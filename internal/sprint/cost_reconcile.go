@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
 )
 
 // THE COST RECONCILIATION (docs/SPEC-SPRINT.md, "What a card cost", the reconciliation; the
@@ -73,13 +75,8 @@ func PropCostReconcile(provider string) string { return PropCostReconcilePrefix 
 
 // UsageRead is one provider's own count of a UTC day's usage as the run loop read it: Known
 // false with Note saying why when there was none to read.
-type UsageRead struct {
-	Provider string
-	Known    bool
-	Day      string // the UTC day the count is of, 2006-01-02
-	Used     float64
-	Note     string
-}
+// It is provbalance's, the transport the reconciliation reads through.
+type UsageRead = provbalance.UsageRead
 
 // CostReconcileReq is the reads of one reconciliation.
 type CostReconcileReq struct {

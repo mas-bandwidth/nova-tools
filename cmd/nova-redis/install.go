@@ -10,8 +10,8 @@ package main
 // persistence and eviction rules) and hands it over stdin, and reads the password in
 // its own process from the login the unit names (--secret and the seat it is in), so
 // neither the unit nor any file holds it. The unit's text, its install and its loader
-// are internal/sprint's (sprint.ServiceUnit, sprint.SeatInstaller, sprint.LoadUnit), shared
-// with nova-sprint install, and nova-sprint units --check names both units installed,
+// are internal/units' (units.ServiceUnit, units.Installer, units.Load), shared with
+// nova-sprint install, and nova-sprint units --check names both units installed,
 // missing or different.
 
 import (
@@ -24,8 +24,8 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
 // The Redis servers nova-redis installs, and each one's port and store directory
@@ -118,12 +118,12 @@ func (d deps) userHome() (string, error) {
 }
 
 // unitInstaller is the installer into dir, its loader the test's when one is set.
-func (d deps) unitInstaller(goos, dir string) sprint.SeatInstaller {
+func (d deps) unitInstaller(goos, dir string) units.Installer {
 	load := d.loadUnit
 	if load == nil {
-		load = sprint.LoadUnit
+		load = units.Load
 	}
-	return sprint.SeatInstaller{Dir: dir,
+	return units.Installer{Dir: dir,
 		Load:   func(p string) error { return load(goos, "load", p) },
 		Unload: func(p string) error { return load(goos, "unload", p) }}
 }
@@ -137,11 +137,11 @@ func (d deps) unitDir(c *tool.Call, goos string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("--units names no directory and the home cannot be read: %v", err)
 	}
-	return sprint.UnitDir(goos, home, d.getenv), nil
+	return units.Dir(goos, home, d.getenv), nil
 }
 
 func installRun(c *tool.Call, d deps, kind string) *tool.Out {
-	k, _ := sprint.UnitKindOf(kind) // ignored: redisUnits are UnitKinds' store and bus
+	k, _ := units.UnitKindOf(kind) // ignored: redisUnits are UnitKinds' store and bus
 	goos := d.unitOS()
 	binds, err := validBinds(c.Str("bind"))
 	if err != nil {
@@ -183,7 +183,7 @@ func installRun(c *tool.Call, d deps, kind string) *tool.Out {
 	if err != nil {
 		return tool.Refuse("the path of this nova-redis cannot be read: " + err.Error() + "; nothing was written")
 	}
-	u := sprint.ServiceUnit{Kind: k, OS: goos, Log: c.Str("log"),
+	u := units.ServiceUnit{Kind: k, OS: goos, Log: c.Str("log"),
 		Args: append([]string{bin, "serve", "--bind", strings.Join(binds, ","), "--port", strconv.Itoa(port), "--dir", filepath.Clean(dir)}, login...)}
 	if u.Log == "" && goos == "darwin" {
 		if herr != nil {
@@ -195,16 +195,16 @@ func installRun(c *tool.Call, d deps, kind string) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error() + "; nothing was written")
 	}
-	units, err := d.unitDir(c, goos)
+	unitsDir, err := d.unitDir(c, goos)
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
 	head := "INSTALL " + strings.ToUpper(kind)
 	if c.DryRun() {
-		fmt.Fprintf(c.Stdout, "%s DRY-RUN unit=%s; nothing was written or loaded\n%s", head, oneline.Field(filepath.Join(units, k.File(goos))), text)
+		fmt.Fprintf(c.Stdout, "%s DRY-RUN unit=%s; nothing was written or loaded\n%s", head, oneline.Field(filepath.Join(unitsDir, k.File(goos))), text)
 		return tool.Exit(0)
 	}
-	r, err := d.unitInstaller(goos, units).InstallUnit(u)
+	r, err := d.unitInstaller(goos, unitsDir).Install(u)
 	if err != nil {
 		fmt.Fprintf(c.Stderr, "%s FAILED err=%s\n", head, oneline.Err(err))
 		return tool.Exit(1)
@@ -214,9 +214,9 @@ func installRun(c *tool.Call, d deps, kind string) *tool.Out {
 }
 
 func uninstallRun(c *tool.Call, d deps, kind string) *tool.Out {
-	k, _ := sprint.UnitKindOf(kind) // ignored: redisUnits are UnitKinds' store and bus
+	k, _ := units.UnitKindOf(kind) // ignored: redisUnits are UnitKinds' store and bus
 	goos := d.unitOS()
-	units, err := d.unitDir(c, goos)
+	unitsDir, err := d.unitDir(c, goos)
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
@@ -226,12 +226,12 @@ func uninstallRun(c *tool.Call, d deps, kind string) *tool.Out {
 		if file == "" {
 			return tool.Refuse("uninstall " + kind + " removes a launchd agent (macOS) or a systemd user unit (Linux), and " + goos + " has neither")
 		}
-		path := filepath.Join(units, file)
+		path := filepath.Join(unitsDir, file)
 		_, serr := os.Stat(path)
 		fmt.Fprintf(c.Stdout, "%s DRY-RUN unit=%s present=%t; nothing was unloaded or removed\n", head, oneline.Field(path), serr == nil)
 		return tool.Exit(0)
 	}
-	r, err := d.unitInstaller(goos, units).UninstallUnit(k, goos)
+	r, err := d.unitInstaller(goos, unitsDir).Uninstall(k, goos)
 	if err != nil {
 		fmt.Fprintf(c.Stderr, "%s FAILED err=%s\n", head, oneline.Err(err))
 		return tool.Exit(1)

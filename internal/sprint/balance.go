@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
 )
 
 // THE BALANCE POLL (nova-tools#5199; the owner, 2026-10-03: "provider out of funds should
@@ -52,15 +54,8 @@ const BalancePollEvery = 10 * time.Minute
 
 // ProviderRead is one balance the poll read: the provider, the dollars left (Known false
 // with Note saying why when there is none to read), and its count of dollars used (HasUsed
-// false when it keeps none).
-type ProviderRead struct {
-	Provider string
-	Known    bool
-	Balance  float64
-	HasUsed  bool
-	Used     float64
-	Note     string
-}
+// false when it keeps none). It is provbalance's, the transport the poll reads through.
+type ProviderRead = provbalance.ProviderRead
 
 // BalanceReq is the reads of one poll.
 type BalanceReq struct {
