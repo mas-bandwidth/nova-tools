@@ -64,6 +64,9 @@ type world struct {
 	review, lander                                  int
 	releaseRed                                      bool
 	schemaOwner, seatDrift, serviceDown, machineRow bool
+	// seatServer is the actor the running server reports when it differs from the seat's
+	// holder (a server-actor-only drift): "" is no drift.
+	seatServer string
 }
 
 // friendFact is one configured friend as the preflight's fakes report it.
@@ -249,7 +252,10 @@ func (w *world) exec(name string, args ...string) (string, error) {
 			break
 		}
 		if w.seatDrift {
-			return "SEAT holder=ada generation=1\nDRIFT key=wrong\n", exitErr{1, ""}
+			return "SEAT holder=ada epoch=1 generation=1 record=ada DRIFT the key says wrong and the record ada: nova-sprint seat --repair --reason <text> (the holder or the owner)\n", exitErr{1, ""}
+		}
+		if w.seatServer != "" {
+			return fmt.Sprintf("SEAT holder=ada epoch=1 generation=1 record=ada server=%s DRIFT the server runs as %s and the seat is ada's: change the server's NOVA_SPRINT_ACTOR=%s to NOVA_SPRINT_ACTOR=ada and restart it\n", w.seatServer, w.seatServer, w.seatServer), exitErr{1, ""}
 		}
 		return w.seatText()
 	case "nova-sprint seat check":
@@ -723,6 +729,22 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.Equal(t, 2, code)
 		assert.Contains(t, lines[len(lines)-1], "first_missing=seat-agreement")
 		assert.Contains(t, lines[len(lines)-1], "--repair")
+	})
+	t.Run("a server actor drift names a restart, not a repair or an instruction", func(t *testing.T) {
+		t.Parallel()
+		w := healthyWorld(t)
+		w.seatServer = "bob"
+		code, lines := w.doctor(jobArgs["coordinator"]...)
+		assert.Equal(t, 2, code, lines)
+		out := strings.Join(lines, "\n")
+		assert.Contains(t, out, "DOCTOR seat-agreement fail ")
+		assert.Contains(t, lines[len(lines)-1], "first_missing=seat-agreement ")
+		_, next, ok := strings.Cut(lines[len(lines)-1], " next: ")
+		require.True(t, ok, lines[len(lines)-1])
+		assert.Equal(t, "nova-sprint install server --listen <address:port> --redis "+testRedis+" --actor ada", next)
+		assert.NotContains(t, next, "--repair")
+		_, refused := parseArgv(next)
+		assert.Empty(t, refused, next)
 	})
 	t.Run("missing installed service precedes push", func(t *testing.T) {
 		t.Parallel()

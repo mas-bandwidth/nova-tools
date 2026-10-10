@@ -214,6 +214,11 @@ var realVerbs = map[string]realVerb{
 			}
 			return configSeatLine(a)
 		})},
+	// cmd/nova-sprint/install.go installUnit, the server kind: --listen and --redis are
+	// required (the server opens the store itself); the unit's loop reads its actor from
+	// NOVA_SPRINT_ACTOR, so --actor is accepted but not the unit's.
+	"nova-sprint install server": {values: []string{"redis", "actor", "op", "max", "epoch", "dir", "log", "listen", "decide"}, bools: []string{"json", "dry-run", "land"},
+		rule: needs("listen", "redis")},
 	// cmd/nova-sprint/view.go: --needs takes neither --all nor --since.
 	"nova-sprint view coordinator": {values: []string{"redis", "actor", "op", "max", "epoch", "since"}, bools: []string{"json", "all", "needs"},
 		rule: all(needs("actor", "redis"), func(a argv) string {
