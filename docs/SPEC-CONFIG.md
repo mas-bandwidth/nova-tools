@@ -410,6 +410,17 @@ reads the list and sets each enabled route's `price_input`, `price_cache_read`,
   `internal/sprint/route.go`, `RouteStats`) should mark a route whose price differs
   from the list by more than 10 percent as stale.
 
+### spend-circuit-breakerb-bb.w8
+
+The hourly dollar cap (docs/SPEC-SPRINT.md, spend-circuit-breakerb-bb.w8; migration 0037):
+
+| field | kind | type | default | what it decides |
+|---|---|---|---|---|
+| `cap_usd_hour` | `route` | decimal | empty: the tier's (flash 5, pro 20, heavy 0 meaning uncapped) | the dollars cards on the route may cost in one clock hour (UTC); past it the route rests to the next hour with the reason `cap reached: $x of $y this hour`; `0` is no cap. The routes read resolves an empty row to its tier's (`RouteOf`, internal/sprint/store/routes.go); Redis: `route:<r>` field `cap_usd_hour` |
+| `cap_usd_hour` | `friend` | decimal | 10 | the dollars a friend's takes and reads may cost in one clock hour; past it she is dealt no card until the next hour; `0` is no cap. A friend on a subscription reports no dollars and never reaches it. Apply writes it on `friend:<f>:desired` (`internal/config/redis.go`); friend sync copies it onto the roster (`cmd/nova-sprint/friends.go`, `FriendSpec.CapUSDHour`) |
+
+A decimal is kept as text in its one spelling, never a float. Migration 0037 sets the route rows that exist to their tier's and every friend row to 10. The roster read (`Store.FriendCaps`, internal/sprint/store/friends.go) carries a friend's cap into the tick with the routes read (`RouteSet.FriendCaps`, `RouteSet.into`).
+
 ### The note
 
 The owner, 2026-10-02, on the route and width choices the first real sprint made

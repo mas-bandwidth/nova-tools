@@ -52,6 +52,11 @@ type Route struct {
 	USD      string `json:"usd,omitempty"`
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
+	// CapUSDHour is the route's dollar cap per clock hour, a canonical decimal, "" for none
+	// on a route built by hand (the store's RouteOf fills an empty row with the tier's
+	// default, TierCapUSDHour): past it the route rests to the next hour
+	// (spendCapRests, route_rest.go; docs/SPEC-SPRINT.md, spend-circuit-breakerb-bb.w8).
+	CapUSDHour string `json:"cap_usd_hour,omitempty"`
 	// First is the route's first field. A route with it set is drawn before the
 	// others of its tier (preferFirst; docs/SPEC-SPRINT.md, the deal).
 	First bool `json:"first"`
