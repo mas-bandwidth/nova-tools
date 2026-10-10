@@ -3010,6 +3010,14 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "merge", err.Error())
 		}
 	}
+	// A bare merge (no fact, no --landed) records the queue's head as landed on nobody's
+	// push: on a real store that is a false landing (2026-10-10: 127 cards recorded landed
+	// whose heads origin's base never held). A landing is recorded by name, each head an
+	// ancestor of the fetched base, or by land, which pushes first. Only the twin, which has
+	// no git, records a bare merge (nova-sprint help, trying it without a Redis).
+	if facts == 0 && len(pins) == 0 && !isTwin(strings.TrimSpace(c.redis)) {
+		return refuse(stderr, "merge", "a bare merge records the queue's head as landed with no push, and a real store refuses it; nothing was changed; record a pushed landing by name with --landed <id>@<head> --repo <dir> --base-ref origin/<base> (each head an ancestor of the base), or let land push and record it; run: nova-sprint land --stream "+*stream)
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())

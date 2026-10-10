@@ -3867,6 +3867,10 @@ are never recorded in its place. It lands exactly the named cards. The position 
 `--rejected`) is about; land's own report names its cards by id, head and attempt
 (tla/Land.tla, idguard), and `merge --landed` is the same record for a caller without
 land (tests TestMergeRecordsLandOnlyTheCardWhoseHeadWasPushed).
+On a real store a bare `merge --stream <s> [--batch n]`, with no fact and no `--landed`,
+is refused before the store is read, naming `--landed` and land: it would record the
+queue's head landed on nobody's push. Only the twin, which has no git, records a bare
+merge (tests TestBareMergeIsRefusedOnARealStore, TestMergeLandedRefusesAHeadNotOnTheBase).
 
 | stream state | means |
 |---|---|
