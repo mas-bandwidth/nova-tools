@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,6 +74,50 @@ func TestScreenReadsAGUIWindowThroughTheAccessibilitySeam(t *testing.T) {
 	assert.Equal(t, "bob", data["friend"])
 	assert.Equal(t, "window", data["source"])
 	assert.Equal(t, []any{"step 3", "step 4"}, data["lines"])
+}
+
+// TestScreenUsesTheRecordedDirectoryForTheWindow pins the target the
+// accessibility seam is asked for: the friend's recorded --dir, from her
+// launch agent, wins even when her status carries no live session
+// (internal/friend/state.go: SessionLive is the mailbox's conversation, not
+// the directory).
+func TestScreenUsesTheRecordedDirectoryForTheWindow(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+
+	agent := friend.Agent{Friend: "bob", Home: r.home}
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/nova/bin/nova-friend</string>
+		<string>serve</string>
+		<string>--as</string>
+		<string>bob</string>
+		<string>--dir</string>
+		<string>/w/bob</string>
+	</array>
+</dict>
+</plist>
+`
+	require.NoError(t, os.MkdirAll(filepath.Dir(agent.PlistPath()), 0o755))
+	require.NoError(t, os.WriteFile(agent.PlistPath(), []byte(plist), 0o644))
+
+	state := friend.DefaultStateDir(r.home, "bob")
+	require.NoError(t, os.MkdirAll(state, 0o755))
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "antigravity"}))
+
+	var readTarget string
+	r.windowReader = func(_ context.Context, _, target string) (string, error) {
+		readTarget = target
+		return "step 1\nstep 2\n", nil
+	}
+
+	out := r.cli().Do(t, "screen", "bob").Exit(0)
+	assert.Contains(t, out.Stdout, "SCREEN friend=bob source=window")
+	assert.Equal(t, "/w/bob", readTarget)
 }
 
 func TestScreenRefusesWithoutThePermission(t *testing.T) {

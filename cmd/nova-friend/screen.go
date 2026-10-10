@@ -17,13 +17,16 @@ func (w world) screen(c *tool.Call) *tool.Out {
 		return tool.Refuse("friend is required: nova-friend screen <friend>")
 	}
 
+	// The recorded --dir identifies the friend's window even when her status
+	// carries no live session (internal/friend/state.go: SessionLive is the
+	// mailbox's conversation, not the directory).
+	dir := ""
 	state := c.Str("state-dir")
 	if state != "" {
 		if _, err := os.Stat(filepath.Join(state, name)); err == nil {
 			state = filepath.Join(state, name)
 		}
 	} else {
-		dir := ""
 		plistPath := filepath.Join(w.home, "Library", "LaunchAgents", "com.nova.friend-"+name+".plist")
 		if b, err := os.ReadFile(plistPath); err == nil {
 			args := friend.PlistArgs(string(b))
@@ -38,6 +41,7 @@ func (w world) screen(c *tool.Call) *tool.Out {
 		Friend:       name,
 		Lines:        c.Int("lines"),
 		StateDir:     state,
+		Dir:          dir,
 		Home:         w.home,
 		Binary:       bin,
 		Now:          w.now,
