@@ -89,6 +89,11 @@ func TestHelpExplainsTheLoop(t *testing.T) {
 	t.Parallel()
 	var out, errb bytes.Buffer
 	require.Equal(t, 0, run([]string{"--help"}, &out, &errb))
+	require.Contains(t, out.String(), "every second")
+	require.Contains(t, out.String(), "--as <friend>")
+	out.Reset()
+	errb.Reset()
+	require.Equal(t, 0, run([]string{"run", "-h"}, &out, &errb))
 	text := out.String()
 	for _, want := range []string{
 		"nova-config friend show",
@@ -127,6 +132,11 @@ func TestHelpExplainsTheLoop(t *testing.T) {
 		require.Contains(t, msg, flag)
 	}
 	require.Equal(t, 2, run([]string{"nope"}, &out, &errb))
+}
+
+func TestRunnerToolMeetsStandard(t *testing.T) {
+	t.Parallel()
+	require.Empty(t, runnerTool().Problems())
 }
 
 type fakeProc struct {
@@ -407,7 +417,7 @@ func TestTickClosesAReadViaTheReadVerb(t *testing.T) {
 
 	r, closes = newReader("Verdict: HOLD\nnothing wrong here\n")
 	require.NoError(t, r.Tick(ctx, now))
-	require.Empty(t, *closes, "a HOLD that names no defect is not a read")
+	require.Equal(t, []string{"d1 return harness fault: read report has no verdict"}, *closes)
 	require.Zero(t, r.lanes.Len())
 }
 

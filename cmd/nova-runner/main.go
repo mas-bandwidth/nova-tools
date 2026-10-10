@@ -1,7 +1,7 @@
 // Command nova-runner keeps one friend at her row's width.
 // The contract is docs/SPEC-RUNNER.md.
 //
-//	example:
+//	Invocation:
 //	  nova-runner run --as ada --dir ~/ada-working --harness opencode --seat coordinator
 package main
 
@@ -77,7 +77,9 @@ func runnerTool() *tool.Tool {
 	return &tool.Tool{
 		Name:      "nova-runner",
 		What:      "keep a friend at her configured width with one-shot harness lanes",
-		How:       helpText,
+		How:       "Reads the friend's nova-config row and fills ready cards up to its width every second.\n" +
+			"Stages and runs one harness per card, then closes its result and sends a true beat.\n" +
+			"Drains lanes before a version change; never kills a lane to enforce width.",
 		Stamp:     version,
 		ExitTable: "0 stopped normally, 1 runner failed, 2 invalid invocation",
 		Verbs: []tool.Verb{{
@@ -85,6 +87,7 @@ func runnerTool() *tool.Tool {
 			Usage:   "run --as <friend> --dir <working-dir> --harness <command> --seat <seat> [--model-<tier> <model>]",
 			Example: "run --as ada --dir ~/ada-working --harness opencode --seat coordinator",
 			Effect:  tool.Delivery + "; claims and closes sprint cards, sends beats and harness-fault judgments",
+			Detail:  helpText,
 			Flags: func(f *tool.Flags) {
 				f.Required("as", "the friend whose row this runner keeps")
 				f.Required("dir", "her working directory, where nova-friend stages jobs")

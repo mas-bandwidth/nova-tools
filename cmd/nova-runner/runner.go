@@ -1001,13 +1001,17 @@ func startLane(ctx context.Context, friendName, dir, harness string, models map[
 	}
 	bin, args := harnessArgv(harness, modelOf(card, models), promptOf(friendName, card))
 	// The harness has its own session and deadline; runner shutdown does not kill it.
-	cmd := subproc.Long(context.Background(), bin, args...)
+	// Keep a claimed lane alive after runner shutdown while retaining a caller-derived
+	// context whose lifetime ends when this child exits.
+	laneCtx, cancelLane := context.WithCancel(context.WithoutCancel(ctx))
+	cmd := subproc.Long(laneCtx, bin, args...)
 	cmd.Dir = dir
 	cmd.Stdin = bytes.NewReader(nil)
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
+		cancelLane()
 		logf.Close()
 		return nil, err
 	}
@@ -1015,6 +1019,7 @@ func startLane(ctx context.Context, friendName, dir, harness string, models map[
 	go capLane(card.Deadline, proc.pid, proc.done)
 	go func() {
 		err := cmd.Wait()
+		cancelLane()
 		logf.Close()
 		proc.line = firstLine(readTrim(logPath))
 		if proc.line == "" && err != nil {
