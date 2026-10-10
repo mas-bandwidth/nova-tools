@@ -222,13 +222,14 @@ func TestOneTickEndNoteOnlyWhenTheTickAddressedTheCoordinator(t *testing.T) {
 	require.Zero(t, ends(), "a tick that addressed nothing wrote %d tick-end notes", ends())
 	h.work("m1")
 	h.work("m2")
-	h.machine() // to review, asked
+	h.machine() // to review: review above working, one backup judgment, one wake
+	require.EqualValues(t, 1, ends(), "the review tick wrote %d tick-end notes, want the one backup judgment", ends())
 	h.readAll()
-	res := h.machine() // accepted: ready to merge, once for the stream, and the reads' notes
-	require.EqualValues(t, 1, ends(), "the accepting tick: %d tick-end notes, count %d, want one note counting at least the ready to merge", ends(), res.TickEnd)
+	res := h.machine() // accepted: ready to merge, and the backup edge that acceptance crosses
+	require.EqualValues(t, 2, ends(), "the accepting tick: %d tick-end notes, count %d, want the review wake and this tick's wake", ends(), res.TickEnd)
 	require.GreaterOrEqual(t, res.TickEnd, 1, "the accepting tick: %d tick-end notes, count %d, want one note counting at least the ready to merge", ends(), res.TickEnd)
 	h.machine()
-	require.EqualValues(t, 1, ends(), "a quiet tick wrote a tick-end note: %d", ends())
+	require.EqualValues(t, 2, ends(), "a quiet tick wrote a tick-end note: %d", ends())
 }
 
 // A drain a step makes before it plans is said, never silent: a pump part

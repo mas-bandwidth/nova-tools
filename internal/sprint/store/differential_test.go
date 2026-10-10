@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -109,6 +110,61 @@ var dKnown = []dKnownDiff{
 		}
 		return sigHas("another", "open.accept=yes/no", "primary.pair")(f)
 	}},
+	// ENGINE. The tick raises one judgment at each backup edge and none while
+	// the predicate holds (docs/SPEC-SPRINT.md, the backup state; sprint.TickBackup).
+	// The reference model walks TickParts, which does not include that part, so
+	// an open or acknowledged note of the four types, and an ack of one the
+	// model has no decision for, differs. The spec names the edges.
+	{"ENGINE the backup edges' judgments are the engine's, not the model's", backupEdgeDiff},
+}
+
+// backupEdgeDiff matches a finding whose every field is one of the four backup
+// judgments, or an ack of one of them that the model refuses because it never
+// opened the note.
+func backupEdgeDiff(f dFinding) bool {
+	field := func(name string) bool {
+		for _, typ := range []string{sprint.NReadsBackedUp, sprint.NReadsClear, sprint.NMergesBackedUp, sprint.NMergesClear} {
+			if name == "other:"+typ {
+				return true
+			}
+		}
+		return false
+	}
+	named := func(typ string) bool {
+		for _, name := range []string{sprint.NReadsBackedUp, sprint.NReadsClear, sprint.NMergesBackedUp, sprint.NMergesClear} {
+			if typ == name || typ == "other:"+name {
+				return true
+			}
+		}
+		return false
+	}
+	if len(f.Seq) == 0 {
+		return false
+	}
+	if f.Kind == "refusal" {
+		a := f.Seq[len(f.Seq)-1]
+		if a.Kind != "ack" || !named(a.Type) {
+			return false
+		}
+		if !strings.Contains(f.Detail, "model refuses") || !strings.Contains(f.Detail, "ack does not answer") {
+			return false
+		}
+		for _, d := range f.Diffs {
+			if !field(d.Field) {
+				return false
+			}
+		}
+		return true
+	}
+	if f.Kind != "state" || len(f.Diffs) == 0 {
+		return false
+	}
+	for _, d := range f.Diffs {
+		if (d.Table != "open" && d.Table != "acked") || !field(d.Field) {
+			return false
+		}
+	}
+	return true
 }
 
 func dClassify(f dFinding) (string, bool) {

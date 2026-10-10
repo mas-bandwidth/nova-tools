@@ -1550,8 +1550,17 @@ default) and `low` (it fills only an idle lane).
   `reads_waiting`, the reads wanted now and not asked over the primaries in review, from the
   tick's where record; `where` prints `backup: reads (review 279 > working 77, merging 44),
   250 reads waiting` under the summary while the state is not none
-  (`TestWhereShowsTheBackupState`). The one judgment at each edge is card
-  a-backup-transition-pushes-one-judgment-b's; the state alone is exposed here.
+  (`TestWhereShowsTheBackupState`). The tick raises one judgment at each edge and
+  none while the predicate holds (`sprint.TickBackup`). Review above working raises
+  `reads are backed up`; once that judgment is open, review not above working raises
+  `reads are clear`. Merging above review plus working raises `merges are backed up`;
+  once that judgment is open, merging not above review plus working raises
+  `merges are clear`. A tick in which both edges flip raises one judgment for each.
+  Each judgment names the three counts, the oldest card in that column and its age,
+  the readers reading and their width, the lander's last landing and the stopped
+  streams, and the verbs that widen the bottleneck: `nova-sprint reader set --tiers`,
+  `nova-sprint fleet up --width`, `nova-sprint route enable`, `nova-sprint resume --stream`.
+  It is answered by ack or wait (`TestReadsBackedUpRaisesOneJudgmentAtTheEdge`).
 - **The fleet readers read their row's tiers.** A fleet reader row whose tiers are `flash`,
   or that names none while the store holds routes, is never asked a pro read (the owner,
   2026-10-06, "I'm ok with flash readers on fleet but not pro"); a row naming pro is; a
@@ -4804,6 +4813,7 @@ the tick would make, no other open judgment on it).
 | a stream has made no progress past its deadline (stale) | where, queue (look), wait | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 | review above its alarm, merging above its alarm, nothing ready while cards wait, the fleet works below its alarm (the backlog alarms, below) | ack (seen: quiet until the episode ends), wait | yes |
+| reads are backed up, reads are clear, merges are backed up, merges are clear (section 1, the backup state: one judgment when review becomes greater than working and one when it is not, and the same pair when merging becomes greater than review plus working; none while the predicate holds; the text names the three counts, the oldest card in the column and its age, the readers reading and their width, the lander's last landing, the stopped streams, and `reader set --tiers`, `fleet up --width`, `route enable`, `resume --stream`) | ack, wait | yes |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
@@ -4820,7 +4830,9 @@ The machine's tick writes its own judgments (section 14): cannot ask, fewer than
 member is up, a work card or a read card past its deadline, a stream with no
 merge step past its deadline, an invariant is broken, a stall (one
 judgment for each card nothing holds, or for the stall a chain of waiting
-cards ends at; the stall judgment itself holds nothing), and the backlog alarms
+cards ends at; the stall judgment itself holds nothing), the backup edges
+(section 1: reads are backed up, reads are clear, merges are backed up, merges are
+clear), and the backlog alarms
 (below).
 
 The sprint done is no judgment. The tick's last part, done, finds the sprint

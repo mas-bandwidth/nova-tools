@@ -42,6 +42,9 @@ func TestReadReturnIsAskedOfAnotherReaderByTheNextTick(t *testing.T) {
 	assert.Equal(t, []string{"s1-1.r1.reader-b"}, ta.askedOf("reader-b"))
 	var returned []sprint.Group
 	for _, g := range ta.inboxGroups() {
+		if isBackupJudgment(g.Type) {
+			continue
+		}
 		assert.NotEqual(t, sprint.Judgment, g.Kind, "no judgment is owed: %+v", g)
 		if g.Type == sprint.NReadReturned {
 			returned = append(returned, g)

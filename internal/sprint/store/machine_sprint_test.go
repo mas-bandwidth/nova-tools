@@ -204,7 +204,18 @@ func (w *crWorld) round(r int) {
 		// pump's to apply (errata 3 amendment 12).
 		before := h.revisionsAll()
 		res2 := h.machine()
+		drained := false
 		for _, p := range res2.Parts {
+			if p.Name == sprint.PartDrain && len(p.Moved) > 0 {
+				drained = true
+			}
+		}
+		for _, p := range res2.Parts {
+			// The drain applies what the first tick queued. A backup edge that
+			// queue crosses is one judgment of this tick (sprint.TickBackup).
+			if drained && p.Name == sprint.PartBackup && len(p.Moved) == 0 && p.Notes > 0 {
+				continue
+			}
 			if p.Name != sprint.PartDrain && (len(p.Moved) > 0 || p.Notes > 0) {
 				var first []string
 				for _, q := range res.Parts {

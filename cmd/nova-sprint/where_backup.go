@@ -11,7 +11,7 @@ import (
 // when the work table's review count exceeds its working count, merges when merging exceeds
 // review and working together, none else, read from the work table's count cells (no card is
 // read), with the reads waiting (sprint.ReadsWaiting) from the tick's where record. The
-// judgment raised at the edge is card a-backup-transition-pushes-one-judgment-b's.
+// tick raises one judgment at each edge (sprint.TickBackup).
 
 // pipelineCounts is the work table's primaries working, in review and merging, summed over
 // its rows from the count cells, an archived stream's row aside (it holds none of them).

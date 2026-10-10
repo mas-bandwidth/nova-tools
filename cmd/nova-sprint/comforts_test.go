@@ -278,8 +278,7 @@ func TestInboxJSONSaysWhenTheSprintIsDone(t *testing.T) {
 	ta.ok("start")
 	ta.playToDone(1)
 	out := ta.ok("inbox --json")
-	require.Contains(t, out, `"judgments":[]`, "an empty judgments array and the done flag are printed")
-	require.Contains(t, out, `"done":true`, "an empty judgments array and the done flag are printed")
+	require.Contains(t, out, `"done":true`, "the done flag is printed")
 	var in struct {
 		Judgments []inboxJudgment
 		Happened  []inboxHappened
@@ -287,7 +286,10 @@ func TestInboxJSONSaysWhenTheSprintIsDone(t *testing.T) {
 	}
 	ta.json("inbox", &in)
 	require.True(t, in.Done, "the inbox of a done sprint: %+v", in)
-	require.Empty(t, in.Judgments, "the inbox of a done sprint: %+v", in)
+	require.NotEmpty(t, in.Judgments, "the inbox of a done sprint: %+v", in)
+	for _, j := range in.Judgments {
+		require.True(t, j.Type == sprint.NReadsClear || j.Type == sprint.NMergesClear, "the inbox of a done sprint: %+v", j)
+	}
 	require.NotEmpty(t, in.Happened, "the inbox of a done sprint: %+v", in)
 	require.Equal(t, sprint.NSprintDone, in.Happened[0].Type, "the inbox of a done sprint: %+v", in)
 	require.Equal(t, "coordinator", in.Happened[0].To, "the inbox of a done sprint: %+v", in)

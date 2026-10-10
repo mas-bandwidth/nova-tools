@@ -46,13 +46,22 @@ func TestACriticalRootIsDealtReadAndJudgedFirst(t *testing.T) {
 	require.NoError(t, err)
 	var types []string
 	for _, g := range v.Groups {
-		if g.Kind == sprint.Judgment {
+		// The backup edge is its own judgment (sprint.TickBackup). This test is
+		// the root's read judgment listing first among the card judgments.
+		if g.Kind == sprint.Judgment && g.Type != sprint.NReadsBackedUp && g.Type != sprint.NReadsClear && g.Type != sprint.NMergesBackedUp && g.Type != sprint.NMergesClear {
 			types = append(types, g.Type)
 		}
 	}
 	require.Len(t, types, 2)
 	assert.Equal(t, sprint.NReadBroken, types[0], "the root's judgment first, though the leaf's is older: %v", types)
-	assert.Equal(t, 3, v.Groups[0].Behind)
+	behind := 0
+	for _, g := range v.Groups {
+		if g.Kind == sprint.Judgment && g.Type == sprint.NReadBroken {
+			behind = g.Behind
+			break
+		}
+	}
+	assert.Equal(t, 3, behind)
 	assert.Equal(t, []sprint.CriticalCard{{ID: "root", Behind: 3, State: sprint.Review}, {ID: "mid", Behind: 2, State: sprint.Waiting}, {ID: "tip", Behind: 1, State: sprint.Waiting}}, sprint.Critical(h.snap(), 5))
 	assert.Equal(t, "critical: root 3 behind, review; mid 2 behind, waiting; tip 1 behind, waiting", sprint.CriticalLine(sprint.Critical(h.snap(), 5)))
 	// a drop writes the weights it changes
