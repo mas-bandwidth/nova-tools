@@ -57,8 +57,9 @@ func TestFunctionalrunPodmanCoverOutput(t *testing.T) {
 	require.NotNil(t, eng)
 	out, err := eng.Output(context.Background(), "ps", "-a", "--format", "{{.ID}}")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), bin)
-	assert.Contains(t, err.Error(), "ps -a")
+	assert.True(t, strings.HasPrefix(err.Error(), bin), "error should start with bin path")
+	assert.Contains(t, err.Error(), "ps -a:", "error should contain first two args")
+	assert.Contains(t, err.Error(), "exec", "error should carry exec's own message")
 	assert.Empty(t, out)
 }
 
@@ -72,8 +73,9 @@ func TestFunctionalrunPodmanCoverStart(t *testing.T) {
 	proc, err := eng.Start([]string{"ps", "-a", "--format", "{{.ID}}"}, &stderr, &stderr)
 	require.Error(t, err)
 	require.Nil(t, proc)
-	assert.Contains(t, err.Error(), bin)
-	assert.Contains(t, err.Error(), "ps -a")
+	assert.True(t, strings.HasPrefix(err.Error(), bin), "error should start with bin path")
+	assert.Contains(t, err.Error(), "ps -a:", "error should contain first two args")
+	assert.Contains(t, err.Error(), "exec", "error should carry exec's own message")
 }
 
 func TestFunctionalrunPodmanCoverUseRuntime(t *testing.T) {
