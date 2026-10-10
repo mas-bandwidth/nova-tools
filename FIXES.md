@@ -26,7 +26,7 @@ The roadmap and this page come back as data, and the open issues move into the r
 
 The fixes held during the split, the point-release candidates found on 2026-10-10, the owed tests, and the sprint store cards that are point-release work. Each is re-applied or written in this repository, then cut as one release.
 
-- **The card tells the child its wall: deadline and temporary directory** (planned). The worker card tells the child its deadline, and the native wall passes the slot temporary directory so TMPDIR is the slot one. From: nova-tools PR #5575, head 4725d7d7d.
+- **The card tells the child its wall: deadline and temporary directory** (shipped). The worker card tells the child its deadline, and the native wall passes the slot temporary directory so TMPDIR is the slot one. From: nova-tools PR #5575, head 4725d7d7d; landed in dev as 7dc8304560 via PR #5594.
 - **A walled lane tokens are read where its harness writes them** (planned). Walled sessions live under the wall home, tokens are read from there first, and a session in no database is unread rather than zero, so the token cap can trip. From: nova-tools PR #5590, head 0c4fd7ea.
 - **The hosted tests are green on main and nightly** (planned). Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of one mirror); make them pass there. From: v1.2.5 candidate list.
 - **A friend AI moved to another machine uses the provider key that worked** (planned). After a move the friend AI ran with a stored provider key that differs from the working one, and the provider refused it. The stored key is replaced by the owner, then the friend AI restarts through the play. From: v1.2.5 candidate list.
