@@ -13,7 +13,7 @@ func main() {
 
 func run(args []string) int {
 	if len(args) == 0 {
-		printBanner()
+		fmt.Fprintln(os.Stderr, "nova-delete: missing command; run: nova-delete help")
 		return 2
 	}
 
@@ -78,7 +78,7 @@ func runDelete(args []string) int {
 	}
 	msg, exit, err := Delete(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "nova-delete: %s\n", err)
+		fmt.Fprintf(os.Stderr, "nova-delete: %s; run: nova-delete help\n", err)
 		return 2
 	}
 	fmt.Println(msg)
@@ -98,7 +98,7 @@ func runSweep(args []string) int {
 	}
 	swept, err := Sweep(*olderThan)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "nova-delete sweep: %s\n", err)
+		fmt.Fprintf(os.Stderr, "nova-delete sweep: %s; run: nova-delete sweep -h\n", err)
 		return 2
 	}
 	for _, p := range swept {

@@ -11,6 +11,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-ci/` | CI slowtests budget and check CLI, and ci-ok's run receipt | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-decide/` | typed decisions with probabilities through a backend, recorded and calibrated against their outcomes | `go test ./cmd/nova-decide` | `go test ./cmd/nova-decide` |
+| `nova-delete/` | moves a literal path to quarantine instead of deleting it | `go test ./cmd/nova-delete` | `go test ./cmd/nova-delete` |
 | `nova-doctor/` | one command that says what is missing and how to fix it: every registered dependency check, exit by the worst | `go test ./cmd/nova-doctor` | `go test ./cmd/nova-doctor` |
 | `nova-friend/` | what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon | `go test ./cmd/nova-friend` | `go test -tags functional ./cmd/nova-friend` |
 | `nova-fuse/` | the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |

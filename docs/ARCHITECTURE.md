@@ -75,6 +75,7 @@ names it opens, and whether it runs every n seconds or is kept alive
 | --- | --- | --- |
 | `nova-bus` | messages between AIs over Redis streams: sent once, delivered until acknowledged | [SPEC-BUS.md](SPEC-BUS.md) |
 | `nova-cairn` | a session's words, kept durably as plain files you can come back to | [SPEC-CAIRN.md](SPEC-CAIRN.md) |
+| `nova-delete` | move a literal path to quarantine instead of deleting it | [SPEC-DELETE.md](SPEC-DELETE.md) |
 | `nova-card` | writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help (pre-alpha) | [SPEC-CARD-CONTRACT.md](SPEC-CARD-CONTRACT.md) |
 | `nova-check` | checks over markdown records and repositories, each finding named by file and line | [SPEC-CHECK.md](SPEC-CHECK.md) |
 | `nova-ci` | test-time budgets over `go test -json` output, this repository's own CI steps, and the ci-ok run receipt | [SPEC-CI.md](SPEC-CI.md) |

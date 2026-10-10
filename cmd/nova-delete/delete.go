@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // allowedRoots returns the list of allowed root directories.
@@ -35,7 +37,7 @@ func validatePath(path string, roots []string) error {
 	}
 
 	// Check for glob characters or special characters (unexpanded variable or glob)
-	if matched, _ := regexp.MatchString(`[*?[\` + "`" + `\n]`, path); matched {
+	if matched, _ := regexp.MatchString("[*?\\[\\]`\\n]", path); matched {
 		return errors.New("path contains glob or special characters")
 	}
 
@@ -44,16 +46,13 @@ func validatePath(path string, roots []string) error {
 		return errors.New("relative path")
 	}
 
-	// Check for top-level roots and their children (temp, home, allowed roots themselves)
+	// Check for top-level roots (temp, home, allowed roots themselves)
 	cleanPath := filepath.Clean(path)
 	for _, root := range roots {
 		cleanRoot := filepath.Clean(root)
-		// Reject if path is the root itself or starts with root followed by separator
-		if cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator)) {
-			// But we allow paths INSIDE allowed roots, only reject the root itself
-			if cleanPath == cleanRoot {
-				return errors.New("path is an allowed root itself")
-			}
+		// Only reject if path is the root itself, not paths inside allowed roots
+		if cleanPath == cleanRoot {
+			return errors.New("path is an allowed root itself")
 		}
 	}
 
@@ -189,7 +188,7 @@ func Sweep(olderThan time.Duration) ([]string, error) {
 			}
 
 			if now.Sub(info.ModTime()) > olderThan {
-				if err := os.RemoveAll(dir); err != nil {
+				if err := safepath.RemoveUnder(root, dir); err != nil {
 					continue
 				}
 				swept = append(swept, dir)
