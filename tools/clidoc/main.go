@@ -92,7 +92,11 @@ func markerTools(doc string) []string {
 // leaving everything outside them as it stands.
 func replaceSection(doc, tool, ref string) string {
 	re := regexp.MustCompile(`(?s)(<!-- clidoc:begin ` + regexp.QuoteMeta(tool) + ` -->).*?(<!-- clidoc:end ` + regexp.QuoteMeta(tool) + ` -->)`)
-	return re.ReplaceAllString(doc, "$1"+ref+"$2")
+	idx := re.FindStringSubmatchIndex(doc)
+	if idx == nil {
+		return doc
+	}
+	return doc[:idx[3]] + ref + doc[idx[4]:]
 }
 
 // reference runs tool's help and each verb's -h from binDir and returns the
