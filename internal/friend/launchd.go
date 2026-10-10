@@ -291,6 +291,37 @@ func ExitTimeout(plist string) time.Duration {
 	return time.Duration(n) * time.Second
 }
 
+// Disabled reports whether launchd's override database holds the label disabled
+// in the domain (gui/<uid>): `launchctl print-disabled <domain>` lists it as
+// `"<label>" => true` after an earlier bootout disabled it, or a hand
+// `launchctl disable`. A launchctl that does not answer, or an output that does
+// not list the label, is not disabled: the database is an addition to launchd,
+// and a machine without one has nothing disabled.
+func Disabled(ctx context.Context, run Launchctl, domain, label string) bool {
+	out, err := run(ctx, "print-disabled", domain)
+	if err != nil {
+		return false
+	}
+	return disabledIn(out, label)
+}
+
+// disabledIn reports whether print-disabled's output lists label as disabled:
+// the quoted label as a key whose value is true. A label is never a substring
+// of another's key here, because the closing quote is part of what is matched.
+func disabledIn(out, label string) bool {
+	quoted := `"` + label + `"`
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), quoted)
+		if !ok {
+			continue
+		}
+		if value, ok := strings.CutPrefix(strings.TrimSpace(rest), "=>"); ok {
+			return strings.TrimSpace(value) == "true"
+		}
+	}
+	return false
+}
+
 // WaitReleased waits until launchd no longer holds the service target (gui/<uid>/<label>)
 // after its bootout: `launchctl print <target>` asked every poll, until it no longer finds
 // the service (anything but exit 0 with the service's own `<target> = {` block), at most
@@ -322,7 +353,12 @@ func WaitReleased(ctx context.Context, run Launchctl, target string, timeout, po
 // label runs now (nothing loaded is fine), a wait until launchd no longer holds
 // the label (WaitReleased), then a bootstrap into the user's
 // domain, sent again after wait() while launchd answers EIO, so running it
-// again replaces the agent with the same result. It answers the plist's
+// again replaces the agent with the same result. A label launchd's override
+// database holds disabled answers exit 5, EIO, at every try; the first
+// refused bootstrap reads that database once (print-disabled) and enables a
+// disabled label (enable) before the next try, and a bootstrap that still
+// fails names the label, its domain, launchd's exit, whether the label was
+// disabled, and the enable line that is the remedy. It answers the plist's
 // path and the commands it ran.
 func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(path string, data []byte) error, wait func()) (path string, ran []string, err error) {
 	placed, copy, err := a.BinaryPlan()
@@ -371,17 +407,44 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		return path, ran, err
 	}
 	bootstrap := []string{"bootstrap", domain, path}
+	checked, wasDisabled := false, false
 	for try := 1; ; try++ {
 		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
 		out, err := run(ctx, bootstrap...)
 		if err == nil {
 			return path, ran, nil
 		}
-		if try == BootstrapTries || !(strings.Contains(out, "Input/output error") || strings.Contains(out, "Operation already in progress")) {
-			return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
+		retry := strings.Contains(out, "Input/output error") || strings.Contains(out, "Operation already in progress")
+		// The two EIOs are told apart by launchd's override database, read
+		// once: a disabled label is enabled before the next try, so the retries
+		// are not spent on a label launchd will never load as it stands.
+		if retry && !checked {
+			checked = true
+			if wasDisabled = Disabled(ctx, run, domain, a.Label()); wasDisabled {
+				enable := []string{"enable", target}
+				ran = append(ran, "launchctl "+strings.Join(enable, " "))
+				if eout, eerr := run(ctx, enable...); eerr != nil {
+					return path, ran, fmt.Errorf("launchctl enable %s: %v: %s; run: launchctl enable %s", target, eerr, strings.TrimSpace(eout), target)
+				}
+			}
+		}
+		if try == BootstrapTries || !retry {
+			return path, ran, bootstrapRefusal(a.Label(), domain, target, err, out, wasDisabled)
 		}
 		wait()
 	}
+}
+
+// bootstrapRefusal is a bootstrap that failed after the retries: it names the
+// label, its domain, launchd's exit and words, whether the label was disabled
+// in the override database, and the enable line that is the remedy.
+func bootstrapRefusal(label, domain, target string, err error, out string, wasDisabled bool) error {
+	state := "the label was not disabled in launchd's override database"
+	if wasDisabled {
+		state = "the label was disabled in launchd's override database, and was enabled before the last try"
+	}
+	return fmt.Errorf("launchctl bootstrap: %v: %s; label %s in domain %s; %s; run: launchctl enable %s",
+		err, strings.TrimSpace(out), label, domain, state, target)
 }
 
 // Uninstall boots the agent out and removes its plist; an agent that is

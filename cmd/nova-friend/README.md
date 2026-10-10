@@ -31,6 +31,15 @@ stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of 
 home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
 
+A dry-run install reads launchd's override database and prints the
+`launchctl enable gui/<uid>/<label>` step it would take, before the bootstrap,
+when that database holds the label disabled (an earlier bootout that disabled
+it, or a hand `launchctl disable`); a label disabled there answers exit 5,
+Input/output error, at every bootstrap. The sitting below has nothing disabled,
+so it shows no enable step; a real install enables the label first and, when a
+bootstrap still fails, names the label, its domain, launchd's exit and that
+enable line.
+
 ```text
 $ nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
