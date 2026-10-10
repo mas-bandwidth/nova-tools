@@ -1380,22 +1380,21 @@ active 2d ago`, and was dealt nothing, because her daemon held its beat back
 under "no beat until a session check answers" while the sprint read beats; the
 coordinator beat for her, and for another friend, from shell loops.
 
-The native heartbeat (`Heartbeat`) sends immediately once the configured
-daemon starts, before opening its bus store, and every second until it stops.
-It runs independently of bus reads, session checks, inbox work and filesystem
-walks. Each send has a 900ms context deadline, with one send at a time. A failed
-transport attempt is an error on status and is tried again on the next tick;
-it creates no session evidence. The Presence model assumes a reachable beat
-recipient and a scheduler that runs the heartbeat each tick; an unavailable
-server cannot record a successful beat.
+The native heartbeat (`Heartbeat`, run by the daemon's beatLoop) sends
+immediately once the daemon's loop starts, and every second until it stops,
+independently of the loop's inbox and lane work. Each send has a 900ms context
+deadline, with one send at a time, so a slow bus read or filesystem walk (the
+send steps the session check and walks activity) is bounded and never stops the
+next tick. A failed transport attempt is an error on status and is tried again
+on the next tick; it creates no session evidence. The Presence model assumes a
+reachable beat recipient and a scheduler that runs the heartbeat each tick; an
+unavailable server cannot record a successful beat.
 
 The heartbeat reads bounded snapshots of what the worker knows: width, start,
 running jobs and working/queue counts once known, latest activity, and the
 check/answer words whose nonce and run the server validates. Session bus
-activity is advisory `--active`; it never stands in for nonce proof. No bus
-read or filesystem access runs on the sender's path. Status writes run on a
-separate worker with a single pending snapshot, so a stalled filesystem cannot
-stop beats. The status file carries the actual successful beat count, last
+activity is advisory `--active`; it never stands in for nonce proof. The loop's
+flush writes the status with the actual successful beat count, last
 success and current transport error. Unknown report fields preserve the server's
 last known facts. An omitted running list is unknown and keeps the last ids;
 an explicit empty list (the daemon sends `--running -` when the last lane
