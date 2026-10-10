@@ -279,6 +279,36 @@ func TestWatchWakeFiresOncePerEventAndNeverLapses(t *testing.T) {
 	})
 }
 
+// TestWatchWakeWatchesTheWakeFile: the retired script recorded the wake file's
+// line count at start and woke on a line appended to it. --wake-file holds both
+// halves: the first run starts at the file's end, a line appended after wakes
+// with up to three new lines shown, the state keeps the count, and the same
+// lines never wake twice.
+func TestWatchWakeWatchesTheWakeFile(t *testing.T) {
+	t.Parallel()
+	r := newWakeRig(t)
+	r.f.world.WakeFile = []string{"before the run"} // the first run records the count: not new
+	w := r.run(func(n int) {
+		if n == 1 {
+			r.f.world.WakeFile = []string{"before the run", "one", "two", "three", "four"}
+		}
+	})
+	assert.Equal(t, "file", w.Kind)
+	assert.Contains(t, w.Evidence, "one")
+	assert.Contains(t, w.Evidence, "three")
+	assert.NotContains(t, w.Evidence, "four", "up to three new lines")
+	assert.NotContains(t, w.Evidence, "before the run", "the first run starts at the file's end")
+	assert.Contains(t, w.String(), "WAKE file ")
+
+	s, err := readWakeState(r.path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, s.Wake, "the state records the lines consumed")
+
+	r.f.world.WakeFile = append(r.f.world.WakeFile, "five")
+	assert.Equal(t, "file", r.run(nil).Kind, "a later append wakes")
+	assert.Equal(t, "check", r.run(nil).Kind, "the same lines do not wake twice")
+}
+
 func TestWatchRefusesWithoutWake(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

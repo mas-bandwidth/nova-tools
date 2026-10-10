@@ -27,8 +27,8 @@ Tool: nova-sprint
 STATUS: retired 2026-10-10
 
 Behaviours:
-1. At start it records the line count of the wake file, the file count of <coordinator-home>/inbox/sprint-judgments and the time. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
-2. It exits 0 printing `WAKE FILE <time>: <up to 3 new lines>` when a line is appended to the wake file. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+1. At start it records the line count of the wake file, the file count of <coordinator-home>/inbox/sprint-judgments and the time. (test: TestWatchWakeWatchesTheWakeFile)
+2. It exits 0 printing `WAKE FILE <time>: <up to 3 new lines>` when a line is appended to the wake file. (test: TestWatchWakeWatchesTheWakeFile)
 3. It exits 0 printing `JUDGMENT WAKE <time>: <n> new: <3 newest names>` when the judgments directory holds more files than at start, at most once per 1200 s (judgment-wake.stamp). (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
 4. It exits 0 printing `TEN-MINUTE CHECK <time>` once it has run 600 s. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
 5. Every 60 s it reads the sprint with `ns.sh where --json`; when that read is empty it checks nothing else that round. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
