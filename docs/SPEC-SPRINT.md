@@ -4368,15 +4368,12 @@ directory that holds no tracked file before the merge) that its PATHS name
 owns the catalog row that directory costs and the maps `make map` writes.
 `internal/docs/catalog.go` is the card's when its change is added lines only,
 each a row naming one of those new directories; every `AGENTS.md` map
-`tools/agentsmap` writes is the card's. A card whose PATHS name an `AGENTS.md`
-map also owns `internal/docs/catalog.go`, the source that map is generated from,
-so an edit of an existing row lands beside the map the card regenerates
-(`diffcheck.Outside`; goal of the-finish-form-is-one-line-bbc). `diffcheck.Outside`
-still reports any other change to `catalog.go`, or a map change from a card that
-adds no directory and names no map, as outside the brief's globs. The lander does
-not refuse them: the catalog and every `AGENTS.md` map are inside every card's PATHS
-by `cardgen.AlwaysInPaths` (`sprint.LandScope`), so an edit of an existing row and a
-map change with no new directory land (`TestLandExemptsTheCatalogRowAndMapOfANewPackage`). The
+`tools/agentsmap` writes is the card's. `diffcheck.Outside` still reports any
+other change to `catalog.go`, or a map change from a card that adds no directory,
+as outside the brief's globs. The lander does not refuse them: the catalog and
+every `AGENTS.md` map are inside every card's PATHS by `cardgen.AlwaysInPaths`
+(`sprint.LandScope`), so an edit of an existing row and a map change with no new
+directory land (`TestLandExemptsTheCatalogRowAndMapOfANewPackage`). The
 maps are a second generated-ledger family, owned by
 `TestCommittedMapMatchesTree`, its update run `go run ./tools/agentsmap` under
 `GOFLAGS=-mod=readonly`. A merge whose unmerged paths are only those maps, or

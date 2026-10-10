@@ -110,9 +110,8 @@ const (
 	UpdatedRerun = "updated, rerun"
 )
 
-// CatalogFile is the hand-written catalog a card that adds a directory may add a row to,
-// and that a card naming an AGENTS.md map owns the edit of (internal/docs/catalog.go;
-// docs/SPEC-SPRINT.md section 7, land-e12-catalog-rows).
+// CatalogFile is the hand-written catalog a card that adds a directory may add a row to
+// (internal/docs/catalog.go; docs/SPEC-SPRINT.md section 7, land-e12-catalog-rows).
 const CatalogFile = "internal/docs/catalog.go"
 
 // AgentsMap says p is an AGENTS.md map tools/agentsmap writes: the root page, or a
@@ -144,11 +143,9 @@ var AgentsMapRoots = []string{
 // before, under which the diff adds a file the card's PATHS name (the file, or that
 // directory), is a new directory the card adds: CatalogFile is then the card's when its
 // change is added lines only, each a row naming one of those directories, and every
-// AGENTS.md map is the card's. A card whose PATHS name an AGENTS.md map also owns
-// CatalogFile, the source that map is generated from, so an edit of an existing row
-// lands beside the map (goal of the-finish-form-is-one-line-bbc). Any other change to
-// the catalog, or a map change from a card that adds no directory, stays outside
-// (docs/SPEC-SPRINT.md section 7, land-e12-catalog-rows).
+// AGENTS.md map is the card's. Any other change to the catalog, or a map change from a
+// card that adds no directory, stays outside (docs/SPEC-SPRINT.md section 7,
+// land-e12-catalog-rows).
 func Outside(paths []string, diff string, trackedBefore []string) []string {
 	if len(paths) == 0 {
 		return nil
@@ -161,13 +158,7 @@ func Outside(paths []string, diff string, trackedBefore []string) []string {
 	named := func(p string) bool {
 		return slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, p) })
 	}
-	// A card whose PATHS name an AGENTS.md map owns the docs catalog that map is
-	// generated from, so an edit of an existing row lands beside the map the card
-	// regenerates (goal of the-finish-form-is-one-line-bbc; docs/SPEC-SPRINT.md
-	// section 7, land-e12-catalog-rows). The map's own change is the card's because
-	// its path is named.
-	ownsCatalog := slices.ContainsFunc(paths, AgentsMap)
-	mine := func(p string) bool { return named(p) || Ledger(p) || ownsCatalog && p == CatalogFile }
+	mine := func(p string) bool { return named(p) || Ledger(p) }
 	var out []string
 	for _, f := range files {
 		if catalogExempt(f, dirs) || len(dirs) > 0 && f.Old == f.New && AgentsMap(f.New) {
