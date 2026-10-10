@@ -238,7 +238,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 		if root == "" && config.FriendDir(r) == "" {
 			return refuse(stderr, name, "wants --root <dir>, the directory holding <root>/"+n+"-working, for her nova-config row has no dir (HOME is not set); or run: nova-config friend set "+n+" --dir <her working directory>"), false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], Dir: config.FriendDir(r), TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], Dir: config.FriendDir(r), TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: config.FriendBilling(r), Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {

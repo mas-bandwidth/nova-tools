@@ -1390,6 +1390,21 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### deal-subscription-first-r-t-bb
+
+**A heavy or pro card is offered to a subscription friend with room before any API friend
+or fleet route takes it** (the owner, 2026-10-04 4:41 PM: "friends are billed by
+subscription or api", and "subscription (the default) is tokens only, the friends
+category, never in the sprint's dollar columns; api is work at API rates"). The friend row
+carries a billing field (`internal/config/kind.go: FriendBilling`): `subscription` (the
+default) or `api` (`FriendBillings`). For a heavy or pro card the deal selects among the
+subscription friends first (`subscriptionFirst`, `tierHeavyOrPro`): an up subscription
+friend with room is offered the card before any other friend, and an api friend or the
+fleet's route takes only what is left. A friend whose row names no billing word is the
+documented default, subscription, and is offered the cards first too; only an explicit
+`api` is api. A card naming a WHO keeps it. Migration 0038 adds the column;
+`TestHeavyAndProCardsGoToSubscriptionFriendsFirst`.
+
 ### The rebalance: queued work to idle lanes, across friends and fleet
 
 **The tick rebalances queued work across both sides, within the tier sets** (the owner,
