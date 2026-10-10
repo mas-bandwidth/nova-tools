@@ -87,3 +87,23 @@ func FormRefusal(s *Snapshot, r FormRefusalReq) Plan {
 	}
 	return p
 }
+
+// HeadFileMiss is why the named report was not the blob at the finish's head. A file
+// missing from the process working directory is not the report, so the text names the
+// commit, or that the finish named none.
+func HeadFileMiss(head string, err error) string {
+	msg := ""
+	if err != nil {
+		msg = strings.TrimSpace(err.Error())
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = strings.TrimSpace(msg[:i])
+		}
+	}
+	if msg == "" {
+		msg = "the blob was not read"
+	}
+	if head == "" {
+		return "not at a head (" + msg + "); the finish names no commit (--head), and a file in the process directory is not the report"
+	}
+	return "not in " + head + " (" + msg + "); a file in the process directory is not the report"
+}
