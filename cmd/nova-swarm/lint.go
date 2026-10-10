@@ -71,9 +71,10 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // live in pkg/swarm/lintheader.go, beside a note on the
 // gate parser they have to agree with,
 // and `depends-on`, which fires only under `--typed`, and the base checks of
-// pkg/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
-// `deadline-p95` -- with `donewhen-test-name`, which fire only under
-// `--base-check`.
+// pkg/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet`,
+// `deadline-p95` and `personal-name` -- with `donewhen-test-name`, which fire
+// only under `--base-check`; `personal-name` reads its names from the caller,
+// and `nova-sprint add` runs the same check on every brief (pkg/swarm/lintpaths.go).
 //
 // The child rules of pkg/swarm/lintchild.go -- one `rule-<name>` per sentence of the
 // brief the coordinator gives every child and one `step-<what>` per forbidden command --
@@ -84,7 +85,7 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 //
 // And the three rules of a tree card (pkg/cardtree): steps-nested, tree-step and
 // script-step, which fire only on a card with a dotted step or a work step.
-var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
+var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies) + 1 // the one personal-name base check
 
 // Every drift names its remedy, and the binary can print the whole table.
 //
@@ -789,7 +790,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	// runs `git push` or `gh`, LEG is in the `--legs` fleet table, and DEADLINE is at
 	// or above the kind's p95 in the `--p95` table. Evidence not handed over is not a
 	// pass: its check draws a finding that says MISSING and names the flag.
-	baseCheck := f.fs.Bool("base-check", false, "also run the four base checks of a coding card: PATHS exist at the base sha in --repo, no STEP pushes or calls gh, the LEG is in --legs, the deadline meets --p95")
+	baseCheck := f.fs.Bool("base-check", false, "also run the base checks of a coding card: PATHS exist at the base sha in --repo, no STEP pushes or calls gh, the LEG is in --legs, the deadline meets --p95, DONE-WHEN names a test absent at the base, and no SOURCE or PATHS prose names a person")
 	// `--child-rules` IS THE ASK FOR THE RULES THE COORDINATOR GIVES EVERY CHILD. A card
 	// written for a bench worker under the twelve shape rules carries none of them, and a
 	// card written for a child of the coordinator carries all of them: the flag says which

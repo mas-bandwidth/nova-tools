@@ -112,4 +112,12 @@
     retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
     empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
     stale session never carries across a clear."
-   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")))
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")
+  (fix "card-lint-names-in-paths-are-not-names" :release "v1.2.6" :status "in-progress"
+   :title "A path in a card brief is not a person's name"
+   :text "The card lint's personal-name check reads the tokens of a SOURCE or PATHS line and skips
+    every token with a slash or a `.md` suffix, so a ledger under a named home is not a person, and it
+    matches a name only as a whole word, so an ordinary word that holds one (`every`, `summary`) is
+    not the name; the names come from the caller, the explicit Names or the friends table `nova-sprint
+    add` hands over, and a bare name in prose still draws personal-name."
+   :origin "dogfood 2026-10-10: add refused a brief over a path segment")))
