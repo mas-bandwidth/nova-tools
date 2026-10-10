@@ -13,10 +13,14 @@
 # below); the route credential through the sealed-secrets path (the play never
 # prints or takes a secret value: nova-secrets opens the seat and the tool reads
 # the key in its own process); a mirror for every repository a live card names;
-# and one probe card, taken and finished, that proves the member. The verb adds
-# the member drained and deals it the probe card outside its width, so no work
-# reaches it until the play's member has taken and finished the probe. Each step
-# prints one FLEET-ADD line, done or the refusal with its remedy.
+# and one probe card, taken and finished, that proves the member. The verb runs
+# the play twice for one add: the setup run (nova_member_probe=0) converges the
+# machine and starts the loops and skips the probe; once the member's own loop
+# has genuinely beaten and its reader row is up the verb deals the probe outside
+# the member's width and runs the probe pass (nova_member_probe=1), which takes
+# and finishes it. No work reaches the member until its loop has beaten, its
+# reader is up and the probe is finished. Each step prints one FLEET-ADD line,
+# done or the refusal with its remedy.
 - name: the member's machine and its pinned tools
   hosts: all
   gather_facts: true
@@ -206,13 +210,18 @@
           FLEET-ADD step=mirrors host={{ inventory_hostname }} done
           repos={{ fleet_add_repos | length }}
 
-    # the probe: the verb dealt the member one probe card outside its width (it
-    # is drained at width 0), the member's loop takes it and reports its finish;
-    # this pass waits for that take and the verb reads the store for the finish.
-    # The probe runs under the same sealed-secrets path as the unit (its route's
-    # key in the environment) and names --pass, so the card's child is handed the
-    # key; a fleet with no route runs it bare and needs none.
+    # the probe: the verb deals the member one probe card outside its width (it
+    # is drained at width 0 until this run), once the member's own loop has
+    # genuinely beaten and its reader row is up (the verb waits before it deals).
+    # This run takes and finishes it; the verb reads the store for the finish.
+    # The probe step runs only in the probe run (nova_member_probe=1): the setup
+    # run (nova_member_probe=0) converges the machine and starts the loops and
+    # skips it, so no probe is taken before the loop has beaten. The probe runs
+    # under the same sealed-secrets path as the unit (its route's key in the
+    # environment) and names --pass, so the card's child is handed the key; a
+    # fleet with no route runs it bare and needs none.
     - name: one probe card, taken and finished by the member
+      when: nova_member_probe | default('1') == '1'
       ansible.builtin.command:
         argv: >-
           {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
@@ -228,6 +237,7 @@
       failed_when: false
 
     - name: the member took and finished the probe card
+      when: nova_member_probe | default('1') == '1'
       ansible.builtin.assert:
         that:
           - (fleet_add_probe_run.rc | default(1)) == 0
@@ -239,6 +249,7 @@
         quiet: true
 
     - name: FLEET-ADD the probe card
+      when: nova_member_probe | default('1') == '1'
       ansible.builtin.debug:
         msg: >-
           FLEET-ADD step=probe host={{ inventory_hostname }} done

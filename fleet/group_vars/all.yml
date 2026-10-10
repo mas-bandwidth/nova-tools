@@ -155,6 +155,10 @@ nova_seat_quiet: 60
 nova_member: ""
 nova_member_width: 0
 nova_member_reader: ""
+# nova_member_probe selects the run of member.yml: 0 converges the machine and
+# starts the member and reader loops and skips the probe step; 1 runs the probe
+# card the verb dealt (nova-sprint fleet add, docs/FLEET.md, "Adding a member").
+nova_member_probe: "1"
 nova_member_tools: ["golang-go", "sqlite3", "age", "sops", "bats"]
 nova_member_harness: opencode
 # nova_member_route_key are the sealed secret names the member's routes read,

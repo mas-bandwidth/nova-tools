@@ -31,14 +31,21 @@ sealed-secrets path (the records name the route's keys and the seat, so
 member and reader argvs and the probe name `--pass` so the card's child is
 handed the route's key; no secret value is printed or passed), and a mirror for
 every repository a live card names. The verb adds the fleet and
-reader rows itself, the member **drained** (width 0), deals it one probe card
-outside that width, and widens it only once it is proved: the member beats
-within a minute, its reader row is up, and it has taken and finished the probe
-card other than by the play's own word — the verb reads the store. Until then
-the member is not dealt work, and a refusal takes the probe card off the table
-and drains the member again. Every step prints one line, done or the refusal
-with its remedy; a second run changes nothing; `--dry-run` runs the play with
-`--check`, lists every step, and writes nothing.
+reader rows itself, the member **drained** (width 0) and with no beat of its
+own, and runs the play twice for one add. The setup run
+(`nova_member_probe=0`) converges the machine and starts the member and reader
+loops, and skips the probe; the verb then reads the store for the member's own
+recent beat and its reader row up — the setup's own steps are never taken for the
+machine's, so a member that has never beaten, or whose only beat is stale, is left
+drained and refused. Only then does the verb deal the member one
+probe card outside its width and run the probe pass (`nova_member_probe=1`),
+which takes and finishes it. The member is widened only once it is proved: its
+beat is genuine and recent, its reader row is up, and it has taken and finished
+the probe card other than by the play's own word — the verb reads the store.
+Until then the member is not dealt work, and a refusal takes the probe card off
+the table and drains the member again. Every step prints one line, done or the
+refusal with its remedy; a second run changes nothing; `--dry-run` runs the play
+with `--check`, lists every step, and writes nothing.
 
 ```
 nova-sprint fleet add bench-a --width 64 --source . --inventory ./nova-inventory

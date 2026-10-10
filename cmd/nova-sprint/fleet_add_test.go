@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,6 +33,13 @@ func (f *fakeFleetAddPlay) Play(_ context.Context, argv []string) (string, error
 		f.onRun()
 	}
 	return f.out, f.err
+}
+
+// fakeProbePhase says whether a play run's argv is the probe pass
+// (nova_member_probe=1): the pass that takes the card the verb dealt, run only
+// once the member's own loop has genuinely beaten.
+func fakeProbePhase(argv []string) bool {
+	return slices.Contains(argv, "nova_member_probe=1")
 }
 
 // fleetAddPlayOK is fleet/member.yml's and fleet/tools.yml's output when every
@@ -187,6 +195,9 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 	setup(okta)
 	ok := &fakeFleetAddPlay{out: fleetAddPlayOK}
 	ok.onRun = func() {
+		if !fakeProbePhase(ok.argv) {
+			return // the setup pass runs no probe: the verb deals it after this
+		}
 		okta.ok("take --as bench-c --limit 1")
 		okta.ok("finish --as bench-c probe-bench-c-1.w1@1")
 		okta.ok("tick") // the server's tick applies the member's queued take and finish
@@ -234,6 +245,7 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 	ta2 := newTestApp(t)
 	ta2.ok("init --readers reader-a,reader-b")
 	ta2.live = []string{"bench-c"}
+	ta2.ok("reader add reader-bench-c") // its row beats with every command from here
 	noProbe := &fakeFleetAddPlay{out: fleetAddPlayNoProbe}
 	fleetAddPlayOf.Store(ta2.a, noProbe)
 	defer fleetAddPlayOf.Delete(ta2.a)
@@ -313,14 +325,20 @@ func TestFleetAddReservesTheMemberWhileTheProbeRuns(t *testing.T) {
 	tickRan := false
 	play := &fakeFleetAddPlay{out: fleetAddPlayOK}
 	play.onRun = func() {
-		// An ordinary tick while the probe runs: the member holds only its probe
-		// cards, up to its room, and the ordinary ready cards stay waiting.
+		// An ordinary tick during the setup pass reaches the drained member no
+		// work; during the probe pass it holds only its probe cards, up to its
+		// room, and the ordinary ready cards stay waiting.
 		ta.ok("tick")
 		tickRan = true
 		var during whereView
 		ta.json("where", &during)
-		assert.Equal(t, 3, cardsOf(during, "bench-c"), "the member holds the primary and both reservations during setup")
-		assert.Equal(t, "4", cellText(during.Tables["work"]["s1"]["ready"]), "the ordinary ready cards stay waiting during setup")
+		if !fakeProbePhase(play.argv) {
+			assert.Equal(t, 0, cardsOf(during, "bench-c"), "a drained member holds no card during setup")
+			assert.Equal(t, "4", cellText(during.Tables["work"]["s1"]["ready"]), "the ordinary ready cards stay waiting during setup")
+			return
+		}
+		assert.Equal(t, 3, cardsOf(during, "bench-c"), "the member holds the primary and both reservations while the probe runs")
+		assert.Equal(t, "4", cellText(during.Tables["work"]["s1"]["ready"]), "the ordinary ready cards stay waiting during the probe")
 		ta.ok("take --as bench-c --limit 1")
 		ta.ok("finish --as bench-c probe-bench-c-1.w1@1")
 		ta.ok("tick")
@@ -341,4 +359,73 @@ func TestFleetAddReservesTheMemberWhileTheProbeRuns(t *testing.T) {
 	var after whereView
 	ta.json("where", &after)
 	assert.Greater(t, cardsOf(after, "bench-c"), 0, "the proved member is dealt ordinary work")
+}
+
+// TestFleetAddRefusesAMemberThatHasNotReallyBeaten pins the fresh-host finding:
+// the setup's own steps are never current availability. A member with no beat at
+// all is dealt no probe and is not widened; so is one whose only beat is
+// expired; only a member whose own loop beats during the setup run is proved.
+// The play's setup pass beats the member, as the machine's loop does, and the
+// probe pass takes the card the verb dealt.
+func TestFleetAddRefusesAMemberThatHasNotReallyBeaten(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "fleet"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "fleet", "member.yml"), []byte("[]\n"), 0o644))
+	base := []string{"--source", src, "--inventory", "/inv/nova-inventory"}
+	line := "fleet add bench-c --width 2 " + strings.Join(base, " ")
+
+	// no beat at all: the member's loop never runs, so the add refuses it and
+	// leaves it drained, and starts no probe run
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b")
+	ta.live = nil
+	none := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	fleetAddPlayOf.Store(ta.a, none)
+	defer fleetAddPlayOf.Delete(ta.a)
+	code, _, errs := ta.do(line)
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "fleet add REFUSED step=beat host=bench-c")
+	assert.Equal(t, 0, fleetAddWidth(t, ta, "bench-c"), "a member with no beat is left drained")
+	assert.False(t, fakeProbePhase(none.argv), "no probe run is started for a member that has not beaten")
+
+	// an expired beat: the member beat once, long ago, and its loop is not
+	// running now, so the stale beat is not current availability
+	old := newTestApp(t)
+	old.ok("init --readers reader-a,reader-b")
+	old.live = []string{"bench-c"}
+	old.ok("tick") // one command beats it, at this clock's now
+	old.mu.Lock()
+	old.live = nil
+	old.now = old.now.Add(2 * fleetAddBeatBound)
+	old.mu.Unlock()
+	stale := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	fleetAddPlayOf.Store(old.a, stale)
+	defer fleetAddPlayOf.Delete(old.a)
+	code, _, errs = old.do(line)
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "fleet add REFUSED step=beat host=bench-c")
+	assert.Equal(t, 0, fleetAddWidth(t, old, "bench-c"), "a stale beat leaves the member drained")
+
+	// a genuine beat: the machine's loop beats the member during the setup run,
+	// and the probe run takes the card, so the member is proved and dealt work
+	fresh := newTestApp(t)
+	fresh.ok("init --readers reader-a,reader-b")
+	fresh.live = nil
+	live := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	live.onRun = func() {
+		if !fakeProbePhase(live.argv) {
+			fresh.live = []string{"bench-c"} // the machine's member loop is up
+			fresh.beat()
+			return
+		}
+		fresh.ok("take --as bench-c --limit 1")
+		fresh.ok("finish --as bench-c probe-bench-c-1.w1@1")
+		fresh.ok("tick")
+	}
+	fleetAddPlayOf.Store(fresh.a, live)
+	defer fleetAddPlayOf.Delete(fresh.a)
+	code, out, errs := fresh.do(line)
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Equal(t, 2, fleetAddWidth(t, fresh, "bench-c"), "a member whose loop has beaten is widened")
 }
