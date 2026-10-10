@@ -22,21 +22,35 @@ claude-oneshot-lanes), `coordinator-wake-verb`, `coordinator-ping-verb`, `friend
 ## coordinator-wake
 
 Path: <coordinator-dir>/tmp/buswatch/watch.sh
-Replacement: coordinator-wake-verb
-STATUS: live
+Replacement: watch
+Tool: nova-sprint
+STATUS: retired 2026-10-10
 
 Behaviours:
-1. At start it records the line count of the wake file, the file count of <coordinator-home>/inbox/sprint-judgments and the time.
-2. It exits 0 printing `WAKE FILE <time>: <up to 3 new lines>` when a line is appended to the wake file.
-3. It exits 0 printing `JUDGMENT WAKE <time>: <n> new: <3 newest names>` when the judgments directory holds more files than at start, at most once per 1200 s (judgment-wake.stamp).
-4. It exits 0 printing `TEN-MINUTE CHECK <time>` once it has run 600 s.
-5. Every 60 s it reads the sprint with `ns.sh where --json`; when that read is empty it checks nothing else that round.
-6. It exits 0 printing `MACHINE WAKE <time>` when `ns.sh log --since 2m` holds a "the machine stopped" line not by the coordinator and the stop-asked file is absent (the first sighting wakes it).
-7. It exits 0 printing `FRIEND WAKE <time>: down: <names>` when a friend other than the two opencode friends, the coordinator and its personal seat has not read up on two checks in a row.
-8. It exits 0 printing `MERGE WAKE <time>` when cards are merging, the newest `LAND OK|DONE` line of the sprint server's loop log is older than 900 s, stop-asked is absent, and the last merge wake is 600 s or more old (merge-wake.stamp).
-9. It exits 0 printing `BACKLOG WAKE <time>: <alarms> (<summary>)` when the fleet works under half of the up width, review holds over 40, merging holds over 60, or ready is 0 with cards waiting; only after 120 s alive, with stop-asked absent, at most once per 1800 s (backlog-wake.stamp).
-10. It blocks up to 5 s per round on the bus stream bus2:to:<coordinator> (redis port 6381) from the end of the stream.
-11. It exits 0 printing `BUS WAKE <time>: <up to 5 subjects>` for a message to the coordinator from anyone but the coordinator, except pong or PING, `card <id> dealt`, `card <id> finished`, LAND or landed, DONE, `width <n>`, e2e-ok, awake, `RESULT:`, a subject ending ` HOLD`, rule applied, ACK and acknowledged.
+1. At start it records the line count of the wake file, the file count of <coordinator-home>/inbox/sprint-judgments and the time. (test: TestWatchWakeWatchesTheWakeFile)
+2. It exits 0 printing `WAKE FILE <time>: <up to 3 new lines>` when a line is appended to the wake file. (test: TestWatchWakeWatchesTheWakeFile)
+3. It exits 0 printing `JUDGMENT WAKE <time>: <n> new: <3 newest names>` when the judgments directory holds more files than at start, at most once per 1200 s (judgment-wake.stamp). (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+4. It exits 0 printing `TEN-MINUTE CHECK <time>` once it has run 600 s. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+5. Every 60 s it reads the sprint with `ns.sh where --json`; when that read is empty it checks nothing else that round. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+6. It exits 0 printing `MACHINE WAKE <time>` when `ns.sh log --since 2m` holds a "the machine stopped" line not by the coordinator and the stop-asked file is absent (the first sighting wakes it). (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+7. It exits 0 printing `FRIEND WAKE <time>: down: <names>` when a friend other than the two opencode friends, the coordinator and its personal seat has not read up on two checks in a row. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+8. It exits 0 printing `MERGE WAKE <time>` when cards are merging, the newest `LAND OK|DONE` line of the sprint server's loop log is older than 900 s, stop-asked is absent, and the last merge wake is 600 s or more old (merge-wake.stamp). (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+9. It exits 0 printing `BACKLOG WAKE <time>: <alarms> (<summary>)` when the fleet works under half of the up width, review holds over 40, merging holds over 60, or ready is 0 with cards waiting; only after 120 s alive, with stop-asked absent, at most once per 1800 s (backlog-wake.stamp). (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+10. It blocks up to 5 s per round on the bus stream bus2:to:<coordinator> (redis port 6381) from the end of the stream. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+11. It exits 0 printing `BUS WAKE <time>: <up to 5 subjects>` for a message to the coordinator from anyone but the coordinator, except pong or PING, `card <id> dealt`, `card <id> finished`, LAND or landed, DONE, `width <n>`, e2e-ok, awake, `RESULT:`, a subject ending ` HOLD`, rule applied, ACK and acknowledged. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
+
+### simp-retire-buswatch-bc.w1
+
+The append wake of the retired script is the verb's `--wake-file`, and the launch command in
+docs/SPRINT-COORDINATOR.md names the file. The wake-file baseline is initialized apart from the
+whole state's seed, so a state seeded before the flag was enabled starts at the file's end
+rather than waking on the lines already there (`TestWatchWakeSeededOldState`, cmd/nova-sprint).
+
+### simp-retire-buswatch-bcb.w2
+
+Every behaviour of the watch.sh row cites a test that exists, `TestStopgapWatchShIsRetired`
+reads the row through this file's parser, and the replacement verb and its `--wake-file`
+flag are in the `nova-sprint` verb table.
 
 ## bud-card-runner
 

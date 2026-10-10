@@ -947,6 +947,43 @@ its own role view.**
     Why: clutter and unasked notes made the page untrustworthy.
     Done by: `nova-sprint view coordinator --json`; `nova-sprint dashboard`.
 
+### simp-retire-buswatch-b
+
+The coordinator's hand wake script (`<coordinator-dir>/tmp/buswatch/watch.sh`) is retired:
+`nova-sprint watch --wake` holds every behaviour it had, each pinned by a test, and its row
+in docs/STOPGAPS.md is `STATUS: retired`. Run the verb in the background as a nova-config loop
+row, `NOVA_SPRINT_SERVER=127.0.0.1:$PORT NOVA_SPRINT_ACTOR=<coordinator> nova-sprint watch --wake --check 10m --wake-file <coordinator-dir>/tmp/buswatch/wake` (R80, R89, R91): stop the
+old background run, start the verb, then delete the script.
+
+### simp-retire-buswatch-bc.w1
+
+The retired script's append wake is carried by the verb's `--wake-file`, so the launch
+command names `<coordinator-dir>/tmp/buswatch/wake`; with no flag the file is not watched
+and that half of the wake is lost. The wake-file baseline is tracked apart from the whole
+state's seed, so a state written before `--wake-file` was enabled starts at the file's end
+instead of waking on the lines already there. Tests:
+`TestWatchWakeWatchesTheWakeFile` and `TestWatchWakeSeededOldState` (cmd/nova-sprint).
+
+### simp-retire-buswatch-bc.w2
+
+The retired `watch.sh` behaviours are covered by `TestWatchWakeWatchesTheWakeFile`
+for append wakes and `TestWatchWakeFiresOncePerEventAndNeverLapses` for judgments,
+checks, stops, friends, merge and backlog alarms, and filtered bus messages.
+`TestStopgapWatchShIsRetired` checks the register's per-behaviour test citations.
+
+### simp-retire-buswatch-bcb.w1
+
+The watch verb's synopsis includes its registered `--wake-file <path>` flag, so the
+retired-script command in docs/COORDINATOR-TOOLS.md maps to a real verb and option.
+`TestWatchWakeSynopsisNamesWakeFile` pins the synopsis, and
+`TestEveryCoordinatorToolMapsToARealNovaVerb` checks the guide's command mapping.
+
+### simp-retire-buswatch-bcb.w2
+
+The watch.sh row is retired with a test on every behaviour, and
+`TestStopgapWatchShIsRetired` (internal/ci) holds the citations through the register's own
+parser. The coordinator runs `nova-sprint watch --wake` where the script ran.
+
 ## Open items
 
 Each is a place this runbook describes a workaround; the change that removes it is named.
