@@ -682,9 +682,12 @@ func (a *app) fleetAddRows(ctx context.Context, st *store.Store, host, reader st
 }
 
 // fleetAddProbe deals one probe card to a just-added member outside its width:
-// the member is briefly widened to one so the deal reaches it, the probe card
-// is admitted on its own stream and dealt to the member alone, and the play's
-// member loop takes and finishes it. A probe already finished (its primary in
+// the member is briefly widened to one so the deal reaches it. Two probe cards
+// on stream probe-<host> (primary -1 and holder -2) are dealt to the member,
+// filling DealAhead * width 1 (2 cards): this reserves the member exclusively
+// for the probe during setup, keeping it unavailable to ordinary deals so any
+// concurrent tick leaves other ready work waiting. The play's member loop
+// takes and finishes the primary (-1). A probe already finished (its primary in
 // Review) is left as it is, so a second run changes nothing; a probe already
 // dealt waits only for the member to take it. It returns the probe card's
 // primary id, which fleetAddProve requires finished before the member is
@@ -692,6 +695,7 @@ func (a *app) fleetAddRows(ctx context.Context, st *store.Store, host, reader st
 func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (string, error) {
 	stream := "probe-" + host
 	primary := stream + "-1"
+	holder := stream + "-2"
 	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
 	if err != nil {
 		return "", err
@@ -701,8 +705,12 @@ func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (
 	case c == nil:
 		// the machine runs, so the add and the deal write the work table
 		// directly (Pump), the tick's own first update, instead of queuing for
-		// the next tick: the probe must be placed before the play runs
-		step := store.AddStep(sprint.AddReq{Stream: stream, IDs: []string{primary}, Brief: fleetAddProbeBrief})
+		// the next tick: the probe must be placed before the play runs.
+		// Two cards are placed on this stream to fill DealAhead * width 1 (2 cards),
+		// reserving the member exclusively for the probe during setup and leaving
+		// other ready work waiting during any interleaved tick.
+		brief := fmt.Sprintf("%sBENCH: %s\n", fleetAddProbeBrief, host)
+		step := store.AddStep(sprint.AddReq{Stream: stream, IDs: []string{primary, holder}, Brief: brief})
 		step.Pump = true
 		res, err := st.Run(ctx, step)
 		if err != nil {
@@ -723,7 +731,7 @@ func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (
 		return "", err
 	}
 	if needDeal {
-		res, err := st.Run(ctx, fleetAddDealStep(sprint.DealReq{Sel: sprint.Sel{Only: []string{primary}}}))
+		res, err := st.Run(ctx, fleetAddDealStep(sprint.DealReq{Sel: sprint.Sel{Only: []string{primary, holder}}}))
 		if err != nil {
 			return "", err
 		}
@@ -743,14 +751,15 @@ func fleetAddDealStep(r sprint.DealReq) store.Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
 }
 
-// fleetAddUndo undoes a refused add's probe: the probe card is taken off the
+// fleetAddUndo undoes a refused add's probe: the probe cards are taken off the
 // table and the member is drained again (width 0), so a member that did not
 // prove leaves no probe card behind and is dealt no work. It runs from
 // cmdFleetAdd's defer on every refusal after the probe was dealt.
 func (a *app) fleetAddUndo(ctx context.Context, st *store.Store, host, probe string) {
-	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{probe}}, Reason: "the probe card of a member add that did not finish"})
+	holder := "probe-" + host + "-2"
+	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{probe, holder}}, Reason: "the probe card of a member add that did not finish"})
 	drop.Pump = true
-	_, _ = st.Run(ctx, drop)                                                     // ignored: the drain below leaves the member drained whether or not the drop moves
+	_, _ = st.Run(ctx, drop) // ignored: the holder card is dropped; widening succeeds either way                                                     // ignored: the drain below leaves the member drained whether or not the drop moves
 	_, _ = st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 0, true, 0, false)) // ignored: the refusal stands; the next run drains the member again
 }
 
@@ -805,10 +814,15 @@ func (a *app) fleetAddProve(ctx context.Context, st *store.Store, host, reader, 
 	return "", nil
 }
 
-// fleetAddWiden sets the member's width to w once it is proved. A member
-// already at w is left as it is, so a second run writes nothing; it says
-// whether it wrote the width.
+// fleetAddWiden sets the member's width to w once it is proved, and drops the
+// holder card used to reserve the member during setup. A member already at w is
+// left as it is, so a second run writes nothing; it says whether it wrote the
+// width.
 func (a *app) fleetAddWiden(ctx context.Context, st *store.Store, host string, w int) (bool, error) {
+	holder := "probe-" + host + "-2"
+	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{holder}}, Reason: "fleet add setup complete"})
+	drop.Pump = true
+	_, _ = st.Run(ctx, drop) // ignored: the holder card is dropped; widening succeeds either way
 	snap, err := st.Load(ctx, []string{sprint.Fleet}, nil)
 	if err != nil {
 		return false, err
@@ -824,4 +838,13 @@ func (a *app) fleetAddWiden(ctx context.Context, st *store.Store, host string, w
 		return false, fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
 	}
 	return true, nil
+}
+
+func init() {
+	installVerbs = append(installVerbs, verb{
+		name:    "fleet add",
+		syntax:  "<host> --width <n> [--dry-run] --source <checkout> --inventory <file>",
+		example: "fleet add bench-a --width 64 --source . --inventory ./nova-inventory --dry-run",
+		run:     (*app).cmdFleetAdd,
+	})
 }

@@ -187,6 +187,15 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 	setup(okta)
 	ok := &fakeFleetAddPlay{out: fleetAddPlayOK}
 	ok.onRun = func() {
+		// An ordinary tick interleaved before probe completion: other ready
+		// work must stay waiting; the member is reserved exclusively for the probe
+		// and unavailable to ordinary deals.
+		okta.ok("tick")
+		var during whereView
+		okta.json("where", &during)
+		assert.Equal(t, 2, cardsOf(during, "bench-c"), "the member holds only the probe card during setup")
+		assert.Equal(t, "4", cellText(during.Tables["work"]["s1"]["ready"]), "other ready work stays waiting during setup")
+
 		okta.ok("take --as bench-c --limit 1")
 		okta.ok("finish --as bench-c probe-bench-c-1.w1@1")
 		okta.ok("tick") // the server's tick applies the member's queued take and finish
@@ -283,4 +292,53 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 		assert.Equal(t, 2, code, "%v: %s", bad, errs)
 		assert.Contains(t, errs, "fleet add REFUSED")
 	}
+}
+
+
+// An ordinary tick interleaved before probe completion must leave other ready
+// work waiting: the member is reserved exclusively for the probe during setup
+// and unavailable to ordinary deals until proved.
+func TestFleetAddInterleavedTickLeavesOtherReadyWorkWaiting(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "fleet"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "fleet", "member.yml"), []byte("[]\n"), 0o644))
+	base := []string{"--source", src, "--inventory", "/inv/nova-inventory"}
+
+	brief := writeBrief(t, "c: ready work\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s")
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b")
+	ta.m.SetRoutes([]sprint.Route{{Name: "flash-or", Tier: "flash", Provider: "deepseek", Model: "deepseek-v4-flash", Enabled: true}})
+	ta.ok("add --stream s1 --count 4 --brief-file " + brief)
+	ta.ok("start")
+	ta.live = []string{"bench-c"}
+	ta.ok("reader add reader-bench-c")
+
+	tickRan := false
+	play := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	play.onRun = func() {
+		// Interleave an ordinary tick before probe completion
+		ta.ok("tick")
+		tickRan = true
+		var mid whereView
+		ta.json("where", &mid)
+		assert.Equal(t, 2, cardsOf(mid, "bench-c"), "bench-c holds only the probe card during setup")
+		assert.Equal(t, "4", cellText(mid.Tables["work"]["s1"]["ready"]), "all 4 cards of s1 stay waiting in ready")
+
+		ta.ok("take --as bench-c --limit 1")
+		ta.ok("finish --as bench-c probe-bench-c-1.w1@1")
+		ta.ok("tick")
+	}
+	fleetAddPlayOf.Store(ta.a, play)
+	defer fleetAddPlayOf.Delete(ta.a)
+
+	code, out, errs := ta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	require.True(t, tickRan, "interleaved tick ran")
+
+	// Proved and widened: the next tick deals the waiting work to bench-c
+	ta.ok("tick")
+	var after whereView
+	ta.json("where", &after)
+	assert.Greater(t, cardsOf(after, "bench-c"), 0, "the proven member is now dealt ordinary work")
 }
