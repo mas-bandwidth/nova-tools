@@ -18,6 +18,7 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -101,6 +102,11 @@ type Field struct {
 	// characters (ListLine), so one row stays one short line; show, --json and
 	// the history keep it whole.
 	Cut bool
+	// Valid, when set, is the rule on a value add or set names, run on its
+	// canonical form when it is not empty and never on a stored row: what the
+	// machine running nova-config can see of it now (a friend's dir is an
+	// existing directory, not a symlink). nil checks nothing.
+	Valid func(v string) error
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -244,14 +250,25 @@ func FriendTokenCap(r Row) int64 {
 	return n
 }
 
+// FriendDir is a friend row's working directory: its dir field, "" when the
+// row has none (nova-sprint then joins <root>/<name>-working, and says so).
+func FriendDir(r Row) string { return r.Fields["dir"] }
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead), her config_dir, when set, is an absolute path, and each stream
-// restriction is a glob the matcher reads. A width that failed its own
-// validation is absent and skipped.
+// instead), her config_dir, when set, is an absolute path, a dir she has is
+// an absolute, clean path, and each stream restriction is a glob the matcher
+// reads. A width that failed its own validation is absent and skipped.
 func checkFriend(r Row) error {
+	var problems []string
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
-		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
+		problems = append(problems, fmt.Sprintf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w))
+	}
+	if d := r.Fields["dir"]; d != "" && (!filepath.IsAbs(d) || filepath.Clean(d) != d) {
+		problems = append(problems, fmt.Sprintf("friend %s has dir %q; a friend's dir is an absolute path with no trailing slash, . or ..: want --dir %s", r.Name, d, cleanAbs(d)))
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	if d := r.Fields["config_dir"]; d != "" && !filepath.IsAbs(d) {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
@@ -266,6 +283,41 @@ func checkFriend(r Row) error {
 		}
 	}
 	return nil
+}
+
+// cleanAbs is the path a refused dir likely meant, for the refusal's remedy.
+func cleanAbs(d string) string {
+	if !filepath.IsAbs(d) {
+		return "/<absolute path>"
+	}
+	return filepath.Clean(d)
+}
+
+// validFriendDir is the friend dir field's Valid: the directory is there on
+// this machine and is a directory itself, never a symlink to one.
+func validFriendDir(d string) error {
+	if !filepath.IsAbs(d) || filepath.Clean(d) != d {
+		return fmt.Errorf("--dir %q: a friend's dir is an absolute path with no trailing slash, . or ..: want --dir %s", d, cleanAbs(d))
+	}
+	fi, err := os.Lstat(d)
+	switch {
+	case err != nil:
+		return fmt.Errorf("--dir %s is not an existing directory on this machine (%v); make it, or name her real working directory", d, err)
+	case fi.Mode()&os.ModeSymlink != 0:
+		real, _ := filepath.EvalSymlinks(d) // ignored: the refusal names the link either way
+		return fmt.Errorf("--dir %s is a symlink, and a friend's dir is her real directory: want --dir %s", d, orText(real, "<the directory it points to>"))
+	case !fi.IsDir():
+		return fmt.Errorf("--dir %s is not a directory", d)
+	}
+	return nil
+}
+
+// orText is s, or dflt when s is empty.
+func orText(s, dflt string) string {
+	if s == "" {
+		return dflt
+	}
+	return s
 }
 
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
@@ -440,7 +492,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, and the optional streams and kinds restrictions on the work she may be dealt",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, her working directory, and the optional streams and kinds restrictions on the work she may be dealt",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
@@ -451,6 +503,7 @@ var Kinds = []*Kind{
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
+			{Name: "dir", Type: TypeText, Nullable: true, Valid: validFriendDir, Help: "her working directory, the absolute path of an existing directory and never a symlink, where nova-sprint delivers her cards and reads her outbox; unset (the default, or --dir '') is <root>/<name>-working"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -1103,6 +1156,9 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 			continue
 		}
 		c, err := f.Canonical(v)
+		if err == nil && f.Valid != nil && c != "" {
+			err = f.Valid(c)
+		}
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
@@ -1154,6 +1210,9 @@ func (k *Kind) Changes(raw map[string]string) (map[string]string, error) {
 			continue
 		}
 		c, err := f.Canonical(v)
+		if err == nil && f.Valid != nil && c != "" {
+			err = f.Valid(c)
+		}
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
