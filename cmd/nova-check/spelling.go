@@ -22,7 +22,7 @@ func spellingVerb() tool.Verb {
 		Name:      "spelling",
 		Usage:     "spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]",
 		Effect:    tool.Effect("local write: --write edits the files in place (--dry-run, or no --write, writes nothing)"),
-		Detail:    "Checks markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place.",
+		Detail:    "Checks markdown or prose for misspellings against a list of common misspellings; it is not a dictionary; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place.",
 		ExitTable: exitCodes,
 		DryRun:    true,
 		Flags:     spellingFlags,
