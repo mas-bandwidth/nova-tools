@@ -16,7 +16,7 @@ import (
 // coordinator read with the remedy on the MORE line, and no clock, subprocess,
 // network or lock to wait on. This doc test reads the section out of the spec
 // the way TestCrossToolEfficiencyCardNamesItsRules reads its section out of
-// SPEC-SWARM.md: the spec is the one place the contract is written.
+// SPEC-WORKER.md: the spec is the one place the contract is written.
 func TestNovaCheckEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 

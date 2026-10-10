@@ -17,7 +17,7 @@ import (
 //     (pulse/cut.go at 27c9ffc66, and the example at
 //     that page, line 4);
 //   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
-//     (WORKER-CARDS.md practice 1, now in the nova-work-old repository, and docs/SPEC-SWARM.md:969,976);
+//     (WORKER-CARDS.md practice 1, now in the nova-work-old repository, and docs/SPEC-WORKER.md:969,976);
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on (pulse/harvest.go at 27c9ffc66, classifyResult).
 //
@@ -25,7 +25,7 @@ import (
 // six cards written by hand on 2026-09-19 each drew one for a colon.
 //
 // RULED: THE COLON FORM WINS (a friend, 2026-09-19, on the cold read of PR #1759;
-// docs/SPEC-TOOLWORK.md §5 rule 7). It is SPEC-SWARM's own law and it is what the
+// docs/SPEC-TOOLWORK.md §5 rule 7). It is SPEC-WORKER's own law and it is what the
 // majority of writers already write -- `cut --kind` (pulse/cutkind.go at 27c9ffc66),
 // `pulse/manager.go at 27c9ffc66`. `RESULT: <label>
 // sha=<sha12>` is the form to WRITE.

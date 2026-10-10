@@ -36,7 +36,7 @@ import (
 // rule over it is a test of it, so the rule reads the live packages
 // (liveTree, the reading CI's selection uses) that select a seat: a package
 // whose Go calls seatcred's FromArgs, directly or on seatcred.Process().
-// Today that is cmd/nova-swarm, cmd/nova-table and cmd/nova-wake, and of them
+// Today that is cmd/nova-worker, cmd/nova-table and cmd/nova-wake, and of them
 // cmd/nova-table declares --redis: it carries nova-sprint's seat resolution
 // (selectSeat) so a session names one seat for both. A live tool that starts
 // selecting a seat joins the set by that call. A live tool that selects no
@@ -212,7 +212,7 @@ func TestNoVerbRefusesAnEmptyRedisUnderASeat(t *testing.T) {
 	}
 	// nova-table declares its --redis once (redisFlag) and every verb takes
 	// it from there; none seen means the flag matcher has stopped seeing
-	// them. (nova-wake and nova-swarm select a seat and take no --redis.)
+	// them. (nova-wake and nova-worker select a seat and take no --redis.)
 	require.GreaterOrEqualf(t, table, 1, "no --redis flag found in cmd/nova-table (set %s); the matcher has stopped matching", strings.Join(dirs, ", "))
 	require.Emptyf(t, violations, "%d --redis read(s) refuse an empty address under --seat (#4330); default the flag to the tool's seat-first default (nova-table: redisDefault(os.Getenv)), wrap a hand-parsed one in redisOr, or use seatcred.Addr():\n  %s",
 		len(violations), strings.Join(violations, "\n  "))

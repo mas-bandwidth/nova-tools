@@ -32,10 +32,10 @@ const hostedDealStep = "deal this shard's packages"
 
 // hostedHeavy are the packages the deal places first, one per shard, before the
 // round-robin: two heavy packages once held shard 3 of 4 together and the ubuntu
-// leg was cancelled at 123 s (reader measurement, #4421 round 2); cmd/nova-swarm
+// leg was cancelled at 123 s (reader measurement, #4421 round 2); cmd/nova-worker
 // is the one heavy command left (the git bus, 46.4 s -short, is removed).
 // ci.yml's deal step spells the same list.
-var hostedHeavy = []string{"cmd/nova-swarm"}
+var hostedHeavy = []string{"cmd/nova-worker"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`

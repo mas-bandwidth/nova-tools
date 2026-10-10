@@ -2157,10 +2157,10 @@ tree on a shared bench; CI runs it on every push to dev. CI also runs the race d
 
 MIT, see [LICENSE](../LICENSE).
 
-## nova-swarm
+## nova-worker
 
 ```
-nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
+nova-worker: one-task AI workers, each run in the sandbox with a deadline and a token budget
 
 how it works: a card is a task in Markdown with a header and rules.
 native runs one card through a harness; a worker description (JSON) can name
@@ -2171,23 +2171,23 @@ first run: the examples print two templates and the lint rules; no setup is need
 To run a card, supply a harness, model, directories, deadline, token budget and any needed credentials.
 
 usage:
-  nova-swarm version    print this build identity (--version also accepted)
-  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
-                       (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
+  nova-worker version    print this build identity (--version also accepted)
+  nova-worker doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-worker (PATH vs ~/.local/bin build stamp)
+  nova-worker verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+  nova-worker lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                       (a bare --card holds the card to nova-worker's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
                        (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
                        (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2)
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
                        (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
-  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+  nova-worker step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
                        (runs the card's own programs: a card whose every work step is a script step, walked in the checkout with no model, each program, POST command and git in its own wall (network denied, no credential, the checkout and a private temp the only writes); one STEP OK|FAILED line per step, stopping at the first failed; refused with no wall unless --no-wall, which runs them unconfined; --remainder prints the card a failed step leaves)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
-  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-worker template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
+  nova-worker profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+  nova-worker native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
+  nova-worker member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                         Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
                         A reader uses its machine's width; --width overrides it. This machine opens no store.
@@ -2214,18 +2214,18 @@ usage:
                         Completed launches leave no checkout; each pool keeps its newest five failed launches.
                         No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
                         A staging refusal reports why so the sprint can deal the card to another member.)
-  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
+  nova-worker disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end (DISK-GUARD STOP and exit 3 instead when free disk is under --stop-floor, default 0: never); --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
-  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
+  nova-worker mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
                        (keep the bench's bare mirrors fresh: each repository cloned from <base>/<name>.git into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each, exit 1 when one failed; --every runs until stopped, 0 once; never git prune)
-  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
-  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+  nova-worker slots init --store <dir> --owner <name> --capacity <n> --share <n>
+  nova-worker slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+  nova-worker slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
                        (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
-  nova-swarm slots list --store <dir>
-  nova-swarm worker    check <description.json> [--env] [--max <n>]
+  nova-worker slots list --store <dir>
+  nova-worker worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
 a missing flag, an unreadable worker description, a key file that is
@@ -2256,17 +2256,17 @@ worker read_roots and any borrowed Git objects are readable.
 The worker's key file is kept outside its readable roots. If a command runs
 outside the wall but fails inside it, check its dependencies and read_roots.
 
-Prepare a card: save nova-swarm template --name card to a file, fill its <...>
-lines, then run nova-swarm lint --card <file> --child-rules. REPO: names the
+Prepare a card: save nova-worker template --name card to a file, fill its <...>
+lines, then run nova-worker lint --card <file> --child-rules. REPO: names the
 repository; BASE: names the branch the work starts from and lands on.
 Lint names unfilled lines in NOTE output. Hand the completed card to native,
 or to nova-sprint add as a brief. template -h lists the required card lines.
-nova-swarm help <verb> (or <verb> -h) prints its usage, flags, example and exit codes.
+nova-worker help <verb> (or <verb> -h) prints its usage, flags, example and exit codes.
 
 example:
-  nova-swarm template --name read-pr
-  nova-swarm template --name worker
-  nova-swarm lint --rules
+  nova-worker template --name read-pr
+  nova-worker template --name worker
+  nova-worker lint --rules
 ```
 
 ### First run
@@ -2274,7 +2274,7 @@ example:
 `template` prints a card template:
 
 ```
-$ nova-swarm template --name read-pr
+$ nova-worker template --name read-pr
 read-pr — read one pull request against the rules
 
 1. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every
@@ -2334,11 +2334,11 @@ the wall but fails inside it, check its dependencies and `read_roots`.
 
 - **Working directory:** the job directory, also named by `NOVA_SWARM_JOB`. `HOME` and `XDG_DATA_HOME` name the slot's data home; `TMPDIR` names its temporary directory.
 - **Arguments:** the providers table's `harness_args`, with `{model}`, `{title}` and `{prompt}` filled from the launch. The prompt is the card text, with its result format or frame when present. `--harness` supplies the binary; the worker description's `harness_args` does not set native's arguments.
-- **Headless harnesses:** a binary named `claude`, `codex` or `grok` is a headless harness of the heavy tier ([SPEC-SWARM.md](SPEC-SWARM.md), the headless harnesses): its argv is the harness's own one-shot form (`claude -p --output-format json`, `codex exec --json`, `grok --single=`), the model the route's part after its provider, and its usage is read from `<job>/harness-output.log` when it ends; its own home on the bench (`~/.claude`, `~/.codex`, `~/.grok`) is a write of the wall and the child is pointed at it (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, a `.grok` link under the data home). The member launches the program its packet's route names (`harness`) from its own PATH, refusing the launch when it has none.
+- **Headless harnesses:** a binary named `claude`, `codex` or `grok` is a headless harness of the heavy tier ([SPEC-WORKER.md](SPEC-WORKER.md), the headless harnesses): its argv is the harness's own one-shot form (`claude -p --output-format json`, `codex exec --json`, `grok --single=`), the model the route's part after its provider, and its usage is read from `<job>/harness-output.log` when it ends; its own home on the bench (`~/.claude`, `~/.codex`, `~/.grok`) is a write of the wall and the child is pointed at it (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, a `.grok` link under the data home). The member launches the program its packet's route names (`harness`) from its own PATH, refusing the launch when it has none.
 - **Result:** the worker publishes `RESULT.md` in the job directory by writing `RESULT.md.tmp` and renaming it, so readers see a whole revision.
 - **Output:** the runner captures stdout and stderr in `<job>/harness-output.log`.
 
-`cmd/nova-swarm/testdata/fakeharness` demonstrates the result and output contract
+`cmd/nova-worker/testdata/fakeharness` demonstrates the result and output contract
 without a live provider. The native tests use it to check launches and their records.
 
 **Capacity and slot ownership.** The dealer admits cards against the bench's
@@ -2348,7 +2348,7 @@ reads no capacity slot store, and accepts but ignores `--slots-store` and
 cannot share a data home.
 
 **The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
-own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's
+own Go must be reachable inside the wall. `nova-worker native` names the provisioning standard's
 toolchain roots on the wall's argv, read-only and skipped when one is not there:
 - On every bench: `~/sdk` (Go and sbcl) as `--read` (carries execute), and `~/go/pkg/mod` as `--read-noexec` (read without execute).
 - On Darwin: `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, and `/usr/local/share/dotnet`.
@@ -2363,8 +2363,8 @@ and records the outcome.
 
 ### The doctor
 
-The doctor compares the `version` line of the `nova-swarm` first on PATH with the one at
-`~/.local/bin/nova-swarm`, and `native` runs the same check before it starts
+The doctor compares the `version` line of the `nova-worker` first on PATH with the one at
+`~/.local/bin/nova-worker`, and `native` runs the same check before it starts
 anything (`-h` never does). Each binary is asked for `version` under a 5-second deadline,
 both at the same time; the first line it prints, at most 4096 bytes, is its stamp, and a
 stamp is printed as a bounded, escaped excerpt.
@@ -2372,7 +2372,7 @@ stamp is printed as a bounded, escaped excerpt.
 | line | meaning | exit | next action |
 |---|---|---|---|
 | `DOCTOR OK stamp=<stamp>` | the two agree, or there is one binary to read | 0 | none |
-| `DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory` | no binary was read | 0 | none |
+| `DOCTOR OK nothing to compare: no nova-worker on PATH and none under the local directory` | no binary was read | 0 | none |
 | `DOCTOR DRIFT path=<binary> stamp=<stamp>` and `DOCTOR DRIFT local=<binary> stamp=<stamp>` | the two stamps differ; both are printed | 2 | see the next line |
 | `DOCTOR REFUSED <path binary> shadows <local binary>; ...` | the PATH binary shadows the local one; the launch does not start | 2 | copy the `~/.local/bin` binary over the PATH one, or fix PATH so `~/.local/bin` comes first |
 | `DOCTOR UNREADABLE reading the version of <path or local>=<binary>: <cause>; <the other binary>; ...` | a binary the check compares could not be read; the launch does not start | 2 | run `<binary> version` by hand, then rebuild or remove that binary, then launch again |
@@ -2638,7 +2638,7 @@ once (docs/SPEC-SPRINT.md section 5, "Back from down: adopt the latest").
 
 ### Every unit a sprint needs, installed by a verb
 
-A running sprint needs nine units on its coordinator's machine: the store and the bus (`nova-redis install store|bus`), the server, the machine's member, the seat's push loop, the friend sync loop and the live table (`nova-sprint install server|member|seat-push|friend-sync|table`), and the disk guard (`nova-swarm install disk-guard`) and the mirrors' refresh (`nova-swarm install mirror-refresh`, owed: the `nova-swarm mirror` verb is written, its unit is not). Each verb writes its unit (a launchd agent on macOS, a systemd user unit on Linux, kept alive and started again at login) into `--dir` (default `~/Library/LaunchAgents` or `~/.config/systemd/user`) and loads it; `--dry-run` prints it and writes nothing, and `uninstall <kind>` unloads and removes it. A unit runs the verb itself by the tool's absolute path, never under `nova-secrets exec`, a shell or a wrapper, and carries no secret: the server, the push loop and the table open the store with the seat login recorded by `seat login` (above), read in their own process, and install refuses a store this shell reaches as a user with no login recorded for it. Not yet in process: the server's decision loop reads its API key and the member the providers' keys `--pass` names from the service's environment, which the unit does not set. `install seat-push` and `install friend-sync` are `seat install` and `friend sync install`. `install table` runs `where --watch --every <d>` with its lines to `--out`. `nova-sprint units --check` reads the unit files and prints `UNIT <kind> installed|missing|different unit=<path>` for each of the nine, a different one with `why=` (the file runs a wrapper, another verb, or is no unit) and each not installed with `; run: <the verb that installs it>` (or `; owed: <the verb> (<what it waits on>)`), then `UNITS CHECK OK|DIFFERENT installed=<n> missing=<n> different=<n>`; exit 1 when one is not installed. `--json` prints the same as one object.
+A running sprint needs nine units on its coordinator's machine: the store and the bus (`nova-redis install store|bus`), the server, the machine's member, the seat's push loop, the friend sync loop and the live table (`nova-sprint install server|member|seat-push|friend-sync|table`), and the disk guard (`nova-worker install disk-guard`) and the mirrors' refresh (`nova-worker install mirror-refresh`, owed: the `nova-worker mirror` verb is written, its unit is not). Each verb writes its unit (a launchd agent on macOS, a systemd user unit on Linux, kept alive and started again at login) into `--dir` (default `~/Library/LaunchAgents` or `~/.config/systemd/user`) and loads it; `--dry-run` prints it and writes nothing, and `uninstall <kind>` unloads and removes it. A unit runs the verb itself by the tool's absolute path, never under `nova-secrets exec`, a shell or a wrapper, and carries no secret: the server, the push loop and the table open the store with the seat login recorded by `seat login` (above), read in their own process, and install refuses a store this shell reaches as a user with no login recorded for it. Not yet in process: the server's decision loop reads its API key and the member the providers' keys `--pass` names from the service's environment, which the unit does not set. `install seat-push` and `install friend-sync` are `seat install` and `friend sync install`. `install table` runs `where --watch --every <d>` with its lines to `--out`. `nova-sprint units --check` reads the unit files and prints `UNIT <kind> installed|missing|different unit=<path>` for each of the nine, a different one with `why=` (the file runs a wrapper, another verb, or is no unit) and each not installed with `; run: <the verb that installs it>` (or `; owed: <the verb> (<what it waits on>)`), then `UNITS CHECK OK|DIFFERENT installed=<n> missing=<n> different=<n>`; exit 1 when one is not installed. `--json` prints the same as one object.
 
 ### The sprint backup
 
@@ -2865,7 +2865,7 @@ current=` per `--dashboard`, and one line per `com.nova.*` launchd agent of `--a
 `LIVE FRIEND` for `nova-friend run` with its last beat and its lanes with a card in hand, else
 `LIVE AGENT`, each with its pid and, for a nova tool, `loaded= stale= fresh= installed=
 args_took= binary=` and the `why=` of a stale one; `--json` also lists the host's nova
-processes, `holds` on this bin directory's nova-sprint and nova-swarm members. Exit 0 whatever it finds, 1 when the
+processes, `holds` on this bin directory's nova-sprint and nova-worker members. Exit 0 whatever it finds, 1 when the
 installed nova-sprint or the agents directory cannot be read, 2 usage.
 
 `nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text>
@@ -3876,7 +3876,7 @@ nova-config logout                                                       # remov
 nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --bus <host:port> --as <name>  # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
-nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-swarm member argv spells no --width, its width is its machine row's
+nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-worker member argv spells no --width, its width is its machine row's
 nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; the argv is the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
 nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]   # the loop's command under <run-dir>/<name>.lock (default ~/nova-bench/run): a second copy exits 3, a lock whose holder died is taken, the lock lives in the wrapper so a wrapper killed outright ends the command with it (linux's parent-death signal) and a restart never doubles it, the start is counted in <name>.starts and written to --metrics as nova_loop_starts_total for node_exporter, SIGINT and SIGTERM pass to the command, and the exit is the command's, 128+N when a signal ended it; with no command after -- it runs the row's argv (a disabled row, or one with keys, is refused with exit 1); the Go verb in place of the bash nova-loop wrapper
 nova-config route add <name> --tier flash|pro|heavy --provider <p> --model <m> [--harness opencode|claude|codex|grok] --deadline <seconds> [--tokens <n>] [--usd <dollars>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>, (a headless --harness claude, codex or grok takes --provider subscription-<harness>) stopped at its token budget or its dollar budget (the harness's reported cost), whichever comes first; frontier cards escalate to the coordinator and are never dealt from routes
@@ -3923,7 +3923,7 @@ refuse an unset endpoint with one `nova-config fleet set --redis_port <port>
 --pg_dsn <dsn>` command; the Redis port has no default. Host scope keeps a group
 default from replacing port 6380, and a localhost Postgres URI stays localhost.
 Loop units receive `NOVA_SPRINT_REDIS` from that applied endpoint. Inventory
-removes an older endpoint assignment only from a rendered `nova-swarm member`
+removes an older endpoint assignment only from a rendered `nova-worker member`
 `/usr/bin/env` prefix, preserving the Redis user, password variable name and
 all other argv words while the persisted row is cleaned with `loop set`.
 
@@ -4135,7 +4135,7 @@ op=<card>@brief-<hex> p_converges= minutes= failed= uncalibrated=true recorded=`
 `failed` naming each question the card leaves open (`commit_stated(0.20)`,
 `ambiguous_step:step-2(0.70)`, or `-`). `nova-sprint add` asks the same of every
 card under `JEV_API_KEY` (no bar is set while the decision is uncalibrated);
-`nova-swarm lint --card <file> --decide` prints it for one file.
+`nova-worker lint --card <file> --decide` prints it for one file.
 `calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
 negatives bounced) and the `CATCH-ALL` bar, the highest that flags every positive; a label of
 classes joined by `+` (`stranded_fragment+invented_reason`) counts for each of
@@ -4163,7 +4163,7 @@ wrong:
 ## nova-local
 
 Run local models: what an engine has, one model served at a chosen context,
-and a worker description nova-swarm accepts. It runs no inference, fetches no
+and a worker description nova-worker accepts. It runs no inference, fetches no
 weights and judges no model.
 See [SPEC-LOCAL.md](SPEC-LOCAL.md).
 
@@ -4189,7 +4189,7 @@ store is under the AI root's `shared/models` (`$NOVA_AI_ROOT`, else `~/ai`).
 per model. `serve` makes `<name>-<ctx>k` (here `gemma4-32k`) with the context,
 temperature 0 and the seed baked in, sends one warm-up, and prints `serve_as=`,
 the name a harness calls, and `load=`, the warm-up it timed. `worker` writes the
-one JSON file `nova-swarm` reads as a worker description. What a first run gets
+one JSON file `nova-worker` reads as a worker description. What a first run gets
 wrong:
 
 - No daemon: `status` exits 1 with `run: ollama serve`, the one command that
@@ -4203,7 +4203,7 @@ wrong:
   remote endpoint is not a local tier.
 - `worker` with a relative `--worker-dir`, an empty `--key-file`, harness
   arguments without `{model}`: every problem named at once. The local engine
-  wants no key; nova-swarm wants a non-empty file, so `printf 'local\n'` is the
+  wants no key; nova-worker wants a non-empty file, so `printf 'local\n'` is the
   whole of it.
 
 

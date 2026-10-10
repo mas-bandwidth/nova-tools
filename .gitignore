@@ -29,6 +29,8 @@ tending/
 /nova-sprint
 /nova-sprint.exe
 /nova-swarm
+/nova-worker
+/nova-worker.exe
 /nova-swarm.exe
 /nova-table
 /nova-table.exe

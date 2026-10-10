@@ -26,12 +26,12 @@ play, fleet sync, and any verb given its own --redis. Each
 member is a fleet row first (init --members, fleet up <name> --width <n>, or
 fleet sync) and each reader a readers row (init --readers, reader add); then on
 each fleet machine, which opens no store:
-  nova-swarm member --as <name> --server <address>:<port> --harness <path> --root <dir>
-  nova-swarm member --as <reader> --server <address>:<port> --reader --width <n> --harness <path> --root <dir>
+  nova-worker member --as <name> --server <address>:<port> --harness <path> --root <dir>
+  nova-worker member --as <reader> --server <address>:<port> --reader --width <n> --harness <path> --root <dir>
 The first beats, takes to its row's width and runs each card as one child; the
 second runs up to <n> reads at once. A harness that reads its provider key from
 the environment needs --pass <KEY>; a store with no routes (nova-config route)
-needs --model, --tokens and --deadline; nova-swarm member -h names every flag.`) + "\n"
+needs --model, --tokens and --deadline; nova-worker member -h names every flag.`) + "\n"
 }
 
 // wordsSection defines, one line each, the words the help and the verbs' output use,

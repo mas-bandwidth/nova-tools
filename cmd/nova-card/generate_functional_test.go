@@ -85,7 +85,7 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	build.Env = goenv.Clean(os.Environ())
 	o, err := build.CombinedOutput()
 	require.NoError(t, err, "building nova-sprint: %s", o)
-	// the seat's name is the role word, as in cmd/nova-swarm's member drive: add holds
+	// the seat's name is the role word, as in cmd/nova-worker's member drive: add holds
 	// every brief to name no coordinator by name (personal-name), and a one-letter
 	// name is a word of any brief
 	env := append(goenv.Clean(os.Environ()), "NOVA_SPRINT_REDIS=mem:"+filepath.Join(t.TempDir(), "twin"), "NOVA_SPRINT_ACTOR=coordinator",

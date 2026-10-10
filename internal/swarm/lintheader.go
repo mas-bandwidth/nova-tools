@@ -37,7 +37,7 @@ import (
 //	STOP: <the condition that ends the task>
 //
 // A brief is a card that names a tier, or one the caller declares typed; a missing
-// either line draws the token `start-named` or `stop-named`. `cmd/nova-swarm/lint.go`
+// either line draws the token `start-named` or `stop-named`. `cmd/nova-worker/lint.go`
 // refuses that finding for a tier flash brief and prints it as a note for tier pro, or
 // no tier, so a flash child with no stopping condition cannot read past its budget.
 //
@@ -79,7 +79,7 @@ import (
 // mistake `validGlobs` just undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
-// sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
+// sits on and the line's own text. It is the shape `cmd/nova-worker/lint.go` prints on a
 // LINT DRIFT line, remedy and all.
 type CardHeaderFinding struct {
 	Check   string
@@ -89,11 +89,11 @@ type CardHeaderFinding struct {
 
 // CardHeaderRemedies is what each of the four tokens wants, in one line, in the same
 // table shape the twelve older tokens use: a check without a remedy costs a card writer
-// a guess per drift (#1464), and `nova-swarm lint --rules` prints these beside them.
+// a guess per drift (#1464), and `nova-worker lint --rules` prints these beside them.
 //
 // The two brief-grammar tokens are not in this map: CardHeaderChecks is the four of §5
 // rule 1, and gap_test pins that list. Their remedies are StartNamedRemedy and
-// StopNamedRemedy below, merged into `cmd/nova-swarm/lint.go`'s cardLintRemedies.
+// StopNamedRemedy below, merged into `cmd/nova-worker/lint.go`'s cardLintRemedies.
 var CardHeaderRemedies = map[string]string{
 	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does; a declared kind whose row names no instruction kind is this finding too: name the instruction kind on that row of the one kinds list",
 	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
@@ -103,7 +103,7 @@ var CardHeaderRemedies = map[string]string{
 
 // StartNamedRemedy and StopNamedRemedy are what the two brief-grammar tokens want, in one
 // line, the same contract as CardHeaderRemedies. They are separate from that map because
-// CardHeaderChecks is the four tokens of §5 rule 1; `cmd/nova-swarm/lint.go` merges these
+// CardHeaderChecks is the four tokens of §5 rule 1; `cmd/nova-worker/lint.go` merges these
 // into its cardLintRemedies, so a start-named or stop-named line names its remedy.
 const (
 	StartNamedRemedy = "the brief carries `START: <files or packages to read first>`, the files or packages the child reads before it spends; it names where the work begins, so the reading is bounded before a token is spent"
@@ -255,7 +255,7 @@ var cardKeyCheck = map[string]string{
 // StartNamedCheck and StopNamedCheck are the tokens for the two reading lines of the
 // brief's header grammar: `START: <files or packages to read first>` and
 // `STOP: <the condition that ends the task>` (docs/SPEC-CARD-CONTRACT.md §2). A brief
-// missing either draws the finding; `cmd/nova-swarm/lint.go` refuses it for a tier
+// missing either draws the finding; `cmd/nova-worker/lint.go` refuses it for a tier
 // flash brief and prints it as a note for tier pro, or no tier. Both carry a remedy in
 // StartNamedRemedy and StopNamedRemedy above, so the note names what to write.
 const (
@@ -461,7 +461,7 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 	// (docs/SPEC-CARD-CONTRACT.md §2, the header grammar). A brief is a card that names
 	// a tier, or one the caller declares typed (`required`), so its missing reading line
 	// is a finding. The RESULT line carries the tier as the sprint writes it, read by
-	// cardhdr.ReadModel, the one parser of it; `cmd/nova-swarm/lint.go` refuses the
+	// cardhdr.ReadModel, the one parser of it; `cmd/nova-worker/lint.go` refuses the
 	// finding for a tier flash brief, whose child with no stopping condition reads past
 	// its budget, and prints it as a note for tier pro, or no tier.
 	m, _ := cardhdr.ReadModel(string(raw))

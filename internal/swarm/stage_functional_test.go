@@ -27,7 +27,7 @@ import (
 // A stage from the bench mirror borrows its objects (the clone's alternates name the
 // mirror's object directory) and first makes the mirror keep every object (gc.auto=0), so
 // no gc of the mirror drops one under a live checkout; a repository the card names on disk
-// is not a mirror this bench keeps, and is copied in (docs/SPEC-SWARM.md, the clone).
+// is not a mirror this bench keeps, and is copied in (docs/SPEC-WORKER.md, the clone).
 func TestStageCardBorrowsTheMirror(t *testing.T) {
 	t.Parallel()
 

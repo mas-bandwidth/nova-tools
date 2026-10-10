@@ -46,7 +46,7 @@ func playOutput(state string, failed string, hosts ...string) string {
 		}
 		fmt.Fprintf(&b, "ok: [%s] => {\n    \"msg\": \"TOOLS host=%s platform=linux-amd64 version=v1.1.0-dev.c2 was=v1.1.0-dev.c1 removed=0 %s\"\n}\n", h, h, tail)
 	}
-	b.WriteString("ok: [localhost] => {\n    \"msg\": [\n        \"RELEASE BUILD DOGFOOD REPORTED open=4 reason=the\\\\x20member\\\\x20fix\",\n        \"RELEASE BUILD INCREMENTAL version=v1.1.0-dev.c2 platform=linux-amd64 base=v1.1.0-dev.c1 changed=3 rebuilt=nova-swarm reused=17\"\n    ]\n}\n")
+	b.WriteString("ok: [localhost] => {\n    \"msg\": [\n        \"RELEASE BUILD DOGFOOD REPORTED open=4 reason=the\\\\x20member\\\\x20fix\",\n        \"RELEASE BUILD INCREMENTAL version=v1.1.0-dev.c2 platform=linux-amd64 base=v1.1.0-dev.c1 changed=3 rebuilt=nova-worker reused=17\"\n    ]\n}\n")
 	b.WriteString("PLAY RECAP *********\n")
 	for _, h := range append(hosts, "localhost") {
 		f := "0"
@@ -113,7 +113,7 @@ func TestCycleChecksThenAppliesAndSaysWhatEachBenchRuns(t *testing.T) {
 	require.Len(t, play.runs, 2)
 	assert.NotContains(t, play.runs[1], "--check")
 	assert.Contains(t, o.String(), "RELEASE BUILD DOGFOOD REPORTED open=4 reason=the\\x20member\\x20fix\n", "the play's JSON quoting is undone")
-	assert.Contains(t, o.String(), "RELEASE BUILD INCREMENTAL version=v1.1.0-dev.c2 platform=linux-amd64 base=v1.1.0-dev.c1 changed=3 rebuilt=nova-swarm reused=17\n")
+	assert.Contains(t, o.String(), "RELEASE BUILD INCREMENTAL version=v1.1.0-dev.c2 platform=linux-amd64 base=v1.1.0-dev.c1 changed=3 rebuilt=nova-worker reused=17\n")
 	assert.Contains(t, o.String(), "CYCLE BENCH host=batman platform=linux-amd64 version=v1.1.0-dev.c2 was=v1.1.0-dev.c1 state=INSTALLED installed=1 skipped=17\n")
 	assert.Contains(t, o.String(), "CYCLE OK version=v1.1.0-dev.c2 benches=2 changed=2 check=1m0s apply=1m0s total=2m0s ")
 }

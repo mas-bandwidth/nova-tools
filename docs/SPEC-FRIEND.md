@@ -9,7 +9,7 @@ is the server; both sides need to know they are connected, continually".
 
 ## The local child load gate
 
-Friend work runs as fleet cards. A `nova-swarm member` may configure the raw
+Friend work runs as fleet cards. A `nova-worker member` may configure the raw
 one-minute host-load thresholds `--max-load` and `--warn-load`. Immediately
 before it creates a new local child, it reads that load through `hostload.Source`:
 above the maximum it refuses the launch and names the measured load and bound;

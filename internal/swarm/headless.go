@@ -13,7 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/harness"
 )
 
-// THE HEADLESS HARNESSES (docs/SPEC-SWARM.md, the headless harnesses). The heavy tier
+// THE HEADLESS HARNESSES (docs/SPEC-WORKER.md, the headless harnesses). The heavy tier
 // runs its cards through the subscription logins of one machine: `claude`, `codex` and
 // `grok`, each a one-shot child that takes the card as its prompt, runs under the same
 // wall and in the same job directory as an opencode child, and prints its own usage in
@@ -23,7 +23,7 @@ import (
 //
 // LOGIC APART FROM TRANSPORT. Everything in this file is a pure function of its arguments:
 // the argv of a launch, the usage and the failure read out of a capture, the login read
-// out of a status verb's output. The runner (cmd/nova-swarm native.go) starts the
+// out of a status verb's output. The runner (cmd/nova-worker native.go) starts the
 // child and reads the files; nothing here opens one.
 
 // HeadlessArgv is the argv of one headless harness launch: the binary, its one-shot form,
@@ -33,7 +33,7 @@ import (
 // The web tools are OFF in all three, as the opencode child's fence denies webfetch
 // (fence.go FencePermission): a card's shell reaches the network as the wall allows and its
 // harness's own fetch and search tools reach nothing the wall does not, so the child has no
-// wider network than an opencode child (docs/SPEC-SWARM.md, what a card can reach).
+// wider network than an opencode child (docs/SPEC-WORKER.md, what a card can reach).
 // An unknown kind is refused, never guessed.
 func HeadlessArgv(kind, bin, model, prompt string) ([]string, error) {
 	switch kind {
@@ -56,7 +56,7 @@ func HeadlessArgv(kind, bin, model, prompt string) ([]string, error) {
 // never mounted, readable or writable: it holds the whole login, the interactive history,
 // the harness's config and hooks, and a write there is a code path outside the wall. What
 // the harness needs of it is its credential file alone, Login, copied into Dir before the
-// launch (docs/SPEC-SWARM.md, what a card can reach), or, for a harness whose file is a
+// launch (docs/SPEC-WORKER.md, what a card can reach), or, for a harness whose file is a
 // refreshable OAuth login, no file at all: its login is the token the run hands it by name,
 // Token. The harness is pointed at Dir by name in Env (claude: CLAUDE_CONFIG_DIR, codex:
 // CODEX_HOME) or, grok reading HOME alone, by being where HOME puts it.
@@ -91,7 +91,7 @@ func HeadlessHomeOf(kind, benchHome, dataHome string) HeadlessHome {
 // ClaudeTokenEnv is the environment name claude reads its long-lived login token from
 // (`claude setup-token`), the bench's nova-secrets key a member hands its children with
 // --pass. The value is never written to a file, never printed, and unset in every shell the
-// harness starts (cmd/nova-swarm shellshim.go).
+// harness starts (cmd/nova-worker shellshim.go).
 const ClaudeTokenEnv = "CLAUDE_CODE_OAUTH_TOKEN"
 
 // HeadlessTokenNote is the one line a run says when its harness reads its login from h.Token

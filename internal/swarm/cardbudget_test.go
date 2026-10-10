@@ -10,7 +10,7 @@ import (
 )
 
 // CARD-8317: a worker description carries a card budget (max_turns,
-// max_cache_read) and nova-swarm run stops a card at the budget with
+// max_cache_read) and nova-worker run stops a card at the budget with
 // end=budget and a PROMPT-DEFECT line.
 
 // The description carries the budget.

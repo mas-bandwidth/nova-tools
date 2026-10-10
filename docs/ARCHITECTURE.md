@@ -32,7 +32,7 @@ climbs from a rule to a bud, then to the coordinator
 
 **card** — the whole brief one worker is handed: one task, its rules, its gate
 and its finish, with a PATHS set the worker may touch and a result line it
-returns. A sprint card is a primary with a lifecycle; a nova-swarm card is one
+returns. A sprint card is a primary with a lifecycle; a nova-worker card is one
 run of a task ([SPEC-CARD-CONTRACT.md](SPEC-CARD-CONTRACT.md)).
 
 **sprint** — a coordinated run of cards dealt to a fleet of workers and read
@@ -83,14 +83,15 @@ names it opens, and whether it runs every n seconds or is kept alive
 | `nova-doctor` | says what is missing for the tools to work here and, for each thing, the one line that fixes it | [SPEC-DOCTOR.md](SPEC-DOCTOR.md) |
 | `nova-friend` | what a friend runs to be part of the team: the wake loop, the beat and the proof of life, as one daemon | [SPEC-FRIEND.md](SPEC-FRIEND.md) |
 | `nova-fuse` | a recorded decision to stop reading an untrusted source, checked before every read | [SPEC.md](SPEC.md) |
-| `nova-local` | run local models: what an engine has, one model served at a chosen context, and a worker description `nova-swarm` accepts | [SPEC-LOCAL.md](SPEC-LOCAL.md) |
+| `nova-local` | run local models: what an engine has, one model served at a chosen context, and a worker description `nova-worker` accepts | [SPEC-LOCAL.md](SPEC-LOCAL.md) |
 | `nova-memory` | search your own markdown notes, and check a draft against what they already say | [SPEC.md](SPEC.md) |
 | `nova-redis` | run a local Redis store, keep short-lived named values in it, and render, check and apply the store's ACL and function library | [SPEC-REDIS.md](SPEC-REDIS.md) |
 | `nova-sandbox` | run one command inside an OS-enforced wall around the directories you name | [SPEC-SANDBOX.md](SPEC-SANDBOX.md) |
 | `nova-secrets` | encrypted secrets in a git repository, handed to one command at a time | [SPEC-SECRETS.md](SPEC-SECRETS.md) |
 | `nova-self-talk` | flags sentences where a writer passes a standing verdict on themselves | [SPEC.md](SPEC.md) |
 | `nova-sprint` | a sprint of work cards, dealt to a fleet of workers and read before they land | [SPEC-SPRINT.md](SPEC-SPRINT.md) |
-| `nova-swarm` | one-task AI workers, each run in the sandbox with a deadline and a token budget; bench slot leases and card lint | [SPEC-SWARM.md](SPEC-SWARM.md) |
+| `nova-swarm` | the one-release shim for the tool renamed to `nova-worker` (removed in the release after v1.3) | [SPEC-WORKER.md](SPEC-WORKER.md) |
+| `nova-worker` | one-task AI workers, each run in the sandbox with a deadline and a token budget; bench slot leases and card lint | [SPEC-WORKER.md](SPEC-WORKER.md) |
 | `nova-table` | tables whose cells are ordered sets, kept in Redis and drawn as text | [SPEC-NOVA-TABLE.md](SPEC-NOVA-TABLE.md) |
 | `nova-tokens` | token spend per day, model and repository, read from AI session logs | [SPEC-TOKENS.md](SPEC-TOKENS.md) |
 | `nova-up` | set nova up on one machine: plan every step, then apply, from nothing to a first sprint | [SPEC-UP.md](SPEC-UP.md) |

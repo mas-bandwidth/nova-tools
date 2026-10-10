@@ -231,7 +231,7 @@ func TestTheColdRunsMistakesAreAnsweredInOneTurn(t *testing.T) {
 	require.NoError(t, os.WriteFile(raw, []byte(filled), 0o600))
 	out = ta.ok("add --stream s1 r2 --one --brief-file " + raw)
 	assert.Contains(t, out, "NOTE the brief holds 7 of the card template's lines unfilled (line 6: Deadline: finish within <n> minutes; the judgment of a card ...;")
-	assert.Contains(t, out, "a worker is handed them as they are: fill each <...> in, then run nova-sprint brief <id> --brief-file <path> before it is dealt (nova-swarm lint --card <file> names them all)")
+	assert.Contains(t, out, "a worker is handed them as they are: fill each <...> in, then run nova-sprint brief <id> --brief-file <path> before it is dealt (nova-worker lint --card <file> names them all)")
 }
 
 // The help's first screen says where the rest is, and the finish it shows is

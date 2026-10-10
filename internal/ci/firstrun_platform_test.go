@@ -24,12 +24,12 @@ import (
 //   - `backend=sandbox-exec` and `abi=` — the sandbox tool's transcript was
 //     recorded on macOS, and `backend=` and `abi=` carry that machine's values;
 //     a wall clamped below the ABI the kernel reports adds a `used=` field.
-//   - `sandbox_probe` — a wall probe that failed; the nova-swarm section
+//   - `sandbox_probe` — a wall probe that failed; the nova-worker section
 //     documents a machine whose containment is broken, the last machine a friend
 //     should be reading a quickstart on.
 //
 // The whole `## <tool>` section is read, not just `### First run`, because the
-// nova-swarm wall-probe transcript lives under its own `### The wall at the
+// nova-worker wall-probe transcript lives under its own `### The wall at the
 // launch seam` heading, and the platform line belongs in the section's prose
 // where a stranger reads it before the fence.
 func TestFirstRunTranscriptsNameTheirPlatform(t *testing.T) {

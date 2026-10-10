@@ -16,7 +16,7 @@ var placeholderRE = regexp.MustCompile(`<[^<>\n]+>`)
 // cut from the template and handed out with REPO: <owner>/<name> stages nothing and lands
 // nowhere (tool ledger W12). A line partly filled in, or a card not cut from the template,
 // is not this finding: only the template's own lines are read, so a card that writes
-// `--count <n>` in its task is never caught by it. nova-swarm lint names each on a NOTE
+// `--count <n>` in its task is never caught by it. nova-worker lint names each on a NOTE
 // line and nova-sprint add says so on its own.
 func UnfilledTemplateLines(card string) []CardHeaderFinding {
 	unfilled := map[string]bool{}

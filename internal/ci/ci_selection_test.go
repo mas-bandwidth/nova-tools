@@ -20,7 +20,7 @@ import (
 // test-matrix` and `nova-ci local` both call it).
 //
 // internal/ci holds class tests that read the workflow and source files as text
-// and scan the tree rather than import what they guard. A cmd/nova-swarm edit
+// and scan the tree rather than import what they guard. A cmd/nova-worker edit
 // (PR #1073) therefore turned an internal/ci class test red but named no
 // dependent in the import graph, so no shard was selected to run it and the
 // branch sat for two hours. The selection must name ./internal/ci on every
@@ -91,7 +91,7 @@ func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
 
 // TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile pins the
 // selection against nova-tools#5111: docsd-16 changed a heading in
-// docs/SPEC-SWARM.md, internal/swarm's test asserts that heading, and the run
+// docs/SPEC-WORKER.md, internal/swarm's test asserts that heading, and the run
 // tested only the touched packages and their importers, so a red test landed
 // green. A changed file that is not Go selects every package whose _test.go
 // files or testdata name it, though no import edge says so. The fixture is the
@@ -104,7 +104,7 @@ func TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile(t *testing.T) {
 	root := t.TempDir()
 	for name, body := range map[string]string{
 		"go.mod":                       "module example.com/m\n",
-		"internal/swarm/swarm_test.go": "package swarm\n\nvar doc = filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-SWARM.md\")\n",
+		"internal/swarm/swarm_test.go": "package swarm\n\nvar doc = filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-WORKER.md\")\n",
 	} {
 		p := filepath.Join(root, filepath.FromSlash(name))
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
@@ -126,8 +126,8 @@ func TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile(t *testing.T) {
 		require.NoError(t, err)
 		return out.Packages
 	}
-	assert.Equal(t, []string{"./internal/ci", "./internal/docs", "./internal/swarm"}, selectFor("docs/SPEC-SWARM.md\n"),
-		"a docs-only change to SPEC-SWARM.md selected no package whose test reads it; pkgselect.Select must map a changed non-Go file to the packages whose _test.go files or testdata name it (nova-tools#5111)")
+	assert.Equal(t, []string{"./internal/ci", "./internal/docs", "./internal/swarm"}, selectFor("docs/SPEC-WORKER.md\n"),
+		"a docs-only change to SPEC-WORKER.md selected no package whose test reads it; pkgselect.Select must map a changed non-Go file to the packages whose _test.go files or testdata name it (nova-tools#5111)")
 	assert.Equal(t, []string{"./internal/ci", "./internal/docs"}, selectFor("docs/OTHER.md\n"),
 		"a doc no test names selected a package beyond the two class-test packages")
 }

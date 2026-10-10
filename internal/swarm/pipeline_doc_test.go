@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SPEC-SWARM.md, "The card is a pipeline, not a loop": a card is a pipeline of
+// SPEC-WORKER.md, "The card is a pipeline, not a loop": a card is a pipeline of
 // stateless model calls, not an agent loop. The section is the deliverable, so
 // a rule renamed out of it is
 // red here before any implementation is trusted. This reads the doc the way
@@ -17,8 +17,8 @@ import (
 func TestSpecSwarmNamesTheCardPipeline(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
-	require.NoError(t, err, "SPEC-SWARM.md is missing: %s", err)
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORKER.md"))
+	require.NoError(t, err, "SPEC-WORKER.md is missing: %s", err)
 	doc := string(raw)
 	for _, phrase := range []string{
 		"## The card is a pipeline, not a loop",
@@ -35,6 +35,6 @@ func TestSpecSwarmNamesTheCardPipeline(t *testing.T) {
 		"TestExploreOverTurnBudgetIsStoppedWithTheBudgetNamed",
 		"TestTheFixCardRunsInThreeModelCalls",
 	} {
-		assert.Contains(t, doc, phrase, "SPEC-SWARM.md does not name the card-pipeline rule keyed by %q", phrase)
+		assert.Contains(t, doc, phrase, "SPEC-WORKER.md does not name the card-pipeline rule keyed by %q", phrase)
 	}
 }

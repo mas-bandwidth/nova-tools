@@ -53,8 +53,8 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			assert.Equal(t, 1, code, errs)
 			assert.Contains(t, out, "UNIT server missing unit="+file("server")+"; run: nova-sprint install server")
 			assert.Contains(t, out, "UNITS CHECK DIFFERENT installed=0 missing=9 different=0")
-			assert.Contains(t, out, "UNIT disk-guard missing unit="+file("disk-guard")+"; run: nova-swarm install disk-guard")
-			assert.Contains(t, out, "UNIT mirror-refresh missing unit="+file("mirror-refresh")+"; owed: nova-swarm install mirror-refresh (nova-swarm has no mirror verb", "a verb not there yet is named owed, never as a line to run")
+			assert.Contains(t, out, "UNIT disk-guard missing unit="+file("disk-guard")+"; run: nova-worker install disk-guard")
+			assert.Contains(t, out, "UNIT mirror-refresh missing unit="+file("mirror-refresh")+"; owed: nova-worker install mirror-refresh (nova-worker has no mirror verb", "a verb not there yet is named owed, never as a line to run")
 
 			code, out, errs = do((*app).cmdInstall, "server", "--listen", "127.0.0.1:6390", "--land", "--decide", "/srv/decide", "--dry-run")
 			require.Equal(t, 0, code, errs)
@@ -88,7 +88,7 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			require.NoError(t, err)
 			args, err = units.UnitArgs(goos, b)
 			require.NoError(t, err)
-			assert.Equal(t, []string{"/opt/nova/bin/nova-swarm", "member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"}, args)
+			assert.Equal(t, []string{"/opt/nova/bin/nova-worker", "member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"}, args)
 			b, err = os.ReadFile(file("table"))
 			require.NoError(t, err)
 			args, err = units.UnitArgs(goos, b)
@@ -151,7 +151,7 @@ func TestInstallRefusesAKindItDoesNotOwnAndAStoreTheUnitCannotLogInTo(t *testing
 	}{
 		{(*app).cmdInstall, nil, "install wants the unit's kind first: server|member|seat-push|friend-sync|table"},
 		{(*app).cmdInstall, []string{"store"}, "the store unit is nova-redis's to install; run: nova-redis install store"},
-		{(*app).cmdUninstall, []string{"disk-guard"}, "run: nova-swarm uninstall disk-guard"},
+		{(*app).cmdUninstall, []string{"disk-guard"}, "run: nova-worker uninstall disk-guard"},
 		{(*app).cmdInstall, []string{"nope"}, "no unit kind nope"},
 		{(*app).cmdInstall, []string{"server"}, "--listen <address:port> is required"},
 		{(*app).cmdInstall, []string{"server", "--listen", "127.0.0.1:6390"}, "nova-sprint seat login --redis 127.0.0.1:6380 --user coordinator"},

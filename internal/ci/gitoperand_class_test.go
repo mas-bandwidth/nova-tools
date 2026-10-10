@@ -16,7 +16,7 @@ import (
 // The class test behind issue mas-bandwidth/ideas#829: a card is untrusted input, and
 // a value a card supplies (base-repo:, base-sha:, a BASE: ref, a PR-HEAD:) that reaches
 // git as a positional is read as an option when it starts with `-`. Every git call under
-// internal/swarm and cmd/nova-swarm puts such an operand behind `--` (or behind
+// internal/swarm and cmd/nova-worker puts such an operand behind `--` (or behind
 // `--end-of-options`, the form for a rev that `--` would turn into a path), so git reads
 // every word after the separator as an operand and nothing else.
 //
@@ -39,7 +39,7 @@ const (
 )
 
 // gitOperandDirs are where card values reach git.
-var gitOperandDirs = []string{"internal/swarm", "cmd/nova-swarm"}
+var gitOperandDirs = []string{"internal/swarm", "cmd/nova-worker"}
 
 // gitOperandHelpers are the swarm helpers that run a git, with the count of leading
 // parameters before the argv.

@@ -1,6 +1,6 @@
 // Package seatcred resolves a seat's fleet Redis user and password in the
 // process that needs them (nova-tools#4052). nova-sprint, nova-card,
-// nova-swarm and nova-wake take `--seat <name>` (or NOVA_SEAT) and read the
+// nova-worker and nova-wake take `--seat <name>` (or NOVA_SEAT) and read the
 // seat's file through internal/secrets -- the same store, key and sops, and
 // the same checks, `nova-secrets exec` uses -- so no shell wrapper stands
 // between a coordinator and its own store.

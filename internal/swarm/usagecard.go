@@ -26,7 +26,7 @@ import (
 // CardUsageColumns are the fourteen columns of one card's usage.tsv, in this order. The
 // order is the contract between the native run that writes it and the batch that sums it.
 //
-// `end` JOINED THEM WITH SPEC-SWARM RULE 13d (issue #1545). The word was being computed by
+// `end` JOINED THEM WITH SPEC-WORKER RULE 13d (issue #1545). The word was being computed by
 // every native launch and thrown away: `writeNativeUsage` has set `row["end"]` since issue
 // #644's follow-up, and there was no column to put it in, so `end=wall` for a card the wall
 // stopped -- and now `end=budget` for one a budget stopped -- reached no reader at all.
@@ -83,7 +83,7 @@ func cardStoreLocations(dataHome string) []string {
 }
 
 // ReadCardUsageAfter is the same read with a FLOOR under the window, and the floor is what
-// keeps a retried card's rows DISJOINT (SPEC-SWARM rule 13d, issue #1545).
+// keeps a retried card's rows DISJOINT (SPEC-WORKER rule 13d, issue #1545).
 //
 // THE DEFECT IT CLOSES, measured: the window is widened five seconds each side, because the
 // launch's own clock and the store's need not agree to the millisecond. On a retried card

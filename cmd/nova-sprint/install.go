@@ -20,7 +20,7 @@ import (
 // sprint needs on its coordinator's machine is written and loaded by a verb, in place
 // of a unit written by hand around nova-secrets exec, zsh or a single-instance wrapper.
 // nova-sprint installs its own (server, member, seat-push, friend-sync, table); the
-// store and the bus are nova-redis install's, the machine's upkeep nova-swarm
+// store and the bus are nova-redis install's, the machine's upkeep nova-worker
 // install's (sprint.UnitKinds). Each unit runs the verb itself, and the store's
 // password is read in the verb's own process from the seat login (nova-sprint seat
 // login), never carried by the unit. units --check names each needed unit installed,
@@ -170,12 +170,12 @@ func (a *app) installUnit(k sprint.UnitKind, args []string, stdout, stderr io.Wr
 		land = fs.Bool("land", false, "the server also lands what the readers passed (run --land)")
 		decideDir = fs.String("decide", "", "the server also keeps the record of its decisions in this `dir`, an absolute path (run --decide)")
 	case "member":
-		as = fs.String("as", "", "the member's name on the fleet table (required): nova-swarm member --as")
-		server = fs.String("server", "", "the sprint server's `address:port` the member's verbs go to (required): nova-swarm member --server")
-		harness = fs.String("harness", "", "the harness binary the member's children run, an absolute path (nova-swarm member --harness)")
-		root = fs.String("root", "", "the member's working root, an absolute path (nova-swarm member --root)")
-		pass = fs.String("pass", "", "the `NAME,...` of the providers' keys a child is handed (nova-swarm member --pass): names only; the values are the service's environment to give")
-		exe = fs.String("swarm", "", "the nova-swarm the unit runs, an absolute path (default: the nova-swarm beside this nova-sprint)")
+		as = fs.String("as", "", "the member's name on the fleet table (required): nova-worker member --as")
+		server = fs.String("server", "", "the sprint server's `address:port` the member's verbs go to (required): nova-worker member --server")
+		harness = fs.String("harness", "", "the harness binary the member's children run, an absolute path (nova-worker member --harness)")
+		root = fs.String("root", "", "the member's working root, an absolute path (nova-worker member --root)")
+		pass = fs.String("pass", "", "the `NAME,...` of the providers' keys a child is handed (nova-worker member --pass): names only; the values are the service's environment to give")
+		exe = fs.String("swarm", "", "the nova-worker the unit runs, an absolute path (default: the nova-worker beside this nova-sprint)")
 	case "table":
 		out = fs.String("out", "", "the file the live table is written to, an absolute path (required; on Linux, where the journal keeps a unit's lines, give the file with --log too)")
 		every = fs.Duration("every", time.Second, "the table's redraw interval, above 0 (where --watch --every)")
@@ -246,7 +246,7 @@ func (a *app) installUnit(k sprint.UnitKind, args []string, stdout, stderr io.Wr
 		}
 		swarm := *exe
 		if swarm == "" {
-			swarm = filepath.Join(filepath.Dir(bin), "nova-swarm")
+			swarm = filepath.Join(filepath.Dir(bin), "nova-worker")
 		}
 		u.Args = []string{swarm, "member", "--as", *as, "--server", *server}
 		for _, f := range []struct{ flag, v string }{{"--harness", *harness}, {"--root", *root}} {

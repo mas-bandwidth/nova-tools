@@ -43,7 +43,7 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 	for _, d := range []string{bin, agents, copyDir, filepath.Join(home, "dash")} {
 		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
-	for _, f := range []string{filepath.Join(bin, "nova-swarm"), filepath.Join(bin, "nova-sprint"), filepath.Join(bin, "nova-friend"), filepath.Join(bin, "nova-redis"), filepath.Join(copyDir, "nova-friend")} {
+	for _, f := range []string{filepath.Join(bin, "nova-worker"), filepath.Join(bin, "nova-sprint"), filepath.Join(bin, "nova-friend"), filepath.Join(bin, "nova-redis"), filepath.Join(copyDir, "nova-friend")} {
 		require.NoError(t, os.WriteFile(f, []byte(f), 0o755))
 	}
 	server := []string{filepath.Join(bin, "nova-sprint"), "run", "--listen", ":6390", "--tick-deadline", "60s"}
@@ -52,9 +52,9 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 		"com.nova.friend-a":             livePlist(filepath.Join(copyDir, "nova-friend"), "run", "--as", "friend-a", "--harness", "opencode", "--dir", "/d", "--width", "2"),
 		"com.nova.redis":                livePlist("/opt/homebrew/bin/redis-server", "/x/nova-redis.conf"),
 		// an interval agent between runs, one launchd does not hold, a disabled one
-		"com.nova.loop.guard": strings.Replace(livePlist(filepath.Join(bin, "nova-swarm"), "disk-guard"), "<key>KeepAlive</key><true/>", "<key>StartInterval</key><integer>900</integer>", 1),
-		"com.nova.loop.gone":  livePlist(filepath.Join(bin, "nova-swarm"), "member"),
-		"com.nova.loop.off":   strings.Replace(livePlist(filepath.Join(bin, "nova-swarm"), "member"), "<key>KeepAlive</key><true/>", "<key>Disabled</key><true/><key>ExitTimeOut</key><integer>180</integer>", 1),
+		"com.nova.loop.guard": strings.Replace(livePlist(filepath.Join(bin, "nova-worker"), "disk-guard"), "<key>KeepAlive</key><true/>", "<key>StartInterval</key><integer>900</integer>", 1),
+		"com.nova.loop.gone":  livePlist(filepath.Join(bin, "nova-worker"), "member"),
+		"com.nova.loop.off":   strings.Replace(livePlist(filepath.Join(bin, "nova-worker"), "member"), "<key>KeepAlive</key><true/>", "<key>Disabled</key><true/><key>ExitTimeOut</key><integer>180</integer>", 1),
 	}
 	for label, body := range plists {
 		require.NoError(t, os.WriteFile(filepath.Join(agents, label+".plist"), []byte(body), 0o644))
@@ -75,8 +75,8 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 			"    1 /sbin/launchd",
 			"   11 " + strings.Join(server, " "),
 			"   12 " + filepath.Join(copyDir, "nova-friend") + " run --as friend-a",
-			"   13 " + filepath.Join(bin, "nova-swarm") + " member --as m1",
-			"   14 " + filepath.Join(bin, "nova-swarm") + " disk-guard",
+			"   13 " + filepath.Join(bin, "nova-worker") + " member --as m1",
+			"   14 " + filepath.Join(bin, "nova-worker") + " disk-guard",
 			"   15 /elsewhere/nova-sprint run",
 		}, "\n"),
 		"ps -o args= -p 11":                                            strings.Join(server, " "),
@@ -84,7 +84,7 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 		"ps -o args= -p 12":                                            filepath.Join(copyDir, "nova-friend") + " run --as friend-a --harness opencode --dir /d --width 2",
 		"lsof -a -p 12 -d txt -F i":                                    fmt.Sprintf("p12\nftxt\ni%d\n", friendIno),
 		bin + "/nova-friend status --as friend-a --dir /d":             `STATUS OK daemon=up lanes="1:s1:card-1/1 2:s2:-" last_beat=2026-10-06T14:59:30Z`,
-		fmt.Sprintf("launchctl print gui/%d/com.nova.loop.guard", uid): "\tstate = not running\n\targuments = {\n\t\t" + bin + "/nova-swarm\n\t\tdisk-guard\n\t}\n\trun interval = 900 seconds\n",
+		fmt.Sprintf("launchctl print gui/%d/com.nova.loop.guard", uid): "\tstate = not running\n\targuments = {\n\t\t" + bin + "/nova-worker\n\t\tdisk-guard\n\t}\n\trun interval = 900 seconds\n",
 	}
 	var ran []string
 	fake := adoptRunner(func(_ context.Context, name string, args ...string) (string, error) {
@@ -168,7 +168,7 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 	assert.False(t, off.Stale, "a disabled agent is meant not to run")
 	assert.Equal(t, 180, off.ExitTimeout)
 
-	// the processes the seat's window waits on: this bin directory's nova-sprint and nova-swarm members
+	// the processes the seat's window waits on: this bin directory's nova-sprint and nova-worker members
 	holds := map[int]bool{}
 	for _, pr := range m.Processes {
 		holds[pr.PID] = pr.Holds
@@ -199,6 +199,6 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 	assert.Contains(t, text, "LIVE SERVER label=com.nova.loop.sprint-server-a pid=11 loaded=true stale=true fresh=false installed=true args_took=true")
 	assert.Contains(t, text, "LIVE FRIEND label=com.nova.friend-a pid=12 loaded=true stale=true fresh=true installed=false")
 	assert.Contains(t, text, "LIVE AGENT label=com.nova.redis pid=0 program=")
-	assert.Contains(t, text, `LIVE AGENT label=com.nova.loop.gone pid=0 loaded=false stale=true fresh=false installed=true args_took=false binary=`+filepath.Join(bin, "nova-swarm")+` why="not loaded"`)
+	assert.Contains(t, text, `LIVE AGENT label=com.nova.loop.gone pid=0 loaded=false stale=true fresh=false installed=true args_took=false binary=`+filepath.Join(bin, "nova-worker")+` why="not loaded"`)
 	assert.Contains(t, text, "lanes=1 ")
 }

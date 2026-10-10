@@ -3,7 +3,7 @@
 //
 // Every copy the wrapper starts (nova-card, card run, card session), every
 // local test run a coordinator's child makes (nova-ci local), and every card a
-// sprint member or reader launches (nova-swarm native: the wall, the harness and
+// sprint member or reader launches (nova-worker native: the wall, the harness and
 // all the card's child runs) calls ToCI on itself before it execs anything:
 // setpriority to Nice, which its children inherit. A CI leg runs at nice 0
 // and wins the cores the moment it lands; nothing schedules around it. This

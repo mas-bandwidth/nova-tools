@@ -764,7 +764,7 @@ failed, and saying the decision is uncalibrated. No key asks nothing and says
 nothing: the key is the opt-in, and a keyless add is the add it was before this
 section. A decision that cannot be made (the record unnamed, as when the home
 directory cannot be found, or unmade; the bar unreadable; the backend failing a
-card) is one `NOTE brief:` line and the add goes on. `nova-swarm lint --card <file> --decide` prints
+card) is one `NOTE brief:` line and the add goes on. `nova-worker lint --card <file> --decide` prints
 the same reading on one `LINT DECIDE` line after the lint's own and never changes
 its verdict (`--decide-answers` answers from a file, `--decide-record` records);
 when the backend fails, the lint's verdict is printed all the same, then why the

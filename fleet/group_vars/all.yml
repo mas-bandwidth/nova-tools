@@ -31,7 +31,7 @@ nova_systemd_scope: user
 # alone and listed.
 nova_retire_units: []
 
-# The disk guard loops.yml adds to every machine (nova-swarm disk-guard): on
+# The disk guard loops.yml adds to every machine (nova-worker disk-guard): on
 # when true, run every nova_disk_guard_every seconds, with these arguments
 # after the --root of each loop record's argv. The scan finds the readers'
 # roots, a stopped loop's too; the glob holds the CI runners' Go build caches.
@@ -44,7 +44,7 @@ nova_disk_guard_args: ["--scan", "~/nova-bench/run", "--cache", "~/runner-*/_cac
 # other unit is left as it is and nothing is retired.
 nova_loop_only: []
 
-# How long the supervisor waits for a member loop (nova-swarm member) it stops
+# How long the supervisor waits for a member loop (nova-worker member) it stops
 # before it kills what is left, in seconds: a member drains on SIGTERM (takes
 # nothing new, lets its running cards finish and reports them) for at most
 # member.DrainMost, two minutes, and this is a minute above it (KillMode=mixed
@@ -142,6 +142,6 @@ nova_seat_friend_drain: 180
 # Where the seat play keeps the tools an adoption replaces (bin/), so a
 # refusal inside its window can put them back, load their library again and
 # start the old server on them; and how long the window waits for every old
-# nova-sprint and nova-swarm member to be gone before it migrates (seconds).
+# nova-sprint and nova-worker member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
 nova_seat_quiet: 60

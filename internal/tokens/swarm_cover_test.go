@@ -257,12 +257,12 @@ func TestSwarmCoverWrongColumn(t *testing.T) {
 		{
 			name:  "a column out of place is named with its position and the column wanted",
 			cells: []string{"job", "attempt", "from", "model"},
-			want:  "column 4 is model, want started (SPEC-SWARM rule 12 names sixteen, in order)",
+			want:  "column 4 is model, want started (SPEC-WORKER rule 12 names sixteen, in order)",
 		},
 		{
 			name:  "a missing column is named",
 			cells: SwarmColumns[:15],
-			want:  "the header is missing the column usd (SPEC-SWARM rule 12 names sixteen, in order)",
+			want:  "the header is missing the column usd (SPEC-WORKER rule 12 names sixteen, in order)",
 		},
 		{
 			name:  "a header wider than sixteen is refused",
@@ -272,7 +272,7 @@ func TestSwarmCoverWrongColumn(t *testing.T) {
 		{
 			name:  "an empty header names the first column",
 			cells: nil,
-			want:  "the header is missing the column job (SPEC-SWARM rule 12 names sixteen, in order)",
+			want:  "the header is missing the column job (SPEC-WORKER rule 12 names sixteen, in order)",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

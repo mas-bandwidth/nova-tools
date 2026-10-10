@@ -20,7 +20,7 @@ import (
 func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORKER.md"))
 	require.NoError(t, err, "the cross-tool efficiency card's contract is the spec's: %s", err)
 	spec := string(raw)
 	section := crossToolEfficiencySection(t, spec)
@@ -50,7 +50,7 @@ func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 		"a per-job clone built with `--shared` borrows the bench mirror's object graph",
 		"the worker prompt carries the named template's conditions from the tool, with no shell script in the path",
 	} {
-		assert.Contains(t, section, want, "SPEC-SWARM.md cross-tool efficiency card names %q; the section holds:\n%s", want, section)
+		assert.Contains(t, section, want, "SPEC-WORKER.md cross-tool efficiency card names %q; the section holds:\n%s", want, section)
 	}
 }
 

@@ -47,7 +47,7 @@ The `Replaces:` clause is the one place a retired word may stand in a glossary.
 - **REFUSED** — the verdict a tool prints when it could not run: `<TOKEN> REFUSED: <reason> (<remedy>)`, on stderr.
   Defined: [SPEC.md, Conventions](SPEC.md#conventions).
 - **slot** — the unit of parallelism: how many cards a machine may run at once.
-  Defined: [SPEC-SWARM.md, Bench slot leases](SPEC-SWARM.md#bench-slot-leases).
+  Defined: [SPEC-WORKER.md, Bench slot leases](SPEC-WORKER.md#bench-slot-leases).
 - **STALE** — `nova-update check`'s verdict for an installed version older than the latest its source publishes.
   Defined: [SPEC-UPDATE.md, The rules, numbered](SPEC-UPDATE.md#the-rules-numbered).
 - **token ledger** — the per-day record of tokens spent, kept on Redis by `nova-tokens`.

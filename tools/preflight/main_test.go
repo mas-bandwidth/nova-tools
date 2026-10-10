@@ -91,13 +91,13 @@ func TestAFailingMakeFailsTheRunWithItsExitCode(t *testing.T) {
 func TestPackageArgumentsReachVetAndMake(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(f).Do(t, "./internal/swarm", "./cmd/nova-swarm").Exit(0).Out("ALL CHECKS PASSED")
+	preflight(f).Do(t, "./internal/swarm", "./cmd/nova-worker").Exit(0).Out("ALL CHECKS PASSED")
 	vet := f.named("fake-go")
 	require.Len(t, vet, 1)
-	assert.Equal(t, []string{"vet", "./internal/swarm", "./cmd/nova-swarm"}, vet[0].args)
+	assert.Equal(t, []string{"vet", "./internal/swarm", "./cmd/nova-worker"}, vet[0].args)
 	mk := f.named("fake-make")
 	require.Len(t, mk, 1)
-	assert.Equal(t, []string{"test-full", "GO=fake-go", "PKGS=./internal/swarm ./cmd/nova-swarm"}, mk[0].args)
+	assert.Equal(t, []string{"test-full", "GO=fake-go", "PKGS=./internal/swarm ./cmd/nova-worker"}, mk[0].args)
 }
 
 func TestRunFlagAndRunEnvReachMakeAsRun(t *testing.T) {

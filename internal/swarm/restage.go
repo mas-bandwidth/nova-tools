@@ -95,7 +95,7 @@ func restageAtTip(ctx context.Context, git func(context.Context, ...string) *exe
 	} else if exit := (*exec.ExitError)(nil); !errors.As(err, &exit) || exit.ExitCode() != 1 {
 		return nil, "diff of the carried work", nil, err
 	}
-	msg := fmt.Sprintf("carry attempt %d's work (%s) onto the tip of %s (%s)\n\nnova-swarm staged this rework at the tip of its base branch with the work of the attempt before carried on top (docs/SPEC-CARD-CONTRACT.md, where a rework starts).",
+	msg := fmt.Sprintf("carry attempt %d's work (%s) onto the tip of %s (%s)\n\nnova-worker staged this rework at the tip of its base branch with the work of the attempt before carried on top (docs/SPEC-CARD-CONTRACT.md, where a rework starts).",
 		rw.From, short12(rw.Prev), base, short12(tip))
 	if out, err := stageTimedOutput(git(ctx, in("-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", msg)...), checkoutTime); err != nil {
 		return nil, "commit of the carried work", out, err

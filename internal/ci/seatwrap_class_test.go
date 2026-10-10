@@ -19,7 +19,7 @@ import (
 // session scratchpad: one ran nova-secrets exec around redis-cli, the other
 // around nova-sprint, because nova-sprint on the coordinator seat could not
 // read its own password. A new session had to recreate them, and every hand
-// fix and table render went through them. nova-sprint, nova-card, nova-swarm
+// fix and table render went through them. nova-sprint, nova-card, nova-worker
 // and nova-wake now take --seat <name> (or NOVA_SEAT) and read the Redis user
 // and password from the seat's file through internal/seatcred, the library
 // nova-secrets exec runs on; `nova-sprint redis-cli -- <cmd...>` is the hand
@@ -29,7 +29,7 @@ import (
 
 // seatTools are the commands that read a seat's Redis login themselves; a
 // wrapper around any of them for a Redis password is the retired shape.
-var seatTools = []string{"nova-sprint", "nova-card", "nova-swarm", "nova-wake", "redis-cli"}
+var seatTools = []string{"nova-sprint", "nova-card", "nova-worker", "nova-wake", "redis-cli"}
 
 var (
 	seatWrapExecRe   = regexp.MustCompile(`nova-secrets(?:\.exe)?\s+exec\b`)
@@ -121,7 +121,7 @@ func seatWrapScanned(rel string, head []byte) bool {
 
 // TestNoSecretsExecWrapsASeatTool sweeps every shell file and docs page in
 // the tree and refuses a nova-secrets exec whose --only names Redis passwords
-// only, wrapped around nova-sprint, nova-card, nova-swarm, nova-wake or
+// only, wrapped around nova-sprint, nova-card, nova-worker, nova-wake or
 // redis-cli. The remedy is the tool's own --seat <name> (or NOVA_SEAT), and
 // `nova-sprint redis-cli --seat <name> -- <cmd...>` for a hand read.
 func TestNoSecretsExecWrapsASeatTool(t *testing.T) {
@@ -164,14 +164,14 @@ func TestSeatWrapRuleSeesEachShape(t *testing.T) {
 		`exec nova-secrets exec --as studio --only NOVA_REDIS_COORDINATOR_PASSWORD -- bash -c 'REDISCLI_AUTH=$NOVA_REDIS_COORDINATOR_PASSWORD exec redis-cli -h h -p 6380 "$@"' _ "$@"`,
 		"nohup ~/.local/bin/nova-secrets exec \\\n  --as swarm-studio --only NOVA_REDIS_BENCH_PASSWORD -- \\\n  ~/.local/bin/nova-wake beat --as x --store h:6380",
 		`nova-secrets exec --as b --only=NOVA_REDIS_BENCH_PASSWORD -- nova-card S/l/1`,
-		`nova-secrets exec --as b --only NOVA_REDIS_BENCH_PASSWORD -- timeout 60 nova-swarm native --card c`,
+		`nova-secrets exec --as b --only NOVA_REDIS_BENCH_PASSWORD -- timeout 60 nova-worker native --card c`,
 	} {
 		v := seatWrapViolations([]byte("# ok\n" + bad + "\n"))
 		require.Len(t, v, 1, "%q: violations %q, want one at line 2", bad, v)
 		require.True(t, strings.HasPrefix(v[0], "2: "), "%q: violations %q, want one at line 2", bad, v)
 	}
 	good := strings.Join([]string{
-		`nova-secrets exec --as b --only OPENROUTER_API_KEY -- nova-swarm native --card c`,
+		`nova-secrets exec --as b --only OPENROUTER_API_KEY -- nova-worker native --card c`,
 		`nova-secrets exec --as b --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens ledger --redis h:6380`,
 		`nova-sprint table --seat studio --redis h:6380 --once`,
 		`nova-sprint redis-cli --seat studio --redis h:6380 -- ZCARD sprint:S:cards`,

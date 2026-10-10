@@ -34,7 +34,7 @@ func TestStageCoverMirrorKeepsObjects(t *testing.T) {
 		name string
 		bin  string
 	}{
-		{"missing git binary", "nova-swarm-no-such-git"},
+		{"missing git binary", "nova-worker-no-such-git"},
 		{"empty git binary name", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestStageCoverWriteStageTimeoutResult(t *testing.T) {
 		require.NoError(t, err, "the result file must be readable")
 		assert.Equal(t, "RESULT: BLOCKED stage-timeout bench-a 120\n"+
 			"blocked: staging timed out after 120s\n"+
-			"written-by: nova-swarm native (the card published no report of its own)\n",
+			"written-by: nova-worker native (the card published no report of its own)\n",
 			string(b), "the result body must name the bench and the seconds in the card's shape")
 	})
 

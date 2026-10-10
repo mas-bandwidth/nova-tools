@@ -70,7 +70,7 @@ var secretWords = []string{"KEY", "TOKEN", "SECRET", "AUTH", "PASSWORD", "PASSWD
 // a URL's `user:password@`, and without HOME, GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, which
 // the step's wall sets for itself. It is a denylist: run by native, the executor's
 // environment is already the child's allowlist (keepNativeEnv), and this is the second
-// filter; run directly, `nova-swarm step` passes the caller's other variables through.
+// filter; run directly, `nova-worker step` passes the caller's other variables through.
 func ScrubEnv(env []string) []string {
 	var out []string
 	for _, kv := range env {

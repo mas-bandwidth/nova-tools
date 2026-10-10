@@ -23,7 +23,7 @@ import (
 
 // FRIENDS' WORKING DIRECTORIES (docs/FRIENDS.md; ideas#833). The owner, 2026-10-02: "we
 // might just need the same thing for friends! eg. working directories." and "cleanup must
-// be auto!". A bench slot leaves no checkout once its launch is done (nova-swarm member);
+// be auto!". A bench slot leaves no checkout once its launch is done (nova-worker member);
 // a friend's job had no rule, so her working directory filled with clones and build output
 // of jobs long reported. friend clean is the rule, run nightly from a loop row on the
 // machine that holds the directories, over every friend row of nova-config (the

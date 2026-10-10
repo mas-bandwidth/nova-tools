@@ -114,7 +114,7 @@ func TestIncrementalBuildRebuildsOnlyWhatChangedSinceTheRecordedCommit(t *testin
 	source, out := sourceTree(t), t.TempDir()
 	src := &fakeSource{commit: "c1", dirs: map[string][]string{
 		"./cmd/nova-bus":    {"cmd/nova-bus", "internal/bus"},
-		"./cmd/nova-swarm":  {"cmd/nova-swarm", "internal/member"},
+		"./cmd/nova-worker":  {"cmd/nova-worker", "internal/member"},
 		"./cmd/nova-update": {"cmd/nova-update", "internal/release"},
 	}}
 	first, _ := buildAt(t, source, out, "v0.1.0-dev.c1", src, &fakeToolchain{}, "--incremental")
@@ -127,8 +127,8 @@ func TestIncrementalBuildRebuildsOnlyWhatChangedSinceTheRecordedCommit(t *testin
 
 	assert.Equal(t, []string{"c1..c2"}, src.asked, "the diff is from the recorded commit to the head")
 	require.Len(t, tc.calls, 1, "only the changed tool compiles: %v", tc.calls)
-	assert.Contains(t, tc.calls[0], "./cmd/nova-swarm")
-	assert.Contains(t, second, "RELEASE BUILD INCREMENTAL version=v0.1.0-dev.c2 platform=linux-amd64 base=v0.1.0-dev.c1 changed=3 rebuilt=nova-swarm reused=2")
+	assert.Contains(t, tc.calls[0], "./cmd/nova-worker")
+	assert.Contains(t, second, "RELEASE BUILD INCREMENTAL version=v0.1.0-dev.c2 platform=linux-amd64 base=v0.1.0-dev.c1 changed=3 rebuilt=nova-worker reused=2")
 	assert.Contains(t, second, "RELEASE BUILT version=v0.1.0-dev.c2 platform=linux-amd64 tools=3 verified=3 ")
 	for _, tool := range []string{"nova-bus", "nova-update"} {
 		was, err := os.ReadFile(filepath.Join(out, "v0.1.0-dev.c1", "linux-amd64", tool))

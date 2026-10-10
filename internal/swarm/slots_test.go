@@ -146,7 +146,7 @@ func TestATakeRefusesAnOwnerWithSeparators(t *testing.T) {
 	})
 }
 
-// TakeSlotLeasesWaiting waits when capacity is occupied and grants once free (docs/SPEC-SWARM.md, "Bench slot leases").
+// TakeSlotLeasesWaiting waits when capacity is occupied and grants once free (docs/SPEC-WORKER.md, "Bench slot leases").
 func TestSlotTakeWaitingSerializes(t *testing.T) {
 	t.Parallel()
 

@@ -70,7 +70,7 @@ func TestJobLeaseReleaseRemovesTheFile(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "the lease outlived the run: %v", err)
 }
 
-// ISSUE #1585, Stella's finding. Two `nova-swarm native` runs used one physical
+// ISSUE #1585, Stella's finding. Two `nova-worker native` runs used one physical
 // `<slot>/jobs/<label>`: the bench store gave each a different seat, but their job
 // liveness files were one path. The first to exit removed `<job>/.lease` -- the file the
 // reaper reads -- and the second, still running, lost its protection: its heartbeat only

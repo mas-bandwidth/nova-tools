@@ -1,6 +1,6 @@
 // nova-local makes a local model engine usable (docs/SPEC-LOCAL.md): what is here
 // (status), one model served at a context the caller chose (serve), and a worker
-// description nova-swarm accepts (worker). It runs no inference, fetches no weights and
+// description nova-worker accepts (worker). It runs no inference, fetches no weights and
 // judges no model. The dispatch, the banner, the help, the refusals and the output
 // envelope are internal/tool's; the engines (engine.go, ollama.go), the box (box*.go),
 // the shared store (store.go), the serving-host rule (host.go) and the worker description
@@ -51,11 +51,11 @@ func main() { os.Exit(localTool(realWorld()).Main()) }
 func localTool(w world) *tool.Tool {
 	return &tool.Tool{
 		Name:  "nova-local",
-		What:  "run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts",
+		What:  "run local models: what an engine has, one model served at a chosen context, and a worker description nova-worker accepts",
 		Stamp: version,
 		How: `an engine (ollama) serves models from the shared store, <ai-root>/shared/models.
 status reads each engine and the box; serve makes <name>-<ctx>k, the context baked in, and loads it;
-worker writes the one JSON file nova-swarm reads. --base is loopback or a tailnet address only.
+worker writes the one JSON file nova-worker reads. --base is loopback or a tailnet address only.
 It never fetches weights, never runs a prompt and never judges a model.`,
 		ExitTable: "0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).",
 		Verbs: []tool.Verb{
@@ -131,9 +131,9 @@ example:
 				Example: "worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m",
 				Effect:  tool.LocalWrite + "; it writes the --out file and nothing else, after asking the engine that it serves --model",
 				DryRun:  true,
-				Detail: `The description is nova-swarm's worker schema, every field from a flag or the engine: provider is
+				Detail: `The description is nova-worker's worker schema, every field from a flag or the engine: provider is
 the engine's, base_url its --base, model the served tag. The key file is stat'ed, never opened:
-the local engine wants no key, and nova-swarm a non-empty file, so one line of any text is the whole of it.
+the local engine wants no key, and nova-worker a non-empty file, so one line of any text is the whole of it.
 
 example:
   nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m`,
@@ -141,11 +141,11 @@ example:
 					w.engineFlags(f, true)
 					f.Required("model", "the served tag a harness calls (serve's serve_as=)")
 					f.Required("out", "the file the description is written to; its directory must exist")
-					f.Required("name", "the name nova-swarm calls this worker by")
+					f.Required("name", "the name nova-worker calls this worker by")
 					f.Required("harness", "the harness command, found on PATH (opencode)")
 					f.Required("harness-args", "the harness's arguments, comma-separated, {model} and {prompt} placed")
 					f.Required("worker-dir", "the absolute home directory copied into each slot; it must exist")
-					f.Required("key-file", "a non-empty file nova-swarm reads as the key; stat'ed, never opened")
+					f.Required("key-file", "a non-empty file nova-worker reads as the key; stat'ed, never opened")
 					f.Required("env-var", "the NAME of the variable the provider reads (OLLAMA_API_KEY), never a value")
 					f.Required("usage", "opencode (OpenCode's own accounting) or none")
 					f.Required("deadline", "the default deadline per task, a Go duration (20m)")
@@ -453,7 +453,7 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	return o
 }
 
-// worker writes the description nova-swarm reads (rules 9, 11, 14).
+// worker writes the description nova-worker reads (rules 9, 11, 14).
 func (w world) worker(c *tool.Call) *tool.Out {
 	a := w.adapter(c.Str("engine"))
 	cl := w.client(a, c.Str("base"), 0)

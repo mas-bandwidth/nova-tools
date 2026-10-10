@@ -4,7 +4,7 @@
 // Go itself removes an entry only after five days unused, with no bound on size; a day of
 // sprint cards grew one shared cache past 50 GiB, and a friend's per-job caches reached
 // 9.3 GiB (ideas#833). Two callers hold a cache with it: the member's lazy round
-// (cmd/nova-swarm/lazyclean.go), a few subdirectories at a time on its own clock, and
+// (cmd/nova-worker/lazyclean.go), a few subdirectories at a time on its own clock, and
 // nova-sprint friend clean (Hold), once a night over a friend's whole cache.
 package gocache
 
@@ -29,7 +29,7 @@ const gib = 1 << 30
 // when a busy 24-slot member wrote 13-14 GiB in three hours: every entry was under three
 // hours old and the trim removed entries running builds still read, every round, and those
 // builds failed (could not import ... go-build/...-d: no such file or directory). A busy
-// machine names its own (nova-swarm member --gocache-limit, disk-guard --cache-max-gb).
+// machine names its own (nova-worker member --gocache-limit, disk-guard --cache-max-gb).
 const (
 	Limit int64 = 20 * gib
 	Slack int64 = Limit / 5

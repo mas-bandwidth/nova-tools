@@ -28,8 +28,8 @@ handles".
 ```
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as ada
-nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
-nova-config loop add reader-bench-a --machine bench-a --argv '["nova-swarm","member","--as","reader-bench-a","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
+nova-config loop add member-bench-a --machine bench-a --argv '["nova-worker","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
+nova-config loop add reader-bench-a --machine bench-a --argv '["nova-worker","member","--as","reader-bench-a","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
 nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
 nova-config apply --as ada
@@ -72,7 +72,7 @@ flash card on `deepseek/deepseek-v4-flash`, on the same machine), or the
 card's own `model:` line. `nova-sprint routes` shows what each route's attempts
 did.
 
-A reader is a loop record the same as a member: `nova-swarm member --reader`
+A reader is a loop record the same as a member: `nova-worker member --reader`
 under the readers row of its `--as` name (`nova-sprint init --readers
 reader-bench-a`, or `nova-sprint reader add reader-bench-a`). It is named for
 its machine, `reader-<m>`, one reader per machine, and it runs at the
@@ -185,12 +185,12 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 | the sprint's store | `nova-redis install store` | `nova-redis serve` on 6380, its data in `~/nova-bench/redis/store` |
 | the friends' bus | `nova-redis install bus` | `nova-redis serve` on 6381, its data in `~/nova-bench/redis/bus` |
 | the sprint's server | `nova-sprint install server --listen <address:port>` | `nova-sprint run --listen` |
-| the machine's member | `nova-sprint install member --as <m> --server <address:port>` | `nova-swarm member` |
+| the machine's member | `nova-sprint install member --as <m> --server <address:port>` | `nova-worker member` |
 | the seat's push loop | `nova-sprint install seat-push` | `nova-sprint inbox --wait --push seat` |
 | the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
 | the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
-| the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
-| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute |
+| the disk guard | `nova-worker install disk-guard` | `nova-worker disk-guard`, one pass every 15 minutes |
+| the mirrors' refresh | `nova-worker install mirror-refresh` (owed) | `nova-worker mirror`, one pass every minute |
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;
@@ -199,9 +199,9 @@ API key from its environment, and the member hands its children the providers' k
 from its environment; a unit carries neither, so until those verbs read a login as the store's does,
 the service's environment has to give them. `nova-sprint units --check` names each of the nine installed, missing or different, so a
 machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
-wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
-binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
-verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: the mirror verb `nova-swarm mirror` is written, its
+wrapper reads as different. `nova-worker install disk-guard` writes that unit in the swarm
+binary, and the unit runs `nova-worker disk-guard` itself. The unit text the sprint and redis
+verbs share lives in `internal/units`, which a worker's binary may import. `nova-worker install mirror-refresh` stays owed: the mirror verb `nova-worker mirror` is written, its
 unit is not, and `units --check` says the unit is owed rather than telling a stranger to run it. Until
 that unit is written, a mirror refresh is not installed from here. The play's disk-guard row above is the
 fleet's copy of the same pass.
@@ -358,7 +358,7 @@ record's log under the fleet row's `loops_dir` (migration 0033 seeds it to
 `~/Library/Logs/nova-loop-<name>.log`, because launchd cannot open log files on
 network volumes such as `/Volumes/nova`). Every unit
 gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
-a `nova-swarm member`, inventory removes an older endpoint assignment from the
+a `nova-worker member`, inventory removes an older endpoint assignment from the
 rendered `/usr/bin/env` prefix while preserving its Redis user, password
 variable name and every other word. This compatibility projection does not
 rewrite Postgres: remove that old assignment from the loop row with
@@ -368,7 +368,7 @@ cleanup.
 
 A sprint unit reads the API keys it needs in its own process. `nova-sprint run --keys <NAME,...>`
 (recorded as `keys.json` beside the seat login) names the decision key and each provider key the
-run loop reads; `nova-swarm member --pass <NAME,...>` names the keys a child may be handed, read
+run loop reads; `nova-worker member --pass <NAME,...>` names the keys a child may be handed, read
 from the seat (`NOVA_SEAT`, or the file `NOVA_SWARM_KEYS` names) when the environment does not
 already hold them. The child is handed the decision key, when pass names it, and the one provider
 key its route needs, never the whole set. A named secret that cannot be read refuses at start,
@@ -415,7 +415,7 @@ carries is refused before anything is written.
 A unit whose file (or timer) changed is restarted, and the run says so first:
 `RESTART <name> on <machine>: its unit file changed; <why>` (`WOULD-RESTART`
 under `--check`, which restarts nothing). A member's unit (a record whose argv
-runs `nova-swarm member`, a reader's too) is never killed mid-card
+runs `nova-worker member`, a reader's too) is never killed mid-card
 (nova-tools#5096 items 25, 26): its unit signals the member alone (systemd
 `KillMode=mixed`; launchd signals the job's process and abandons its group)
 and waits `nova_member_stop_timeout` (180 s, a minute above the member's
@@ -434,7 +434,7 @@ adopted by the new member while they live.
 ### The disk guard, on every machine
 
 Beside the records, the play adds one periodic row to every machine,
-`disk-guard`: `nova-swarm disk-guard` every `nova_disk_guard_every` seconds
+`disk-guard`: `nova-worker disk-guard` every `nova_disk_guard_every` seconds
 (900), its `--root` each root a record's argv names, then
 `nova_disk_guard_args`, logging to `~/nova-bench/loops/disk-guard.log` (on darwin,
 launchd logs to `~/Library/Logs/nova-loop-disk-guard.log`). A record
@@ -446,7 +446,7 @@ per-machine artifact the fleet writes, and what removes it, when:
 | artifact | what removes it, and when |
 |---|---|
 | a launch's checkout, `<root>/slots/<launch>/` | the member, while its loop runs: at once when the launch is reported ok, a failed one kept (the newest 5 of the pool); swept at the member's start. A pool whose loop stopped (no process names its root or works in it, nothing moved for 30 minutes): the disk guard's next run, by the same rule; a work launch whose checkout holds commits past its staged one is kept and said on a `KEPT slot` line, every run, until a person removes it |
-| a launch's small files and results (`.native.log`, `.card.md`, `.frame.json`, `results/<launch>`) | the member's cleaner, once the sprint's epoch is two past theirs (docs/SPEC-SWARM.md, `member`) |
+| a launch's small files and results (`.native.log`, `.card.md`, `.frame.json`, `results/<launch>`) | the member's cleaner, once the sprint's epoch is two past theirs (docs/SPEC-WORKER.md, `member`) |
 | a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under `--gocache-limit` (20 GiB) while it runs; the disk guard every run, under `--cache-max-gb` (20), whether or not a loop runs |
 | the login's Go build cache (`$GOCACHE`, else the user cache directory's `go-build`) and every `--cache` (the CI runners' `_cache/go-build`) | the disk guard every run, under `--cache-max-gb`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth |
 | a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50), no `go` command runs and no process holds a file in it |

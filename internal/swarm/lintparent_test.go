@@ -24,7 +24,7 @@ func TestAWalkedParentPathIsAFinding(t *testing.T) {
 		"cp RESULT.md ../RESULT.md",
 		"rm -rf ../repo",
 		"git -C ../other rev-parse HEAD",
-		"nova-swarm gather --root ../queue",
+		"nova-worker gather --root ../queue",
 		"go test ./... > ../out.txt",
 		"pushd ../..",
 		"mv scratch ../scratch",
@@ -46,7 +46,7 @@ func TestAQuotedParentPathIsNotAFinding(t *testing.T) {
 	for _, l := range []string{
 		"| the test package you add to | `internal/docs/`, package `docs`. See `internal/docs/agents_md_test.go` -- its paths to repo files are relative to the package directory, in the form `\"../../AGENTS.md\"` (that file, line 34). Follow that convention. |",
 		"3. **`docs/SPEC-CI.md:515`, one link,** `[pit-stop ledger item 20](../reports/pitstop-tests-2026-09-17.md)`.",
-		"  `SPEC-SWARM.md`, `WORKER-CARDS.md`, `SPEC-MERGE.md` or `PIT-STOP.md` gains a `../` prefix.",
+		"  `SPEC-WORKER.md`, `WORKER-CARDS.md`, `SPEC-MERGE.md` or `PIT-STOP.md` gains a `../` prefix.",
 		"drop the `../` prefix you added. Run the named test again. It must go RED naming that file, that",
 		"and the coordinator saw it green after this exact correction by hand at 16:03Z (`ok .../internal/pulse 1.813s`).",
 		"see [the ledger](../reports/pitstop.md) for the counts",

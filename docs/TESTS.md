@@ -476,27 +476,27 @@ MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
 ```
 
-## nova-swarm
+## nova-worker
 
 Fixture: owned directories under `t.TempDir()` and fake harnesses. The transcript
 comparators invoke the dispatcher with fixture paths and compare its output with
-the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
+the examples below. The [quickstart guide](nova-worker-quickstart.md) shows a
 `native` run and a sprint member.
 
 ### The budget word on the native route
 
-Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
-(SPEC-SWARM). Recorded against the fake harness, with the paths
+Every `nova-worker native` launch carries `--tokens <n>` or `--tokens unmetered`
+(SPEC-WORKER). Recorded against the fake harness, with the paths
 abridged:
 
 ```
-$ nova-swarm native --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
-nova-swarm native: --tokens is required; it wants a token budget for this job, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; refusing to guess
+$ nova-worker native --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-worker native: --tokens is required; it wants a token budget for this job, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; refusing to guess
 
-$ nova-swarm native --tokens 0 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
-nova-swarm native: --tokens is a budget and is at least 1, got 0; `unmetered` is how a caller says there is no accounting
+$ nova-worker native --tokens 0 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-worker native: --tokens is a budget and is at least 1, got 0; `unmetered` is how a caller says there is no accounting
 
-$ nova-swarm native --tokens unmetered --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+$ nova-worker native --tokens unmetered --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
 ! NATIVE NOTE: no harness store: looked at ./root/slot-1/data/opencode/opencode.db and ./root/slot-1/data/.local/share/opencode/opencode.db
 NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=0 wall=0.18s sandbox=none-by-flag card_sha256=ab6468b200da0b3d5a0175e863d1b1cf772f010abdf4fe70b3ea39926f3fc826 binary_sha256=13c788f4813d7d81152460f6a16d45123314342ce0269f3fb43e6c8438192852 config=68719609 harness=ok budget=unmetered usage=none reason=no-store path=./root/slot-1/data/opencode/opencode.db
 ```
@@ -510,10 +510,10 @@ A budget wants a source this tool can read. The source is the worker
 description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
 
 ```
-$ nova-swarm native --tokens 100000 --worker ./usage-none.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+$ nova-worker native --tokens 100000 --worker ./usage-none.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
 ! NATIVE REFUSED: a numeric --tokens wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
 
-$ PATH=./empty nova-swarm native --tokens 100000 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+$ PATH=./empty nova-worker native --tokens 100000 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
 ! NATIVE REFUSED: a numeric --tokens is read from the harness's own database with `sqlite3 -readonly`, and sqlite3 is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install sqlite3 on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read
 ```
 
@@ -521,7 +521,7 @@ The card's own budget is read from the same source, so it meets the same refusal
 `--tokens` says — `unmetered` included:
 
 ```
-$ nova-swarm native --tokens unmetered --worker ./usage-none-max-turns.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+$ nova-worker native --tokens unmetered --worker ./usage-none-max-turns.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
 ! NATIVE REFUSED: this worker description's max_turns wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
 ```
 
@@ -556,7 +556,7 @@ A card that publishes a report, spends past `--tokens 100000` and then declines 
 terminate, under `--deadline 120s` so that the budget is what ends it:
 
 ```
-$ nova-swarm native --tokens 100000 --usage-interval 1s … --deadline 120s
+$ nova-worker native --tokens 100000 --usage-interval 1s … --deadline 120s
 NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=-1 wall=5.05s sandbox=none-by-flag card_sha256=8e1f… binary_sha256=ad88… config=ffdf555f harness=ok budget=100000/100000 stopped=tokens
 ```
 
@@ -581,11 +581,11 @@ findings: 2
 ### The sample interval's floor and ceiling
 
 ```
-$ nova-swarm native --tokens unmetered --usage-interval 900ms … --deadline 30s
-! nova-swarm native: --usage-interval is at least 1s, got 900ms; each sample launches sqlite3 against the harness's own live database, and under a second that is more launches than there is anything new to read
+$ nova-worker native --tokens unmetered --usage-interval 900ms … --deadline 30s
+! nova-worker native: --usage-interval is at least 1s, got 900ms; each sample launches sqlite3 against the harness's own live database, and under a second that is more launches than there is anything new to read
 
-$ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
-! nova-swarm native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
+$ nova-worker native --tokens unmetered --usage-interval 30s … --deadline 30s
+! nova-worker native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
 ```
 
 `1s` exactly is accepted — the floor is inclusive — and the ceiling is exclusive.
@@ -593,7 +593,7 @@ $ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
 ### First run
 
 ```
-$ nova-swarm template --name read-pr
+$ nova-worker template --name read-pr
 read-pr — read one pull request against the rules
 
 1. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every

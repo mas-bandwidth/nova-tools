@@ -28,7 +28,7 @@ Which run it is comes from the environment:
 Exit 0 passed, 1 the shim is not first on PATH, else make's own exit status, 2 bad usage.
 
 example:
-  go run ./tools/ci unit-test --packages "./cmd/nova-swarm ./internal/swarm"
+  go run ./tools/ci unit-test --packages "./cmd/nova-worker ./internal/swarm"
 `,
 		do: func(e env, args []string) int { return unitTestVerb(e, args, selRealHost()) },
 	})

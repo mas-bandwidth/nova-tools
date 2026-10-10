@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SPEC CARD #880 ITEM 18 (docs/SPEC-SWARM.md, Bench slot leases): the bench
+// SPEC CARD #880 ITEM 18 (docs/SPEC-WORKER.md, Bench slot leases): the bench
 // slot lease section names its seven rules, the broker verbs, and its Red
 // tests. This doc test reads the section out of the spec the way
 // TestEveryRunLineParsesAgainstTheGrammar reads the Output grammar: the spec
@@ -18,7 +18,7 @@ import (
 func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORKER.md"))
 	require.NoError(t, err, "the bench slot lease contract is the spec's: %s", err)
 	spec := string(raw)
 	section := benchSlotLeasesSection(t, spec)
@@ -28,11 +28,11 @@ func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 		"<bench store>/slots",
 		"owner, pid, card label, until=",
 		"`native` takes no bench capacity lease",
-		"nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>",
+		"nova-worker slots take --store <dir> --owner <o> --n <k> --for <duration>",
 		"<store>/shares.tsv",
 		"refuses with the holder list when the share is spent",
 		"never grants past capacity minus reserve",
-		"nova-swarm slots list --store <dir>",
+		"nova-worker slots list --store <dir>",
 		"one line per lease",
 		"a lease past until= whose pid is gone is reaped by the next take",
 		"a pid alive past until= is DRIFT",
@@ -48,7 +48,7 @@ func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 		"a live-until lease whose pid is gone is stranded with its label",
 		"Card kinds carry a weight",
 	} {
-		assert.Contains(t, section, want, "SPEC-SWARM.md Bench slot leases names %q; the section holds:\n%s", want, section)
+		assert.Contains(t, section, want, "SPEC-WORKER.md Bench slot leases names %q; the section holds:\n%s", want, section)
 	}
 }
 

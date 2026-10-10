@@ -303,23 +303,23 @@ a JSON array, the program first, so a word may hold a blank and nothing is
 split by a shell; a secret is never in it, it goes by name in `--keys`:
 
 ```
-nova-config loop add reader-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --as a1
+nova-config loop add reader-m1 --machine m1 --argv '["/opt/bin/nova-worker","member","--as","reader-m1","--reader"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --as a1
 CONFIG ADD kind=loop name=reader-m1 rev=12
 nova-config loop add refresh-m1 --machine m1 --argv '["/opt/bin/refresh","--once"]' --every 60 --as a1
 CONFIG ADD kind=loop name=refresh-m1 rev=13
 nova-config loop list
-LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true
+LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-worker","member","--as","reader-m1","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true
 LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false enabled=true
 CONFIG LIST kind=loop rows=2
-nova-config loop set reader-m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader","--width","16"]' --as a1
-nova-config loop set REFUSED: loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>; run: nova-config loop show reader-m1
+nova-config loop set reader-m1 --argv '["/opt/bin/nova-worker","member","--as","reader-m1","--reader","--width","16"]' --as a1
+nova-config loop set REFUSED: loop reader-m1: its argv carries --width, and a nova-worker member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>; run: nova-config loop show reader-m1
 nova-config machine show m1
 MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 width=4 tla=false note=- created=<t> updated=<t> loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a
 long-running one up; a loop has exactly one of the two. A loop has no width:
-a `nova-swarm member`'s, a reader's too, is its machine row's (`machine set <m>
+a `nova-worker member`'s, a reader's too, is its machine row's (`machine set <m>
 --width <n>`, moved to the fleet table by `nova-sprint fleet sync` and read by
 the worker with its queue every tick; a reader is named for its machine,
 `reader-<m>`, one per machine, and runs at that machine's width), so an argv

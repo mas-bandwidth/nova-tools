@@ -1678,7 +1678,7 @@ func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
 // TestPassReportsCompletedChildWhenQueueReadFails pins that a completed child
 // is collected and pushed before queue read, reported and cleaned up when
 // the queue read fails or times out, and that no new child is launched from
-// an unknown queue state (docs/SPEC-SWARM.md, member; docs/SPEC-SPRINT.md, the fleet).
+// an unknown queue state (docs/SPEC-WORKER.md, member; docs/SPEC-SPRINT.md, the fleet).
 func TestPassReportsCompletedChildWhenQueueReadFails(t *testing.T) {
 	t.Parallel()
 	bs := &blockingSprint{scriptSprint: newScript(), entered: make(chan struct{}), released: make(chan struct{})}
