@@ -261,3 +261,82 @@ func partsInt64(s string) int64 {
 	}
 	return result
 }
+
+// Judgment represents a violation of the row=lanes contract.
+type Judgment struct {
+	Friend   string
+	CardID   string
+	LaneID   string
+	Reason   string
+	Severity string // warning, error
+}
+
+// RecordJudgment persists a judgment to Redis.
+func RecordJudgment(ctx context.Context, st *store.Store, judgment Judgment) error {
+	if st == nil || judgment.Friend == "" {
+		return fmt.Errorf("friend: store and friend are required")
+	}
+	if judgment.CardID == "" || judgment.LaneID == "" {
+		return fmt.Errorf("friend: judgment must have card_id and lane_id")
+	}
+
+	key := fmt.Sprintf("friend:%s:judgments", judgment.Friend)
+	record := fmt.Sprintf("%s:%s:%s:%s", judgment.CardID, judgment.LaneID, judgment.Reason, judgment.Severity)
+
+	// Append to the judgments list
+	_, err := st.Client().LPush(ctx, key, record).Result()
+	if err != nil {
+		return err
+	}
+
+	// Set expiration to 24 hours
+	_, err = st.Client().Expire(ctx, key, 24*time.Hour).Result()
+	return err
+}
+
+// GetJudgments returns all judgments for a friend.
+func GetJudgments(ctx context.Context, st *store.Store, friend string) ([]Judgment, error) {
+	if st == nil || friend == "" {
+		return nil, fmt.Errorf("friend: store and friend are required")
+	}
+
+	key := fmt.Sprintf("friend:%s:judgments", friend)
+	vals, err := st.Client().LRange(ctx, key, 0, -1).Result()
+	if err != nil {
+		if err.Error() == "redis: nil" {
+			return []Judgment{}, nil
+		}
+		return nil, err
+	}
+
+	if len(vals) == 0 {
+		return []Judgment{}, nil
+	}
+
+	var judgments []Judgment
+	for _, val := range vals {
+		parts := strings.Split(val, ":")
+		if len(parts) >= 4 {
+			judgments = append(judgments, Judgment{
+				Friend:   friend,
+				CardID:   parts[0],
+				LaneID:   parts[1],
+				Reason:   strings.Join(parts[2:len(parts)-1], ":"),
+				Severity: parts[len(parts)-1],
+			})
+		}
+	}
+
+	return judgments, nil
+}
+
+// ClearJudgments clears all judgments for a friend.
+func ClearJudgments(ctx context.Context, st *store.Store, friend string) error {
+	if st == nil || friend == "" {
+		return fmt.Errorf("friend: store and friend are required")
+	}
+
+	key := fmt.Sprintf("friend:%s:judgments", friend)
+	_, err := st.Client().Del(ctx, key).Result()
+	return err
+}

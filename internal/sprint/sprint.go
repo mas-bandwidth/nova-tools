@@ -37,20 +37,20 @@ func NewWorkingSetValidator(st *store.Store) *WorkingSetValidator {
 }
 
 // ValidateRowEqualsLanes checks if friend's row working set equals live lanes.
-// Returns judgments for violations (live lane on card not taken).
-func (v *WorkingSetValidator) ValidateRowEqualsLanes(ctx context.Context, friend string) ([]Judgment, error) {
-	if v.st == nil || friend == "" {
+// Returns judgments for violations (live lane on card not taken) and persists them.
+func (v *WorkingSetValidator) ValidateRowEqualsLanes(ctx context.Context, f string) ([]Judgment, error) {
+	if v.st == nil || f == "" {
 		return nil, fmt.Errorf("sprint: store and friend are required")
 	}
 
 	// Get live lanes from friend beat
-	liveLanes, err := getLiveLanesInternal(ctx, v.st, friend)
+	liveLanes, err := getLiveLanesInternal(ctx, v.st, f)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get taken cards from friend's row
-	takenCards, err := getTakenCardsInternal(ctx, v.st, friend)
+	takenCards, err := getTakenCardsInternal(ctx, v.st, f)
 	if err != nil {
 		return nil, err
 	}
@@ -60,12 +60,25 @@ func (v *WorkingSetValidator) ValidateRowEqualsLanes(ctx context.Context, friend
 	// Check: live lane on a card not taken on her row is a judgment
 	for _, lane := range liveLanes {
 		if _, ok := takenCards[lane.ID]; !ok {
-			judgments = append(judgments, Judgment{
+			judgment := Judgment{
 				CardID: lane.ID,
 				LaneID: lane.ID, // lane id is the card id per spec
 				Reason: fmt.Sprintf("live lane on card not taken on row: %s", lane.ID),
 				Severity: "error",
-			})
+			}
+
+			// Persist the judgment
+			if err := friend.RecordJudgment(ctx, v.st, friend.Judgment{
+				Friend:   f,
+				CardID:   judgment.CardID,
+				LaneID:   judgment.LaneID,
+				Reason:   judgment.Reason,
+				Severity: judgment.Severity,
+			}); err != nil {
+				return nil, fmt.Errorf("sprint: failed to record judgment: %w", err)
+			}
+
+			judgments = append(judgments, judgment)
 		}
 	}
 
@@ -73,14 +86,14 @@ func (v *WorkingSetValidator) ValidateRowEqualsLanes(ctx context.Context, friend
 }
 
 // ExpireStaleCards checks for taken cards with no live lane past their deadline.
-// Returns card IDs that should go back to ready.
-func (v *WorkingSetValidator) ExpireStaleCards(ctx context.Context, friend string, now time.Time) ([]string, error) {
-	if v.st == nil || friend == "" {
+// Moves them back to ready by clearing their take record.
+func (v *WorkingSetValidator) ExpireStaleCards(ctx context.Context, f string, now time.Time) ([]string, error) {
+	if v.st == nil || f == "" {
 		return nil, fmt.Errorf("sprint: store and friend are required")
 	}
 
 	// Get live lanes
-	liveLanes, err := getLiveLanesInternal(ctx, v.st, friend)
+	liveLanes, err := getLiveLanesInternal(ctx, v.st, f)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +105,7 @@ func (v *WorkingSetValidator) ExpireStaleCards(ctx context.Context, friend strin
 	}
 
 	// Get taken cards
-	takenCards, err := getTakenCardsInternal(ctx, v.st, friend)
+	takenCards, err := getTakenCardsInternal(ctx, v.st, f)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +119,10 @@ func (v *WorkingSetValidator) ExpireStaleCards(ctx context.Context, friend strin
 
 		// Check if past deadline
 		if !status.TakeDeadline.IsZero() && status.TakeDeadline.Before(now) {
+			// Clear the take record to move card back to ready
+			if err := friend.ClearTake(ctx, v.st, f, cardID); err != nil {
+				return nil, fmt.Errorf("sprint: failed to clear take for %s: %w", cardID, err)
+			}
 			stale = append(stale, cardID)
 		}
 	}
@@ -115,17 +132,17 @@ func (v *WorkingSetValidator) ExpireStaleCards(ctx context.Context, friend strin
 
 // ApplyRowRestriction enforces the row working set to match live lanes.
 // This combines expire stale and judgment generation.
-func (v *WorkingSetValidator) ApplyRowRestriction(ctx context.Context, friend string, now time.Time) ([]string, []Judgment, error) {
-	if v.st == nil || friend == "" {
+func (v *WorkingSetValidator) ApplyRowRestriction(ctx context.Context, f string, now time.Time) ([]string, []Judgment, error) {
+	if v.st == nil || f == "" {
 		return nil, nil, fmt.Errorf("sprint: store and friend are required")
 	}
 
-	stale, err := v.ExpireStaleCards(ctx, friend, now)
+	stale, err := v.ExpireStaleCards(ctx, f, now)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	judgments, err := v.ValidateRowEqualsLanes(ctx, friend)
+	judgments, err := v.ValidateRowEqualsLanes(ctx, f)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -133,24 +150,13 @@ func (v *WorkingSetValidator) ApplyRowRestriction(ctx context.Context, friend st
 	return stale, judgments, nil
 }
 
-// internal helpers that would call Redis in production
-func getLiveLanesInternal(ctx context.Context, st *store.Store, friend string) ([]LiveLane, error) {
-	if st == nil {
-		return []LiveLane{}, nil
-	}
-
-	// In real implementation, this calls Redis
-	// For testing, we return empty
-	return []LiveLane{}, nil
+// internal helpers that call Redis via the friend package
+func getLiveLanesInternal(ctx context.Context, st *store.Store, f string) ([]LiveLane, error) {
+	return friend.GetLiveLanes(ctx, st, f)
 }
 
-func getTakenCardsInternal(ctx context.Context, st *store.Store, friend string) (map[string]CardStatus, error) {
-	if st == nil {
-		return map[string]CardStatus{}, nil
-	}
-
-	// In real implementation, this calls Redis
-	return map[string]CardStatus{}, nil
+func getTakenCardsInternal(ctx context.Context, st *store.Store, f string) (map[string]CardStatus, error) {
+	return friend.GetRowWorkingSet(ctx, st, f)
 }
 
 // RecordJudgment logs a judgment to the system.
