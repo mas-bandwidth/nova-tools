@@ -67,7 +67,7 @@ func TestAReadNamesTheBranchTheWorkPushed(t *testing.T) {
 	for _, p := range packets {
 		assert.Equal(t, pushed, p.WorkBranch, "%s names the branch the work pushed, never the generation the card reached", p.Card)
 		assert.Equal(t, pushedSha, p.Head, "%s names the head pushed", p.Card)
-		assert.False(t, strings.Contains(sprint.ReadCardBrief(p.Worker, p.Card, p, "", r.now), later), "%s's brief never names the later generation's branch", p.Card)
+		assert.False(t, strings.Contains(sprint.ReadCardBrief(p.Worker, p.Card, p, "", r.now, ""), later), "%s's brief never names the later generation's branch", p.Card)
 	}
 }
 

@@ -2473,7 +2473,10 @@ friend's reader row, `reader-<friend>`, the work the hand-written `reader.zsh` l
   `opencode run [--model <m>] <prompt>` in her directory with no session listing, so reads never queue
   behind lane opens; a harness without it opens the prompt as a lane session). A claude
   account's model per tier is `ReadModels` (frontier claude-fable-5-1, heavy claude-opus-5-5,
-  pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001).
+  pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001). The bench rule
+  (`friend.BenchRule`, `friend.ReadText`) names the bench the sprint chose, the least
+  loaded one under its cap (docs/SPEC-SPRINT.md section 5, "the bench a lane gates on"),
+  never a machine by habit.
 - **The record.** RESULT.md saying `verdict: ok|broken` is `read --ok|--broken <card> --epoch <n>
   --finding <report line and body, 3500 bytes> --usage "model=<m> wall=<s>s harness=<h>
   account=<friend>"`; any other end (no RESULT.md, another verdict) is `read --return <card>
