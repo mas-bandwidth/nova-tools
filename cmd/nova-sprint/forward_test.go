@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
@@ -355,7 +357,7 @@ func TestAClientServerVerbTableMismatchIsOneSkewLine(t *testing.T) {
 	// 1. Equal tables serve as before
 	reqEqual := sprintwire.Request{
 		Protocol: sprintwire.Protocol,
-		VerbHash: r.a.verbTableHash(),
+		VerbHash: verbTableHash(),
 		Build:    buildinfo.Version(version),
 		Verbs:    [][]string{{"take", "--as", "m1", "--epoch", "0", "--json"}},
 	}
@@ -401,4 +403,25 @@ func TestAClientServerVerbTableMismatchIsOneSkewLine(t *testing.T) {
 	assert.Equal(t, "SKEW client=client-v1 server="+buildinfo.Version(version)+" verb=take flag=--future-flag\n", resBatch[0].Stderr)
 	assert.Equal(t, 2, resBatch[1].Code)
 	assert.Equal(t, "SKEW client=client-v1 server="+buildinfo.Version(version)+" verb=queue flag=-\n", resBatch[1].Stderr)
+
+	// 4. The hash is computed from the verbs table, not a constant: a verb, a flag and
+	// a flag's type each change it (docs/SPEC-SPRINT.md: the wire protocol names its
+	// verb table hash). A constant hash would pass cases 1-3 above.
+	probe := func(kind, name string, flags ...string) []verb {
+		return []verb{{name: name, run: func(*app, []string, io.Writer, io.Writer) int {
+			fs := verbflag.New(name)
+			for _, f := range flags {
+				if kind == "int" {
+					fs.Int(f, 0, "")
+				} else {
+					fs.String(f, "", "")
+				}
+			}
+			panic(verbflag.Help{FS: fs})
+		}}}
+	}
+	assert.Equal(t, computeVerbTableHash(probe("string", "p", "a", "b")), computeVerbTableHash(probe("string", "p", "a", "b")), "the same table hashes the same")
+	assert.NotEqual(t, computeVerbTableHash(probe("string", "p", "a", "b")), computeVerbTableHash(probe("string", "p", "a", "b", "c")), "one more flag hashes differently")
+	assert.NotEqual(t, computeVerbTableHash(probe("string", "p", "a")), computeVerbTableHash(probe("string", "q", "a")), "a verb's name is in the hash")
+	assert.NotEqual(t, computeVerbTableHash(probe("string", "p", "a")), computeVerbTableHash(probe("int", "p", "a")), "a flag's type is in the hash")
 }

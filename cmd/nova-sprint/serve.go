@@ -193,7 +193,7 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // typed on.
 var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend reconcile", "friend clean", "dashboard", "answer", "seat install", "seat uninstall", "selftest land", "server switch"}
 
-func (a *app) skewResponse(req sprintwire.Request) sprintwire.Response {
+func skewResponse(req sprintwire.Request) sprintwire.Response {
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
 	serverVer := buildinfo.Version(version)
 	clientVer := req.Build
@@ -201,8 +201,8 @@ func (a *app) skewResponse(req sprintwire.Request) sprintwire.Response {
 		clientVer = "-"
 	}
 	for i, argv := range req.Verbs {
-		verbName, words := a.verbNameAndWords(argv)
-		flag := a.firstUnknownFlag(verbName, argv, words)
+		verbName, words := verbNameAndWords(argv)
+		flag := firstUnknownFlag(verbName, argv, words)
 		out.Results[i] = sprintwire.Result{
 			Code:   2,
 			Stderr: fmt.Sprintf("SKEW client=%s server=%s verb=%s flag=%s\n", clientVer, serverVer, verbName, flag),
@@ -211,8 +211,8 @@ func (a *app) skewResponse(req sprintwire.Request) sprintwire.Response {
 	return out
 }
 
-func (a *app) firstUnknownFlag(verbName string, argv []string, verbWords int) string {
-	fs := a.verbFlags(verbName)
+func firstUnknownFlag(verbName string, argv []string, verbWords int) string {
+	fs := verbFlags(verbName)
 	if fs == nil {
 		for _, w := range argv[verbWords:] {
 			if w == "--" {
@@ -268,8 +268,8 @@ func (a *app) firstUnknownFlag(verbName string, argv []string, verbWords int) st
 // its caller waits for the answer: a caller gone (ctx done) before the line is taken has
 // its verbs from there on not run, each answered exit 2 saying so, and nothing changed.
 func (a *app) serveCtx(ctx context.Context, req sprintwire.Request, local bool) sprintwire.Response {
-	if req.VerbHash != "" && (req.Protocol != sprintwire.Protocol || req.VerbHash != a.verbTableHash()) {
-		return a.skewResponse(req)
+	if req.VerbHash != "" && (req.Protocol != sprintwire.Protocol || req.VerbHash != verbTableHash()) {
+		return skewResponse(req)
 	}
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
 	lanes := a.lanesFor(ctx)
