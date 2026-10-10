@@ -67,15 +67,38 @@ func versionKey(line string) (string, error) {
 	}
 	return "", fmt.Errorf("no_version")
 }
+
+// pinVersion reports whether tok is a version a pin's `<name> <version>` line
+// can hold whole: a dotted release or pseudo-version, `devel`, or a bare
+// commit. A pin compares two of these as strings (SPEC-UPDATE rule 15), so the
+// token is kept exactly as printed rather than re-derived.
+func pinVersion(tok string) bool {
+	return dotted.MatchString(tok) || tok == "devel" || bareCommit.MatchString(tok)
+}
+
 func identity(e Entry, raw string, report bool) Read {
 	r := Read{Raw: firstLine(raw), Remedy: "wrap it in a script that prints the version alone"}
 	if e.Kind == "pin" {
 		f := strings.Fields(r.Raw)
 		if len(f) < 2 {
 			r.Reason = "version line has fewer than two tokens"
-		} else {
-			r.Version = f[1]
+			return r
 		}
+		// The depender's own line is `<name> <version>`: keep the second token
+		// whole when it is a version. When it is not -- `go version`'s second
+		// word is the word `version` -- take the version token the installed
+		// reader's ladder takes from the line, and refuse a line holding none,
+		// so the help's own `local:go version` sample is never a false green.
+		if pinVersion(f[1]) {
+			r.Version = f[1]
+			return r
+		}
+		v, err := versionKey(r.Raw)
+		if err != nil {
+			r.Reason = err.Error()
+			return r
+		}
+		r.Version = v
 		return r
 	}
 	if e.Kind == "model" {
