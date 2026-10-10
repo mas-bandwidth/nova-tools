@@ -24,6 +24,7 @@ import (
 type twinRow struct {
 	mu    sync.Mutex
 	cards []HeldCard
+	epoch uint64 // the sprint's epoch as the answer said it; zero names none
 	err   error
 	asked int
 }
@@ -32,7 +33,7 @@ func (w *twinRow) held(context.Context) (Row, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.asked++
-	return Row{Cards: append([]HeldCard(nil), w.cards...), Reads: true, From: FromCards}, w.err
+	return Row{Cards: append([]HeldCard(nil), w.cards...), Reads: true, From: FromCards, Epoch: w.epoch}, w.err
 }
 
 func (w *twinRow) set(cards ...HeldCard) { w.mu.Lock(); w.cards = cards; w.mu.Unlock() }
