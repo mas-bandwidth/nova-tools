@@ -1169,18 +1169,27 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
 	fl := &friend.Limits{Now: w.now, Nonce: w.random, Harness: c.Str("harness"), Rest: c.Dur("limit-rest")}
-	// every harness's credit and quota refusal, one table (limit.go): each lane's output and
+	// every harness's credit and quota refusal, one table (limit.go): the harness's stderr and
 	// the runner log are read, and a hit the harness's own wording did not name is handed to
 	// the same limit path (fl.Refuse); three lanes failing alike with a wording no row knows
 	// is one judgment (RefusalWatch). The harness's own wording is read first, so a hit both
-	// readers know is one down.
+	// readers know is one down. A failed lane's answer is the model's stdout with the harness's
+	// stderr after it (friend.RealExec): the stderr is caught apart while the lane runs
+	// (friend.WithStderrCapture) and only it is handed as Stderr, so the model's stdout -- a
+	// brief, a report or a page it quoted -- is never read for a refusal.
 	rw := &RefusalWatch{Harness: c.Str("harness"), Now: w.now}
 	limitWatch := fl.Watch(walled)
 	watched := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+		var harnessErr strings.Builder
+		ctx = friend.WithStderrCapture(ctx, &harnessErr)
 		out, exit, err := limitWatch(ctx, d, prog, args, stdin)
 		if exit != 0 || err != nil {
 			if _, _, alreadyHeld := fl.Limited(); !alreadyHeld {
-				rw.Observe(LaneText{Stdout: out, Log: friend.RunnerLog(dir)})
+				logDir := d
+				if logDir == "" {
+					logDir = dir
+				}
+				rw.Observe(LaneText{Stderr: harnessErr.String(), Log: friend.RunnerLog(logDir)}, exit)
 			}
 		}
 		return out, exit, err
@@ -1378,16 +1387,23 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// a refusal the row knows and the harness's own wording did not: the same limit path
 	// (status, the gate, the down beat, the seat), and the down verb so her begun cards come
 	// back; three lanes alike with a wording no row knows is one judgment to the seat
+	flDownBase := fl.Down
+	fl.Down = func(until time.Time, reason string) {
+		flDownBase(until, reason)
+		if fl.Kind() == friend.KindCredits {
+			r := Refusal{Harness: c.Str("harness"), Kind: fl.Kind(), Reason: reason, Until: until}
+			if w.down == nil {
+				record(w.now().UTC().Format(time.RFC3339) + " credit refusal: no down verb to send: " + DownReason(r))
+				return
+			}
+			if err := w.down(ctx, server, DownArgv(name, r)); err != nil {
+				record(w.now().UTC().Format(time.RFC3339) + " credit refusal: friend down: " + err.Error())
+				tellSeat("friend "+name+": the down verb was refused", DownReason(r)+"\nnova-sprint friend down was refused: "+err.Error()+"\n")
+			}
+		}
+	}
 	rw.Down = func(r Refusal) {
 		fl.Refuse(r.Kind, DownReason(r), r.Until)
-		if w.down == nil {
-			record(w.now().UTC().Format(time.RFC3339) + " credit refusal: no down verb to send: " + DownReason(r))
-			return
-		}
-		if err := w.down(ctx, server, DownArgv(name, r)); err != nil {
-			record(w.now().UTC().Format(time.RFC3339) + " credit refusal: friend down: " + err.Error())
-			tellSeat("friend "+name+": the down verb was refused", DownReason(r)+"\nnova-sprint friend down was refused: "+err.Error()+"\n")
-		}
 	}
 	rw.Judge = func(text string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)

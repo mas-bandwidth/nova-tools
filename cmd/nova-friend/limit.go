@@ -1,11 +1,13 @@
 // The daemon's reading of every harness's credit and quota refusal, from the
-// places a lane leaves it: the lane's stdout, its stderr, the harness log it
-// writes and the REPORT.md it leaves (docs/SPEC-FRIEND.md, a harness out of
-// credits). One table names each harness's 402 and its own wordings, so a
-// friend is marked down for every harness it runs, never only for the ones
-// whose wording is already known. A refusal no row knows is never silently
-// retried: three lanes ending with the same first error line surface to the
-// seat as one judgment, "lanes failing alike: <line>".
+// two places the harness itself leaves it: its stderr and the runner's own log
+// lines. The model's stdout and the REPORT.md it writes are never read: they
+// are the model's words, and a brief or a page the model quoted that carries
+// "402", "billing" or "payment required" must not take a friend down. One
+// table names each harness's 402 and its own wordings, so a friend is marked
+// down for every harness it runs, never only for the ones whose wording is
+// already known. A refusal no row knows is never silently retried: three lanes
+// ending with the same first error line surface to the seat as one judgment,
+// "lanes failing alike: <line>".
 //
 // This file is pure: no store, no socket, no real time; the tests step it with
 // an injected clock.
@@ -16,12 +18,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // CreditRetry is how long a friend is down when a harness refuses for credits
-// or quota and the row names no retry: the row's credit_retry, default 24h.
-const CreditRetry = 24 * time.Hour
+// or quota and the row names no retry: the row's credit_retry, default 1h.
+const CreditRetry = time.Hour
+
+// RefusalTail is how much of the end of each trusted channel is read for a
+// refusal: a harness says it last, and the model's own text earlier in the lane
+// is far from the tail. It is friend.LimitTail's number (internal/friend/limit.go,
+// ReadLimit).
+const RefusalTail = 2048
 
 // The kinds of a refusal: the balance that pays for the harness is empty, or
 // its usage window or quota is spent. The status says the kind
@@ -38,9 +47,11 @@ const (
 // the seat, never a fourth silent retry.
 const AlikeLanes = 3
 
-// LaneText is one lane's evidence, the four places a harness's refusal shows:
+// LaneText is one lane's evidence, the places a harness's refusal may show:
 // what the lane printed on stdout and stderr, the log the harness itself
-// writes, and the REPORT.md the lane leaves.
+// writes, and the REPORT.md the lane leaves. A refusal is read only from
+// Stderr and Log (Sources): stdout is the model's answer and the REPORT.md is
+// the model's report, and neither is the harness's own refusal.
 type LaneText struct {
 	Stdout string
 	Stderr string
@@ -48,15 +59,16 @@ type LaneText struct {
 	Report string
 }
 
-// Sources is the four texts in the order a refusal is read: stdout, stderr,
-// the harness log, the REPORT.md.
+// Sources is the two channels a refusal is read from, in order: the harness's
+// stderr, then the runner's own log. The model's stdout and the REPORT.md it
+// writes are never sources.
 func (t LaneText) Sources() []string {
-	return []string{t.Stdout, t.Stderr, t.Log, t.Report}
+	return []string{t.Stderr, t.Log}
 }
 
 // Refusal is a credit or quota refusal read from a lane's evidence: which
-// harness said it, the kind, the first line that said it, and when the friend
-// may be tried again (now plus the row's retry).
+// harness said it, the kind, the first line that said it (redacted), and when
+// the friend may be tried again (now plus the row's retry).
 type Refusal struct {
 	Harness string
 	Kind    string
@@ -64,13 +76,11 @@ type Refusal struct {
 	Until   time.Time
 }
 
-// refusalRow is one harness's wording of a credit or quota refusal. Retry is
-// the row's credit_retry; zero is CreditRetry.
+// refusalRow is one harness's wording of a credit or quota refusal.
 type refusalRow struct {
 	Harness string
 	Kind    string
 	Re      *regexp.Regexp
-	Retry   time.Duration
 }
 
 // refusalRows is the one table: every harness the daemon runs, its provider's
@@ -95,31 +105,66 @@ var refusalRows = []refusalRow{
 	{Harness: "gemini", Kind: RefusalQuota, Re: regexp.MustCompile(`(?i)exceeded your current quota|quota (?:exceeded|exhausted)|usage limit (?:reached|exceeded)`)},
 }
 
-// ReadRefusal reads a lane's evidence, source by source and line by line, for
-// harness's credit or quota refusal, and answers the first line that matches a
-// row: its kind, the line (capped), and the friend's retry (now plus the row's
-// credit_retry, CreditRetry when the row names none). A harness the table does
-// not hold, or a text no row knows, is no refusal.
-func ReadRefusal(harness string, t LaneText, now time.Time) (Refusal, bool) {
+// refusalStatus is the provider's own status beside a refusal's words: a 402
+// (payment required) or a 429 (rate limited).
+var refusalStatus = regexp.MustCompile(`(?i)\b(?:402|429)\b`)
+
+// refusalLimit is the harness's own limit line beside the words: its usage
+// window or quota spent. It is the harness's own wording, never a line a brief
+// or a page the model read may carry.
+var refusalLimit = regexp.MustCompile(`(?i)usage limit|limit reached|limit exceeded|quota (?:exceeded|exhausted)|exceeded your current quota|hit your (?:[a-z-]+ )?limit|rate[ _-]?limit|too many requests`)
+
+// refusalConfirmed reports whether a line that matches a row carries the
+// harness's own evidence beside the words and is not the words alone: the lane
+// exited non-zero (exit), or the line carries a provider status (a 402 or a
+// 429, refusalStatus) or the harness's own limit line (refusalLimit).
+func refusalConfirmed(line string, exit int) bool {
+	return exit != 0 || refusalStatus.MatchString(line) || refusalLimit.MatchString(line)
+}
+
+// tail is s's last RefusalTail bytes, the end a harness says its refusal at.
+func tail(s string) string {
+	if len(s) > RefusalTail {
+		return s[len(s)-RefusalTail:]
+	}
+	return s
+}
+
+// ReadRefusal reads the harness's own two channels for harness's credit or
+// quota refusal -- its stderr and the runner's own log lines, the last
+// RefusalTail bytes of each -- and answers the first line that matches a row
+// and is confirmed (refusalConfirmed): its kind, the line (redacted and
+// capped), and the friend's retry (now plus retry, CreditRetry when retry is
+// zero). The model's stdout and the REPORT.md it writes are never read. A
+// harness the table does not hold, or a text no row knows, is no refusal.
+func ReadRefusal(harness string, t LaneText, exit int, retry time.Duration, now time.Time) (Refusal, bool) {
+	if retry <= 0 {
+		retry = CreditRetry
+	}
 	for _, src := range t.Sources() {
-		for _, line := range strings.Split(src, "\n") {
+		for _, line := range strings.Split(tail(src), "\n") {
 			line = strings.TrimSpace(line)
-			if line == "" {
+			if line == "" || !refusalConfirmed(line, exit) {
 				continue
 			}
 			for _, row := range refusalRows {
 				if row.Harness != harness || !row.Re.MatchString(line) {
 					continue
 				}
-				retry := row.Retry
-				if retry <= 0 {
-					retry = CreditRetry
-				}
-				return Refusal{Harness: harness, Kind: row.Kind, Reason: oneline.Cap(line, 300), Until: now.Add(retry)}, true
+				return Refusal{Harness: harness, Kind: row.Kind, Reason: oneline.Cap(Redact(line), 300), Until: now.Add(retry)}, true
 			}
 		}
 	}
 	return Refusal{}, false
+}
+
+// Redact replaces anything in a refusal's matched line that looks like a key
+// or a token with <redacted> before the reason is stored or sent: a long
+// base64 or hex run, an sk- key, or a key=value. The reason rides into the
+// store and the bus, so a harness error line that echoes a key must not carry
+// it.
+func Redact(s string) string {
+	return friend.Redact(s)
 }
 
 // FirstErrorLine is a lane's first error line for the alike judgment: the
@@ -182,28 +227,31 @@ func (a *alikeLanes) observe(line string) (string, bool) {
 }
 
 // RefusalWatch is one friend's lane refusals: each lane's evidence is read for
-// a refusal (ReadRefusal) and, on a match, Down is called with it so the
-// daemon marks the friend down; a lane with no known refusal feeds the alike
-// count, and Judge is called with the one judgment at the third alike failure.
-// A refusal resets the alike count. Now is injected, and nil is time.Now.
+// a refusal (ReadRefusal, with the lane's exit code) and, on a match, Down is
+// called with it so the daemon marks the friend down; a lane with no known
+// refusal feeds the alike count, and Judge is called with the one judgment at
+// the third alike failure. A refusal resets the alike count. Now is injected,
+// and nil is time.Now; Retry is the friend row's credit_retry (CreditRetry
+// when zero).
 type RefusalWatch struct {
 	Harness string
 	Now     func() time.Time
+	Retry   time.Duration
 	Down    func(r Refusal)
 	Judge   func(text string)
 	alike   alikeLanes
 }
 
-// Observe reads one lane's evidence: a refusal calls Down and answers it; a
-// lane that is no known refusal feeds the alike count and, at the third alike
-// failure, calls Judge once with the judgment. It answers the refusal and
-// whether there was one.
-func (w *RefusalWatch) Observe(t LaneText) (Refusal, bool) {
+// Observe reads one lane's evidence with the lane's exit code: a refusal calls
+// Down and answers it; a lane that is no known refusal feeds the alike count
+// and, at the third alike failure, calls Judge once with the judgment. It
+// answers the refusal and whether there was one.
+func (w *RefusalWatch) Observe(t LaneText, exit int) (Refusal, bool) {
 	now := time.Now
 	if w.Now != nil {
 		now = w.Now
 	}
-	if r, ok := ReadRefusal(w.Harness, t, now()); ok {
+	if r, ok := ReadRefusal(w.Harness, t, exit, w.Retry, now()); ok {
 		w.alike = alikeLanes{}
 		if w.Down != nil {
 			w.Down(r)
@@ -220,10 +268,10 @@ func (w *RefusalWatch) Observe(t LaneText) (Refusal, bool) {
 
 // refusalReaders is the reader surface the daemon's lane step drives: it reads
 // a lane's evidence (ReadRefusal, FirstErrorLine), names the down the server
-// takes (DownReason, DownArgv), and counts the alike failures (RefusalWatch,
-// alikeLanes). The list keeps every one of them reachable from the binary
-// (cmd/nova-friend/main.go), so the pure reader costs the dead-code ledger
-// nothing.
+// takes (DownReason, DownArgv), redacts the reason (Redact), and counts the
+// alike failures (RefusalWatch, alikeLanes). The list keeps every one of them
+// reachable from the binary (cmd/nova-friend/main.go), so the pure reader
+// costs the dead-code ledger nothing.
 var refusalReaders = [...]any{
 	LaneText.Sources,
 	ReadRefusal,
@@ -231,6 +279,7 @@ var refusalReaders = [...]any{
 	DownReason,
 	DownArgv,
 	AlikeJudgment,
+	Redact,
 	(*alikeLanes).observe,
 	(*RefusalWatch).Observe,
 }
