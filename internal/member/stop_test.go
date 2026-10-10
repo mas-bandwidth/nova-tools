@@ -325,7 +325,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	// initial beat with 0 owed
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, beatArgs(s.lines("beat")))
 
 	// the machine stops: c1 is cancelled, now 1 stop-return is owed
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
@@ -333,7 +333,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 1"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 1"}, beatArgs(s.lines("beat")))
 
 	// child ends and is handed back via stop-return
 	r.child("c1").end(Result{OK: true})
@@ -344,7 +344,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	// beat after hand-back: owed returns to 0
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, beatArgs(s.lines("beat")))
 }
 
 // A reader member restarted mid-stop: every reading card under its row with no child of ours

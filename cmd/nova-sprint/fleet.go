@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -121,13 +122,14 @@ func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drai
 
 // beatReport is what fleet beat prints with --json.
 type beatReport struct {
-	Member string          `json:"member"`
-	At     time.Time       `json:"at"`
-	Load   float64         `json:"load"`
-	Last   float64         `json:"last"`
-	How    string          `json:"how"`
-	Cores  int             `json:"cores"`
-	Files  *hostload.Files `json:"files,omitempty"`
+	Member string              `json:"member"`
+	At     time.Time           `json:"at"`
+	Load   float64             `json:"load"`
+	Last   float64             `json:"last"`
+	How    string              `json:"how"`
+	Cores  int                 `json:"cores"`
+	Files  *hostload.Files     `json:"files,omitempty"`
+	Disk   *sprint.DiskReading `json:"disk,omitempty"`
 	// StopReturns is how many stop-returns the member's lanes still owe (section 14).
 	StopReturns int `json:"stop_returns,omitempty"`
 }
@@ -159,6 +161,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	stopReturns := fs.Int("stop-returns", 0, "how many stop-returns the member's lanes still owe after the machine's stop (section 14): start waits for zero")
 	fdWarn := fs.Int("fd-warn", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else %d)", hostload.FilesWarnDefault))
 	fdAlarm := fs.Int("fd-alarm", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else %d)", hostload.FilesAlarmDefault))
+	diskFlag := fs.String("disk", "", "the volume's reading as one JSON sprint.DiskReading, measured on the worker's machine; a member sends it because the server cannot read a remote machine's files")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
@@ -221,7 +224,28 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		v := *stopReturns
 		owing = &v
 	}
-	b, err := st.BeatOwing(context.Background(), pos[0], nil, src, owing)
+	// the volume the beat's working directory lives on, and the largest
+	// directories under the AI root, for the disk watermark (disk.go); a beat
+	// served for a remote member measures nothing: this process cannot read
+	// its files
+	var disk *sprint.DiskReading
+	switch {
+	case *diskFlag != "":
+		var d sprint.DiskReading
+		if err := json.Unmarshal([]byte(*diskFlag), &d); err != nil {
+			return refuse(stderr, "fleet beat", "--disk wants one JSON reading of the volume (sprint.DiskReading), found "+oneline.Cap(*diskFlag, 80))
+		}
+		disk = &d
+	case !a.serving:
+		if wd, werr := os.Getwd(); werr == nil {
+			home, _ := os.UserHomeDir()
+			root := sprint.GCAIRoot(home, os.Getenv("NOVA_AI_ROOT"))
+			if d, derr := sprint.MeasureDisk(wd, root, time.Now()); derr == nil {
+				disk = &d
+			}
+		}
+	}
+	b, err := st.BeatWithDiskOwing(context.Background(), pos[0], nil, src, disk, owing)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -232,7 +256,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	}
 	files := b.Meter.Files
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, StopReturns: b.StopReturns})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, Disk: b.Disk, StopReturns: b.StopReturns})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
@@ -242,6 +266,9 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	}
 	if b.StopReturns > 0 {
 		fmt.Fprintf(stdout, " stop_returns=%d", b.StopReturns)
+	}
+	if b.Disk != nil {
+		fmt.Fprintf(stdout, " disk=%s used=%.1f%% inodes=%.1f%%", b.Disk.Volume, b.Disk.Use(), b.Disk.InodeUse())
 	}
 	fmt.Fprintln(stdout)
 	if files != nil && files.Level() != hostload.LevelOK {
