@@ -72,7 +72,7 @@ func (a *app) reconcileFriendsTick(ctx context.Context, st *store.Store, ft *fri
 			ft.skip(friend, "HOME is not set on the server and her nova-config row has no dir, so her working directory is not known", stdout)
 			continue
 		}
-		if err := a.reconcileFriendTick(ctx, st, ft, friend, a.friendDir(friend, dirs[friend], stdout), stdout); err != nil {
+		if err := a.reconcileFriendTick(ctx, st, ft, friend, a.friendDir(friend, dirs[friend], root, stdout), stdout); err != nil {
 			fmt.Fprintf(stdout, "FRIEND-RECONCILE FAILED friend=%s: %s; the next tick reads her again; run: nova-sprint friend reconcile %s --dry-run\n", friend, oneline.Escape(err.Error()), friend)
 		}
 	}

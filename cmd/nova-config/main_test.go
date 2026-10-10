@@ -313,7 +313,7 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 		code, _, errs = h.run(t, "machine", "add", "hulk", "--as", "rowan", "--pg", dsn, "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", flag, "x")
 		assert.Equal(t, 2, code, "machine add %s: %d %q", flag, code, errs)
 		assert.Contains(t, errs, "REFUSED: unknown flag "+flag, "machine add %s: %d %q", flag, code, errs)
-		assert.Contains(t, errs, "this verb takes --actor, --as, --dry-run, --file, --json, --note, --pg, --reason, --runners, --seat, --slots, --tla, --user, --width; run: nova-config machine add -h", "machine add %s: the flags it takes", flag)
+		assert.Contains(t, errs, "this verb takes --actor, --as, --dry-run, --file, --json, --note, --nova_root, --pg, --reason, --runners, --seat, --slots, --tla, --user, --width; run: nova-config machine add -h", "machine add %s: the flags it takes", flag)
 		assert.NotContains(t, errs, "flag provided but not defined", "machine add %s: never the flag package's stock line", flag)
 	}
 	// The friend kind has no runtime fact and no coordinator role: what
@@ -466,17 +466,17 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
 	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=hulk rev=7\nNOTE machine=hulk width=default: "), "machine add hulk: %q", out)
 	out, _ = step(0, "machine", "list")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=- tla=false note=-\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false note=-\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=- tla=false nova_root=- note=-\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false nova_root=- note=-\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
 	require.Equal(t, 0, h.redis.opens, "a list with no --redis opened Redis")
 	h.redis.beats["hulk"] = &config.Beat{Cores: "64", At: "2026-09-27T03:00:00Z"}
 	out, _ = step(0, "machine", "list", "--redis", "127.0.0.1:6379")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=- tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false note=- beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=- tla=false nova_root=- note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false nova_root=- note=- beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "machine", "show", "hulk")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=- tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=- tla=false nova_root=- note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
 	delete(h.env, "NOVA_SPRINT_REDIS")
 	out, _ = step(0, "machine", "show", "studio")
-	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
+	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false nova_root=- note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
 
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.

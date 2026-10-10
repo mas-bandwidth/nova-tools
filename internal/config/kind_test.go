@@ -71,10 +71,10 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners,width,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,note", scopedGot70)
+	require.Equal(t, "user,seat,slots,runners,width,tla,nova_root,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,nova_root,note", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "nova_root" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false, nova_root to unset and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
 	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)

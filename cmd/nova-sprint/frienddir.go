@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -15,7 +17,8 @@ import (
 // A friend's working directory is her nova-config row's dir (config.FriendDir).
 // friend sync carries it onto the friends table (store.FriendSpec.Dir), and sync,
 // reconcile (the verb and the run loop's tick), clean and the seat's inbox read it
-// there or from the row. A row with no dir is <nova-root>/ai/<name>/working.
+// there or from the row. A row with no dir is <root>/<name>-working, or
+// <nova_root>/ai/<name>/working when the machine's nova-config row names a nova_root.
 // The explicit path avoids requiring a symlink as a sandbox root.
 
 // friendDirNoted is the friends each app has said the fallback for, so a given
@@ -28,27 +31,17 @@ type friendDirKey struct {
 }
 
 // friendDir is the friend's working directory: dir, her row's, when it is set; else
-// <nova-root>/ai/<name>/working, with the note said on note the first time this app falls
-// back for her. A nil note says nothing.
-func (a *app) friendDir(friend, dir string, note io.Writer) string {
+// <root>/<friend>-working, or <nova_root>/ai/<friend>/working when the machine's
+// nova-config row names a nova_root; the note is said on note the first time this app
+// falls back for her. A nil note says nothing.
+func (a *app) friendDir(friend, dir, root string, note io.Writer) string {
 	if dir != "" {
 		return dir
 	}
-	// Read machine's nova_root
-	var machineNovaRoot string
-	if a.inventory != nil {
-		// Find the machine this app is running on (use "self" or env var)
-		if machines, err := a.inventory(context.Background(), a.getenv("NOVA_PG_DSN")); err == nil && len(machines) > 0 {
-			// For now, use the first machine; in practice, we'd find the right one
-			for _, m := range machines {
-				if m.NovaRoot != "" {
-					machineNovaRoot = m.NovaRoot
-					break
-				}
-			}
-		}
+	fallback := filepath.Join(root, friend+"-working")
+	if nr := a.machineNovaRoot(); nr != "" {
+		fallback = layout.ResolveFriend(nr, friend, "").Working
 	}
-	fallback := layout.ResolveFriend(machineNovaRoot, friend, "").Working
 	if note != nil {
 		if _, said := friendDirNoted.LoadOrStore(friendDirKey{a, friend}, true); !said {
 			fmt.Fprintf(note, "NOTE friend=%s has no dir on her nova-config row, so her working directory is %s; run: nova-config friend set %s --dir <her real working directory>\n", friend, oneline.Field(fallback), friend)
@@ -57,11 +50,48 @@ func (a *app) friendDir(friend, dir string, note io.Writer) string {
 	return fallback
 }
 
+// machineNovaRoot is this machine's nova_root out of nova-config: the machine row whose
+// name is this host, else the one row that sets a root. "" when no config store is named,
+// no row sets a root, or more than one does and none names this host.
+func (a *app) machineNovaRoot() string {
+	if a.inventory == nil {
+		return ""
+	}
+	machines, err := a.inventory(context.Background(), "")
+	if err != nil {
+		return ""
+	}
+	host, _ := os.Hostname()
+	found, many := "", false
+	for _, m := range machines {
+		if m.NovaRoot == "" {
+			continue
+		}
+		if m.Machine == host {
+			return m.NovaRoot
+		}
+		switch {
+		case found == "":
+			found = m.NovaRoot
+		case found != m.NovaRoot:
+			many = true
+		}
+	}
+	if many {
+		return ""
+	}
+	return found
+}
+
 // friendWorkDir is the friend's working directory as a brief or a view names it to her:
-// dir, her row's, when it is set, so no symlink is needed; else <nova-root>/ai/<name>/working.
+// dir, her row's, when it is set, so no symlink is needed; else <nova_root>/ai/<name>/working
+// when a nova_root is known, else today's ~/<friend>-working.
 func friendWorkDir(novaRoot, friend, dir string) string {
 	if dir != "" {
 		return dir
+	}
+	if novaRoot == "" {
+		return "~/" + friend + "-working"
 	}
 	return layout.ResolveFriend(novaRoot, friend, "").Working
 }

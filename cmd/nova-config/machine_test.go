@@ -202,9 +202,9 @@ func TestMachineTLAIsTheRecordMachineFact(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	h.machine(t, "m2", "4")
 	_, out, _ := h.run(t, "machine", "list", "--pg", dsn)
-	assert.Equal(t, "MACHINE name=m1 user=u seat=s slots=8 runners=0 width=4 tla=true note=-\nMACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false note=-\nCONFIG LIST kind=machine rows=2\n", out)
+	assert.Equal(t, "MACHINE name=m1 user=u seat=s slots=8 runners=0 width=4 tla=true nova_root=- note=-\nMACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false nova_root=- note=-\nCONFIG LIST kind=machine rows=2\n", out)
 	code, _, errs = h.run(t, "machine", "set", "m1", "--tla", "false", "--pg", dsn, "--as", "a1")
 	require.Equal(t, 0, code, errs)
 	_, out, _ = h.run(t, "machine", "show", "m1", "--pg", dsn)
-	assert.Contains(t, out, " width=4 tla=false note=- created=", "show: %q", out)
+	assert.Contains(t, out, " width=4 tla=false nova_root=- note=- created=", "show: %q", out)
 }

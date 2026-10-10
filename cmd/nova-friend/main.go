@@ -1248,7 +1248,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
-		if alias := filepath.Join(w.home, "ai", name, "working"); fileThere(alias) {
+		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
 			oc.Allow = append(oc.Allow, alias)
 		}
 		deliver = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }} // every lane run priced from her own session record, and capped by her row's token_cap

@@ -64,12 +64,12 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "machine show lists the machine's loops",
 			args: []string{"machine", "show", "m1"},
-			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
+			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 width=4 tla=false nova_root=- note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
 		},
 		{
 			name: "a machine with no loop says so",
 			args: []string{"machine", "show", "m2"},
-			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
+			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false nova_root=- note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
 		},
 		{
 			name: "set that leaves a loop both periodic and kept alive is refused",

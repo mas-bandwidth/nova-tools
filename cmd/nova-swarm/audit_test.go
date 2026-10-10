@@ -217,6 +217,12 @@ var swarmAudit = audit.Config{
 		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
 		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardcost"`,
+		// layout (diskguard.go, mirror.go) answers a path from the machine row's
+		// nova_root: it takes a root and returns a struct of strings, holds no writer
+		// and prints nothing. The paths it returns are flag defaults and the
+		// mkdir targets the verbs walk, never a line this binary prints; a path that
+		// does reach one goes through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/layout"`,
 		// math/big (main.go, native.go, nativesample.go) holds the dollar budget and compares
 		// a cost with it (#5094): exact arithmetic on values, no writer, no stream.
 		`"math/big"`,

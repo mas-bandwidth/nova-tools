@@ -15,12 +15,14 @@ import (
 type CmdRunner func(ctx context.Context, dir string, env []string, name string, args ...string) error
 
 // MirrorPath is the bench mirror of the repository named name: the first place
-// FindBenchMirror looks, so a stage finds what a keeper made.
-func MirrorPath(mirrorDir, name string) string {
-	return filepath.Join(mirrorDir, strings.TrimSuffix(name, ".git")+".git")
+// FindBenchMirror looks, so a stage finds what a keeper made. benchHome is the
+// bench user's home; the mirror lives at its nova-bench/mirror.
+func MirrorPath(benchHome, name string) string {
+	return filepath.Join(benchHome, "nova-bench", "mirror", strings.TrimSuffix(name, ".git")+".git")
 }
 
-// cardMirrorDir is where a pulse card's clone step looks for the bench mirror.
+// cardMirrorDir is where a pulse card's clone step looks for the bench mirror: under $HOME,
+// which is the bench user's home to a person and the slot's data home to a card's harness.
 const cardMirrorDir = "$HOME/nova-bench/mirror/"
 
 // PointCardAtMirrors writes the bench's own mirror directory into a card's clone step: the
@@ -31,7 +33,7 @@ func PointCardAtMirrors(card, benchHome string) string {
 	if benchHome == "" {
 		return card
 	}
-	return strings.ReplaceAll(card, cardMirrorDir, benchHome+"/")
+	return strings.ReplaceAll(card, cardMirrorDir, filepath.Join(benchHome, "nova-bench", "mirror")+"/")
 }
 
 // MirrorKeeper keeps one bare mirror of Origin at Mirror and a build cache warmed at the

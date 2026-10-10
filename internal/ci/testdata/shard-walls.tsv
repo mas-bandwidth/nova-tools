@@ -90,6 +90,7 @@ internal/harness	0.1	@local	-
 internal/hostload	1.1	@local	-
 internal/hygiene	0.5	@run37411066588	self-hosted
 internal/keyshape	0.0	@run37411066588	self-hosted
+internal/layout	0.2	@local	-
 internal/log	0.0	@run37411066588	self-hosted
 internal/member	1.3	@local	-
 internal/memindex	0.0	@run37411066588	self-hosted

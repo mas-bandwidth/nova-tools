@@ -83,5 +83,5 @@ func GCVolumeIn(out string) (use int, ok bool) {
 }
 
 // GCProbeLine is the remote line that reads a machine's volumes between its runs: df -P of
-// the home and the nova root (those that exist).
-const GCProbeLine = `df -Pk "$HOME" "${NOVA_NOVA_ROOT:-$HOME/nova}" 2>/dev/null; true`
+// the home, the bench root and the AI root (those that exist).
+const GCProbeLine = `df -Pk "$HOME" "$HOME/nova-bench" "${NOVA_AI_ROOT:-$HOME/ai}" 2>/dev/null; true`

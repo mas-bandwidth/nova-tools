@@ -732,7 +732,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=37 applied=37
+CONFIG MIGRATE file=try.json from=0 to=38 applied=38
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -741,11 +741,11 @@ $ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false note=-
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false nova_root=- note=-
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- runners=0 seat=s1 slots=8 tla=false user=nova width=4
+HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- nova_root=- runners=0 seat=s1 slots=8 tla=false user=nova width=4
 HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```

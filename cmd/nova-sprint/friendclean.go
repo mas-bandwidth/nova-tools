@@ -149,7 +149,7 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	// a fallback's note is one of the run's lines, on stdout with the rest (or in --json's)
 	var notes strings.Builder
 	for _, r := range rows {
-		w := a.friendDir(r.Name, config.FriendDir(r), &notes)
+		w := a.friendDir(r.Name, config.FriendDir(r), cl.root, &notes)
 		if notes.Len() > 0 {
 			cl.lines = append(cl.lines, strings.TrimSuffix(notes.String(), "\n"))
 			notes.Reset()

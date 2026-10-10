@@ -151,7 +151,7 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 	trees := make([]sprint.CollectTree, 0, len(roster))
 	at := map[string]time.Time{}
 	for _, f := range roster {
-		dir := a.friendDir(f, dirs[f], stderr)
+		dir := a.friendDir(f, dirs[f], *root, stderr)
 		t := sprint.CollectTree{Friend: f, Reports: map[string]string{}, Unread: map[string]string{}}
 		for job := range want {
 			report, why, when, err := friendReadReport(dir, job)

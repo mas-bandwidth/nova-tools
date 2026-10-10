@@ -50,7 +50,7 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	machine := fs.String("machine", "", "run gc on this machine (a host name ssh reaches) through the fleet runner, rather than on this one")
 	dry := fs.Bool("dry-run", false, "print every removal with the bytes it would free, and remove nothing")
-	aiRoot := fs.String("ai-root", "", "the AI root the working directories are under (default: layout.DefaultAIRoot); an absolute path")
+	aiRoot := fs.String("ai-root", "", "the AI root the working directories are under (else NOVA_AI_ROOT, else ~/ai, else the one the home's <name>-working links name); an absolute path")
 	maxAge := fs.String("max-age", "2d", "how old a bench directory, a lander worktree or a job no runner names is before it goes: days (2d) or a Go duration (36h)")
 	pos, err := parse(fs, args)
 	switch {

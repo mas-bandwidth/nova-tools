@@ -488,7 +488,15 @@ func (a *app) seatInbox(name, rowDir string, note io.Writer) (dir, parent string
 	if name == "" {
 		return "", "", false
 	}
-	parent = filepath.Join(a.friendDir(name, rowDir, note), "inbox")
+	home := ""
+	if rowDir == "" {
+		h, err := a.home()
+		if err != nil {
+			return "", "", false
+		}
+		home = h
+	}
+	parent = filepath.Join(a.friendDir(name, rowDir, home, note), "inbox")
 	info, err := os.Stat(parent)
 	return filepath.Join(parent, "sprint-judgments"), parent, err == nil && info.IsDir()
 }
