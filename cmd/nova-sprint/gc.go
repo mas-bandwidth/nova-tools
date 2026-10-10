@@ -29,7 +29,7 @@ func init() {
 	// it works on the directories of the machine it runs on (or the one --machine names)
 	notServed = append(notServed, "gc")
 	verbExit["gc"] = "exit codes: 0 GC OK, 1 a removal or a read failed (GC FAILED names each; the summary is GC INCOMPLETE) or --machine did not answer, 2 usage"
-	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, and trims the go caches to their cap; never a path under no known scratch root, never a clone with work that is nowhere else; --dry-run removes nothing"
+	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, sweeps the bench lane directories whose lane is gone, and trims the go caches to their cap, and says a bench whose /tmp is nearly full, naming it and its largest directories; never a path under no known scratch root, never a clone with work that is nowhere else; --dry-run removes nothing"
 }
 
 // gcRunner runs one line on a machine through the fleet runner: its exit status, and an
