@@ -1,3 +1,2 @@
 # The staticcheck findings in this package when the rule landed, one row per check; shrink-only (docs/SPEC-CI.md, staticcheck).
-# ceiling: 1
-internal/cardcontract:ST1005 0 fixed by adding lint:ignore directives to accept "Stage:" as the brief's header line
+# ceiling: 0
