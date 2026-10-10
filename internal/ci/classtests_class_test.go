@@ -886,6 +886,8 @@ func sharedPromotionRepo(t *testing.T) *promotionRepo {
 	}
 }
 
+var ciBinDir string
+
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if promotionShared.dir != "" {
