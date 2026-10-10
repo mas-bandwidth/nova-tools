@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
