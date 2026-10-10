@@ -7133,6 +7133,17 @@ candidates that error, panic, hang past the deadline and print no plan
 by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
 store refused (`TestShadowTickStoreRefusesEveryWrite`).
 
+#### install-rollback-on-missed-ticks-b.w6: a probation rollback on a missed tick or exit
+
+After `server switch --rollback`, the new server is watched through its first N ticks
+(`--probation`, default 5). `TickMissed` is enabled only while `ticks < Probation` in
+`tla/ServerInstall.tla`: after N successful ticks, a later missed tick cannot roll back the
+kept binary. The `NoRollbackAfterProbation` invariant and its reversed
+`MCServerInstallBrokenLateMissed` case pin this boundary. A miss during probation or a process
+exit restores the previous binary, logs and pushes one note, then exits so the supervisor starts
+the restored binary. `TestASwappedServerThatMissesItsFirstTicksIsRolledBack` checks missed ticks,
+exit, the Nth successful tick, and that a completed probation does not roll back.
+
 #### Adopting a build
 
 The seat adopts a build the way the fleet does, through the tools play (`fleet/tools.yml`) and
