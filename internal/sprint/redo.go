@@ -212,7 +212,13 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 		// no route serves its tier and a friend up does: the friends' deal's, never a machine's
 		_, _, toFriend, byFriend := s.routeOf(c, nil, nil, "")
 		if len(up) > 0 && !friend && !byFriend {
-			m = rr.next(up, q, room, reworkAvoid(s, c))
+			// a member that can launch a route of its tier (launchersOf), never one refused after
+			ms, why := s.launchersOf(c, nil, up)
+			if len(ms) == 0 && why != "" {
+				p.refuse(c.ID, why)
+				continue
+			}
+			m = rr.next(ms, q, room, reworkAvoid(s, c))
 		}
 		var u Unit
 		if m != "" {

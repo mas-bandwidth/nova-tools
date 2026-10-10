@@ -72,6 +72,22 @@ func HarnessesWhy(words string) string {
 	return ""
 }
 
+// launchersOf is the members of ms the deal can deal the primary c to: those for which
+// routeOf draws a route (each a check, moving no index), wc the work card dealt again
+// (nil for a new attempt); when none can, why is the first member's refusal. A member is
+// chosen from these, never chosen first and then refused, so a card whose route only
+// some members can launch goes to one of them (the second cold read of nova-tools#5576).
+func (s *Snapshot) launchersOf(c, wc *Card, ms []string) (out []string, why string) {
+	for _, m := range ms {
+		if _, _, w, _ := s.routeOf(c, wc, nil, m); w == "" {
+			out = append(out, m)
+		} else if why == "" {
+			why = w
+		}
+	}
+	return out, why
+}
+
 // notLaunching is the members of up that cannot launch the work card c on the route it
 // carries (Launches): what a move of a dealt card (a member down, the level, the
 // rebalance), which keeps its route, avoids as it avoids a member that refused it.

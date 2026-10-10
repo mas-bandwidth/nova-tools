@@ -1001,13 +1001,21 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			p.refuse(c.ID, benchRefusal(bench))
 			continue
 		}
-		next := func() string { return rr.next(members, q, widths, "") }
 		roomWhy := noRoomWhy
 		if len(bench) > 0 {
 			roomWhy = benchRoom(bench)
 		}
 		if quiet != "" {
 			roomWhy += "; " + quiet
+		}
+		// the next member round the fleet that can launch a route of the card's tier
+		// (launchersOf): with none, why says which route and harness it wants
+		next := func(card, wc *Card, of []string) (string, string) {
+			ms, why := s.launchersOf(card, wc, of)
+			if len(ms) == 0 && len(of) > 0 && why != "" {
+				return "", why
+			}
+			return rr.next(ms, q, widths, ""), roomWhy
 		}
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
@@ -1024,9 +1032,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 					continue
 				}
 				// below its ceiling: the machine escalates it, a new attempt on the next tier
-				m := next()
+				m, none := next(withField(c, FieldTierNow, tier), nil, members)
 				if m == "" {
-					p.refuse(c.ID, roomWhy)
+					p.refuse(c.ID, none)
 					continue
 				}
 				on, _ := CardTiers(c)
@@ -1050,17 +1058,17 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				continue
 			}
 			// a member that refused it at staging is not dealt it again (StagingRefusers)
-			m := next()
+			of := members
 			if refused := StagingRefusers(wc); len(refused) > 0 {
-				others := without(members, refused)
-				if len(others) == 0 {
+				of = without(members, refused)
+				if len(of) == 0 {
 					p.refuse(c.ID, fmt.Sprintf("%s was refused at staging by every member up (%s): rework it with a fix, or drop it", wc.ID, strings.Join(refused, ", ")))
 					continue
 				}
-				m = rr.next(others, q, widths, "")
 			}
+			m, why := next(c, wc, of)
 			if m == "" {
-				p.refuse(c.ID, roomWhy)
+				p.refuse(c.ID, why)
 				continue
 			}
 			u, why := redeal(s, c, wc, m, q, ri)
@@ -1077,9 +1085,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			p.refuse(c.ID, why) // a machine draws a route: a tier friends alone serve is theirs
 			continue
 		}
-		m := next()
+		m, why := next(c, nil, members)
 		if m == "" {
-			p.refuse(c.ID, roomWhy)
+			p.refuse(c.ID, why)
 			continue
 		}
 		u, why := deal(s, c, c.F("fix"), m, q, ri, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})

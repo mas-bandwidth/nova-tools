@@ -65,3 +65,24 @@ func TestHarnessesWordsAreHeadlessOrNone(t *testing.T) {
 	assert.Equal(t, "claude,codex", harnessesValue("codex,claude,codex"))
 	assert.Equal(t, "", harnessesValue("none"))
 }
+
+// The deal chooses among the members that can launch a route of the card's tier, never
+// chooses one and is then refused (the second cold read of nova-tools#5576): on a fleet of
+// m1 (no claude) and m2 (claude), with the tier's one route under claude, every card is
+// dealt to m2, none refused, whichever member the round starts at.
+func TestTheDealSendsAClaudeCardToAMemberWithClaude(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1", Width: 2}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2", Width: 2, Harnesses: "claude"}))
+	assert.Equal(t, "claude", w.s.MemberCtl("m2").F(FieldHarnesses), "fleet up --harnesses names it on the control card")
+	w.s.Routes = []Route{{Name: "flash-claude", Tier: cardhdr.RouteFlash, Provider: "subscription-claude", Model: "opus", Harness: "claude", Enabled: true, Deadline: 600}}
+	w.must(Add(w.s, AddReq{Stream: "s1", Count: 3}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3"}}}))
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		wc := w.s.Fleet.Card(WorkCardID(id, 1))
+		require.NotNil(t, wc, id)
+		assert.Equal(t, "m2", wc.Row, "%s dealt to the member with claude", id)
+		assert.Equal(t, "flash-claude", wc.F(FieldRoute), id)
+	}
+}
