@@ -169,12 +169,12 @@ func (a *app) sweepBenchLanes(c *common, machine string, stdout, stderr io.Write
 		}
 	}
 	st, err := a.store(*c)
-	if err != nil {
-		return // ignored: no store, no live lanes to read, nothing swept
+	if err != nil { // ignored: no store, no live lanes to read, nothing swept
+		return
 	}
 	rows, err := st.LaneRows(context.Background())
-	if err != nil {
-		return // ignored: lanes that cannot be read are not swept away
+	if err != nil { // ignored: lanes that cannot be read are not swept away
+		return
 	}
 	for _, r := range rows {
 		if r.Machine == machine && r.Kind == sprint.LaneGo && len(r.Held) > 0 {
