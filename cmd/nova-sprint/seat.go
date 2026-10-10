@@ -74,8 +74,19 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 	if why := sprint.NotSeat(holder, req); why != "" {
 		return refuse(stderr, "coordinator", why)
 	}
-	// the seat goes only to a session the push loop has reached (pushproof.go)
-	if why, err := pushGate(ctx, st, req.To, a.now()); err != nil {
+	// Every seat-changing operation wants the current seat's complete proof set.
+	// A take's whole purpose is an away holder whose pushes are necessarily stale
+	// (down or out of credits): only the next holder's judgment proof gates it.
+	if holder != "" && !req.Take {
+		if why, err := pushGate(ctx, st, holder, a.now()); err != nil {
+			return a.readFailed("coordinator", err, stderr)
+		} else if why != "" {
+			return refuse(stderr, "coordinator", why)
+		}
+	}
+	// The next holder proves its session before handover; its native observers
+	// bind to the new seat generation after handover (SPEC-SPRINT section 8).
+	if why, err := targetJudgmentGate(ctx, st, req.To, a.now()); err != nil {
 		return a.readFailed("coordinator", err, stderr)
 	} else if why != "" {
 		return refuse(stderr, "coordinator", why)
@@ -586,6 +597,8 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 			return a.cmdSeatLogin(args[1:], stdout, stderr)
 		case "logout":
 			return a.cmdSeatLogout(args[1:], stdout, stderr)
+		case "deliver":
+			return a.cmdSeatDeliver(args[1:], stdout, stderr)
 		case "push":
 			return a.cmdSeatPush(args[1:], stdout, stderr)
 		case "pong":

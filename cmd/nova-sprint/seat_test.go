@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,6 +179,35 @@ func TestATakeWithoutTheOwnersNameIsRefused(t *testing.T) {
 	}
 	ta2.ok("coordinator rowan --take --approved-by glenn --reason r --actor rowan")
 	assert.Equal(t, "rowan", ta2.holder())
+}
+
+// A take's whole purpose is an away holder whose pushes are necessarily stale
+// (down or out of credits): while pushes are armed, the take still moves the
+// seat. Only the next holder's judgment nonce proof gates it, never the away
+// holder's complete set (the reader finding on attempt 7).
+func TestATakeStillWorksForAnAwayHolderWhosePushesAreStale(t *testing.T) {
+	t.Parallel()
+	const away = "take-away"
+	ta, _ := pushProofSprint(t, away)
+	ctx := context.Background()
+	ta.ok("init --readers reader-a,reader-b --members m1,m2 --owner glenn")
+	st, err := ta.a.store(common{redis: "mem:0", actor: away})
+	require.NoError(t, err)
+
+	// the away holder's pong is two hours old and its observers never beat: a
+	// normal move would be refused with a PUSH DOWN naming it
+	old := ta.a.now().Add(-2 * time.Hour)
+	require.NoError(t, writePush(ctx, st, sprint.PushRecord{Name: away, Harness: "opencode", Target: t.TempDir(), Nonce: "n1", Sent: old, Proven: old, PongOf: "n1"}))
+
+	// the next holder's judgment nonce is proven
+	next := "take-next"
+	pushTests.Store(next, pushArmedOnly{})
+	t.Cleanup(func() { pushTests.Delete(next) })
+	require.NoError(t, writePush(ctx, st, sprint.PushRecord{Name: next, Harness: "opencode", Target: t.TempDir(), Nonce: "n1", Sent: ta.a.now(), Proven: ta.a.now(), PongOf: "n1"}))
+
+	out := ta.ok("coordinator " + next + " --take --approved-by glenn --reason 'the holder is away' --actor " + next)
+	assert.Contains(t, out, "COORDINATOR OK holder="+next+" from="+away+" by="+next+" taken approved_by=glenn", out)
+	assert.Equal(t, next, ta.holder())
 }
 
 // handover prints what the next seat needs, from the store, in one screen.
