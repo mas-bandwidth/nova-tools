@@ -79,11 +79,19 @@ type Status struct {
 	HarnessAlive string `json:"alive,omitempty"`
 	StoreError   string `json:"store_error,omitempty"`
 	Width        int    `json:"width"`
-	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
-	// turns in a row the same way; empty for a passive harness.
+	// Session is SessionOK, SessionBroken once the provider refused BrokenAfter
+	// turns in a row the same way (or a turn could not be taken, or the
+	// context was full, or the harness compacted in a loop, or a turn stuck),
+	// or SessionRecovered once a fresh session has taken over; empty for a
+	// passive harness.
 	Session       string `json:"session,omitempty"`
 	SessionID     string `json:"session_id,omitempty"`
 	SessionReason string `json:"session_reason,omitempty"`
+	// SessionFrom and SessionTo are the old and new session ids of the last
+	// recovery, and RecoveredAt when it happened (session=recovered).
+	SessionFrom string    `json:"session_from,omitempty"`
+	SessionTo   string    `json:"session_to,omitempty"`
+	RecoveredAt time.Time `json:"recovered_at,omitzero"`
 	// SessionLive is the conversation a mailbox harness delivers into (Daemon.Mailbox):
 	// the one that reads, as the daemon last followed it; empty for every other harness.
 	SessionLive string `json:"session_live,omitempty"`
