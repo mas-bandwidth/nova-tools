@@ -161,7 +161,7 @@ takes `--json`; `log` takes `--max`.
 - `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one `PEEK MESSAGE
   state= id= from= at= subject=` line per message. Writes nothing, makes no
   group.
-- `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
+- `log [--bodies] [--from <name>] [--to <name>] [--max <n>]` reads `bus2:log`, oldest first. `--from` and `--to` filter before `--max`. Writes nothing.
 - `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
   `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>`.
 - `version`, `help`, `help <verb>`.
