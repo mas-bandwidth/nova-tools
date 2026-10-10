@@ -232,6 +232,34 @@ naming the verb or the step above: install `sops`, set the missing variable, `ch
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
 checks and says which; run `nova-doctor run` without `--local` to see it.
 
+### dep-jev-b.w6: the Jev backend (nova-decide's backend)
+
+The Jev dependency is TypeSafe's System One model, the backend that nova-decide uses for
+decisions (internal/decide/jev.go, SPEC-NOVA-DECIDE section 3). A decision is a named schema
+asked over one state text; the Jev backend posts the state and schema to an endpoint and
+receives answers with probabilities. The key `JEV_API_KEY` must be sealed in the secrets store
+by name, and the endpoint must answer a health call (the check calls the endpoint with a
+bounded HTTP request, no spend). When Jev is absent, nova-decide can still run but with
+decisions unavailable.
+
+Who needs it: any machine that runs nova-decide decisions (a fleet member, a coordinator's
+decide read and answer). `nova-up --local` can provide this dependency: its `jev` step
+(`internal/up/jev.go`) adds a reference to `JEV_API_KEY` in seat.env. A person on another
+machine can also add the reference by hand: seal the key in the secrets store and append a
+line to seat.env.
+
+```sh
+nova-secrets seal --store <store> --as <seat> --name JEV_API_KEY
+echo 'JEV_API_KEY=' >> ~/nova/seat.env
+```
+
+The doctor check `jev` (`internal/doctor/check_jev.go`) verifies two things: (1) `JEV_API_KEY`
+is in the secrets store's listing (names only, never printed), and (2) the endpoint answers
+a health call (a no-cost HTTP request to `https://api.typesafe.ai/v1/systemone`, or the address
+in `JEV_ENDPOINT`). Absent key is a warn noting that decisions via nova-decide will be
+unavailable. Unreachable endpoint is also a warn. The check is fleet only, so
+`nova-doctor --local` skips it.
+
 ### dep-ssh-b.w8: ssh between the coordinator and the benches
 
 The coordinator and the fleet's members reach the benches by ssh: the land, the sandbox
