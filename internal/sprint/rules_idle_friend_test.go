@@ -568,12 +568,13 @@ func TestOneBoundLaterCardsReturnToPoolAndRowMarkedIdleWithOneJudgment(t *testin
 	friends := []FriendSeat{{Name: "amy", Width: 8, Status: Up}}
 	p, _ := TickRuleIdleReturn(s, TickReq{AnswerRules: true, Friends: friends})
 
-	// 1 judgment for the row in seat's inbox
+	// 1 judgment for the row in seat's inbox: the row is its subject, not a stream
 	require.Len(t, p.Notes, 1)
 	assert.Equal(t, Judgment, p.Notes[0].Kind)
 	assert.Equal(t, RuleFriendIdleReturn, p.Notes[0].Type)
-	assert.Equal(t, row, p.Notes[0].Stream)
-	assert.True(t, p.Notes[0].StreamLevel)
+	assert.Equal(t, []string{row}, p.Notes[0].Primaries)
+	assert.Empty(t, p.Notes[0].Stream)
+	assert.False(t, p.Notes[0].StreamLevel)
 	assert.Contains(t, p.Notes[0].What, "friend amy idle: cards returned to pool")
 
 	// Cards returned and row marked idle
@@ -678,7 +679,6 @@ func TestTakeCardClearsIdle(t *testing.T) {
 	assert.Contains(t, p.Units[1].Moved, "idle cleared")
 }
 
-
 func TestStaleBeatWithChildrenDoesNotSuppressIdleLoaded(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
@@ -725,4 +725,65 @@ func TestStaleBeatWithChildrenDoesNotSuppressIdleLoaded(t *testing.T) {
 	assert.Equal(t, "inbox", p.Notes[0].Type)
 	assert.Equal(t, "friend amy idle-loaded 30m: width goal sent", p.Notes[0].What)
 	assert.Equal(t, "coordinator", p.Notes[0].To)
+}
+
+func TestSessionProofIsNotWorkEvidence(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 7, 23, 11, 0, 0, time.UTC)
+	s := &Snapshot{Now: now, Work: NewTable(Work), Fleet: NewTable(Fleet)}
+	row := FriendRow("freddy")
+	s.Fleet.Put(&Card{
+		ID:     CtlID(row),
+		Row:    row,
+		Col:    Ctl,
+		Fields: map[string]string{"kind": "member", "status": Up},
+	})
+	s.Fleet.Put(&Card{
+		ID:     "freddy.w1",
+		Row:    row,
+		Col:    Working,
+		Fields: map[string]string{"kind": "work", "primary": "test.1", "taken": stamp(now.Add(-30 * time.Minute))},
+	})
+	// Her session answered a SESSION CHECK a minute ago: a live session, no work.
+	friends := []FriendSeat{{Name: "freddy", Status: Up, Proof: now.Add(-1 * time.Minute)}}
+	idle, idleMinutes := isRowIdleLoaded(s, TickReq{Friends: friends}, row, 15*time.Minute)
+	assert.True(t, idle, "session proof is presence, not evidence of work")
+	assert.Equal(t, int64(30), idleMinutes)
+}
+
+func TestIdleReturnRowJudgmentSurvivesTheStreamRetirementPass(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	s := &Snapshot{Now: now, Work: NewTable(Work), Merge: NewTable(Merge), Fleet: NewTable(Fleet)}
+	row := FriendRow("amy")
+	s.Fleet.Put(&Card{
+		ID:     CtlID(row),
+		Row:    row,
+		Col:    Ctl,
+		Fields: map[string]string{"kind": "member", "status": Up, FieldFriendIdleLoaded: stamp(now.Add(-16 * time.Minute))},
+	})
+	s.Fleet.SetRows([]string{row})
+	s.Fleet.Put(&Card{
+		ID:     "amy.w1",
+		Row:    row,
+		Col:    Working,
+		Fields: map[string]string{"kind": "work", "primary": "task1", "taken": stamp(now.Add(-35 * time.Minute))},
+	})
+
+	friends := []FriendSeat{{Name: "amy", Width: 8, Status: Up}}
+	p, _ := TickRuleIdleReturn(s, TickReq{AnswerRules: true, Friends: friends})
+	require.Len(t, p.Notes, 1)
+	n := p.Notes[0]
+	assert.Empty(t, n.Stream, "a Fleet row is no work stream")
+	assert.False(t, n.StreamLevel)
+	assert.Equal(t, []string{row}, n.Primaries)
+	require.Equal(t, []string{row}, n.Subjects(), "the row is the judgment's one subject")
+
+	// The open judgment the seat holds, keyed as the store keys it.
+	s.Open = nil
+	for _, sub := range n.Subjects() {
+		s.Open = append(s.Open, Open{Key: OpenKey(n.ID, sub), Note: n})
+	}
+	retired, _ := TickRetireGone(s, TickReq{AnswerRules: true})
+	assert.Empty(t, retired.Closes, "the stream-retirement pass closes no row judgment")
 }

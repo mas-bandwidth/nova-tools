@@ -198,7 +198,6 @@ func friendEvidenceOfWork(s *Snapshot, r TickReq, friend string, row string) tim
 		if seat.Name == friend {
 			see(seat.Finished)
 			see(seat.Active)
-			see(seat.Proof)
 			if len(seat.Running) > 0 {
 				if recent(seat.Beat.At) {
 					see(seat.Beat.At)
@@ -214,7 +213,6 @@ func friendEvidenceOfWork(s *Snapshot, r TickReq, friend string, row string) tim
 			if seat.Name == friend {
 				see(seat.Finished)
 				see(seat.Active)
-				see(seat.Proof)
 				if len(seat.Running) > 0 {
 					if recent(seat.Beat.At) {
 						see(seat.Beat.At)
@@ -233,7 +231,6 @@ func friendEvidenceOfWork(s *Snapshot, r TickReq, friend string, row string) tim
 	}
 	if ok && b.Friend != nil {
 		see(b.Friend.Active)
-		see(b.Proof)
 		if (b.Friend.Working != nil && *b.Friend.Working > 0) || len(b.Friend.Running) > 0 {
 			if recent(b.At) {
 				see(b.At)
@@ -460,14 +457,17 @@ func TickRuleIdleReturn(s *Snapshot, r TickReq) (Plan, int) {
 			})
 		}
 
+		// The row's one judgment, built as NStatus is: the row is its primary
+		// subject and it names no work stream, so the tick's stream-retirement
+		// pass (TickRetireGone, NamedStream) leaves it open for the seat.
 		p.Notes = append(p.Notes, Note{
-			Kind:        Judgment,
-			Type:        RuleFriendIdleReturn,
-			Stream:      row,
-			What:        fmt.Sprintf("friend %s idle: cards returned to pool", friend),
-			Who:         "rule " + RuleFriendIdleReturn,
-			At:          s.Now,
-			StreamLevel: true,
+			Kind:      Judgment,
+			Type:      RuleFriendIdleReturn,
+			Primaries: []string{row},
+			Count:     1,
+			What:      fmt.Sprintf("friend %s idle: cards returned to pool", friend),
+			Who:       "rule " + RuleFriendIdleReturn,
+			At:        s.Now,
 		})
 	}
 	return p, 0
