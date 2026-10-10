@@ -3,7 +3,9 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -61,10 +63,7 @@ func checkUnits(ctx context.Context, env Env) Result {
 	if addr == "" || strings.HasPrefix(addr, "mem:") {
 		return Result{Status: OK, Evidence: unitsLocal}
 	}
-	dir := env.Getenv("NOVA_UNITS_DIR")
-	if dir == "" {
-		dir = defaultUnitsDir(env)
-	}
+	dirs := unitsDirs(env)
 	cctx, cancel := context.WithTimeout(ctx, unitsTimeout)
 	defer cancel()
 	out, err := env.Exec(cctx, "nova-config", "inventory")
@@ -85,11 +84,18 @@ func checkUnits(ctx context.Context, env Env) Result {
 			Evidence: "no machine row is this machine: nova-config inventory marks none ansible_connection=local",
 			Fix:      "set NOVA_MACHINE to this machine's row name (nova-config machine list names them) (" + doc + ")"}
 	}
-	found, rerr := readUnits(env, dir)
-	if rerr != nil {
-		return Result{Status: Fail,
-			Evidence: "the unit directory " + dir + " could not be read: " + oneLine(rerr.Error()),
-			Fix:      "create the service manager's directory or set NOVA_UNITS_DIR (" + doc + ")"}
+	var found []unitFile
+	for _, dir := range dirs {
+		units, rerr := readUnits(env, dir)
+		if errors.Is(rerr, fs.ErrNotExist) && len(dirs) > 1 {
+			continue // a machine need not use both the login and system scope
+		}
+		if rerr != nil {
+			return Result{Status: Fail,
+				Evidence: "the unit directory " + dir + " could not be read: " + oneLine(rerr.Error()),
+				Fix:      "create the service manager's directory or set NOVA_UNITS_DIR (" + doc + ")"}
+		}
+		found = append(found, units...)
 	}
 	missing, hand, differ := compareUnits(records, found)
 	if len(missing)+len(hand)+len(differ) == 0 {
@@ -133,22 +139,26 @@ func selfLoops(inv inventoryLoops, machine string) ([]loopRecord, string, bool) 
 	return nil, "", false
 }
 
-// defaultUnitsDir is the service manager's directory the units are installed
-// in: the login's LaunchAgents on darwin, its systemd user units on linux.
-func defaultUnitsDir(env Env) string {
+// unitsDirs covers both scopes the fleet play installs in. NOVA_UNITS_DIR
+// selects one directory for an isolated check.
+func unitsDirs(env Env) []string {
+	if dir := env.Getenv("NOVA_UNITS_DIR"); dir != "" {
+		return []string{dir}
+	}
 	home := env.Getenv("HOME")
 	if runtime.GOOS == "darwin" {
-		return filepath.Join(home, "Library", "LaunchAgents")
+		return []string{filepath.Join(home, "Library", "LaunchAgents"), "/Library/LaunchDaemons"}
 	}
-	return filepath.Join(home, ".config", "systemd", "user")
+	return []string{filepath.Join(home, ".config", "systemd", "user"), "/etc/systemd/system"}
 }
 
 // unitFile is one installed unit the check read: the record name its file
 // names, the command it runs, and why it could not be read when it could not.
 type unitFile struct {
-	Name string
-	Args []string
-	Why  string
+	Name     string
+	Args     []string
+	Why      string
+	FromPlay bool
 }
 
 // readUnits reads every loop unit in dir: a launchd plist or a systemd user
@@ -175,6 +185,7 @@ func readUnits(env Env, dir string) ([]unitFile, error) {
 			out = append(out, u)
 			continue
 		}
+		u.FromPlay = strings.Contains(string(b), loopMark)
 		args, perr := units.UnitArgs(goos, b)
 		if perr != nil {
 			u.Why = "it is no unit this tool reads: " + oneLine(perr.Error())
@@ -218,6 +229,9 @@ func compareUnits(records []loopRecord, found []unitFile) (missing, hand, differ
 		seen[u.Name] = true
 		r, ok := byName[u.Name]
 		if !ok {
+			if u.Name == "disk-guard" && u.FromPlay {
+				continue // the fleet play adds this virtual row beside loop records
+			}
 			hand = append(hand, u.Name)
 			continue
 		}

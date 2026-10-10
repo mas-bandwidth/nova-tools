@@ -314,3 +314,13 @@ records (`nova-config inventory`) and the units in the service manager's directo
 a unit with no record (a hand plist), and a unit whose command differs from its record,
 each with the apply-and-play fix line above. It is fleet-scoped: `nova-doctor --local`
 skips it, and a machine whose sprint store is its own twin (`mem:`) is `ok` with that said.
+
+#### dep-launchd-units-bcb.w1: the play's scopes and disk guard
+
+The check reads both unit scopes the fleet play can install: the login's
+`~/Library/LaunchAgents` and `/Library/LaunchDaemons` on darwin, or
+`~/.config/systemd/user` and `/etc/systemd/system` on linux. A missing unused
+directory is fine. The play also writes a marked `disk-guard` unit beside the
+loop records on each machine; that unit needs no `nova_loops` record. An
+unmarked `disk-guard` unit, like any other unrecorded hand unit, is named for
+repair. `NOVA_UNITS_DIR` selects one directory for an isolated check.
