@@ -212,3 +212,8 @@ func TestTLACoverageRefusesAnOwedRowWithNoCard(t *testing.T) {
 		assert.NotEmptyf(t, tlaCoverageProblems(root, []tlaCoverageRow{bad}), "%+v", bad)
 	}
 }
+
+func TestTLAModelIsCurrentFriendHarnessLimit(t *testing.T) {
+	t.Parallel()
+	requireModelCurrent(t, "friend-harness-limit")
+}
