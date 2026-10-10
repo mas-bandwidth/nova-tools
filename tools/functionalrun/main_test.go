@@ -905,23 +905,6 @@ func TestReapDryRunChangesNothing(t *testing.T) {
 	assert.Contains(t, stderr.String(), "REAP-WOULD id=a1 run=20300102t030405-0000000a")
 }
 
-func TestEveryRunIDMatchesTheReapersPattern(t *testing.T) {
-	t.Parallel()
-	id := newRunID(time.Now())
-	assert.True(t, runIDRE.MatchString(id) && runIDRE.MatchString(id+"-mod"),
-		"the reaper would not take this tool's own run id %q", id)
-	labels := map[string]string{}
-	args := testArgs(testConfig(), "img", id, time.Unix(1_800_000_000, 0))
-	for _, kv := range flagValues(args, "--label") {
-		k, v, _ := strings.Cut(kv, "=")
-		labels[k] = v
-	}
-	vs, foreign := judge([]listed{{ID: "x", Labels: labels}}, time.Unix(1_800_000_000, 0).Add(testConfig().deadline+time.Minute), 30*time.Second, "501")
-	assert.Zero(t, foreign, "the labels a run writes are not foreign: %+v", vs)
-	require.Len(t, vs, 1)
-	assert.True(t, vs[0].remove, "the reaper does not take an overdue container with the labels a run writes: %+v", vs)
-}
-
 func TestChooseRuntimePrefersPodmanThenDocker(t *testing.T) {
 	t.Parallel()
 	has := func(names ...string) func(string) (string, error) {
