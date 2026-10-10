@@ -2,6 +2,8 @@
 
 Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). Rules: [STANDARD.md](STANDARD.md).
 
+The session contract (docs/SPEC-FRIEND.md, "The session contract", internal/friend/session_contract.go): the daemon tells a session friend everything the machine expects of her, the moment it changes — the wake file and the exact monitor line, the pong line, the start stamp (`nova-sprint progress --as friend.<me> <card>@<gen> --epoch <n>`) and the finish form. It is carried by every session check until the session answers one, pushed as one message titled `your contract` on the daemon's start, on a reinstall and whenever the wake path, the server or the epoch changes (the first epoch included), written to `<state-dir>/CONTRACT.md`, and printed by `nova-friend contract --as <me>`. A check deferred because the session runs no monitor over its wake file is pushed as a message (`answer <nonce>: <pong line>`) that still carries that contract; three in a row unanswered put the friend down with the reason `session runs no monitor over <file>`. The daemon stamps a start wherever it can see one: a lane it starts, and a held work card whose job directory gains a worktree or a branch push.
+
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
 | `acceptance/` | release acceptance records: one measured requirement per file, with the raw numbers | `go test ./internal/ci` | `go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed` |

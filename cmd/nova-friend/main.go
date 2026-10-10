@@ -1378,7 +1378,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	pongLine := func(nonce string) string {
 		return w.pongCommand(name, nonce, state, c.Str("redis"), dir)
 	}
-	sc := &friend.SessionCheck{
+	var sc *friend.SessionCheck
+	sc = &friend.SessionCheck{
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
 		Go:   w.checkGo,
