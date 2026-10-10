@@ -17,11 +17,11 @@ func TestFsckFindsLandedRecordsMissingFromTheBase(t *testing.T) {
 	w.s.Work.SetRows([]string{"s1"})
 	// Create two landed cards with heads not on base
 	pr1 := &Card{ID: "s1-1", Row: "s1", Col: Landed, Fields: map[string]string{
-		"brief": "REPO: example.com/foo BASE: main HEAD: abc123456789",
+		"brief": "REPO: example.com/foo\nBASE: main\nHEAD: abc123456789",
 		"head":  "abc123456789",
 	}}
 	pr2 := &Card{ID: "s1-2", Row: "s1", Col: Landed, Fields: map[string]string{
-		"brief": "REPO: example.com/bar BASE: main HEAD: def987654321",
+		"brief": "REPO: example.com/bar\nBASE: main\nHEAD: def987654321",
 		"head":  "def987654321",
 	}}
 	w.s.Work.Put(pr1)
@@ -38,7 +38,7 @@ func TestFsckFindsLandedRecordsMissingFromTheBase(t *testing.T) {
 		return 0, "", ""
 	}
 
-	findings := LandOnBase(w.s, runGit, "main")
+	findings := LandOnBase(w.s, runGit)
 	require.Len(t, findings, 2)
 	for _, f := range findings {
 		assert.Equal(t, FsckCheckName, f.Check)
@@ -55,7 +55,7 @@ func TestFsckOkWhenAllLandedOnBase(t *testing.T) {
 	w.s.Work.SetRows([]string{"s1"})
 	// Create a landed card whose head IS on base
 	pr := &Card{ID: "s1-1", Row: "s1", Col: Landed, Fields: map[string]string{
-		"brief": "REPO: example.com/foo BASE: main HEAD: 1234567890abcdef",
+		"brief": "REPO: example.com/foo\nBASE: main\nHEAD: 1234567890abcdef",
 		"head":  "1234567890abcdef",
 	}}
 	w.s.Work.Put(pr)
@@ -71,7 +71,7 @@ func TestFsckOkWhenAllLandedOnBase(t *testing.T) {
 		return 0, "", ""
 	}
 
-	findings := LandOnBase(w.s, runGit, "main")
+	findings := LandOnBase(w.s, runGit)
 	require.Len(t, findings, 1)
 	assert.True(t, findings[0].Ancestor)
 	assert.Contains(t, findings[0].Line(), "FSCK OK")

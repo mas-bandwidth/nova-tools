@@ -29,10 +29,9 @@ type fsckResult struct {
 
 func (a *app) cmdFsck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("fsck")
-	jsonFlag := fs.Bool("json", false, "output as JSON")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "fsck", argErr("takes no words; err, fsck [--json] ", err, pos...))
+		return refuse(stderr, "fsck", argErr("takes no words; run: fsck [--json] ", err, pos...))
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -44,8 +43,8 @@ func (a *app) cmdFsck(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("fsck", err, stderr)
 	}
 	runGit := a.gitRunner(*c)
-	results := sprint.LandOnBase(snap, runGit, "") // base from card brief
-	if c.json || *jsonFlag {
+	results := sprint.LandOnBase(snap, runGit)
+	if c.json {
 		var items []fsckResult
 		for _, f := range results {
 			items = append(items, fsckResult{
@@ -64,11 +63,17 @@ func (a *app) cmdFsck(args []string, stdout, stderr io.Writer) int {
 		return exitFromResults(results)
 	}
 	violations := 0
+	unreadable := false
 	for _, f := range results {
-		if !f.Ancestor && f.Why == "" {
+		if f.Why != "" {
+			unreadable = true
+		} else if !f.Ancestor {
 			violations++
 		}
 		fmt.Fprintln(stdout, f.Line())
+	}
+	if unreadable {
+		return 2
 	}
 	if violations == 0 {
 		fmt.Fprintln(stdout, "FSCK OK checks=1")

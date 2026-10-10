@@ -46,13 +46,13 @@ func (f LandOnBaseFinding) Line() string {
 
 // LandOnBase is the landed-on-base check over a snapshot with git facts filled by runGit.
 // runGit runs git commands and returns exit code, stdout, stderr.
-func LandOnBase(snap *Snapshot, runGit func(cmd string, args ...string) (int, string, string), base string) []LandOnBaseFinding {
+func LandOnBase(snap *Snapshot, runGit func(cmd string, args ...string) (int, string, string)) []LandOnBaseFinding {
 	var findings []LandOnBaseFinding
 	for _, pr := range snap.Work.Column(Landed) {
 		if IsSentinel(pr) {
 			continue
 		}
-		f := checkLandOnBase(pr, base, runGit)
+		f := checkLandOnBase(pr, runGit)
 		if f.ID != "" {
 			findings = append(findings, f)
 		}
@@ -61,10 +61,10 @@ func LandOnBase(snap *Snapshot, runGit func(cmd string, args ...string) (int, st
 }
 
 // checkLandOnBase checks one landed card: its head is an ancestor of origin/<base>.
-func checkLandOnBase(pr *Card, base string, runGit func(cmd string, args ...string) (int, string, string)) LandOnBaseFinding {
+func checkLandOnBase(pr *Card, runGit func(cmd string, args ...string) (int, string, string)) LandOnBaseFinding {
 	cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 	f := LandOnBaseFinding{Check: FsckCheckName, ID: pr.ID, Stream: pr.Row,
-		Head: pr.F("head"), Repo: cb.Named, Base: base, Fix: "nova-sprint reopen " + pr.ID + " --reason <text>"}
+		Head: pr.F("head"), Repo: cb.Named, Base: "", Fix: "nova-sprint reopen " + pr.ID + " --reason <text>"}
 	if cb.Ref != "" {
 		f.Base = cb.Ref
 	}
@@ -82,13 +82,18 @@ func checkLandOnBase(pr *Card, base string, runGit func(cmd string, args ...stri
 	}
 	// check if head is on base tip
 	ref := "refs/remotes/origin/" + f.Base
-	_, tip, _ := runGit("git", "ls-remote", "origin", ref)
-	tip = strings.TrimSpace(tip)
-	if tip == "" {
+	_, out, _ := runGit("git", "ls-remote", "origin", ref)
+	out = strings.TrimSpace(out)
+	if out == "" {
 		f.Why = "origin/" + f.Base + " could not be read"
 		return f
 	}
-	f.Tip = tip
+	// ls-remote returns "<sha> <ref>"
+	sha, _, ok := strings.Cut(out, "\t")
+	if !ok {
+		sha = strings.Fields(out)[0]
+	}
+	f.Tip = sha
 	// check if head is ancestor of tip
 	exit, _, _ := runGit("git", "merge-base", "--is-ancestor", f.Head, f.Tip)
 	f.Ancestor = (exit == 0)
