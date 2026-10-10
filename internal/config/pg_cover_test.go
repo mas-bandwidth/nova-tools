@@ -101,11 +101,11 @@ func unexpected(q string) ([]string, [][]driver.Value, error) {
 
 // friendCols and friendRow are the columns(k), created_at, updated_at scanRow
 // reads for the friend kind.
-var friendCols = []string{"name", "slots", "tiers", "roles", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "created_at", "updated_at"}
+var friendCols = []string{"name", "slots", "tiers", "roles", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "cap_usd_hour", "created_at", "updated_at"}
 
 func friendRow(name string) []driver.Value {
 	at := time.Unix(0, 0).UTC()
-	return []driver.Value{name, int64(2), "flash", "", int64(8), "batch", nil, int64(6000000), "", "", at, at}
+	return []driver.Value{name, int64(2), "flash", "", int64(8), "batch", nil, int64(6000000), "", "", "10", at, at}
 }
 
 // TestPgCoverRedact: Redact names the user, host, port and database, and
@@ -179,11 +179,11 @@ func TestPgCoverValues(t *testing.T) {
 	k, ok := Lookup(KindFriend)
 	require.True(t, ok)
 	row := Row{Name: "f1", Fields: map[string]string{"slots": "2", "tiers": "flash", "roles": "", "width": "8", "mode": "one-shot"}}
-	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", nil, int64(0), "", ""}, values(k, row), "an unset config_dir is NULL, and an unset token_cap binds as 0")
+	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", nil, int64(0), "", "", ""}, values(k, row), "an unset config_dir is NULL, and an unset token_cap binds as 0")
 	row.Fields["config_dir"] = "/accounts/heavy-a"
-	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(0), "", ""}, values(k, row))
+	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(0), "", "", ""}, values(k, row))
 	row.Fields["token_cap"] = "6000000"
-	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(6000000), "", ""}, values(k, row))
+	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(6000000), "", "", ""}, values(k, row))
 }
 
 // TestPgCoverKindOf: a known kind is returned, an unknown one refused.
