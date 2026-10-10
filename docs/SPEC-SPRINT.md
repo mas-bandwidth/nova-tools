@@ -4960,10 +4960,11 @@ The nova-wake unit: the tool left cmd/ (fleet/retired-tools.txt) and its binary 
 
 ### Backlog alarms
 
-Four conditions of the whole sprint the tick keeps (its deadlines part plans them
-with the deadlines), each off until the coordinator sets its threshold with `set`,
-the work table's properties `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready`
-(a clear starts the next epoch with none):
+Five conditions of the whole sprint the tick keeps (its deadlines part plans them
+with the deadlines), each off until the coordinator sets its threshold with `set`
+except the defect alarm, which is on by default at 10; the work table's properties
+`alarm_review`, `alarm_merging`, `alarm_fleet`, `alarm_ready` and `alarm_defect`
+(a clear starts the next epoch with none set, so the defect alarm is at its default):
 
 - review above its alarm: more primaries in review than `--alarm-review <n>`;
 - merging above its alarm: more primaries merging than `--alarm-merging <n>`;
@@ -4971,7 +4972,11 @@ the work table's properties `alarm_review`, `alarm_merging`, `alarm_fleet` and `
   more waiting;
 - the fleet works below its alarm: the members up working fewer work cards than
   `--alarm-fleet <percent>` (1 to 100) of their width, while a primary is ready or
-  waiting.
+  waiting;
+- defect above its alarm: more primaries in review held as brief defects than
+  `--alarm-defect <n>` (default 10, `off` to take it off), or any one in defect longer
+  than 2 hours, listing the oldest five with their reasons ("The review reason: reads
+  and defect" above).
 
 An alarm is an episode: one judgment of the sprint (no primaries) written when its
 condition starts, never again while it stands, whatever its counts do (it is keyed by

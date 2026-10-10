@@ -669,7 +669,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 					// primary carries the mark so every later step and view reads it
 					// (brief_defect.go; columns.go, the review reason)
 					n = judgment(NBriefDefect, pr.Row, s.Now, 0, pr.ID)
-					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), "a brief defect, "+reason+": re-cut the brief; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)
+					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), "a brief defect, "+reason+": re-cut the brief; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)+"; "+briefDefectRemedy(pr.ID)
 					if costs[pr.ID] == nil {
 						costs[pr.ID] = map[string]string{}
 					}
@@ -862,7 +862,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		// primary's own mark, or a stored finding that names the brief (columns.go,
 		// ReviewDefect). It asks again to re-cut the brief, never a stranded rework
 		// (docs/SPEC-SPRINT.md section 1, a brief defect)
-		typ, why = NBriefDefect, "a brief defect, "+defectWhy+": re-cut the brief; nothing is open on it"
+		typ, why = NBriefDefect, "a brief defect, "+defectWhy+": re-cut the brief; nothing is open on it; "+briefDefectRemedy(pr.ID)
 	case pr.F("result") == "failed":
 		typ, why = NStranded, "its work came back failed and nothing is open on it"
 	case reads == 0 && len(before) == 0:

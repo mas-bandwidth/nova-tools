@@ -204,6 +204,13 @@ func defectAge(d time.Duration) string {
 	}
 }
 
+// briefDefectRemedy is the remedy the defect judgment carries (item 4): the brief corrected
+// in place, its next attempt, or the card dropped. The finding to answer rides on the
+// judgment's own words, so the seat pastes one line.
+func briefDefectRemedy(id string) string {
+	return "run: nova-sprint brief " + id + " --brief-file <path> (the brief corrected in place, its next attempt), or nova-sprint drop " + id + " --reason '<why>'"
+}
+
 // ReviewCardFields is a primary's stored fields with its review reason added, the shape
 // card --all --json carries: the fields map as the card has it, FieldReviewReason set to
 // ReviewReasonRead or ReviewReasonDefect while it is in review. The command should marshal

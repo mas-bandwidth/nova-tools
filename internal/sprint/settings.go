@@ -289,6 +289,7 @@ type SetReq struct {
 	AlarmMerging string `json:",omitempty"`
 	AlarmFleet   string `json:",omitempty"`
 	AlarmReady   string `json:",omitempty"`
+	AlarmDefect  string `json:",omitempty"` // the defect alarm's count (columns.go, PropAlarmDefect), on by default at AlarmDefectDefault
 	GoLanes      string `json:",omitempty"` // the Go lanes of every machine (PropGoLanes, section 18)
 	// The drift alarm's thresholds of the base ahead of dev (drift.go): commits and hours,
 	// whole numbers from 1, or default.
@@ -640,7 +641,7 @@ func orDefault(v, name string) string {
 // alarms is the backlog alarms' thresholds the request sets, by property; none unset.
 func (r SetReq) alarms() map[string]string {
 	out := map[string]string{}
-	for prop, v := range map[string]string{PropAlarmReview: r.AlarmReview, PropAlarmMerging: r.AlarmMerging, PropAlarmFleet: r.AlarmFleet, PropAlarmReady: r.AlarmReady} {
+	for prop, v := range map[string]string{PropAlarmReview: r.AlarmReview, PropAlarmMerging: r.AlarmMerging, PropAlarmFleet: r.AlarmFleet, PropAlarmReady: r.AlarmReady, PropAlarmDefect: r.AlarmDefect} {
 		if v != "" {
 			out[prop] = v
 		}
