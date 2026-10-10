@@ -35,12 +35,13 @@ const (
 	sleepsSkipsAllowlistPath = "internal/ci/sleeps-skips_allowlist.txt"
 	unitSocketsSeedDir       = "internal/ci/testdata/unit-sockets/"
 	refusalGrammarSeedDir    = "internal/ci/testdata/refusal-grammar/"
+	exitWordSeedDir          = "internal/ci/testdata/exit-word/"
 )
 
 // seedLedgerDirs are the counted ledgers allowed their one-time seed: each is
 // exempt only while the merge base holds no shard of it (docs/SPEC-CI.md,
-// `unit-sockets` and `refusal-grammar`).
-var seedLedgerDirs = []string{unitSocketsSeedDir, refusalGrammarSeedDir}
+// `unit-sockets`, `refusal-grammar` and `exit-word`).
+var seedLedgerDirs = []string{unitSocketsSeedDir, refusalGrammarSeedDir, exitWordSeedDir}
 
 // parseLedgerRows reads a counted shard's text into its row keys (the first
 // field of each row, the key every class rule's list is shrunk by) and its
@@ -553,6 +554,45 @@ func TestRefusalGrammarLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
 		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
 	}, problems, "replacing the base's last shard does not reopen the seed")
 }
+
+// TestExitWordLedgerSeedsOnlyWhenTheBaseHasNoShard pins the one-time seed
+// exception for the newly introduced rule (docs/SPEC-CI.md, `exit-word`).
+func TestExitWordLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	newShard := exitWordSeedDir + "cmd/nova-redis.txt"
+	existingShard := exitWordSeedDir + "cmd/nova-sandbox.txt"
+	writeLedgerGuardFixture(t, root, newShard, "# ceiling: 1\ncmd/nova-redis:verb-no-flags 1 reason\n")
+	writeLedgerGuardFixture(t, root, existingShard, "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n")
+	shards := []string{existingShard, newShard}
+	missing := func(string) (string, bool, error) { return "", false, nil }
+
+	problems, err := checkCountedShards(root, "123456789abcdef", shards, nil, missing)
+	require.NoError(t, err)
+	require.Empty(t, problems, "the exit-word ledger is seeded at its introduction")
+
+	baseHasAnotherShard := func(rel string) (string, bool, error) {
+		if rel == existingShard {
+			return "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n", true, nil
+		}
+		return "", false, nil
+	}
+	seededBase := []string{existingShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", shards, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "a later new package shard remains growth after the ledger has a base")
+
+	replaced := []string{newShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", replaced, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "replacing the base's last shard does not reopen the seed")
+}
+
 
 func testCountedShardInMemory(t *testing.T) {
 	t.Helper()
