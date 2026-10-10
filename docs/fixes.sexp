@@ -18,7 +18,10 @@
   (release "v1.2.6" :status "planned"
    :text "The fixes held during the split, the point-release candidates found on 2026-10-10, the owed
     tests, and the sprint store cards that are point-release work. Each is re-applied or written in
-    this repository, then cut as one release."))
+    this repository, then cut as one release.")
+  (release "v1.2.9" :status "planned"
+   :text "The point release after v1.2.6: the sprint store cards that are point-release work, each
+    written in this repository, then cut as one release."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -105,4 +108,9 @@
     retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
     empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
     stale session never carries across a clear."
-   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")))
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")
+  (fix "swarm-doctor-checks-running-executable" :release "v1.2.9" :status "in-progress"
+   :title "nova-swarm doctor checks the running executable, not only PATH"
+   :text "The launch preflight refuses a new binary found on PATH but passes the same binary by absolute
+    path. It checks the executable that is actually running."
+   :origin "issue #3469")))

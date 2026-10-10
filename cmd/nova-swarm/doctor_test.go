@@ -182,6 +182,10 @@ func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 			doctorLocal("/home/me"):  doctorRebuiltLine,
 		},
 		func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil }, "/home/me")
+	// Started by name, the running binary is PATH's answer: the incident's stale copy is
+	// what the launch would run, and the preflight refuses it (it is the running
+	// executable's stamp the check vouches for now).
+	env.exe = func() (string, error) { return "/opt/go/bin/nova-swarm", nil }
 
 	var errOut bytes.Buffer
 	code, stop := env.preflight([]string{"native", "--dir", "d"}, &errOut)
@@ -217,6 +221,85 @@ func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
 	require.False(t, stop, "template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	require.Equal(t, 0, code, "template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	assert.Zero(t, errOut.Len(), "a verb that starts nothing was refused: %q", errOut.String())
+}
+
+// THE RUNNING EXECUTABLE IS THE PREFLIGHT'S SUBJECT (docs/SPEC-SWARM.md, "The doctor";
+// swarm-doctor-checks-running-executable). The launch runs THIS binary, so a nova-swarm
+// started by absolute path must answer the same check as one the shell found on PATH: before
+// the fix the preflight read only PATH's stamp, so a rebuilt binary was refused when it was
+// first on PATH and the same binary passed when it was started by absolute path, and the
+// installed binary started by absolute path was refused because a stale copy shadowed it.
+// Nothing here executes a discovered path: the running file is named through the exe seam.
+func TestPreflightChecksTheRunningExecutable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		lines   map[string]string
+		look    func(string) (string, error)
+		exe     func() (string, error)
+		code    int
+		stop    bool
+		printed []string
+	}{
+		{
+			name: "the installed binary started by absolute path passes while a stale copy is first on PATH",
+			lines: map[string]string{
+				"/opt/go/bin/nova-swarm": doctorStaleLine,
+				doctorLocal("/home/me"):  doctorRebuiltLine,
+			},
+			look: func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil },
+			exe:  func() (string, error) { return doctorLocal("/home/me"), nil },
+			code: 0, stop: false,
+		},
+		{
+			name: "a fresh build started by absolute path is refused like the same binary found on PATH",
+			lines: map[string]string{
+				"/opt/go/bin/nova-swarm": doctorStaleLine,
+				doctorLocal("/home/me"):  doctorStaleLine,
+				"/build/nova-swarm":      doctorRebuiltLine,
+			},
+			look: func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil },
+			exe:  func() (string, error) { return "/build/nova-swarm", nil },
+			code: 2, stop: true,
+			printed: []string{doctorStaleLine, doctorRebuiltLine},
+		},
+		{
+			name: "started by name, PATH's stale copy is still refused",
+			lines: map[string]string{
+				"/opt/go/bin/nova-swarm": doctorStaleLine,
+				doctorLocal("/home/me"):  doctorRebuiltLine,
+			},
+			look: func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil },
+			exe:  func() (string, error) { return "/opt/go/bin/nova-swarm", nil },
+			code: 2, stop: true,
+			printed: []string{doctorStaleLine, doctorRebuiltLine},
+		},
+		{
+			name: "a running file that cannot be named falls back to PATH's answer",
+			lines: map[string]string{
+				"/opt/go/bin/nova-swarm": doctorStaleLine,
+				doctorLocal("/home/me"):  doctorRebuiltLine,
+			},
+			look: func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil },
+			exe:  func() (string, error) { return "", errors.New("/proc/self/exe: gone") },
+			code: 2, stop: true,
+			printed: []string{doctorStaleLine, doctorRebuiltLine},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			env := doctorFake(c.lines, c.look, "/home/me")
+			env.exe = c.exe
+			var errOut bytes.Buffer
+			code, stop := env.preflight([]string{"native", "--dir", "d"}, &errOut)
+			require.Equal(t, c.stop, stop, "preflight(exit=%d, stop=%v), want (%d, %v)\n%s", code, stop, c.code, c.stop, errOut.String())
+			require.Equal(t, c.code, code, "preflight(exit=%d, stop=%v), want (%d, %v)\n%s", code, stop, c.code, c.stop, errOut.String())
+			for _, want := range c.printed {
+				assert.Contains(t, errOut.String(), want, "the refusal does not carry %q:\n%s", want, errOut.String())
+			}
+		})
+	}
 }
 
 // The verb is reachable from the dispatcher, and `doctor` is not a launch verb itself, so

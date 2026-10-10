@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (29)
-- [Setup, release and operations](#setup-release-and-operations) (107)
+- [Setup, release and operations](#setup-release-and-operations) (106)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -878,14 +878,6 @@ The documented Redis call authenticates as the default user and is refused. A us
 Target: v1.3
 
 From: issue #3461
-
-### nova-swarm doctor checks the running executable, not only PATH
-
-The launch preflight refuses a new binary found on PATH but passes the same binary by absolute path. It checks the executable that is actually running.
-
-Target: v1.3
-
-From: issue #3469
 
 ### nova-swarm slots list prints a summary line and the live leases
 
