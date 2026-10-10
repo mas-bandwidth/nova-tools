@@ -28,6 +28,7 @@ func writeCheckout(t *testing.T, path string) {
 	require.NoError(t, os.MkdirAll(path, 0o755))
 	gitdir := filepath.Join(path, ".gitdir")
 	require.NoError(t, os.MkdirAll(gitdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte("ref: refs/heads/test\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(path, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644))
 }
 
@@ -176,6 +177,13 @@ func TestAPromptNamingABriefThatIsNotThereIsRefused(t *testing.T) {
 	require.NoError(t, os.WriteFile(checkout, []byte("not a checkout\n"), 0o644))
 	_, refused = StageGate(dir, c, job, "STATUS: nova-sprint card c1\n", func() bool { return true })
 	assert.True(t, refused, "a file is not a checkout")
+
+	require.NoError(t, os.Remove(checkout))
+	writeCheckout(t, checkout)
+	require.NoError(t, os.RemoveAll(filepath.Join(checkout, ".gitdir")))
+	f, refused = StageGate(dir, c, job, "STATUS: nova-sprint card c1\n", func() bool { return true })
+	require.True(t, refused, "a dangling worktree gitdir is not a checkout")
+	assert.Contains(t, f.Error(), "the stage wrote no checkout")
 }
 
 // A card whose gate names a go command on a host with no go is refused at stage, and the
@@ -190,6 +198,8 @@ func TestAGoGateOnAHostWithNoGoIsRefusedAtStage(t *testing.T) {
 	c := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
 	require.True(t, NeedsGo(brief), "a go command on a continuation line of the gate counts")
 	require.True(t, NeedsGo("DONE WHEN: go build ./... && go vet ./...\n"), "a go command on the DONE WHEN line counts")
+	require.True(t, NeedsGo("STEP 4. Run the gate: go test -count=1 ./internal/friend/...\n"), "a STEP gate counts")
+	require.True(t, NeedsGo("DONE WHEN: prose\n\nSTEP 4. Run the gate: go test ./...\n"), "a later STEP gate counts")
 	require.False(t, NeedsGo("STATUS: nova-sprint card c1\n\nDONE WHEN: the prose is enough\n\nRULES: go test ./... is not this gate\n"), "a go command in a later section is not the gate")
 	f, refused := StageGate(dir, c, job, brief, func() bool { return false })
 	require.True(t, refused)
@@ -262,13 +272,13 @@ func TestAJobFileThatNamesNothingStaysStaged(t *testing.T) {
 	job := "a.w1~15"
 	require.NoError(t, os.MkdirAll(JobDir(dir, job), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(JobDir(dir, job), JobFile), []byte("# JOB: work a.w1, attempt 1\n"), 0o644))
-	assert.True(t, Staged(dir, job))
+	assert.False(t, Staged(dir, job), "an unparseable JOB.md must be restaged")
 }
 
 // JOB.md alone must not suppress a retry after its brief or checkout disappeared.
 func TestAPartialStagedJobIsRepairedAcrossPasses(t *testing.T) {
 	t.Parallel()
-	for _, missing := range []string{"brief", "checkout"} {
+	for _, missing := range []string{"brief", "checkout", "record"} {
 		t.Run(missing, func(t *testing.T) {
 			t.Parallel()
 			g := testkit.Git(t, 1)
@@ -293,8 +303,10 @@ func TestAPartialStagedJobIsRepairedAcrossPasses(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(JobDir(r.d.Dir, h.Job), JobFile), []byte(stageRecordText(checkout, brief)), 0o644))
 			if missing == "brief" {
 				require.NoError(t, os.Remove(brief))
-			} else {
+			} else if missing == "checkout" {
 				require.NoError(t, os.RemoveAll(checkout))
+			} else {
+				require.NoError(t, os.WriteFile(filepath.Join(JobDir(r.d.Dir, h.Job), JobFile), []byte("# JOB: work c1, attempt 1\n"), 0o644))
 			}
 			assert.False(t, Staged(r.d.Dir, h.Job))
 			r.d.heldCards = []HeldCard{h}

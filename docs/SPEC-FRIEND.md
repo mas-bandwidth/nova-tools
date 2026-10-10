@@ -1623,13 +1623,15 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
 - No lane is handed a card whose job the daemon stages until its `JOB.md` is there, and in
   batch mode the session is told of such a brief once its job is staged.
 - Every retry revalidates the files named by the stage record. A surviving `JOB.md`
-  does not suppress a retry for a missing brief or checkout. Staging restores a missing
+  that names neither brief nor checkout, or names a missing one, does not suppress a retry.
+  Staging restores a missing
   recorded brief from the canonical inbox copy, and recreates a missing checkout on its
   existing branch without resetting work; a successful retry clears the lane's failure count.
 - **The stage contract** (`internal/friend/lanes.go`, `StageGate`): a lane starts only once
   the stage has written all three of a readable regular brief (a directory is not a brief),
-  the job's `JOB.md`, and a validated checkout (a git checkout, not a path that merely
-  exists and not a file standing in for `jobs/<job>/repo`). The brief the prompt names is
+  the job's `JOB.md`, and a validated checkout (a git checkout with readable worktree
+  metadata and `HEAD`, not a path that merely exists or a dangling `.git` pointer).
+  The brief the prompt names is
   the absolute path the stage record carries: `JOB.md`'s line `The brief the stage wrote:
   <path>`, or, when that line is absent, the brief beside the checkout the record names.
   The lane does not compose that path. A missing piece is a stage failure, not a lane that
@@ -1638,7 +1640,8 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   once as a judgment to the coordinator, and it is counted again at most once a
   `StageRetryEvery`. The third stage failure of one card finishes it FAIL with that stage
   reason (`Verdict: FAIL`, the reason in the report), never "wrote no report". A card whose
-  `DONE WHEN` gate names a go command (`go build`, `go vet`, `go test` or `go run`), the
+  `DONE WHEN` or `STEP n. Run the gate:` gate names a go command (`go build`, `go vet`,
+  `go test` or `go run`), the
   whole gate including a command on a continuation line, on a host with no `go` on `PATH`
   is refused at stage with "go is not on this host; the card's gates run on a bench", and
   the card is handed back, never started. A prompt whose brief path does not exist is

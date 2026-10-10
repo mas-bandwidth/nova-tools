@@ -73,6 +73,9 @@ var GoOnPath = func() bool {
 // doneWhenLineRE is the start of a DONE WHEN gate. The gate runs on past that line.
 var doneWhenLineRE = regexp.MustCompile(`^DONE[ -]WHEN:\s*(.*)$`)
 
+// stepGateLineRE is the gate heading used by step-form cards.
+var stepGateLineRE = regexp.MustCompile(`^STEP [0-9]+\. Run the gate:\s*(.*)$`)
+
 // goCmdRE is a go command a card's gate names.
 var goCmdRE = regexp.MustCompile(`\bgo (?:build|vet|test|run)\b`)
 
@@ -82,9 +85,9 @@ var stagedCheckoutRE = regexp.MustCompile(`The staged checkout: (\S+)`)
 // stagedBriefRE is the brief path JOB.md records when the stage names it.
 var stagedBriefRE = regexp.MustCompile(`(?m)^The brief the stage wrote: (\S+)\s*$`)
 
-// gateText is the card's DONE WHEN gate, the header line and every continuation
-// until a blank line or the next section header. A go command on a later line of
-// the same gate is part of it; one in a later section is not.
+// gateText is the card's gate sections, each header line and its continuation
+// until a blank line or the next section header. A go command in a later rule
+// section is not a gate.
 func gateText(brief string) string {
 	var b strings.Builder
 	in := false
@@ -93,6 +96,9 @@ func gateText(brief string) string {
 		if !in {
 			m := doneWhenLineRE.FindStringSubmatch(line)
 			if m == nil {
+				m = stepGateLineRE.FindStringSubmatch(line)
+			}
+			if m == nil {
 				continue
 			}
 			in = true
@@ -100,8 +106,9 @@ func gateText(brief string) string {
 			b.WriteByte('\n')
 			continue
 		}
-		if strings.TrimSpace(line) == "" || sectionHeader(line) {
-			break
+		if strings.TrimSpace(line) == "" || sectionHeader(line) || strings.HasPrefix(line, "STEP ") {
+			in = false
+			continue
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -247,7 +254,7 @@ func validCheckout(path string) bool {
 		return false
 	}
 	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir: ")
-	return ok && gitdir != "" && filepath.IsAbs(gitdir)
+	return ok && gitdir != "" && filepath.IsAbs(gitdir) && readableRegular(filepath.Join(gitdir, "HEAD"))
 }
 
 // StageGate is the stage contract at the lane: what a card's stage must have written

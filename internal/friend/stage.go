@@ -218,18 +218,13 @@ func (s *Stager) repoLock(repo string) *sync.Mutex {
 // JobDir is where a job is staged, under her working directory.
 func JobDir(dir, job string) string { return filepath.Join(dir, JobsDir, job) }
 
-// Staged says the files the stage record names are still there. A JOB.md that
-// names a brief or a checkout does not suppress a retry while either is
-// missing. A JOB.md that names neither is the older record, staged by its
-// presence, so a stage that ended on the file alone is not run again.
+// Staged says the files the stage record names are still there. An incomplete
+// or unparseable JOB.md does not suppress the next staging attempt.
 func Staged(dir, job string) bool {
 	jobFile := filepath.Join(JobDir(dir, job), JobFile)
-	if _, err := os.Lstat(jobFile); err != nil {
-		return false
-	}
 	rec, ok := stageRecordOf(dir, job)
 	if !ok {
-		return true
+		return false
 	}
 	return readableRegular(jobFile) && readableRegular(rec.Brief) && validCheckout(rec.Checkout)
 }
