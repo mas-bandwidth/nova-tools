@@ -98,3 +98,33 @@ func TestAdoptWindowVerbRefusesABadStopped(t *testing.T) {
 		assert.Empty(t, out.String())
 	}
 }
+
+// TestAdoptWindowVerbTakesTheSeatPlaysWindowArgv exercises the argv the seat
+// play's window step builds (fleet/tools.yml): the candidate's `adopt window`
+// with --binary and --window, then one `--stopped <label>=<pid>` per agent the
+// adoption stopped. The play once built seat_window_flags as bare
+// `<label>=<pid>` words and appended them without `--stopped`; the verb reads
+// those as positionals and refuses at exit 2 before it waits, so the shipped
+// window call could not complete any adoption that stopped an agent. This
+// holds the play's own set_fact to the flag and runs the shape it builds.
+func TestAdoptWindowVerbTakesTheSeatPlaysWindowArgv(t *testing.T) {
+	t.Parallel()
+	play, err := os.ReadFile(filepath.Join("..", "..", "fleet", "tools.yml"))
+	require.NoError(t, err)
+	require.Contains(t, string(play), `['--stopped', item.label ~ '=' ~ (item.pid | default(0) | string)]`,
+		"the seat play's seat_window_flags must carry --stopped before each bare <label>=<pid>")
+
+	bin := "/seat/.local/bin/nova-sprint"
+	a := newApp(func(string) string { return "" })
+	windowProcsFor.Store(a, func(context.Context) ([]sprint.WindowProc, error) { return nil, nil })
+	t.Cleanup(func() { windowProcsFor.Delete(a) })
+
+	// the play's argv: the candidate's verb, then the stop flags it built
+	argv := []string{"--binary", bin, "--window", "60s",
+		"--stopped", "com.nova.loop.srv=4100",
+		"--stopped", "com.nova.loop.mem=0"}
+	var out, errs bytes.Buffer
+	code := a.cmdAdoptWindow(argv, &out, &errs)
+	require.Equal(t, 0, code, "the play's argv must be the verb, not usage: %s", errs.String())
+	assert.Equal(t, "WINDOW OK stopped=2 waited=0s others=0\n", out.String())
+}

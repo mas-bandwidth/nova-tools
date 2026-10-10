@@ -7241,14 +7241,15 @@ pid=,args=`, this process aside): `--stopped <label>=<pid>` (repeatable), `--bin
 nova-sprint, default `~/.local/bin/nova-sprint`, links followed), `--window`; exit 0 on WINDOW OK,
 1 on WINDOW REFUSED or a table that does not read, 2 on usage. It is the verb `adopt window`
 (cmd/nova-sprint/verbs.go; it stands before `adopt` in the table, so its two words dispatch to
-it), and the seat play's step 3 above calls it from the candidate with the pids of `seat_stopped`
-read before the bootout (fleet/tools.yml): the agents it stopped alone are waited on, and the
-receipt prints `WINDOW OK`. Tested on a fake table and a clock that moves only by the window's own
+it), and the seat play's step 3 above calls it from the candidate with each pid of `seat_stopped`
+read before the bootout, one `--stopped <label>=<pid>` per agent (fleet/tools.yml): the agents it
+stopped alone are waited on, and the receipt prints `WINDOW OK`. Tested on a fake table and a clock that moves only by the window's own
 sleeps (`TestAdoptWindowRefusesAStoppedAgentStillRunningPastTheBound`,
 `TestAdoptWindowListsAVerbProcessOfTheBinaryAsOtherAndDoesNotRefuse`,
 `TestAdoptWindowSaysOKWithTheCountsWhenEveryStoppedAgentIsGone`), and the verb's body on a fake
 table (`TestAdoptWindowVerbWaitsOnlyOnTheStoppedAgents`,
-`TestWindowProcsOfResolvesTheDashboardLinkToTheBinary`).
+`TestWindowProcsOfResolvesTheDashboardLinkToTheBinary`,
+`TestAdoptWindowVerbTakesTheSeatPlaysWindowArgv`).
 
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 
