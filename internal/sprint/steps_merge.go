@@ -117,6 +117,24 @@ const (
 
 var baseGateCount = []string{FieldBaseGateRefused, FieldBaseGateBase, FieldBaseGateFirst}
 
+// FieldStopReason is the words a stop names, on the stream's control card, so
+// the dashboard row can show "stopped: <reason>". Resume clears it.
+const FieldStopReason = "stop_reason"
+
+// stopReason is the reason a stop shows, the note when the caller gave one,
+// else the judgment type without its "stream stopped: " prefix, cut to the
+// control card's short text.
+func stopReason(note, typ string) string {
+	reason := strings.TrimSpace(note)
+	if reason == "" {
+		reason = strings.TrimSpace(strings.TrimPrefix(typ, "stream stopped: "))
+	}
+	if reason == "" {
+		return ""
+	}
+	return cutText(reason, MaxProviderErrorBytes)
+}
+
 // BaseGateStops is the refusals on one base that stop its stream: the first failure of its
 // tree gate and one at each retry (BaseGateRetries).
 var BaseGateStops = len(BaseGateRetries) + 1
@@ -148,6 +166,9 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 		what = fmt.Sprintf("the base %s fails its tree gate, refused %d times, first refused at %s: %s", r.Base, n, at.UTC().Format("15:04:05 MST"), what)
 	}
 	set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
+	if reason := stopReason(what, NBaseRed); reason != "" {
+		set[FieldStopReason] = reason
+	}
 	j := judgment(NBaseRed, r.Stream, s.Now, 0)
 	j.StreamLevel, j.Who, j.What = true, r.Who, cutText(what, MaxCardTextBytes)
 	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"card", "other"}, baseGateCount...)...))}, Notes: []Note{j},
@@ -500,6 +521,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	stop := func(cause, typ string, primaries []string, before int, unset ...string) Unit {
 		ctlSet["state"], ctlSet["since"], ctlSet["cause"] = StreamStopped, now, cause
+		if reason := stopReason(r.Note, typ); reason != "" {
+			ctlSet[FieldStopReason] = reason
+		}
 		j := judgment(typ, r.Stream, s.Now, before, primaries...)
 		j.StreamLevel, j.Who, j.What = true, r.Who, r.Note
 		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, append(unset, baseGateCount...)...))}, Notes: append(notes, j)}
@@ -563,6 +587,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		u := stop("cross", NCross, []string{card, other}, 0)
 		j := &u.Notes[len(u.Notes)-1]
 		j.What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))
+		if reason := stopReason(j.What, ""); reason != "" {
+			ctlSet[FieldStopReason] = reason
+		}
 		j.Card, j.Other, j.OtherStream = card, other, otherStream
 		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, map[string]string{"need_card": other, "need_stream": otherStream})))
 		u.Moved = fmt.Sprintf("stream %s stopped: %s queued -> stuck, needs %s (stream %s) landed first", r.Stream, card, other, orDash(otherStream))
@@ -585,6 +612,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			j.What = "suspects: " + strings.Join(r.Suspects, ", ") + " (of the batch of " + itoa(len(ids)) + ")"
 		} else {
 			j.What = "no suspect named; the batch of " + itoa(len(ids)) + " is " + span(ids) + "; list it: nova-sprint queue --stream " + r.Stream + " --max " + itoa(len(ids))
+		}
+		if strings.TrimSpace(r.Note) == "" {
+			if reason := stopReason(j.What, ""); reason != "" {
+				ctlSet[FieldStopReason] = reason
+			}
 		}
 		for _, c := range batch {
 			if pr := s.Work.Placed(c.ID); pr != nil {
@@ -749,7 +781,7 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	if r.Did != "" {
 		set["did"] = r.Did
 	}
-	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"cause", "card", "other", FieldConflictKind, FieldConflictPaths}, baseGateCount...)...))},
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"cause", "card", "other", FieldConflictKind, FieldConflictPaths, FieldStopReason}, baseGateCount...)...))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
 	if state == StreamLanded {
 		n := happened(NStreamLanded, r.Stream, s.Now)
