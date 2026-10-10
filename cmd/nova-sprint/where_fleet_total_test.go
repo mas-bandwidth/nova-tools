@@ -22,7 +22,7 @@ func TestTheFleetFooterSumsOnlyTheMembersUp(t *testing.T) {
 	ta.ok("fleet up m1 --width 4 --reason 'test'")
 	ta.ok("fleet up m2 --width 32 --reason 'test'")
 	ta.ok("fleet up m3 --width 8 --reason 'test'")
-	ta.ok("fleet down m2") // held
+	ta.ok("fleet down m2 --reason 'test'") // held
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("start")
 	ta.ok("tick")
