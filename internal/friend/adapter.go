@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -85,6 +86,25 @@ type Exec func(ctx context.Context, dir, name string, args []string, stdin strin
 // OutputKept bounds how much of a turn's output the daemon keeps in its
 // record: the head, enough to see what the session did with the message.
 const OutputKept = 2048
+
+// acceptanceKey carries the adapter's explicit word that a turn was taken.
+// Output alone is not acceptance (SPEC-BUS.md, message-receipts).
+type acceptanceKey struct{}
+
+// WithTurnAccepted carries a callback an adapter calls once it accepts the
+// turn. The callback runs at most once, independently of output and exit.
+func WithTurnAccepted(ctx context.Context, accepted func()) context.Context {
+	var once sync.Once
+	return context.WithValue(ctx, acceptanceKey{}, func() { once.Do(accepted) })
+}
+
+// TurnAccepted confirms the adapter took the turn; a refusal or a launch
+// failure never calls it (SPEC-BUS.md, message-receipts).
+func TurnAccepted(ctx context.Context) {
+	if accepted, _ := ctx.Value(acceptanceKey{}).(func()); accepted != nil {
+		accepted()
+	}
+}
 
 // outputKey carries, in a delivery's context, what to call when the command
 // prints: the daemon's watch on a running turn (WithOutputSeen).

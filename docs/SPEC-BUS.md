@@ -357,8 +357,9 @@ message that reached the friend daemon from one the session read or one it
 acted on. Every message therefore has a receipt per recipient that moves
 only forward: `delivered` (the recipient's reader took it off its stream:
 `recv`, which the daemon runs), `read` (the turn carrying it started: the
-daemon marks it when the session took the turn, its first output, or when a
-turn that ran ended non-zero), `acted` (the turn ended at exit 0, or the
+daemon marks it only after the adapter accepts the turn through
+`TurnAccepted`, or a successful adapter return confirms that acceptance),
+`acted` (the turn ended at exit 0, or the
 recipient sent a message whose `re` is its id). The receipts are one hash
 per recipient beside its stream, `bus2:receipt:<name>`, field the message
 id, value the state and the store's time it was reached in Unix seconds
@@ -383,23 +384,25 @@ acked message is never listed. It reads the roster, peeks each stream, and
 reads every receipts hash in one pipeline.
 
 Delivery stays at least once (a claim after `ClaimAfter` hands a message in
-again); the take is idempotent. The friend daemon remembers the ids it
-pushed into a turn that ended acted (the newest `ActedKept`, 4096), and a
-second delivery of one, or of any message whose receipt `recv` found
-`acted`, is dropped with one record line, `duplicate dropped id=<id>`, and
-acked, never pushed in twice. The receipt covers a restarted daemon, which
-remembers nothing; the memory covers an `acted` stamp the store did not
-write. Both lost at once (the stamp refused, then the daemon restarted
-before its ack landed) pushes the message in once more.
+again). The daemon uses the stored `acted` receipt as its duplicate authority.
+A second delivery is dropped with one record line, `duplicate dropped id=<id>`,
+and acked, never pushed in twice. The same store receipt covers a restarted
+daemon. Output, a launch failure, and a refusal do not prove acceptance and
+never stamp `read`. Adapters can explicitly signal acceptance while running;
+a successful return also confirms acceptance, including a quiet turn.
+When the acted write fails, the daemon keeps the successful turn pending and
+retries only its receipt commit before acking, never the session delivery.
+A crash between an external turn's completion and its receipt commit remains
+an at-least-once boundary; the store and the external session share no transaction.
 
-The model is `tla/Bus2Receipts.tla`, `ReceiptSpec`, which extends
-`tla/Bus2.tla` (so Bus2's own cases read the machine unchanged): the receipt
-states over the delivery machine, the daemon's take, turn, ack, a lost ack and a crash,
-with `ReceiptNeverMovesBack`, `ActedImpliesDelivered` and `NoIdActedTwice`
-(`MCBus2Receipts`), and two reversed witnesses: a take that pushes a
-redelivered id (`MCBus2BrokenPushDup`, `NoIdActedTwice`) and a recv that
-writes `delivered` over the receipt (`MCBus2BrokenBackStamp`,
-`ReceiptNeverMovesBack`).
+The model is `tla/Bus2Receipts.tla`, `ReceiptSpec`, refining the delivery and
+reply actions in `tla/Bus2.tla`. The broad `MCBus2.cfg` keeps two recipients,
+three messages, two consumers and all its existing properties. Receipt cases
+check `ReceiptNeverMovesBack`, `ActedImpliesDelivered`, `NoIdActedTwice` and
+`ReadOnlyAfterAcceptance`. Four reversed witnesses cover a duplicate take
+(`MCBus2BrokenPushDup`), a backward stamp (`MCBus2BrokenBackStamp`), a read
+before acceptance (`MCBus2BrokenEarlyRead`), and an undelivered reply stamped
+acted (`MCBus2BrokenReplyUndelivered`).
 
 ## The identity
 

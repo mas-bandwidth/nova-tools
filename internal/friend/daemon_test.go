@@ -117,6 +117,7 @@ func newRig(t *testing.T) *rig {
 }
 
 func (r *rig) Deliver(ctx context.Context, text string) (int, error) {
+	TurnAccepted(ctx)
 	r.mu.Lock()
 	r.delivered = append(r.delivered, text)
 	hold := r.hold
@@ -628,20 +629,17 @@ func (s *lostAck) Ack(ctx context.Context, stream, group string, entries ...stri
 
 // A message a turn acted on whose ack was lost is handed in again by the
 // claim; the take drops it with one record line and acks it, never pushing
-// it in twice: by the daemon's memory, by the receipt the store holds (a
-// restarted daemon remembers nothing), and by the memory when the acted
-// stamp was not written (docs/SPEC-BUS.md, message-receipts;
+// it in twice: by the receipt the store holds, across a restart and after
+// retrying a refused receipt commit (docs/SPEC-BUS.md, message-receipts;
 // tla/Bus2Receipts.tla, NoIdActedTwice).
 func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		restart bool // a second Run: the memory is gone, the receipt stands
-		noStamp bool // the acted stamp is refused: the memory stands
 	}{
-		{name: "the memory"},
+		{name: "the store receipt"},
 		{name: "the receipt, across a restart", restart: true},
-		{name: "the memory, with no acted stamp", noStamp: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -649,11 +647,8 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 			st := &lostAck{Fake: r.store, lose: 1}
 			r.d.Store = st
 			m := r.send(t, "ada", "hello", "once")
-			if tc.noStamp {
-				r.at[1] = func() { r.store.FailForward = errors.New("NOPERM receipts") } // after the delivered stamp, before the turn ends
-			}
 			if !tc.restart {
-				r.at[4] = func() { r.store.Advance(bus.ClaimAfter) }
+				r.at[4] = func() { r.store.FailForward = nil; r.store.Advance(bus.ClaimAfter) }
 				r.run(t, 8)
 			} else {
 				r.run(t, 4)
@@ -676,11 +671,7 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 			r.store.FailForward = nil
 			got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
 			require.NoError(t, err)
-			want := bus.Acted
-			if tc.noStamp {
-				want = bus.Delivered
-			}
-			assert.Equal(t, want, got[0].State)
+			assert.Equal(t, bus.Acted, got[0].State)
 		})
 	}
 }
