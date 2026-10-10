@@ -364,9 +364,10 @@ func (l *loop) offTip(h HeldCard, verdict, head, branch string) string {
 // report=no when the run wrote none. A working card on her row that no lane of the daemon is
 // running, with no REPORT.md, whose job's last event in that log is such an END (with no
 // LIMIT after its START: a run stopped at a usage limit is run again), is a dead lane: the
-// daemon writes its REPORT.md, Verdict FAIL naming the END line, and the outbox pass finishes
-// it --failed, so the card is dealt again. nova-sprint collect --dead-lanes keeps the same
-// rule (sprint.RunnerEnded) from the coordinator's side.
+// daemon writes its REPORT.md with no verdict, naming the END line (a harness fault, never
+// the card's, NoVerdict), and the outbox pass finishes it --failed as a harness fault, which
+// redeals the attempt. nova-sprint collect --dead-lanes keeps the same rule
+// (sprint.RunnerEnded) from the coordinator's side.
 
 // RunnerLogCap bounds the runner log the daemon reads: its last RunnerLogCap bytes.
 const RunnerLogCap = 4 << 20
@@ -467,7 +468,7 @@ func (l *loop) deadLanes(outbox string, running map[string]bool, at string) bool
 			continue
 		}
 		wrote = true
-		d.Record(fmt.Sprintf("%s outbox: dead lane %s: the runner ended it with no report (%s); wrote outbox/%s/REPORT.md Verdict FAIL", at, job, oneLine(end, 300), job))
+		d.Record(fmt.Sprintf("%s outbox: dead lane %s: the runner ended it with no report (%s); wrote outbox/%s/REPORT.md with no verdict (a harness fault)", at, job, oneLine(end, 300), job))
 	}
 	return wrote
 }

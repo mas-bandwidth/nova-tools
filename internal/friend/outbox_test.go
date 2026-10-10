@@ -231,6 +231,11 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "a run stopped at its usage limit is run again, never dead")
 	said := strings.Join(r.records, "\n")
 	assert.Contains(t, said, "outbox: left outbox/off.w1~15/REPORT.md: Head "+head+" is not origin's tip of sprint/off.w1.g1.e15, "+other)
+	// the dead lane's report carries no verdict, so its record names the harness fault,
+	// never a Verdict FAIL it did not write (docs/SPEC-FRIEND.md, the daemon reads every
+	// outbox job; NoVerdict)
+	assert.NotContains(t, said, "Verdict FAIL", "a dead lane's report has no verdict; the record must not claim one")
+	assert.Contains(t, said, "outbox: dead lane "+dead.Job+": the runner ended it with no report ("+oneLine(end, 300)+"); wrote outbox/"+dead.Job+"/REPORT.md with no verdict (a harness fault)")
 }
 
 func TestRunnerEndedReadsTheJobsLastEventAsCollectDoes(t *testing.T) {
