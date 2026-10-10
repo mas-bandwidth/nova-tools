@@ -81,7 +81,7 @@ func readVerb(argv []string) (v verbArgs) {
 // verbFlags is the verb's flag set, got as its -h is (helpCommand): the verb run with
 // --help stops at its flags, before it reads or writes anything. nil when it did not.
 func verbFlags(name string) *flag.FlagSet {
-	return (*app)(nil).verbFlags(name)
+	return flagsOfVerb(verbs, name)
 }
 
 // on says the list sets the verb's boolean flag true.
@@ -165,7 +165,7 @@ func (a *app) ask(ctx context.Context, addr string, verb, rest []string) (sprint
 			return sprintwire.Client{
 				Addr:     addr,
 				Build:    buildinfo.Version(version),
-				VerbHash: a.verbTableHash(),
+				VerbHash: verbTableHash(),
 			}.Do(ctx, verbs...)
 		}
 	}

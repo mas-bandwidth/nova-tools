@@ -434,21 +434,14 @@ func versionLine() string { return buildinfo.Line(prog, version) }
 var (
 	defaultHashOnce sync.Once
 	defaultHash     string
-	appVerbHashes   sync.Map // *app -> string
-	appVerbs        sync.Map // *app -> []verb
 )
 
-func (a *app) verbList() []verb {
-	if a != nil {
-		if v, ok := appVerbs.Load(a); ok {
-			return v.([]verb)
-		}
-	}
-	return verbs
-}
-
-func (a *app) verbFlags(name string) (fs *flag.FlagSet) {
-	for _, v := range a.verbList() {
+// flagsOfVerb is the named verb's flag set, got as its -h is (helpCommand): the verb run
+// with --help stops at its flags, before it reads or writes anything. nil when it did not.
+// vbs is the table the verb is read from (docs/SPEC-SPRINT.md: the wire protocol's
+// verb table hash).
+func flagsOfVerb(vbs []verb, name string) (fs *flag.FlagSet) {
+	for _, v := range vbs {
 		if v.name != name {
 			continue
 		}
@@ -466,10 +459,13 @@ func (a *app) verbFlags(name string) (fs *flag.FlagSet) {
 	return nil
 }
 
-func (a *app) verbNameAndWords(argv []string) (string, int) {
+// verbNameAndWords is the verb the argument list names and how many words it is: the
+// longest name in the table its words open (docs/SPEC-SPRINT.md: the SKEW line names
+// the verb).
+func verbNameAndWords(argv []string) (string, int) {
 	var bestName string
 	var bestWords int
-	for _, vb := range a.verbList() {
+	for _, vb := range verbs {
 		w := strings.Fields(vb.name)
 		if len(argv) >= len(w) && slices.Equal(argv[:len(w)], w) && len(w) > bestWords {
 			bestName, bestWords = vb.name, len(w)
@@ -484,8 +480,11 @@ func (a *app) verbNameAndWords(argv []string) (string, int) {
 	return "", 0
 }
 
-func (a *app) computeVerbTableHash() string {
-	vbs := a.verbList()
+// computeVerbTableHash is a stable hash over every verb's name, its flags and their
+// types, computed from a verbs table (docs/SPEC-SPRINT.md: the wire protocol names its
+// verb table hash). A table that differs in a verb, a flag or a flag's type hashes
+// differently, so a client and a server that disagree are refused.
+func computeVerbTableHash(vbs []verb) string {
 	h := sha256.New()
 	names := make([]string, 0, len(vbs))
 	for _, v := range vbs {
@@ -494,8 +493,7 @@ func (a *app) computeVerbTableHash() string {
 	slices.Sort(names)
 	for _, name := range names {
 		fmt.Fprintf(h, "verb:%s\n", name)
-		fs := a.verbFlags(name)
-		if fs != nil {
+		if fs := flagsOfVerb(vbs, name); fs != nil {
 			fs.VisitAll(func(f *flag.Flag) {
 				fmt.Fprintf(h, "flag:%s:%T\n", f.Name, f.Value)
 			})
@@ -504,20 +502,9 @@ func (a *app) computeVerbTableHash() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (a *app) verbTableHash() string {
-	if a != nil {
-		if h, ok := appVerbHashes.Load(a); ok {
-			return h.(string)
-		}
-		if _, ok := appVerbs.Load(a); ok {
-			h := a.computeVerbTableHash()
-			appVerbHashes.Store(a, h)
-			return h
-		}
-	}
-	defaultHashOnce.Do(func() {
-		defaultHash = (*app)(nil).computeVerbTableHash()
-	})
+// verbTableHash is this build's verbs table hash, computed once from the verbs table.
+func verbTableHash() string {
+	defaultHashOnce.Do(func() { defaultHash = computeVerbTableHash(verbs) })
 	return defaultHash
 }
 
