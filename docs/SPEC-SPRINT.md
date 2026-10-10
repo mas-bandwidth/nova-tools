@@ -6562,6 +6562,15 @@ present there. The refusal names the evidence. `--allow-done` bypasses this
 check. Add does not run the `TEST` named by the brief; no test runs on the
 coordinator's machine.
 
+### add-first-check-bb.w1
+
+The already-done check's third arm (created files + named TEST) uses
+`hygiene.MatchGlob` (docs/SPEC-SWARM.md) to match PATHS entries against the
+brief's NEW: globs and against base files. This ensures `**` globs and
+directory entries (e.g., `internal/x/**` or `internal/x`) correctly match nested
+files (e.g., `internal/x/sub/new.go`). The same matcher is used in
+preflightOverlap (docs/SPEC-SPRINT.md, preflight verb).
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded

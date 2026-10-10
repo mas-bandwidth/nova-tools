@@ -41,8 +41,8 @@ func TestAddRefusesACardWhoseWorkIsAlreadyOnTheBase(t *testing.T) {
 	git(work, "switch", "-q", "sprint/base")
 	git(work, "merge", "-q", "--ff-only", branch)
 	git(work, "push", "-q", remote, "HEAD:refs/heads/sprint/base")
-	makeBrief := func(id, commit, created, testName string) string {
-		head := "RESULT: " + id + " sha=0123456789ab tier: pro\nREPO: " + remote + "\nBASE: sprint/base\nPATHS: cmd/example/*.go\n"
+	makeBrief := func(id, commit, created, testName, briefS string) string {
+		head := "RESULT: " + id + " sha=0123456789ab tier: pro\nREPO: " + remote + "\nBASE: sprint/base\nPATHS: " + briefS + "\n"
 		if created != "" {
 			head += "NEW: " + created + "\n"
 		}
@@ -62,16 +62,17 @@ func TestAddRefusesACardWhoseWorkIsAlreadyOnTheBase(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name, id, commit, created, testName string
+		name, id, commit, created, testName, briefS string
 		want                                string
 	}{
-		{"commit subject", "commit-done", "commit-done: implement", "", "TestNew", "commit-done: already landed"},
-		{"pushed branch ancestor", "branch-done", "branch-work: implement", "", "TestNew", "branch"},
-		{"created files and named test", "files-done", "new-work: implement", "cmd/example/new.go", "TestTask", "new.go"},
+		{"commit subject", "commit-done", "commit-done: implement", "", "TestNew", "cmd/example/*.go", "commit-done: already landed"},
+		{"pushed branch ancestor", "branch-done", "branch-work: implement", "", "TestNew", "cmd/example/*.go", "branch"},
+		{"created files and named test", "files-done", "new-work: implement", "cmd/example/new.go", "TestTask", "cmd/example/*.go", "new.go"},
+		{"created files with glob PATHS", "glob-done", "glob-work: implement", "cmd/example/subdir/glob.go", "TestGlob", "cmd/example/**", "glob.go"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := ta.applies()
-			code, out, stderr := add(tc.id, makeBrief(tc.id, tc.commit, tc.created, tc.testName), false)
+			code, out, stderr := add(tc.id, makeBrief(tc.id, tc.commit, tc.created, tc.testName, tc.briefS), false)
 			assert.Equal(t, 2, code, "%s%s", out, stderr)
 			assert.Contains(t, stderr, "already done", "%s", stderr)
 			assert.Contains(t, stderr, tc.want, "%s", stderr)
@@ -80,10 +81,10 @@ func TestAddRefusesACardWhoseWorkIsAlreadyOnTheBase(t *testing.T) {
 		})
 	}
 
-	code, out, stderr := add("fresh-card", makeBrief("fresh-card", "fresh-card: implement", "", "TestNew"), false)
+	code, out, stderr := add("fresh-card", makeBrief("fresh-card", "fresh-card: implement", "", "TestNew", "cmd/example/*.go"), false)
 	require.Equal(t, 0, code, "%s%s", out, stderr)
 	assert.True(t, ta.placed("fresh-card"), "fresh work was not added")
-	code, out, stderr = add("commit-done", makeBrief("commit-done", "commit-done: implement", "", "TestNew"), true)
+	code, out, stderr = add("commit-done", makeBrief("commit-done", "commit-done: implement", "", "TestNew", "cmd/example/*.go"), true)
 	require.Equal(t, 0, code, "--allow-done did not override the refusal: %s%s", out, stderr)
 	assert.True(t, ta.placed("commit-done"), "--allow-done did not add the completed card")
 }

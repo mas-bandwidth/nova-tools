@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"io"
@@ -103,7 +103,7 @@ func (a *app) createdTestAtBase(ctx context.Context, l *lander, repo, sha, brief
 		}
 		matched := ""
 		for _, file := range files {
-			if hit, _ := filepath.Match(glob, file); hit {
+			if hygiene.MatchGlob(glob, file) {
 				matched = file
 				break
 			}
@@ -139,14 +139,7 @@ func splitGlobs(value string) []string {
 }
 
 func patternCovers(paths, created string) bool {
-	if paths == created {
-		return true
-	}
-	if strings.ContainsAny(paths, "*?[") {
-		ok, _ := filepath.Match(paths, created)
-		return ok
-	}
-	return false
+	return preflightOverlap(paths, created)
 }
 
 func (a *app) holdAlreadyDone(briefs []briefCheck, allow bool, stderr io.Writer) int {
