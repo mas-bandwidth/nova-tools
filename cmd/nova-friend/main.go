@@ -294,7 +294,9 @@ func realWorld() world {
 		},
 	}
 	w.open = w.openRedis
-	w.disabled = func(domain, label string) bool { return friend.Disabled(context.Background(), w.launchctl, domain, label) }
+	w.disabled = func(domain, label string) bool {
+		return friend.Disabled(context.Background(), w.launchctl, domain, label)
+	}
 	return w
 }
 
@@ -1861,13 +1863,13 @@ func (w world) install(c *tool.Call) *tool.Out {
 		}
 		domain := fmt.Sprintf("gui/%d", w.uid)
 		o = o.Item("plan", "command", tool.Text("write "+a.PlistPath())).
-			Item("plan", "command", tool.Text("launchctl bootout " + domain + "/" + a.Label()))
+			Item("plan", "command", tool.Text("launchctl bootout "+domain+"/"+a.Label()))
 		// a label disabled in launchd's override database answers exit 5 at
 		// every bootstrap: the real install enables it first, so the plan says so
 		if w.disabled != nil && w.disabled(domain, a.Label()) {
-			o = o.Item("plan", "command", tool.Text("launchctl enable " + domain + "/" + a.Label()))
+			o = o.Item("plan", "command", tool.Text("launchctl enable "+domain+"/"+a.Label()))
 		}
-		o = o.Item("plan", "command", tool.Text("launchctl bootstrap " + domain + " " + a.PlistPath())).
+		o = o.Item("plan", "command", tool.Text("launchctl bootstrap "+domain+" "+a.PlistPath())).
 			Note("the agent runs: " + a.Said())
 		return noteClaudeWait(noteGrokMonitor(o, a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
 	}
