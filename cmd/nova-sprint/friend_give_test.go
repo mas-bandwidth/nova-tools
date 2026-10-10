@@ -101,5 +101,12 @@ func TestFriendGiveDealsAReadyUndealtCard(t *testing.T) {
 	out := ta.ok("friend give amy s1-1 --reason 'the coordinator gives it'")
 	assert.Contains(t, out, "MOVED s1-1 may be dealt to amy again (the coordinator gives it)")
 	assert.Contains(t, out, "FRIEND-GIVE OK moved=1 refused=0")
+	ta.ok("tick")
+	ta.ok("tick")
+	var c cardView
+	ta.json("card s1-1", &c)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "dealt to amy")
+	assert.Equal(t, sprint.Working, c.Primary.Col)
 	ta.clean()
 }

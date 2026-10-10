@@ -271,10 +271,12 @@ func FriendGive(s *Snapshot, r FriendGiveReq) Plan {
 		case pr.Col != Ready && pr.Col != Waiting:
 			p.refuse(id, fmt.Sprintf("%s is %s, not ready or waiting", pr.ID, pr.Col))
 		case pr.Int("attempt") == 0 && wc == nil:
-			// undealt card: accept for friend give (will be dealt to friend on next tick)
+			// undealt card: accept for friend give and set who to the named friend
+			// so the deal deals it to her (docs/SPEC-SPRINT.md, friend give)
 			n := happened(NGivenBack, pr.Row, s.Now, pr.ID)
 			n.Who, n.What = r.Who, fmt.Sprintf("%s may be dealt to %s again (%s)", pr.ID, r.Friend, reason)
-			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Notes: []Note{n}, Moved: n.What})
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row,
+				Changes: []Change{change(Work, setEntry(pr, nil, FieldWho, row))}, Notes: []Note{n}, Moved: n.What})
 		case pr.Int("attempt") == 0:
 			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from no friend)", card, r.Friend))
 		case wc == nil:
