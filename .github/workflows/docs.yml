@@ -1,0 +1,52 @@
+# Docs CI for nova-tools: the docs gates run on every change that touches the
+# docs tier.
+#
+# Why this exists: documentation breaks quietly unless something runs on every
+# change. This workflow is the one entry for the docs gates, so a change to the
+# docs tree, a README, a verb's help or the generated CLI reference cannot land
+# without them.
+#
+# What it runs: `make docs-check`, which runs the internal/docs tests, the link
+# check (`nova-check links --dir .`) and the generated CLI reference check
+# (`make clidoc`).
+#
+# Where it runs: a generic self-hosted Linux runner (`[self-hosted, linux,
+# x64]`), never a named machine, under the same two-minute job cap as ci.yml.
+name: docs
+
+on:
+  push:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+
+permissions:
+  contents: read
+
+jobs:
+  docs-check:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 2
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+      - name: set up Go
+        # The self-hosted jobs of ci.yml use the runner's installed Go; this job
+        # names the module's own toolchain through setup-go, like release.yml,
+        # and takes the runner's persistent cache rather than saving one.
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: docs-check
+        run: make docs-check

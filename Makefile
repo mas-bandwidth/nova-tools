@@ -149,6 +149,12 @@ clidoc:
 	$(GO) build -o ./bin/ $(shell sed -n 's/^<!-- clidoc:begin \(nova-[a-z0-9-]*\) -->$$/\1/p' docs/CLI.md | sort -u | sed 's|^|./cmd/|') ./tools/clidoc
 	./bin/clidoc --bin ./bin
 
+# docs-check: the docs CI gates. Card tdocs-docs-ci-b.w7.
+docs-check:
+	$(GO) test -count=1 ./internal/docs/...
+	$(GO) run ./cmd/nova-check links --dir .
+	$(MAKE) clidoc
+
 
 build:
 	$(GO) build ./...
