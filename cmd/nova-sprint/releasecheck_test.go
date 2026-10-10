@@ -131,6 +131,24 @@ func TestReleaseCheckRefusesAnUnknownCheckAndWords(t *testing.T) {
 	code, _, errs = ta.do("release check --streams [")
 	assert.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "not a glob")
+	code, _, errs = ta.do("release check --product no-such-product")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, `no release product named "no-such-product"`)
+}
+
+func TestReleaseCheckProductScopesTheRegistryAndReportsItsHead(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
+	ta.ok("add --stream tools-v1-2-0-a tools-1 --one --actor lead --brief-file " + proBriefFile(t))
+	code, out, errs := ta.do("release check --product nova-tools --check cards-settled")
+	require.Equal(t, 1, code, "%s %s", out, errs)
+	assert.Contains(t, out, "RELEASE CHECK cards-settled fail card tools-1")
+
+	var rep sprint.ReleaseReport
+	ta.json("release check --product nova-tools --check cards-settled", &rep)
+	assert.Equal(t, "nova-tools", rep.Product)
+	assert.Equal(t, "sprint/mechanical-2026-10-02", rep.Head)
 }
 
 func TestAddRefusesACardCalledCheckAndReleaseOfACardStillWorks(t *testing.T) {

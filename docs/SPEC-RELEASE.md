@@ -579,6 +579,14 @@ The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "Adopting a build"; the coordi
 
 Each later card of stream sprint-v1-release adds its row here with its check.
 
+### release-check-tools-b.w2
+
+`release check --product nova-sprint|nova-tools` selects a product's stream
+glob and release head from the one product table. Nova-sprint is the default;
+`--streams` overrides only its glob. Every registry check receives the scoped
+facts. A check that has no meaning for the selected product reports `n/a` and
+its reason instead of an `ok` result.
+
 ### release-check-acceptance-r-b.w3
 
 The release check runs the acceptance sentinel's six checks as well, source: the

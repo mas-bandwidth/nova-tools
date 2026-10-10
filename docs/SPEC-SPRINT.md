@@ -6473,6 +6473,16 @@ check, so each passes and says so; the bars are in
 release-check-acceptance-r-b.w3. Test:
 `TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
 
+### release-check-tools-b.w2
+
+`release check --product nova-sprint` (the default) scopes every check to
+`sprint-v1-*`; `--product nova-tools` scopes them to `tools-v1-2-0-*`. The
+single product table in `internal/sprint/releasecheck.go` records those stream
+sets and each product's release head. `--streams` overrides the product stream
+glob, while the selected product and head remain in the JSON report. A check
+without meaning for a product prints `RELEASE CHECK <name> n/a <why>` and does
+not count as a pass or failure.
+
 ### release-check-merge-queue-p90-b.w7
 
 `release check` also runs `merge-queue-p90`, the merge queue's age check (the

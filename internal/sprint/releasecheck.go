@@ -35,11 +35,15 @@ type ReleaseFacts interface {
 type ReleaseResult struct {
 	Name     string `json:"name"`
 	OK       bool   `json:"ok"`
+	NA       bool   `json:"na,omitempty"`
 	Evidence string `json:"evidence"`
 }
 
 // Line is the check's one printed line: RELEASE CHECK <name> ok|fail <evidence>.
 func (r ReleaseResult) Line() string {
+	if r.NA {
+		return "RELEASE CHECK " + r.Name + " n/a " + r.Evidence
+	}
 	word := "fail"
 	if r.OK {
 		word = "ok"
@@ -50,9 +54,38 @@ func (r ReleaseResult) Line() string {
 // ReleaseCheck is one entry of the registry: its name, the bar it holds
 // (stated in docs/SPEC-RELEASE.md, "release check") and the pure function.
 type ReleaseCheck struct {
-	Name string
-	Bar  string
-	Run  func(ReleaseFacts) ReleaseResult
+	Name   string
+	Bar    string
+	Run    func(ReleaseFacts) ReleaseResult
+	NotFor func(ReleaseProduct) string
+}
+
+// ReleaseProduct is the release-check scope for one shipped product. The table
+// keeps product selection out of individual checks (SPEC-SPRINT.md, release check).
+type ReleaseProduct struct {
+	Name, Streams, ReleaseHead string
+}
+
+var ReleaseProducts = []ReleaseProduct{
+	{Name: "nova-sprint", Streams: "sprint-v1-*", ReleaseHead: "sprint/mechanical-2026-10-02"},
+	{Name: "nova-tools", Streams: "tools-v1-2-0-*", ReleaseHead: "sprint/mechanical-2026-10-02"},
+}
+
+// FindReleaseProduct returns a product's stream glob and release head. Keeping
+// the facts together makes product selection data rather than branches in checks.
+func FindReleaseProduct(name string) (ReleaseProduct, error) {
+	for _, product := range ReleaseProducts {
+		if product.Name == name {
+			return product, nil
+		}
+	}
+	return ReleaseProduct{}, fmt.Errorf("no release product named %q", name)
+}
+
+// ReleaseProductScope returns the product's stream glob.
+func ReleaseProductScope(name string) (string, error) {
+	product, err := FindReleaseProduct(name)
+	return product.Streams, err
 }
 
 // ReleaseChecks is the registry, in the order the verb runs them. A later card
@@ -71,6 +104,8 @@ var ReleaseChecks = []ReleaseCheck{
 // ReleaseReport is the verb's result value: the lines are rendered from it and
 // --json is the same value.
 type ReleaseReport struct {
+	Product string          `json:"product,omitempty"`
+	Head    string          `json:"head,omitempty"`
 	Results []ReleaseResult `json:"results"`
 	Checks  int             `json:"checks"`
 	Failed  int             `json:"failed"`
@@ -101,6 +136,12 @@ func ReleaseCheckNames() []string {
 // RELEASE NOT READY failed=<n> otherwise. A name that is no check is an error
 // naming the checks there are, and nothing runs.
 func RunReleaseChecks(f ReleaseFacts, names []string) (ReleaseReport, error) {
+	return RunReleaseChecksForProduct(f, names, ReleaseProduct{})
+}
+
+// RunReleaseChecksForProduct runs the registry against one product's facts. A
+// check that does not apply is explicit: n/a is neither a pass nor a failure.
+func RunReleaseChecksForProduct(f ReleaseFacts, names []string, product ReleaseProduct) (ReleaseReport, error) {
 	want := map[string]bool{}
 	for _, n := range names {
 		if !hasName(n) {
@@ -108,10 +149,16 @@ func RunReleaseChecks(f ReleaseFacts, names []string) (ReleaseReport, error) {
 		}
 		want[n] = true
 	}
-	rep := ReleaseReport{Results: []ReleaseResult{}}
+	rep := ReleaseReport{Product: product.Name, Head: product.ReleaseHead, Results: []ReleaseResult{}}
 	for _, c := range ReleaseChecks {
 		if len(want) > 0 && !want[c.Name] {
 			continue
+		}
+		if c.NotFor != nil {
+			if why := c.NotFor(product); why != "" {
+				rep.Results = append(rep.Results, ReleaseResult{Name: c.Name, NA: true, Evidence: why})
+				continue
+			}
 		}
 		r := c.Run(f)
 		r.Name = c.Name

@@ -58,6 +58,7 @@ func (s storeRelease) MergeP90() time.Duration       { return s.mergeP90 }
 // object. Exit 0 every check passed, 1 one failed, 2 usage or a store that did not answer.
 func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release check")
+	product := fs.String("product", "nova-sprint", "release product: nova-sprint or nova-tools")
 	streams := fs.String("streams", "", "only the log of the streams this glob names (path.Match over the stream's name; default every stream)")
 	window := fs.Duration("window", sprint.MergeQueueWindowDefault, "how far back a card's merging counts, for merge-queue-p90 (default 24h)")
 	mergeP90 := fs.Duration("merge-p90", sprint.MergeQueueP90Default, "the bar on merge-queue-p90: the p90 of the time cards spent merging (default 30m)")
@@ -66,6 +67,13 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "release check", argErr("takes no words ", err, pos...))
+	}
+	releaseProduct, err := sprint.FindReleaseProduct(*product)
+	if err != nil {
+		return refuse(stderr, "release check", err.Error())
+	}
+	if *streams == "" {
+		*streams = releaseProduct.Streams
 	}
 	for _, n := range names {
 		if !slicesHas(sprint.ReleaseCheckNames(), n) {
@@ -94,7 +102,10 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("release check", err, stderr)
 	}
-	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), accept: sprint.AcceptanceOf(s, lines, *streams), mergeWindow: *window, mergeP90: *mergeP90}, names)
+	if *streams != releaseProduct.Streams {
+		releaseProduct.Streams = *streams
+	}
+	rep, err := sprint.RunReleaseChecksForProduct(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), accept: sprint.AcceptanceOf(s, lines, *streams), mergeWindow: *window, mergeP90: *mergeP90}, names, releaseProduct)
 	if err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}
