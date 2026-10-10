@@ -208,8 +208,10 @@ func claudeLimit(ev rateLimitEvent, now time.Time) Limit {
 }
 
 // Limits is one friend's harness limit: up, or down until a reset, then
-// waking until a turn answers the current nonce (tla/FriendLimit.tla is
-// owed). Watch reads every command's output for it; Gate holds deliveries
+// waking until a turn answers the current nonce.
+// model: tla/FriendLimit.tla (DownOncePerEpisode, NoDeliveryBeforeReset,
+// UpOnlyOnCurrentWakeNonce, NoDownBeatAfterUp, UnreadOncePerHold, NeverUpByClock).
+// Watch reads every command's output for it; Gate holds deliveries
 // while it is down and wakes the session after the reset. The hooks say the
 // change to the sprint: Down once per limit with its reset (friend down
 // --until), Up when a wake answered.
