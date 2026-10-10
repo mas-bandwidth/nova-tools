@@ -65,7 +65,7 @@ func friendQueueRead(dir string) (account sprint.FriendAccount, why string, err 
 func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 	const name = "friend reconcile"
 	fs, c := a.verbSetup(name)
-	root := fs.String("root", "", "the directory the friends' working directories are under, <root>/<friend>-working (else HOME); her inbox/QUEUE.json and outbox are read there, and nothing is written there")
+	root := fs.String("root", "", "the directory holding <root>/<friend>-working when her nova-config row has no dir (else HOME); her inbox/QUEUE.json and outbox are read in her row's dir, else there, and nothing is written there")
 	dry := fs.Bool("dry-run", false, "say what each card working on her row would get (collect, keep, return) and write nothing; the reads of the store and her directory are made")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
@@ -84,13 +84,17 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: no friend %s on the friends table (friends: %s): its row is nova-config's friend row; run: nova-sprint friend sync; nothing was changed\n", prog, name, friend, orDashStr(strings.Join(names, ","), "none"))
 		return 1
 	}
+	spec, err := st.FriendSpecOf(ctx, friend)
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
 	if *root == "" {
 		*root = a.getenv("HOME")
 	}
-	if *root == "" {
-		return refuse(stderr, name, "wants --root <dir>, the directory the friends' working directories are under (HOME is not set)")
+	if *root == "" && spec.Dir == "" {
+		return refuse(stderr, name, "wants --root <dir>, the directory holding <root>/"+friend+"-working, for her nova-config row has no dir (HOME is not set); or run: nova-config friend set "+friend+" --dir <her working directory>, then nova-sprint friend sync")
 	}
-	dir := filepath.Join(*root, friend+"-working")
+	dir := a.friendDir(friend, spec.Dir, *root, stderr)
 	account, why, err := friendQueueRead(dir)
 	switch {
 	case err != nil:

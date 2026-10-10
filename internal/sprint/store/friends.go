@@ -72,6 +72,9 @@ type friendEntry struct {
 	// Roles is her row's roles, comma joined (builder, may-hold, reader): a read card is
 	// dealt only to a friend whose roles name reader (sprint read_cards.go).
 	Roles string `json:"roles,omitempty"`
+	// Dir is her working directory, her nova-config row's dir; empty when the
+	// row declares none, and the tools join <root>/<name>-working (frienddir.go).
+	Dir string `json:"dir,omitempty"`
 	// Billing is her row's billing word, when it names one: a friend whose calls are
 	// billed per use shows dollars on the tokens column, a subscription friend tokens.
 	// The cost card adds the field; until it exists this is empty, which is a
@@ -86,7 +89,7 @@ type friendEntry struct {
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
-// of nova-config), her width and her class.
+// of nova-config), her width, her class, her delivery mode and her working directory.
 type FriendSpec struct {
 	Name  string
 	Width int
@@ -101,6 +104,8 @@ type FriendSpec struct {
 	TokenCapSet bool
 	// Roles is her row's roles, comma joined: reader is the read cards'.
 	Roles string
+	// Dir is her working directory, config.FriendDir of her row; "" when it has none.
+	Dir string
 	// Billing is her row's billing word ("" when the row names none): a friend billed
 	// per call shows dollars on the tokens column. The cost card adds the field.
 	Billing string
@@ -219,7 +224,7 @@ func noFriend(r map[string]friendEntry, friend string) error {
 // friend it has that the specs lack is taken off with her beat; a friend that
 // stays keeps her hold, and her width is set from the spec. It writes nothing
 // when there is nothing to change, and says who was added, who taken off and
-// who stayed with a width that changed, each in name order.
+// who stayed with a width, class, mode or dir that changed, each in name order.
 func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, removed, updated []string, err error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
@@ -234,11 +239,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds || e.Dir != s.Dir:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds, e.Dir = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds, s.Dir
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -782,7 +787,24 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds, Dir: e.Dir}, nil
+}
+
+// FriendDirs is each friend of the roster's working directory as friend sync last
+// wrote it from her nova-config row, by name; a friend whose row has no dir is
+// absent. The run loop's reconcile reads it once a pass (frienddir.go).
+func (st *Store) FriendDirs(ctx context.Context) (map[string]string, error) {
+	r, _, err := st.roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for n, e := range r {
+		if e.Dir != "" {
+			out[n] = e.Dir
+		}
+	}
+	return out, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

@@ -87,7 +87,8 @@ unstarted card's stored WHO choice without editing its brief; --stream <s>
 selects a stream, and --dry-run only previews it. Work assigned to a friend
 uses her fleet row friend.<name>; presence never takes it back. friend take
 takes back what she has not started, and friend down takes back every card.
-friend sync writes it as <friend>-working/inbox/<job>/BRIEF.md, the job
+friend sync writes it as inbox/<job>/BRIEF.md in her working directory (her
+nova-config row's dir, else <root>/<friend>-working, said once), the job
 directory <card> at epoch 0 and <card>~<epoch> after a clear (its STATUS line
 names the card, the branch to push and the report), and finishes it from
 outbox/<job>/REPORT.md: Verdict: LAND with Head: <full sha> goes to review at
@@ -104,7 +105,7 @@ finish the card failed too, each with the report's first paragraph. card
 prints who=; where counts it on her friends row.
 
 friend reconcile <friend> settles her cards when her own account and the table
-disagree: it reads <friend>-working/inbox/QUEUE.json, {"tasks":[{"id":"<card>",
+disagree: it reads inbox/QUEUE.json in her working directory, {"tasks":[{"id":"<card>",
 "state":"queued|working|done"}]} (an id is the card or its job directory), and
 her outbox, and for each card working on her row collects it when
 outbox/<job>/REPORT.md is there (as friend sync does), keeps it while her queue
@@ -179,7 +180,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 	}
 	fs, c := a.verbSetup(name)
 	pg := fs.String("pg", "", "the config store, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN; the password from the variable NOVA_PG_PASSWORD_ENV names), as nova-config takes it")
-	root := fs.String("root", "", "the directory the friends' working directories are under, <root>/<friend>-working (else HOME); the sync delivers and collects each friend's sprint cards there and never writes elsewhere")
+	root := fs.String("root", "", "the directory holding <root>/<friend>-working for a friend whose nova-config row has no dir (else HOME); the sync delivers and collects each friend's sprint cards in her row's dir, else there, and never writes elsewhere")
 	every := fs.Duration("every", 0, "sync now and again each time this passes, until interrupted, as the sprint's coordinator seat when no --actor is given, read again each pass (default: once); friend sync install --every <d> runs it as this machine's service and friend sync uninstall removes it (-h of each), or the friend sync loop row runs it (docs/FRIENDS.md)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -220,9 +221,6 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 	if root == "" {
 		root = a.getenv("HOME")
 	}
-	if root == "" {
-		return refuse(stderr, name, "wants --root <dir>, the directory the friends' working directories are under (HOME is not set)"), false
-	}
 	// the specs: the roster and each friend's width, nothing read of her
 	// working directory (the cards, below, are delivered and collected there,
 	// and where counts them from the fleet table, never from the directory)
@@ -237,7 +235,10 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
+		if root == "" && config.FriendDir(r) == "" {
+			return refuse(stderr, name, "wants --root <dir>, the directory holding <root>/"+n+"-working, for her nova-config row has no dir (HOME is not set); or run: nova-config friend set "+n+" --dir <her working directory>"), false
+		}
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], Dir: config.FriendDir(r), TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -254,12 +255,13 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 		}
 	}
 	for _, s := range specs {
+		dir := a.friendDir(s.Name, s.Dir, root, stderr)
 		// her starts first, so a card she began is working before its report is read
-		if err := a.friendStartsOf(ctx, st, s.Name, filepath.Join(root, s.Name+"-working"), say); err != nil {
+		if err := a.friendStartsOf(ctx, st, s.Name, dir, say); err != nil {
 			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be read for her starts: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))
 			return 1, false
 		}
-		d, f, err := a.friendCardsOf(ctx, st, s.Name, filepath.Join(root, s.Name+"-working"), say)
+		d, f, err := a.friendCardsOf(ctx, st, s.Name, dir, s.Dir, say)
 		delivered, finished = delivered+d, finished+f
 		if err != nil {
 			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be delivered or collected: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))

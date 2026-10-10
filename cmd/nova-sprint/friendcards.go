@@ -72,23 +72,25 @@ func friendJobOf(p sprint.Packet) string {
 	return job
 }
 
-// friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
-// epoch and attempt, the branch to push and the report to write), the working-directory
-// line of docs/FRIENDS.md, a later attempt's start and why it exists (as a child's JOB.md
-// says them), then the brief as a child is handed it (the rules it names injected). A
-// reworked card's is the daemon's form (friend.ReworkedBrief): its fix the first line after
-// STATUS and its STOP, whichever of friend sync and the daemon writes it first.
+// friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line, her
+// configured working directory, a later attempt's start, and the brief's rules.
+// A reworked card has the daemon's form (friend.ReworkedBrief), with its fix
+// immediately after STATUS and its STOP updated, whichever writer delivers it.
 func friendBrief(name string, p sprint.Packet) string {
-	return friend.ReworkedBrief(friendServerBrief(name, p))
+	return friendBriefAtDir(name, "", p)
 }
 
-// friendServerBrief is friendBrief before it is reworked: the fix on a 'The coordinator
-// asks:' line under the start, the form friend.ReworkedBrief reads.
-func friendServerBrief(name string, p sprint.Packet) string {
+// friendBriefAtDir names the row directory in the delivered brief (docs/FRIENDS.md).
+func friendBriefAtDir(name, dir string, p sprint.Packet) string {
+	return friend.ReworkedBrief(friendServerBriefAtDir(name, dir, p))
+}
+
+// friendServerBriefAtDir is the brief before a rework transforms its fix and STOP.
+func friendServerBriefAtDir(name, dir string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
-	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, "+swarm.FriendGoCacheLine(name)+", and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
+	fmt.Fprintf(&b, "Work in %[1]s/jobs/%[2]s/: every clone, worktree and build output goes inside it, "+strings.ReplaceAll(swarm.FriendGoCacheLine(name), "~/"+name+"-working", friendWorkDir(name, dir))+", and the report goes to %[1]s/outbox/%[2]s/REPORT.md.\n", friendWorkDir(name, dir), job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a card brief --widen widened starts from the held attempt's head (member.Carried)
 		p.BaseHead, p.BaseAttempt = c.Head, c.Attempt
@@ -624,7 +626,7 @@ func withMatchedOnRoute(line string) (string, bool) {
 // delivered and finished. A batch friend (the default) is woken once, after this
 // call's deliveries, for the cards the pass wrote; a one-shot friend is woken per
 // card, which is how her runner starts a lane (docs/FRIENDS.md).
-func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
+func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir, rowDir string, say func(string)) (delivered, finished int, err error) {
 	// her working cards, then the ready ones dealt behind them (sprint.TickDeal): both are
 	// delivered, and her queue file says which are which
 	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
@@ -691,7 +693,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	}()
 	for i, p := range packets {
 		if p.Kind == "read" {
-			d, f, err := a.friendReadOf(ctx, st, name, dir, p, cards[i], say, wake)
+			d, f, err := a.friendReadOf(ctx, st, name, dir, rowDir, p, cards[i], say, wake)
 			delivered, finished = delivered+d, finished+f
 			if err != nil {
 				return delivered, finished, err
@@ -712,7 +714,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			if err := os.MkdirAll(in, 0o755); err != nil {
 				return delivered, finished, err
 			}
-			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, p)), 0o644, atomicfile.NoReplace()); {
+			switch err := atomicfile.WriteFile(brief, []byte(friendBriefAtDir(name, rowDir, p)), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
 				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)
@@ -994,6 +996,17 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 	return sprint.ReadCardBrief(name, friendJobOf(p), p, start, deadline)
 }
 
+// friendReadTextAtDir names the row directory in a review brief header
+// (docs/FRIENDS.md), keeping the pure sprint generators independent of config.
+func friendReadTextAtDir(st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card) string {
+	text := friendReadText(st, name, p, c)
+	header, body, found := strings.Cut(text, "\n\n")
+	if !found {
+		return text
+	}
+	return strings.ReplaceAll(header, "~/"+name+"-working", friendWorkDir(name, dir)) + "\n\n" + body
+}
+
 // friendReadOf delivers one friend's read and closes it from the friend's
 // report. The brief is the read's (sprint.FriendReadBrief: the AS A READ
 // section, the attempt's branch, start commit and head, deadline thirty
@@ -1001,7 +1014,7 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
 // wake is the pass's: one-shot sends now, batch records the card for the one message.
-func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string), wake func(sprint.Packet, string, string) error) (delivered, finished int, err error) {
+func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir, rowDir string, p sprint.Packet, c *sprint.Card, say func(string), wake func(sprint.Packet, string, string) error) (delivered, finished int, err error) {
 	job := friendJobOf(p)
 	in, why, err := friendInbox(dir, p)
 	if err != nil {
@@ -1016,7 +1029,7 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		if err := os.MkdirAll(in, 0o755); err != nil {
 			return 0, 0, err
 		}
-		text := friendReadText(st, name, p, c)
+		text := friendReadTextAtDir(st, name, rowDir, p, c)
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			delivered++

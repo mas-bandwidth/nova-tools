@@ -622,9 +622,18 @@ func (a *app) pushJudgments(ctx context.Context, src inboxSource, holder string,
 	if err != nil || !found {
 		return // the proof says PUSH DOWN for it at the next look
 	}
-	if inbox, _, ok := a.seatInbox(holder); ok && rec.Adapter == sprint.AdapterFolder && sameDir(rec.Target, inbox) {
-		say("OK", holder, "", "")
-		return
+	if rec.Adapter == sprint.AdapterFolder {
+		// docs/FRIENDS.md: the folder already has the judgments only when it is
+		// the holder's row directory; an unreadable row cannot select a fallback.
+		dirs, err := a.friendRowDirs(ctx)
+		if err != nil {
+			say("DOWN", holder, "", "the judgments were written and not delivered: nova-config friend rows cannot be read: "+err.Error())
+			return
+		}
+		if inbox, _, ok := a.seatInbox(holder, dirs[holder], nil); ok && sameDir(rec.Target, inbox) {
+			say("OK", holder, "", "")
+			return
+		}
 	}
 	if why := a.deliverPush(ctx, rec, "NOVA SPRINT INBOX: new for the coordinator\n"+strings.Join(texts, "\n")); why != "" {
 		say("DOWN", holder, "", "the judgments were written and not delivered: "+why)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -72,7 +73,7 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 	const name = "collect"
 	fs, c := a.verbSetup(name)
 	pg := fs.String("pg", "", "the config store, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN), as friend sync reads the roster from it")
-	root := fs.String("root", "", "the directory the friends' working directories are under, <root>/<friend>-working (else HOME); collect reads every friend's outbox there and writes nothing in it")
+	root := fs.String("root", "", "the directory holding <root>/<friend>-working (else HOME), a friend's working directory when her nova-config row has no dir (nova-config friend set <friend> --dir); collect reads every friend's outbox in her working directory and writes nothing in it")
 	dead := fs.Bool("dead-lanes", false, "also finish failed each working card with no report whose friend's runner ENDed its job with report=no (runner.log in her working directory or beside it), so the card is dealt again")
 	dry := fs.Bool("dry-run", false, "print what would be finished; finish nothing and read no tip")
 	pos, err := parse(fs, args)
@@ -94,9 +95,13 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 		return exitCannotRead
 	}
 	var roster []string
+	dirs := map[string]string{} // each friend's working directory as her row says it; absent: none
 	for _, r := range rows {
 		if sprint.ValidID(r.Name) {
 			roster = append(roster, r.Name)
+			if d := config.FriendDir(r); d != "" {
+				dirs[r.Name] = d
+			}
 		}
 	}
 	only := roster
@@ -113,7 +118,11 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 		*root = a.getenv("HOME")
 	}
 	if *root == "" {
-		return refuse(stderr, name, "wants --root <dir>, the directory the friends' working directories are under (HOME is not set)")
+		for _, f := range roster {
+			if dirs[f] == "" {
+				return refuse(stderr, name, "wants --root <dir>, the directory holding <root>/"+f+"-working, for her nova-config row has no dir (HOME is not set); or run: nova-config friend set "+f+" --dir <her working directory>")
+			}
+		}
 	}
 
 	// the work cards working on the named friends' rows, each as its job
@@ -142,7 +151,7 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 	trees := make([]sprint.CollectTree, 0, len(roster))
 	at := map[string]time.Time{}
 	for _, f := range roster {
-		dir := filepath.Join(*root, f+"-working")
+		dir := a.friendDir(f, dirs[f], *root, stderr)
 		t := sprint.CollectTree{Friend: f, Reports: map[string]string{}, Unread: map[string]string{}}
 		for job := range want {
 			report, why, when, err := friendReadReport(dir, job)

@@ -19,7 +19,7 @@ import (
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
 // for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
-// width, delivery mode, config_dir, token_cap and the optional streams and
+// width, delivery mode, config_dir, token_cap, dir, and the optional streams and
 // kinds work restriction, plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
@@ -232,7 +232,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "dir")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -263,6 +263,8 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			// her optional work restriction, "" for none
 			"streams": str(d, 6),
 			"kinds":   str(d, 7),
+			// her working directory, "" when the row names none
+			"dir": str(d, 8),
 		}
 	}
 	return views, revValue(rev), nil
@@ -444,8 +446,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeTokenCap := prev == nil || prev["token_cap"] != row.Fields["token_cap"]
 	writeStreams := prev == nil || prev["streams"] != row.Fields["streams"]
 	writeKinds := prev == nil || prev["kinds"] != row.Fields["kinds"]
+	writeDir := prev == nil && row.Fields["dir"] != "" || prev != nil && prev["dir"] != row.Fields["dir"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writeRoles {
+	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writeDir && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -467,6 +470,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeKinds { // her optional KIND restriction, a plain field beside streams
 		pipe.HSet(ctx, "friend:"+f+":desired", "kinds", row.Fields["kinds"])
+	}
+	if writeDir { // her working directory, a plain field beside the restriction; unset is no field
+		if row.Fields["dir"] != "" {
+			pipe.HSet(ctx, "friend:"+f+":desired", "dir", row.Fields["dir"])
+		} else {
+			pipe.HDel(ctx, "friend:"+f+":desired", "dir")
+		}
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

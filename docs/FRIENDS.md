@@ -2,8 +2,8 @@
 
 A friend is an AI who works beside the coordinator under her own name: a
 nova-config friend row (docs/SPEC-CONFIG.md, `friend`), a row of the sprint's
-friends table (docs/FLEET.md), and a working directory `~/<name>-working` on
-the machine she runs on. The coordinator is a friend row too (the sprint row's
+friends table (docs/FLEET.md), and a working directory on the machine she runs
+on: her friend row's `dir` (`nova-config friend set <name> --dir <absolute path>`, a real directory and never a symlink), else `~/<name>-working`. The coordinator is a friend row too (the sprint row's
 `coordinator` names one), and her own working directory follows the same
 standard. This page is the standard for that directory: how a job arrives, how
 it is reported, where its work lives, and how the work is removed once done.
@@ -282,15 +282,36 @@ inbox/ and outbox/ hold text: the brief, the report, the evidence. A job's
 clones, worktrees and build output live in `jobs/<job>/`, the same `<job>` as
 its inbox directory, and nowhere else; the build cache is the friend's one
 cache, `.cache/go-build`, never one per job. Every brief to a friend (and every
-brief to a coordinator's child) carries this line, with the name and the job
+brief to a coordinator's child) carries this line, with the row directory (or its default) and the job
 filled in:
 
 ```
-Work in ~/<name>-working/jobs/<job>/: every clone, worktree and build output goes inside it, GOCACHE=~/<name>-working/.cache/go-build, and the report goes to ~/<name>-working/outbox/<job>/REPORT.md.
+Work in <dir>/jobs/<job>/: every clone, worktree and build output goes inside it, GOCACHE=<dir>/.cache/go-build is your own build cache, warm across your cards: keep it, and the report goes to <dir>/outbox/<job>/REPORT.md.
 ```
 
 A clone left inside `inbox/<job>/`, beside its brief (the layout before this
 line), is found there too.
+
+### Her directory is her row's
+
+nova-sprint finds a friend's inbox and outbox at her nova-config row's `dir`, and
+only at `<root>/<name>-working` (`--root`, else HOME) when the row has none, saying
+so once a run (`NOTE friend=<name> has no dir on her nova-config row ...`). The
+explicit row path lets sandboxes use the real directory as their writable root
+without relying on a symlink. Declare it on her row:
+
+```
+nova-config friend set <name> --dir /srv/friends/<name>/working
+nova-config apply --kind friend
+nova-sprint friend sync
+```
+
+`--dir` is refused when the path is not an existing directory on the machine running
+nova-config, or is a symlink (the refusal names where the link points); `--dir ''`
+unsets it. friend sync, friend reconcile (the verb and the run loop's), collect, friend clean
+and the seat's inbox read it, and the work line above, which friend sync writes into
+each brief, names it (as do the brief and report paths of `view worker --as <name>`),
+so once every row has its dir no friend needs a symlink.
 
 ## Retention: `nova-sprint friend clean`
 
@@ -345,7 +366,8 @@ nova-config loop add seat-push --machine bench-a --argv '["/usr/bin/env","NOVA_S
 
    Its log is the loop's, `~/nova-bench/loops/seat-push.log`. It writes each new
    judgment and note into the holder's inbox directory,
-   `~/<holder>-working/inbox/sprint-judgments/`, and follows the seat when it
+   `inbox/sprint-judgments/` in the holder's working directory (her row's `dir`,
+   else `~/<holder>-working`), and follows the seat when it
    moves. It replaces the hand-written launch agent `com.nova.loop.seat-push-<seat>`
    (a zsh script under `nova-secrets exec`).
 

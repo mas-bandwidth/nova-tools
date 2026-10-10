@@ -480,15 +480,23 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// seatInbox is a name's inbox for pushed judgments,
-// ~/<name>-working/inbox/sprint-judgments, and the inbox it is under; ok false
-// when that inbox is not there.
-func (a *app) seatInbox(name string) (dir, parent string, ok bool) {
-	home, err := a.home()
-	if err != nil || name == "" {
+// seatInbox is a name's inbox for pushed judgments, inbox/sprint-judgments in
+// its working directory (rowDir, its nova-config friend row's dir; else
+// ~/<name>-working, said once on note: frienddir.go), and the inbox it is
+// under; ok false when that inbox is not there.
+func (a *app) seatInbox(name, rowDir string, note io.Writer) (dir, parent string, ok bool) {
+	if name == "" {
 		return "", "", false
 	}
-	parent = filepath.Join(home, name+"-working", "inbox")
+	home := ""
+	if rowDir == "" {
+		h, err := a.home()
+		if err != nil {
+			return "", "", false
+		}
+		home = h
+	}
+	parent = filepath.Join(a.friendDir(name, rowDir, home, note), "inbox")
 	info, err := os.Stat(parent)
 	return filepath.Join(parent, "sprint-judgments"), parent, err == nil && info.IsDir()
 }
@@ -497,10 +505,18 @@ func (a *app) seatInbox(name string) (dir, parent string, ok bool) {
 // following the seat (--push seat), the holder's inbox, and a note addressed to
 // someone with an inbox there, theirs. Each directory's files are its cursor.
 type pushTarget struct {
-	a      *app
-	fixed  string                     // --push <dir>; "" follows the seat
-	seen   map[string]map[string]bool // each directory's keys, read once
-	holder string                     // the holder last pushed for
+	a         *app
+	fixed     string                     // --push <dir>; "" follows the seat
+	seen      map[string]map[string]bool // each directory's keys, read once
+	holder    string                     // the holder last pushed for
+	dirs      map[string]string          // the friend rows' dirs, read again at every look (friendRowDirs)
+	note      io.Writer                  // where a fallback to ~/<name>-working is said once
+	followErr error                      // a friend-row read failure, surfaced by unseen in the wait callback
+}
+
+// inbox is seatInbox for name, from the friend rows' dirs as read at the last look.
+func (p *pushTarget) inbox(name string) (dir, parent string, ok bool) {
+	return p.a.seatInbox(name, p.dirs[name], p.note)
 }
 
 // dirOf is the directory the group is written to with the seat held by holder,
@@ -510,11 +526,11 @@ func (p *pushTarget) dirOf(holder string, g sprint.Group) string {
 		return p.fixed
 	}
 	if g.To != "" && g.To != holder {
-		if dir, _, ok := p.a.seatInbox(g.To); ok {
+		if dir, _, ok := p.inbox(g.To); ok {
 			return dir
 		}
 	}
-	if dir, _, ok := p.a.seatInbox(holder); ok {
+	if dir, _, ok := p.inbox(holder); ok {
 		return dir
 	}
 	return ""
@@ -539,6 +555,9 @@ func (p *pushTarget) keys(dir string) (map[string]bool, error) {
 // unseen is the groups that wake the coordinator and hold a key their
 // directory does not, in the inbox's order; a group with no directory now waits.
 func (p *pushTarget) unseen(l inboxLook) ([]sprint.Group, error) {
+	if p.followErr != nil {
+		return nil, p.followErr
+	}
 	var out []sprint.Group
 	for _, g := range l.groups {
 		if !forCoordinator(g) {
@@ -559,21 +578,32 @@ func (p *pushTarget) unseen(l inboxLook) ([]sprint.Group, error) {
 	return out, nil
 }
 
-// follow says where a loop following the seat writes, once for each holder: a
-// line when the seat moved, and whether the holder has an inbox. A loop
-// started for a holder with none is refused (exit 2, naming it).
+// follow says where a loop following the seat writes, from the friend rows read
+// at this look: a line when the holder or her directory moved, and whether the
+// holder has an inbox. A loop started for a holder with none is refused (exit 2,
+// naming it).
 func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer) int {
-	if p.fixed != "" || holder == p.holder {
+	if p.fixed != "" {
 		return 0
 	}
-	p.holder = holder
-	dir, parent, ok := p.a.seatInbox(holder)
+	dirs, err := p.a.friendRowDirs(context.Background())
+	if err != nil {
+		code := p.a.readFailed("inbox --push", fmt.Errorf("nova-config friend rows cannot be read: %w", err), stderr)
+		p.followErr = &exitErr{code: code}
+		return code
+	}
+	moved := holder != p.holder
+	if !moved {
+		moved = dirs[holder] != p.dirs[holder]
+	}
+	p.holder, p.dirs, p.note, p.followErr = holder, dirs, stderr, nil
+	dir, parent, ok := p.inbox(holder)
 	switch {
 	case first && !ok:
 		return refuse(stderr, "inbox", fmt.Sprintf("--push seat writes to the holder's inbox, %s, and %s is not there: make it, or give --push <dir>", dir, parent))
 	case !ok:
 		fmt.Fprintf(stdout, "NOTE the seat is %s's, and %s is not there: nothing is pushed until it is\n", oneline.Field(holder), oneline.Field(parent))
-	case !first:
+	case !first && moved:
 		fmt.Fprintf(stdout, "NOTE the seat is %s's: pushing to %s\n", oneline.Field(holder), oneline.Field(dir))
 	}
 	return 0
