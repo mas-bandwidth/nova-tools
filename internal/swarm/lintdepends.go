@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // DEPENDS-ON IS A HEADER KEY, CHECKED ONLY WHEN THE CARD IS TYPED (#2636).
@@ -32,6 +34,12 @@ import (
 // Whitespace (`nova-tools #2550`) is not that shape and is refused by name. A word
 // the lineup does not hold (`dogfood`) is refused by name as an unknown card id.
 //
+// An entry may instead be an external operand (docs/SPEC-ISA.md, the one wait kind;
+// tla/CardISA.tla, Ext): `pr <repo>#<n> merged`, `<branch> contains <sha>`, or
+// `after <RFC3339>`. The card waits until the tick sees the operand hold. An entry
+// that opens like one (first word `pr` or `after`, or second word `contains`) and
+// is not one of the three shapes is refused with the forms (ParseDependsOperand).
+//
 // The lineup file is the sprint's ORDER.tsv shape, or one id per line. A header
 // row that names `depends-on` is not a card. The id column is the one named `id`,
 // `card`, `card-id` or `label`; otherwise it is the first column, which is where
@@ -43,7 +51,99 @@ type Lineup map[string]bool
 
 // CardDependsRemedy is what the `depends-on` drift names. One remedy for the
 // token, the two forms the key is allowed to take.
-const CardDependsRemedy = "DEPENDS-ON: <card-id>[, ...] or DEPENDS-ON: -"
+const CardDependsRemedy = "DEPENDS-ON: <card-id>[, ...] or DEPENDS-ON: -; an entry may be an external operand: " + DependsOperandForms
+
+// DependsOperandForms is the three external operands of DEPENDS-ON, as a refusal names them.
+const DependsOperandForms = "pr <owner/repo>#<n> merged, <branch> contains <sha>, or after <RFC3339>"
+
+// The forms of an external operand (DependsOperand.Form).
+const (
+	OperandPRMerged = "pr"       // pr <repo>#<n> merged: the pull request has merged
+	OperandContains = "contains" // <branch> contains <sha>: the commit is on the branch
+	OperandAfter    = "after"    // after <RFC3339>: the clock has passed the time
+)
+
+// DependsOperand is one external operand of a DEPENDS-ON entry. Text is the entry
+// as written, its words separated by single blanks: the operand's one name, which
+// the tick asks once a tick however many cards wait on it.
+type DependsOperand struct {
+	Form   string
+	Text   string
+	Repo   string // pr: owner/repo, or repo alone
+	N      int    // pr: the number
+	Branch string // contains: the branch
+	SHA    string // contains: the commit
+	At     time.Time
+}
+
+// Waits is the operand as a card's wait says it: `nova-tools#5303 merged`,
+// `main contains 0123abc`, `after 2026-10-06T12:00:00Z`.
+func (o DependsOperand) Waits() string {
+	if o.Form == OperandPRMerged {
+		return o.Repo + "#" + strconv.Itoa(o.N) + " merged"
+	}
+	return o.Text
+}
+
+// prRefRE is the pull request of `pr <repo>#<n> merged`: a repository, with its
+// owner or without, then `#` and digits.
+var prRefRE = regexp.MustCompile(`^((?:[A-Za-z0-9][A-Za-z0-9._-]*/)?[A-Za-z0-9][A-Za-z0-9._-]*)#([0-9]+)$`)
+
+// branchRE is a branch of `<branch> contains <sha>`; shaRE its commit, 7 to 40 hex digits.
+var (
+	branchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	shaRE    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+)
+
+// ParseDependsOperand reads one DEPENDS-ON entry as an external operand. external
+// says the entry opens like one: first word `pr` or `after`, or second word
+// `contains`; a card id never does, since it is one word. err says why an entry
+// that opens like one is not one of the three forms.
+func ParseDependsOperand(entry string) (op DependsOperand, external bool, err error) {
+	f := strings.Fields(entry)
+	switch {
+	case len(f) > 0 && f[0] == OperandPRMerged:
+		op.Form = OperandPRMerged
+	case len(f) > 0 && f[0] == OperandAfter:
+		op.Form = OperandAfter
+	case len(f) > 1 && f[1] == OperandContains:
+		op.Form = OperandContains
+	default:
+		return op, false, nil
+	}
+	op.Text = strings.Join(f, " ")
+	switch op.Form {
+	case OperandPRMerged:
+		if len(f) != 3 || f[2] != "merged" {
+			return op, true, fmt.Errorf("%q wants three words, pr <owner/repo>#<n> merged", op.Text)
+		}
+		m := prRefRE.FindStringSubmatch(f[1])
+		if m == nil {
+			return op, true, fmt.Errorf("%q names no pull request: %q is not <owner/repo>#<n>", op.Text, f[1])
+		}
+		op.Repo = m[1]
+		op.N, _ = strconv.Atoi(m[2]) // ignored: the pattern took digits alone
+	case OperandAfter:
+		if len(f) != 2 {
+			return op, true, fmt.Errorf("%q wants two words, after <RFC3339>", op.Text)
+		}
+		if op.At, err = time.Parse(time.RFC3339, f[1]); err != nil {
+			return op, true, fmt.Errorf("%q: %q is not an RFC3339 time (2026-10-06T12:00:00Z)", op.Text, f[1])
+		}
+	case OperandContains:
+		if len(f) != 3 {
+			return op, true, fmt.Errorf("%q wants three words, <branch> contains <sha>", op.Text)
+		}
+		if !branchRE.MatchString(f[0]) || strings.Contains(f[0], "..") {
+			return op, true, fmt.Errorf("%q: %q is not a branch name", op.Text, f[0])
+		}
+		if !shaRE.MatchString(f[2]) {
+			return op, true, fmt.Errorf("%q: %q is not a commit, 7 to 40 lowercase hex digits", op.Text, f[2])
+		}
+		op.Branch, op.SHA = f[0], f[2]
+	}
+	return op, true, nil
+}
 
 // LintCardDepends returns the depends-on findings for one card. lineup may be
 // nil: an id is then not called unknown.
@@ -85,7 +185,7 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 	}
 
 	own := cardOwnID(firstLine(raw))
-	var selfs, bad, unknowns []string
+	var selfs, bad, unknowns, operands []string
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if seen[id] {
@@ -100,6 +200,13 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 		if dependsReferenceRE.MatchString(id) {
 			continue
 		}
+		// An external operand is shape only too: the tick asks whether it holds.
+		if _, external, err := ParseDependsOperand(id); external {
+			if err != nil {
+				operands = append(operands, err.Error())
+			}
+			continue
+		}
 		if !oneCardID(id) {
 			bad = append(bad, id)
 			continue
@@ -109,7 +216,10 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 		}
 	}
 	if len(bad) > 0 {
-		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id or an owner/repo#n reference", quoteDepends(bad)))
+		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id, an owner/repo#n reference, or an external operand (%s)", quoteDepends(bad), DependsOperandForms))
+	}
+	if len(operands) > 0 {
+		add(f.line, fmt.Sprintf("DEPENDS-ON: %s; an external operand is %s", strings.Join(operands, "; "), DependsOperandForms))
 	}
 	if len(selfs) > 0 {
 		add(f.line, fmt.Sprintf("DEPENDS-ON: %s names this card's own id", strings.Join(selfs, ", ")))

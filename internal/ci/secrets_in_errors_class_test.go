@@ -339,6 +339,7 @@ var secretOpeners = map[string]any{
 	"internal/swarm.NewWallReader":                     swarm.NewWallReader,
 	"internal/swarm.OpenCodeStoreLocations":            swarm.OpenCodeStoreLocations,
 	"internal/swarm.ParseChildRules":                   swarm.ParseChildRules,
+	"internal/swarm.ParseDependsOperand":               swarm.ParseDependsOperand,
 	"internal/swarm.ParseIdentity":                     swarm.ParseIdentity,
 	"internal/swarm.ParseRouteList":                    swarm.ParseRouteList,
 	"internal/tlc.Parse":                               tlc.Parse,

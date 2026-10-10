@@ -12,6 +12,8 @@ MCSlots     == [k \in MCConsumers |-> 1]
 MCDeps      == [c \in MCCards |-> {}]
 MCKind      == [c \in MCCards |-> IF c = "c1" THEN "wait" ELSE "think"]
 MCWaitFor   == [c \in MCCards |-> IF c = "c1" THEN "release" ELSE "c1"]
+\* no external operand in this instance; MCCardISAExt has two
+MCExt       == {}
 MCMaxBase   == 2
 \* the PR head is unbounded; TLC explores up to MCMaxHead
 MCMaxHead   == 1
@@ -24,6 +26,26 @@ MCSlotsLive     == [k \in MCConsumersLive |-> 1]
 MCDepsLive      == [c \in MCCardsLive |-> {}]
 MCKindLive      == [c \in MCCardsLive |-> "wait"]
 MCWaitForLive   == [c \in MCCardsLive |-> "release"]
+MCExtLive       == {}
 MCMaxHeadLive   == 1
 MCCardISAHeadBoundLive == HeadBound(MCMaxHeadLive)
+
+\* the external instance (layer 3): two wait cards on two external operands,
+\* c1 on e1 (a pr merged) and c2 on e2 (a branch contains a sha), so a
+\* cache read under the wrong operand ("onekey") releases one on the other's
+\* answer
+MCCardsExt     == {"c1", "c2"}
+MCConsumersExt == {"k1"}
+MCSlotsExt     == [k \in MCConsumersExt |-> 1]
+MCDepsExt      == [c \in MCCardsExt |-> {}]
+MCKindExt      == [c \in MCCardsExt |-> "wait"]
+MCExtExt       == {"e1", "e2"}
+MCWaitForExt   == [c \in MCCardsExt |-> IF c = "c1" THEN "e1" ELSE "e2"]
+
+\* the external liveness instance: one wait card on one external operand
+MCCardsExtLive   == {"c1"}
+MCKindExtLive    == [c \in MCCardsExtLive |-> "wait"]
+MCExtExtLive     == {"e1"}
+MCWaitForExtLive == [c \in MCCardsExtLive |-> "e1"]
+MCDepsExtLive    == [c \in MCCardsExtLive |-> {}]
 ========================================================================
