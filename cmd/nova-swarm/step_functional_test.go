@@ -3,13 +3,16 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,4 +102,38 @@ func TestAGoVetPostRunsInTheStepsWall(t *testing.T) {
 	assert.Equal(t, "rename Foo to Bar\n", runGit(t, repo, "log", "-1", "--format=%s"))
 	_, err = os.Stat(filepath.Join(work, "tmp", "go-build"))
 	assert.NoError(t, err, "go vet's build cache is the step's own, in its temp")
+}
+
+// realWallBackend is the real wall backend the built nova-sandbox reports on
+// this kernel (`nova-sandbox check`), skipping where it reports none.
+func realWallBackend(t *testing.T) string {
+	t.Helper()
+	require.NotEmpty(t, builtSandbox, "TestMain builds nova-sandbox for the real wall run")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, builtSandbox, "check")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.Output()
+	require.NoError(t, err, "nova-sandbox check failed; stdout=%q", string(out))
+	fields := strings.Fields(string(out))
+	require.GreaterOrEqual(t, len(fields), 2, "malformed nova-sandbox check output: %q", string(out))
+	require.Equal(t, "CHECK", fields[0], "malformed nova-sandbox check output: %q", string(out))
+	require.Equal(t, "OK", fields[1], "malformed nova-sandbox check output: %q", string(out))
+	backend := ""
+	for _, field := range fields[2:] {
+		if strings.HasPrefix(field, "backend=") {
+			backend = strings.TrimPrefix(field, "backend=")
+			break
+		}
+	}
+	require.NotEmpty(t, backend, "CHECK OK did not name a backend: %q", string(out))
+	if backend == "none" {
+		t.Skipf("the built nova-sandbox reports no supported backend on this kernel: %s", strings.TrimSpace(string(out)))
+	}
+	want := "sandbox-exec"
+	if runtime.GOOS == "linux" {
+		want = "landlock"
+	}
+	require.Equal(t, want, backend, "unexpected real wall backend: %q", string(out))
+	return backend
 }

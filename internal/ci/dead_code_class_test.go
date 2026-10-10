@@ -6,7 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"go/ast"
+	"go/build"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,9 +111,18 @@ func runDeadcode(t *testing.T, ctx context.Context, bin, root, targetOS string) 
 	if err != nil {
 		return nil, err
 	}
+	env := append(goenv.Clean(os.Environ()), "GOOS="+targetOS)
+	exported, overlay, err := pkgExportRoots(root, targetOS, t.TempDir())
+	if err != nil {
+		return nil, err
+	}
+	if exported != "" {
+		roots = append(roots, exported)
+		env = append(env, "GOFLAGS=-overlay="+overlay)
+	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"-json"}, roots...)...)
 	cmd.Dir = root
-	cmd.Env = append(goenv.Clean(os.Environ()), "GOOS="+targetOS)
+	cmd.Env = env
 	cmd.WaitDelay = 5 * time.Second
 
 	var stdout, stderr bytes.Buffer
@@ -367,4 +382,156 @@ func TestDeadCodeWitness(t *testing.T) {
 	joined := strings.Join(rec4.lines, "\n")
 	assert.Contains(t, joined, "refuses to raise a count")
 	assert.Contains(t, joined, "refuses to grow")
+}
+
+// deadcodeExportRootsDir is where, by overlay, the main package that roots pkg/'s
+// exported API sits: a path of this module that can import every pkg/ package.
+const deadcodeExportRootsDir = "internal/ci/deadcoderoots"
+
+// pkgExportRoots makes pkg/'s exported API a root of the walk (docs/SPEC-CI.md,
+// "deadcode"): pkg/ is a public library, its callers live in other modules
+// (mas-bandwidth/nova-sprint since the split), so an exported function or method
+// of a pkg/ package is live by being exported, and the unexported code under it
+// is still held to what those roots reach. It writes, under dir, one main package
+// whose init takes the value of every exported, non-generic function and method of
+// every pkg/ package that builds for targetOS (a pkg/.../internal package is not
+// public and is skipped), and an overlay that places it at deadcodeExportRootsDir.
+// It returns that package's import path and the overlay file, or "" when there is
+// no pkg/ to root.
+func pkgExportRoots(root, targetOS, dir string) (importPath, overlay string, err error) {
+	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return "", "", err
+	}
+	module := ""
+	for _, line := range strings.Split(string(mod), "\n") {
+		if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			module = strings.TrimSpace(m)
+			break
+		}
+	}
+	if module == "" {
+		return "", "", fmt.Errorf("%s/go.mod names no module", root)
+	}
+	bctx := build.Default
+	bctx.GOOS, bctx.GOARCH, bctx.CgoEnabled = targetOS, "amd64", false
+	var imports, refs []string
+	walkErr := filepath.WalkDir(filepath.Join(root, "pkg"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if path != filepath.Join(root, "pkg") && (name == "testdata" || name == "internal" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
+			return filepath.SkipDir
+		}
+		bp, err := bctx.ImportDir(path, 0)
+		if err != nil || bp.Name == "main" || len(bp.GoFiles) == 0 {
+			return nil
+		}
+		alias := fmt.Sprintf("p%d", len(imports))
+		fset := token.NewFileSet()
+		var syms []string
+		for _, f := range bp.GoFiles {
+			file, err := parser.ParseFile(fset, filepath.Join(path, f), nil, parser.SkipObjectResolution)
+			if err != nil {
+				return err
+			}
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || !fn.Name.IsExported() || fn.Type.TypeParams != nil {
+					continue
+				}
+				if fn.Recv == nil {
+					syms = append(syms, alias+"."+fn.Name.Name)
+					continue
+				}
+				recv, ptr := fn.Recv.List[0].Type, false
+				if star, ok := recv.(*ast.StarExpr); ok {
+					recv, ptr = star.X, true
+				}
+				id, ok := recv.(*ast.Ident) // a generic receiver (T[K]) is not an Ident
+				if !ok || !id.IsExported() {
+					continue
+				}
+				if ptr {
+					syms = append(syms, "(*"+alias+"."+id.Name+")."+fn.Name.Name)
+				} else {
+					syms = append(syms, alias+"."+id.Name+"."+fn.Name.Name)
+				}
+			}
+		}
+		if len(syms) == 0 {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		imports = append(imports, fmt.Sprintf("\t%s %q\n", alias, module+"/"+filepath.ToSlash(rel)))
+		refs = append(refs, syms...)
+		return nil
+	})
+	if errors.Is(walkErr, fs.ErrNotExist) || len(imports) == 0 {
+		return "", "", nil
+	}
+	if walkErr != nil {
+		return "", "", walkErr
+	}
+	src := "package main\n\nimport (\n" + strings.Join(imports, "") + ")\n\nvar _ = []any{\n\t" + strings.Join(refs, ",\n\t") + ",\n}\n\nfunc main() {}\n"
+	mainFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(mainFile, []byte(src), 0o644); err != nil {
+		return "", "", err
+	}
+	ov, err := json.Marshal(map[string]map[string]string{"Replace": {filepath.Join(root, filepath.FromSlash(deadcodeExportRootsDir), "main.go"): mainFile}})
+	if err != nil {
+		return "", "", err
+	}
+	overlay = filepath.Join(dir, "overlay.json")
+	if err := os.WriteFile(overlay, ov, 0o644); err != nil {
+		return "", "", err
+	}
+	return module + "/" + deadcodeExportRootsDir, overlay, nil
+}
+
+// TestDeadCodeRootsPkgExportedAPI is the pkg/ roots' reversed witness: in a
+// fixture module with no main that calls pkg/lib, an exported function, an
+// exported method by value and by pointer, and the unexported helper they call
+// are live (pkg/ is a library other modules call), while an unexported function
+// nothing reaches is still reported, and so is an unreached function of
+// internal/, which gains no roots.
+func TestDeadCodeRootsPkgExportedAPI(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":                  "module example.com/deadfixture\n\ngo 1.25\n",
+		"cmd/app/main.go":         "package main\nfunc main() {}\n",
+		"pkg/lib/lib.go":          "package lib\nfunc Exported() { helper() }\nfunc helper() {}\nfunc unused() {}\ntype T struct{}\nfunc (T) Value() {}\nfunc (*T) Pointer() {}\n",
+		"pkg/lib/internal/x/x.go": "package x\nfunc Hidden() {}\n",
+		"internal/demo/demo.go":   "package demo\nfunc Dead() {}\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	pkgs, err := runDeadcode(t, ctx, deadcodeToolBinary(t, ctx), root, "linux")
+	require.NoError(t, err)
+	dead := map[string][]string{}
+	for _, pkg := range pkgs {
+		for _, fn := range pkg.Funcs {
+			dead[pkg.Path] = append(dead[pkg.Path], fn.Name)
+		}
+	}
+	lib := dead["example.com/deadfixture/pkg/lib"]
+	assert.Contains(t, lib, "unused", "an unexported pkg/ function nothing reaches is dead")
+	for _, live := range []string{"Exported", "helper", "T.Value", "T.Pointer"} {
+		assert.NotContains(t, lib, live, "pkg/'s exported API and what it calls are roots")
+	}
+	assert.Contains(t, dead["example.com/deadfixture/pkg/lib/internal/x"], "Hidden", "a pkg/.../internal package is not public")
+	assert.Contains(t, dead["example.com/deadfixture/internal/demo"], "Dead", "internal/ gains no roots")
 }
