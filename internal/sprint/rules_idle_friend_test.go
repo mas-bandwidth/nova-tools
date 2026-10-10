@@ -370,9 +370,10 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	s := &Snapshot{
-		Now:   now,
-		Work:  NewTable(Work),
-		Fleet: NewTable(Fleet),
+		Now:         now,
+		Work:        NewTable(Work),
+		Fleet:       NewTable(Fleet),
+		Coordinator: "coordinator",
 	}
 	row := FriendRow("amy")
 	ctl := &Card{
@@ -392,24 +393,39 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	s.Fleet.Put(&Card{ID: "amy.w3", Row: row, Col: Working, Fields: map[string]string{"kind": "work", "taken": stamp(now.Add(-20 * time.Minute))}})
 
 	friends := []FriendSeat{{Name: "amy", Width: 8, Status: Up}}
-	p, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends})
+	var sentFriend string
+	var sentReads, sentWork, sentWidth int
+	var sentIdle int64
+	sent := 0
+	send := func(friend string, reads, work, width int, idle int64) error {
+		sentFriend, sentReads, sentWork, sentWidth, sentIdle = friend, reads, work, width, idle
+		sent++
+		return nil
+	}
+	p, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends, SendWidthGoal: send})
 
-	require.Len(t, p.Notes, 2)
+	// One bus message with the live numbers.
+	require.Equal(t, 1, sent)
+	assert.Equal(t, "amy", sentFriend)
+	assert.Equal(t, 2, sentReads)
+	assert.Equal(t, 3, sentWork)
+	assert.Equal(t, 8, sentWidth)
+	assert.Equal(t, int64(20), sentIdle)
+
+	// One judgment-free line to the seat's inbox.
+	require.Len(t, p.Notes, 1)
 	assert.Equal(t, Happened, p.Notes[0].Kind)
-	assert.Contains(t, p.Notes[0].What, "Width goal for amy: you are holding 2 reads and 3 work cards (width 8). You have been idle for 20 minutes.")
-	assert.Equal(t, "amy", p.Notes[0].To)
-
-	assert.Equal(t, Happened, p.Notes[1].Kind)
-	assert.Equal(t, "inbox", p.Notes[1].Type)
-	assert.Equal(t, "friend amy idle-loaded 20m: width goal sent", p.Notes[1].What)
+	assert.Equal(t, s.Coordinator, p.Notes[0].To)
+	assert.Equal(t, "friend amy idle-loaded 20m: width goal sent", p.Notes[0].What)
 
 	require.Len(t, p.Units, 1)
 	assert.Equal(t, row, p.Units[0].Key)
 	ctl.Fields[FieldFriendIdleLoaded] = stamp(now)
 
 	// Second tick: sent once!
-	p2, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends})
+	p2, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends, SendWidthGoal: send})
 	assert.Empty(t, p2.Notes)
+	assert.Equal(t, 1, sent)
 }
 
 func TestProgressLineResetsIdleLoaded(t *testing.T) {
