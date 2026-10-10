@@ -25,6 +25,7 @@ CONSTANTS
   Slots,       \* [Consumers -> Nat]: <c>:desired slots
   MaxCopies,   \* copies cut per primary in the model (the store is unbounded)
   Deps         \* [Cards -> SUBSET Cards]: DEPENDS-ON (task_queue.lua DEP)
+  BEHIND_CAP   \* cap for turn-since: how long a batch turn keeps a friend up (ms)
 
 ASSUME Slots \in [Consumers -> Nat]
 ASSUME Deps \in [Cards -> SUBSET Cards]
@@ -64,10 +65,11 @@ VARIABLES
   cl,       \* [CopyId -> Legs]                     leg
   leased,   \* [CopyId -> BOOLEAN]                  lease_until > now
   up        \* [Consumers -> BOOLEAN]               <c>:beat within a lease
+  turnSince \* [Consumers -> Nat]                   <c>:turn-since from beat (0 when none)
 
 pvars == <<where, ok, copy, reads, pending, low, ncut, author, head, prHead, ci>>
 cvars == <<cw, ck, cl, leased>>
-vars  == <<pvars, cvars, up>>
+vars  == <<pvars, cvars, up, turnSince>>
 
 TypeOK ==
   /\ where \in [Cards -> Where]
@@ -85,6 +87,7 @@ TypeOK ==
   /\ cl \in [CopyId -> Legs]
   /\ leased \in [CopyId -> BOOLEAN]
   /\ up \in [Consumers -> BOOLEAN]
+  /\ turnSince \in [Consumers -> Nat]
 
 Init ==
   /\ where = [c \in Cards |-> "null"]
@@ -103,6 +106,7 @@ Init ==
   /\ cl = [i \in CopyId |-> "none"]
   /\ leased = [i \in CopyId |-> FALSE]
   /\ up = [k \in Consumers |-> TRUE]
+  /\ turnSince = [k \in Consumers |-> 0]
 
 ----------------------------------------------------------------------------
 (* Derived *)
@@ -201,8 +205,26 @@ Lapse(i) ==
   /\ UNCHANGED <<pvars, cw, ck, cl, up>>
 
 \* a consumer's beat stops and returns (bench or friend down)
-Down(k) == up[k] /\ up' = [up EXCEPT ![k] = FALSE] /\ UNCHANGED <<pvars, cvars>>
-Up(k)   == ~up[k] /\ up' = [up EXCEPT ![k] = TRUE] /\ UNCHANGED <<pvars, cvars>>
+\* For friends: down only if turnSince is empty or BEHIND_CAP has passed
+Down(k) ==
+  /\ up[k]
+  /\ /\ turnSince[k] = 0 \* no batch turn
+     \/ turnSince[k] > BEHIND_CAP \* cap has passed
+  /\ up' = [up EXCEPT ![k] = FALSE]
+  /\ UNCHANGED <<pvars, cvars, turnSince>>
+Up(k)   == ~up[k] /\ up' = [up EXCEPT ![k] = TRUE] /\ UNCHANGED <<pvars, cvars, turnSince>>
+
+\* Friend batch turn start: turnSince becomes non-zero, up is kept true
+FriendTurnStart(k, start_ms) ==
+  /\ k \in Consumers
+  /\ turnSince[k] = 0
+  /\ turnSince' = [turnSince EXCEPT ![k] = start_ms]
+  /\ UNCHANGED <<pvars, cvars, up>>
+\* Friend batch turn end: turnSince cleared, up follows normal beat rules
+FriendTurnEnd(k) ==
+  /\ k \in Consumers
+  /\ turnSince'[k] = 0
+  /\ UNCHANGED <<pvars, cvars, up, turnSince EXCEPT ![k]>>
 
 ----------------------------------------------------------------------------
 (* TM.finish (2877): a copy's end, case by case. c is the copy's primary. *)
@@ -452,11 +474,12 @@ Next ==
                        \/ GiveBack(i) \/ EndFail(i) \/ EndWorkPR(i) \/ EndWorkDone(i)
                        \/ EndReadHigh(i) \/ EndReadStale(i) \/ EndReadLow(i) \/ EndReadFail(i)
                        \/ EndFixOK(i)
-  \/ \E k \in Consumers : Down(k) \/ Up(k)
+  \/ \E k \in Consumers : Down(k) \/ Up(k) \/ \E start \in Nat : FriendTurnStart(k, start) \/ FriendTurnEnd(k)
 
 \* The duties (the reconciler's ticks) and the workers are fair; time
 \* (Lapse), outages (Down), a PR's head moving and the coordinator's hand
 \* (cancel, a land event) are not. Up is fair: an outage ends.
+\* Friend turnStart/turnEnd are internal state changes, not scheduled events.
 Fairness ==
   /\ \A c \in Cards : WF_vars(Push(c)) /\ WF_vars(Release(c)) /\ WF_vars(DealReturn(c))
                       /\ WF_vars(CIWord(c)) /\ WF_vars(Verdict(c)) /\ WF_vars(Land(c))
