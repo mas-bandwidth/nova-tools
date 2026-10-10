@@ -63,7 +63,7 @@ case "$nova_sub" in
 // checkout's: a linked worktree and the clone link share it) goes through to the real git
 // unchanged too, and records nothing: on 2026-10-09/10 the gates' own tests pushed to an
 // `origin` of their temp repositories under the job, the shim recorded those test commits
-// (1,072 of 1,076 records on hetzner), and a finish with no head of its own took the last
+// (1,072 of 1,076 records on one bench), and a finish with no head of its own took the last
 // one for the child's (LastPushed): "the result's head d05a62fc... is not a commit on the
 // checkout's branches", ~600 refused pushes a day across the fleet.
 const gitPush = `push)
