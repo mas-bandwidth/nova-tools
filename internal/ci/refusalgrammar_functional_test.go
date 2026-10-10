@@ -37,8 +37,11 @@ func TestEveryRefusalFollowsTheGrammar(t *testing.T) {
 		if !e.IsDir() {
 			continue
 		}
-		found++
 		tool := e.Name()
+		if shimTools[tool] {
+			continue
+		}
+		found++
 		t.Run(tool, func(t *testing.T) {
 			t.Parallel()
 			grammar.begin()

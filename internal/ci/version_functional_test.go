@@ -73,14 +73,16 @@ func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
 	}
 }
 
-// novaCommands lists cmd/nova-* by walking the directory, never a list.
+// novaCommands lists cmd/nova-* by walking the directory, never a list. A shim
+// (a passthrough to another tool, shimTools) is not a tool: its version line is
+// the tool it runs, so the version walk skips it.
 func novaCommands(t *testing.T, root string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	require.NoErrorf(t, err, "reading cmd/: %v", err)
 	var tools []string
 	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "nova-") {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "nova-") && !shimTools[e.Name()] {
 			tools = append(tools, e.Name())
 		}
 	}
