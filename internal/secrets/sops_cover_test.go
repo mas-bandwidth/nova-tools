@@ -37,7 +37,7 @@ func TestAgeUpgradeCmdForOS(t *testing.T) {
 		want string
 	}{
 		{"darwin uses brew", "darwin", "brew upgrade age"},
-		{"linux uses apt-get, dnf, or curl", "linux", "sudo apt-get install --only-upgrade age || sudo dnf upgrade age || curl -L https://github.com/FiloSottile/age/releases/download/v" + MinAgeKeygenVersion + "/age-" + MinAgeKeygenVersion + "-linux-amd64.tar.gz | tar xz && sudo mv age/age /usr/local/bin/ && sudo mv age/age-keygen /usr/local/bin/"},
+		{"linux uses apt-get, dnf, or curl", "linux", "sudo apt-get install --only-upgrade age || sudo dnf upgrade age || curl -L https://github.com/" + "FiloSottile/age/releases/download/v" + MinAgeKeygenVersion + "/age-" + MinAgeKeygenVersion + "-linux-amd64.tar.gz | tar xz && sudo mv age/age /usr/local/bin/ && sudo mv age/age-keygen /usr/local/bin/"},
 		{"windows defaults to brew", "windows", "brew upgrade age"},
 		{"unknown OS defaults to brew", "unknown", "brew upgrade age"},
 	}

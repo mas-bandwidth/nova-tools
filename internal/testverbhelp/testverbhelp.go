@@ -252,19 +252,7 @@ const (
 // LedgerPath is the shrink-only ledger, found from this source file.
 func LedgerPath() string {
 	_, file, _, _ := runtime.Caller(0)
-	// When file is a module path (test builds), convert to filesystem path.
-	if module := "github.com/mas-bandwidth/nova-tools/"; strings.HasPrefix(file, module) {
-		file = strings.TrimPrefix(file, module)
-	}
-	// file is now internal/testverbhelp/testverbhelp.go; go up one level then to ci/testdata.
-	p := filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
-	if !filepath.IsAbs(p) {
-		// repo root is two levels up from testverbhelp
-		if wd, err := os.Getwd(); err == nil {
-			p = filepath.Join(filepath.Dir(filepath.Dir(wd)), p)
-		}
-	}
-	return p
+	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
 }
 
 var (
