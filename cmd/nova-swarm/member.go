@@ -575,16 +575,20 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		return nil, err
 	}
+	model, tokens, deadline, err := r.route(p)
+	if err != nil {
+		return nil, err
+	}
+	// the card tells the child the wall it runs under, the one --deadline below ends it at
+	// (member.CardText): a brief's own DEADLINE line is planning text, and a child that
+	// planned on 120 minutes was ended at 40 with no RESULT.md (fault 9, 2026-10-10)
+	p.Deadline = int(deadline / time.Second)
 	card, err := childCard(p)
 	if err != nil {
 		return nil, err
 	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
 	if err := os.WriteFile(cardPath, []byte(swarm.PointCardAtMirrors(card, r.benchHome)), 0o644); err != nil {
-		return nil, err
-	}
-	model, tokens, deadline, err := r.route(p)
-	if err != nil {
 		return nil, err
 	}
 	bin, err := r.harnessFor(p)

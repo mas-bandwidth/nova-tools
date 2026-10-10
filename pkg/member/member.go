@@ -2209,6 +2209,7 @@ func CardText(p Packet) string {
 		b.WriteString("\n\n")
 		b.WriteString(cardtree.Guide(cardtree.Parse(p.Brief)))
 	}
+	b.WriteString(WallText(p.Deadline))
 	if strings.TrimSpace(p.Fix) != "" {
 		fmt.Fprintf(&b, "Fix, this attempt:\n\n%s\n\n", strings.TrimSpace(p.Fix))
 	}
@@ -2228,6 +2229,29 @@ func CardText(p Packet) string {
 	fmt.Fprintf(&b, "    nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	return b.String()
 }
+
+// WallFinishShare is the share of the wall by which the card tells the child to have its
+// RESULT.md written (WallText): the rest is the member's margin to end, push and report.
+const WallFinishShare = 0.8
+
+// WallText is the paragraph that tells a child the wall it runs under, the deadline the
+// member ends it at (the route's, or the member's override), in whole minutes, and when to
+// have its result written; "" when the packet carries none. It overrides any time the brief
+// names: a child on a slow member planned against a brief's "finish within 120 minutes" and was
+// ended at the route's 40 with no RESULT.md, its commit unpushed (fault 9, 2026-10-10).
+func WallText(deadlineSeconds int) string {
+	if deadlineSeconds <= 0 {
+		return ""
+	}
+	wall := max(1, deadlineSeconds/60)
+	by := max(1, int(float64(deadlineSeconds)*WallFinishShare)/60)
+	return fmt.Sprintf("Your wall: this run is ended at %d minutes from its start, whatever time the brief names; work not in RESULT.md by then is lost. Commit and write RESULT.md by minute %d, then stop; if the card cannot be finished by then, write what is done and what is left, and stop.\n\n%s", wall, by, TmpText)
+}
+
+// TmpText tells a child where its temp files go. The sandbox denies a write outside the
+// directories it was handed, and /tmp is not one of them: a child that wrote /tmp/gate1.log
+// had its run refused for the denial (fault 1, 2026-10-10). $TMPDIR is its own, writable.
+const TmpText = "Temp files go under $TMPDIR, which is yours and writable; never write to /tmp or /var/tmp directly: the sandbox denies it and the run is refused.\n\n"
 
 // routeWords is a work card's route as the member's start and finish lines name
 // it: " route=<r> model=<m>", "" when the packet names none (the member's
