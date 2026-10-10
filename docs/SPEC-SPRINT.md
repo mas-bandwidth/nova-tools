@@ -6841,8 +6841,11 @@ read of the document that fails leaves the last one, which goes stale, says `SNA
 it. `where --json --fresh`, and a `where --json` given a flag the document does not hold
 (`--stale`, `--at-epoch`), read the store as before; `where` without `--json` is unchanged.
 `GET /api/sprint` on either listener answers the full document under the same rule (a refusal
-is a 503 with its line), so a page that needs only the document never spawns a process.
-`TestAForwardedWhereJSONAnswersUnder100ms` times the forward path through the server's handler.
+is a 503 with its line), so a page that needs only the document never spawns a process. The
+forward path it is answered from is walked whole, through the client's forward and the
+server's handler, with no store trip, in
+`TestAForwardedWhereJSONAnswersFromTheSnapshotWhole`; the sub-second wall is the design's (no
+store read), not a unit test's wall-clock bound (docs/STANDARD.md, no fixed wall-clock wait).
 
 The tick's turn. The batches, the lanes beside the tick (land's reads and report, decide,
 balance) and the tick take one line of control. The batches and the lanes take it in the order
