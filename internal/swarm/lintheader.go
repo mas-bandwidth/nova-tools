@@ -598,8 +598,21 @@ func HasFormLine(brief string) bool {
 }
 
 // formRulePrefixes are the words a rule line starts with; a line after FORM: that starts
-// with one of them is a rule and must parse, and any other line ends the block.
+// with one of them is a rule and must parse.
 var formRulePrefixes = []string{"line ", "heading", "item", "each item", "count"}
+
+// formHeaderKeys are the card's header keys. A line after FORM: that starts with one of
+// formRulePrefixes is a rule and must parse; a `KEY: value` line whose key is one of these
+// is the next header and ends the block; and any other non-blank line inside the block is
+// an unknown rule and is refused, as the card lint refuses a FORM: it cannot parse
+// (docs/SPEC-SPRINT.md, the report's form). The names are the exact upper-case keys of
+// cardTypedKeys, the brief's START and STOP, and the card's identity and routing keys.
+var formHeaderKeys = map[string]bool{
+	"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true,
+	"START": true, "STOP": true,
+	"REPO": true, "BASE": true, "ROUTE": true, "NEW": true, "SHARED": true,
+	"WHO": true, "DEPENDS-ON": true, "ATTRIBUTION": true,
+}
 
 // ReadForm reads a brief's FORM: block. It returns an error when the block is not there,
 // when its path is empty, when a rule line does not parse, or when the block carries no
@@ -625,18 +638,26 @@ func ReadForm(brief string) (Form, error) {
 	}
 	for i := at + 1; i < len(lines); i++ {
 		line := strings.TrimRight(lines[i], "\r")
-		if strings.TrimSpace(line) == "" {
+		t := strings.TrimSpace(line)
+		if t == "" {
 			break
 		}
-		if !formRuleLine(line) {
+		if formRuleLine(t) {
+			r, err := parseFormRule(t)
+			if err != nil {
+				return Form{}, fmt.Errorf("FORM: line %d: %v", i+1, err)
+			}
+			r.Raw = t
+			f.Rules = append(f.Rules, r)
+			continue
+		}
+		// Not a rule line: the next card header ends the block, and every other line is
+		// an unknown rule inside the block and is refused, as the card lint refuses a
+		// FORM: it cannot parse (docs/SPEC-SPRINT.md, the report's form).
+		if k, _, ok := cardhdr.KeyValue(line); ok && formHeaderKeys[k] {
 			break
 		}
-		r, err := parseFormRule(line)
-		if err != nil {
-			return Form{}, fmt.Errorf("FORM: line %d: %v", i+1, err)
-		}
-		r.Raw = strings.TrimSpace(line)
-		f.Rules = append(f.Rules, r)
+		return Form{}, fmt.Errorf("FORM: line %d: %q is no rule the grammar names", i+1, t)
 	}
 	if len(f.Rules) == 0 {
 		return Form{}, fmt.Errorf("FORM: line %d carries no rule", at+1)
@@ -653,8 +674,10 @@ func ReadForm(brief string) (Form, error) {
 	return f, nil
 }
 
-// formRuleLine says a line after FORM: is a rule the grammar names, so a line that is not
-// ends the block and a rule the grammar does not hold is refused rather than read past.
+// formRuleLine says a line after FORM: is a rule the grammar names: its first word is one of
+// formRulePrefixes, so ReadForm parses it and refuses a rule the grammar does not hold. A line
+// that is not a rule is the next header (formHeaderKeys) or an unknown line, which ReadForm
+// refuses.
 func formRuleLine(line string) bool {
 	t := strings.TrimSpace(line)
 	for _, p := range formRulePrefixes {

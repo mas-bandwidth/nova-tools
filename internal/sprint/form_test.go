@@ -76,6 +76,7 @@ func TestParseFormRefusesWhatItCannotRead(t *testing.T) {
 		{"bad count", "FORM: outbox/r.md\ncount: 3\nPATHS: none\n", "wants `<min>..<max> items`"},
 		{"bad count order", "FORM: outbox/r.md\ncount: 4..2 items\nPATHS: none\n", "min <= max"},
 		{"unknown rule", "FORM: outbox/r.md\nline one: x\nPATHS: none\n", "is no rule the grammar names"},
+		{"unknown rule key", "FORM: outbox/r.md\nline 1: Verdict: LAND\nmystery: x\nPATHS: none\n", "is no rule the grammar names"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
