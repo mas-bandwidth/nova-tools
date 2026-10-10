@@ -81,6 +81,7 @@ cmd/nova-sprint/snapshot.go redisSource.Save waits and retries
 cmd/nova-swarm/member.go nativeRunner.Start waits and retries
 internal/nsprint/testutil/pg/pg.go Server.ready waits and retries
 internal/nsprint/testutil/redis.go startOnce waits and retries
+internal/ci/functionalrun/run.go leftovers waits and retries
 internal/sandbox/tree.go Tree.KillAndAwait waits and retries
 internal/secrets/seal.go sealCarry.carry waits and retries
 internal/sprint/control_line.go ControlLine.TickLock waits and retries
