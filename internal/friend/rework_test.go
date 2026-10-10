@@ -66,7 +66,7 @@ func TestAReworkedBriefOpensWithTheFix(t *testing.T) {
 	assert.Equal(t, got, ReworkedBrief(got), "a brief already reworked is left as it is")
 	p, ok := PacketOf(HeldCard{Card: h.Card, Job: h.Job, Brief: got})
 	require.True(t, ok)
-	assert.Equal(t, Packet{Card: h.Card, Job: h.Job, Repo: "mas-bandwidth/nova-tools", Base: "main", Branch: h.Branch, Attempt: 2}, p, "the packet reads the same from the reworked brief")
+	assert.Equal(t, Packet{Card: h.Card, Job: h.Job, Repo: "mas-bandwidth/nova-tools", Base: "main", Branch: h.Branch, Attempt: 2, Carry: reworkCarried, CarryAttempt: 1}, p, "the packet reads the same from the reworked brief")
 	assert.Equal(t, fix, BriefFix(got))
 	assert.Equal(t, fix, BriefFix(h.Brief), "the fix reads from either form")
 
