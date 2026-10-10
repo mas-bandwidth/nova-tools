@@ -92,4 +92,10 @@
    :text "nova-friend install takes --deny-self and writes it into the agent, the seat play passes
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
-   :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")))
+   :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
+  (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
+   :title "A friend's lane wall reads the pinned harness it runs"
+   :text "nova-friend install takes --wall-reads and writes it into the agent, and the seat play passes
+    nova_friend_wall_reads to a reinstall whose plist records none, so a pinned harness whose shim
+    execs a directory under the home no longer exits 126 (Operation not permitted) for every lane."
+   :origin "mini-m5, 2026-10-10: every Freddy lane exit 126 after the pin; the wall denied reading ~/nova-bench/harness-v1.18.20")))

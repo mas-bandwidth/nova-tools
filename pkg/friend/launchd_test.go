@@ -399,3 +399,19 @@ func TestTheAgentCarriesDenySelfOnlyWhenSetAndTheDefaultIsTheSeatsWorkingRoot(t 
 	assert.Nil(t, DefaultDenySelf("/home/u", "../x"), "a seat that is no plain name names no path")
 	assert.Nil(t, DefaultDenySelf("", "ada"))
 }
+
+// A pinned harness whose shim lives under the home execs a directory the lane wall does not read
+// (v1.2.6: ~/.local/bin/opencode execs ~/nova-bench/harness-v1.18.20/opencode, and every lane of
+// that friend exited 126, "Operation not permitted"), so the agent can carry --wall-reads, as it
+// carries --deny-self, and the seat play's reinstall keeps it.
+func TestTheAgentCarriesWallReadsOnlyWhenSet(t *testing.T) {
+	t.Parallel()
+	a := Agent{Friend: "bob", Harness: "opencode", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2", Width: 4}
+	assert.NotContains(t, a.Args(), "--wall-reads")
+	a.WallReads = "/home/u/nova-bench/harness-v1.18.20"
+	args := a.Args()
+	i := slices.Index(args, "--wall-reads")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal(t, "/home/u/nova-bench/harness-v1.18.20", args[i+1])
+	assert.Contains(t, a.Plist(), "<string>--wall-reads</string>")
+}
