@@ -1622,8 +1622,9 @@ soon as the loop sees it, at most once every ten minutes while it stays there
 
 ### The disk guard's volumes
 
-The volumes a machine's friends work on are guarded like the root disk (`nova-swarm disk-guard`).
-They come from `--volume` (a path, `path=floor`, or `path=floor:stop`, repeated), else the
+The volumes a machine's friends work on are guarded like the root disk (`sprint.GuardVolumes`,
+`nova-swarm disk-guard`). They come from `--volume` (a path, `path=floor`, or `path=floor:stop`,
+repeated), else the
 machine row's `disk_volumes` when `nova-config machine show` prints that field, else the root disk
 and the volume that holds the friends' directories (`NOVA_AI_ROOT`, else `~/ai`, and each
 `<home>/<name>-working`). Floor and stop are per volume. A size is bytes or a whole number of GB
@@ -1644,7 +1645,8 @@ friend's `jobs/` under the AI root, which is where a landed one-shot job was lef
 after its branch was pruned (kept as commits on no remote, or as uncommitted paths). The friend's
 own prune pass does not call this class (docs/SPEC-FRIEND.md, the prune pass): the daemon is a
 store client and reads no card's state beyond its own row. (`TestLandedJobIsRemovedAfterTheGrace`,
-`TestOpenJobIsKept`, `TestDroppedJobIsRemoved`.)
+`TestOpenJobIsKept`, `TestDroppedJobIsRemoved`,
+`TestGuardRunsLandedBelowTheFloorAndHoldsDealsBelowTheStop`, `TestVolumeRowShowsTheFreeFigure`.)
 
 ## 2. The cards
 

@@ -158,3 +158,85 @@ func TestDroppedJobIsRemoved(t *testing.T) {
 	assert.NoDirExists(t, drop)
 	assert.NoDirExists(t, primary)
 }
+
+// Below the floor the landed removal runs and then the caches, and the refusal
+// names the free space. Below the stop this machine's deals are held, never
+// the server's, in the one judgment. A volume that could not be read is not
+// treated as empty.
+func TestGuardRunsLandedBelowTheFloorAndHoldsDealsBelowTheStop(t *testing.T) {
+	t.Parallel()
+	floor := GuardVolumes("studio", []GuardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 100 * GB, Floor: 200 * GB, Stop: 50 * GB,
+	}})
+	assert.True(t, floor.RunLanded)
+	assert.True(t, floor.ThenCaches)
+	assert.False(t, floor.HoldDeals)
+	assert.False(t, floor.ServerHeld)
+	assert.Contains(t, floor.Refused, "free=100GB")
+	assert.Equal(t, "REFUSED /Volumes/nova free=100GB", floor.Refused)
+
+	g := newLandedTree(t)
+	dir := g.job("c~15", 2*time.Hour)
+	var order []string
+	if floor.RunLanded {
+		order = append(order, "landed")
+		res := PruneLanded(filepath.Join(g.w, "jobs"), g.now, false, g.cards(landedAt("c", g.now.Add(-2*time.Hour))))
+		assert.Contains(t, strings.Join(res.Detail, "\n"), "GC REMOVED class=landed path="+dir)
+		assert.NoDirExists(t, dir)
+	}
+	if floor.ThenCaches {
+		order = append(order, "caches")
+	}
+	assert.Equal(t, []string{"landed", "caches"}, order)
+
+	stop := GuardVolumes("studio", []GuardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 10 * GB,
+	}})
+	assert.True(t, stop.HoldDeals)
+	assert.True(t, stop.RunLanded)
+	assert.False(t, stop.ServerHeld)
+	assert.Equal(t, "studio /Volumes/nova at 10GB: deals held", stop.Judgment)
+
+	unread := GuardVolumes("studio", []GuardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Err: errors.New("unread"),
+	}})
+	assert.False(t, unread.RunLanded)
+	assert.False(t, unread.HoldDeals)
+	assert.Empty(t, unread.Rows)
+	assert.Empty(t, unread.Judgment)
+}
+
+// A row names the free figure. Under the floor it is red. At the floor it is not.
+func TestVolumeRowShowsTheFreeFigure(t *testing.T) {
+	t.Parallel()
+	act := GuardVolumes("studio", []GuardedVolume{
+		{Name: "/", Path: "/", Free: 300 * GB, Floor: 200 * GB, Stop: 50 * GB},
+		{Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 100 * GB, Floor: 200 * GB, Stop: 50 * GB},
+	})
+	assert.Equal(t, []string{
+		"volume=/ free=300GB",
+		"volume=/Volumes/nova free=100GB red",
+	}, act.Rows)
+	assert.NotContains(t, act.Rows[0], "red")
+	assert.Contains(t, act.Rows[0], "free=300GB")
+	assert.Contains(t, act.Rows[1], "free=100GB")
+
+	level := GuardVolumes("studio", []GuardedVolume{{
+		Name: "/", Path: "/", Free: 200 * GB, Floor: 200 * GB, Stop: 50 * GB,
+	}})
+	assert.Equal(t, []string{"volume=/ free=200GB"}, level.Rows)
+	assert.False(t, level.RunLanded)
+	assert.False(t, level.HoldDeals)
+
+	vols, err := parseDiskVolumes("/Volumes/nova=200GB:50GB")
+	require.NoError(t, err)
+	require.Len(t, vols, 1)
+	assert.Equal(t, "/Volumes/nova", vols[0].Name)
+	assert.Equal(t, uint64(200*GB), vols[0].Floor)
+	assert.Equal(t, uint64(50*GB), vols[0].Stop)
+	defs := DefaultGuardVolumes([]string{"/Volumes/nova/ai/ada/working", "/Volumes/nova/ai/bud/working"})
+	assert.Equal(t, []GuardedVolume{
+		{Name: "/", Path: "/"},
+		{Name: "/Volumes/nova", Path: "/Volumes/nova"},
+	}, defs)
+}
