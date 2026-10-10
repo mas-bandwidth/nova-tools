@@ -124,7 +124,7 @@ func sprintVerb(ctx context.Context, server string, argv []string) error {
 		return fmt.Errorf("%s: the server answered %d results, want 1", argv[0], len(res))
 	}
 	if res[0].Code != 0 {
-		return fmt.Errorf("%s refused: %s", argv[0], strings.TrimSpace(res[0].Stderr))
+		return &friend.Refused{Why: fmt.Sprintf("%s refused: %s", argv[0], strings.TrimSpace(res[0].Stderr))} // the server's word: a lane drops its job on it
 	}
 	return nil
 }
@@ -1623,11 +1623,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return w.finish(ctx, server, argv)
 		},
-		Take: func(ctx context.Context, argv []string) error {
-			if w.finish == nil {
-				return errors.New("this world sends no take") // a test's: d.Take is cleared below
+		Take: func(ctx context.Context, argv []string) (string, error) {
+			if w.cards == nil {
+				return "", errors.New("this world sends no take") // a test's: d.Take is cleared below
 			}
-			return w.finish(ctx, server, argv) // the same worker verb send as finish: a refusal is an error
+			return w.cards(ctx, server, argv) // the server's answer (a lane reads its LANE line), a refusal an error
 		},
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
@@ -1652,8 +1652,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	owedStopReturns = d.OwedStopReturns
-	if w.finish == nil {
-		d.Take = nil // a world that sends no verb takes nothing: its lanes run as before
+	if w.finish == nil || w.cards == nil {
+		d.Take = nil // a world that asks no server: its lanes run the cards on her row in order (a test's)
 	}
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }

@@ -93,6 +93,13 @@
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
    :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
+  (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
+   :title "A friend's lanes are thin clients of the sprint server"
+   :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
+    ids, epoch and lane the server gave; a refusal drops the job and the lane asks again. lanes.json
+    keeps sessions and owed stop-returns only, never what a lane holds, and reads go through the
+    same lane loop. The model is tla/FriendLane.tla."
+   :origin "a one-shot friend host, 2026-10-10: took logged while the server showed the card ready, and progress sent at epoch 0")
   (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
    :title "A friend's lane wall reads the pinned harness it runs"
    :text "nova-friend install takes --wall-reads and writes it into the agent, and the seat play passes
