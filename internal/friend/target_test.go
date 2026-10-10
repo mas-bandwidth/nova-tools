@@ -47,13 +47,20 @@ func TestAGoneSessionTargetIsInvalidAndNeverRetried(t *testing.T) {
 		r := newRig(t)
 		home, dir := t.TempDir(), t.TempDir()
 		const thread = "01a10e84-0000-4000-8000-000000000001"
+		const live = "01a10e84-0000-4000-8000-000000000002"
 		codexThread(t, home, thread, dir, true)
+		codexThread(t, home, live, dir, false) // the newest live session: the daemon must never guess it in place of the named one
 		var mu sync.Mutex
 		calls := 0
-		run := func(context.Context, string, string, []string, string) (string, int, error) {
+		run := func(_ context.Context, _ string, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			calls++
+			for _, a := range args {
+				if a == live { // a guessed delivery into the newest live session would take: it must never be tried
+					return "ok\n", 0, nil
+				}
+			}
 			return "error: thread " + thread + " not found\n", 1, nil // what an archived thread answers on both routes
 		}
 		r.d.Deliver, r.passive = &Codex{Dir: dir, Session: thread, Run: run, Home: home, Held: func(string) bool { return true }}, true
@@ -115,7 +122,11 @@ func TestAGoneSessionTargetIsInvalidAndNeverRetried(t *testing.T) {
 		}
 		assert.Equal(t, 1, hello, "the message stays on her stream for the rebound session")
 		assert.Equal(t, 1, notes, "one NOTE to the friend")
-		assert.Equal(t, 0, s.Delivered)
+		assert.Equal(t, 0, s.Delivered, "nothing delivered: the daemon never guesses the newest live session")
+		assert.FileExists(t, filepath.Join(home, "archived_sessions", "rollout-2026-10-06T10-00-00-"+thread+".jsonl"),
+			"the daemon never unarchives the thread: its rollout stays under archived_sessions")
+		assert.NoFileExists(t, filepath.Join(home, "sessions", "2026", "10", "06", "rollout-2026-10-06T10-00-00-"+thread+".jsonl"),
+			"and never puts its rollout back under sessions")
 		mu.Lock()
 		defer mu.Unlock()
 		require.NotEmpty(t, gones, "the beats after it say the target is invalid (friend beat --target-invalid)")
