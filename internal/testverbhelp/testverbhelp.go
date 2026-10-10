@@ -249,10 +249,29 @@ const (
 	GapMissingPrefix = "flag-missing:"
 )
 
-// LedgerPath is the shrink-only ledger, found from this source file.
+// LedgerPath is the shrink-only ledger, found from this source file; a build
+// with -trimpath names that file by its import path, so the ledger is then
+// found from the checkout the test's working directory sits in.
 func LedgerPath() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	if p := filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt"); filepath.IsAbs(p) {
+		return p
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return filepath.Join("internal", "ci", "testdata", "help-complete-ledger.txt")
+	}
+	for {
+		p := filepath.Join(dir, "internal", "ci", "testdata", "help-complete-ledger.txt")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Join("internal", "ci", "testdata", "help-complete-ledger.txt")
+		}
+		dir = parent
+	}
 }
 
 var (

@@ -3,6 +3,7 @@ package testverbhelp
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -101,4 +102,16 @@ func readLedger(t *testing.T) string {
 	b, err := os.ReadFile(LedgerPath())
 	require.NoError(t, err)
 	return string(b)
+}
+
+// LedgerPath names a real file even when Go builds the test with -trimpath, in
+// which case runtime.Caller returns this source file's import path instead of
+// its directory; the ledger is then found from the test's working directory,
+// and a tool under cmd/ is still recognized as shipped.
+func TestTheLedgerIsFoundInATrimpathBuild(t *testing.T) {
+	t.Parallel()
+	p := LedgerPath()
+	require.True(t, filepath.IsAbs(p), "LedgerPath() = %q, want an absolute file path", p)
+	require.FileExists(t, p)
+	assert.True(t, shipped("nova-check"), "a directory under cmd/ is a shipped tool")
 }
