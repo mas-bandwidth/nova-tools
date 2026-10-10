@@ -123,6 +123,8 @@ type FriendSeat struct {
 	// Roles is her nova-config row's roles: a read card is dealt only to a friend whose
 	// roles name reader (RoleReader, read_cards.go).
 	Roles []string
+	// Billing is her row's billing word, "" when it names none (a subscription).
+	Billing string
 	Dir   string
 	// Streams and Kinds are her work restriction (her nova-config row's streams and
 	// kinds, carried by friend sync): the stream globs and card KIND values the deal
