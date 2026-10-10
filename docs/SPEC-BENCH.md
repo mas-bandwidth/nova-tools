@@ -66,8 +66,8 @@ A run directory older than two hours with no live process on the bench is a leak
   cache, a friend's copy, anything else) is never a candidate, so the sweep can
   never delete an arbitrary two-level directory below a bench root.
 - For each run directory where modification age exceeds 2 hours and no live
-  process names it or holds a file in it, the path is checked against the bench
-  package's own run guard (`bench.CheckRunDir`) and then removed.
+  process names it or holds a file in it, the directory is removed under the
+  bench root by the guard's own `safepath` remove, never a bare path.
 - Each removal prints a single `REMOVED run <path> freed=<bytes>` line.
 
 ## 6. Disk Floor Check

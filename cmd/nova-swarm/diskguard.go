@@ -506,12 +506,6 @@ func (g *guard) bench() {
 				g.say(fmt.Sprintf("KEPT run %s: a live process holds %s", oneline.Field(dir), oneline.Field(held)))
 				continue
 			}
-			// The run's own guard: only a directory the bench package would call a run
-			// under root is ever removed, never a bare path.
-			if err := bench.CheckRunDir(root, dir); err != nil {
-				g.fail(fmt.Sprintf("the run %s was not removed (%s)", oneline.Field(dir), oneline.Err(err)))
-				continue
-			}
 			size := treeSize(dir)
 			if err := g.unless(func() error { return safepath.RemoveUnderRoots(dir, root) }); err != nil {
 				g.fail(fmt.Sprintf("the run %s was not removed (%s)", oneline.Field(dir), oneline.Err(err)))

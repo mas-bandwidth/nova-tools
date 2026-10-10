@@ -700,3 +700,40 @@ func TestDiskGuardDoesNotStopWhenAVolumeCouldNotBeRead(t *testing.T) {
 	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE")
 	assert.NotContains(t, out.String(), "DISK-GUARD STOP")
 }
+
+// The bench sweep looks only at the run directories, <root>/runs/*: an old run with no
+// live process goes, a young run and a run a live process names stay, and no other
+// directory under the bench root (the shared build cache, a friend's copy) is ever a
+// candidate, so the sweep can never delete an arbitrary two-level directory.
+func TestDiskGuardSweepsOnlyBenchRunDirectories(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	oldRun := filepath.Join(root, "runs", "gate-old")
+	youngRun := filepath.Join(root, "runs", "gate-young")
+	liveRun := filepath.Join(root, "runs", "read-live")
+	cacheDir := filepath.Join(root, "cache", "go-build")
+	friendDir := filepath.Join(root, "friends", "alice")
+	for _, d := range []string{oldRun, youngRun, liveRun, cacheDir, friendDir} {
+		dgFile(t, filepath.Join(d, "f"), 10, dgNow)
+	}
+	dgAge(t, oldRun, dgNow.Add(-3*time.Hour))
+	dgAge(t, liveRun, dgNow.Add(-3*time.Hour))
+	dgAge(t, cacheDir, dgNow.Add(-72*time.Hour))
+	dgAge(t, friendDir, dgNow.Add(-72*time.Hour))
+	// youngRun keeps dgNow: it is inside bench.RunAgeLimit.
+
+	g, out := dgGuard(t)
+	g.roots = []string{root}
+	g.procs = func() ([]string, error) { return []string{"go build -o " + liveRun + "/f"}, nil }
+	g.bench()
+
+	assert.NoDirExists(t, oldRun, "an old run with no live process is swept")
+	assert.DirExists(t, youngRun, "a run younger than the bound is kept")
+	assert.DirExists(t, liveRun, "a run a live process names is kept")
+	assert.DirExists(t, cacheDir, "the build cache below the root is never a candidate")
+	assert.DirExists(t, friendDir, "a two-level directory below the root is never a candidate")
+	assert.Contains(t, out.String(), "REMOVED run "+oldRun)
+	assert.Contains(t, out.String(), "KEPT run "+liveRun)
+	assert.NotContains(t, out.String(), cacheDir)
+	assert.NotContains(t, out.String(), friendDir)
+}
