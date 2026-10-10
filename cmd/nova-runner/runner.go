@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // The process edges around Next. Each one shells out or starts a child.
@@ -608,7 +609,7 @@ func ParseQueue(out string) ([]Card, error) {
 		if tier == "" {
 			tier = headerValue(p.Brief, "tier")
 		}
-		job := friend.JobName(c.ID, p.Epoch, gen)
+		job := jobNameOf(c.ID, p.Epoch, gen)
 		cards = append(cards, Card{
 			ID: c.ID, Kind: kind, Tier: tier, Model: p.Model, Deadline: p.Deadline,
 			Job: job, Epoch: p.Epoch, Attempt: attempt, Gen: gen, Brief: p.Brief,
@@ -722,7 +723,17 @@ func jobOf(card Card) string {
 	if card.Job != "" {
 		return card.Job
 	}
-	return friend.JobName(card.ID, card.Epoch, card.Gen)
+	return jobNameOf(card.ID, card.Epoch, card.Gen)
+}
+
+// jobNameOf is a card's job directory, the name nova-sprint delivers it as
+// (friendJobOf): its stored id, .g<gen> from the second generation.
+func jobNameOf(id string, epoch uint64, gen int) string {
+	job := sprint.StoredID(id, epoch)
+	if gen > 1 {
+		job += ".g" + strconv.Itoa(gen)
+	}
+	return job
 }
 
 func oneLine(s string, n int) string {
