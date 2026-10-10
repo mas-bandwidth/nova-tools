@@ -369,9 +369,9 @@ func friendReadReport(dir, job string) (report, why string, at time.Time, err er
 // outbox/<job>/REPORT.md when that is there. A card whose id is not a card id, or whose
 // inbox/<job> is a symlink or no directory, is refused, a line each: nothing is written
 // outside her working directory. It says what it did, a line each, and how many it
-// delivered and finished. A batch friend (the default) is woken once, after this
-// call's deliveries, for the cards the pass wrote; a one-shot friend is woken per
-// card, which is how her runner starts a lane (docs/FRIENDS.md).
+// delivered and finished. A deal pass sends a friend at most one notice per pass,
+// folding per-card notices into a single pass notice when multiple cards are delivered,
+// and none when no new card was dealt (docs/SPEC-SPRINT.md section 1, a-deal-that-adds-no-card-sends-no-notice.w1).
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
 	// her working cards, then the ready ones dealt behind them (sprint.TickDeal): both are
 	// delivered, and her queue file says which are which
@@ -406,14 +406,16 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	if err != nil {
 		return 0, 0, err
 	}
-	// dealt is this pass's new files. One-shot wakes inside the loop; batch
-	// waits until the files and the queue write have been attempted.
-	var dealt []sprint.Packet
+	// dealt is this pass's new files. Per-card notices fold into the pass notice;
+	// a one-shot friend with a single delivered card keeps her card wake.
+	type dealtCard struct {
+		packet sprint.Packet
+		brief  string
+		line   string
+	}
+	var dealt []dealtCard
 	wake := func(p sprint.Packet, brief, line string) error {
-		if spec.Mode == config.FriendModeOneShot {
-			return a.wakeFriend(ctx, st, name, p, brief, line, say)
-		}
-		dealt = append(dealt, p)
+		dealt = append(dealt, dealtCard{packet: p, brief: brief, line: line})
 		return nil
 	}
 	var cards []*sprint.Card
@@ -433,8 +435,18 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		}
 		// Files already delivered stand even if a later collect or the queue
 		// write fails; their one courtesy wake still belongs to this pass.
-		if len(dealt) > 0 {
-			err = errors.Join(err, a.wakeFriendPass(ctx, st, name, filepath.Join(dir, "inbox"), dealt, say))
+		// A deal pass sends at most one notice per friend per pass (docs/SPEC-SPRINT.md section 1,
+		// a-deal-that-adds-no-card-sends-no-notice.w1): a single card to a one-shot friend
+		// sends her card notice; multiple cards fold into one pass notice; a pass that
+		// dealt no new cards sends nothing.
+		if len(dealt) == 1 && spec.Mode == config.FriendModeOneShot {
+			err = errors.Join(err, a.wakeFriend(ctx, st, name, dealt[0].packet, dealt[0].brief, dealt[0].line, say))
+		} else if len(dealt) > 0 {
+			pkts := make([]sprint.Packet, len(dealt))
+			for i, d := range dealt {
+				pkts[i] = d.packet
+			}
+			err = errors.Join(err, a.wakeFriendPass(ctx, st, name, filepath.Join(dir, "inbox"), pkts, say))
 		}
 	}()
 	for i, p := range packets {
