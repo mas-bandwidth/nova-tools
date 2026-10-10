@@ -125,6 +125,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"routes wake":       "routes wake openrouter --reason r",
 		"cost reconcile":    "cost reconcile",
 		"cost reprice":      "cost reprice",
+		"stats reset":       "stats reset --reason r",
 		"stats tidy":        "stats tidy --all --reason r",
 		"wait":              "wait x --for 1m",
 		"ack":               "ack x --reason r",

@@ -187,7 +187,10 @@ func TestStatsTidyZeroesCountersAndKeepsTheWork(t *testing.T) {
 	assert.Equal(t, "m1", arch.Rows[0].Row)
 	assert.Equal(t, 15, arch.Rows[0].OK)
 	var moved []sprint.TidyCard
-	moved = append(moved, arch.Rows[0].Moved...)
+	for _, c := range arch.Rows[0].Moved {
+		assert.False(t, c.Finished.IsZero(), "%s carries its finish stamp", c.ID)
+		moved = append(moved, sprint.TidyCard{ID: c.ID, Cell: c.Cell})
+	}
 	want := []sprint.TidyCard{}
 	for i := 1; i <= 5; i++ {
 		want = append(want, sprint.TidyCard{ID: sprint.WorkCardID(fmt.Sprintf("s1-%d", i), 1), Cell: "ok"})
@@ -350,7 +353,8 @@ func TestATidyWhoseCardMovedKeepsItsArchive(t *testing.T) {
 	arch = r.archiveOf(res.Archive)
 	assert.Equal(t, store.ArchiveDone, arch.State)
 	require.Len(t, arch.Rows, 1)
-	assert.Equal(t, []sprint.TidyCard{{ID: sprint.WorkCardID("s1-2", 1), Cell: "ok"}}, arch.Rows[0].Moved, "the moved card is not tidied; the archive says what did move")
+	require.Len(t, arch.Rows[0].Moved, 1, "the moved card is not tidied; the archive says what did move")
+	assert.Equal(t, sprint.TidyCard{ID: sprint.WorkCardID("s1-2", 1), Cell: "ok"}, sprint.TidyCard{ID: arch.Rows[0].Moved[0].ID, Cell: arch.Rows[0].Moved[0].Cell})
 	assert.Equal(t, sprint.Withdrawn, r.snap().Fleet.Card(first).Col, "it stays where the other writer put it")
 	assert.Nil(t, r.snap().Fleet.Placed(sprint.WorkCardID("s1-2", 1)))
 }

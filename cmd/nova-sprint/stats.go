@@ -12,8 +12,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// cmdStats is the epoch's numbers since the last stats tidy (sprint.StatsSince; the whole
-// epoch before the first): the stages, each member's work, each reader's reads and each
+// cmdStats is the epoch's numbers since the last stats tidy or stats reset, the later
+// (sprint.StatsSince; the whole epoch before the first): the stages, each member's work, each reader's reads and each
 // route's takes, in seconds, from one read of the work, fleet and readers tables (the
 // primaries' work and read cards, retired ones too, read with them in read sets, never a
 // card at a time). --routes is the route table from the log over --since, by default
@@ -71,7 +71,11 @@ func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	}
 	sinceWord := ""
 	if !from.IsZero() {
-		fmt.Fprintf(stdout, "since %s (stats tidy)\n", from.UTC().Format(time.RFC3339))
+		by := "stats tidy"
+		if m, err := st.StatsReset(context.Background()); err == nil && m != nil && m.At.Equal(from) {
+			by = "stats reset"
+		}
+		fmt.Fprintf(stdout, "since %s (%s)\n", from.UTC().Format(time.RFC3339), by)
 		sinceWord = " since=" + from.UTC().Format(time.RFC3339)
 	}
 	fmt.Fprint(stdout, statsText(ps))

@@ -512,3 +512,8 @@ MCRouteRest.cfg	MCRouteRest.tla	pass	-	ignore-terminal	routerest	required	-
 MCRouteRestBrokenNoResult.cfg	MCRouteRest.tla	action	RestOnlyByProviderOrCoordinator	ignore-terminal	routerest	required	-
 MCRouteRestBrokenBalance.cfg	MCRouteRest.tla	action	RestOnlyByProviderOrCoordinator	ignore-terminal	routerest	required	-
 MCRouteRestBrokenSilent.cfg	MCRouteRest.tla	temporal	LowIsRaised	ignore-terminal	routerest	required	-
+MCStatsReset.cfg	MCStatsReset.tla	pass	-	ignore-terminal	statsreset	required	-
+MCStatsResetBrokenNoRebase.cfg	MCStatsReset.tla	invariant	ShownIsSinceMark	ignore-terminal	statsreset	required	-
+MCStatsResetBrokenByCount.cfg	MCStatsReset.tla	invariant	ShownIsSinceMark	ignore-terminal	statsreset	required	-
+MCStatsResetBrokenNoLock.cfg	MCStatsReset.tla	invariant	ShownIsSinceMark	ignore-terminal	statsreset	required	-
+MCStatsResetBrokenNoStamp.cfg	MCStatsReset.tla	invariant	RecordShowsShown	ignore-terminal	statsreset	required	-

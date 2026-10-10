@@ -5864,6 +5864,7 @@ command that loads it.
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while it rests: its provider failed its takes, refused one, or the coordinator rested it (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
 | stats | the epoch's pass in seconds since the last `stats tidy` (the whole epoch before the first; a sample counts when it ended at or after the tidy, `sprint.StatsSince`, and the text frame's first line says `since <RFC3339> (stats tidy)`, the OK line `since=`), each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, or for a friend's card, which reports no usage, `taken` to `reported` (her REPORT.md's time, which `friend sync` keeps on the card, no later than the finish; `TestStatsTimesAFriendsRunFromHerReport`), report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json`. `--routes [--since <time>]` prints the route table from the log over that window instead, the window from the last tidy of the routes when `--since` is not given (refused, exit 2, with neither) (`sprint.RouteTable`): takes, ok, failed, no-result, provider failures, landed, first-take rate, wrong at review, dollars per take, dollars per landing, median wall, imputed; a finish before the window is left out, and the provider takes on that finish with it; a deal, a take, an accept and a read before the window stay, as the route, the wall and the review of a finish inside it; a provider take whose error begins `no result:` is a no-result and every other provider take is a provider failure; `actual_usd` counts when the usage writes it; an accept is the verb `accept` or `tick accept` |
+| stats reset | every figure counts from a mark, and nothing moves (the owner, 2026-10-09: "Clear the cost per-card right now. Clear the per-tier costs. Clear the total cost.", "Clear the done and the ok% for all friends now.", "tidy is different"): `stats reset --reason <text> [--dry-run] \| --show`, the coordinator's; see Statistics, below |
 | stats tidy | starts the statistics afresh and keeps the work (the owner, 2026-10-06: "can you please clear the sets of done consumer cards for all friends and fleet", "I would like a semi-fresh start to stats now"; named tidy the same day, "reset sounds too aggressive"): `stats tidy (--friends \| --fleet \| --routes \| --streams \| --all)... --reason <text> [--dry-run]`, the coordinator's; see Statistics, below |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced by the read card's route (section 2, What a card cost); a verdict on a routed read with no `--usage` at all is refused, the remedy named; one whose usage reports no token is kept and recorded `unpriced=no-tokens` (section 2, Reads are priced like work) |
 | accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible. The tick makes this move itself for every primary whose reads are all ok and nothing holds (section 6), so the verb is for a held primary and a stuck case: `accept --read-ok` with nothing eligible says `nothing waits: the tick accepts` |
@@ -6427,6 +6428,68 @@ moved=<n> kept=<n> archive=<key>` (`STATS-TIDY DRY-RUN would move ...` with `--d
 `--json` carries the rows and streams). `TestStatsTidyZeroesCountersAndKeepsTheWork`,
 `TestASecondStatsTidyWithinAMinuteIsRefused`, `TestATidyWhoseCardMovedKeepsItsArchive`,
 `TestATidyKeepsTheRecentAndTheRulesSamplesAndTakesTheRest`.
+
+`stats reset` (`store.ResetStats`, `sprint.ResetMarkOf`, internal/sprint/stats_reset.go;
+`tla/StatsReset.tla`) is the other way to count afresh, and it moves nothing: no card, no
+stream, no archive, no table property. It writes one mark into the stats record
+(`store.StatsRecord.Reset`, the same key, beside the last tidy, which it leaves as it was):
+when, by whom, why, the epoch, and the counters as they stand: each fleet row's `ok` and
+`failed` (the machines' rows and the friends' alike), each stream's landed cost and count
+(the control card's exact figure, as a tidy's base) and its spend as the where view shows
+it (`total_cost`, `work_cost`, `read_cost`, `cost_by_tier`), and the epoch's total. Every
+figure the mark covers is then shown as the epoch's less the mark's, never below zero
+(`sprint.MoneyLess`, `sprint.TierCostsSince`, `sprint.ResetMark.FleetSince`): a row's
+`done` and `ok%` (over the cards finished since), a stream's `cost` cell and `per landed`
+(the later of the reset and the last tidy of the streams gives the base), `stream_costs`
+in `where --json` (a tier with nothing since left out), and `stats` (from the later of the
+reset and the last tidy). `where --json` carries `stats_reset` (`at`, `by`, `reason`, and
+`landed`, the cards landed since over the headline's scope), and the dashboard's cost per
+card divides the cost tile by that `landed`. A figure the mark does not cover (a row or a
+stream it never knew, the cards by tier, the reads of the day, the unpriced runs, the
+reconciliation) reads as before. The tick counts the where record again after a reset,
+since a reset writes no table and so moves no revision; the mark is written, then the
+where record is emptied and the display cells mirrored, as after a tidy of the streams. The
+where record also carries the stamp of the stats record it was counted from (the last tidy
+of the streams and the mark, by their times, `WhereRecord.Stats`): the tick counts again,
+and where takes no record, whose stamp is not the one in force, so a tick that read the
+stats record before a reset and wrote after it is never shown. `where --json`'s
+`stats_reset.streams` is the cards landed since the mark stream by stream; the page's
+release view (internal/sprintdash/release.go) sums it over the release's streams, as it
+does landed, so the cost per card is the release's cost since the mark over the release's
+cards since it. The page reads the spend by tier from `stream_costs` (where `where --json`
+carries it; a work row's own only where a copy has one). Later wins between a reset and a
+tidy: `stats`, the cost cells and per landed count from the later of the two, and a tidy of
+the fleet or the friends after a reset rebases the mark's rows by the cards it took off that
+finished before the mark (`sprint.ResetMark.Rebase`, by each moved card's finish stamp,
+`sprint.TidyCard.Finished`, never by count: a tidy keeps a card whose primary has not landed
+whatever its age, so it does not take the oldest first). The row's done since the mark is then
+the cards finished since the mark still on the row: a card since the mark that the tidy takes
+off leaves it. A tidy writes a marker into the stats record before it writes or moves anything
+(`StatsRecord.Tidying`: its archive, when it began, the mark in force then) and clears it in
+its last write; a reset is refused while the marker stands (exit 1, `STATS-RESET REFUSED: a
+stats tidy is in flight ...`, nothing written), and the tidy rebases only the mark it saw when
+it began. A marker older than `store.TidyStale` (10 minutes) is a tidy whose process died: a
+reset or a tidy goes on past it, and a mark written then, counted after that tidy's move, is
+never rebased by it. Both write the stats record by compare-and-set (`store.updateStats`:
+Redis WATCH and MULTI/EXEC, the twin under its lock), and the reset counts its mark inside the
+compare-and-set: each try reads the stats record, then the fleet and work tables, and writes
+only while the record is what it read, so a tidy that began or ended between has the mark
+counted again from the rows after it. A second reset replaces the mark. With `--op <id>` the mark keeps the id: the same id again prints
+`STATS-RESET REPLAY op=<id> nothing written; mark ...` and writes nothing; the same id with
+another reason, or an id another verb's step recorded, is refused, as a step's is (only the
+mark in force is remembered: a retry of an id after a later reset writes again).
+`--dry-run` writes nothing and `--show` prints the mark in force: a `ROW <row> done=<n> ok=<n> failed=<n>` line each,
+a `STREAM <s> landed=<n> cost=<$> total=<$> tiers=<t=$,...>` line each, then
+`STATS-RESET OK at=<RFC3339Nano> by=<actor> rows=<n> streams=<n> total=<$> reason=<text>`
+(`replaced=<time>` when it replaced one; `STATS-RESET DRY-RUN would mark ...`,
+`STATS-RESET mark ...` with `--show`, `STATS-RESET none` with no mark).
+`TestAStatsResetCountsEveryFigureFromItsMarkAndMovesNothing`,
+`TestTheFleetSinceAMarkLeavesARowItDoesNotKnow`, `TestTierCostsSinceAMark`,
+`TestStatsResetVerbMarksShowsAndReplaces`, `TestAResetThenATidyOfTheFleetThenOneCardShowsDoneOne`,
+`TestAWhereRecordCountedBeforeAResetIsNeverTaken`,
+`TestAResetUnderAnOperationIDIsWrittenOnce`, `TestATidyBetweenAResetsReadAndWriteHasTheMarkCountedAgain`,
+`TestAResetBetweenATidysMoveAndWrite`, `TestATidyRebasesTheMarkByTheCardsFinishedBeforeIt`, `TestAReleaseViewCountsTheResetsLandedOverItsStreams`,
+`TestThePageCountsCostPerCardAndTiersFromTheMark`.
 
 Not yet: `where` (its text frame, `where --json` and the dashboard it feeds) and the
 coordinator view's sum line say nothing of the tidy: `since <time>` beside `ok%` and the

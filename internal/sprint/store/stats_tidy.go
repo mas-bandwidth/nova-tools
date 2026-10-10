@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -43,6 +44,31 @@ type StatsRecord struct {
 	Streams map[string]sprint.StreamBase `json:"streams,omitempty"`
 	// Archives is every archive record's key, oldest first: teardown deletes each by name.
 	Archives []string `json:"archives,omitempty"`
+	// Reset is the last stats reset (ResetStats, stats_reset.go): the counters at its mark,
+	// which every figure it covers counts from. A tidy keeps it, rebased by the cards it took
+	// off that finished before it (sprint.ResetMark.Rebase).
+	Reset *sprint.ResetMark `json:"reset,omitempty"`
+	// Tidying is a tidy in flight: written before it moves anything, cleared by its last
+	// write. A reset is refused while it stands (TidyInFlight.Fresh), so a mark is never
+	// counted from a sprint a tidy is moving, and the tidy rebases only the mark it saw here.
+	Tidying *TidyInFlight `json:"tidying,omitempty"`
+}
+
+// TidyInFlight is a tidy that began and has not written its end: its archive, when it began,
+// and the reset's mark in force then (its time; zero for none).
+type TidyInFlight struct {
+	Archive string    `json:"archive"`
+	At      time.Time `json:"at"`
+	Mark    time.Time `json:"mark,omitzero"`
+}
+
+// TidyStale is how long a tidy in flight stands: one whose process died leaves its marker,
+// and past this a reset or another tidy goes on, saying so.
+const TidyStale = 10 * time.Minute
+
+// Fresh is whether the tidy in flight still stands at now.
+func (t *TidyInFlight) Fresh(now time.Time) bool {
+	return t != nil && now.Sub(t.At) < TidyStale
 }
 
 // The states of an archive record: written before the move, then how the move ended.
@@ -119,25 +145,62 @@ func (st *Store) StatsTidied(ctx context.Context) (StatsRecord, error) {
 
 // StatsSince is when the statistics of the kind start: its last tidy in the store's
 // epoch, zero when there was none ("" is any kind's, the last tidy).
+//
+// A stats reset (ResetStats) later than that tidy is where they start instead: the reset's
+// mark covers every kind.
 func (st *Store) StatsSince(ctx context.Context, kind string) (time.Time, error) {
 	rec, err := st.StatsTidied(ctx)
-	if err != nil || rec.Epoch != st.epoch {
+	if err != nil {
 		return time.Time{}, err
 	}
-	if kind == "" {
-		return rec.Since, nil
+	return rec.sinceIn(st.epoch, kind), nil
+}
+
+// sinceIn is when the statistics of the kind start in the epoch: its last tidy ("" any
+// kind's), or the reset when that is later; zero with neither.
+func (rec StatsRecord) sinceIn(epoch uint64, kind string) time.Time {
+	var t time.Time
+	if rec.Epoch == epoch {
+		t = rec.Since
+		if kind != "" {
+			t = rec.Kinds[kind]
+		}
 	}
-	return rec.Kinds[kind], nil
+	if m := rec.resetIn(epoch); m.Later(t) {
+		t = m.At
+	}
+	return t
 }
 
 // streamBases is the streams' bases the work table's cost column counts from: the
 // record's in the store's epoch, none otherwise.
+//
+// A stats reset later than the last tidy of the streams gives the bases instead (each
+// stream's at its mark, sprint.ResetStream.Base): the later of the two is where the cost
+// column counts from.
 func (st *Store) streamBases(ctx context.Context) (map[string]sprint.StreamBase, error) {
 	rec, err := st.StatsTidied(ctx)
-	if err != nil || rec.Epoch != st.epoch {
+	if err != nil {
 		return nil, err
 	}
-	return rec.Streams, nil
+	return rec.basesIn(st.epoch), nil
+}
+
+// basesIn is the streams' bases in the epoch: the last tidy's of the streams, or the
+// reset's when it is later; none with neither.
+func (rec StatsRecord) basesIn(epoch uint64) map[string]sprint.StreamBase {
+	var bases map[string]sprint.StreamBase
+	var tidied time.Time
+	if rec.Epoch == epoch {
+		bases, tidied = rec.Streams, rec.Kinds[sprint.TidyStreams]
+	}
+	if m := rec.resetIn(epoch); m.Later(tidied) {
+		bases = make(map[string]sprint.StreamBase, len(m.Streams))
+		for stream, b := range m.Streams {
+			bases[stream] = b.Base()
+		}
+	}
+	return bases
 }
 
 // archiveNonce is a short random nonce for an archive's key.
@@ -207,11 +270,37 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 	if req.DryRun {
 		return res, nil
 	}
+	// the tidy in flight, before anything is written or moves: a reset is refused while it
+	// stands, and the mark in force now is the one this tidy rebases at its end
+	var inFlight TidyInFlight
+	if _, err := st.updateStats(ctx, kv, func(rec *StatsRecord) error {
+		if t := rec.Tidying; t.Fresh(st.now()) {
+			return fmt.Errorf("another stats tidy is in flight (archive %s, since %s): nothing written; run it again after it ends", t.Archive, t.At.Format(time.RFC3339Nano))
+		} else if t != nil {
+			res.Said = append(res.Said, fmt.Sprintf("the stats tidy in flight since %s (archive %s) is past %s: taken as ended", t.At.Format(time.RFC3339Nano), t.Archive, TidyStale))
+		}
+		inFlight = TidyInFlight{Archive: res.Archive, At: now}
+		if m := rec.resetIn(st.epoch); m != nil {
+			inFlight.Mark = m.At
+		}
+		marker := inFlight
+		rec.Tidying = &marker
+		return nil
+	}); err != nil {
+		return res, err
+	}
 	// the archive first: whatever the move does, what it was to move is kept
 	if err := st.putJSON(ctx, res.Archive, res.Record); err != nil {
 		return res, err
 	}
-	rec.Archives = append(rec.Archives, res.Archive)
+	keepArchive := func(rec *StatsRecord) {
+		if !slices.Contains(rec.Archives, res.Archive) {
+			rec.Archives = append(rec.Archives, res.Archive)
+		}
+		if rec.Tidying != nil && rec.Tidying.Archive == res.Archive {
+			rec.Tidying = nil // this tidy's end
+		}
+	}
 	if has(sprint.TidyFriends) || has(sprint.TidyFleet) {
 		var rows []sprint.TidyRow
 		r, err := st.Run(ctx, Step{Verb: "stats tidy", Load: []string{sprint.Work, sprint.Fleet}, Plan: func(s *sprint.Snapshot) sprint.Plan {
@@ -228,8 +317,8 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 		}
 		if err != nil {
 			res.Record.State, res.Record.Error = ArchiveFailed, err.Error()
-			_ = st.putJSON(ctx, res.Archive, res.Record) // ignored: the move's error is the one to report; the planned archive stands
-			_ = st.putJSON(ctx, keyStats, rec)           // ignored: as above; the record keeps the archive's key for teardown
+			_ = st.putJSON(ctx, res.Archive, res.Record)                                                  // ignored: the move's error is the one to report; the planned archive stands
+			_, _ = st.updateStats(ctx, kv, func(rec *StatsRecord) error { keepArchive(rec); return nil }) // ignored: as above; the record keeps the archive's key for teardown
 			return res, fmt.Errorf("%w; the archive %s is kept (state failed, or planned when that write failed too); run it again after a minute", err, res.Archive)
 		}
 		res.Record.Rows = rows
@@ -239,20 +328,36 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 	if err := st.putJSON(ctx, res.Archive, res.Record); err != nil {
 		return res, err
 	}
-	if rec.Epoch != st.epoch {
-		rec.Kinds, rec.Streams = nil, nil
-	}
-	rec.Epoch, rec.Since, rec.Reason, rec.By = st.epoch, now, req.Reason, st.Actor
-	if rec.Kinds == nil {
-		rec.Kinds = map[string]time.Time{}
-	}
-	for _, k := range kinds {
-		rec.Kinds[k] = now
-	}
-	if has(sprint.TidyStreams) {
-		rec.Streams = res.Record.Streams
-	}
-	if err := st.putJSON(ctx, keyStats, rec); err != nil {
+	// the record, read again and written only while unchanged (updateStats): a reset written
+	// since this tidy's first read is kept, its rows rebased on what this tidy took off
+	if _, err := st.updateStats(ctx, kv, func(rec *StatsRecord) error {
+		keepArchive(rec)
+		if rec.Epoch != st.epoch {
+			rec.Kinds, rec.Streams = nil, nil
+		}
+		rec.Epoch, rec.Since, rec.Reason, rec.By = st.epoch, now, req.Reason, st.Actor
+		if rec.Kinds == nil {
+			rec.Kinds = map[string]time.Time{}
+		}
+		for _, k := range kinds {
+			rec.Kinds[k] = now
+		}
+		if has(sprint.TidyStreams) {
+			rec.Streams = res.Record.Streams
+		}
+		// a reset's rows count from the mark: the cards this tidy took off that finished
+		// before the mark leave its counters too (sprint.ResetMark.Rebase), so the row's done
+		// since the mark is the cards since it still on the row. Only the mark this tidy saw
+		// when it began is rebased: that one was counted before the move; a mark written since
+		// (past a stale marker) was counted after it and holds none of the cards moved
+		if m := rec.resetIn(st.epoch); m != nil && m.At.Equal(inFlight.Mark) {
+			rebased := *m
+			rebased.Rows = maps.Clone(m.Rows)
+			rebased.Rebase(res.Record.Rows)
+			rec.Reset = &rebased
+		}
+		return nil
+	}); err != nil {
 		return res, err
 	}
 	if has(sprint.TidyStreams) {

@@ -64,6 +64,7 @@ var verbEffect = map[string]string{
 	"card":              "inspection: reads one card, its brief and its attempts, writes nothing",
 	"log":               "inspection: reads the sprint's change log, writes nothing",
 	"stats":             "inspection: reads the sprint's counts and rates, writes nothing",
+	"stats reset":       "local write: writes one mark, the counters as they stand, into the sprint's stats record; nothing moves, and every figure counts from the mark; --dry-run and --show write nothing",
 	"stats tidy":        "local write: takes the history off the done cells named and writes the tidy's archive and stats record to the sprint's store; --dry-run writes nothing",
 	"queue":             "inspection: reads a worker's or a stream's cards, writes nothing",
 	"handover":          "inspection: reads the store, writes nothing",

@@ -552,6 +552,17 @@ func noSprintYet(err error) error {
 		Next: "nova-sprint init --coordinator <name>"}
 }
 
+// statsResetView is where --json's stats_reset: the mark in force and the cards landed since.
+type statsResetView struct {
+	At     time.Time `json:"at"`
+	By     string    `json:"by,omitempty"`
+	Reason string    `json:"reason"`
+	Landed int64     `json:"landed"`
+	// Streams is the cards landed since the mark, stream by stream, over the same scope as
+	// Landed: the dashboard's release view sums it over the release's streams.
+	Streams map[string]int64 `json:"streams,omitempty"`
+}
+
 // seatWaitsView is what waits on the seat as where carries it: the record's counts, the
 // oldest judgment's age at the view's time, and when the tick counted them.
 type seatWaitsView struct {
@@ -669,6 +680,13 @@ type whereView struct {
 	// in tables and rows only with --archived; the summary and the drawn footers leave
 	// them out either way (ArchivedCards, ArchivedLanded carry their counts).
 	Archived *archivedView `json:"archived,omitempty"`
+	// StatsReset is the stats reset's mark in force (stats reset): when, by whom and why, and
+	// Landed, the cards landed since it over the headline's scope (the streams on the table,
+	// or the epoch's every stream once the sprint is done), which the dashboard's cost per card
+	// divides by; absent with no mark. Every figure the mark covers is counted from it
+	// already: the fleet and friends rows' done and ok%, the work rows' cost and per_landed,
+	// and stream_costs' total_cost, work_cost, read_cost and cost_by_tier.
+	StatsReset *statsResetView `json:"stats_reset,omitempty"`
 	// Ready, Width, Buffer and Low are the ready buffer a program reads off
 	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
 	// work table's streams, the total width of the fleet members that are up,
@@ -1225,6 +1243,14 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		// a sprint done: the headline is the epoch's, as the done line counts it
 		v.Landed, v.All = v.Landed+v.ArchivedLanded, v.All+v.ArchivedCards
 	}
+	if m := facts.Reset; m != nil {
+		done := v.Done
+		by := m.LandedSinceBy(shapes[0], func(r ntable.Row) bool { return done || !archivedRow(shapes[0], r) })
+		v.StatsReset = &statsResetView{At: m.At, By: m.By, Reason: m.Reason, Streams: by}
+		for _, n := range by {
+			v.StatsReset.Landed += n
+		}
+	}
 	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
 	if err != nil {
 		return whereView{}, "", err
@@ -1275,7 +1301,8 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		if logical == sprint.Fleet {
 			// a friend's row holds her sprint cards: counted on the friends table, never a
 			// machine of the fleet table (sprint.FriendRow)
-			t, friendCards = splitFriendRows(t)
+			// done and ok% count from the stats reset's mark (sprint.ResetMark.FleetSince)
+			t, friendCards = splitFriendRows(facts.Reset.FleetSince(t))
 		}
 		if logical == sprint.Readers {
 			// each reader's width beside reading, derived from its fleet row
