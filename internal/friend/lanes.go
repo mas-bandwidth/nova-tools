@@ -625,8 +625,9 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 
 // stageHandsOver says a card may be handed to a lane: the daemon stages nothing here, the
 // card is not one it stages, or its stage wrote a readable regular brief, the JOB.md and
-// a validated checkout (StageGate). The brief path is the stage record's. It is the one
-// gate every hand goes through (laneStep's held).
+// a validated checkout (StageGate). A read has its own staged files (ReadStageGate): its
+// inbox BRIEF.md, and no work JOB.md or checkout. The brief path is the stage record's. It
+// is the one gate every hand goes through (laneStep's held).
 func (l *loop) stageHandsOver(c Card) bool {
 	d := l.d
 	if d.Stage == nil {
@@ -636,8 +637,12 @@ func (l *loop) stageHandsOver(c Card) bool {
 	if !ok {
 		return true // not a card on her row: nothing is staged for it here
 	}
+	if h.Kind == "read" {
+		_, refused := ReadStageGate(d.Dir, Card{ID: h.Card, Outbox: c.Outbox}, h.Job)
+		return !refused
+	}
 	if _, ok := PacketOf(h); !ok {
-		return true // a read, or a card with no REPO: nothing is staged for it
+		return true // a card with no REPO: nothing is staged for it
 	}
 	c = carryStagedBrief(d.Dir, c)
 	var brief []byte
@@ -652,10 +657,11 @@ func (l *loop) stageHandsOver(c Card) bool {
 
 // stageLaneStep is the stage contract at the lane, once a step: every held card whose
 // stage has not written the brief, the JOB.md and the checkout is counted and never
-// handed to a lane. The brief path is the stage record's, never one composed here. Each
-// failure is said once on the record and once as a judgment to the coordinator, and
-// waits StageRetryEvery before it is counted again; after StageFailLimit stage failures
-// the card is finished FAIL with the stage reason.
+// handed to a lane. A read is counted on its own staged files (ReadStageGate): its inbox
+// BRIEF.md, and no work JOB.md. The brief path is the stage record's, never one composed
+// here. Each failure is said once on the record and once as a judgment to the
+// coordinator, and waits StageRetryEvery before it is counted again; after
+// StageFailLimit stage failures the card is finished FAIL with the stage reason.
 func (l *loop) stageLaneStep(now time.Time) {
 	d, s := l.d, l.lanes
 	if d.Stage == nil {
@@ -683,17 +689,24 @@ func (l *loop) stageLaneStep(now time.Time) {
 		if !validJob(h.Job) || s.given[h.Job] {
 			continue
 		}
-		if _, ok := PacketOf(h); !ok {
-			continue // a read, or a card with no REPO: nothing is staged for it
-		}
-		c := carryStagedBrief(d.Dir, Card{ID: h.Card, Outbox: filepath.Join(d.Dir, "outbox", h.Job)})
-		var brief []byte
-		if c.Brief != "" {
-			if raw, err := os.ReadFile(c.Brief); err == nil {
-				brief = raw
+		c := Card{ID: h.Card, Outbox: filepath.Join(d.Dir, "outbox", h.Job)}
+		var f StageFailure
+		var refused bool
+		if h.Kind == "read" {
+			f, refused = ReadStageGate(d.Dir, c, h.Job)
+		} else {
+			if _, ok := PacketOf(h); !ok {
+				continue // a card with no REPO: nothing is staged for it
 			}
+			c = carryStagedBrief(d.Dir, c)
+			var brief []byte
+			if c.Brief != "" {
+				if raw, err := os.ReadFile(c.Brief); err == nil {
+					brief = raw
+				}
+			}
+			f, refused = StageGate(d.Dir, c, h.Job, string(brief), GoOnPath)
 		}
-		f, refused := StageGate(d.Dir, c, h.Job, string(brief), GoOnPath)
 		if !refused {
 			delete(s.stageFails, h.Job)
 			delete(s.stageSaid, h.Job)

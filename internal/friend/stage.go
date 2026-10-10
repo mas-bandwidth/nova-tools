@@ -234,6 +234,41 @@ func Staged(dir, job string) bool {
 	return readableRegular(jobFile) && readableRegular(rec.Brief) && validCheckout(rec.Checkout)
 }
 
+// readBriefPath is the file a read's stage wrote: the read card's BRIEF.md in the friend's
+// inbox (inbox/<job>/BRIEF.md), the line friend sync writes for every held card. A read
+// gets no JOB.md and no staged checkout: its lane clones the work under review itself
+// (ReadText).
+func readBriefPath(dir, job string) string {
+	return filepath.Join(dir, "inbox", job, "BRIEF.md")
+}
+
+// ReadStaged says a read's staged files are there: its inbox BRIEF.md is a readable
+// regular file. A read is not a work card: requiring its JOB.md or a staged checkout would
+// refuse every read. A job that is no inbox directory is never staged.
+func ReadStaged(dir, job string) bool {
+	return validJob(job) && readableRegular(readBriefPath(dir, job))
+}
+
+// ReadStageGate is the stage contract at the lane for a read (`HeldCard.Kind == "read"`): the
+// read's staged files are its inbox BRIEF.md, and no work JOB.md and no checkout are required
+// of it. It answers false when the read's lane may start, else the StageFailure naming what is
+// missing. It is the read's StageGate, whose three work files (the brief the stage record
+// names, the JOB.md and the checkout) a read does not have.
+func ReadStageGate(dir string, c Card, job string) (StageFailure, bool) {
+	if !validJob(job) {
+		return StageFailure{Card: c.ID, What: "its job " + dash(job), Why: "no inbox directory"}, true
+	}
+	brief := readBriefPath(dir, job)
+	if !readableRegular(brief) {
+		why := "the stage wrote no BRIEF.md for the read"
+		if fi, err := os.Stat(brief); err == nil && !fi.Mode().IsRegular() {
+			why = "the read's brief is not a readable regular file"
+		}
+		return StageFailure{Card: c.ID, What: "its read " + dash(brief), Why: why}, true
+	}
+	return StageFailure{}, false
+}
+
 // repairBrief restores a missing recorded brief from the canonical inbox copy.
 // Existing files are preserved; the next gate judges whether they are readable.
 func (s *Stager) repairBrief(p Packet) error {

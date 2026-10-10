@@ -198,6 +198,60 @@ func TestAGoGateOnAHostWithNoGoIsRefusedAtStage(t *testing.T) {
 	assert.False(t, refused, "a host with go hands the card over")
 }
 
+// A read is its own stage case (ReadStageGate): its staged files are its inbox BRIEF.md,
+// the line friend sync writes for a held card. The read's lane clones the work under review
+// itself, so a read needs no work JOB.md and no checkout, and requiring either would refuse
+// every read. A held read whose BRIEF.md the stage did not write starts no lane, is counted
+// as a stage failure, and raises one judgment; the read's own BRIEF.md clears it, and three
+// such failures finish the read FAIL with the stage reason, never "wrote no report".
+func TestAReadMissingItsBriefIsAStageFailure(t *testing.T) {
+	t.Parallel()
+	job := "frontier.r1.bob"
+	dir := t.TempDir()
+	read := HeldCard{Card: "frontier.r1", Job: job, Col: "working", Kind: "read", Brief: "WHO: friend bob\n\nread this\n"}
+	r, l := stageLoop(t)
+	r.d.Dir = dir
+	r.d.Stage = func(context.Context, Packet) (string, error) { return "", nil }
+	r.d.heldCards = []HeldCard{read}
+	handed := Card{ID: read.Card, Outbox: filepath.Join(dir, "outbox", job), Brief: filepath.Join(dir, "inbox", job, "BRIEF.md")}
+
+	assert.False(t, ReadStaged(dir, job), "the read's inbox BRIEF.md is not there")
+	assert.False(t, l.stageHandsOver(handed), "a read with no staged BRIEF.md is not handed over")
+
+	l.stageLaneStep(t0)
+	assert.Equal(t, 1, l.lanes.stageFails[job], "the read's missing brief is a stage failure")
+	assert.False(t, l.lanes.given[job], "the card is back in the queue, not finished")
+	got := r.adaGot(t)
+	require.Len(t, got, 1, "one judgment, not one a step: %v", got)
+	assert.Contains(t, got[0], "stage failed for frontier.r1: ")
+	assert.Contains(t, got[0], "BRIEF.md")
+
+	// the read's own BRIEF.md is its staged file: a work JOB.md and a checkout are not
+	// required of it, and a staged read clears the failure count
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", job), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", job, "BRIEF.md"), []byte(read.Brief), 0o644))
+	assert.True(t, ReadStaged(dir, job))
+	assert.True(t, l.stageHandsOver(handed), "a staged read is handed over")
+	assert.NoFileExists(t, filepath.Join(dir, "jobs", job, JobFile), "a read needs no work JOB.md")
+	l.stageLaneStep(t0.Add(StageRetryEvery))
+	assert.Empty(t, l.lanes.stageFails, "a staged read clears its failure count")
+	assert.False(t, l.lanes.given[job])
+
+	// three stage failures of a read finish it FAIL with the stage reason, never "wrote no report"
+	require.NoError(t, os.Remove(filepath.Join(dir, "inbox", job, "BRIEF.md")))
+	now := t0.Add(2 * StageRetryEvery)
+	for range StageFailLimit {
+		l.stageLaneStep(now)
+		now = now.Add(StageRetryEvery)
+	}
+	require.True(t, l.lanes.given[job], "the read is set aside after three stage failures")
+	raw, err := os.ReadFile(filepath.Join(dir, "outbox", job, "REPORT.md"))
+	require.NoError(t, err, "the read's REPORT.md is written")
+	assert.True(t, strings.HasPrefix(string(raw), "Verdict: FAIL\n"), "the report: %s", raw)
+	assert.Contains(t, string(raw), "stage failed for frontier.r1: ")
+	assert.NotContains(t, string(raw), "wrote no report")
+}
+
 // A JOB.md that names neither a brief nor a checkout is the older record: its presence
 // is the stage, so a later pass does not treat it as a missing file.
 func TestAJobFileThatNamesNothingStaysStaged(t *testing.T) {
