@@ -52,10 +52,6 @@ func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store
 	return a, st, addr
 }
 
-// quotedSocket is the proof's unix socket, named so the reply command must
-// quote it. It stays under the test directory when that path fits a Unix
-// socket, and otherwise in a short private directory, as twinSocket does when
-// a long TMPDIR cannot hold one.
 // quotedSocket is defined in testhelpers_functional_test.go
 
 func TestPushProofReplyIgnoresTheRecipientsWrongDefaultStore(t *testing.T) {
