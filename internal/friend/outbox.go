@@ -459,11 +459,7 @@ func (l *loop) outboxStep(now time.Time) {
 		// FAIL, so a card cannot hang forever.
 		if final, _ := Final(first, second); !final {
 			if !l.pastFinalDeadline(h, job, now) {
-				if verdict == "" {
-					note(job, "it has no Verdict line")
-				} else {
-					note(job, "report not final yet: "+id+": "+oneLine(first, 200))
-				}
+				note(job, "report not final yet: "+id+": "+oneLine(first, 200))
 				continue
 			}
 			report = "report never became final: first line " + oneLine(first, 300) + "\n"

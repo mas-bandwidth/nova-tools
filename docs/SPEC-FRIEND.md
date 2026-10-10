@@ -2158,8 +2158,8 @@ whoever wrote the brief:
   Every other report is not final: `pending`, and any other word; a `LAND` whose
   second line is not a `Head`; and a report whose first line is not the verdict
   (a later `Verdict:` line does not count). The file is left, noted once
-  (`report not final yet: <card>: <first line>`), and read again next pass. A
-  report with no `Verdict:` line is noted `it has no Verdict line`. Past the
+  (`report not final yet: <card>: <first line>`), including when it has no
+  `Verdict:` line, and read again next pass. Past the
   card's deadline every not-final report is collected as `FAIL` with the reason
   `report never became final: first line <text>`. The deadline is the brief's
   `DEADLINE:` line, its key read in any case (an issued brief writes `Deadline:`
@@ -2176,7 +2176,7 @@ whoever wrote the brief:
   and sent again after `OutboxRetry` (a minute); friend sync may finish it
   first, and the server refuses the second.
 - A report with no `Verdict:` line is said once while it stands
-  (`outbox: left outbox/<job>/REPORT.md: it has no Verdict line`) and left until
+  (`outbox: left outbox/<job>/REPORT.md: report not final yet: <card>: <first line>`) and left until
   the card's deadline, when it is collected as `FAIL` like any report that never
   became final. A report that cannot be read, a card not on her row, ready and
   not working, or a read, is said once while it stands
