@@ -150,22 +150,28 @@ type staticcheckFinding struct {
 }
 
 // staticcheckCache is the analysis cache every staticcheck run of this package
-// shares, staticcheck's own default (<user cache dir>/staticcheck). A cache
-// made fresh per run re-analysed the standard library and every dependency
-// from source on each run, 50-90 s of the functional internal/ci package at
-// GOMAXPROCS=2 (docs/SPEC-CI.md, `staticcheck`). The cache is
-// content-addressed and salted with the binary's build ID, so a changed
-// package, a changed dependency or another staticcheck version misses it and
-// is analysed again: sharing it changes what is re-done, never what is found.
-// Where the environment names no user cache directory (no HOME), the run gets
-// a cache of its own, which finds the same and only costs the time.
+// shares, staticcheck's own default (<user cache dir>/staticcheck) where the
+// run may write it. A cache made fresh per run re-analysed the standard library
+// and every dependency from source on each run, 50-90 s of the functional
+// internal/ci package at GOMAXPROCS=2 (docs/SPEC-CI.md, `staticcheck`). The
+// cache is content-addressed and salted with the binary's build ID, so a
+// changed package, a changed dependency or another staticcheck version misses
+// it and is analysed again: sharing it changes what is re-done, never what is
+// found. A sandboxed run's write root is the job, not the home, and creating
+// the user cache dir there is refused; the cache then lives under the
+// process's own temporary root, which the caller keeps inside the job.
 func staticcheckCache(t *testing.T) string {
 	t.Helper()
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		return t.TempDir()
+	if dir := os.Getenv("STATICCHECK_CACHE"); dir != "" {
+		return dir
 	}
-	return filepath.Join(dir, "staticcheck")
+	if dir, err := os.UserCacheDir(); err == nil {
+		cache := filepath.Join(dir, "staticcheck")
+		if err := os.MkdirAll(cache, 0o755); err == nil {
+			return cache
+		}
+	}
+	return filepath.Join(os.TempDir(), "staticcheck")
 }
 
 // staticcheckSites runs staticcheck (its default checks, U1000 `unused`
