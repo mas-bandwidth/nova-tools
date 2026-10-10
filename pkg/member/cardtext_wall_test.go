@@ -1,6 +1,7 @@
 package member
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,4 +28,20 @@ func TestTheCardTellsTheChildItsWall(t *testing.T) {
 	assert.Equal(t, "", WallText(0))
 	assert.Contains(t, WallText(30), "ended at 1 minutes", "never a wall of zero minutes")
 	assert.Contains(t, WallText(30), "by minute 1")
+}
+
+// The finish minute is WallFinishShare of the wall, floored to whole minutes and never zero;
+// each row sits on a boundary of that floor.
+func TestWallTextFinishMinuteAtTheMarginBoundary(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		seconds  int
+		wall, by int
+	}{
+		{59, 1, 1}, {60, 1, 1}, {74, 1, 1}, {75, 1, 1}, {149, 2, 1}, {150, 2, 2}, {600, 10, 8}, {601, 10, 8}, {2400, 40, 32}, {7200, 120, 96},
+	} {
+		got := WallText(tc.seconds)
+		assert.Contains(t, got, fmt.Sprintf("ended at %d minutes", tc.wall), "%ds", tc.seconds)
+		assert.Contains(t, got, fmt.Sprintf("by minute %d,", tc.by), "%ds", tc.seconds)
+	}
 }

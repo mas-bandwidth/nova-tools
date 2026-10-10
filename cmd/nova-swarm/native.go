@@ -203,6 +203,7 @@ type nativeRunResult struct {
 	lost         bool              // the provider read died after the request may have been accepted
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
+	deadlined    bool              // the deadline timer ended the run: the child was still working at its wall
 	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
 	starts       int               // the harness starts tried when every one failed (harnessStartFailed), else 0
 	// THE JOB'S OWN FIGURE (the budget rule keeps two numbers apart: the row is the launch's and
@@ -1254,6 +1255,7 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 		nativeKillGroup(st.pgid, st.started)
 		<-st.done
 		s.res.rc = -1
+		s.res.deadlined = true
 	case end := <-st.idleC:
 		st.stopDeadline()
 		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
@@ -1441,6 +1443,14 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 		}
 		if path, wrote, err := swarm.WriteBlockedResult(s.prep.jobDir, s.prep.cfg.label, s.res.idleEnd.Kind, s.res.idleEnd.Path, s.res.idleEnd.Step, reason); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the blocked report could not be written: %s\n", oneline.Escape(err.Error()))
+		} else if wrote {
+			s.res.blockedPath = path
+		}
+	}
+	if !s.res.lost && s.res.deadlined && !s.res.idled && !s.res.terminated && s.res.stopped == "" && s.res.wallReport == "" && (s.res.wallRefusal == swarm.WallRefusal{}) {
+		// the card worked to its wall: a commit in ./repo and no report is work to name, not a silent no-result (fault 9)
+		if path, wrote, err := swarm.WriteDeadlineResult(s.prep.jobDir, s.prep.cfg.label, true); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the deadline report could not be written: %s\n", oneline.Escape(err.Error()))
 		} else if wrote {
 			s.res.blockedPath = path
 		}
