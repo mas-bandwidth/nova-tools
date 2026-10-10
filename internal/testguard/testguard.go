@@ -33,6 +33,7 @@ package testguard
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -246,4 +247,66 @@ func commandLine(program string, args []string) string {
 		fmt.Fprintf(&b, " %q", a)
 	}
 	return b.String()
+}
+
+// Default returns the process-wide guard.
+func Default() *Guard {
+	return defaultGuard
+}
+
+// RefuseAddr is what every store dialer in this tree calls with the network and address
+// it is about to dial. Under the guard, and outside an AllowHosts scope, it panics
+// naming that address unless the host is loopback or network is unix under a temp root.
+func RefuseAddr(network, addr string) {
+	defaultGuard.RefuseAddr(network, addr)
+}
+
+func (g *Guard) RefuseAddr(network, addr string) {
+	if !g.refusing.Load() || g.allowed.Load() > 0 {
+		return
+	}
+	if g.isAllowedAddr(network, addr) {
+		return
+	}
+	panic(fmt.Sprintf(
+		"%s=1: a test reached a store off the loopback: network=%s addr=%s; "+
+			"inject a fake dialer, use a store on 127.0.0.1 with an OS-assigned port, or a unix socket in t.TempDir()",
+		EnvNoHost, network, addr))
+}
+
+func (g *Guard) isAllowedAddr(network, addr string) bool {
+	if strings.HasPrefix(network, "unix") {
+		return g.isTempPath(addr)
+	}
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return true
+	}
+	return false
+}
+
+func (g *Guard) isTempPath(p string) bool {
+	abs := p
+	if !filepath.IsAbs(abs) {
+		if a, err := filepath.Abs(abs); err == nil {
+			abs = a
+		}
+	}
+	rootsFn := g.tempRoots
+	if rootsFn == nil {
+		rootsFn = tempRoots
+	}
+	for _, root := range rootsFn() {
+		if under(abs, root) {
+			return true
+		}
+	}
+	return false
 }

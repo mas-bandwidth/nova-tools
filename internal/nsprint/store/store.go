@@ -4,6 +4,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"net"
 	"os"
 	"strings"
 
@@ -134,6 +136,10 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	// and Redis 8.10.2 refuses it (errorstat_ERR), a second trip for
 	// nothing; the same setting as redisconn.Open. The connect is HELLO alone.
 	opts := &redis.Options{Addr: addr, Username: user, Password: password, DisableIdentity: true,
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			testguard.RefuseAddr(network, addr)
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		},
 		MaintNotificationsConfig: &maintnotifications.Config{
 			Mode:         maintnotifications.ModeDisabled,
 			EndpointType: maintnotifications.EndpointTypeNone,
