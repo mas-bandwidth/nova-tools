@@ -106,6 +106,28 @@ nova-config apply --kind friend
 A claude row in one-shot mode without `config_dir` runs no lane: her daemon
 says so on its record with the `nova-config friend set` that fixes it.
 
+### simp-retire-bud-runners-r-b.w1
+
+A bud is a claude friend row and nothing else: the hand-written `runner.zsh` and
+`reader.zsh` are retired, and one `nova-friend run --harness claude` daemon on a
+`mode one-shot` row runs her cards as one-shot lanes and serves her reader row,
+`reader-<bud>`, from the same loop. The tier-to-model table the runner carried is
+`ReadModels` (frontier claude-fable-5-1, heavy claude-opus-5-5, pro
+claude-sonnet-5-5, flash claude-haiku-4-5-20251001); the bench rule is
+`BenchRule` on every read prompt; a usage limit holds her down until its reset
+and pauses her lanes. Her register rows (`docs/STOPGAPS.md`, `## bud-card-runner`
+and `## bud-reader-runner`) are retired, and `TestStopgapBudRunnersAreRetired`
+reads both rows through the register's parser:
+
+```
+nova-config friend add <bud> --slots 8 --tiers <tier> --mode one-shot --config_dir <her account's absolute config directory>
+nova-config apply --kind friend
+nova-sprint friend sync
+nova-friend run --as <bud> --harness claude --dir <her working directory>
+```
+
+The two scripts live outside this repository: nobody edits or removes them here.
+
 ## One-shot lanes at parity with the card runner
 
 A friend whose delivery mode is `one-shot` runs her cards through nova-friend's lanes, not through a runner script:

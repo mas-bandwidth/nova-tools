@@ -55,38 +55,61 @@ flag are in the `nova-sprint` verb table.
 ## bud-card-runner
 
 Path: <buds-dir>/<bud>/runner.zsh (identical copies, one per bud)
-Replacement: claude-oneshot-lanesb
-STATUS: live
+Replacement: run
+Tool: nova-friend
+STATUS: retired 2026-10-10
 
 Behaviours:
-1. It scans the bud's working/inbox/ every 10 s for a directory holding BRIEF.md, with no runner/<job>.started file and no non-empty outbox/<job>/REPORT.md.
-2. It starts each such card as one headless `claude -p --permission-mode bypassPermissions </dev/null` in working/, with the bud's account in CLAUDE_CONFIG_DIR, and records runner/<job>.started, .pid and .tier.
-3. It reads the tier from the brief's `RESULT:` line and picks the model: frontier claude-fable-5-1, heavy claude-opus-5-5, pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001, none or other claude-opus-5-5.
-4. It runs at most MAX (default 8) cards at once and at most one frontier card at once.
-5. Its prompt names the bud, tells the child to read AGENTS.md, do the card in inbox/<job>/BRIEF.md and write REPORT.md and RESULT.md, and carries the bench rule: no go command on the coordinator's machine, sync to the Linux bench (the second bench when the first does not answer), remove the bench directory after.
-6. It starts the bud's `nova-friend run --as <bud> --harness claude` daemon (the beat) when none runs and restarts it when it is gone.
-7. A usage-limit message in a run's output with no REPORT.md writes runner/PAUSED with the reset epoch (one hour on when the message has none), removes that card's .started so it runs again, and stops the daemon so the bud reads down.
-8. While runner/PAUSED exists it starts no card; at the reset time it removes PAUSED, logs RESUME and starts the daemon.
-9. It appends START, END, LIMIT, RESUME and DAEMON lines to runner.log with model, exit, wall time and the report's first line.
+1. It scans the bud's working/inbox/ every 10 s for a directory holding BRIEF.md, with no runner/<job>.started file and no non-empty outbox/<job>/REPORT.md. (test: TestNextCardIsTheFirstQueuedDeliveredUnfinishedCard)
+2. It starts each such card as one headless `claude -p --permission-mode bypassPermissions </dev/null` in working/, with the bud's account in CLAUDE_CONFIG_DIR, and records runner/<job>.started, .pid and .tier. (test: TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox)
+3. It reads the tier from the brief's `RESULT:` line and picks the model: frontier claude-fable-5-1, heavy claude-opus-5-5, pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001, none or other claude-opus-5-5. (test: TestClaudeReadModelsAreTheBudRunnersTable)
+4. It runs at most MAX (default 8) cards at once and at most one frontier card at once. (test: TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession)
+5. Its prompt names the bud, tells the child to read AGENTS.md, do the card in inbox/<job>/BRIEF.md and write REPORT.md and RESULT.md, and carries the bench rule: no go command on the coordinator's machine, sync to the Linux bench (the second bench when the first does not answer), remove the bench directory after. (test: TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox)
+6. It starts the bud's `nova-friend run --as <bud> --harness claude` daemon (the beat) when none runs and restarts it when it is gone. (test: TestThePlistRunsTheDaemonAtLoadAndKeepsItAlive)
+7. A usage-limit message in a run's output with no REPORT.md writes runner/PAUSED with the reset epoch (one hour on when the message has none), removes that card's .started so it runs again, and stops the daemon so the bud reads down. (test: TestAProviderFailureStopsEveryLaneUnderWayAndKeepsItsCard)
+8. While runner/PAUSED exists it starts no card; at the reset time it removes PAUSED, logs RESUME and starts the daemon. (test: TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt)
+9. It appends START, END, LIMIT, RESUME and DAEMON lines to runner.log with model, exit, wall time and the report's first line. (test: TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession)
+
+### simp-retire-bud-runners-r-b.w1
+
+The runner.zsh row is retired: one `nova-friend run --harness claude` daemon on a
+`mode one-shot` row is the card lane (the claude adapter's `CardRunner`), one card
+a process with the brief its prompt and the result read from the outbox, and its
+tests are the row's citations. The tier-to-model table the runner carried is
+`ReadModels` (`TestClaudeReadModelsAreTheBudRunnersTable`); a work card is never
+frontier (the sprint deals none), so the runner's `MAX` is the row's `--width`
+and its one-frontier rule has nothing to hold. `TestStopgapBudRunnersAreRetired`
+reads the row through this file's parser.
 
 ## bud-reader-runner
 
 Path: <buds-dir>/<bud>/reader.zsh (identical copies, one per bud)
-Replacement: claude-oneshot-lanesb
-STATUS: live
+Replacement: run
+Tool: nova-friend
+STATUS: retired 2026-10-10
 
 Behaviours:
-1. Every 10 s it reads `ns.sh queue --as reader-<bud> --json`, which is the reader's beat.
-2. It begins every card in the `asked` column that it has not started, up to MAX (default 4) at once, with `read --begin <card> --epoch <epoch>`; a refusal not saying OK is logged and the card is left.
-3. It writes the read's BRIEF.md, WORKER-REPORT.txt and READ.md under working/reads/<card>/ from the card's packet.
-4. READ.md tells the child to clone the repo, detach at the work's head, judge the merge-base diff only, run go vet and go test on the touched packages on the bench, and write RESULT.md with head, branch, verdict (ok or broken), gate, report and a body.
-5. It runs the read as one headless `claude -p --permission-mode bypassPermissions </dev/null` on the bud's account, with the model from the read's tier (the bud-card-runner's tier table).
-6. A RESULT.md verdict of ok or broken is recorded with `read --ok` or `read --broken`, the report line and up to 3500 bytes of the body as the finding, and a usage line (model, wall time, harness claude-code, account).
-7. A read with no verdict is handed back with `read --return` and the reason.
-8. A usage-limit message in a read's output writes runner/PAUSED (the card runner's file), stops the bud's nova-friend daemon and returns the read.
-9. While runner/PAUSED exists it begins no read.
-10. `reader.zsh --once <card>` begins and runs that one read and exits.
-11. It appends BEGIN, END, RETURN, LIMIT and BEGIN REFUSED lines to reader.log.
+1. Every 10 s it reads `ns.sh queue --as reader-<bud> --json`, which is the reader's beat. (test: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict)
+2. It begins every card in the `asked` column that it has not started, up to MAX (default 4) at once, with `read --begin <card> --epoch <epoch>`; a refusal not saying OK is logged and the card is left. (test: TestAReadSlotIsNeverACardLaneAndNeverWaitsForOne)
+3. It writes the read's BRIEF.md, WORKER-REPORT.txt and READ.md under working/reads/<card>/ from the card's packet. (test: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict)
+4. READ.md tells the child to clone the repo, detach at the work's head, judge the merge-base diff only, run go vet and go test on the touched packages on the bench, and write RESULT.md with head, branch, verdict (ok or broken), gate, report and a body. (test: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict)
+5. It runs the read as one headless `claude -p --permission-mode bypassPermissions </dev/null` on the bud's account, with the model from the read's tier (the bud-card-runner's tier table). (test: TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard)
+6. A RESULT.md verdict of ok or broken is recorded with `read --ok` or `read --broken`, the report line and up to 3500 bytes of the body as the finding, and a usage line (model, wall time, harness claude-code, account). (test: TestALaneDaemonRecordsABrokenReadWithItsFinding)
+7. A read with no verdict is handed back with `read --return` and the reason. (test: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict)
+8. A usage-limit message in a read's output writes runner/PAUSED (the card runner's file), stops the bud's nova-friend daemon and returns the read. (test: TestAReadThatMeetsAUsageLimitIsReturnedAndTheLanesBackOff)
+9. While runner/PAUSED exists it begins no read. (test: TestAReadThatMeetsAUsageLimitIsReturnedAndTheLanesBackOff)
+10. `reader.zsh --once <card>` begins and runs that one read and exits. (test: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict)
+11. It appends BEGIN, END, RETURN, LIMIT and BEGIN REFUSED lines to reader.log. (test: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict)
+
+### simp-retire-bud-runners-r-b.w1
+
+The reader.zsh row is retired: the same one-shot daemon serves the friend's reader
+row, `reader-<friend>`, asking `queue --as reader-<friend> --json` every
+`ReadAskEvery` and running each asked read as a one-shot of her harness on the
+read's tier's model, recording `read --ok|--broken` with the finding or returning
+it with `read --return`, and its tests are the row's citations. The `--once`
+invocation is the daemon's `ReadAskEvery` step beginning each asked read; the
+bench rule is `BenchRule` on every read prompt.
 
 ## flash-friend-runner
 
