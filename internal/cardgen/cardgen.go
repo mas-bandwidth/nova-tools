@@ -704,6 +704,11 @@ type Header struct {
 	Base    string // the branch
 	Sha     string // the base sha, 40 hex
 	Minutes int    // the deadline; 0 takes the tier's default
+	// Bench is the bench a lane gates on now (sprint.BenchLine, docs/SPEC-SPRINT.md
+	// section 5, "the bench a lane gates on"): the least loaded bench with its reason,
+	// written into the brief so the lane runs its go commands on it and never on a name by
+	// habit; "" writes no line.
+	Bench string
 }
 
 // Attribution is the line every brief carries about its commit's By: trailer. A brief
@@ -805,6 +810,9 @@ func Render(h Header, c Card) string {
 	// docs/SPEC-CARD-CONTRACT.md: the deadline is a bound; past it is the coordinator's judgment.
 	fmt.Fprintf(&b, "Deadline: finish within %d minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n", minutes)
 	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.\n", h.Sha)
+	if h.Bench != "" {
+		fmt.Fprintf(&b, "%s\n", h.Bench)
+	}
 	b.WriteString("Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.\n\n")
 	b.WriteString(swarm.ChildRulesParagraph())
 	b.WriteString("\n")

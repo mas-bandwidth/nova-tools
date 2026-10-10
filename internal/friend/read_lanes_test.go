@@ -246,3 +246,18 @@ func TestParseReadSlotsAndVerdict(t *testing.T) {
 	_, err := ParseReadQueue(`{"cards":[]}`)
 	assert.Error(t, err, "a queue with no epoch is not trusted")
 }
+
+// The bench rule names the bench the sprint chose, never one by habit (docs/SPEC-SPRINT.md
+// section 5, "the bench a lane gates on"): a read's bench rule ssh-es to the least loaded
+// machine, and with no bench it keeps the reader's own fallback.
+func TestTheBenchRuleNamesTheChosenBenchNotAHabit(t *testing.T) {
+	t.Parallel()
+	named := BenchRule("bob", "a.w1", "idle")
+	assert.Contains(t, named, "ssh idle 'mkdir -p")
+	assert.Contains(t, named, "idle is the least loaded Linux bench, chosen by the sprint")
+	assert.NotContains(t, named, "the next one it names")
+	fallback := BenchRule("bob", "a.w1", "")
+	assert.Contains(t, fallback, "<bench> is the Linux bench your AGENTS.md names")
+	assert.Equal(t, "idle", benchOf(`{"bench_name":"idle"}`))
+	assert.Empty(t, benchOf("not json"))
+}
