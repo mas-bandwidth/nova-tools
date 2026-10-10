@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -2247,4 +2248,421 @@ func RecordLanded(s *Snapshot, r LandedReq) Plan {
 		notes[pin.ID] = "recorded landed at " + r.Sha + ": " + r.Reason
 	}
 	return MergeStep(s, MergeReq{Stream: stream, Landed: r.Pins, Resolved: notes, Note: r.Reason, Who: r.Who})
+}
+
+// Review starved, and reads idle (docs/SPEC-SPRINT.md, "Review starved, and reads idle").
+// On 2026-10-07 at 5:40 PM ET the owner had 115 cards in review and no read out on any
+// friend or fleet member. The seat found it by looking. This part pushes one judgment
+// when cards in review want a read and no read is out, and one when readers are free
+// while reads still wait. Each is one episode: raised once, closed with a note when
+// the condition ends.
+//
+// The episode is a fleet-table property, so the tick's end writes it in the step that
+// sees it (a work-table property waits for the next pump). The alarm runs inside
+// the existing done step: a quiet tick must not gain an operation ID just for
+// checking the alarm. TickParts remains the reference model's duty list.
+const (
+	NReviewStarved      = "review starved"
+	NReadsIdle          = "reads idle"
+	NReviewAlarmCleared = "a review alarm cleared"
+
+	// PropReviewStarved is the work table's property: a duration, or off. Absent is
+	// reviewStarvedDefault.
+	PropReviewStarved   = "review_starved"
+	PropReviewStarvedEp = "review_starved_ep" // fleet: since\t0|1
+	PropReadsIdleEp     = "reads_idle_ep"
+
+	PartReviewStarved = "review-starved"
+
+	// reviewStarvedTick is one tick of running time. store.TickEvery is the same
+	// second; this package does not import the store.
+	reviewStarvedTick    = time.Second
+	reviewStarvedDefault = 2 * reviewStarvedTick
+
+	reviewWhyHeld   = "stream held"
+	reviewClearOut  = "a read is out"
+	reviewClearNone = "no card in review wants a read"
+	reviewClearBusy = "no reader is free"
+)
+
+func init() {
+	// Both are conditions the tick keeps: ack holds the episode quiet until the
+	// condition clears, and wait names the time it is shown again
+	// (docs/SPEC-SPRINT.md, "ack and wait are the judgment's decisions; the
+	// episode stays one until the condition ends, whether or not it was
+	// acknowledged").
+	TickDecisions[NReviewStarved] = []string{"ack", "wait"}
+	TickDecisions[NReadsIdle] = []string{"ack", "wait"}
+	reviewStarvedInstall()
+}
+
+// reviewStarvedInstall keeps the tick's existing part count. Each part gets an
+// operation ID even when its plan is empty, so adding a separate end part
+// changes the IDs of unrelated first-run and inbox commands. TickParts copies
+// TickEnd at package initialization, before this init runs, so the reference
+// model's done duty (refmodel.partFn reads TickParts) would keep the bare
+// TickDone and never plan the alarm: patch it too, as friend_read.go patches
+// its own part.
+func reviewStarvedInstall() {
+	for i := range TickEnd {
+		if TickEnd[i].Name == PartDone {
+			TickEnd[i].Fn = tickReviewAlarmAndDone
+			break
+		}
+	}
+	for i := range TickParts {
+		if TickParts[i].Name == PartDone {
+			TickParts[i].Fn = tickReviewAlarmAndDone
+		}
+	}
+}
+
+// tickReviewAlarmAndDone composes the alarm's fleet-property and judgment
+// writes with the done note in the existing final tick step. The done note
+// leads: the store reads the done part's first note as "the sprint is done"
+// (store/tick.go, stopDone), so an alarm note written first would be reported
+// and pushed in its place.
+func tickReviewAlarmAndDone(s *Snapshot, r TickReq) (Plan, int) {
+	p, due := TickReviewStarved(s, r)
+	done, more := TickDone(s, r)
+	p.Notes = append(append([]Note{}, done.Notes...), p.Notes...)
+	return p, due + more
+}
+
+// reviewStarvedWindow is the setting: off, or a duration at least one tick.
+// Absent, empty, or not a duration is the default of two ticks.
+func (s *Snapshot) reviewStarvedWindow() (time.Duration, bool) {
+	if s == nil || s.Work == nil {
+		return reviewStarvedDefault, false
+	}
+	v, ok := s.Work.Prop(PropReviewStarved)
+	v = strings.TrimSpace(v)
+	if !ok || v == "" {
+		return reviewStarvedDefault, false
+	}
+	if v == AlarmOff {
+		return 0, true
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return reviewStarvedDefault, false
+	}
+	if d < reviewStarvedTick {
+		d = reviewStarvedTick
+	}
+	return d, false
+}
+
+// WithReviewStarved adds the review alarm window to a set plan. A setting on its
+// own may be the only thing to set, so it clears only Set's "nothing to set"
+// refusal; every other refusal leaves the whole step unwritten.
+func WithReviewStarved(p Plan, s *Snapshot, v string) Plan {
+	if v == "" {
+		return p
+	}
+	for _, x := range p.Refused {
+		if !strings.HasPrefix(x.Why, "nothing to set") {
+			return p
+		}
+	}
+	p.Refused = nil
+	word := v
+	if v != AlarmOff {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return Plan{Refused: []Refusal{{Key: "set", Why: "--review-starved wants a duration above zero (2s, 1m), or off; found " + v}}}
+		}
+		if d < reviewStarvedTick {
+			d = reviewStarvedTick
+		}
+		word = d.String()
+	}
+	was, had := s.Work.Prop(PropReviewStarved)
+	p.Props = append(p.Props, PropWrite{Table: Work, Name: PropReviewStarved, Value: word, Was: was, WasAbsent: !had})
+	for i := range p.Units {
+		if p.Units[i].Key == "set" {
+			if strings.TrimSpace(p.Units[i].Moved) == "sprint" {
+				p.Units[i].Moved = "sprint review-starved " + word
+			} else {
+				p.Units[i].Moved += ", review-starved " + word
+			}
+			return p
+		}
+	}
+	p.Units = append(p.Units, Unit{Key: "set", Moved: "sprint review-starved " + word})
+	return p
+}
+
+// TickReviewStarved is the tick's review-starved part.
+func TickReviewStarved(s *Snapshot, r TickReq) (Plan, int) {
+	var p Plan
+	if s == nil || s.Work == nil || s.Fleet == nil {
+		return p, 0
+	}
+	window, off := s.reviewStarvedWindow()
+	if off {
+		return reviewAlarmFinish(reviewAlarmDisarm(s, p))
+	}
+	wants := reviewWantsRead(s)
+	out := readsOut(s)
+	free := reviewFreeReaders(s, reviewAlarmSeats(s, r))
+	starved := len(wants) > 0 && out == 0
+	idle := free > 0 && len(wants) > 0
+	clearStarved := reviewClearNone
+	if out > 0 {
+		clearStarved = reviewClearOut
+	}
+	clearIdle := reviewClearNone
+	if free == 0 {
+		clearIdle = reviewClearBusy
+	}
+	p = reviewAlarmStep(s, r, p, PropReviewStarvedEp, NReviewStarved, window, starved,
+		func() string { return reviewStarvedWhat(s, r, wants) }, clearStarved, len(wants), reviewAlarmFirstIDs(wants))
+	p = reviewAlarmStep(s, r, p, PropReadsIdleEp, NReadsIdle, window, idle,
+		func() string { return reviewIdleWhat(free, len(wants)) }, clearIdle, len(wants), nil)
+	return reviewAlarmFinish(p)
+}
+
+// reviewAlarmFirstIDs is the first three ids in work order, the ones the
+// starved judgment names.
+func reviewAlarmFirstIDs(wants []*Card) []string {
+	var ids []string
+	for i, c := range wants {
+		if i == 3 {
+			break
+		}
+		ids = append(ids, c.ID)
+	}
+	return ids
+}
+
+// reviewWantsRead is the cards in review whose attempt came back ok and still
+// wants a read (readCardsWanted). A failed attempt wants none.
+func reviewWantsRead(s *Snapshot) []*Card {
+	var out []*Card
+	for _, pr := range s.Work.Column(Review) {
+		if pr.F("result") != "ok" || IsSentinel(pr) {
+			continue
+		}
+		if readCardsWanted(s, pr, nil) > 0 {
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
+// readsOut is the reads in flight: a read card ready or working on any fleet
+// row, or a read asked or reading on the readers table.
+func readsOut(s *Snapshot) int {
+	n := 0
+	if s.Fleet != nil {
+		for _, c := range s.Fleet.Column(Ready, Working) {
+			if isRead(c) {
+				n++
+			}
+		}
+	}
+	if s.Readers != nil {
+		n += len(s.Readers.Column(Asked)) + len(s.Readers.Column(Reading))
+	}
+	return n
+}
+
+// reviewFreeReaders is the readers with room: a unit the read-card deal may
+// use that has a half slot free, and a reader up on the readers table under
+// its width that the units did not already count.
+func reviewFreeReaders(s *Snapshot, seats []FriendSeat) int {
+	named := map[string]bool{}
+	n := 0
+	if s.Fleet != nil {
+		for _, u := range readUnitsOf(s, seats) {
+			named[u.name] = true
+			if u.half > 0 {
+				n++
+			}
+		}
+	}
+	if s.Readers == nil {
+		return n
+	}
+	for _, rd := range s.UpReaders() {
+		m, ok := ReaderMachine(rd)
+		if ok && named[m] || !ok && named[rd] {
+			continue
+		}
+		if s.ReaderWidth(rd) > s.readerLoad(rd) {
+			n++
+		}
+	}
+	return n
+}
+
+func reviewAlarmSeats(s *Snapshot, r TickReq) []FriendSeat {
+	if r.Friends != nil {
+		return r.Friends
+	}
+	return s.Friends
+}
+
+func reviewStarvedWhat(s *Snapshot, r TickReq, wants []*Card) string {
+	seats := reviewAlarmSeats(s, r)
+	_, waits := readCardsAsk(s, seats, nil)
+	var bits []string
+	for i, c := range wants {
+		if i == 3 {
+			break
+		}
+		why := cmp.Or(waits[c.ID], c.F(FieldWaitingReader))
+		if StreamHeld(s, c.Row) {
+			why = reviewWhyHeld
+		} else if why == "" {
+			why = "the read deal did not report a wait reason"
+		}
+		bits = append(bits, c.ID+" ("+why+")")
+	}
+	return fmt.Sprintf("review starved: %d cards in review want a read and no read is out: %s", len(wants), strings.Join(bits, "; "))
+}
+
+func reviewIdleWhat(free, waiting int) string {
+	return fmt.Sprintf("reads idle: %d readers free and %d cards in review want a read", free, waiting)
+}
+
+func reviewAlarmDisarm(s *Snapshot, p Plan) Plan {
+	for _, spec := range []struct{ prop, typ string }{
+		{PropReviewStarvedEp, NReviewStarved},
+		{PropReadsIdleEp, NReadsIdle},
+	} {
+		if v, ok := s.Fleet.Prop(spec.prop); ok && v != "" {
+			reviewAlarmWrite(s, &p, spec.prop, "")
+		}
+		p.Closes = append(p.Closes, reviewAlarmOpen(s, spec.typ)...)
+	}
+	return p
+}
+
+// reviewAlarmStep advances one episode. The first tick that sees the condition
+// records when; a later tick raises once the window of running time has passed;
+// the tick that finds the condition ended closes it, with a note when one was raised.
+func reviewAlarmStep(s *Snapshot, r TickReq, p Plan, prop, typ string, window time.Duration, on bool, what func() string, clear string, count int, ids []string) Plan {
+	since, said := reviewAlarmRead(s, prop)
+	// A hold on this condition whose wait has run out is closed here; the
+	// condition, when it still holds, is raised again this tick (WaitReq's
+	// words; notify does the same for the tick's own conditions).
+	if on && said {
+		for _, o := range s.Acked {
+			if o.Note.Type == typ && !o.Note.Review.IsZero() && DueNow(s.Now, o.Note.Review, o.Note.ReviewSet, r.Stopped) {
+				p.Closes = append(p.Closes, o)
+				said = false
+			}
+		}
+	}
+	if !on {
+		if since == "" && !said {
+			return p
+		}
+		reviewAlarmWrite(s, &p, prop, "")
+		if said {
+			p.Closes = append(p.Closes, reviewAlarmOpen(s, typ)...)
+			n := happened(NReviewAlarmCleared, "", s.Now)
+			n.Who, n.To = r.who(), s.Coordinator
+			n.What = typ + ": " + clear
+			p.Notes = append(p.Notes, n)
+		}
+		return p
+	}
+	if since == "" {
+		reviewAlarmWrite(s, &p, prop, reviewAlarmEncode(s.Now, false))
+		return p
+	}
+	elapsed, ok := reviewAlarmElapsed(s.Now, since)
+	if !ok {
+		reviewAlarmWrite(s, &p, prop, reviewAlarmEncode(s.Now, false))
+		return p
+	}
+	if elapsed < window || said {
+		return p
+	}
+	n := Note{
+		Kind: Judgment, Type: typ, What: what(), Who: r.who(), At: s.Now,
+		Decisions: []string{"ack", "wait"}, SprintLevel: true, Count: count,
+		Primaries: ids,
+	}
+	p.Notes = append(p.Notes, n)
+	reviewAlarmWrite(s, &p, prop, reviewAlarmSaid(since))
+	return p
+}
+
+func reviewAlarmRead(s *Snapshot, prop string) (since string, said bool) {
+	v, ok := s.Fleet.Prop(prop)
+	if !ok || v == "" {
+		return "", false
+	}
+	since, flag, ok := strings.Cut(v, "\t")
+	if !ok || since == "" {
+		return "", false
+	}
+	return since, flag == "1"
+}
+
+func reviewAlarmEncode(since time.Time, said bool) string {
+	flag := "0"
+	if said {
+		flag = "1"
+	}
+	return since.UTC().Format(time.RFC3339Nano) + "\t" + flag
+}
+
+func reviewAlarmSaid(since string) string {
+	t, _, _ := strings.Cut(since, "\t")
+	return t + "\t1"
+}
+
+func reviewAlarmElapsed(now time.Time, since string) (time.Duration, bool) {
+	t, err := time.Parse(time.RFC3339Nano, since)
+	if err != nil {
+		return 0, false
+	}
+	if now.Before(t) {
+		return 0, true
+	}
+	return now.Sub(t), true
+}
+
+func reviewAlarmWrite(s *Snapshot, p *Plan, name, value string) {
+	was, had := s.Fleet.Prop(name)
+	if had && was == value {
+		return
+	}
+	if !had && value == "" {
+		return
+	}
+	p.Props = append(p.Props, PropWrite{Table: Fleet, Name: name, Value: value, Was: was, WasAbsent: !had})
+}
+
+func reviewAlarmOpen(s *Snapshot, typ string) []Open {
+	var out []Open
+	for _, o := range s.Open {
+		if o.Note.Kind == Judgment && o.Note.Type == typ {
+			out = append(out, o)
+		}
+	}
+	// An acknowledged condition is held in s.Acked (SplitOpen): the episode is
+	// closed from there too when the condition ends, or a wait runs out, as
+	// notify closes its own.
+	for _, o := range s.Acked {
+		if o.Note.Type == typ {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// reviewAlarmFinish makes a property-only plan visible to the tick. The probe
+// skips a plan Empty is true of, and Empty ignores Props, so the episode would
+// never be stored. A unit with no move is not a line the quiet ticks forbid.
+func reviewAlarmFinish(p Plan) (Plan, int) {
+	if len(p.Props) > 0 && p.Empty() {
+		p.Units = append(p.Units, Unit{Key: PartReviewStarved})
+	}
+	return p, 0
 }
