@@ -124,6 +124,7 @@ var verbEffect = map[string]string{
 
 	// verbs that read and write nothing
 	"goal show": "inspection: reads the goals in the sprint's store, writes nothing",
+	"fsck":      "inspection: reads the work table and checks landed records against git ancestry, writes nothing",
 	"fsck seat": "inspection: reads the coordinator key, the seat record and the server's actor from the sprint's store and the sprint row's coordinator from nova-config's store, writes nothing",
 }
 

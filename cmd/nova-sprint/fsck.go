@@ -29,9 +29,14 @@ type fsckResult struct {
 
 func (a *app) cmdFsck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("fsck")
+	var checks []string
+	fs.Func("check", "filter to named checks only (repeatable)", func(s string) error {
+		checks = append(checks, sprint.Split(s)...)
+		return nil
+	})
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "fsck", argErr("takes no words; run: fsck [--json] ", err, pos...))
+		return refuse(stderr, "fsck", argErr("takes no words; run: fsck [--json] [--check <name>]...", err, pos...))
 	}
 	st, err := a.store(*c)
 	if err != nil {

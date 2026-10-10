@@ -575,11 +575,17 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 	if code, sent := a.forwarded(args, stdout, stderr); sent {
 		return code
 	}
+	var bestMatch *verb
+	var bestMatchLen int
 	for _, v := range verbs {
 		words := strings.Fields(v.name)
-		if len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.name {
-			return v.run(a, args[len(words):], stdout, stderr)
+		if len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.name && len(words) > bestMatchLen {
+			bestMatch = &v
+			bestMatchLen = len(words)
 		}
+	}
+	if bestMatch != nil {
+		return bestMatch.run(a, args[bestMatchLen:], stdout, stderr)
 	}
 	if members := groupVerbs(args[0]); len(members) > 0 {
 		// a verb group: its -h is its help at exit 0 (help is never a refusal); a bare

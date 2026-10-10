@@ -421,7 +421,7 @@ var verbExamples = map[string][]string{
 		"add --stream s1 --brief-file a.md --brief-file b.md",
 	},
 	"fsck":      {},
-	"fsck seat": {},
+	"fsck seat": {"fsck seat"},
 }
 
 // verbExample is the lines a verb's -h shows above its flags: its examples,

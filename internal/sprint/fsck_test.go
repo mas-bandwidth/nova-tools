@@ -29,8 +29,8 @@ func TestFsckFindsLandedRecordsMissingFromTheBase(t *testing.T) {
 
 	// fake git: ls-remote returns a tip, merge-base returns exit 1 (not ancestor)
 	runGit := func(cmd string, args ...string) (int, string, string) {
-		if len(args) >= 2 && args[0] == "ls-remote" && args[1] == "origin" {
-			return 0, "1234567890abcdef refs/remotes/origin/main\n", ""
+		if len(args) >= 2 && args[0] == "ls-remote" && args[2] == "main" {
+			return 0, "1234567890abcdef refs/heads/main\n", ""
 		}
 		if len(args) >= 2 && args[0] == "merge-base" && args[1] == "--is-ancestor" {
 			return 1, "", "" // not ancestor
@@ -62,8 +62,8 @@ func TestFsckOkWhenAllLandedOnBase(t *testing.T) {
 
 	// fake git: merge-base returns exit 0 (is ancestor)
 	runGit := func(cmd string, args ...string) (int, string, string) {
-		if len(args) >= 2 && args[0] == "ls-remote" && args[1] == "origin" {
-			return 0, "1234567890abcdef refs/remotes/origin/main\n", ""
+		if len(args) >= 3 && args[0] == "ls-remote" && args[2] == "main" {
+			return 0, "1234567890abcdef refs/heads/main\n", ""
 		}
 		if len(args) >= 2 && args[0] == "merge-base" && args[1] == "--is-ancestor" {
 			return 0, "", "" // is ancestor

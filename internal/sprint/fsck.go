@@ -81,8 +81,7 @@ func checkLandOnBase(pr *Card, runGit func(cmd string, args ...string) (int, str
 		return f
 	}
 	// check if head is on base tip
-	ref := "refs/remotes/origin/" + f.Base
-	_, out, _ := runGit("git", "ls-remote", "origin", ref)
+	_, out, _ := runGit("git", "ls-remote", f.Repo, f.Base)
 	out = strings.TrimSpace(out)
 	if out == "" {
 		f.Why = "origin/" + f.Base + " could not be read"
