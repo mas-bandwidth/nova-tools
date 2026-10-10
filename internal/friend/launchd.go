@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/xml"
@@ -144,7 +145,7 @@ func (a Agent) Plist() string {
   <key>WorkingDirectory</key><string>` + esc(a.Home) + `</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>5</integer>
+  <key>ThrottleInterval</key><integer>` + fmt.Sprint(ThrottleInterval) + `</integer>
   <key>StandardOutPath</key><string>` + esc(a.LaunchdLog) + `</string>
   <key>StandardErrorPath</key><string>` + esc(a.LaunchdLog) + `</string>
 </dict>
@@ -348,6 +349,9 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		}
 	}
 	path = a.PlistPath()
+	if err := CheckPlist(a.Plist()); err != nil {
+		return path, nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(a.LaunchdLog), 0o755); err != nil {
 		return path, nil, err
 	}
@@ -395,6 +399,123 @@ func Uninstall(ctx context.Context, a Agent, uid int, run Launchctl, remove func
 		return ran, err
 	}
 	return ran, nil
+}
+
+// ThrottleInterval is the plist's ThrottleInterval in seconds: launchd waits
+// at least this long before it starts a daemon that died again.
+const ThrottleInterval = 5
+
+// CheckPlist is nil when plist is one launchd keeps alive: RunAtLoad and
+// KeepAlive true, ThrottleInterval, and the program and the binary before its
+// verb by absolute path (docs/SPEC-FRIEND.md, daemon-supervised-r-b.w7).
+// Otherwise it names every problem at once; Install refuses such a plist and
+// writes nothing.
+func CheckPlist(plist string) error {
+	v := PlistValues(plist)
+	var problems []string
+	for _, key := range []string{"RunAtLoad", "KeepAlive"} {
+		if v[key] != "true" {
+			problems = append(problems, key+" is not true")
+		}
+	}
+	if v["ThrottleInterval"] != fmt.Sprint(ThrottleInterval) {
+		problems = append(problems, fmt.Sprintf("ThrottleInterval is not %d", ThrottleInterval))
+	}
+	args := PlistArgs(plist)
+	switch {
+	case len(args) == 0:
+		problems = append(problems, "no ProgramArguments")
+	case !filepath.IsAbs(args[0]):
+		problems = append(problems, "the program "+args[0]+" is not an absolute path")
+	}
+	if i := slices.Index(args, "run"); i > 0 && !filepath.IsAbs(args[i-1]) {
+		problems = append(problems, "the binary "+args[i-1]+" is not an absolute path")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("the plist would not keep the daemon alive: %s; run nova-friend install from the binary by its absolute path", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// PlistValues is a launchd plist's scalar values by key: "true" or "false"
+// for a boolean, the text of an integer or a string; arrays and dicts are
+// walked, so a nested dict's keys are there too (EnvironmentVariables).
+func PlistValues(plist string) map[string]string {
+	dec := xml.NewDecoder(strings.NewReader(plist))
+	dec.Strict = false
+	out := map[string]string{}
+	key := ""
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return out
+		}
+		el, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch el.Name.Local {
+		case "key":
+			var k string
+			if dec.DecodeElement(&k, &el) == nil {
+				key = strings.TrimSpace(k)
+			}
+		case "true", "false":
+			if key != "" {
+				out[key], key = el.Name.Local, ""
+			}
+		case "integer", "string":
+			var t string
+			if dec.DecodeElement(&t, &el) == nil && key != "" {
+				out[key], key = strings.TrimSpace(t), ""
+			}
+		case "array", "dict":
+			key = ""
+		}
+	}
+}
+
+// Installed is one friend daemon's agent installed for this login: its
+// name, its plist, and the state directory its status file is read from.
+type Installed struct {
+	Friend, Plist, StateDir string
+}
+
+// InstalledAgents is every friend daemon agent under home's LaunchAgents
+// (com.nova.friend-<name>.plist whose program runs the daemon's verb run),
+// sorted by name. An agent that runs another verb (the wake ping loop) is not
+// a daemon and is not listed. The state directory is the plist's --state-dir,
+// else FindStateDir over its --dir.
+func InstalledAgents(home string) ([]Installed, error) {
+	paths, err := filepath.Glob(filepath.Join(home, "Library", "LaunchAgents", "com.nova.friend-*.plist"))
+	if err != nil {
+		return nil, err
+	}
+	var out []Installed
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		run := daemonPart(PlistArgs(string(raw)))
+		if run == nil {
+			continue
+		}
+		flag := func(name string) string {
+			if i := slices.Index(run, name); i >= 0 && i+1 < len(run) {
+				return run[i+1]
+			}
+			return ""
+		}
+		name := cmp.Or(flag("--as"), strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "com.nova.friend-"), ".plist"))
+		state := flag("--state-dir")
+		if state == "" {
+			state = FindStateDir(home, flag("--dir"), name)
+		}
+		out = append(out, Installed{Friend: name, Plist: p, StateDir: state})
+	}
+	slices.SortFunc(out, func(a, b Installed) int { return strings.Compare(a.Friend, b.Friend) })
+	return out, nil
 }
 
 // PlistArgs is the ProgramArguments array of a launchd plist, in order; nil

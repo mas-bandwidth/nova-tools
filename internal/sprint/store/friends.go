@@ -140,9 +140,12 @@ type FriendRow struct {
 	Streams string `json:"-"`
 	Kinds   string `json:"-"`
 	// Load and Report are what her last beat reported (friend beat --load, and
-	// sprint.FriendReport), absent when it reported none.
-	Load   float64              `json:"load,omitempty"`
-	Report *sprint.FriendReport `json:"report,omitempty"`
+	// sprint.FriendReport), absent when it reported none; DaemonVersion is the build
+	// stamp the daemon that beat for her runs (sprint.FriendReport.DaemonVersion,
+	// friend beat --daemon-version), empty when its beat carried none.
+	Load          float64              `json:"load,omitempty"`
+	DaemonVersion string               `json:"daemon_version,omitempty"`
+	Report        *sprint.FriendReport `json:"report,omitempty"`
 	// Active is the newest write her daemon found under her working directory and
 	// outbox (sprint.FriendReport.Active), zero when it reported none: the last
 	// session activity column.
@@ -363,7 +366,7 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that still reports nothing carries no report
 	}
-	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() {
+	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() || rep.DaemonVersion != "" {
 		b.Friend = &rep // her daemon's own facts are a report (sprint.StatusTransitions reads them)
 	}
 	if load != nil {
@@ -514,6 +517,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
+			row.DaemonVersion = b.Friend.DaemonVersion
 		}
 		if h.Observed() {
 			row.Health = &h

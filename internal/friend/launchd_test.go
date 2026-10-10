@@ -340,6 +340,100 @@ func TestThePlistWrapsTheDaemonInNovaSecretsExecForItsSecrets(t *testing.T) {
 	assert.Equal(t, "/opt/nova/bin/nova-friend", a.Args()[0], "no secrets, no wrap")
 }
 
+// The installed agent is one launchd keeps alive and the daemon it runs says
+// which binary it is: the plist on disk carries RunAtLoad, KeepAlive, the
+// throttle and the binary by absolute path, install refuses a plist without
+// them and writes nothing, and the daemon's status carries its version and
+// path, read back through the installed agent's state directory
+// (docs/SPEC-FRIEND.md, daemon-supervised-r-b.w7).
+func TestInstalledAgentKeepsAliveAndStatusSaysVersion(t *testing.T) {
+	t.Parallel()
+	ctl := func(context.Context, ...string) (string, error) { return "", nil }
+	writeFile := func(path string, data []byte) error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, data, 0o644)
+	}
+
+	t.Run("the installed plist keeps the daemon alive", func(t *testing.T) {
+		t.Parallel()
+		a := agent()
+		a.Home = t.TempDir()
+		a.LaunchdLog = filepath.Join(a.Home, "Library", "Logs", "nova-friend-bob.log")
+		path, _, err := Install(context.Background(), a, 501, ctl, writeFile, func() {})
+		require.NoError(t, err)
+		raw, err := os.ReadFile(path)
+		require.NoError(t, err)
+		plist := string(raw)
+		v := PlistValues(plist)
+		assert.Equal(t, "true", v["KeepAlive"])
+		assert.Equal(t, "true", v["RunAtLoad"])
+		assert.Equal(t, "5", v["ThrottleInterval"])
+		args := PlistArgs(plist)
+		require.NotEmpty(t, args)
+		assert.Equal(t, "/opt/nova/bin/nova-friend", args[0], "the binary by absolute path")
+		assert.NoError(t, CheckPlist(plist))
+	})
+
+	t.Run("a plist without them is refused, naming each", func(t *testing.T) {
+		t.Parallel()
+		good := agent().Plist()
+		for _, c := range []struct{ name, from, to, want string }{
+			{"no keep alive", "<key>KeepAlive</key><true/>", "", "KeepAlive is not true"},
+			{"keep alive false", "<key>KeepAlive</key><true/>", "<key>KeepAlive</key><false/>", "KeepAlive is not true"},
+			{"no run at load", "<key>RunAtLoad</key><true/>", "", "RunAtLoad is not true"},
+			{"no throttle", "<key>ThrottleInterval</key><integer>5</integer>", "", "ThrottleInterval is not 5"},
+			{"relative binary", "<string>/opt/nova/bin/nova-friend</string>", "<string>nova-friend</string>", "the program nova-friend is not an absolute path"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
+				bad := strings.Replace(good, c.from, c.to, 1)
+				require.NotEqual(t, good, bad)
+				assert.ErrorContains(t, CheckPlist(bad), c.want)
+			})
+		}
+		both := strings.Replace(strings.Replace(good, "<key>KeepAlive</key><true/>", "", 1), "<key>RunAtLoad</key><true/>", "", 1)
+		assert.ErrorContains(t, CheckPlist(both), "RunAtLoad is not true; KeepAlive is not true", "every problem at once")
+
+		a := agent()
+		a.Home = t.TempDir()
+		a.LaunchdLog = filepath.Join(a.Home, "launchd.log")
+		a.Binary = "bin/nova-friend"
+		ran := 0
+		_, commands, err := Install(context.Background(), a, 501, func(context.Context, ...string) (string, error) { ran++; return "", nil }, writeFile, func() {})
+		assert.ErrorContains(t, err, "the program bin/nova-friend is not an absolute path")
+		assert.Empty(t, commands)
+		assert.Zero(t, ran, "no launchctl")
+		assert.NoFileExists(t, a.PlistPath(), "nothing written")
+	})
+
+	t.Run("the daemon's status says its version and binary", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		a := agent()
+		a.Home, a.Dir = home, filepath.Join(home, "w", "bob")
+		a.LaunchdLog = filepath.Join(home, "launchd.log")
+		_, _, err := Install(context.Background(), a, 501, ctl, writeFile, func() {})
+		require.NoError(t, err)
+		agents, err := InstalledAgents(home)
+		require.NoError(t, err)
+		require.Len(t, agents, 1)
+		assert.Equal(t, Installed{Friend: "bob", Plist: a.PlistPath(), StateDir: DefaultStateDir(home, "bob")}, agents[0])
+
+		r := newRig(t)
+		r.d.Version, r.d.Binary = "v1.2.0", "/opt/nova/bin/nova-friend"
+		r.d.Status = func(s Status) error { return WriteStatus(agents[0].StateDir, s) }
+		r.run(t, 8) // past StatusEvery on the rig's clock: a status written after a beat
+		s, found, err := ReadStatus(agents[0].StateDir)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "v1.2.0", s.DaemonVersion)
+		assert.Equal(t, "/opt/nova/bin/nova-friend", s.Binary)
+		assert.True(t, s.LastBeat.After(t0), "the last beat, on the injected clock")
+	})
+}
+
 // Notification installation has its own label and carries its safe mode and policy;
 // it never boots out the ordinary daemon (SPEC-FRIEND.md, notifications).
 func TestNotificationsAgentKeepsPolicyAndSeparateLabel(t *testing.T) {

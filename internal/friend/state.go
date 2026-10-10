@@ -120,6 +120,11 @@ type Status struct {
 	// HeldFrom is where the last answer came from: friend cards, or the worker view while the
 	// server does not serve it (no brief is written from the view).
 	HeldFrom string `json:"held_from,omitempty"`
+	// DaemonVersion is the daemon's build stamp (the tool's Stamp) and Binary the
+	// path it runs from, so a reader sees which binary each daemon runs
+	// (docs/SPEC-FRIEND.md, daemon-supervised-r-b.w7).
+	DaemonVersion string `json:"daemon_version,omitempty"`
+	Binary        string `json:"binary,omitempty"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside

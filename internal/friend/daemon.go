@@ -257,6 +257,9 @@ type Daemon struct {
 	// it is a new session, owed the present (present.go). Nil reads none: the daemon's start
 	// and the stale bound still bring the present.
 	Session func() string
+	// Version is this daemon's build stamp and Binary its path, written into
+	// every status (Status.DaemonVersion, Status.Binary).
+	Version, Binary string
 
 	// NotificationOnly uses the notification receiver without any sprint or job hooks (SPEC-FRIEND.md, notifications).
 	NotificationOnly     bool
@@ -650,7 +653,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	defer l.followWG.Wait()
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width, DaemonVersion: d.Version, Binary: d.Binary}
 	if !l.passive {
 		d.status.Session = SessionOK
 	}

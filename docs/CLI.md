@@ -1474,7 +1474,7 @@ usage:
   nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
-  nova-friend status --as <me> --dir <d> [--state-dir <d>]
+  nova-friend status --as <me> --dir <d> [--state-dir <d>] | status --all
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
   nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
@@ -1761,11 +1761,12 @@ effect: inspection: reads, writes nothing: the cursor file in the state director
 ```
 usage: nova-friend status [flags]
 from `nova-friend help`:
-  nova-friend status --as <me> --dir <d> [--state-dir <d>]
+  nova-friend status --as <me> --dir <d> [--state-dir <d>] | status --all
   nova-friend status --as bob --dir ./bob
 flags:
-  --as <string>  your name (required)
-  --dir <string>  the friend's working directory, where the queue file lives (required)
+  --all  one line per friend daemon agent installed for this login (com.nova.friend-*): name, daemon up or down, daemon_version, last_beat_age
+  --as <string>  your name (required without --all)
+  --dir <string>  the friend's working directory, where the queue file lives (required without --all)
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
