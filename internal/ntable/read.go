@@ -248,14 +248,3 @@ func Summaries(ctx context.Context, c redis.Cmdable) ([]Summary, error) {
 	}
 	return out, nil
 }
-func List(ctx context.Context, c redis.Cmdable) ([]string, error) {
-	rows, err := Summaries(ctx, c)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, len(rows))
-	for i, r := range rows {
-		names[i] = r.Name
-	}
-	return names, nil
-}

@@ -1243,12 +1243,6 @@ func Clear(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptio
 func CellAdd(ctx context.Context, c redis.Cmdable, name, row, col, member string, score float64, opts ...WriteOptions) (int64, error) {
 	return CellsAdd(ctx, c, name, row, col, score, []string{member}, opts...)
 }
-func CellRemove(ctx context.Context, c redis.Cmdable, name, row, col, member string, opts ...WriteOptions) (int64, error) {
-	return CellsRemove(ctx, c, name, row, col, []string{member}, opts...)
-}
-func CellMove(ctx context.Context, c redis.Cmdable, name, row, from, to, member string, opts ...WriteOptions) (int64, error) {
-	return CellsMove(ctx, c, name, row, from, to, []string{member}, opts...)
-}
 
 // CellsAdd atomically adds every member at one score and returns the cell count.
 func CellsAdd(ctx context.Context, c redis.Cmdable, name, row, col string, score float64, members []string, opts ...WriteOptions) (int64, error) {
