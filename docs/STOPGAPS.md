@@ -22,8 +22,9 @@ claude-oneshot-lanes), `coordinator-wake-verb`, `coordinator-ping-verb`, `friend
 ## coordinator-wake
 
 Path: <coordinator-dir>/tmp/buswatch/watch.sh
-Replacement: coordinator-wake-verb
-STATUS: live
+Replacement: watch
+Tool: nova-sprint
+STATUS: retired 2026-10-10
 
 Behaviours:
 1. At start it records the line count of the wake file, the file count of <coordinator-home>/inbox/sprint-judgments and the time.
