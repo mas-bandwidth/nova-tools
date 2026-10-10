@@ -16,8 +16,7 @@ import (
 // and not started, in a row's overflow (the row holds more cards than its lanes, whether or not
 // all its lanes work), goes to a unit of either side with a free lane that may take it, friend
 // or member, within the side's tier set, the cheapest first; a row's ready past its cap,
-// DealAhead times its width, and the ready of a friend down or held go back to the pool for the
-// deal's stack part (TickStack). tla/DealCost.tla (WorkNow, Return) and tla/WhoPreference.tla,
+// DealAhead times its width, goes back to the pool for the deal's stack part (TickStack). tla/DealCost.tla (WorkNow, Return) and tla/WhoPreference.tla,
 // Rebalance.
 
 // PartRebalance is the work table's part after the deal (TickTables).
@@ -30,8 +29,8 @@ const FieldRebalancedFrom = "rebalanced_from"
 // NRebalanced is the happened note of a queued card rebalanced to an idle lane.
 const NRebalanced = "a queued card rebalanced to an idle lane"
 
-// NReturnedToPool is the happened note of a dealt card returned to the pool: its row held more ready
-// than its cap, or its friend is down or held.
+// NReturnedToPool is the happened note of a dealt card returned to the pool: its row held more
+// ready than its cap.
 const NReturnedToPool = "a dealt card returned to the pool"
 
 // rebalanceUnit is a row the rebalance reads: a friend dealable or a member up, its lanes,
@@ -67,7 +66,7 @@ func TickRebalance(s *Snapshot, r TickReq) (Plan, int) {
 // overflow moves whether or not all its lanes work (2026-10-10: a friend at 28 of 32 working
 // held 50 ready while another friend sat at 0 of 32 and the fleet at 42 of 126). Then each
 // unit's ready past its cap, DealAhead times its width, goes back to the pool
-// (rebalanceReturns), and so does every unstarted card of a friend down or held. A card stays
+// (rebalanceReturns). A card stays
 // when it is a read, a sentinel's, of a held stream, a bench card, a hard pin (OnlyFriend), a pin honoured where it sits (its WHO names the friend it is on, or
 // a model pin on a member; a WHO: friend card on a friend's row goes to no member), run by a lane (laneRunsIt), or its route rests. A friend may take
 // it when she is dealable, her tiers and the friends' set hold its tier (friendTakes) and it
@@ -167,9 +166,9 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 // rebalanceReturns is the dealt cards the rebalance returns to the pool (tla/DealCost.tla,
 // Return), each withdrawn (withdrawUnit) and its primary back to ready for the deal's stack
 // part: on each unit, its ready work cards past its cap, DealAhead times its width, the newest
-// first (the owner, 2026-10-10: "then go to ready overflow up to 2X"); and every unstarted card
-// on the row of a friend down or held (friendCanRead), so a friend who cannot work keeps no
-// stack (the stack is a reservation the next tick may revoke, never a hold). A card a lane runs
+// first (the owner, 2026-10-10: "then go to ready overflow up to 2X"; the stack is a
+// reservation the next tick may revoke, never a hold). A friend down or held is no unit: her
+// cards are the hold's and the stall ladder's, as before. A card a lane runs
 // (laneRunsIt), one she started (friendStarted), a hard pin (OnlyFriend: no other worker may
 // take it), a sentinel's, a read, a bench card and one of a held stream stay. moved is the
 // cards the rebalance moved already this plan: none is returned too.
@@ -210,17 +209,6 @@ func rebalanceReturns(s *Snapshot, seats []FriendSeat, units []*rebalanceUnit, m
 			if returnable(ready[i], seat) != nil {
 				give(ready[i], fmt.Sprintf("its ready %d is past its cap %d (twice its width %d)", len(ready), DealAhead*u.width, u.width))
 				excess--
-			}
-		}
-	}
-	for _, f := range seats {
-		if f.Status == "" || friendCanRead(s, f) {
-			continue // up (or not known): her stack is hers
-		}
-		seat := f
-		for _, wc := range s.Fleet.Cell(FriendRow(f.Name), Ready) {
-			if returnable(wc, &seat) != nil {
-				give(wc, "her status is "+orDash(f.Status)+": a friend who cannot work keeps no stack")
 			}
 		}
 	}

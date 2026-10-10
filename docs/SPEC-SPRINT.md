@@ -1386,22 +1386,25 @@ table's deal is three parts, each over the store as the part before it left it:
 
 - `deal`, work now: the ready cards fill free lanes alone, a subscription friend's first
   (her room is her lanes, `RoomLanes`), then the machines' (`DealReq.Lanes`); an API-rate
-  friend is dealt nothing here (`RoomNone`).
+  friend is dealt nothing here (`RoomNone`), and a card whose WHO line names a friend reaches
+  no machine here (the machines take it in the stack part, after the friends' room). The
+  start bound's level moves a friend's unstarted card to a friend with an idle lane here.
 - `rebalance`: each row's overflow, whether or not its own lanes all work, goes to free lanes
   elsewhere, the cheapest first (below); then a row's ready past its cap, DealAhead (two)
-  times its width, goes back to the pool, the newest first, and so does every unstarted card
-  of a friend down or held (a stack is a reservation the next tick may revoke, never a hold).
+  times its width, goes back to the pool, the newest first (a stack is a reservation the next
+  tick may revoke, never a hold).
 - `stack`: what is left is dealt to the rows below their room, DealAhead times their width,
   the friends before the machines; a friend's free lane before any friend's stack
-  (`preferredFriend`), and an API-rate friend's lanes alone, never a stack. It raises no
-  judgment.
+  (`preferredFriend`), and an API-rate friend's lanes alone, never a stack. The friends'
+  level evens their rooms after it, so it never takes a room a card of the pool would have
+  had. It raises no judgment.
 
 So no card waits in the pool or in a row's overflow while a row that may take it has a free
 lane, no row's ready passes twice its width, and a frontier card, which no machine route
 serves, never reaches the fleet
 (`TestTheDealFillsEveryFreeLaneBeforeAnyStack`, `TestTheOverflowMovesThoughALaneOfItsOwnIsFree`,
 `TestTheReadyPastTwiceTheWidthReturnsToThePool`, `TestAFrontierCardNeverGoesToTheFleet`,
-`TestTheDealIsLowestCostFirst`, `TestAFriendDownKeepsNoStack`).
+`TestTheDealIsLowestCostFirst`).
 
 ### The rebalance: queued work to idle lanes, across friends and fleet
 

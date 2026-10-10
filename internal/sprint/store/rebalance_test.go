@@ -151,7 +151,8 @@ func TestTheRebalanceRunsOnceAtTheStartOfEveryTick(t *testing.T) {
 	}
 	level := slices.Index(names, sprint.PartLevel)
 	require.GreaterOrEqual(t, level, 0, "the level moved m1's ready cards to m2: parts %v", names)
-	assert.Less(t, level, slices.Index(names, "deal"), "the level comes before the deal: %v", names)
+	deal := slices.IndexFunc(names, func(n string) bool { return n == "deal" || n == sprint.PartStack })
+	assert.Less(t, level, deal, "the level comes before the deal (its work-now part or its stack part): %v", names)
 	n := 0
 	for _, x := range names {
 		if x == sprint.PartLevel {

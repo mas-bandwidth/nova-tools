@@ -319,9 +319,14 @@ func TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused(t *te
 	for _, id := range waiting {
 		wc := s.Fleet.Card(id)
 		require.NotNil(t, wc)
-		assert.Equal(t, sprint.Withdrawn, wc.Col, "%s: withdrawn while ready", id)
 		assert.Empty(t, wc.F(sprint.FieldTakeEnded), "%s: no take ended", id)
-		assert.Equal(t, sprint.Ready, s.Work.Card(primaries[id]).Col, "%s: its primary is ready for the deal", id)
+		if wc.Col == sprint.Withdrawn {
+			assert.Equal(t, sprint.Ready, s.Work.Card(primaries[id]).Col, "%s: its primary is ready for the deal", id)
+		} else {
+			// the deal's stack part, later in the same tick, dealt it again on a route that serves
+			assert.Equal(t, sprint.Ready, wc.Col, "%s: withdrawn while ready, and dealt again", id)
+			assert.Equal(t, "oc-a", wc.F(sprint.FieldRoute), "%s: dealt again on the provider that serves", id)
+		}
 		why := sprint.NRestWithdrawn + ": taken back: its route " + onRoute[id] + " rests (out of credit: provider openrouter refused card " + onOR[0] + " on route "
 		lines := h.linesOf(primaries[id])
 		assert.True(t, slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, why) }), "%s: its primary's timeline says why: %q", id, lines)

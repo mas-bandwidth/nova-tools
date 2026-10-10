@@ -89,6 +89,19 @@ type seqPart struct {
 	readers [][]string
 }
 
+// dealMoves reads the moved lines of the deal: its work-now part and then its stack part, one
+// deal in two parts of the pump whose stream turns go on from the one to the other
+// (tla/DealCost.tla), counted as one part.
+func dealMoves(res TickResult) seqPart {
+	out, stack := seqMoves(res, "deal"), seqMoves(res, sprint.PartStack)
+	out.ids = append(out.ids, stack.ids...)
+	out.members = append(out.members, stack.members...)
+	out.streams = append(out.streams, stack.streams...)
+	out.readers = append(out.readers, stack.readers...)
+	out.parts = min(1, out.parts+stack.parts)
+	return out
+}
+
 // seqMoves reads the moved lines of the parts named name.
 func seqMoves(res TickResult, name string) seqPart {
 	var out seqPart
@@ -251,7 +264,7 @@ func streamsRun(t *testing.T, h *harness, ticks int) seqRun {
 		}
 		res := h.machine()
 		r.dealCounts, r.askCounts, r.had = append(r.dealCounts, ready), append(r.askCounts, review), append(r.had, had)
-		r.deal, r.ask = append(r.deal, seqMoves(res, "deal")), append(r.ask, seqMoves(res, "ask"))
+		r.deal, r.ask = append(r.deal, dealMoves(res)), append(r.ask, seqMoves(res, "ask"))
 		h.readOutstanding() // both reads of each primary asked this tick come back ok
 		acc := map[string]int{}
 		for _, st := range seqStreams {

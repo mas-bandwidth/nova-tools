@@ -92,7 +92,7 @@ func (r *holeRec) take() []holeWrite {
 
 // pumpParts are the parts of the work table's update, the pump: the only
 // steps that write the work table while the machine runs.
-var pumpParts = []string{"work/drain", "work/resolve", "work/deal", "work/accept"}
+var pumpParts = []string{"work/drain", "work/resolve", "work/deal", "work/rebalance", "work/stack", "work/accept"}
 
 // holeStep is one planning of a part of the tick: its name and what it planned.
 type holeStep struct {
@@ -473,11 +473,13 @@ func TestG2TheDealWritesTheFleetInThePumpsOwnStep(t *testing.T) {
 				continue
 			}
 			for _, e := range w.Members {
-				if e.Create != nil && w.Part == "work/deal" {
+				// the deal is its work-now part and its stack part (tla/DealCost.tla)
+				dealPart := w.Part == "work/deal" || w.Part == "work/stack"
+				if e.Create != nil && dealPart {
 					created++
 				}
 				if e.Create != nil {
-					require.Equal(t, "work/deal", w.Part, "%s created work card %s: only the pump's deal places new work on a member", w.Part, e.ID)
+					require.True(t, dealPart, "%s created work card %s: only the pump's deal places new work on a member", w.Part, e.ID)
 				}
 			}
 		}
@@ -534,7 +536,7 @@ func TestG2ALapseNeverTakesAMachineOverDealAheadTimesItsWidth(t *testing.T) {
 		made := map[string]int{}
 		for _, w := range ws {
 			for _, e := range w.Members {
-				if w.Table == sprint.Fleet && w.Part == "work/deal" && e.Create != nil {
+				if w.Table == sprint.Fleet && (w.Part == "work/deal" || w.Part == "work/stack") && e.Create != nil {
 					made[e.Create.Row]++
 				}
 			}

@@ -684,7 +684,7 @@ func dealPart(s *Snapshot, r TickReq, stack bool) (Plan, int) {
 	}
 	// the ladder (priority.go, reads_priority.go): the cards above reader, then the friends'
 	// reads, asked and placed in this plan, then normal and low work in the room they leave
-	fp, seats, dealt, dealtWorking := friendDealByLadderReclaim(s, dealOrder(s, offer), dealSeats(r.Friends, stack), !stack)
+	fp, seats, dealt, dealtWorking := friendDealByLadder(s, dealOrder(s, offer), dealSeats(r.Friends, stack), !stack)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -867,42 +867,35 @@ func dealPart(s *Snapshot, r TickReq, stack bool) (Plan, int) {
 		}
 	}
 	p.Units = append(reads.Units, p.Units...)
-	if stack {
-		// the stack part deals and judges nothing: the work-now part's judgments stand
-		return p, 0
-	}
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
 		// FriendLevelPerTick cards a tick (docs/SPEC-SPRINT.md section 1,
-		// friend-deal-idle-lanes-first.w1)
-		// a card dealt to a friend and not started within the start bound, while her beat
-		// names no job running, goes first to a friend with an idle lane, never back to
-		// her (friendUnstartedLevel; docs/SPEC-SPRINT.md section 1, a friend's card is
-		// working once she starts it); the level then neither moves it again nor counts it
-		// on her row
-		// the friends' level moves a card from one friend's row to another's, never from the
-		// pool: it evens their rooms as before, an idle lane first (the work-now part's lanes are
-		// the deal's alone), and an API-rate friend's lanes alone
+		// friend-deal-idle-lanes-first.w1). Each moves a card from one friend's row to
+		// another's, never from the pool, an API-rate friend's lanes alone (dealSeats).
 		seats = dealSeats(seats, true)
-		up := friendUnstartedLevel(s, seats, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
-		moved := map[string]bool{}
-		for _, u := range up.Units {
-			c := s.Fleet.Card(u.Key)
-			moved[c.ID] = true
-			from, _ := FriendOfRow(c.Row)
-			to, _ := FriendOfRow(u.Changes[0].Entry.Move.Row)
-			dealt[from]--
-			dealt[to]++
+		var lp Plan
+		if !stack {
+			// work now: a card dealt to a friend and not started within the start bound, while
+			// her beat names no job running, goes to a friend with an idle lane, never back to
+			// her (friendUnstartedLevel; docs/SPEC-SPRINT.md section 1, a friend's card is
+			// working once she starts it)
+			lp = friendUnstartedLevel(s, seats, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
+		} else {
+			// the stack: the friends' rooms are evened after the pool's cards are stacked, so the
+			// level never takes a room a card of the pool would have had
+			lp = friendLevel(s, FriendLevelReq{Seats: seats, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units}, dealt, dealtWorking)
 		}
-		lp := friendLevel(s, FriendLevelReq{Seats: seats, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units, Moved: moved}, dealt, dealtWorking)
-		lp.Rows, lp.Units = append(up.Rows, lp.Rows...), append(up.Units, lp.Units...)
 		for _, row := range lp.Rows {
 			if !slices.Contains(p.Rows, row) {
 				p.Rows = append(p.Rows, row)
 			}
 		}
 		p.Units = append(p.Units, lp.Units...)
+	}
+	if stack {
+		// the stack part judges nothing: the work-now part's judgments stand
+		return p, 0
 	}
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)

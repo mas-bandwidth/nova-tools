@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
@@ -223,21 +222,4 @@ func TestTheDealIsLowestCostFirst(t *testing.T) {
 		assert.Equal(t, 1, workOn(w, FriendRow("alex")), "her free lane before any stack, and never a stack of her own")
 		assert.Equal(t, DealAhead*1, workOn(w, "m1"), "the machine is stacked to its room")
 	})
-}
-
-// A friend down or held keeps no stack: the rebalance returns her unstarted cards to the pool;
-// one she started stays.
-func TestAFriendDownKeepsNoStack(t *testing.T) {
-	t.Parallel()
-	w := costWorld(t, 1)
-	started := rbPlace(w, "d-s", cardhdr.RouteFlash, FriendRow("dee"), Ready)
-	queued := rbPlace(w, "d-r", cardhdr.RouteFlash, FriendRow("dee"), Ready)
-	dee := flashFriend("dee", 2)
-	dee.Status = Down
-	dee.Running = []string{started.ID}
-	w.must(Rebalance(w.s, []FriendSeat{dee}, "machine"))
-	assert.Equal(t, Withdrawn, w.s.Fleet.Card(queued.ID).Col, "her unstarted card goes back to the pool")
-	assert.Equal(t, Ready, w.s.Work.Card("d-r").Col)
-	require.NotNil(t, w.s.Fleet.Card(started.ID))
-	assert.Equal(t, FriendRow("dee"), w.s.Fleet.Card(started.ID).Row, "the card her lane runs stays")
 }

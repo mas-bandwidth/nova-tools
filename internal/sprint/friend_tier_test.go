@@ -68,7 +68,8 @@ func TestEveryFriendDecisionReadsTheOneTierOfTheCard(t *testing.T) {
 		require.Equal(t, "heavy", w.s.DealTier(w.s.Primary("s1-1")))
 
 		// no friend serves heavy: both come back to ready, none stranded on her row
-		w.part(TickDeal, TickReq{Friends: []FriendSeat{emma}}) // the work-now part takes them back
+		// the deal's stack part levels: a card her tiers no longer hold is taken back
+		w.dealParts(TickReq{Friends: []FriendSeat{emma}})
 		for _, id := range []string{"s1-1", "s1-2"} {
 			wc := w.s.Fleet.Card(id + ".w1")
 			require.NotNil(t, wc)

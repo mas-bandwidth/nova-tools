@@ -38,8 +38,8 @@ func widthSprint(t *testing.T, width, perStream int) *harness {
 func dealtBy(res TickResult) map[string]int {
 	out := map[string]int{}
 	for _, p := range res.Parts {
-		if p.Name != "deal" {
-			continue
+		if p.Name != "deal" && p.Name != sprint.PartStack {
+			continue // the deal is its work-now part and its stack part
 		}
 		for _, line := range p.Moved {
 			if _, m, ok := strings.Cut(line, " member="); ok {

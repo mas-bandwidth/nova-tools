@@ -54,6 +54,8 @@ func TestPreferenceOverflowOnTheTwin(t *testing.T) {
 			h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "job", Brief: "job tier: pro\nWHO: " + tc.who + "\n\nWork."}}}))
 			var due int
 			h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: tc.seats}, nil, nil, &due))
+			// a card whose WHO line names a friend reaches the fleet in the deal's stack part
+			h.must(TickPartStep(sprint.PartStack, sprint.TickStack, sprint.TickReq{Friends: tc.seats}, nil, nil, &due))
 			wc := h.snap().Fleet.Card("job.w1")
 			if tc.want == "" {
 				assert.Nil(t, wc)
@@ -85,12 +87,15 @@ func TestPreferenceConsumesActualRoomOnTheTwin(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: cards}))
 	seats := []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up, Class: "pro"}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "pro"}}
 	var due int
+	// the deal's work-now part fills each friend's free lane first (amy's preference, then
+	// bob's idle lane), and its stack part each room (tla/DealCost.tla)
 	h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: seats}, nil, nil, &due))
+	h.must(TickPartStep(sprint.PartStack, sprint.TickStack, sprint.TickReq{Friends: seats}, nil, nil, &due))
 	s := h.snap()
-	for _, id := range []string{"a", "b"} {
+	for _, id := range []string{"a", "c"} {
 		assert.Equal(t, "friend.amy", s.Fleet.Card(id+".w1").Row)
 	}
-	for _, id := range []string{"c", "d"} {
+	for _, id := range []string{"b", "d"} {
 		assert.Equal(t, "friend.bob", s.Fleet.Card(id+".w1").Row)
 	}
 	assert.Contains(t, []string{"m1", "m2"}, s.Fleet.Card("e.w1").Row)
@@ -121,7 +126,9 @@ func TestUnpinReturnedCardWhileRunningOnTheTwin(t *testing.T) {
 	brief := "job tier: pro\nWHO: only friend amy\n\nWork."
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "a", Brief: brief}, {ID: "b", Brief: brief}}}))
 	var due int
-	h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up, Class: "flash,pro"}}}, nil, nil, &due))
+	amy := sprint.TickReq{Friends: []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up, Class: "flash,pro"}}}
+	h.must(TickPartStep("deal", sprint.TickDeal, amy, nil, nil, &due))
+	h.must(TickPartStep(sprint.PartStack, sprint.TickStack, amy, nil, nil, &due)) // b, behind her lane
 	h.must(FriendTakeStep(sprint.FriendTakeReq{Friend: "amy", IDs: []string{"b"}, Reason: "share"}))
 	h.startMachine()
 	h.must(UnpinStep(sprint.UnpinReq{IDs: []string{"b"}, Reason: "share returned work", Who: "tester"}))

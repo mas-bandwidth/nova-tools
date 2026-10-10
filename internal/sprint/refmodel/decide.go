@@ -21,7 +21,8 @@ const (
 	DutyResume      = "resume"       // a stream stopped on another's card goes on when it landed
 	DutyCapDeal     = "cap deal"     // a ready card past its attempt cap is dealt to a frontier or heavy friend with room
 	DutyDeal        = "deal"         // ready primaries are dealt to the members up
-	DutyRebalance   = "rebalance"    // a card queued behind lanes that all work goes to an idle lane of either side
+	DutyRebalance   = "rebalance"    // a card past its row's lanes goes to a free lane of either side, the cheapest first
+	DutyStack       = "stack"        // the ready cards no free lane took are stacked to the rows' room, friends first
 	DutyLevel       = "level"        // the members' backlogs are evened, at the tick's start
 	DutyLevelReads  = "level reads"  // the readers' loads are evened, at the tick's start
 	DutyAccept      = "accept"       // primaries in review with two ok reads are accepted and queued to merge
@@ -35,7 +36,7 @@ const (
 
 // dutyNames is the duties' names in the tick's order, which the canonical order
 // of moves follows. Duties lists the same names, and a test holds them equal.
-var dutyNames = []string{DutyLevel, DutyLevelReads, DutyResolve, DutyCapDeal, DutyDeal, DutyRebalance, DutyAccept, DutyAsk, DutyResume, DutyStrangers, DutyPresence, DutyFriendStall, DutyCheck, DutyDeadlines, DutyOverdue, DutyDone, DutyRemind}
+var dutyNames = []string{DutyLevel, DutyLevelReads, DutyResolve, DutyCapDeal, DutyDeal, DutyRebalance, DutyStack, DutyAccept, DutyAsk, DutyResume, DutyStrangers, DutyPresence, DutyFriendStall, DutyCheck, DutyDeadlines, DutyOverdue, DutyDone, DutyRemind}
 
 // Duty is one duty of the tick: its name and the function that decides it.
 type Duty struct {
@@ -54,6 +55,7 @@ var Duties = []Duty{
 	{DutyCapDeal, CapDealMoves},
 	{DutyDeal, DealMoves},
 	{DutyRebalance, RebalanceMoves},
+	{DutyStack, StackMoves},
 	{DutyAccept, AcceptMoves},
 	{DutyAsk, AskMoves},
 	{DutyResume, ResumeMoves},
@@ -119,10 +121,16 @@ func ResumeMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, Duty
 // (T3).
 func DealMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyDeal) }
 
-// RebalanceMoves is the rebalance after the deal: each work card dealt and not started,
-// queued on a friend or a member whose lanes all work, moved to a unit of either side with an
-// idle lane whose tiers and side's set admit it, the cheapest first (sprint.Rebalance).
+// RebalanceMoves is the rebalance after the deal: each work card dealt and not started in a
+// friend's or a member's overflow (past its width) moved to a unit of either side with an idle
+// lane whose tiers and side's set admit it, the cheapest first, and a row's ready past twice
+// its width returned to the pool (sprint.Rebalance; tla/DealCost.tla).
 func RebalanceMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyRebalance) }
+
+// StackMoves is the deal's stack part: the ready primaries no free lane took dealt to the
+// friends and then the members below their room, DealAhead times their width
+// (sprint.TickStack; tla/DealCost.tla).
+func StackMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyStack) }
 
 // CapDealMoves is the attempt cap's default answer: each machine's primary ready and
 // past its stream's attempt cap dealt as a friend's card to the frontier or heavy friend
@@ -204,6 +212,7 @@ func decisions() []dutyOn {
 		{DutyCapDeal, partOn(DutyCapDeal)},
 		{DutyDeal, partOn(DutyDeal)},
 		{DutyRebalance, partOn(DutyRebalance)},
+		{DutyStack, partOn(DutyStack)},
 		{DutyAccept, partOn(DutyAccept)},
 		{DutyAsk, partOn(DutyAsk)},
 		{DutyResume, partOn(DutyResume)},

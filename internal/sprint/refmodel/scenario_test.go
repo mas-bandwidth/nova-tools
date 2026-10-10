@@ -25,7 +25,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap, aMemberWithFreeLanes, aQueuedCardOnAFullFriend} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap, aMemberWithFreeLanes, aQueuedCardOnAFullFriend, aPrimaryWithItsReadsOK} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -264,7 +264,9 @@ func aCardPastItsCap(k *walk) []sample {
 
 // aQueuedCardOnAFullFriend deals a friend of width one two cards and has her take one:
 // her lane works, the other card waits behind it, and the members' lanes are idle beside
-// it: the rebalance's case (sprint.Rebalance; the walks give no friend).
+// it: the rebalance's case (sprint.Rebalance; the walks give no friend). The deal fills
+// her lane in its work-now part and stacks the second in its stack part, the members held
+// out of both so that the rebalance has the card to move when they come back.
 func aQueuedCardOnAFullFriend(k *walk) []sample {
 	k.friends = []sprint.FriendSeat{{Name: "flo", Width: 1, Status: sprint.Up, Tiers: []string{cardhdr.RouteFlash, cardhdr.RoutePro}}}
 	for range 2 {
@@ -272,7 +274,12 @@ func aQueuedCardOnAFullFriend(k *walk) []sample {
 			return nil
 		}
 	}
-	if !k.runPart("deal") {
+	if !k.try(sprint.Set(k.s, sprint.SetReq{Fleet: sprint.SwitchOff, Who: coordinator})) {
+		return nil
+	}
+	dealt := k.runPart("deal")
+	stacked := k.runPart(sprint.PartStack)
+	if !k.try(sprint.Set(k.s, sprint.SetReq{Fleet: sprint.SwitchOn, Who: coordinator})) || !dealt || !stacked {
 		return nil
 	}
 	row := sprint.FriendRow("flo")
@@ -284,6 +291,28 @@ func aQueuedCardOnAFullFriend(k *walk) []sample {
 	took := k.try(sprint.Take(k.s, sprint.TakeReq{As: row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: row}))
 	k.s.Friends = nil
 	if !took {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// aPrimaryWithItsReadsOK takes a primary to review and has its reads come back ok, each asked
+// as the one before it came back: the accept's case. The walks reach it by luck only now and
+// then, and fewer since the deal fills free lanes before it stacks (tla/DealCost.tla).
+func aPrimaryWithItsReadsOK(k *walk) []sample {
+	id := k.addTo(k.streams[0])
+	if id == "" || !k.advance(id, sprint.Review) {
+		return nil
+	}
+	for range 2 {
+		k.try(sprint.Ask(k.s, sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}, Who: sprint.MachineActor}))
+		for _, rc := range k.s.Readers.Of(id) {
+			if rc.Col == sprint.Asked {
+				k.try(sprint.Read(k.s, sprint.ReadReq{As: rc.Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+			}
+		}
+	}
+	if k.s.StateOf(id) != sprint.Review {
 		return nil
 	}
 	return []sample{k.sample()}

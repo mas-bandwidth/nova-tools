@@ -17,8 +17,9 @@ EXTENDS Naturals, FiniteSets, TLC
 \* will take this tick.
 \*
 \* The tick is a run of steps (phase "tick") that ends when none is enabled:
-\*   Return:  a dealt card of a member down, or over the cap (ready > 2 x width),
-\*            goes back to the pool;
+\*   Return:  a dealt card of a member up over its cap (ready > 2 x width) goes
+\*            back to the pool (a member down is no unit of the rebalance: its
+\*            cards are the hold's and the stall ladder's, outside this module);
 \*   WorkNow: a pool card, or a dealt card in its member's overflow, goes to a
 \*            member up with a free slot that may run it, the cheapest first;
 \*   Stack:   a pool card goes to a member up below its room (DealAhead, two,
@@ -32,7 +33,7 @@ EXTENDS Naturals, FiniteSets, TLC
 \*                   (Stack ignores free slots) and nothing moving a dealt card
 \*                   after it: NoQueuedWhileFreeSlot breaks;
 \*   "busyonly":     the old rebalance, which moved a dealt card only off a member
-\*                   whose slots all worked (the Stella row, 28 of 32 working and
+\*                   whose slots all worked (a friend row of 2026-10-10, 28 of 32 working and
 \*                   50 ready): NoQueuedWhileFreeSlot breaks;
 \*   "nocap":        no return over the cap: ReadyCap breaks;
 \*   "costblind":    WorkNow to any member with a free slot: CheapestFirst breaks.
@@ -63,13 +64,13 @@ Free(m) == Width[m] - Cardinality(Held(m))
 Overflow(m) == Cardinality(Held(m)) - Width[m]
 Unstarted(c) == c \notin started /\ where[c] # "done"
 \* a ready card the deal may place now: in the pool, or dealt into an overflow
-Placeable(c) == Unstarted(c) /\ (where[c] = "pool" \/ (where[c] \in Members /\ Overflow(where[c]) > 0))
+Placeable(c) == Unstarted(c) /\ (where[c] = "pool" \/ (where[c] \in up /\ Overflow(where[c]) > 0))
 FreeFor(c) == {m \in up : Can(m, c) /\ Free(m) > 0 /\ m # where[c]}
 RoomFor(c) == {m \in up : Can(m, c) /\ Cardinality(Held(m)) < 2 * Width[m]}
 Cheapest(S) == {m \in S : \A n \in S : Cost[m] <= Cost[n]}
 
 \* any state at all: rows stacked past their slots and the cap as an older deal
-\* left them (the Stella row), started cards within the slots; a tick comes first
+\* left them (a friend row of 2026-10-10), started cards within the slots; a tick comes first
 Init == /\ where \in [Cards -> {"pool"} \cup Members]
         /\ \A c \in Cards : where[c] \in Members => Can(where[c], c)
         /\ started \in SUBSET {c \in Cards : where[c] \in Members}
@@ -82,9 +83,8 @@ Init == /\ where \in [Cards -> {"pool"} \cup Members]
 \* --- the tick ---
 OverCap(m) == Cardinality(Ready(m)) > 2 * Width[m]
 Return(c) == /\ phase = "tick"
-             /\ where[c] \in Members /\ c \notin started
-             /\ \/ where[c] \notin up
-                \/ (OverCap(where[c]) /\ Bad # "nocap")
+             /\ where[c] \in up /\ c \notin started
+             /\ OverCap(where[c]) /\ Bad # "nocap"
              /\ where' = [where EXCEPT ![c] = "pool"]
              /\ UNCHANGED <<started, up, phase, skipped, settled>>
 
@@ -157,9 +157,7 @@ TypeOK == /\ where \in [Cards -> Places]
 \* run it has a free slot: every free slot is filled before any card is stacked
 NoQueuedWhileFreeSlot == settled => \A c \in Cards : Placeable(c) => FreeFor(c) = {}
 \* a member's ready (dealt, not started) is at most twice its width
-ReadyCap == settled => \A m \in Members : Cardinality(Ready(m)) <= 2 * Width[m]
-\* a member down holds no dealt card
-DownHoldsNoReady == settled => \A m \in Members \ up : Ready(m) = {}
+ReadyCap == settled => \A m \in up : Cardinality(Ready(m)) <= 2 * Width[m]
 \* no card is dealt into a slot while a cheaper member that may run it had one free
 CheapestFirst == skipped = {}
 \* a card is only ever on a member that may run its tier: a frontier card never
