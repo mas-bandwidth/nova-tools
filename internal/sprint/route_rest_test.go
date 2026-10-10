@@ -152,7 +152,7 @@ func TestAnOldPerRouteRestPropertyIsIgnored(t *testing.T) {
 	f.SetProps(map[string]string{"route_rest_a": old})
 	assert.Empty(t, RouteRests(routes, f), "the old per-route property rests nothing")
 	f.SetProp(PropRule3Rest("p"), "a "+old)
-	assert.Empty(t, RouteRests(routes, f), "a line with no cause is rule 3's, retired: it rests nothing")
+	assert.False(t, RouteRests(routes, f)["a"].Resting(t0.Add(time.Minute)), "a line with no cause is rule 3's, retired: it rests nothing")
 	f.SetProp(PropRule3Rest("p"), "a "+old+" "+RestProvider)
 	got := RouteRests(routes, f)["a"]
 	assert.Equal(t, "a", got.Route)
@@ -322,4 +322,96 @@ func TestARestRoundTripsWithAndWithoutItsBalance(t *testing.T) {
 			assert.Equal(t, tc.value, r.value(), "written back unchanged")
 		})
 	}
+}
+
+// A retired rule's rest holds no route but stays the mark the rules count after (the cold
+// read of PR 5546, probe A): with openrouter's balance rest of 01:54Z in the fleet table, a
+// take refused for credit at 2026-10-09 20:00Z, long before it, never rests the provider
+// again on deploy, the rest open or ended; a refusal launched after the rest began does. A
+// retired no-result rest of a route keeps its window: transient failures before it never
+// count, three after it rest the route.
+func TestARetiredRestKeepsItsMark(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 6, 0, 0, 0, time.UTC)
+	routes := []Route{
+		{Name: "flash-glm53-openrouter", Tier: "flash", Provider: "openrouter", Enabled: true},
+		{Name: "flash-deepseek41-direct", Tier: "pro", Provider: "deepseek", Enabled: true},
+	}
+	refused := func(id, taken string) *Card {
+		take := ProviderTake{Route: "flash-glm53-openrouter", Taken: taken, Finished: taken, Error: "provider: class=out-of-credit status=402 msg=Insufficient credits"}
+		return &Card{ID: id, Row: "m1", Col: DoneOK, Fields: map[string]string{FieldProviderTake + "1": take.String(), FieldRoute: "flash-glm53-openrouter", "finished": taken}}
+	}
+	limited := func(id, at string) *Card {
+		take := ProviderTake{Route: "flash-deepseek41-direct", Taken: at, Finished: at, Error: "provider: class=rate-limited status=429 msg=slow down"}
+		return &Card{ID: id, Row: "m1", Col: Withdrawn, Fields: map[string]string{FieldProviderTake + "1": take.String()}}
+	}
+	open := "2026-10-10T01:54:32Z open - balance low on funds: provider openrouter balance $190.77"
+	ended := "2026-10-10T01:54:32Z 2026-10-10T03:00:00Z - balance low; ended: balance $500"
+	noResult := "flash-deepseek41-direct 2026-10-10T03:38:45Z 2026-10-10T04:08:45Z c1,c2,c3 no-result"
+	for _, tc := range []struct {
+		name  string
+		props map[string]string
+		cards []*Card
+		want  []string // "provider" or the route each due rest names
+	}{
+		{"an old 402 under an open balance rest", map[string]string{PropProviderRest("openrouter"): open}, []*Card{refused("old1", "2026-10-09T20:00:00Z")}, nil},
+		{"an old 402 under an ended balance rest", map[string]string{PropProviderRest("openrouter"): ended}, []*Card{refused("old1", "2026-10-09T20:00:00Z")}, nil},
+		{"a 402 launched after the balance rest began", map[string]string{PropProviderRest("openrouter"): open}, []*Card{refused("new1", "2026-10-10T05:30:00Z")}, []string{"provider"}},
+		{"429s before a retired no-result rest", map[string]string{PropRule3Rest("deepseek"): noResult},
+			[]*Card{limited("a1", "2026-10-10T03:00:00Z"), limited("a2", "2026-10-10T03:10:00Z"), limited("a3", "2026-10-10T03:20:00Z")}, nil},
+		{"429s after a retired no-result rest", map[string]string{PropRule3Rest("deepseek"): noResult},
+			[]*Card{limited("a1", "2026-10-10T05:00:00Z"), limited("a2", "2026-10-10T05:10:00Z"), limited("a3", "2026-10-10T05:20:00Z")}, []string{"flash-deepseek41-direct"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := NewTable(Fleet)
+			f.SetRows([]string{"m1"})
+			for _, c := range tc.cards {
+				f.Put(c)
+			}
+			f.SetProps(tc.props)
+			var got []string
+			for _, r := range RestsDue(&Snapshot{Now: now, Fleet: f, Routes: routes}) {
+				if r.Route == "" {
+					got = append(got, "provider")
+				} else {
+					got = append(got, r.Route)
+				}
+			}
+			assert.Equal(t, tc.want, got)
+			for name, r := range RouteRests(routes, f) {
+				assert.False(t, r.Resting(now), "%s: a retired rest holds nothing", name)
+			}
+		})
+	}
+}
+
+// routes rest never replaces a rest that holds (the cold read of PR 5546, probe B;
+// tla/RouteRest.tla, RestProvider and RestRoute): over a refused take's credit rest, a
+// coordinator's rest for 30 minutes would end the credit rest with it and take the provider
+// out of the all-out stop. It is refused, naming the rest, and the stop holds an hour on.
+// A route's own rest is not replaced either; a route under its provider's rest may take
+// its own.
+func TestRoutesRestNeverReplacesARestThatHolds(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 6, 0, 0, 0, time.UTC)
+	routes := []Route{{Name: "flash-glm53-openrouter", Tier: "flash", Provider: "openrouter", Enabled: true}}
+	f := NewTable(Fleet)
+	f.SetProps(map[string]string{
+		PropProviderRest("openrouter"): "2026-10-10T05:00:00Z open c9 out-of-credit out of credit: provider openrouter refused card c9",
+	})
+	s := &Snapshot{Now: now, Fleet: f, Routes: routes}
+	require.NotEmpty(t, AllOutOfCredit(routes, RouteRests(routes, f), now))
+	p := RestRoutes(s, RouteRestReq{Target: "openrouter", Reason: "x", Until: now.Add(30 * time.Minute), Who: "seat"})
+	require.Len(t, p.Refused, 1)
+	assert.Contains(t, p.Refused[0].Why, "provider openrouter rests already until paid (out-of-credit: out of credit: provider openrouter refused card c9)")
+	assert.Empty(t, p.Props)
+	assert.NotEmpty(t, AllOutOfCredit(routes, RouteRests(routes, f), now.Add(time.Hour)), "the stop holds")
+
+	p = RestRoutes(s, RouteRestReq{Target: "flash-glm53-openrouter", Reason: "its own", Who: "seat"})
+	require.Empty(t, p.Refused, "a route under its provider's rest may take its own")
+	f.SetProp(p.Props[0].Name, p.Props[0].Value)
+	p = RestRoutes(s, RouteRestReq{Target: "flash-glm53-openrouter", Reason: "again", Until: now.Add(time.Minute), Who: "seat"})
+	require.Len(t, p.Refused, 1)
+	assert.Contains(t, p.Refused[0].Why, "route flash-glm53-openrouter rests already until woken")
 }

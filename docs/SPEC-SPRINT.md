@@ -2670,7 +2670,10 @@ and it is the coordinator's decision, receipted.
   on that card, never the provider's: it counts against the card's attempt and the route's
   ok%, and it never rests the route (rule 3 of 2026-10-02, nova-tools#5174, rested a route on
   three of them; it is retired, and a `no-result` line it wrote holds no route from the
-  moment the code that reads it runs: `RouteRest.Retired`). The tick's deal counts each
+  moment the code that reads it runs: `RouteRest.Retired`). A retired rest stays the mark
+  the rules count after (`RouteRest.Mark`: its end, or when it began for one with no time),
+  so no end before it, a 402 included, rests anything again on deploy
+  (`TestARetiredRestKeepsItsMark`). The tick's deal counts each
   route's ended takes over a sliding window, the last RouteRestWindow (10) takes on it that
   ended after its last rest began, in the order they ended: each take the provider failed or
   that left no result (the work card's provider_take_<n> records) and each work card's own
@@ -2706,7 +2709,10 @@ and it is the coordinator's decision, receipted.
   with none, until woken; `routes wake <provider|route> --reason <text>` ends now the rest
   holding the provider, whatever its cause (a refused take's included), and its routes' own,
   or one route's own while its provider serves (a route under its provider's rest is
-  refused, naming the provider). A wake is never a payment: `funded` says one, and the seat
+  refused, naming the provider). `routes rest` never replaces a rest that holds: a provider
+  resting (a refused take's credit rest included) or a route resting on its own line is
+  refused, naming the rest, so a credit rest never loses its place in the all-out stop
+  (`TestRoutesRestNeverReplacesARestThatHolds`). A wake is never a payment: `funded` says one, and the seat
   never says `funded` to lift a rest no payment ended. Each is refused whole with no reason,
   a name that is neither a route nor a provider of one, or (wake) nothing resting
   (`TestTheCoordinatorRestsAndWakesRoutes`).

@@ -84,6 +84,19 @@ func RestRoutes(s *Snapshot, r RouteRestReq) Plan {
 		until = r.Until
 	}
 	rest := RouteRest{At: s.Now, Until: until, Cause: RestCoordinator, Why: oneLine("rested by " + r.Who + ": " + r.Reason)}
+	// a rest that holds is never replaced (tla/RouteRest.tla, RestProvider and RestRoute: a
+	// rest begins only on a serving provider or route): a refused take's credit rest would
+	// end with the coordinator's time and take the provider out of the all-out stop
+	if pr, ok := ProviderRests(s.Fleet)[provider]; ok && pr.Resting(s.Now) && isProvider {
+		p.refuse(r.Target, "provider "+provider+" rests already until "+pr.UntilSaid()+" ("+pr.Cause+": "+pr.Said()+"): nova-sprint routes wake "+provider+" ends it first")
+		return p
+	}
+	if !isProvider {
+		if own, ok := parseRule3(func() string { v, _ := s.Fleet.Prop(PropRule3Rest(provider)); return v }())[routes[0]]; ok && own.Resting(s.Now) {
+			p.refuse(r.Target, "route "+routes[0]+" rests already until "+own.UntilSaid()+" ("+own.Cause+": "+own.Said()+"): nova-sprint routes wake "+routes[0]+" ends it first")
+			return p
+		}
+	}
 	if isProvider {
 		rest.Provider = provider
 		was, had := s.Fleet.Prop(PropProviderRest(provider))

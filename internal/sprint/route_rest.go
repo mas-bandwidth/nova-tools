@@ -3,7 +3,6 @@ package sprint
 import (
 	"cmp"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -116,8 +115,20 @@ func (r RouteRest) UntilSaid() string {
 	return stamp(r.Until)
 }
 
-// Resting says the rest holds at now.
-func (r RouteRest) Resting(now time.Time) bool { return now.Before(r.Until) }
+// Resting says the rest holds at now. A retired rule's rest never holds (Retired), though
+// it stays the history mark the rules count after (Mark).
+func (r RouteRest) Resting(now time.Time) bool { return !r.Retired() && now.Before(r.Until) }
+
+// Mark is the moment the rules count ends after: the rest's end, or for a retired rule's
+// rest with no time (a balance poll's, open), when it began: no take was dealt on it while
+// it held, and a take launched after it began is the provider's to judge again
+// (TestARetiredRestKeepsItsMark: an old 402 never rests the provider again on deploy).
+func (r RouteRest) Mark() time.Time {
+	if r.Retired() && r.Open() {
+		return r.At
+	}
+	return r.Until
+}
 
 // Funds says the rest is the provider's want of funds: a take it refused for credit.
 func (r RouteRest) Funds() bool { return r.Cause == RestCredit }
@@ -254,9 +265,7 @@ func rule3Rests(fleet *Table) map[string]map[string]RouteRest {
 		if !ok {
 			continue
 		}
-		m := parseRule3(v)
-		maps.DeleteFunc(m, func(_ string, r RouteRest) bool { return r.Retired() })
-		out[p] = m
+		out[p] = parseRule3(v) // a retired line stays: its mark (it holds nothing: Resting)
 	}
 	return out
 }
@@ -272,7 +281,7 @@ func ProviderRests(fleet *Table) map[string]RouteRest {
 		if !ok {
 			continue
 		}
-		if rest, ok := parseRest(v); ok && !rest.Retired() {
+		if rest, ok := parseRest(v); ok { // a retired rest stays: its mark (it holds nothing: Resting)
 			rest.Provider = p
 			out[p] = rest
 		}
@@ -290,8 +299,10 @@ func RouteRests(routes []Route, fleet *Table) map[string]RouteRest {
 	for _, r := range routes {
 		own, hasOwn := rule3[r.Provider][r.Name]
 		pr, hasProvider := byProvider[r.Provider]
+		// a rest that holds decides over a retired one, whichever ends later
+		providerFirst := !hasOwn || pr.Retired() == own.Retired() && !own.Until.After(pr.Until) || own.Retired() && !pr.Retired()
 		switch {
-		case r.Provider != "" && hasProvider && (!hasOwn || !own.Until.After(pr.Until)):
+		case r.Provider != "" && hasProvider && providerFirst:
 			pr.Route = r.Name
 			out[r.Name] = pr
 		case hasOwn:
@@ -470,7 +481,7 @@ func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
 	}
 	provider, _, _ := strings.Cut(c.F(FieldModel), "/")
 	v, _ := s.Fleet.Prop(PropProviderRest(provider))
-	if rest, ok := parseRest(v); ok && !rest.Retired() && rest.Resting(s.Now) {
+	if rest, ok := parseRest(v); ok && rest.Resting(s.Now) {
 		return rest, true
 	}
 	return RouteRest{}, false

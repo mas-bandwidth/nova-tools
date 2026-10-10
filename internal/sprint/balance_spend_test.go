@@ -89,7 +89,9 @@ func TestTheNightsBalanceRestLiftsOnTheNextPoll(t *testing.T) {
 		PropProviderRest("openrouter"):    "2026-10-10T01:54:32Z open - balance low on funds: provider openrouter balance $190.77 at 2026-10-10T01:54:32Z is not over one hour of its spend ($234.82 an hour)",
 	})
 	s := &Snapshot{Now: now, Fleet: f, Work: nightWork(t, nightRest), Routes: nightRoutes, Coordinator: Coordinator}
-	assert.Empty(t, RouteRests(nightRoutes, f), "a balance poll's rest of before holds no route")
+	for name, r := range RouteRests(nightRoutes, f) {
+		assert.False(t, r.Resting(now), "%s: a balance poll's rest of before holds no route", name)
+	}
 
 	p := Balance(s, BalanceReq{Reads: []ProviderRead{{Provider: "openrouter", Known: true, Balance: 148.54, HasUsed: true, Used: 1101.46}}, Who: MachineActor})
 	require.Empty(t, p.Refused)

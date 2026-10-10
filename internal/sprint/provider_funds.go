@@ -102,7 +102,7 @@ func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][
 			continue
 		}
 		for _, e := range ends[r.Name] {
-			if e.refused == "" || had && !e.taken.After(last.Until) {
+			if e.refused == "" || had && !e.taken.After(last.Mark()) {
 				continue
 			}
 			if n, ok := newest[r.Provider]; !ok || cmpEnd(n, e) < 0 {
