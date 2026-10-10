@@ -85,6 +85,7 @@ func linksFlags(f *tool.Flags) {
 	f.Required("dir", dirHint)
 	f.Var(&repeatable{}, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
 	f.Var(&repeatable{}, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
+	addAllowEmpty(f)
 	addMax(f)
 }
 
