@@ -864,5 +864,5 @@ func TestAPullRequestKeepsNovaSwarmOffTheMacLegs(t *testing.T) {
 			pushed += len(strings.Fields(leg.Packages))
 		}
 	}
-	assert.Equal(t, 3, pushed, "a push deals all three to macOS")
+	assert.Equal(t, 2, pushed, "a push deals both to macOS")
 }

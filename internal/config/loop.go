@@ -33,6 +33,11 @@ var NovaTools = []string{
 	"nova-tokens", "nova-up", "nova-update", "nova-version",
 }
 
+// SprintTools are the programs the same release ships from nova-sprint's own
+// release (the split, v1.2.3: nova-update release build --sprint-release), not
+// from cmd/. A loop that runs one is asked like any other.
+var SprintTools = []string{"nova-card", "nova-sprint", "nova-work"}
+
 // verbWord is a word that can be a verb: lower-case, a letter first. A path, a
 // flag or a value with any other character is no verb, and is never asked.
 var verbWord = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -47,7 +52,7 @@ func LoopCalls(argv []string) []LoopCall {
 	var out []LoopCall
 	for i := 0; i+1 < len(argv); i++ {
 		prog, verb := filepath.Base(argv[i]), argv[i+1]
-		if !slices.Contains(NovaTools, prog) || !verbWord.MatchString(verb) || verb == "help" || verb == "version" {
+		if (!slices.Contains(NovaTools, prog) && !slices.Contains(SprintTools, prog)) || !verbWord.MatchString(verb) || verb == "help" || verb == "version" {
 			continue
 		}
 		out = append(out, LoopCall{Program: argv[i], Verb: verb})
