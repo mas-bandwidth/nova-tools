@@ -8,7 +8,7 @@ EXTENDS Integers, FiniteSets
 \* reads (friend_deal.go cardLeft). A card that names its friend (WHO: friend
 \* <name>) is hers alone after a rework (ReworkPinned) and is never left. One
 \* card for any friend, two friends, attempts up to MaxAttempts. 2026-10-09/10:
-\* Freddy's opencode lanes ran 46 attempts empty and the rework dealt each
+\* a friend's opencode lanes ran 46 attempts empty and the rework dealt each
 \* straight back to them.
 CONSTANTS MaxAttempts, Named, BadNoLeft
 Friends == {"amy", "bob"}

@@ -24,11 +24,11 @@ var harnessFaultClasses = []struct {
 	re    *regexp.Regexp
 }{
 	{"lane died", regexp.MustCompile(`the runner ended job|lane ended with no report|the lane died`)},
-	// an empty run: the lane's harness exited and the model did nothing, no report and not
-	// one token (2026-10-09/10: Freddy's opencode lanes ended "exit 0 after 154s and wrote no
-	// report ... tokens input=0 ... output=0", the provider refusing every turn); matched
-	// before "cost line", which the same report carries as its first error
-	{ClassEmptyRun, regexp.MustCompile(`(?i)\bwrote no report\b|harness-fault: no report|\btokens input=0 cache_read=0 cache_write=0 output=0\b`)},
+	// an empty run: the lane's harness exited and wrote no report (2026-10-09/10: a friend's
+	// opencode lanes ended "exit 0 after 154s and wrote no report"); matched before "cost
+	// line", which the same report carries as its first error. A zero tokens line alone is
+	// no evidence: the daemon can read a lane's tokens from the wrong session store
+	{ClassEmptyRun, regexp.MustCompile(`(?i)\bwrote no report\b|harness-fault: no report`)},
 	{"no step line", regexp.MustCompile(`carries no line for this step`)},
 	{"not started", regexp.MustCompile(`\bHOLD: not started\b`)},
 	{"staging", regexp.MustCompile(`(?i)refused at staging|^staging refused`)},
@@ -43,7 +43,7 @@ var harnessFaultClasses = []struct {
 	{"no result", regexp.MustCompile(`(?i)^no result:|no RESULT\.md`)},
 }
 
-// ClassEmptyRun is the harness fault of a run that did nothing: no report, zero tokens.
+// ClassEmptyRun is the harness fault of a run that wrote no report.
 // Its rework never goes back to the worker it ran on (ruleHarness, emptyRunLeft).
 const ClassEmptyRun = "empty run"
 

@@ -7,9 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// An empty run is a lane that ran nothing: no report, not one token. On 2026-10-09/10
-// Freddy's opencode lanes ended so (the provider refused the lane's first turn), the
-// classifier took the report's Cost line for its first error ("cost line"), and the failed
+// An empty run is a lane that wrote no report. On 2026-10-09/10 a friend's opencode lanes
+// ended so, the classifier took the report's Cost line for its first error ("cost line"), and the failed
 // rule reworked the card on its tier straight back to the lane that ran it empty.
 
 // emptyRunReport is the failed report of an empty run as the sprint log quoted it.
@@ -20,10 +19,9 @@ func emptyRunReport(friend string) string {
 func TestAnEmptyRunIsItsOwnClassBeforeTheCostLine(t *testing.T) {
 	t.Parallel()
 	for name, report := range map[string]string{
-		"the log's report":         emptyRunReport("freddy"),
+		"the log's report":         emptyRunReport("amy"),
 		"the lane's fault words":   "friend amy FAIL: harness-fault: no report; first error: the harness printed no error line",
-		"zero tokens, no words":    "friend amy HOLD: Cost: $0.00 (opencode: $0.00) tokens input=0 cache_read=0 cache_write=0 output=0 reasoning=0 model=m harness=opencode",
-		"no report, a cost beside": "friend amy FAIL: the lane wrote no report; Cost: $0.02 tokens input=10 cache_read=0 cache_write=0 output=0",
+		"no report, a cost beside":"friend amy FAIL: the lane wrote no report; Cost: $0.02 tokens input=10 cache_read=0 cache_write=0 output=0",
 	} {
 		assert.Equal(t, ClassEmptyRun, HarnessFault(report), name)
 	}
@@ -31,6 +29,10 @@ func TestAnEmptyRunIsItsOwnClassBeforeTheCostLine(t *testing.T) {
 	zhi := "friend zhi HOLD: Cost: $0.09 (list price, route flash-deepseek41-direct) (opencode: -) tokens input=84549 cache_read=3719936 cache_write=0 output=34474 reasoning=0 model=deepseek/deepseek-v4.1-flash harness=dsh price_route=flash-deepseek41-direct"
 	assert.Equal(t, "cost line", HarnessFault(zhi), "tokens spent: the cost line")
 	assert.Equal(t, "lane died", HarnessFault(harnessFaults["lane died"]), "a runner's kill stays lane died")
+	// a zero tokens line with a report is no empty run: the daemon can read a lane's tokens
+	// from the wrong session store, so zero tokens alone is no evidence of an empty run
+	zero := "friend amy HOLD: Cost: $0.00 (opencode: $0.00) tokens input=0 cache_read=0 cache_write=0 output=0 reasoning=0 model=m harness=opencode"
+	assert.NotEqual(t, ClassEmptyRun, HarnessFault(zero), "zero tokens alone")
 }
 
 // emptyRunOnAmy is a world with s1-1 a card for any friend (WHO: friend) dealt to amy alone,
