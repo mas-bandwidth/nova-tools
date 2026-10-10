@@ -297,3 +297,119 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 	_, body = LimitUpText("bob")
 	assert.Contains(t, body, "nova-sprint friend up bob")
 }
+
+// A provider failure is one typed record per attempt (kind, status where the
+// harness exposed it, retry-after, request id) and the limit layer is driven by
+// its kind, never by the text again (docs/SPEC-FRIEND.md, a provider failure is
+// typed): a 429 with a reset in 90 s parks the lanes until the reset plus slack
+// and the beat reports the limit; an out-of-funds exit parks with no wake time,
+// never a guessed one.
+func TestAProviderFailureIsTypedAndDrivesTheLimitLayer(t *testing.T) {
+	t.Parallel()
+	clock := &limitClock{t: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)}
+
+	// the typed record, read once from the turn's own text
+	out := "working on the card\n429 Too Many Requests\nretry-after: 90\n" + `{"request_id":"req_abc123"}` + "\n"
+	f, ok := ClassifyProviderFailure("ses_1", out, clock.now())
+	require.True(t, ok)
+	assert.Equal(t, FailureRateLimited, f.Kind)
+	assert.Equal(t, 429, f.Status)
+	assert.Equal(t, 90*time.Second, f.RetryAfter)
+	assert.Equal(t, "req_abc123", f.RequestID)
+
+	// the layer parks the lanes until the reset plus slack and records the kind
+	var records []string
+	nonces := []string{"wake01"}
+	l := &Limits{
+		Now:     clock.now,
+		Harness: "opencode", // the daemon's --harness: the typed path must still govern
+		Nonce:   func() string { n := nonces[0]; nonces = nonces[1:]; return n },
+		Slack:   10 * time.Second,
+		Record:  func(line string) { records = append(records, line) },
+	}
+	se := &scriptExec{outs: []string{out, "wake01\n", "ran it\n"}, exits: []int{1, 0, 0}}
+	d := l.Gate(&OpenCode{Dir: "/w/f", Session: "s1", Run: l.Watch(se.run)})
+
+	exit, err := d.Deliver(context.Background(), "card c1")
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred, "the turn that hit the provider limit is deferred, the message in hand")
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, FailureRateLimited, l.Kind(), "driven by the classified kind")
+	until, reason, limited := l.Limited()
+	require.True(t, limited)
+	assert.Equal(t, clock.t.Add(90*time.Second+10*time.Second), until, "the reset the provider named plus slack")
+	assert.Contains(t, reason, "429 Too Many Requests")
+	require.Len(t, records, 1, "one typed record for the attempt")
+	assert.Contains(t, records[0], "kind=rate-limited")
+	assert.Contains(t, records[0], "status=429")
+	assert.Contains(t, records[0], "retry-after=1m30s")
+	assert.Contains(t, records[0], "request-id=req_abc123")
+
+	// the beat reports the limit, never an up beat while it stands
+	var beats, downs int
+	err = l.BeatOrDown(func(context.Context) error { beats++; return nil },
+		func(_ context.Context, u time.Time, r string) error { downs++; return nil })(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, beats)
+	assert.Equal(t, 1, downs)
+
+	// nothing runs before the reset plus slack, then a wake answers and the message goes in
+	clock.t = until.Add(-time.Second)
+	_, err = d.Deliver(context.Background(), "card c1")
+	require.ErrorAs(t, err, &deferred)
+	assert.Len(t, se.texts, 1, "the harness is not run while parked")
+	clock.t = until
+	exit, err = d.Deliver(context.Background(), "card c1")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	require.Len(t, se.texts, 3)
+	assert.Contains(t, se.texts[1], "wake01", "the wake carries its nonce")
+	assert.Equal(t, "card c1", se.texts[2], "then the message goes in")
+	_, _, limited = l.Limited()
+	assert.False(t, limited, "up after the wake answered")
+
+	// out of funds: a gate with no wake time, never a guessed one
+	clock.t = time.Date(2026, 10, 9, 13, 0, 0, 0, time.UTC)
+	var records2 []string
+	l2 := &Limits{Now: clock.now, Harness: "opencode", Nonce: func() string { return "wake01" }, Record: func(line string) { records2 = append(records2, line) }}
+	se2 := &scriptExec{outs: []string{"402 Payment Required: insufficient balance\n"}, exits: []int{1}}
+	d2 := l2.Gate(&OpenCode{Dir: "/w/f", Session: "s1", Run: l2.Watch(se2.run)})
+	_, err = d2.Deliver(context.Background(), "card c2")
+	require.ErrorAs(t, err, &deferred)
+	until2, _, limited2 := l2.Limited()
+	require.True(t, limited2)
+	assert.True(t, until2.IsZero(), "out of funds names no reset: no wake time, no guess")
+	require.Len(t, records2, 1)
+	assert.Contains(t, records2[0], "kind=out-of-funds")
+	assert.Contains(t, records2[0], "retry-after=none")
+	clock.t = clock.t.Add(48 * time.Hour)
+	_, err = d2.Deliver(context.Background(), "card c2")
+	require.ErrorAs(t, err, &deferred, "no wake, however long the wait")
+	assert.Len(t, se2.texts, 1, "the harness is never run for a guessed wake")
+}
+
+// A limit with no reset known is one record line saying until=none, said once
+// while it stands, then session=ok when it clears: a zero reset cannot be told
+// from "no limit said" by the reset alone (a-provider-failure-is-typed.w1).
+func TestTheDaemonRecordSaysUntilNoneForALimitWithNoWakeTime(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	var records []string
+	d := &Daemon{
+		Friend:  "bob",
+		m:       Start(now),
+		Now:     func() time.Time { return now },
+		Limited: func() (string, time.Time, bool) { return FailureOutOfFunds, time.Time{}, true },
+		Record:  func(line string) { records = append(records, line) },
+		Status:  func(Status) error { return nil },
+	}
+	d.flush(now)
+	require.Len(t, records, 1)
+	assert.Contains(t, records[0], "session=limited kind=out-of-funds until=none")
+	d.flush(now)
+	require.Len(t, records, 1, "said once while it stands")
+	d.Limited = func() (string, time.Time, bool) { return "", time.Time{}, false }
+	d.flush(now)
+	require.Len(t, records, 2)
+	assert.Contains(t, records[1], "session=ok: the harness answered after its reset")
+}

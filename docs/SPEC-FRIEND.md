@@ -1956,6 +1956,33 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### a-provider-failure-is-typed.w1 — every provider failure is a typed record, and the limit layer governs the lanes
+
+A provider failure is classified once from a failed turn's text and then driven
+by its kind, never by the text again. `ClassifyProviderFailure`
+(`internal/friend/ratelimit.go`) reads the tail of the turn (`LimitTail`) for a
+rate limit (a `429`, `rate limit reached`, `too many requests`, `input token
+limit exceeded`, `rate_limit_error`) or out of funds (a `402`, `payment
+required`, `insufficient balance`, `insufficient ... credits`, `out of funds`),
+out of funds first; a line with its reset beside it is the harness's own limit
+(`ParseLimit`, above), never a provider failure here. The record is
+`ProviderFailure`: its kind (`rate-limited`, `out-of-funds`, `usage-limited`,
+`refused`), the HTTP status the text exposed (`statusCode`, `HTTP`, `code`, or
+the bare 429/402), the wait it named before another try (`retry-after`,
+`resets_in_seconds`, `try again in N unit`), and the provider's request id
+(`request_id`, `x-request-id`). `ProviderLimit` answers the same read as
+`OutOfFunds` or `RateLimited`.
+
+`Limits` drives by kind. A rate limit or a usage limit with a known reset parks
+the lanes until the reset plus `LimitSlack` (30 s; `Limits.Slack` overrides),
+then wakes; out of funds, and any limit whose text names no reset, holds with no
+wake time (`until` zero: the gate never guesses one, `gated.Deliver`). Each
+failure is one typed line on the record (`Limits.Record`: `provider failure:
+kind=... status=... retry-after=<d|none> request-id=...`), `Down` tells the
+sprint once, the daemon's status and record read `session=limited kind=<kind>
+until=<reset|none>`, and the beat says down with the reason (`BeatOrDown`).
+`TestAProviderFailureIsTypedAndDrivesTheLimitLayer`.
+
 ### subscription-pacing-is-a-setting.w1 — a subscription friend is paced by measurement (internal/friend/pacing.go)
 
 The owner, 2026-10-05 ~10:45 PM: "Please try to go easy on <friend> (<machine>)
@@ -2889,17 +2916,20 @@ last session activity (above) and no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
 
-The limit layer (`limit.go`) is built and tested, not yet wired: the daemon
-and `nova-friend run` do not yet wrap the adapter's Exec in `Limits.Watch` or
-the Deliverer in `Limits.Gate` (a wrap must keep the `LaneHarness` lanes and
-the OpenCode `Allow` setting, and gate the lanes' turns), do not call `Down`
-and `Up` at the sprint (a friend's own `down --until` and `up`, which the
-server today takes as the coordinator's hold), and the beat sends no flags;
-`friend beat` takes no `--five-hour` or `--seven-day` until the sprint
-records them for pacing. Claude has no deliver command, so its
+The limit layer (`limit.go`) is wired: the daemon and `nova-friend run` wrap
+the adapter's Exec in `Limits.Watch` and the Deliverer in `Limits.Gate` (the
+`LaneHarness` lanes and the OpenCode `Allow` setting are kept), `Down` and `Up`
+are said at the sprint (a friend's own `down --until` and `up`), and the beat
+carries the limit with `BeatOrDown`; every provider failure is a typed record
+and the layer is driven by its kind, never the text
+(a-provider-failure-is-typed.w1, above). Claude has no deliver command, so its
 `rate_limit_event` is read only once a Claude run's output passes through
-`Watch`. The state machine (up, down until a reset, waking on a nonce) wants
-its TLA+ module beside `tla/Friend.tla`.
+`Watch`. Owed still: the one-shot lanes are exempt from the gate's deferral (a
+Deferred lane turn would give up her card), so holding them while she is down
+belongs to the lanes' loop; the beat sends no flags and `friend beat` takes no
+`--five-hour` or `--seven-day` until the sprint records them for pacing; and
+the state machine (up, down until a reset, waking on a nonce) wants its TLA+
+module beside `tla/Friend.tla`.
 
 ## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
 

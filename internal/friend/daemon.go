@@ -288,6 +288,9 @@ type Daemon struct {
 	stageDone   []stageResult // the stages that ended, for the loop
 	stageWG     sync.WaitGroup
 	pruneSaid   string // the prune failure last said, said once while it stands
+
+	limitSaidSet  bool   // a limit stands on the record; a zero reset still says "until=none"
+	limitSaidKind string // the kind last said, so a kind change is said too
 }
 
 // Mailbox is a harness whose session queues what is delivered: Follow reads who read
@@ -1599,12 +1602,17 @@ func (d *Daemon) flush(now time.Time) {
 	if d.Limited != nil && s.Session != SessionBroken {
 		if kind, until, limited := d.Limited(); limited {
 			s.Session, s.LimitKind, s.LimitUntil = SessionLimited, kind, until
-			if d.limitSaid != until {
-				d.limitSaid = until
-				d.Record(fmt.Sprintf("%s session=limited kind=%s until=%s: nothing is delivered, every message stays pending, pings are answered", now.UTC().Format(time.RFC3339), kind, until.UTC().Format(time.RFC3339)))
+			if !d.limitSaidSet || d.limitSaidKind != kind || !d.limitSaid.Equal(until) {
+				d.limitSaid, d.limitSaidKind, d.limitSaidSet = until, kind, true
+				// a limit with no reset known ("none") is held with no wake time, never a guessed one
+				untilText := until.UTC().Format(time.RFC3339)
+				if until.IsZero() {
+					untilText = "none"
+				}
+				d.Record(fmt.Sprintf("%s session=limited kind=%s until=%s: nothing is delivered, every message stays pending, pings are answered", now.UTC().Format(time.RFC3339), kind, untilText))
 			}
-		} else if !d.limitSaid.IsZero() {
-			d.limitSaid = time.Time{}
+		} else if d.limitSaidSet {
+			d.limitSaid, d.limitSaidKind, d.limitSaidSet = time.Time{}, "", false
 			d.Record(now.UTC().Format(time.RFC3339) + " session=ok: the harness answered after its reset")
 		}
 	}

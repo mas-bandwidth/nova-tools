@@ -1267,6 +1267,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
+	// each typed provider failure the limit layer holds the lanes for is one
+	// record line (kind, status, retry-after, request id); the layer's kind,
+	// never the text, drives the park (docs/SPEC-FRIEND.md, a provider failure is typed)
+	fl.Record = func(line string) { record(w.now().UTC().Format(time.RFC3339) + " " + line) }
 	// when the sprint server last took her session's answer to a check as its proof (the up
 	// beat's answer says proved=<nonce>): status proof_sent, check proof=sent
 	var sent atomic.Pointer[time.Time]
@@ -1296,6 +1300,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// the seat (else --coordinator) is told of each limit and each wake; set once the store is open
 	tellSeat := func(subject, body string) {}
 	fl.Down = func(until time.Time, reason string) {
+		if until.IsZero() {
+			// no reset known: held with no wake time; the row's down beat carries
+			// a horizon rather than a guessed reset (docs/SPEC-FRIEND.md, a provider failure is typed)
+			until = w.now().Add(friend.PauseBeatAhead)
+		}
 		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns and beats held until then, then a wake")
 		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
@@ -1500,6 +1509,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			// ahead of the look; the inner check is the last before the up beat, so a limit
 			// seen during the step is never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
+				if until.IsZero() {
+					// no reset known: the down beat carries a horizon, never a guessed reset
+					until = w.now().Add(friend.PauseBeatAhead)
+				}
 				said := words()
 				err := w.beatDown(ctx, server, name, active, until, reason, said)
 				if err == nil {

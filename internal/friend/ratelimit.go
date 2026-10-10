@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -64,13 +65,77 @@ var (
 	fundsLine     = regexp.MustCompile(`(?i)(?:status|code|error|http)[^\n0-9]{0,24}402\b|payment required|insufficient (?:balance|funds|[a-z ]{0,20}credits)|out of (?:funds|credits?)\b|credit balance is too low`)
 )
 
-// ProviderLimit reads the tail of a lane turn's output (the last LimitTail
-// bytes: a harness says it last) for a rate limit or out of funds, out of
-// funds first: OutOfFunds, RateLimited, or nil. A line with its reset beside
-// it ("Insufficient AI Credits ... will refresh 6:52 PM") is the harness's
-// own limit (Limits: down until the reset, then woken), never out of funds
-// here.
-func ProviderLimit(session, out string) error {
+// The kinds of a provider failure, classified once from a failed turn's text
+// and driven by kind afterwards, never by the text again (docs/SPEC-FRIEND.md,
+// a provider failure is typed): a rate limit (a 429), out of funds (a 402),
+// the harness's own usage limit with its reset, or the provider's refusal of
+// the session (adapter.go ProviderRefused).
+const (
+	FailureRateLimited  = "rate-limited"
+	FailureOutOfFunds   = "out-of-funds"
+	FailureUsageLimited = "usage-limited"
+	FailureRefused      = "refused"
+)
+
+// ProviderFailure is one attempt's provider failure as a typed record: its
+// kind, the HTTP status where the harness exposed it (429, 402), the wait the
+// provider named before another try (retry-after; zero when none is known; the
+// limit layer adds its slack to it), the provider's request id when the text
+// carries one, and the line that said it.
+type ProviderFailure struct {
+	Session    string
+	Kind       string
+	Status     int
+	RetryAfter time.Duration
+	RequestID  string
+	Reason     string
+}
+
+// IsLimit is whether the failure parks the limit layer: a rate limit, out of
+// funds and a usage limit are limits; the provider's refusal of the session is
+// not (adapter.go ProviderRefused).
+func (f ProviderFailure) IsLimit() bool {
+	return f.Kind == FailureRateLimited || f.Kind == FailureOutOfFunds || f.Kind == FailureUsageLimited
+}
+
+// RecordLine is the typed failure as the daemon's record says it: the kind,
+// the status and request id when the harness exposed them, the retry-after
+// (none when the provider named no reset), and the line.
+func (f ProviderFailure) RecordLine() string {
+	var b strings.Builder
+	b.WriteString("provider failure: kind=" + f.Kind)
+	if f.Status != 0 {
+		fmt.Fprintf(&b, " status=%d", f.Status)
+	}
+	if f.RetryAfter > 0 {
+		fmt.Fprintf(&b, " retry-after=%s", f.RetryAfter)
+	} else {
+		b.WriteString(" retry-after=none")
+	}
+	if f.RequestID != "" {
+		b.WriteString(" request-id=" + f.RequestID)
+	}
+	b.WriteString(" reason=" + oneLine(f.Reason, 200))
+	return b.String()
+}
+
+var (
+	failureStatus      = regexp.MustCompile(`(?i)(?:status(?:code)?|http|code)["':= ]*(\d{3})\b`)
+	failureStatusBare  = regexp.MustCompile(`\b(429|402)\b`)
+	failureRetryHeader = regexp.MustCompile(`(?i)retry[_ -]?after["':= ]+(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|ms)?\b`)
+	failureRetryIn     = regexp.MustCompile(`(?i)(?:try again|retry|reset|resets|available again|refresh)\w*\s+(?:after|in)\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|ms)?\b`)
+	failureResetsIn    = regexp.MustCompile(`"resets_in_seconds"\s*:\s*(\d+)`)
+	failureRequestID   = regexp.MustCompile(`(?i)(?:request[_ -]?id|x-request-id)["':= ]+([A-Za-z0-9._-]{4,})`)
+)
+
+// ClassifyProviderFailure reads the tail of a failed turn's output for a rate
+// limit or out of funds, out of funds first: the typed record, or false when
+// the text carries neither. A line with its reset beside it ("Insufficient AI
+// Credits ... will refresh 6:52 PM") is the harness's own limit (Limits: down
+// until the reset, then woken), never out of funds here. It is what
+// ProviderLimit answers as an error, and what the limit layer records and
+// parks the lanes on (Limits.Fail).
+func ClassifyProviderFailure(session, out string, now time.Time) (ProviderFailure, bool) {
 	tail := out
 	if len(tail) > LimitTail {
 		tail = tail[len(tail)-LimitTail:]
@@ -79,17 +144,89 @@ func ProviderLimit(session, out string) error {
 	for _, line := range strings.Split(tail, "\n") {
 		line = stripANSI(line)
 		if fundsLine.MatchString(line) {
-			if lim, found := ReadLimit(line, time.Time{}); found && lim.Limited {
+			if lim, found := ReadLimit(line, now); found && lim.Limited {
 				continue // a reset beside it: the harness's limit
 			}
-			return OutOfFunds{Session: session, Reason: oneLine(line, 200)}
+			return newProviderFailure(session, FailureOutOfFunds, line, tail), true
 		}
 		if rate == "" && rateLimitLine.MatchString(line) {
-			rate = oneLine(line, 200)
+			rate = line
 		}
 	}
 	if rate != "" {
-		return RateLimited{Session: session, Reason: rate}
+		return newProviderFailure(session, FailureRateLimited, rate, tail), true
+	}
+	return ProviderFailure{}, false
+}
+
+// newProviderFailure is a line that said the failure as its typed record: its
+// kind and reason, and, from the whole tail, its HTTP status, the retry-after
+// it named and its request id (a header or a field on a line of its own).
+func newProviderFailure(session, kind, line, tail string) ProviderFailure {
+	f := ProviderFailure{Session: session, Kind: kind, Reason: oneLine(line, 200)}
+	if m := failureStatus.FindStringSubmatch(tail); m != nil {
+		f.Status, _ = strconv.Atoi(m[1]) // ignored: three digits always parse
+	} else if m := failureStatusBare.FindStringSubmatch(tail); m != nil {
+		f.Status, _ = strconv.Atoi(m[1]) // ignored: three digits always parse
+	}
+	f.RetryAfter = parseRetryAfter(tail)
+	if m := failureRequestID.FindStringSubmatch(tail); m != nil {
+		f.RequestID = m[1]
+	}
+	return f
+}
+
+// parseRetryAfter is the wait the line names before another try: a seconds
+// count in a 429 body, a retry-after header, or a "try again/reset in N unit"
+// phrase; zero when none is known.
+func parseRetryAfter(line string) time.Duration {
+	if m := failureResetsIn.FindStringSubmatch(line); m != nil {
+		n, _ := strconv.Atoi(m[1]) // ignored: digits always parse
+		return time.Duration(n) * time.Second
+	}
+	for _, re := range []*regexp.Regexp{failureRetryHeader, failureRetryIn} {
+		if m := re.FindStringSubmatch(line); m != nil {
+			return retryUnit(m[1], m[2])
+		}
+	}
+	return 0
+}
+
+// retryUnit is a count and its unit as a duration; a unit the text does not
+// name or one that does not parse is seconds.
+func retryUnit(n, unit string) time.Duration {
+	f, err := strconv.ParseFloat(n, 64)
+	if err != nil {
+		return 0
+	}
+	u := time.Second
+	switch strings.ToLower(unit) {
+	case "minutes", "minute", "mins", "min", "m":
+		u = time.Minute
+	case "hours", "hour", "hrs", "hr", "h":
+		u = time.Hour
+	case "ms":
+		u = time.Millisecond
+	}
+	return time.Duration(f * float64(u))
+}
+
+// ProviderLimit reads the tail of a lane turn's output (the last LimitTail
+// bytes: a harness says it last) for a rate limit or out of funds, out of
+// funds first: OutOfFunds, RateLimited, or nil. A line with its reset beside
+// it ("Insufficient AI Credits ... will refresh 6:52 PM") is the harness's
+// own limit (Limits: down until the reset, then woken), never out of funds
+// here.
+func ProviderLimit(session, out string) error {
+	f, ok := ClassifyProviderFailure(session, out, time.Time{})
+	if !ok {
+		return nil
+	}
+	switch f.Kind {
+	case FailureOutOfFunds:
+		return OutOfFunds{Session: session, Reason: f.Reason}
+	case FailureRateLimited:
+		return RateLimited{Session: session, Reason: f.Reason}
 	}
 	return nil
 }

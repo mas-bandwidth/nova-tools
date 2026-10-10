@@ -83,7 +83,9 @@ func TestAReplyThatTalksOfLimitsIsNoLimit(t *testing.T) {
 		_, _, limited := l.Limited()
 		assert.Equal(t, tc.limits, limited, tc.out)
 		if tc.limits {
-			assert.Equal(t, KindCredits, l.Kind())
+			// the provider's own out-of-funds wording is typed before the
+			// harness's parse (a-provider-failure-is-typed.w1)
+			assert.Equal(t, FailureOutOfFunds, l.Kind())
 			assert.Equal(t, 1, downs)
 		}
 	}
