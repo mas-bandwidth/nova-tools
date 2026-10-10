@@ -1891,7 +1891,7 @@ jobs:
         run: |
           echo "a fork's pull request: the self-hosted CL-tier jobs do not run on fork code, so ci-ok is red"
           exit 1
-      - name: every CL-tier job succeeded (push to dev: no hosted suite)
+      - name: every CL-tier job succeeded (push to dev, no hosted suite)
         if: always() && github.event_name == 'push' && github.ref != 'refs/heads/main'
         shell: bash
         run: |
