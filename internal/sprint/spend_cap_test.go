@@ -130,6 +130,28 @@ func TestAFriendPastHerHourlyCapIsCapped(t *testing.T) {
 	}
 }
 
+// docs/SPEC-SPRINT.md, spend-circuit-breakerb-bb.w8: a friend whose cost over the current
+// clock hour has reached her cap is dealt no card until the next hour, and one judgment per
+// episode goes to the coordinator, filed under friend-cap:<name>. The clock is the
+// snapshot's, injected.
+func TestAFriendPastHerHourlyCapIsDealtNoCardAndJudged(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("only friend fay"))
+	u := cardcost.NoUsage()
+	u.Predicted = "10.5"
+	c := Consumer{Kind: "work", Card: "fay.w1", Attempt: 1, Gen: 1, Who: FriendRow("fay"), End: "finished", At: stamp(t0), Key: "fay.w1#g1", Usage: u}
+	w.s.Work.Put(&Card{ID: "fay", Row: "s1", Col: DoneOK, Fields: map[string]string{FieldCostRecord + c.Key: c.line()}})
+	seats := []FriendSeat{{Name: "fay", Width: 2, Status: Up, Class: "flash,pro"}}
+	p, _ := TickDeal(w.s, TickReq{Friends: seats, FriendCaps: map[string]string{"fay": ""}})
+	w.must(p)
+	require.Nil(t, w.s.Fleet.Card("s1-1.w1"), "no work card is dealt to a friend past her cap")
+	require.Equal(t, Ready, w.s.StateOf("s1-1"), "the card waits ready for her, dealt no machine")
+	js := w.notesOf(NFriendCap)
+	require.Len(t, js, 1, "one judgment of the episode: %v", w.notes)
+	assert.Equal(t, FriendCapSubject("fay"), js[0].Stream)
+	assert.Contains(t, js[0].What, "cap reached: $10.50 of $10.00 this hour", "money to the cent, rounded up")
+}
+
 func mapKeys(m map[string]string) []string {
 	var out []string
 	for k := range m {
