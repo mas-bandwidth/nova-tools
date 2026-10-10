@@ -984,7 +984,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	}
 	var turns []turn
 	limited := false
-	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+	w.exec = func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
 		text := args[len(args)-1]
 		p, _, _ := friend.ReadPresence(state) // ignored: a missing file reads as the zero presence, which the test sees
 		mu.Lock()
@@ -1003,7 +1003,13 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 			if !limited {
 				limited = true
 				turns = append(turns, turn{now, "limit", p})
-				return "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", 1, nil
+				// the harness says its credit refusal on its own stderr: the daemon
+				// never reads credits from the model's stdout
+				const refusal = "Insufficient AI Credits. Your credits will refresh in 10 minutes.\n"
+				if cw := friend.CapturedStderr(ctx); cw != nil {
+					_, _ = cw.Write([]byte(refusal))
+				}
+				return "working\n" + refusal, 1, nil
 			}
 			turns = append(turns, turn{now, "message", p})
 			cancel()

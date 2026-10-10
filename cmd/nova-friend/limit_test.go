@@ -278,6 +278,9 @@ func TestTheHarnessStderrIsCapturedApartFromTheModelsStdout(t *testing.T) {
 // through the actual fl.Watch / watched path: a command printing "Credit balance is too low"
 // on stdout and exiting 1 does not down the friend (fl.Limited() == false, 0 downs).
 // Conversely, when the refusal is on stderr with exit 1, the friend is marked down.
+// A refusal's own wording in the model's stdout -- "Insufficient AI Credits. Your credits
+// will refresh 6:52 PM." -- downs the friend at no exit either, with empty stderr: credits
+// are read from the harness's stderr and the runner log alone.
 func TestModelStdoutPlusExitOneThroughWatchedPathDoesNotDownFriend(t *testing.T) {
 	t.Parallel()
 
@@ -287,6 +290,12 @@ func TestModelStdoutPlusExitOneThroughWatchedPathDoesNotDownFriend(t *testing.T)
 
 	stderrScript := filepath.Join(tmp, "fail-stderr")
 	require.NoError(t, testbin.WriteExecutable(stderrScript, []byte("#!/bin/sh\nprintf 'Credit balance is too low\\n' >&2\nexit 1\n"), 0o755))
+
+	agFailScript := filepath.Join(tmp, "ag-fail-stdout")
+	require.NoError(t, testbin.WriteExecutable(agFailScript, []byte("#!/bin/sh\nprintf 'Insufficient AI Credits. Your credits will refresh 6:52 PM.\\n'\nexit 1\n"), 0o755))
+
+	agOKScript := filepath.Join(tmp, "ag-ok-stdout")
+	require.NoError(t, testbin.WriteExecutable(agOKScript, []byte("#!/bin/sh\nprintf 'Insufficient AI Credits. Your credits will refresh 6:52 PM.\\n'\n"), 0o755))
 
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
@@ -374,5 +383,59 @@ func TestModelStdoutPlusExitOneThroughWatchedPathDoesNotDownFriend(t *testing.T)
 		assert.Equal(t, 1, downs)
 		assert.True(t, until.After(now))
 		assert.Contains(t, reason, "Credit balance is too low")
+	}
+
+	// 3. Run through the same path with a real refusal's own wording on STDOUT, at
+	// exit 1 with empty stderr and at exit 0: the model's stdout is never a credit
+	// refusal, whatever the exit is.
+	{
+		downs := 0
+		fl := &friend.Limits{
+			Now:     func() time.Time { return now },
+			Harness: "antigravity",
+			Down:    func(time.Time, string) { downs++ },
+		}
+		rw := &RefusalWatch{Harness: "antigravity", Now: func() time.Time { return now }}
+		rwDowns := 0
+		rw.Down = func(r Refusal) {
+			rwDowns++
+			fl.Refuse(r.Kind, DownReason(r), r.Until)
+		}
+
+		limitWatch := fl.Watch(friend.RealExec)
+		watched := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+			var harnessErr strings.Builder
+			ctx = friend.WithStderrCapture(ctx, &harnessErr)
+			out, exit, err := limitWatch(ctx, d, prog, args, stdin)
+			if exit != 0 || err != nil {
+				if _, _, alreadyHeld := fl.Limited(); !alreadyHeld {
+					logDir := d
+					if logDir == "" {
+						logDir = tmp
+					}
+					rw.Observe(LaneText{Stderr: harnessErr.String(), Log: friend.RunnerLog(logDir)}, exit)
+				}
+			}
+			return out, exit, err
+		}
+
+		const line = "Insufficient AI Credits. Your credits will refresh 6:52 PM."
+		out, exit, err := watched(context.Background(), tmp, agFailScript, nil, "")
+		require.NoError(t, err)
+		require.Equal(t, 1, exit)
+		require.Contains(t, out, line, "the joined output carries the model's stdout")
+		_, _, limited := fl.Limited()
+		assert.False(t, limited, "stdout with the refusal's own wording and exit 1, empty stderr, must not down the friend")
+		assert.Zero(t, downs, "no downs from Limits")
+		assert.Zero(t, rwDowns, "no downs from RefusalWatch")
+
+		out, exit, err = watched(context.Background(), tmp, agOKScript, nil, "")
+		require.NoError(t, err)
+		require.Equal(t, 0, exit)
+		require.Contains(t, out, line)
+		_, _, limited = fl.Limited()
+		assert.False(t, limited, "and at exit 0 it must not either")
+		assert.Zero(t, downs)
+		assert.Zero(t, rwDowns)
 	}
 }

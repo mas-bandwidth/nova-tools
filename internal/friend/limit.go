@@ -311,10 +311,6 @@ func (l *Limits) Watch(run Exec) Exec {
 	}
 }
 
-func (l *Limits) see(out string, failed bool) {
-	l.seeEvidence(out, "", "", failed)
-}
-
 func (l *Limits) seeEvidence(out, stderr, runnerLog string, failed bool) {
 	now := l.Now()
 	lim, found := ReadLimit(out, now)
@@ -324,12 +320,19 @@ func (l *Limits) seeEvidence(out, stderr, runnerLog string, failed bool) {
 	if found && lim.Limited {
 		kind = limitKindOf(lim.Reason)
 		if kind == KindCredits {
-			lim.Reason = Redact(lim.Reason)
+			// the joined output is the model's stdout (a head of the harness's stderr
+			// rides after it on a failure, RealExec): a credit line in it is the model's
+			// words -- a brief, a report or a page it read may carry one -- and is
+			// discarded, at any exit, never a down. Credits are read only from the
+			// harness's own stderr and the runner log, below (docs/SPEC-FRIEND.md,
+			// every harness's credit and quota refusal).
+			lim, found, kind = Limit{}, false, ""
 		}
 	}
 
 	if !strings.Contains(out, `"rate_limit_event"`) && failed {
-		// Non-credit limit from ParseLimit on out
+		// the harness's own wording of a failed turn, its usage limit only: a credit
+		// hit in the joined output is the model's words (above)
 		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok && hit.Kind == KindLimit {
 			lim, found, kind, named = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind, hit.Named
 		}
