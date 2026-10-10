@@ -77,6 +77,9 @@ type friendEntry struct {
 	// The cost card adds the field; until it exists this is empty, which is a
 	// subscription.
 	Billing string `json:"billing,omitempty"`
+	// Session is her row's session, the one her daemon delivers into as nova-friend
+	// rebind or install last recorded it, which her beat answers (row_session=).
+	Session string `json:"session,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -108,6 +111,8 @@ type FriendSpec struct {
 	// lists the dealer reads (sprint.Split; empty for no restriction).
 	Streams string
 	Kinds   string
+	// Session is her row's session ("" when it names none).
+	Session string
 }
 
 // RestrictionWhy explains why the configured stream and kind do not fit this friend: ""
@@ -223,19 +228,23 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		return nil, nil, nil, err
 	}
 	want := map[string]FriendSpec{}
+	rebound := map[string]string{} // a session that was already set and changed: the old presence is not evidence
 	rosterChanged := false
 	for _, s := range specs {
 		want[s.Name] = s
 		e, had := r[s.Name]
+		if had && e.Session != "" && e.Session != s.Session {
+			rebound[s.Name] = s.Session
+		}
 		switch {
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds || e.Session != s.Session:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds, e.Session = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds, s.Session
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -263,7 +272,47 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 			return added, removed, updated, err
 		}
 	}
+	for _, n := range slices.Sorted(maps.Keys(rebound)) {
+		if err := st.dropReboundProof(ctx, kv, n, rebound[n]); err != nil {
+			return added, removed, updated, err
+		}
+	}
 	return added, removed, updated, nil
+}
+
+// dropReboundProof clears every presence signal of a friend after her roster
+// session changed (nova-friend rebind, carried by friend sync). The beat
+// record's pong, the friend-health session pong, and the friend-finish time
+// are the old session's. FriendEvidence reads the pong or the finish as up
+// inside its window, so leaving either would keep her eligible before a
+// check through the new session. A record that cannot be read holds no proof.
+func (st *Store) dropReboundProof(ctx context.Context, kv KV, friend, session string) error {
+	// Health and finish have no session of their own. Drop them even when she
+	// has no beat: a health pong or a finish alone reads up.
+	if _, err := st.B.DeleteKeys(ctx, []string{
+		st.Names.Key(friendHealthKey(friend)),
+		st.Names.Key(friendFinishKey(friend)),
+	}); err != nil {
+		return err
+	}
+	raw, ok, err := kv.GetKey(ctx, friendBeatKey(friend))
+	if err != nil || !ok {
+		return err
+	}
+	var rec friendBeatRecord
+	if json.Unmarshal([]byte(raw), &rec) != nil {
+		return nil
+	}
+	rec.Pong = time.Time{}
+	rec.Asked = nil
+	rec.NoProof = ""
+	rec.Beat.Proof = time.Time{}
+	rec.Session = session
+	out, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, friendBeatKey(friend), string(out))
 }
 
 // FriendBeat writes one beat of the friend at the store's clock, to the
@@ -285,13 +334,19 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 // friendBeatRecord is a friend's beat as kept: the beat; her session's last proof, the
 // server's time of the last answer that named a check her daemon asked (sprint.ProveBeat;
 // zero: none), which the friends' rule and the coordinator's pass read; the checks still
-// answerable; and the last beat with no proof, and why. A reader of the beat alone reads
-// the record as a sprint.Beat, its Proof the record's pong.
+// answerable; and the last beat with no proof, and why. Session is the roster
+// session that proof belongs to: a rebind to another session drops it. A reader
+// of the beat alone reads the record as a sprint.Beat, its Proof the record's pong.
 type friendBeatRecord struct {
 	sprint.Beat
 	Pong    time.Time           `json:"pong,omitzero"`
 	Asked   []sprint.AskedCheck `json:"asked,omitempty"`
 	NoProof string              `json:"no_proof,omitempty"`
+	Session string              `json:"session,omitempty"`
+	// Target is her daemon's word that the session it names is gone (friend beat
+	// --target-invalid), nil while it is not: her row reads TargetInvalid. A beat
+	// that does not say it clears the last one.
+	Target *GoneTarget `json:"target_invalid,omitempty"`
 }
 
 // BeatProof is what one beat's proof words came to: proved (her session answered a check
@@ -302,11 +357,49 @@ type BeatProof struct {
 	Proof   time.Time
 }
 
+// TargetInvalid is a friend's status while her daemon's beat says the session it
+// delivers into is gone (archived, deleted, moved, or not the one her row names;
+// docs/SPEC-FRIEND.md, "A gone session target"): its own word, never down, since the
+// remedy is hers, a rebind, and not a wait. She is not up, so nothing is dealt to her.
+const TargetInvalid = "target-invalid"
+
+// GoneTarget is the session her daemon found gone, as her beat says it: the id and the
+// state found (with its detail).
+type GoneTarget struct {
+	Session string `json:"session"`
+	State   string `json:"state,omitempty"`
+}
+
+// rebindLine is the command a friend runs to name her session again (nova-friend
+// rebind; friend.RebindLine says the same).
+func rebindLine(friend string) string {
+	return "nova-friend rebind --as " + friend + " --session <id>"
+}
+
 // FriendBeatProof is FriendBeatReport with the beat's proof words (sprint.BeatWords: the
 // check her daemon asked, the check her session answered, the daemon's run): the record's
 // checks and proof are carried from the last beat and stepped by sprint.ProveBeat at the
-// store's clock, so only an answer to a check asked proves, once.
+// store's clock, so only an answer to a check asked proves, once. A beat with no
+// target-invalid word clears one the last beat said.
 func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, w sprint.BeatWords) (sprint.Beat, BeatProof, error) {
+	return st.FriendBeatFull(ctx, friend, rep, load, w, nil)
+}
+
+// FriendBeatGone is FriendBeatReport with her session's last pong as a legacy time
+// (zero: none) and her daemon's word that the session it names is gone (nil: it is
+// not), kept on the beat until the next replaces it.
+func (st *Store) FriendBeatGone(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, pong time.Time, gone *GoneTarget) (sprint.Beat, error) {
+	w := sprint.BeatWords{}
+	if !pong.IsZero() {
+		w.Legacy = pong
+	}
+	b, _, err := st.FriendBeatFull(ctx, friend, rep, load, w, gone)
+	return b, err
+}
+
+// FriendBeatFull is FriendBeatProof with the target-invalid word (nil: the session
+// is not gone, and a word the last beat said is cleared).
+func (st *Store) FriendBeatFull(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, w sprint.BeatWords, gone *GoneTarget) (sprint.Beat, BeatProof, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return sprint.Beat{}, BeatProof{}, err
@@ -331,8 +424,16 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
-	rec := friendBeatRecord{Beat: b, Pong: prev.Pong, NoProof: prev.NoProof}
-	asked, proved, why := sprint.ProveBeat(prev.Asked, w, now)
+	// A proof recorded for another session is not evidence after a rebind.
+	// An empty recorded session is a beat from before this field, and keeps
+	// its proof so a deploy does not put the fleet down.
+	rosterSession := r[friend].Session
+	pong, noProof, askedPrev := prev.Pong, prev.NoProof, prev.Asked
+	if prev.Session != "" && prev.Session != rosterSession {
+		pong, noProof, askedPrev = time.Time{}, "", nil
+	}
+	rec := friendBeatRecord{Beat: b, Pong: pong, NoProof: noProof, Target: gone, Session: rosterSession}
+	asked, proved, why := sprint.ProveBeat(askedPrev, w, now)
 	rec.Asked = asked
 	if proved {
 		rec.Pong, rec.NoProof = now, ""
@@ -451,13 +552,13 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 	status := map[string]string{}
 	whys := map[string]string{}
 	for i, n := range names {
-		var b sprint.Beat
+		var rec friendBeatRecord
 		var h sprint.FriendHealth
 		var fin time.Time
 		if 3*i+2 < len(oks) {
 			if oks[3*i] {
 				// ignored: an unreadable record is no beat, which the next beat replaces
-				_ = json.Unmarshal([]byte(vals[3*i]), &b)
+				_ = json.Unmarshal([]byte(vals[3*i]), &rec)
 			}
 			if oks[3*i+1] {
 				// ignored: an unreadable record is no observation, which the next replaces
@@ -468,11 +569,22 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 				fin, _ = time.Parse(time.RFC3339, vals[3*i+2])
 			}
 		}
+		b := rec.Beat
+		// The record's outer pong owns the json name "pong", the same name as Beat.Proof.
+		// A reader of the beat alone fills Proof; a reader of the record fills Pong.
+		// Status reads the beat, so the proof it sees is the record's pong.
+		b.Proof = rec.Pong
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
 		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
+		}
+		if g := rec.Target; g != nil && !r[n].Held { // her named session is gone: not down, and not up
+			row.Status = TargetInvalid
+			row.Evidence = fmt.Sprintf("her daemon's beat %s ago says session %s is gone (%s); nothing is delivered until she rebinds: %s", now.Sub(b.At).Truncate(time.Second), g.Session, g.State, rebindLine(n))
+			row.Reason = "session " + g.Session + " " + g.State
+			whys[n] = "her session target is invalid: " + g.Session + " is " + g.State + "; " + rebindLine(n)
 		}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
@@ -740,7 +852,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds, Session: e.Session}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

@@ -354,6 +354,16 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	if err := write(path, []byte(a.Plist())); err != nil {
 		return path, nil, err
 	}
+	ran, err = Load(ctx, a, path, uid, run, wait)
+	return path, ran, err
+}
+
+// Load boots out whatever label runs now (nothing loaded is fine), waits until
+// launchd no longer holds the label (WaitReleased), and bootstraps the plist
+// at path into the user's domain, sent again after wait() while launchd
+// answers EIO. It answers the commands it ran. It is Install's tail and the
+// rebind verb's reload, after the plist was written in place.
+func Load(ctx context.Context, a Agent, path string, uid int, run Launchctl, wait func()) (ran []string, err error) {
 	domain := fmt.Sprintf("gui/%d", uid)
 	bootout := []string{"bootout", domain + "/" + a.Label()}
 	ran = append(ran, "launchctl "+strings.Join(bootout, " "))
@@ -368,17 +378,17 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		ran = append(ran, fmt.Sprintf("launchctl print %s (every %s until launchd released it: %s)", target, ReleasePoll, waited))
 	}
 	if err != nil {
-		return path, ran, err
+		return ran, err
 	}
 	bootstrap := []string{"bootstrap", domain, path}
 	for try := 1; ; try++ {
 		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
 		out, err := run(ctx, bootstrap...)
 		if err == nil {
-			return path, ran, nil
+			return ran, nil
 		}
 		if try == BootstrapTries || !(strings.Contains(out, "Input/output error") || strings.Contains(out, "Operation already in progress")) {
-			return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
+			return ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
 		}
 		wait()
 	}
