@@ -65,7 +65,9 @@
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
   (fix "worker-writes-result-before-deadline" :release "v1.2.6" :status "planned"
-   :title "A worker writes its result before the route deadline"
-   :text "Children on some direct routes work to the route deadline and never write their result file;
-    give the route a longer deadline or reserve a margin to write the result."
-   :origin "fault inventory, 2026-10-10")))
+   :title "A child ended at its deadline with a commit and no result gets a report"
+   :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
+    to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the
+    head when the deadline ended it with commits in the repository and no report of its own.
+    The report has no findings head, so it is never scored as the child's own work."
+   :origin "fault 9, 2026-10-10")))
