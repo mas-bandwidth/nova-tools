@@ -504,3 +504,20 @@ func TestSpellingDirRefusesASymlinkedMarkdownFileInsteadOfReadingIt(t *testing.T
 	require.ErrorContains(t, err, "not a regular file", "red before: colour finding from the outside file, got %+v err=%v", res, err)
 	assert.Empty(t, res.Findings, "symlink was read: %+v", res.Findings)
 }
+
+// TestSpellingColumnIsOneBased checks that columns are reported 1-based,
+// as editors do (not 0-based like the misspell library internally uses).
+func TestSpellingColumnIsOneBased(t *testing.T) {
+	t.Parallel()
+
+	text := "the recieve mail.\n"
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
+	require.NoError(t, err)
+	require.Len(t, findings, 1, "got %d findings, want 1", len(findings))
+
+	// "recieve" starts at column 5 (1-based): "the " = 4 chars, then "recieve" starts at position 5
+	// In 0-based indexing, it would be column 4
+	assert.Equal(t, 5, findings[0].Column, "column = %d, want 5 (1-based)", findings[0].Column)
+	assert.Equal(t, "recieve", findings[0].Original)
+	assert.Equal(t, "receive", findings[0].Replacement)
+}
