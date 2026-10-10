@@ -522,8 +522,9 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 			switch {
 			case fate.hold:
 				if fate.start {
-					// a come-back pin whose friend's absence the sprint cannot time:
-					// start the clock on the card and keep it for her this tick
+					// a pin whose friend is held or full (or a come-back pin down)
+					// and the sprint cannot time: start the clock on the card and
+					// keep it for her this tick
 					p.Units = append(p.Units, pinClockUnit(s, c, name, fate.why))
 				}
 				continue // inside the pin wait: she keeps it, the fleet does not
@@ -932,9 +933,9 @@ type pinFate struct {
 	d     time.Duration
 	hold  bool
 	waive bool
-	// start says the deal must stamp the clock (FieldPinSince): a come-back pin whose
-	// friend is down, held or full with an age the sprint cannot tell. It waits this
-	// tick and the bound runs from the stamp.
+	// start says the deal must stamp the clock (FieldPinSince): a pin whose friend is
+	// held or full (or a come-back pin down) with an age the sprint cannot tell. It
+	// waits this tick and the bound runs from the stamp.
 	start bool
 }
 
@@ -980,8 +981,8 @@ func pinHolds(s *Snapshot, c *Card, seats []FriendSeat) bool {
 }
 
 // pinClockUnit starts the pin clock on the primary (FieldPinSince now) and says what it
-// waits for and how long: a come-back pin whose friend is down, held or full with an age
-// the sprint cannot tell. The deal stamps it once and waits this tick.
+// waits for and how long: a pin whose friend is held or full (or a come-back pin down)
+// with an age the sprint cannot tell. The deal stamps it once and waits this tick.
 func pinClockUnit(s *Snapshot, c *Card, name, why string) Unit {
 	return Unit{Key: c.ID, Stream: c.Row,
 		Changes: []Change{change(Work, setEntry(c, map[string]string{FieldPinSince: stamp(s.Now)}))},
@@ -1035,10 +1036,12 @@ func pinBlockWhy(s *Snapshot, seats []FriendSeat, name string, fullAtStart map[s
 }
 
 // pinDecide times the block. A known age inside PinWait holds, a negative age
-// holds as zero, and a first deal's unknown age is already past: the story uses
-// PinWait. A come-back pin's unknown age starts the clock instead (start): it holds
-// this tick and the bound runs from the stamp, so a rework, return or redo is never
-// a hole while the sprint cannot tell how long she has been unable.
+// holds as zero, and a first deal's unknown down age is already past: the story uses
+// PinWait. A come-back pin's unknown age, and a first deal's unknown full or held
+// age, start the clock instead (start): they hold this tick and the bound runs from
+// the stamp, so a rework, return or redo is never a hole, and a newly full or held
+// friend keeps a first card inside the bound while the sprint cannot tell how long
+// she has been unable.
 func pinDecide(s *Snapshot, c *Card, seats []FriendSeat, name, why string) pinFate {
 	d, known := pinBlockedFor(s, c, seats, name, why)
 	if known && d < 0 {
@@ -1049,7 +1052,7 @@ func pinDecide(s *Snapshot, c *Card, seats []FriendSeat, name, why string) pinFa
 		return pinFate{why: why, d: d, hold: true}
 	}
 	if !known {
-		if ReworkPinned(c) {
+		if ReworkPinned(c) || why == "full" || why == "held" {
 			return pinFate{why: why, hold: true, start: true}
 		}
 		d = bound

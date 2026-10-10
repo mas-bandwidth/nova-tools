@@ -518,9 +518,11 @@ and the machines' deal leaves it. A width of 0, a tier or restriction she does
 not take, a friend the card has left, and a row filled by an earlier card of the
 same pass are not that clock: the card is offered on at once, as a preference
 always was. Once the known wait is longer than the pin wait the pin is waived. A
-first deal whose friend's absence the sprint cannot time is offered on at once, as
-a preference always was; a card come back to her starts the clock instead
-(`pin_since`), so it waits the bound from the tick the deal first found her unable.
+first deal whose friend's down absence the sprint cannot time is offered on at
+once, as a preference always was; a first deal whose friend is full or held with
+an age the sprint cannot tell, and a card come back to her, start the clock
+instead (`pin_since`), so they wait the bound from the tick the deal first found
+her unable.
 The card is dealt to the next unit of its tier as if unpinned. The unit's story line
 is `pin to <friend> waived after <d>: she is <down|held|full>; dealt to <unit>`.
 `who` stays `friend.<name>` (`preferred`), so the next attempt, and the next

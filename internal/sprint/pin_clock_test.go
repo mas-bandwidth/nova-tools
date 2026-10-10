@@ -171,6 +171,48 @@ func TestPinFullAndHeldUseTheClock(t *testing.T) {
 	assert.Empty(t, pinStory(p))
 }
 
+func TestPinFullStartsTheClockAndWaitsInsideTheBound(t *testing.T) {
+	t.Parallel()
+	fill := func(w *world) {
+		t.Helper()
+		row := FriendRow("amy")
+		if !w.s.Fleet.HasRow(row) {
+			w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), row))
+		}
+		for i, id := range []string{"fill-a", "fill-b"} {
+			w.s.Fleet.Put(&Card{ID: id, Row: row, Col: Ready, Score: float64(i + 1), Rev: 1, Fields: map[string]string{
+				"kind": "work", "dealt": stamp(w.s.Now), "untaken_since": stamp(w.s.Now),
+			}})
+		}
+	}
+	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}
+	bob := FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"}
+
+	w := friendWorld(t, friendBrief("friend amy"))
+	fill(w)
+
+	// her full age is unknown on the first deal: the clock starts on the card and
+	// keeps it for her this tick
+	p := dealWith(w, amy, bob)
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
+	assert.Nil(t, w.s.Fleet.Card("s1-1.w1"))
+	assert.Equal(t, stamp(w.s.Now), w.s.Primary("s1-1").F(FieldPinSince), "the clock starts on the card")
+	assert.Contains(t, pinWaitStory(p), "waits ready for friend amy (she is full)")
+
+	// inside the bound from the started clock it still waits
+	p = dealWith(w, amy, bob)
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
+	assert.Empty(t, pinStory(p))
+
+	// past the bound the started clock waives the pin: dealt on, WHO kept
+	w.s.Now = w.s.Now.Add(PinWaitDefault + time.Minute)
+	p = dealWith(w, amy, bob)
+	require.NotNil(t, w.s.Fleet.Card("s1-1.w1"))
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row)
+	assert.Contains(t, pinStory(p), "pin to amy waived after 31m0s: she is full; dealt to friend.bob")
+	assert.Equal(t, FriendRow("amy"), w.s.Primary("s1-1").F(FieldWho), "the WHO line stays as her preference")
+}
+
 func TestPinUnknownAbsenceWaivesAndAShortPinSinceHolds(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"))
