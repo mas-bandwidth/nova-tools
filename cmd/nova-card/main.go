@@ -637,7 +637,7 @@ func gitFileCommits(dir, file string) ([]string, error) {
 }
 
 func commitPaths(dir, sha string) ([]string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, "diff-tree", "--root", "--first-parent", "--no-renames", "--no-commit-id", "--name-only", "-r", "-z", sha)
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, "diff-tree", "-m", "--root", "--first-parent", "--no-renames", "--no-commit-id", "--name-only", "-r", "-z", sha)
 	if err != nil {
 		return nil, fmt.Errorf("git diff-tree: %s", strings.TrimSpace(string(res.Stderr)))
 	}

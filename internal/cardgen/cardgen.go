@@ -435,7 +435,7 @@ func ledgerTask(l Ledger, c Card) string {
 // every other card's test is red before the change and green after it.
 func stopCondition(c Card) string {
 	if c.ReLand {
-		return "the exact commit intent is present on this branch and the STEP 4 gate passes"
+		return "the exact commit intent is present on this branch"
 	}
 	if c.Kind != swarm.LedgerKind {
 		return "the test " + testName(c.Test) + " is red before the change and green after it"

@@ -47,6 +47,8 @@ func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
 	require.Contains(t, string(first), "go test -count=1 -timeout 600s ./cmd/a/ ./internal/ci/")
 	require.Contains(t, string(second), "go test -count=1 -timeout 600s ./internal/b/ ./internal/ci/")
 	require.Contains(t, string(first), "TEST: internal/ci Test")
+	require.Contains(t, string(first), "STOP: the exact commit intent is present on this branch, and the STEP 4 gate passes")
+	require.NotContains(t, string(first), "gate passes, and the STEP 4 gate passes", "the gate clause is appended once")
 	exit, stdout, stderr = runCard("generate", "--from", "commits", "--range", base+"..HEAD", "--paths", "cmd/a/*.go", "--repo-dir", dir, "--out", filepath.Join(t.TempDir(), "filtered"), "--dry-run")
 	require.Zero(t, exit, "stdout: %s stderr: %s", stdout, stderr)
 	require.Contains(t, stdout, "cards=1 waves=1 tier=pro")
@@ -59,6 +61,35 @@ func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
 	require.Zero(t, exit, "stdout: %s stderr: %s", stdout, stderr)
 	require.Contains(t, stdout, "land-1\tcmd/a/a.go")
 	require.Contains(t, stdout, "land-2\tinternal/b/b.go")
+
+	// A merge commit is the exact input re-land exists for: the tree's landed
+	// commits are merges, where `land <stream> (<card>)` has two parents. git
+	// diff-tree prints nothing for a merge without -m, so commitPaths asks for the
+	// first-parent diff; without it every merge has no paths and no brief.
+	mergeDir, mgit := fixtureCheckout(t, map[string]string{
+		"base.txt":               "base\n",
+		"internal/ci/ci_test.go": "package ci\nimport \"testing\"\nfunc TestCI(t *testing.T) {}\n",
+	})
+	mergeBase := mgit("rev-parse", "HEAD")
+	mgit("checkout", "-q", "-b", "side")
+	sidePath := filepath.Join(mergeDir, "internal", "side", "side.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(sidePath), 0o755))
+	require.NoError(t, os.WriteFile(sidePath, []byte("package side\n"), 0o644))
+	mgit("add", "internal/side/side.go")
+	commitFixture(t, mergeDir, "side adds internal/side/side.go")
+	mgit("checkout", "-q", "dev")
+	mgit("merge", "-q", "--no-ff", "--no-commit", "side")
+	mergeOnly := filepath.Join(mergeDir, "cmd", "mergeonly", "mergeonly.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(mergeOnly), 0o755))
+	require.NoError(t, os.WriteFile(mergeOnly, []byte("package mergeonly\n"), 0o644))
+	mgit("add", "cmd/mergeonly/mergeonly.go")
+	commitFixture(t, mergeDir, "merge side adds cmd/mergeonly/mergeonly.go")
+	mergeOut := filepath.Join(t.TempDir(), "merged")
+	mergeExit, mergeStdout, mergeStderr := runCard("generate", "--from", "commits", "--range", mergeBase+"..HEAD", "--repo-dir", mergeDir, "--out", mergeOut)
+	require.Zero(t, mergeExit, "stdout: %s\nstderr: %s", mergeStdout, mergeStderr)
+	mergeManifest, err := os.ReadFile(filepath.Join(mergeOut, "manifest.tsv"))
+	require.NoError(t, err)
+	require.Contains(t, string(mergeManifest), "cmd/mergeonly/mergeonly.go", "the merge's first-parent files become a brief")
 }
 
 func commitFixture(t *testing.T, dir, message string) {
