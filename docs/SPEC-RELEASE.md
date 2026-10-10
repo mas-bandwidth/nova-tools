@@ -821,7 +821,8 @@ One numbered line per test; where one test holds several behaviours, they share 
 69. `TestCutAcceptsCertifiedCommit` — `cut` accepts a commit whose latest certification run completed with success.
 70. `TestCutDispatchCertification` — `--dispatch-certification` dispatches `certification.yml` once on the fake and waits for completion.
 71. `TestCertificationNotCoveredByWaivers` — dogfood, journey, and spend waivers never cover certification; an uncertified or failing commit is refused even with all waivers granted.
-72. `TestWorkflowLintPRCIIncludesEveryFunctionalShard` — workflow lint reads `ci.yml`, `certification.yml`, and `release.yml` and asserts PR CI includes every functional shard the merge group runs.
+72. `TestWorkflowLintPRCIIncludesEveryFunctionalShard` — workflow lint reads `ci.yml`, `certification.yml`, and `release.yml` and asserts PR CI includes every functional shard the merge group runs: one `functional` job whose matrix is `test-packages`'s `functional` output and whose `if` runs on pull_request (head-repo guarded) and merge_group.
+73. `TestCertificationIsTheNewestRunNotAnOlderGreen` — the certification gate is the check `release.yml` makes: every certification run completed and the newest `updated_at` group uniformly green; an older green does not vouch for a newer red or a newer still-running run, and two runs sharing the latest stamp must both be green.
 
 Demanded, and proven by no test yet (8):
 
