@@ -232,3 +232,49 @@ func TestTestDefinedAtRefusesATreeThatIsNotAFullSha(t *testing.T) {
 		assert.Contains(t, err.Error(), "not a full commit sha", tree)
 	}
 }
+
+// TestPersonalNameCheck pins the personal-name check: it refuses a person's name in
+// prose on a SOURCE or PATHS line, takes the names from the caller, and reads a path
+// token (a slash or a `.md` suffix) and an ordinary word that merely holds a name as
+// not the name. The check is the one `nova-sprint add` runs too (lintpaths.go).
+func TestPersonalNameCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		header map[string]string
+		names  []string
+		want   string // a phrase the excerpt must carry; "" means no finding
+	}{
+		{name: "a brief whose SOURCE is a path under a named home is not the name",
+			header: map[string]string{"SOURCE": "home/alice/README.md"}, names: []string{"alice"}},
+		{name: "a prose name is refused",
+			header: map[string]string{"SOURCE": "alice keeps the ledger"}, names: []string{"alice"},
+			want: `names the person "alice" in prose`},
+		{name: "a path beside a prose name is still the prose",
+			header: map[string]string{"SOURCE": "alice keeps the ledger at /home/alice/ledger.md"}, names: []string{"alice"},
+			want: `names the person "alice" in prose`},
+		{name: "PATHS path tokens carry no prose name",
+			header: map[string]string{"PATHS": "pkg/foo, cmd/bar"}, names: []string{"alice"}},
+		{name: "a bare name on a PATHS entry is prose",
+			header: map[string]string{"PATHS": "pkg/foo, alice"}, names: []string{"alice"},
+			want: `names the person "alice" in prose`},
+		{name: "a name inside an ordinary word is not the name",
+			header: map[string]string{"SOURCE": "every change needs a test"}, names: []string{"eve"}},
+		{name: "a whole word that is the name is refused",
+			header: map[string]string{"SOURCE": "eve reviews the change"}, names: []string{"eve"},
+			want: `names the person "eve" in prose`},
+		{name: "no names handed over checks nothing",
+			header: map[string]string{"SOURCE": "alice keeps the ledger"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := findingsFor(LintCardBase(baseCard(tc.header), BaseCheck{Names: tc.names}), "personal-name")
+			if tc.want == "" {
+				assert.Empty(t, fs, tc.name)
+				return
+			}
+			require.Len(t, fs, 1, tc.name)
+			assert.Contains(t, fs[0].Excerpt, tc.want, tc.name)
+		})
+	}
+}
