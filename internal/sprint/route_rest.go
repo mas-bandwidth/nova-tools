@@ -3,6 +3,7 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,6 +25,22 @@ const (
 	RouteRestAfter  = 3
 	RouteRestFor    = 30 * time.Minute
 )
+
+// routeRestEnd computes the end time of a route rest with +/-20% jitter,
+// deterministically derived from the route name and rest start time.
+// Two routes resting at the same instant end at different times.
+func routeRestEnd(at time.Time, route string) time.Time {
+	// Hash route name and start time to get a deterministic seed.
+	h := fnv.New64a()
+	h.Write([]byte(route))
+	h.Write([]byte(at.Format(time.RFC3339)))
+	sum := h.Sum64()
+
+	// Map hash to [-0.2, 0.2] range for ±20% jitter.
+	jitter := (float64(sum%1000) / 1000.0 - 0.5) * 0.4
+
+	return at.Add(time.Duration(float64(RouteRestFor) * (1 + jitter)))
+}
 
 // PropRule3Rest is the fleet table's property that holds one provider's rule-3 rests:
 // one property per provider, one line per route that has rested, so the table's
@@ -357,7 +374,7 @@ func RestsDue(s *Snapshot) []RouteRest {
 			}
 		}
 		if len(cards) >= RouteRestAfter {
-			out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: cards, Cause: RestNoResult})
+			out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: routeRestEnd(s.Now, r.Name), Cards: cards, Cause: RestNoResult})
 		}
 	}
 	// a provider's refusal rests the provider, every route of it, over rule 3's on its routes

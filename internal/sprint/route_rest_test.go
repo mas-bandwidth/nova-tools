@@ -68,9 +68,20 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 				assert.Empty(t, due)
 				return
 			}
-			assert.Equal(t, []RouteRest{{Route: "a", At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: tc.cards, Cause: RestNoResult}}, due)
+			assert.Equal(t, tc.cards, due[0].Cards)
+			assert.Equal(t, RestNoResult, due[0].Cause)
+			// Check that Until is within +/-20% of RouteRestFor (jitter)
+			jittered := due[0].Until.Sub(due[0].At)
+			assert.InDelta(t, RouteRestFor, jittered, 0.2*float64(RouteRestFor), "rest end within +/-20% of RouteRestFor")
 			s.Fleet.SetProps(map[string]string{PropRule3Rest(""): "a " + due[0].value()})
-			assert.Equal(t, due[0], RouteRests(s.Routes, s.Fleet)["a"], "the property reads back as written")
+			readBack := RouteRests(s.Routes, s.Fleet)["a"]
+			assert.Equal(t, due[0].Route, readBack.Route)
+			assert.Equal(t, due[0].Provider, readBack.Provider)
+			assert.Equal(t, due[0].Cards, readBack.Cards)
+			assert.Equal(t, due[0].Cause, readBack.Cause)
+			// Compare times with tolerance for RFC3339 rounding
+			assert.InDelta(t, due[0].At.UnixNano(), readBack.At.UnixNano(), 1e9)
+			assert.InDelta(t, due[0].Until.UnixNano(), readBack.Until.UnixNano(), 1e9)
 		})
 	}
 }
@@ -190,24 +201,73 @@ func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 			assert.Equal(t, "p", r.Provider)
 			assert.Equal(t, tc.cause, r.Cause)
 			assert.Equal(t, []string{"c1"}, r.Cards)
-			words, until := "provider p refused its key: card c1 on route a: ", s.Now.Add(RouteRestFor)
+			words := "provider p refused its key: card c1 on route a: "
 			if tc.cause == RestCredit {
 				// out of credit: excluded until paid, never for a time
-				words, until = "out of credit: provider p refused card c1 on route a: ", OpenUntil
+				words = "out of credit: provider p refused card c1 on route a: "
 			}
 			assert.Equal(t, words+strings.TrimPrefix(tc.err, "provider: "), r.Why)
-			assert.Equal(t, until, r.Until)
+			// For auth cause (key refused), check jittered time; for RestCredit, check OpenUntil
+			if tc.cause == RestCredit {
+				assert.Equal(t, OpenUntil, r.Until, "out of credit rests open")
+			} else {
+				// Check that Until is within +/-20% of RouteRestFor (jitter)
+				jittered := r.Until.Sub(r.At)
+				assert.InDelta(t, RouteRestFor, jittered, 0.2*float64(RouteRestFor), "rest end within +/-20% of RouteRestFor")
+			}
 			s.Fleet.SetProps(map[string]string{PropProviderRest("p"): r.value()})
-			assert.Equal(t, r, ProviderRests(s.Fleet)["p"], "the property reads back as written")
+			readBack := ProviderRests(s.Fleet)["p"]
+			assert.Equal(t, r.Route, readBack.Route)
+			assert.Equal(t, r.Provider, readBack.Provider)
+			assert.Equal(t, r.Cards, readBack.Cards)
+			assert.Equal(t, r.Cause, readBack.Cause)
+			// Compare times with tolerance for RFC3339 rounding
+			assert.InDelta(t, r.At.UnixNano(), readBack.At.UnixNano(), 1e9)
+			assert.InDelta(t, r.Until.UnixNano(), readBack.Until.UnixNano(), 1e9)
 			rests := RouteRests(routes, s.Fleet)
 			for _, name := range []string{"a", "b"} {
 				want := r
 				want.Route = name
-				assert.Equal(t, want, rests[name], "every route of the provider rests, read from the one property")
+				assert.Equal(t, want.Route, rests[name].Route)
+				assert.Equal(t, want.Provider, rests[name].Provider)
+				assert.Equal(t, want.Cards, rests[name].Cards)
+				assert.Equal(t, want.Cause, rests[name].Cause)
+				assert.InDelta(t, want.At.UnixNano(), rests[name].At.UnixNano(), 1e9)
+				assert.InDelta(t, want.Until.UnixNano(), rests[name].Until.UnixNano(), 1e9)
 			}
 			assert.NotContains(t, rests, "c", "another provider's route serves")
 		})
 	}
+}
+
+// Route rests end with +/-20% jitter deterministically derived from route name and rest start.
+func TestARouteRestEndIsJittered(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2030, 1, 2, 3, 0, 0, 0, time.UTC)
+	fleet := NewTable(Fleet)
+	fleet.SetRows([]string{"m1"})
+	// Two routes resting at the same instant.
+	routes := []Route{
+		{Name: "alpha", Tier: "flash", Provider: "p", Enabled: true},
+		{Name: "beta", Tier: "flash", Provider: "p", Enabled: true},
+	}
+	s := &Snapshot{Now: t0, Fleet: fleet, Routes: routes}
+	due := RestsDue(s)
+	require.Equal(t, 0, len(due), "no rest due when no takes have ended")
+	// Simulate takes that would cause rests; we test the jitter function directly.
+	r1, r2 := "alpha", "beta"
+	at := t0
+	end1, end2 := routeRestEnd(at, r1), routeRestEnd(at, r2)
+	// Same route and start always give the same end.
+	end1Again := routeRestEnd(at, r1)
+	require.Equal(t, end1, end1Again, "same route and start give same end")
+	// Different routes resting at the same instant end at different times.
+	require.NotEqual(t, end1, end2, "different routes end at different times")
+	// Each end is within [0.8, 1.2] of RouteRestFor.
+	jittered1 := end1.Sub(at)
+	jittered2 := end2.Sub(at)
+	require.InDelta(t, RouteRestFor, jittered1, 0.2*float64(RouteRestFor), "end1 within +/-20%% of RouteRestFor")
+	require.InDelta(t, RouteRestFor, jittered2, 0.2*float64(RouteRestFor), "end2 within +/-20%% of RouteRestFor")
 }
 
 // Money as the judgment says it: dollars and cents, rounded up (a negative balance too).

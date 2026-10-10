@@ -2671,8 +2671,11 @@ and it is the coordinator's decision, receipted.
   failed or that left no result (the work card's provider_take_<n> records) and each
   work card's own finish; a take that ended with its member down keeps no record and
   is not counted. When RouteRestAfter (3) of the window left no result, the tick
-  rests the route for RouteRestFor (30 minutes, the clock's): it writes that route's
-  line into the fleet table's one property per provider, `rule3_rest_<provider>`
+  rests the route for RouteRestFor (30 minutes, the clock's), with +/-20% jitter:
+  the end time is deterministically derived from the route name and rest start,
+  so two routes resting at the same instant end at different times within
+  [0.8, 1.2] of RouteRestFor. The rest line is written into the fleet table's
+  one property per provider, `rule3_rest_<provider>`
   (one line per route, `<route> <began> <ends> <card,card,card> no-result`, RFC3339,
   the lines in route-name order, the whole value guarded on the value read), in the
   deal's batch, and a happened note to the

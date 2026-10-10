@@ -92,7 +92,7 @@ func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][
 	for _, p := range slices.Sorted(maps.Keys(newest)) {
 		e := newest[p]
 		m := causeRE.FindStringSubmatch(e.refused)
-		cause, until := m[1], s.Now.Add(RouteRestFor)
+		cause, until := m[1], routeRestEnd(s.Now, "")
 		words := fmt.Sprintf("provider %s refused its key: card %s on route %s: class=%s status=%s msg=%s", p, e.card, on[p], m[1], m[2], m[3])
 		if cause == RestCredit {
 			until = OpenUntil
