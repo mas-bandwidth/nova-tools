@@ -47,7 +47,15 @@ func checkSecrets(ctx context.Context, env Env) Result {
 	if key == "" {
 		return Result{Status: Fail,
 			Evidence: "NOVA_SECRETS_KEY is not set, so this machine has no age key to open the store with",
-			Fix:      "set NOVA_SECRETS_KEY to this machine's age private key; nova-up --local writes it into seat.env (" + secretsDoc + ")"}
+			Fix:      "set NOVA_SECRETS_KEY to the path of this machine's age key file; nova-up --local writes it into seat.env (" + secretsDoc + ")"}
+	}
+	// The contract line says the variable holds the path of this machine's age
+	// key file, never the key itself: key material in the variable is refused
+	// before any line can print it, in text or --json.
+	if strings.HasPrefix(key, "AGE-SECRET-KEY-") {
+		return Result{Status: Fail,
+			Evidence: "NOVA_SECRETS_KEY holds key material, not a path",
+			Fix:      "set NOVA_SECRETS_KEY to the path of this machine's age key file (never the key itself); nova-up --local writes it into seat.env (" + secretsDoc + ")"}
 	}
 	if _, err := env.ReadFile(key); err != nil {
 		return Result{Status: Fail,
