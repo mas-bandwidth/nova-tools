@@ -59,10 +59,11 @@
    :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
     refuses unless an explicit opt-out flag is given."
    :origin "nova-tools PR #5571 cold read")
-   (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "in-progress"
-    :title "The release changelog lists merge-queue merges"
-    :text "The changelog now excludes merge-queue commits (identified by gh-readonly-queue in the message)."
-    :origin "v1.2.4 cut note")
+  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "in-progress"
+   :title "The release changelog lists merge-queue merges"
+   :text "The cut changelog says no pull request merged since the previous tag although the merge queue
+    merged many; the listing includes merge-queue merges."
+   :origin "v1.2.4 cut note")
   (fix "worker-writes-result-before-deadline" :release "v1.2.6" :status "planned"
    :title "A worker writes its result before the route deadline"
    :text "Children on some direct routes work to the route deadline and never write their result file;

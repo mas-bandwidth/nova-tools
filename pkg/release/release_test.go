@@ -523,32 +523,29 @@ func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
 	}
 }
 
-// TestPullRequestsExcludesMergeQueueCommits verifies that merge-queue merge commits
-// (which have "gh-readonly-queue" in the source branch) are not included in the changelog.
-func TestPullRequestsExcludesMergeQueueCommits(t *testing.T) {
+// A merge-queue merge is a `Merge pull request #n from o/b` subject whose number
+// is not on the end as a squash merge's is; it must still list, with the PR's own
+// title from the body's first line, and the `#n` a title mentions is not a member.
+func TestPullRequestsListsMergeQueueMerges(t *testing.T) {
 	t.Parallel()
 
 	commits := []Commit{
-		// Regular squash merge - should be included
 		{SHA: "aaa", Message: "feat: some feature (#123)\n\nbody"},
-		// Merge-queue merge - should NOT be included
-		{SHA: "bbb", Message: "Merge pull request #456 from gh-readonly-queue/main/pr-456-abcdef"},
-		// Another regular squash merge - should be included
+		{SHA: "bbb", Message: "Merge pull request #456 from mas-bandwidth/rowan/some-feature\n\nfix: the merge queue's merge (closes #123)"},
 		{SHA: "ccc", Message: "fix: a fix (#789)\n\nbody"},
 	}
 
 	prs := PullRequests(commits)
 
-	// Should only have 2 PRs (the squash merges)
-	if len(prs) != 2 {
-		t.Errorf("expected 2 PRs, got %d: %v", len(prs), prs)
-	}
-	if prs[0].Number != 123 {
-		t.Errorf("expected first PR to be #123, got #%d", prs[0].Number)
-	}
-	if prs[1].Number != 789 {
-		t.Errorf("expected second PR to be #789, got #%d", prs[1].Number)
-	}
+	require.Len(t, prs, 3, "prs=%v", prs)
+	sort.Slice(prs, func(i, j int) bool { return prs[i].Number < prs[j].Number })
+	require.Equal(t, 123, prs[0].Number)
+	require.Equal(t, "feat: some feature", prs[0].Title)
+	require.Equal(t, 456, prs[1].Number)
+	require.Equal(t, "fix: the merge queue's merge (closes #123)", prs[1].Title)
+	require.Empty(t, prs[1].Members, "the title's #123 was filed as a member: %v", prs[1].Members)
+	require.Equal(t, 789, prs[2].Number)
+	require.Equal(t, "fix: a fix", prs[2].Title)
 }
 
 func TestCutDryRunWritesNothingAndTagsNothing(t *testing.T) {
