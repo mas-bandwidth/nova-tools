@@ -42,7 +42,7 @@
 \* each a deal of its own (internal/sprint Ask).
 \*
 \* THE MEMBER'S HARNESSES (fault 10, 2026-10-10: cards on heavy-opus-claude were
-\* dealt to batman, space, superman and vision, which have no claude, and every
+\* dealt to four members that have no claude, and every
 \* launch was refused). Unlaunch is the routes the dealing member cannot launch:
 \* a route whose harness is headless (claude, codex, grok) that the member's
 \* control card does not name (fleet up --harnesses). The work deal and the

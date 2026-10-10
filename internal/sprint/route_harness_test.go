@@ -9,7 +9,7 @@ import (
 )
 
 // A deal to a member draws only a route that member can launch (fault 10, 2026-10-10:
-// heavy-opus-claude cards were dealt to batman, space, superman and vision, which have no
+// heavy-opus-claude cards were dealt to four members that have no
 // claude, and every launch was refused; tla/RouteIndex.tla, NeverUnlaunchable). A route
 // of a headless harness is drawn for a member whose control card names it (fleet up
 // --harnesses), walked past for any other; a tier whose every route is one the member
