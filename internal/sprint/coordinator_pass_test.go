@@ -428,12 +428,18 @@ func TestAPinnedCardRotatedOffItsFriendIsJudgedOnce(t *testing.T) {
 	r := newPassRig(t)
 	r.hold(sprint.HoldReq{Names: []string{"amy"}, Reason: "she is away"})
 	r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-2", Brief: friendsBrief("friend amy")}}}))
+	// the first tick starts her pin clock and holds the card for her inside the bound
 	r.pongs["bob"] = r.clock()
 	r.tick(time.Second)
+	// past the bound the clock waives the pin and the card rotates to bob, which
+	// is the judgment this test reads
+	r.pongs["amy"] = r.clock().Add(31 * time.Minute)
+	r.pongs["bob"] = r.clock().Add(31 * time.Minute)
+	r.tick(31 * time.Minute)
 	s := r.snap()
 	wc := s.Fleet.Card(s.Work.Card("f1-2").F("work"))
 	require.NotNil(t, wc, "the pin was dealt")
-	require.Equal(t, sprint.FriendRow("bob"), wc.Row, "amy is held, so the pin rotates to bob")
+	require.Equal(t, sprint.FriendRow("bob"), wc.Row, "her held pin is waived past the bound, so it rotates to bob")
 	j := r.open(sprint.NPinIgnored, "f1-2")
 	require.NotNil(t, j, "a pin placed on someone else's row is a judgment")
 	assert.Contains(t, j.What, wc.ID)
@@ -481,7 +487,13 @@ func TestAPinnedCardTheFleetTookIsJudgedOnce(t *testing.T) {
 	r := newPassRig(t)
 	r.hold(sprint.HoldReq{Names: []string{"amy", "bob"}, Reason: "both away"})
 	r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-9", Brief: friendsBrief("friend amy")}}}))
+	// the first tick starts her pin clock and holds the card inside the bound
 	r.tick(time.Second)
+	// her pin is waived when the clock runs past the bound; every friend is held,
+	// so the fleet deals it
+	r.pongs["amy"] = r.clock().Add(31 * time.Minute)
+	r.pongs["bob"] = r.clock().Add(31 * time.Minute)
+	r.tick(31 * time.Minute)
 	s := r.snap()
 	wc := s.Fleet.Card(s.Work.Card("f1-9").F("work"))
 	require.NotNil(t, wc, "no friend is up, so the fleet deals the pin")
