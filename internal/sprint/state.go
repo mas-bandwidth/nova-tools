@@ -430,6 +430,14 @@ type Snapshot struct {
 	// rests is the routes resting at Now, settled once by a step that deals
 	// (withRests, route_rest.go); nil is not yet settled.
 	rests map[string]RouteRest
+	// spend is what each route and friend spent in the clock hour holding Now, settled
+	// with the rests (withRests; cost.go, hourSpendOf); nil is not yet summed.
+	spend *hourSpend
+	// FriendCaps is each friend's dollar cap per clock hour by name (a canonical
+	// decimal), read with the routes by a step that deals (store.FriendCaps);
+	// TickReq.FriendCaps overrides it. nil is none read: a friend the map names
+	// none is uncapped, and an empty value is the default (DefaultFriendCapUSDHour).
+	FriendCaps map[string]string
 	// restScans, when set, counts withRests' scans of the fleet table: the tick's
 	// cost gate (TestTheTicksCheckSettlesTheRestsOnceAtScale) holds them to one a part.
 	restScans *int

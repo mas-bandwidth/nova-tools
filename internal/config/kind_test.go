@@ -85,15 +85,16 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
 // that a friend would just know, is runtime redis data". Her slots, tiers,
-// roles, width, mode, config_dir, token cap, optional work restriction and
-// working directory; no machine, harness, logins, wake or note; and no
+// roles, width, mode, config_dir, token cap, dollar cap per clock hour, the
+// optional work restriction and her working directory; no machine, harness,
+// logins, wake or note; and no
 // coordinator role, which is the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 	t.Parallel()
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,dir", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,dir", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,dir,cap_usd_hour", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,dir,cap_usd_hour", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
