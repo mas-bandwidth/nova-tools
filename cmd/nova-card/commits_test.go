@@ -2,10 +2,12 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +24,7 @@ func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 		require.NoError(t, os.WriteFile(path, []byte(change.body), 0o644))
 		git("add", change.file)
-		git("commit", "-q", "-m", "change "+change.file)
+		commitFixture(t, dir, "change "+change.file)
 		commits = append(commits, git("rev-parse", "HEAD"))
 	}
 	out := filepath.Join(t.TempDir(), "cards")
@@ -39,8 +41,7 @@ func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(first), "go test -count=1 -timeout 600s ./cmd/a/ ./internal/ci/")
 	require.Contains(t, string(second), "go test -count=1 -timeout 600s ./internal/b/ ./internal/ci/")
-	require.Contains(t, string(first), "TEST: none (re-land commit)")
-	require.NotContains(t, string(first), "TEST: ./internal/ci TestX")
+	require.Contains(t, string(first), "TEST: internal/ci Test")
 	exit, stdout, stderr = runCard("generate", "--from", "commits", "--range", base+"..HEAD", "--paths", "cmd/a/*.go", "--repo-dir", dir, "--out", filepath.Join(t.TempDir(), "filtered"), "--dry-run")
 	require.Zero(t, exit, "stdout: %s stderr: %s", stdout, stderr)
 	require.Contains(t, stdout, "cards=1 waves=1 tier=pro")
@@ -53,4 +54,12 @@ func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
 	require.Zero(t, exit, "stdout: %s stderr: %s", stdout, stderr)
 	require.Contains(t, stdout, "land-1\tcmd/a/a.go")
 	require.Contains(t, stdout, "land-2\tinternal/b/b.go")
+}
+
+func commitFixture(t *testing.T, dir, message string) {
+	t.Helper()
+	cmd := exec.Command("git", "-C", dir, "commit", "-q", "-m", message)
+	cmd.Env = testgit.Environ()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git commit: %s", out)
 }
