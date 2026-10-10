@@ -287,18 +287,27 @@ do
   -- an object cannot masquerade as an empty replacement row list. Skip
   -- quoted strings (including escapes) and nested containers; do not match
   -- spelling inside a label or a nested object. Repeated fields are refused.
+  --
+  -- The scan jumps, in C (string.find), to the next quote or bracket outside a
+  -- string and to the next quote or backslash inside one: the characters
+  -- between change nothing it tracks. A walk of one character at a time in Lua
+  -- was a sixth of a batch's time in the store on 2026-10-10 (the certification
+  -- tick gate, cmd/nova-sprint TestTheDirtyTickDriveOnAStore: 17 MB of
+  -- manifests in one drive).
   function T.arrayfield(raw, field)
     local i, depth, found = 1, 0, false
     while i <= #raw do
+      i = string.find(raw, '["{}%[%]]', i)
+      if not i then break end
       local ch = string.sub(raw, i, i)
       if ch == '"' then
         local start = i
         i = i + 1
         while i <= #raw do
-          local v = string.sub(raw, i, i)
-          if v == '\\' then i = i + 2
-          elseif v == '"' then break
-          else i = i + 1 end
+          local at = string.find(raw, '["\\]', i)
+          if not at then i = #raw + 1; break end
+          if string.byte(raw, at) == 92 then i = at + 2
+          else i = at; break end
         end
         if depth == 1 then
           local colon = string.find(raw, '%S', i + 1)
@@ -1098,7 +1107,9 @@ do
     local event = {'XADD', stream, '*', 'verb', verb, 'args', cjson.encode(wireargs),
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
-      'members', #d.members == 0 and '[]' or cjson.encode(d.members), 'outcome', outcome}
+      -- a call that resolves its writes (opts.resolve) has its members encoded
+      -- when the event is written, below: not twice
+      'members', (#d.members == 0 or opts.resolve) and '[]' or cjson.encode(d.members), 'outcome', outcome}
     local members_at = #event - 2
     local delta_at
     if d.renamed_keys then event[#event + 1] = 'renamed_keys'; event[#event + 1] = cjson.encode(d.renamed_keys) end
@@ -2044,15 +2055,14 @@ do
     local pos = 1
     local len = #raw
 
+    -- Each scan below finds its stop in C (string.find) and decodes a string
+    -- through cjson only when it holds an escape or a NUL: a walk of one
+    -- character at a time and a cjson call for every key and value were a third
+    -- of a batch's time in the store on 2026-10-10 (the certification tick
+    -- gate, cmd/nova-sprint TestTheDirtyTickDriveOnAStore). What it accepts
+    -- and refuses, and the order, are as before.
     local function skip_ws()
-      while pos <= len do
-        local b = string.byte(raw, pos)
-        if b == 32 or b == 9 or b == 10 or b == 13 then
-          pos = pos + 1
-        else
-          break
-        end
-      end
+      pos = string.find(raw, '[^ \t\n\r]', pos) or len + 1
     end
 
     local function peek()
@@ -2073,6 +2083,7 @@ do
       skip_ws()
       if string.sub(raw, pos, pos) ~= '"' then return nil, "expected string" end
       local start = pos
+      local escaped = false
       pos = pos + 1
       while pos <= len do
         -- the next quote or backslash, found in C: the characters between
@@ -2080,9 +2091,14 @@ do
         local at = string.find(raw, '["\\]', pos)
         if not at then pos = len + 1; break end
         if string.byte(raw, at) == 92 then
+          escaped = true
           pos = at + 2
         else
           pos = at + 1
+          local body = string.sub(raw, start + 1, pos - 2)
+          -- with no escape and no NUL (the one byte cjson refuses unescaped)
+          -- the string is its own bytes, as cjson would decode it
+          if not escaped and not string.find(body, '%z') then return body end
           local ok, s = pcall(cjson.decode, string.sub(raw, start, pos - 1))
           if not ok then return nil, "invalid string escape" end
           return s
@@ -2092,8 +2108,29 @@ do
     end
 
     local parse_value, parse_object, parse_array
+    -- the keys each object may name, built once a call and not once a key
+    local root_keys = {
+      schema=true, table=true, epoch=true, expected_table_revision=true,
+      operation_id=true, actor=true, members=true,
+      props=true, prop_expect=true, prop_absent=true
+    }
+    local member_keys = {
+      id=true, expect=true, create=true, move=true, remove=true, set=true, unset=true
+    }
+    local expect_keys = {absent=true, revision=true, place=true, fields=true}
+    local place_keys = {row=true, col=true}
+    local guard_keys = {equals=true, absent=true, one_of=true}
+    local create_move_keys = {row=true, col=true, score=true}
 
+    -- A plain string token (no escape, no NUL) is matched whole in one call
+    -- where a string or any value is wanted; anything else takes the
+    -- character-level path below, which says what is wrong.
+    local plain_string = '^[ \t\r\n]*"([^"\\%z]*)"'
     parse_value = function(ctx)
+      if ctx == nil or ctx == 'string' then
+        local _, e = string.find(raw, plain_string, pos)
+        if e then pos = e + 1; return true end
+      end
       skip_ws()
       local ch = peek()
       if not ch then return nil, "unexpected EOF" end
@@ -2126,13 +2163,7 @@ do
         return true
       elseif ch == 't' or ch == 'f' or ch == 'n' then
         local start = pos
-        while pos <= len do
-          local c = string.sub(raw, pos, pos)
-          if c == ',' or c == '}' or c == ']' or c == ' ' or c == '\t' or c == '\r' or c == '\n' then
-            break
-          end
-          pos = pos + 1
-        end
+        pos = string.find(raw, '[,}%] \t\r\n]', pos) or len + 1
         local lit = string.sub(raw, start, pos - 1)
         if lit ~= "true" and lit ~= "false" and lit ~= "null" then
           return nil, "invalid literal: " .. lit
@@ -2140,13 +2171,7 @@ do
         return true
       else
         local start = pos
-        while pos <= len do
-          local c = string.sub(raw, pos, pos)
-          if c == ',' or c == '}' or c == ']' or c == ' ' or c == '\t' or c == '\r' or c == '\n' then
-            break
-          end
-          pos = pos + 1
-        end
+        pos = string.find(raw, '[,}%] \t\r\n]', pos) or len + 1
         local num_str = string.sub(raw, start, pos - 1)
         -- The JSON number grammar only: tonumber also reads 0x10, inf and 1e5 spellings JSON does not have.
         if not T.jsonnumber(num_str) then
@@ -2172,8 +2197,14 @@ do
       end
 
       while true do
-        local key, err = parse_string()
-        if err then return nil, err end
+        local key, err
+        local _, ke, plain = string.find(raw, plain_string, pos)
+        if ke then
+          key, pos = plain, ke + 1
+        else
+          key, err = parse_string()
+          if err then return nil, err end
+        end
 
         if seen[key] then
           return nil, "duplicate key: " .. key
@@ -2182,20 +2213,12 @@ do
 
         local val_ctx = nil
         if ctx == 'root' then
-          local root_keys = {
-            schema=true, table=true, epoch=true, expected_table_revision=true,
-            operation_id=true, actor=true, members=true,
-            props=true, prop_expect=true, prop_absent=true
-          }
           if not root_keys[key] then return nil, "unknown field: " .. key end
           if key == 'members' then val_ctx = 'members' end
           if key == 'props' or key == 'prop_expect' then val_ctx = 'props' end
           if key == 'prop_absent' then val_ctx = 'prop_absent' end
           if key == 'schema' then val_ctx = 'schema' end
         elseif ctx == 'member' then
-          local member_keys = {
-            id=true, expect=true, create=true, move=true, remove=true, set=true, unset=true
-          }
           if not member_keys[key] then return nil, "unknown member field: " .. key end
           if key == 'expect' then val_ctx = 'expect'
           elseif key == 'create' then val_ctx = 'create'
@@ -2204,29 +2227,22 @@ do
           elseif key == 'unset' then val_ctx = 'unset'
           end
         elseif ctx == 'expect' then
-          local expect_keys = {
-            absent=true, revision=true, place=true, fields=true
-          }
           if not expect_keys[key] then return nil, "unknown expect field: " .. key end
           if key == 'place' then val_ctx = 'place'
           elseif key == 'fields' then val_ctx = 'fields'
           end
         elseif ctx == 'place' then
-          local place_keys = {row=true, col=true}
           if not place_keys[key] then return nil, "unknown place field: " .. key end
         elseif ctx == 'fields' then
           if not T.word(key) then return nil, "invalid field guard name: " .. key end
           val_ctx = 'field_guard'
         elseif ctx == 'field_guard' then
-          local guard_keys = {equals=true, absent=true, one_of=true}
           if not guard_keys[key] then return nil, "unknown guard field: " .. key end
           if key == 'one_of' then val_ctx = 'one_of' end
         elseif ctx == 'create' then
-          local create_keys = {row=true, col=true, score=true}
-          if not create_keys[key] then return nil, "unknown create field: " .. key end
+          if not create_move_keys[key] then return nil, "unknown create field: " .. key end
         elseif ctx == 'move' then
-          local move_keys = {row=true, col=true, score=true}
-          if not move_keys[key] then return nil, "unknown move field: " .. key end
+          if not create_move_keys[key] then return nil, "unknown move field: " .. key end
         elseif ctx == 'set' then
           if not T.word(key) then return nil, "invalid field name: " .. key end
           val_ctx = 'string'
@@ -2237,22 +2253,17 @@ do
           return nil, "an object is not allowed here"
         end
 
-        skip_ws()
-        if next_char() ~= ':' then return nil, "expected :" end
+        local _, ce = string.find(raw, '^[ \t\r\n]*:', pos)
+        if not ce then return nil, "expected :" end
+        pos = ce + 1
 
         local ok, v_err = parse_value(val_ctx)
         if not ok then return nil, v_err end
 
-        skip_ws()
-        local sep = peek()
-        if sep == ',' then
-          next_char()
-        elseif sep == '}' then
-          next_char()
-          break
-        else
-          return nil, "expected , or } after object property"
-        end
+        local _, se, sep = string.find(raw, '^[ \t\r\n]*([,}])', pos)
+        if not se then return nil, "expected , or } after object property" end
+        pos = se + 1
+        if sep == '}' then break end
       end
 
       if ctx == 'member' then
@@ -2282,16 +2293,10 @@ do
         local ok, err = parse_value(elem_ctx)
         if not ok then return nil, err end
 
-        skip_ws()
-        local sep = peek()
-        if sep == ',' then
-          next_char()
-        elseif sep == ']' then
-          next_char()
-          break
-        else
-          return nil, "expected , or ] after array element"
-        end
+        local _, se, sep = string.find(raw, '^[ \t\r\n]*([,%]])', pos)
+        if not se then return nil, "expected , or ] after array element" end
+        pos = se + 1
+        if sep == ']' then break end
       end
       return true
     end
@@ -2525,7 +2530,8 @@ do
     local manifest_err = T.validate_manifest_json(raw_json)
     if manifest_err then return manifest_err end
     local digest = redis.sha1hex(raw_json)
-    local manifest = T.decode(raw_json)
+    -- the request decoded once: the peek above is the same text's decoding
+    local manifest = peek
     if not manifest or type(manifest) ~= 'table' then return T.refuse('MANIFEST', 'invalid json') end
     if manifest.schema ~= 1 then return T.refuse('SCHEMA', tostring(manifest.schema)) end
     if manifest.table ~= table_name then return T.refuse('ARGS', 'table mismatch') end
@@ -2534,7 +2540,11 @@ do
     if not T.uint(manifest.epoch) then return T.refuse('EPOCH', tostring(manifest.epoch)) end
     if not T.uint(manifest.expected_table_revision) then return T.refuse('REVISION', tostring(manifest.expected_table_revision)) end
     if type(manifest.members) ~= 'table' then return T.refuse('ARGS', 'members array required') end
-    if not T.arrayfield(raw_json, 'members') then return T.refuse('MANIFEST', 'members must be json array') end
+    -- members is one JSON array at the root here: T.validate_manifest_json
+    -- above refuses a members value that is not an array and a key named
+    -- twice, comparing keys as decoded, which is what T.arrayfield checked
+    -- with a second walk of the whole manifest (a tenth of a batch's time in
+    -- the store on 2026-10-10)
     local static_err, changed_count, guard_count = T.static_entries(manifest)
     if static_err then return static_err end
     op_field = manifest.epoch .. ':' .. manifest.operation_id
@@ -2750,7 +2760,10 @@ do
       end
     end
 
-    -- Validate mutation constraints before staging:
+    -- Validate mutation constraints before staging. A cell is looked up once
+    -- a call (T.cell_once), as the heads above look it up: nothing is written
+    -- before the staged writes, and a deal of a thousand cards names a few
+    -- dozen cells, not a thousand.
     local plan = {}
     for _, entry in ipairs(members_list) do
       local id = entry.id
@@ -2785,7 +2798,7 @@ do
           return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
         end
         local crow, ccol = entry.create.row, entry.create.col
-        local dst_cell, err = T.cell(d, crow, ccol, true)
+        local dst_cell, err = T.cell_once(d, crow, ccol, true)
         if not dst_cell then return at_member(err, id) end
         local score = entry.create.score
         item.action = 'create'
@@ -2804,7 +2817,7 @@ do
       elseif entry.move then
         if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to move') end
         local mrow, mcol = entry.move.row, entry.move.col
-        local dst_cell, err = T.cell(d, mrow, mcol, true)
+        local dst_cell, err = T.cell_once(d, mrow, mcol, true)
         if not dst_cell then return at_member(err, id) end
         local score
         if entry.move.score ~= nil then
@@ -2813,7 +2826,7 @@ do
           score = member_scores[id]
         end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
-        local src_cell, err2 = T.cell(d, src_row, src_col, true)
+        local src_cell, err2 = T.cell_once(d, src_row, src_col, true)
         if not src_cell then return at_member(err2, id) end
         local dst_place = T.place(mrow, mcol)
         local cur_score = member_scores[id]
@@ -2848,7 +2861,7 @@ do
       elseif entry.remove then
         if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to remove') end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
-        local src_cell, err = T.cell(d, src_row, src_col, true)
+        local src_cell, err = T.cell_once(d, src_row, src_col, true)
         if not src_cell then return at_member(err, id) end
         item.action = 'remove'
         item.effective_change = true
