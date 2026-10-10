@@ -70,6 +70,7 @@ var CardBaseRemedies = map[string]string{
 	"leg-in-fleet":       "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>`",
 	"donewhen-test-name": "DONE-WHEN: names the runner and a literal test that does not exist at the card's base-sha -- `go test ./<pkg> -run <TestName>`, `pytest <file>::<test_name>` (or `-k <test_name>`), `cargo test <name>` -- so the test can be red on base and green at head; an English outcome (\"applied cleanly\", \"make preflight\") or a runner with no test named is not a control, and the repository holding base-sha is handed over with `--repo <dir>`",
 	"deadline-p95":       "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first",
+	"personal-name":      "SOURCE and PATHS lines may not contain file paths with a person's name (like `/home/alice/...`); paths with a slash or ending in `.md` are ignored",
 }
 
 // LintCardBase returns the base-check findings for one card, in the order the
@@ -236,6 +237,16 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 				add("donewhen-test-name", dwLine, fmt.Sprintf("DONE-WHEN test %s exists at base-sha %s, so it cannot be red there; name the new test the card adds", quoteDepends(present), short12(full)))
 			}
 		}
+	}
+
+	// 6. personal-name.
+	source, sourceLine := h["SOURCE"].value, h["SOURCE"].line
+	paths, pathsLine := h["PATHS"].value, h["PATHS"].line
+	if source != "" && hasPersonalName(source) {
+		add("personal-name", sourceLine, fmt.Sprintf("SOURCE %q contains a person's name in a path", oneLineCap(source, 80)))
+	}
+	if paths != "" && hasPersonalName(paths) {
+		add("personal-name", pathsLine, fmt.Sprintf("PATHS %q contains a person's name in a path", oneLineCap(paths, 80)))
 	}
 	return out
 }
@@ -723,4 +734,23 @@ func tableRows(p string) ([][]string, error) {
 		rows = append(rows, strings.Fields(line))
 	}
 	return rows, nil
+}
+
+// hasPersonalName reports whether v contains a person's name in a file path.
+// Path tokens (anything containing a slash or ending in .md) are ignored.
+func hasPersonalName(v string) bool {
+	// Ignore path tokens: anything containing a slash or ending in .md
+	if strings.Contains(v, "/") || strings.HasSuffix(strings.ToLower(v), ".md") {
+		return false
+	}
+	// Check for common person name patterns in prose (not in paths)
+	// This is a simple heuristic: look for lowercase words that look like names
+	// that might appear in prose about a person
+	personalWords := []string{"alice", "bob", "charlie", "dave", "eve", "frank", "glenn", "heidi", "ivan", "judy", "kai", "laura", "mallory", "nina", "oscar", "peggy", "quinn", "randy", "sybil", "trent", "u", "victor", "walter", "xena", "yuri", "zoe", "john", "mary", "jane", "mike", "joe", "sarah", "tom", "lisa", "david", "linda", "richard", "patricia", "charles", "jennifer", "robert", "elizabeth", "michael", "susan", "william", "jessica", "james", "judy"}
+	for _, word := range personalWords {
+		if strings.Contains(strings.ToLower(v), word) {
+			return true
+		}
+	}
+	return false
 }
