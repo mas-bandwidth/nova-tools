@@ -2986,3 +2986,7 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+## Reader Lanes and Read Slots
+
+Each friend row carries read lanes (`read_slots`, default 2) reserved exclusively for running asked reads (`reader-<friend>`) and never taken by worker cards. Read slots run independently of card width, ensuring continuous background reading without starvation.
