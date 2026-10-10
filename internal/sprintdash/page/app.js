@@ -198,8 +198,10 @@ function allocate(counts, total, n) {
 // column; the lit cells first, the rest dark; nothing past the width. The lit cells run in the
 // priority ladder, highest on the left (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner,
 // 2026-10-07: "to the left of read cards, and to the right of critical cards"): blocker,
-// critical, fix (purple), reads (one orange cell per two reads, a lone read a whole cell), then
-// the working blue; a row's counts are where's <level>_working and the view's fix.
+// critical, fix (purple), reads (one orange cell a read), then the working blue; a row's counts
+// are where's <level>_working and the view's fix. One cell is one card or read on the row, so the
+// lit cells always number the row's working figure (half-cell reads drew 24 cells for a friend's
+// "31 / 32", the owner 2026-10-09: "Something is wrong with the rendering for a friend").
 var TRACK_LEVELS = [["blocker_working", "p-blocker", "blocker"], ["critical_working", "p-critical", "critical"], ["fix", "p-fix", "fix"]];
 function trackSegs(m) {
   var working = int(m.working), segs = [], words = [], cards = 0;
@@ -209,7 +211,7 @@ function trackSegs(m) {
     if (n) words.push(n + " " + l[2]);
   });
   var reads = int(m.reads_working); cards += reads;
-  for (var j = 0; j < Math.ceil(reads / 2); j++) segs.push("p-reader");
+  for (var j = 0; j < reads; j++) segs.push("p-reader");
   if (reads) words.push(reads + " read" + (reads === 1 ? "" : "s"));
   for (var k = cards; k < working; k++) segs.push("working");
   return { segs: segs, words: words };

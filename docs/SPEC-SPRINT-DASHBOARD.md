@@ -149,7 +149,7 @@ from the owner edits one line here and nothing else moves.
   sent out again sits (review -> working on rework), unless where prints the row's `fix` itself; the copy's
   `fix` is the Work rows' summed; and `priorities.fix` lists those primaries, off high and low. A track's lit
   cells run in the ladder, highest on the left: blocker (`--p-blocker`), critical (`--p-critical`), fix
-  (purple), reads (orange, one cell per two reads, a lone read a whole cell), then the working blue; the
+  (purple), reads (orange, one cell a read), then the working blue, so the lit cells number the row's working; the
   Total row says "<n> fix" under the tracks when any row has one. The In flight tile counts a card at fix as
   working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
   defect, carry no dealt card, so the view cannot see them until where prints the Work row's `fix`.
