@@ -4,28 +4,28 @@ Read cold as a stranger on a Linux bench (named `<bench>` here): only `nova-upda
 `nova-update help`,
 `nova-update help release`, every verb's `-h`, and the tool's page under `docs/`
 (`docs/SPEC-UPDATE.md`), nothing else. The binary was built in the staged checkout at
-`d746414234c081ea41b65ddde0aeadcca6c5ffe4` (the checkout's staged tip) with
-`go build -o $J/bin/nova-update ./cmd/nova-update` (never the installed binary), where
-`$J` is the job root and the commands below are typed with the binary as `nova-update`
-from `$J/repo`, files under `$J/scratch`. `nova-update version` printed:
+`1978105c2bb8329c696d206734969ee9c47ee2bf` (the checkout's staged tip) with
+`go build -o $JOB/bin/nova-update ./cmd/nova-update` (never the installed binary), where
+`$JOB` is the job root and the commands below are typed with the binary as `nova-update`
+from `$JOB/repo`, files under `$JOB/scratch`. `$JOB/bin/nova-update version` printed:
 
 ```
-nova-update v1.0.1-0.20261010033023-d746414234c0 linux/amd64 go1.26.6
+nova-update devel linux/amd64 go1.26.6
 ```
 
-and `go version -m $J/bin/nova-update | head -5` printed:
+and `go version -m $JOB/bin/nova-update | head -5` printed:
 
 ```
-$J/bin/nova-update: go1.26.6
+$JOB/bin/nova-update: go1.26.6
 	path	github.com/mas-bandwidth/nova-tools/cmd/nova-update
-	mod	github.com/mas-bandwidth/nova-tools	v1.0.1-0.20261010033023-d746414234c0	
+	mod	github.com/mas-bandwidth/nova-tools	(devel)	
 	dep	github.com/cespare/xxhash/v2	v2.3.0	h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 	dep	github.com/jackc/pgpassfile	v1.0.0	h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 ```
 
-The `mod` line's pseudo-version names `d746414234c0`, the staged commit, so this is the
+The `mod` line carries `(devel)`, the toolchain's unrecorded-origin floor, so this is the
 staged checkout's own build and no other binary's output is written here. Every verb ran
-with its real flags against a scratch store under `$J/scratch/store` and a temp release
+with its real flags against a scratch store under `$JOB/scratch/store` and a temp release
 root, the refusals too, over about twenty minutes. Every actor and recipient below is a
 made-up placeholder (`boss`, `carol`, `nobody`), and no real identity is written. No code
 changed, and a finding is recorded here, never fixed.
