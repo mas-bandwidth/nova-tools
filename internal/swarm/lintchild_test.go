@@ -302,6 +302,9 @@ func TestChildScansRefuseTheCommandAndAllowTheRest(t *testing.T) {
 		{"step-go-test-timeout",
 			[]string{"STEP 7. go test ./...", "STEP 7. Run go test -count=1 ./x/", "STEP 7. go test ./a && go test -timeout 600s ./b"},
 			[]string{"STEP 7. go test -timeout 600s ./...", "STEP 7. go test -count=1 -timeout 600s ./x/ -run TestY", "STEP 7. go vet ./...", "STEP 7. Never go test the whole tree."}},
+		{"step-push-proof",
+			[]string{"STEP 7. Run git ls-remote and verify remote tip equals HEAD", "STEP 7. Parent: abc123", "STEP 7. Send proof of push"},
+			[]string{"STEP 7. Head: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "STEP 7. Check friendcards.go ls-remote logic"}},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {
@@ -516,4 +519,44 @@ func TestChildLibrariesCheckIsOnlyWhereTheRuleSetCarriesIt(t *testing.T) {
 	ours := strings.Replace(card, ChildRulesParagraph(), RulesParagraph(ourRules(t)), 1)
 	assert.Contains(t, childChecks(LintCardChildWith([]byte(ours), ourRules(t))), LibrariesConsideredRule)
 	assert.Contains(t, ChildRemedy(ourRules(t), LibrariesConsideredRule), "Libraries considered:")
+}
+
+// A STEP that asks for a push proof draws step-push-proof at that STEP's own line
+// (goal of the-finish-form-is-one-line-bbc).
+func TestAPushProofStepIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{
+		"STEP 1. Run git ls-remote and check if remote tip equals HEAD",
+		"STEP 2. Report ls-remote matched HEAD: yes",
+		"STEP 3. Parent: abc1234",
+		"STEP 4. Send proof of push",
+		"STEP 5. Verify remote tip matches HEAD",
+	} {
+		card := ourCard(t) + line + "\n"
+		want := strings.Count(card, "\n") // the line just appended, the card's last
+		got := LintCardChildWith([]byte(card), ourRules(t))
+		if assert.Len(t, got, 1, "%q draws %v, want step-push-proof", line, got) {
+			assert.Equal(t, "step-push-proof", got[0].Check, "%q draws %v, want step-push-proof", line, got)
+			assert.Equal(t, want, got[0].Line, "%q draws %v, want it at line %d", line, got, want)
+		}
+	}
+}
+
+// The friend report's `Head:` line, prose that names friendcards.go's own ls-remote, and the
+// bare word `push` are not a push proof (goal of the-finish-form-is-one-line-bbc).
+func TestAHeadLineIsNotAPushProof(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{
+		"Head: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		"STEP 1. Run push",
+		"STEP 2. Check friendcards.go ls-remote logic",
+		"STEP 3. git push origin HEAD",
+		"STEP 4. The git shim records a push; the member makes both from outside the wall",
+		"STEP 5. The result equals the head of the list",
+		"STEP 6. The label matches the head of the table",
+	} {
+		got := scanFindings(t, line)
+		assert.Empty(t, got, "%q draws %v, want none", line, got)
+	}
+	assert.Empty(t, childChecks(LintCardChildWith([]byte(ourCard(t)), ourRules(t))), "a brief with none of these draws none")
 }

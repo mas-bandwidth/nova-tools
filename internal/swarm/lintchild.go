@@ -178,6 +178,23 @@ var childScans = []childScan{
 	{Check: "step-rebase",
 		RE:     childCmd(gitCmd + `rebase\b`),
 		Remedy: "no line rebases: merge the base forward with `git merge --no-edit`; a rebase rewrites the history another worktree shares"},
+	{Check: "step-push-proof",
+		// THE GOAL OF the-finish-form-is-one-line-bbc: a brief never asks a worker to prove its
+		// push in prose, because the machine reads the branch itself -- the friend finish
+		// compares the report's Head with origin's tip by its own ls-remote
+		// (cmd/nova-sprint/friendcards.go, friendFinish and branchTip). A line that asks to run
+		// or report an `ls-remote`, to show the remote tip `equals`/`matches` HEAD, to report a
+		// `Parent:` sha, or for `proof of push` is refused; a friend report's `Head: <40-hex>`
+		// line, prose naming friendcards.go's own ls-remote, and the bare word `push` are not.
+		// The remote-tip reading ties `equals`/`matches` to the remote tip, so a line where
+		// `equals` or `matches` only happens to precede a standalone `head` (the head of a
+		// list) is no proof.
+		RE:     childCmd(`(?i)\b(?:ls-remote\b|proof[ \t]+of[ \t]+push\b|parent[ \t]*:|remote[ \t]+tip\b.*?\b(?:equals|matches)\b)`),
+		Remedy: "the machine reads your branch; never prove the push in prose",
+		Allow: func(line string, at int) bool {
+			low := strings.ToLower(line)
+			return strings.Contains(low, "friendcards.go")
+		}},
 	{Check: "step-stash",
 		RE:     childCmd(gitCmd + `stash\b`),
 		Remedy: "no line stashes: the stash list is shared by every worktree of the repository, so a stash taken here is popped there; commit to the child's own branch instead"},
