@@ -833,6 +833,7 @@ func TestPromotionReadsDeclarationsBelowItsMergeTip(t *testing.T) {
 	r.stage("base")
 	r.git("checkout", "-q", "-b", "promo")
 	r.remove("gone_test.go")
+	r.stage("delete gone_test.go")
 	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\n")
 	r.stage("merge origin/dev into promo/2026-10-07-1")
 	r.git("checkout", "-q", "main")
