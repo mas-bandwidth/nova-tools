@@ -55,13 +55,14 @@ const ReportChars = 600
 
 // outboxState is what the daemon keeps between its outbox passes: the jobs it finished
 // (never sent again, and never noted after their card leaves her row), the finishes the
-// server did not take and when, the notes said while they stand, and when a report that
-// was not final was first seen (a duration deadline runs from that pass).
+// server did not take and when, the notes said while they stand, and when each working
+// card was first seen on her row (a duration deadline runs from the card's start, that
+// pass, not from the pass that first reads its report).
 type outboxState struct {
 	finished map[string]bool
 	tried    map[string]time.Time
 	said     map[string]bool
-	opened   map[string]time.Time
+	started  map[string]time.Time
 }
 
 // reportVerdict is a report's verdict (the first word of its first Verdict: line, upper
@@ -211,14 +212,17 @@ func readReport(outbox, job string) (string, bool, error) {
 const reportFinalWithin = 2 * time.Hour
 
 // deadlineWithinRE is a DEADLINE value the brief writes as words: `finish within <n> <unit>`
-// or a bare `<n> <unit>` (cardhdr's deadline shape). A Go duration is read first.
-var deadlineWithinRE = regexp.MustCompile(`(?i)^(?:finish within\s+)?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|h)$`)
+// or a bare `<n> <unit>` (cardhdr's deadline shape), with anything the sentence says after it
+// (`finish within 240 minutes.`, the template's `... minutes; the judgment ...`) ignored. A
+// Go duration is read first.
+var deadlineWithinRE = regexp.MustCompile(`(?i)^(?:finish within\s+)?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|h)(?:\s*[.;,].*)?$`)
 
 // cardDeadline is the brief's deadline (docs/SPEC-FRIEND.md, the daemon reads every
-// outbox job): an absolute time, or a duration. ok is false when the brief names none
-// the daemon can read; a duration runs from the first pass that saw the report.
+// outbox job): an absolute time, or a duration measured from the card's start. The
+// DEADLINE key is matched in any case, for an issued brief writes `Deadline:`; ok is
+// false when the brief names none the daemon can read.
 func cardDeadline(brief string) (at time.Time, within time.Duration, ok bool) {
-	val, found := cardhdr.Value(brief, "DEADLINE")
+	val, found := briefValueFold(brief, "DEADLINE")
 	if !found {
 		return time.Time{}, 0, false
 	}
@@ -229,6 +233,18 @@ func cardDeadline(brief string) (at time.Time, within time.Duration, ok bool) {
 		return time.Time{}, d, true
 	}
 	return time.Time{}, 0, false
+}
+
+// briefValueFold is cardhdr.Value with the key matched in any case: an issued brief writes
+// `Deadline:`, and cardhdr.Value matches the key as written, so a card's own deadline was
+// read as none and the daemon fell back to its two hours.
+func briefValueFold(brief, key string) (value string, ok bool) {
+	for _, l := range strings.Split(brief, "\n") {
+		if k, v, isKV := cardhdr.KeyValue(l); isKV && strings.EqualFold(k, key) {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // deadlineWithin reads a duration deadline: a Go duration or `finish within <n> <unit>`.
@@ -254,10 +270,30 @@ func deadlineWithin(v string) (time.Duration, bool) {
 	return time.Duration(n) * unit, true
 }
 
+// cardStart is when the card began, the anchor a duration deadline runs from
+// (docs/SPEC-FRIEND.md, the daemon reads every outbox job): the lane's own start when this
+// daemon began it (LaneState.Started, kept across restarts), else the first outbox pass
+// that saw it working on her row (outboxState.started). now is the pass, recorded when the
+// card has no start yet.
+func (l *loop) cardStart(job string, now time.Time) time.Time {
+	if st, ok := l.lanes.state.Started[job]; ok && !st.At.IsZero() {
+		return st.At
+	}
+	o := &l.d.outbox
+	if o.started == nil {
+		o.started = map[string]time.Time{}
+	}
+	if at, seen := o.started[job]; seen {
+		return at
+	}
+	o.started[job] = now
+	return now
+}
+
 // pastFinalDeadline says the card's deadline has passed for a report that is not final
 // (docs/SPEC-FRIEND.md, the daemon reads every outbox job). An absolute deadline is that
 // time. A duration, and the two hours used when the brief names none, runs from the
-// first pass that saw the report.
+// card's start, never from the pass that first read the report.
 func (l *loop) pastFinalDeadline(h *HeldCard, job string, now time.Time) bool {
 	at, within, ok := cardDeadline(h.Brief)
 	if ok && !at.IsZero() {
@@ -266,16 +302,7 @@ func (l *loop) pastFinalDeadline(h *HeldCard, job string, now time.Time) bool {
 	if !ok || within <= 0 {
 		within = reportFinalWithin
 	}
-	o := &l.d.outbox
-	if o.opened == nil {
-		o.opened = map[string]time.Time{}
-	}
-	first, seen := o.opened[job]
-	if !seen {
-		o.opened[job] = now
-		return false
-	}
-	return !now.Before(first.Add(within))
+	return !now.Before(l.cardStart(job, now).Add(within))
 }
 
 // firstTwo is a report's first line and its second, without a trailing carriage return.
@@ -312,7 +339,19 @@ func (l *loop) outboxStep(now time.Time) {
 	o := &d.outbox
 	if o.finished == nil {
 		o.finished, o.tried, o.said = map[string]bool{}, map[string]time.Time{}, map[string]bool{}
-		o.opened = map[string]time.Time{}
+		o.started = map[string]time.Time{}
+	}
+	// A duration deadline runs from the card's start: record every card working on her
+	// row the first pass it is seen, before a report is read, so a report written late
+	// does not give the card a fresh deadline (pastFinalDeadline).
+	for i := range d.heldCards {
+		h := &d.heldCards[i]
+		if h.Col != "working" || h.Kind == "read" {
+			continue
+		}
+		if _, seen := o.started[h.Job]; !seen {
+			o.started[h.Job] = now
+		}
 	}
 	at := now.UTC().Format(time.RFC3339)
 	said := map[string]bool{}

@@ -136,3 +136,72 @@ func TestFinalGatesEveryReportAndTheDeadlineCollectsTheRest(t *testing.T) {
 		"friend bob FAIL: report never became final: first line the notes first",
 	}, f.got()[1])
 }
+
+// The brief's deadline is read from the issued spellings: the key in any case (`Deadline:`
+// is what an issued brief writes), and a value that ends in a period or carries the
+// template's sentence after the duration (docs/SPEC-FRIEND.md, the daemon reads every
+// outbox job).
+func TestTheCardDeadlineIsReadFromTheIssuedBrief(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		brief  string
+		within time.Duration
+		abs    bool
+		ok     bool
+	}{
+		{name: "mixed case, a period", brief: "Deadline: finish within 240 minutes.\n", within: 240 * time.Minute, ok: true},
+		{name: "the template's sentence", brief: "Deadline: finish within 90 minutes; the judgment of a card that runs past it is the coordinator's.\n", within: 90 * time.Minute, ok: true},
+		{name: "upper case, no period", brief: "DEADLINE: finish within 90 minutes\n", within: 90 * time.Minute, ok: true},
+		{name: "a Go duration", brief: "Deadline: 2h\n", within: 2 * time.Hour, ok: true},
+		{name: "an absolute time", brief: "Deadline: " + t0.Add(time.Hour).Format(time.RFC3339) + "\n", abs: true, ok: true},
+		{name: "none", brief: "no deadline here\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			at, within, ok := cardDeadline(c.brief)
+			assert.Equal(t, c.ok, ok, "%q", c.brief)
+			assert.Equal(t, c.within, within, "%q", c.brief)
+			if c.abs {
+				assert.Equal(t, t0.Add(time.Hour), at, "%q", c.brief)
+			} else {
+				assert.True(t, at.IsZero(), "%q has no absolute time", c.brief)
+			}
+		})
+	}
+}
+
+// A duration deadline runs from the card's start, not from the pass that first reads its
+// report: a report written near the end of an issued card's 90 minutes is collected when
+// the card's 90 minutes are up, not 90 minutes after the report appeared
+// (docs/SPEC-FRIEND.md, the daemon reads every outbox job).
+func TestACardDeadlineRunsFromTheCardsStart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &finishes{}
+	r.d.Finish = f.finish
+	card := workCard("late.w1", "working")
+	card.Branch = "sprint/late.w1.g1.e15"
+	card.Brief += "Deadline: finish within 90 minutes.\n"
+	r.d.heldCards = []HeldCard{card}
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+
+	l.outboxStep(t0) // the card is working with no report yet: its start is this pass
+	assert.Empty(t, f.got(), "no report, nothing collected")
+
+	outboxReport(t, r.d.Dir, card.Job, "Verdict: pending\n") // the report comes 80 minutes in
+	l.outboxStep(t0.Add(80 * time.Minute))
+	assert.Empty(t, f.got(), "80 of the card's 90 minutes: the report is left")
+	assert.Contains(t, r.recordText(), "report not final yet: late.w1: Verdict: pending")
+
+	l.outboxStep(t0.Add(89 * time.Minute))
+	assert.Empty(t, f.got(), "one minute inside the card's deadline: still left")
+
+	l.outboxStep(t0.Add(90 * time.Minute))
+	require.Len(t, f.got(), 1, "at the card's deadline the report is collected as FAIL: %v", f.got())
+	assert.Equal(t, []string{
+		"finish", "--as", "friend.bob", "late.w1@1", "--epoch", "15", "--failed",
+		"--branch", "sprint/late.w1.g1.e15", "--report",
+		"friend bob FAIL: report never became final: first line Verdict: pending",
+	}, f.got()[0])
+}
