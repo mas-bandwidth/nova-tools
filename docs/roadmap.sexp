@@ -33,7 +33,11 @@
     its own provider's API. Mercury 3 becomes heavy when v1.3's global per-model rate limit lands.
     Direct providers come first; OpenRouter and OpenCode are spillover only. Clean results start at
     2026-10-09 22:01Z."
-   :date "2026-10-09"))
+   :date "2026-10-09")
+  (done "repository-split" :title "nova-sprint split out of nova-tools"
+   :text "nova-sprint, nova-card and nova-work, with their models and docs, live in mas-bandwidth/nova-sprint
+    from v1.2.3; CI here refuses their paths."
+   :date "2026-10-10"))
 
  :groups
  ((group "lessons"
@@ -203,15 +207,6 @@
    :title "The TLA+ ledger union"
    :text "Union slice M: the TLA+ ledger work from the union manifest."
    :why "Union slice M, parked by the owner, 2026-10-09."
-   :date "2026-10-09")
-  (item "repository-split" :group "docs" :area "repo"
-   :title "Split nova-sprint out of nova-tools"
-   :text "nova-sprint's code moves to its own repository: both READMEs say which is which, and nova-tools
-    drops cmd/nova-sprint and the sprint packages. Today the code lives here, on dev. The
-    mas-bandwidth/nova-sprint repository is a copy seeded from nova-tools, pinned to nova-tools v1.1.0,
-    last pushed 2026-10-08."
-   :why "An architecture change."
-   :cards 2
    :date "2026-10-09")
 
   ; Far
@@ -566,13 +561,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-per-tier-model-choice" :group "friends"
-   :title "Each friend's model per tier is decided and recorded"
-   :text "Friend rows record which model serves each tier, so the deal and the friend agree on it. Friends
-    set up with missing tiers are found and corrected."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "card moved out of the sprint (work record, 2026-10-04); PR #5387")
   (item "spend-reconciliation-and-route-price-refresh" :group "measure"
    :title "Captured spend matches the provider's account"
    :text "Price every run, read and retry so recorded spend matches the provider's own account. Route
@@ -872,13 +860,6 @@
    :date "2026-10-10"
    :release "v1.4"
    :origin "PR #5313")
-  (item "public-dashboard-served-from-files" :group "ops"
-   :title "Serve the public sprint dashboard as files from one puller"
-   :text "A fleet role serves the page and data as static files refreshed by one puller, with no reverse
-    proxy to the coordinator machine."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "PR #5329")
   (item "friend-status-counts-current-assignments" :group "friends"
    :title "Scope friend status and pong counts to current assignments"
    :text "Queue sync writes a versioned snapshot of the friend's current Ready and Working row so counts
@@ -1234,13 +1215,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "issue #2555")
-  (item "fleet-monitoring-dashboard" :group "ops"
-   :title "One monitoring dashboard for the sprint, load, network and store"
-   :text "Redis metrics are scraped and one ready-made dashboard shows per-bench cards, load, memory,
-    network and store latency."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "issue #2556")
   (item "central-log-shipper" :group "ops"
    :title "Ship bench and loop logs to one queryable place"
    :text "Install a log shipper on every bench that sends harness, bench and loop logs to one log store,

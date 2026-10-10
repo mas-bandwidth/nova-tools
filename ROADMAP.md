@@ -16,15 +16,16 @@ These were roadmap items and now have a release. They are listed here so nobody 
 Decided and in place. Recorded so the items that measure them have their starting point.
 
 - **Tier defaults on direct providers** (2026-10-09). flash is Mercury 2.5, pro is DeepSeek 4.1 Flash and heavy is DeepSeek v4 Pro, each called on its own provider's API. Mercury 3 becomes heavy when v1.3's global per-model rate limit lands. Direct providers come first; OpenRouter and OpenCode are spillover only. Clean results start at 2026-10-09 22:01Z.
+- **nova-sprint split out of nova-tools** (2026-10-10). nova-sprint, nova-card and nova-work, with their models and docs, live in mas-bandwidth/nova-sprint from v1.2.3; CI here refuses their paths.
 
 ## Contents
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (10)
 - [The sprint machine](#the-sprint-machine) (3)
-- [Friends](#friends) (31)
-- [Setup, release and operations](#setup-release-and-operations) (113)
-- [Docs, models and the repository](#docs-models-and-the-repository) (16)
+- [Friends](#friends) (30)
+- [Setup, release and operations](#setup-release-and-operations) (111)
+- [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (11)
 - [Tests and test tiers](#tests-and-test-tiers) (38)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (39)
@@ -252,14 +253,6 @@ A hold or down state carries its cause and end time, and the tick notices when i
 Target: v1.3
 
 From: card moved out of the sprint (work record, 2026-10-04)
-
-### Each friend's model per tier is decided and recorded
-
-Friend rows record which model serves each tier, so the deal and the friend agree on it. Friends set up with missing tiers are found and corrected.
-
-Target: after v1.4
-
-From: card moved out of the sprint (work record, 2026-10-04); PR #5387
 
 ### Mark bus messages by sender authority in a friend's session
 
@@ -635,14 +628,6 @@ Target: v1.3
 
 From: PR #5155; issue #5151
 
-### Serve the public sprint dashboard as files from one puller
-
-A fleet role serves the page and data as static files refreshed by one puller, with no reverse proxy to the coordinator machine.
-
-Target: after v1.4
-
-From: PR #5329
-
 ### Loop logs rotate by size and age
 
 Member and reader logs grow without bound today. A rule in the logs spec and the loop definitions bounds them.
@@ -858,14 +843,6 @@ The playbook replicates the SQLite record continuously, and a restore from the r
 Target: after v1.4
 
 From: issue #2555
-
-### One monitoring dashboard for the sprint, load, network and store
-
-Redis metrics are scraped and one ready-made dashboard shows per-bench cards, load, memory, network and store latency.
-
-Target: after v1.4
-
-From: issue #2556
 
 ### Ship bench and loop logs to one queryable place
 
@@ -1348,14 +1325,6 @@ Documentation suites, the TLA+ ledger, and where nova-sprint's code lives.
 Union slice M: the TLA+ ledger work from the union manifest.
 
 Why it waits: Union slice M, parked by the owner, 2026-10-09.
-
-### Split nova-sprint out of nova-tools
-
-nova-sprint's code moves to its own repository: both READMEs say which is which, and nova-tools drops cmd/nova-sprint and the sprint packages. Today the code lives here, on dev. The mas-bandwidth/nova-sprint repository is a copy seeded from nova-tools, pinned to nova-tools v1.1.0, last pushed 2026-10-08.
-
-Why it waits: An architecture change.
-
-Replaces 2 open sprint cards, each mapped to `repository-split`.
 
 ### Generate the CLI reference from the tools and check it in CI
 
