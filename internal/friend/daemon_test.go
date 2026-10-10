@@ -47,6 +47,7 @@ type rig struct {
 	status    []Status
 	records   []string
 	cancel    context.CancelFunc
+	done      <-chan struct{} // the running Run's ctx.Done
 	stopAfter int
 	at        map[int]func() // what happens at a step, from the beat
 	d         *Daemon
@@ -108,9 +109,20 @@ func newRig(t *testing.T) *rig {
 		if owed {
 			r.owed--
 		}
+		done := r.done
 		r.mu.Unlock()
-		if owed {
-			r.gate <- struct{}{}
+		if !owed {
+			return
+		}
+		select {
+		case r.gate <- struct{}{}:
+		case <-done:
+			// the run is over (Run waits for this turn before it returns): no pause waits for
+			// the token, so a full gate never holds Run open; room still keeps it, as before
+			select {
+			case r.gate <- struct{}{}:
+			default:
+			}
 		}
 	}
 	return r
@@ -136,7 +148,9 @@ func (r *rig) Deliver(ctx context.Context, text string) (int, error) {
 func (r *rig) run(t *testing.T, steps int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	r.cancel = cancel
+	r.mu.Lock()
+	r.cancel, r.done = cancel, ctx.Done()
+	r.mu.Unlock()
 	r.stopAfter = steps
 	require.NoError(t, r.d.Run(ctx))
 }

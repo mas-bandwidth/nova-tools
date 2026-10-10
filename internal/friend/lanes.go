@@ -478,10 +478,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.opening, ln.openFrom = true, now
 			agents, memory := d.identity()
 			seed := LaneSeed(d.Friend, ln.n, width, agents, memory)
-			go func(ln *lane) {
+			l.work(func() {
 				id, err := lh.OpenSession(LaneContext(l.ctx), seed)
-				s.results <- laneResult{ln: ln, open: true, session: id, err: err}
-			}(ln)
+				queue(l.ctx, s.results, laneResult{ln: ln, open: true, session: id, err: err})
+			})
 			continue
 		}
 		if ln.card == nil {
