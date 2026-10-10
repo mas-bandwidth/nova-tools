@@ -1223,7 +1223,7 @@ computed at render and never written: `done:sum(ok+failed)` and
 `okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
 member with no finished card shows `0` and `0.0%`; the footer pools ok% over
 the members (every ok over every finished card, never a mean of the members'
-percentages). The text cells (ci, state, since, status, load) are display
+percentages). Across every table, ok% is landed-or-ok results over attempts a worker actually ran to an end: `ok / (ok + failed)`. The denominator excludes launch refusals, withdrawn and handed-back attempts, coordinator take-backs, and provider or route failures; each attempt record carries `blame=coordinator|worker|provider|none`, and brief defects are charged to the coordinator seat row. The text cells (ci, state, since, status, load) are display
 copies of the control cards, written after each step; the control cards are
 written with the moves. A step whose write committed and whose display copies
 then failed to sync reports OK, for every verb, with the sync's error on its own
