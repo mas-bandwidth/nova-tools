@@ -45,7 +45,7 @@ func gitIn(t *testing.T, env []string, dir string, args ...string) string {
 	return out
 }
 
-// For every card the daemon writes into the inbox it also stages the job: a clone of REPO at
+// For every card the daemon delivers into the inbox it first stages the job: a clone of REPO at
 // BASE on the card's branch under jobs/<job>/repo, from one cached mirror per repository, and
 // jobs/<job>/JOB.md naming the checkout, the branch, the outbox report and the finish. A
 // repository her account cannot reach is one judgment to the coordinator with the remedy, and
@@ -129,6 +129,9 @@ func TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile(t *testing.T) {
 	for _, h := range []HeldCard{private, private2, plain, read} {
 		assert.NoFileExists(t, filepath.Join(dir, "jobs", h.Job, "JOB.md"), "%s is not staged", h.Card)
 		assert.NoDirExists(t, filepath.Join(dir, "jobs", h.Job, "repo"))
+	}
+	for _, h := range []HeldCard{private, private2} {
+		assert.NoFileExists(t, filepath.Join(dir, "inbox", h.Job, "BRIEF.md"), "%s's brief waits for its stage", h.Card)
 	}
 	var judgments []string
 	for _, m := range r.adaGot(t) {

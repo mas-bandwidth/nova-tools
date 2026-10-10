@@ -2506,6 +2506,7 @@ nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend cards <friend> [--json]
+nova-sprint deliver <friend> [--once] [--every <duration>] [--root <dir>] [--stages daemon|runner] [--mirrors <dir>] [--dry-run]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint friend give <friend> <id>... [--reason <text>]
 nova-sprint friend level
@@ -2716,7 +2717,12 @@ The sprint's server (`run --listen`) serves them read-only at `/api/view/coordin
 a friend's row (working, then ready) with its packet and its `BRIEF.md` as friend sync writes
 it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
 her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
-"Role views".
+"Role views". `nova-sprint deliver <friend> [--once]` is the coordinator's hand version of her
+daemon's delivery, by the same code: each card on her row has its job staged and then its brief
+written under `<root>/<friend>-working`, one `DELIVER <job> staged|brief|skipped [<why>]` line
+each; `--stages runner` for a friend whose runner stages its own jobs (her daemon's `nova-friend
+run --stages runner`), `--mirrors <dir>` the bare mirrors (default: under her daemon's state
+dir). The order and its rules are [SPEC-FRIEND.md](SPEC-FRIEND.md), "The delivery order".
 
 ### A worker's own view: the dashboard's pull routes
 

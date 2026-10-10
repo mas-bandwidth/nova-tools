@@ -208,8 +208,8 @@ type Daemon struct {
 	ReadSlots func() int
 	ReadModel func(tier string) string
 	// Stage stages a held work card's job (Stager.Stage: jobs/<job>/repo and its JOB.md) and
-	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
-	// its brief alone.
+	// answers the commit staged (stage.go), before its brief is written (Delivery, delivery.go);
+	// nil stages none, the friend whose runner stages its own jobs: her briefs are written alone.
 	Stage func(ctx context.Context, p Packet) (string, error)
 	// Prune removes finished jobs' worktrees past FinishedJobsKept (Stager.Prune), given the
 	// jobs that are live (held on her row, run by a lane, being staged), after each inbox
@@ -283,7 +283,6 @@ type Daemon struct {
 	staging     map[string]bool      // the jobs a stage is under way for
 	stageRetry  map[string]time.Time // when a job whose stage failed is staged again
 	stageSaid   map[string]bool      // the stage failures said, once while they stand
-	stageDealt  map[string]string    // a written brief's line for the batch session, held until its job is staged
 	stageMu     sync.Mutex
 	stageDone   []stageResult // the stages that ended, for the loop
 	stageWG     sync.WaitGroup
@@ -646,7 +645,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.m = Start(d.Now())
 	l.presentDue, l.delivered = true, d.m.LastPing // a session start: the present comes first
 	if d.staging == nil {
-		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
+		d.staging, d.stageRetry, d.stageSaid = map[string]bool{}, map[string]time.Time{}, map[string]bool{}
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	defer l.followWG.Wait()
