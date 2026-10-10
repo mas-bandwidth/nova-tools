@@ -84,12 +84,12 @@ func exitWordExitCodes(help string) []int {
 
 // exitWordAnswers is "" when the observed exit code agrees with the last
 // status word according to the status contract (OK→0, FAILED→1, REFUSED→2,
-// and code > 2 listed in exitTable); otherwise it names the breach.
+// and code > 2 listed in exitTable); otherwise it names the breach. A code
+// above 2 is checked against the verb's table before the no-status return, so a
+// run that prints no status word still has to publish the code (exit codes tell
+// the truth, docs/STANDARD.md section 2).
 func exitWordAnswers(code int, stdout, stderr string, exitTable []int) string {
 	word, line := exitWordLastStatus(stdout, stderr)
-	if word == "" {
-		return ""
-	}
 	if word == "OK" {
 		if code != 0 {
 			return fmt.Sprintf("exit code %d disagrees with status word OK (line %q); align the exit code with the status word (OK→0, FAILED→1, REFUSED→2) or add it to the verb's exit table", code, line)
@@ -101,6 +101,9 @@ func exitWordAnswers(code int, stdout, stderr string, exitTable []int) string {
 			return ""
 		}
 		return fmt.Sprintf("exit code %d is above 2 and not in the verb's exit table (line %q); align the exit code with the status word (OK→0, FAILED→1, REFUSED→2) or add it to the verb's exit table", code, line)
+	}
+	if word == "" {
+		return ""
 	}
 	switch word {
 	case "FAILED":
@@ -146,6 +149,8 @@ func TestExitWordJudges(t *testing.T) {
 		{"good hygiene transcript (docs/TESTS.md:318-324)", 1, hygieneFailed, "", nil, ""},
 		{"good refusal transcript", 2, "", busRefused, nil, ""},
 		{"good exit code above 2 in exit table", 3, "LOCK FAILED\n", "", []int{3}, ""},
+		{"good exit code above 2 in exit table with no status word", 125, "usage: nova-tool run\n", "", []int{125}, ""},
+		{"the witness: exit code above 2 with no status word", 42, "usage: nova-tool run\n", "", nil, "is above 2 and not in the verb's exit table"},
 		{"the witness: OK with exit 1", 1, "QUICKSTART OK done=2 worst-exit=1\n", "", nil, "exit code 1 disagrees with status word OK"},
 		{"the witness: OK with exit 2", 2, "VERB OK\n", "", nil, "exit code 2 disagrees with status word OK"},
 		{"the witness: FAILED with exit 0", 0, "HYGIENE FAILED\n", "", nil, "exit code 0 disagrees with status word FAILED"},
@@ -201,6 +206,7 @@ func TestExitWordReadsExitTable(t *testing.T) {
 	assert.Empty(t, exitWordAnswers(125, "RUN FAILED\n", "", codes), "a listed code above 2 passes")
 	assert.Contains(t, exitWordAnswers(130, "RUN FAILED\n", "", codes), "is above 2 and not in the verb's exit table", "an unlisted code above 2 is refused")
 	assert.Contains(t, exitWordAnswers(3, "RUN FAILED\n", "", exitWordExitCodes("usage: nova-demo run\n")), "is above 2 and not in the verb's exit table", "help that publishes no table refuses every code above 2")
+	assert.Contains(t, exitWordAnswers(42, "usage: nova-demo run\n", "", exitWordExitCodes("usage: nova-demo run\n")), "is above 2 and not in the verb's exit table", "an unlisted code above 2 is refused even when no line carries a status word")
 }
 
 // TestExitWordReadsFixtures is the witness test: a fixture that breaks the rule once is refused naming the site,
