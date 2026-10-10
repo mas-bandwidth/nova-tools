@@ -1075,6 +1075,16 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			}
 			m.kv[friendHealthKey(op.Health.Friend)] = string(rec)
 		}
+		for _, f := range op.ReadFriendFinishes {
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			rec, err := json.Marshal(time.Now().UTC().Truncate(time.Second).Format(time.RFC3339))
+			if err != nil {
+				return err
+			}
+			m.kv[friendFinishKey(f)] = string(rec)
+		}
 		if len(op.CloseTimers) > 0 {
 			if m.kv == nil {
 				m.kv = map[string]string{}

@@ -87,6 +87,9 @@ type Plan struct {
 	// Seat is the seat's change (MoveSeat): the step's commit writes the
 	// coordinator and the seat's record with its note.
 	Seat *SeatChange
+	// ReadFriendFinishes are friends whose read cards were accepted (verdict ok/broken)
+	// in this plan. The store updates their friend-finish records on commit.
+	ReadFriendFinishes []string
 	// Health is a friend's health observed (ObserveFriend): the step's commit
 	// writes it as her record.
 	Health *FriendHealthWrite
