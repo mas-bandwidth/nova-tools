@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -183,13 +184,13 @@ func TestADryRunWritesNothing(t *testing.T) {
 	newOut := filepath.Join(dir, "new-out")
 	r = invoke(t, "session", "--claude-session", session, "--out", newOut, "--dry-run")
 	wantExit(t, r, 0)
-	assert.Contains(t, r.stdout, "TOKENS DAY day=2026-09-11 written=false")
+	assert.Contains(t, r.stdout, "SESSION DAY day=2026-09-11 written=false")
 	assert.NoDirExists(t, newOut, "a dry-run session made its --out")
 
 	note := filepath.Join(dir, "note.txt")
 	r = invoke(t, "report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr, "--note", note, "--dry-run")
 	wantExit(t, r, 0)
-	assert.Contains(t, r.stderr, " dry_run=true note="+note+" subject=")
+	assert.Contains(t, r.stdout, " dry_run=true note="+note+" subject=")
 	assert.NoFileExists(t, note, "a dry-run report wrote --note")
 
 	// The real fold writes, and a dry-run ledger reads that day and dials no store: an
@@ -197,7 +198,7 @@ func TestADryRunWritesNothing(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr), 0)
 	r = invoke(t, "ledger", "--out", out, "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run")
 	wantExit(t, r, 0)
-	assert.Equal(t, "LEDGER day=2026-09-11 rows=2\nLEDGER OK day=2026-09-11 days=1 rows=2 bad=0 dry_run=true\n", r.stdout)
+	assert.Equal(t, "LEDGER OK day=2026-09-11 days=1 rows=2 bad=0 dry_run=true\nLEDGER DAY day=2026-09-11 rows=2\n", r.stdout)
 }
 
 // A gate that cannot go red is no gate: an --out holding no day file is a finding, with
@@ -208,9 +209,8 @@ func TestCheckOverAnOutWithNoDayFileSaysNo(t *testing.T) {
 	out := mkdir(t, filepath.Join(t.TempDir(), "out"))
 	r := invoke(t, "check", "--out", out)
 	wantExit(t, r, 1)
-	assert.Empty(t, r.stdout)
-	assert.Contains(t, r.stderr, "CHECK FAILED looked at nothing: --out "+out+" holds no day file; fold one first, or run: nova-tokens check --out "+out+" --allow-empty")
-	assert.Contains(t, r.stderr, "CHECK FAILED files=0 rows=0 first=- last=- bad=0 missing=0 stray=0 gap=0 notes=0\n")
+	wantContains(t, r.stdout, "looked at nothing: --out "+out+" holds no day file; fold one first, or run: nova-tokens check --out "+out+" --allow-empty")
+	assert.Contains(t, r.stdout, "CHECK FAILED files=0 rows=0 first=- last=- bad=0 missing=0 stray=0 gap=0 notes=0")
 }
 
 // A source that fed nothing for a day its file names is said on the note, never "nothing
@@ -233,13 +233,15 @@ func TestAQuietSourceIsTheNoteNotTheAllClear(t *testing.T) {
 }
 
 // The banner's word on the environment is the code's: the Redis verbs read the seat from
-// the variables redisauth names, and every other verb reads none (T-6).
+// the variables redisauth names, and every other verb reads none (T-6). That word lives in
+// the rules topic now, `nova-tokens help rules`, where the shared banner keeps its prose.
 func TestTheBannerNamesTheEnvironmentTheRedisVerbsRead(t *testing.T) {
 	t.Parallel()
 
-	assert.NotContains(t, usage, "no environment variable is consulted")
+	rules := tokensTool(time.Time{}).Topics[0].Text
+	assert.NotContains(t, rules, "no environment variable is consulted")
 	for _, name := range []string{redisauth.UserEnv, redisauth.PasswordEnvEnv, redisauth.DefaultPasswordEnv, "$PATH", tokens.LockName} {
-		assert.Contains(t, usage, name)
+		assert.Contains(t, rules, name)
 	}
 }
 
@@ -273,12 +275,12 @@ func TestAMixedPricedAndUnpricedModelRatesOnlyItsPricedTokens(t *testing.T) {
 	swarmUsage(t, pool, "j1", swarmRowCost("j1", "1", "-", "deepseek", "mercury-2.5", "serialize", "2026-09-14T01:00:00Z", "1000", "0", "0", "0", "-", "0.5"))
 	r := invoke(t, "report", "--who", "ada", "--day", "2026-09-14", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--swarm", "b="+pool)
 	wantExit(t, r, 0)
-	assert.Contains(t, r.stderr, "TOKENS AVG day=2026-09-14 model=deepseek/mercury-2.5 tokens=4000 usd=0.5 usd_per_mtok=500.0000 unpriced=3000\n")
-	assert.Contains(t, r.stderr, "TOKENS AVG-ALL day=2026-09-14 tokens=4000 usd=0.5 usd_per_mtok=500.0000 unpriced=3000\n")
+	assert.Contains(t, r.stderr, "REPORT AVG day=2026-09-14 model=deepseek/mercury-2.5 tokens=4000 usd=0.5 usd_per_mtok=500.0000 unpriced=3000\n")
+	assert.Contains(t, r.stderr, "REPORT AVG-ALL day=2026-09-14 tokens=4000 usd=0.5 usd_per_mtok=500.0000 unpriced=3000\n")
 
 	// Wholly priced: unpriced=0. Wholly unpriced: every cost field a dash.
 	r = invoke(t, "report", "--who", "ada", "--day", "2026-09-14", "--repos", reposFile(t, dir), "--swarm", "b="+pool)
-	assert.Contains(t, r.stderr, "TOKENS AVG day=2026-09-14 model=deepseek/mercury-2.5 tokens=1000 usd=0.5 usd_per_mtok=500.0000 unpriced=0\n")
+	assert.Contains(t, r.stderr, "REPORT AVG day=2026-09-14 model=deepseek/mercury-2.5 tokens=1000 usd=0.5 usd_per_mtok=500.0000 unpriced=0\n")
 	r = invoke(t, "report", "--who", "ada", "--day", "2026-09-14", "--repos", reposFile(t, dir), "--claude", "g="+tr)
-	assert.Contains(t, r.stderr, "TOKENS AVG day=2026-09-14 model=mercury-2.5 tokens=3000 usd=- usd_per_mtok=- unpriced=3000\n")
+	assert.Contains(t, r.stderr, "REPORT AVG day=2026-09-14 model=mercury-2.5 tokens=3000 usd=- usd_per_mtok=- unpriced=3000\n")
 }

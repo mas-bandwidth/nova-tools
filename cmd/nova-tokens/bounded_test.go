@@ -166,7 +166,7 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 		assert.LessOrEqual(t, n, 28*1024, "%d bytes at the largest plausible state, want under 28 KB", n)
 	}
 	// The counts are the truth about the STATE, never about the output.
-	fail := lineWith(r.stderr, "TOKENS FAILED")
+	fail := lineWith(r.stdout, "TOKENS FAILED")
 	for _, want := range []string{"unreadable=25", "conflict=25", "mixed=25"} {
 		wantContains(t, fail, want)
 	}
@@ -237,8 +237,8 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	wantExit(t, r, 1)
 	all := r.stdout + r.stderr
 	more, byToken := countKinds(all)
-	if byToken["CHECK FAILED"] != 21 { // twenty item lines and the count line
-		assert.Failf(t, "CHECK FAILED line count mismatch", "%d CHECK FAILED lines, want 20 findings and one count line", byToken["CHECK FAILED"])
+	if byToken["CHECK FAILED"]+byToken["CHECK FILE"]+byToken["CHECK ROW"] != 21 { // twenty item lines and the count line
+		assert.Failf(t, "CHECK FAILED line count mismatch", "%d CHECK FAILED lines, want 20 findings and one count line", byToken["CHECK FAILED"]+byToken["CHECK FILE"]+byToken["CHECK ROW"])
 	}
 	assert.Equal(t, 20, byToken["CHECK MISSING"], "check printed %v", byToken)
 	assert.Equal(t, 20, byToken["CHECK STRAY"], "check printed %v", byToken)
@@ -251,7 +251,7 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 		n := ownBytes(all, dir)
 		assert.LessOrEqual(t, n, 8*1024, "%d bytes, want under 8 KB", n)
 	}
-	count := lineWith(r.stderr, "CHECK FAILED files=")
+	count := lineWith(r.stdout, "CHECK FAILED files=")
 	wantContains(t, count, "bad=25")
 	wantContains(t, count, "stray=25")
 	t.Logf("measured: %d lines, %d bytes", len(lines(all)), ownBytes(all, dir))
@@ -328,7 +328,7 @@ func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
 	// Two hundred pairs, four types each: a Claude transcript carries no reasoning count.
 	{
 		n := len(lines(r.stdout))
-		assert.Equal(t, 800, n, "%d report lines, want 800 (200 pairs x the four types a transcript carries)", n)
+		assert.Equal(t, 801, n, "%d report lines, want 801 (200 pairs x the four types a transcript carries, plus the result line)", n)
 	}
 	wantNotContains(t, r.stdout, "MORE")
 	{
@@ -337,7 +337,7 @@ func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
 	}
 	{
 		n := len(lines(r.stderr))
-		assert.Equal(t, 22, n, "%d lines on stderr, want 22 (20 TOKENS AVG + the one TOKENS AVG-ALL + the one REPORT OK)", n)
+		assert.Equal(t, 21, n, "%d lines on stderr, want 21 (20 REPORT AVG + the one REPORT AVG-ALL)", n)
 	}
 	t.Logf("measured: %d lines, %d bytes", len(lines(r.stdout)), len(r.stdout))
 }
