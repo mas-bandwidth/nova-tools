@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,6 +67,45 @@ func TestAdoptWindowVerbWaitsOnlyOnTheStoppedAgents(t *testing.T) {
 	code := a.cmdAdoptWindow([]string{"--binary", bin, "--stopped", "com.nova.sprint.server=4100", "--stopped", "com.nova.loop.guard=0"}, &out, &errs)
 	require.Equal(t, 0, code, errs.String())
 	assert.Equal(t, "OTHER 21128 nova-sprint-int2 where --json\nWINDOW OK stopped=2 waited=1s others=1\n", out.String())
+}
+
+// TestAdoptWindowVerbAcceptsThePlaybookArgumentShape is the seat play's
+// shipped argv: the candidate's list `[--binary, <bin>, --window, <N>s]` with
+// each stopped agent as the pair `--stopped <label>=<pid>` (an interval agent
+// between runs is pid 0). The verb reads only repeated `--stopped` flags and
+// refuses positional words, so the play must put the flag before each value;
+// this builds that exact list and runs it.
+func TestAdoptWindowVerbAcceptsThePlaybookArgumentShape(t *testing.T) {
+	t.Parallel()
+	bin := "/seat/.local/bin/nova-sprint"
+	stopped := []sprint.WindowAgent{
+		{Label: "com.nova.sprint.server", PID: 4100},
+		{Label: "com.nova.loop.member", PID: 4200},
+		{Label: "com.nova.disk-guard", PID: 0},
+	}
+	// the playbook's seat_window_flags: each agent as --stopped <label>=<pid>
+	flags := make([]string, 0, 2*len(stopped))
+	for _, a := range stopped {
+		flags = append(flags, "--stopped", a.Label+"="+strconv.Itoa(a.PID))
+	}
+	// the playbook's argv after the verb: --binary, --window, then the flags
+	args := append([]string{"--binary", bin, "--window", "60s"}, flags...)
+
+	reads := [][]sprint.WindowProc{
+		{{PID: 4100, Path: bin, Args: bin + " run"}, {PID: 4200, Path: "/seat/.local/bin/nova-swarm", Args: "nova-swarm member"}, {PID: 21128, Path: bin, Args: "nova-sprint-int2 where --json"}},
+		{{PID: 21128, Path: bin, Args: "nova-sprint-int2 where --json"}},
+	}
+	n := 0
+	a := newApp(func(string) string { return "" })
+	windowProcsFor.Store(a, func(context.Context) ([]sprint.WindowProc, error) {
+		n++
+		return reads[min(n, len(reads))-1], nil
+	})
+	t.Cleanup(func() { windowProcsFor.Delete(a) })
+	var out, errs bytes.Buffer
+	code := a.cmdAdoptWindow(args, &out, &errs)
+	require.Equal(t, 0, code, errs.String())
+	assert.Equal(t, "OTHER 21128 nova-sprint-int2 where --json\nWINDOW OK stopped=3 waited=1s others=1\n", out.String())
 }
 
 func TestAdoptWindowVerbRefusesAStoppedAgentPastTheBound(t *testing.T) {

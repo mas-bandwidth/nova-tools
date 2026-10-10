@@ -700,7 +700,7 @@
             # rename so a running process keeps its own inode.
             - name: "window: the agents it stopped, as --stopped <label>=<pid>"
               ansible.builtin.set_fact:
-                seat_window_flags: "{{ (seat_window_flags | default([])) + [item.label ~ '=' ~ (item.pid | default(0) | string)] }}"
+                seat_window_flags: "{{ (seat_window_flags | default([])) + ['--stopped', item.label ~ '=' ~ (item.pid | default(0) | string)] }}"
               loop: "{{ seat_stopped }}"
               loop_control: { label: "{{ item.label }}" }
 
