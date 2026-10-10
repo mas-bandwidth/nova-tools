@@ -68,8 +68,7 @@ func TestEveryFriendDecisionReadsTheOneTierOfTheCard(t *testing.T) {
 		require.Equal(t, "heavy", w.s.DealTier(w.s.Primary("s1-1")))
 
 		// no friend serves heavy: both come back to ready, none stranded on her row
-		p, _ := TickDeal(w.s, TickReq{Friends: []FriendSeat{emma}})
-		w.must(p)
+		w.part(TickDeal, TickReq{Friends: []FriendSeat{emma}}) // the work-now part takes them back
 		for _, id := range []string{"s1-1", "s1-2"} {
 			wc := w.s.Fleet.Card(id + ".w1")
 			require.NotNil(t, wc)
@@ -79,8 +78,7 @@ func TestEveryFriendDecisionReadsTheOneTierOfTheCard(t *testing.T) {
 
 		// a friend serving heavy takes them
 		hal := FriendSeat{Name: "hal", Width: 2, Status: Up, Tiers: []string{"heavy"}}
-		p, _ = TickDeal(w.s, TickReq{Friends: []FriendSeat{emma, hal}})
-		w.must(p)
+		w.dealParts(TickReq{Friends: []FriendSeat{emma, hal}})
 		assert.Equal(t, FriendRow("hal"), w.s.Fleet.Card("s1-1.w1").Row)
 		assert.Equal(t, FriendRow("hal"), w.s.Fleet.Card("s1-2.w1").Row)
 		assert.Empty(t, Check(w.s, nil))
@@ -92,8 +90,7 @@ func TestEveryFriendDecisionReadsTheOneTierOfTheCard(t *testing.T) {
 		emma := FriendSeat{Name: "emma", Width: 1, Status: Up, Tiers: []string{"flash", "pro"}, Running: []string{"s1-1.w1"}}
 		dealWith(w, emma)
 		w.must(Brief(w.s, BriefReq{ID: "s1-1", Tier: "heavy"}))
-		p, _ := TickDeal(w.s, TickReq{Friends: []FriendSeat{emma}})
-		w.must(p)
+		w.dealParts(TickReq{Friends: []FriendSeat{emma}})
 		assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 	})
 }

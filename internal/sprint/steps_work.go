@@ -930,6 +930,10 @@ func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 type DealReq struct {
 	Sel
 	Who string
+	// Lanes fills each member only to its width, its free lanes, never its stack (the deal by
+	// cost's work-now part, TickDeal; tla/DealCost.tla WorkNow): a card no free lane takes is
+	// refused here and stacked by the tick's stack part (TickStack).
+	Lanes bool `json:",omitempty"`
 }
 
 // Deal moves ready -> working: for each primary, in work order, its work
@@ -992,6 +996,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	quiet := quietWhy(s, up)
 	up = notQuiet(s, up)
 	q, widths := memberLoads(s, up), memberWidths(s, up)
+	if r.Lanes {
+		widths = memberLanes(s, up)
+	}
 	for _, c := range chosen {
 		// its bench: the members its brief's BENCH line names, and the deal deals it to
 		// none other; with no member of it up it waits ready (bench_deal.go)

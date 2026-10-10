@@ -128,6 +128,26 @@ func memberWidths(s *Snapshot, up []string) map[string]int {
 	return w
 }
 
+// memberLanes is each up member's room in the deal's work-now part (DealReq.Lanes): its width,
+// the lanes a card dealt now starts in, never the stack behind them.
+func memberLanes(s *Snapshot, up []string) map[string]int {
+	w := map[string]int{}
+	for _, m := range up {
+		w[m] = s.Width(m)
+	}
+	return w
+}
+
+// lanesRoom is the sum over the up members of their free lanes: the cards each can still take
+// before it holds its width (the deal's work-now part, TickDeal).
+func lanesRoom(s *Snapshot, up []string) int {
+	room := 0
+	for _, m := range up {
+		room += max(0, s.Width(m)-halfLoad(rowLoad(s, m)))
+	}
+	return room
+}
+
 // widthRoom is the sum over the up members of the cards each can still take
 // before it holds DealAhead times its width.
 func widthRoom(s *Snapshot, up []string) int {

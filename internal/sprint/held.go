@@ -226,8 +226,10 @@ func (c *held) dealTurn(id string) int {
 }
 
 // heldParts is the tick's parts the rule asks what the next tick does: every
-// part but the check, whose duty the rule is.
-var heldParts = []TickPartFn{TickLevel, TickLevelReads, TickResolve, TickResume, TickDeal, TickAccept, TickAsk, TickDeadlines, TickOverdue}
+// part but the check, whose duty the rule is. The deal is its work-now part, the
+// rebalance and its stack part (TickDeal, TickRebalance, TickStack); each asked of the
+// same state, the stack part answers every card the deal's room takes.
+var heldParts = []TickPartFn{TickLevel, TickLevelReads, TickResolve, TickResume, TickDeal, TickRebalance, TickStack, TickAccept, TickAsk, TickDeadlines, TickOverdue}
 
 func newHeld(h HeldState, now time.Time) *held {
 	s := *h.Snap

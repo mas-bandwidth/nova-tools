@@ -66,8 +66,7 @@ func priorityWorld(t *testing.T, working, flashReads, frontierReads, ready int) 
 // runs them in order (TickTables), each applied.
 func tickDealAndAsk(t *testing.T, w *world, seats ...FriendSeat) {
 	t.Helper()
-	p, _ := TickDeal(w.s, TickReq{Friends: seats})
-	w.must(p)
+	w.dealParts(TickReq{Friends: seats})
 	askReaders(t, w, seats)
 }
 
@@ -114,7 +113,7 @@ func TestReadsOutrankNormalWork(t *testing.T) {
 			r, _ := friendRoom(amy)
 			require.Equal(t, 3, r-friendLoad(w.s, "amy"), "her room is three")
 
-			p, _ := TickDeal(w.s, TickReq{Friends: []FriendSeat{amy}})
+			p, _ := w.dealParts(TickReq{Friends: []FriendSeat{amy}})
 			firstRead, firstWork := -1, -1
 			for i, u := range p.Units {
 				if u.Moved == u.Key+" asked of friend amy" && firstRead < 0 {
@@ -128,7 +127,6 @@ func TestReadsOutrankNormalWork(t *testing.T) {
 			if firstWork >= 0 {
 				require.Less(t, firstRead, firstWork, "the deal's plan places a read before any normal work card")
 			}
-			w.must(p)
 			askReaders(t, w, []FriendSeat{amy})
 			assert.Len(t, friendReads(w, "amy"), tc.reads, "every read she may take is placed")
 			assert.Len(t, friendNewWork(w, "amy"), tc.work, "work only in the room the reads leave")
@@ -230,7 +228,7 @@ func TestLowFillsOnlyAnIdleLane(t *testing.T) {
 			{ID: "s1-2", Brief: "c: a normal card\n\nThe task."},
 			{ID: "s1-3", Brief: "c: a normal card\n\nThe task."},
 		}}))
-		w.part(TickDeal, TickReq{})
+		w.dealParts(TickReq{})
 		// width 1 holds DealAhead (2) cards: both normal cards, the low card left ready
 		assert.Equal(t, Working, w.s.StateOf("s1-2"))
 		assert.Equal(t, Working, w.s.StateOf("s1-3"))

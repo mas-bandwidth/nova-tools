@@ -37,8 +37,10 @@ func friendWorld(t *testing.T, briefs ...string) *world {
 // dealWith is the tick's deal part with these friends, applied.
 func dealWith(w *world, seats ...FriendSeat) Plan {
 	w.t.Helper()
-	p, _ := TickDeal(w.s, TickReq{Friends: seats})
-	return w.must(p)
+	// the deal is its work-now part and its stack part (TickDeal, TickStack; tla/DealCost.tla)
+	p, _ := w.dealParts(TickReq{Friends: seats})
+	require.Empty(w.t, p.Refused, "refused: %v", p.Refused)
+	return p
 }
 
 func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
@@ -139,9 +141,11 @@ func TestWhoFriendGoesToTheUpFriendWithTheMostFreeWidth(t *testing.T) {
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
 	// room is DealAhead times width: amy has two places, bob four
 	dealStarted(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"}, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash"}, FriendSeat{Name: "cat", Width: 8, Status: Held})
-	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "bob has four free, amy two")
-	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-2.w1").Row, "bob still has three free")
-	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-3.w1").Row, "amy and bob have two each: amy is first by name")
+	// the work-now part fills free lanes first (the deal by cost, tla/DealCost.tla): the most
+	// idle lanes first, then the most room, then the name
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "bob has two idle lanes, amy one")
+	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-2.w1").Row, "one idle lane each: amy is first by name")
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-3.w1").Row, "bob's last idle lane")
 	assert.Equal(t, 0, w.s.Fleet.Count(FriendRow("cat"), Working), "a held friend is dealt nothing")
 }
 

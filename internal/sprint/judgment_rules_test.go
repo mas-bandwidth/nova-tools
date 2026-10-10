@@ -102,7 +102,9 @@ func friendDealt(t *testing.T, running ...string) (*world, FriendSeat) {
 	w := friendWorld(t, friendBrief("friend"))
 	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro", Running: running}
 	bob := FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash,pro"}
-	dealWith(w, amy)
+	dealt := amy
+	dealt.Running = nil // her beat names it once it is on her row: the deal's two parts run before
+	dealWith(w, dealt)
 	wc := w.s.Fleet.Card("s1-1.w1")
 	require.Equal(t, FriendRow("amy"), wc.Row)
 	require.Equal(t, Ready, wc.Col, "dealt to her: ready until she starts it")

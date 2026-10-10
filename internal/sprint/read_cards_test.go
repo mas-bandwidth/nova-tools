@@ -34,7 +34,9 @@ func putReviewBy(w *world, id, brief, unit string, score float64) {
 // dealReads runs the tick's deal, which deals the read cards (TickDeal, withReadCards).
 func dealReads(t *testing.T, w *world, seats []FriendSeat) Plan {
 	t.Helper()
-	return w.part(TickDeal, TickReq{Friends: seats})
+	p, _ := w.dealParts(TickReq{Friends: seats})
+	require.Empty(t, p.Refused, "refused: %v", p.Refused)
+	return p
 }
 
 // readCardsOf is the placed read cards of the primary on the fleet table.

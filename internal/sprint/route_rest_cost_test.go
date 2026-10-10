@@ -18,8 +18,7 @@ func restWorld(t testing.TB) *Snapshot {
 	}
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1", Width: 8}))
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 1000, Brief: "c: the work tier: flash\nThe task.\n"}))
-	p, _ := TickDeal(w.s, TickReq{})
-	w.do(p)
+	w.dealParts(TickReq{})
 	for i := range 3000 {
 		w.s.Fleet.Put(&Card{ID: fmt.Sprintf("old-%d.w1", i), Row: "m1", Col: DoneOK, Fields: map[string]string{
 			"ok": "yes", FieldRoute: []string{"flash-a", "flash-b"}[i%2], "finished": stamp(t0)}})

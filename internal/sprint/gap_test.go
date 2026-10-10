@@ -125,7 +125,7 @@ func TestAMemberPastItsRoomTakesNoneOfAnothersRoom(t *testing.T) {
 		}
 		putWorkCard(w, "x"+string(rune('a'+i)), "m1", col, float64(100+i), nil)
 	}
-	p, due := TickDeal(w.s, TickReq{})
+	p, due := w.dealParts(TickReq{})
 	require.Len(t, p.Units, DealAhead*2, "dealt %d (due %d), want m2's room", len(p.Units), due)
 	require.Zero(t, due, "dealt %d (due %d), want m2's room", len(p.Units), due)
 }

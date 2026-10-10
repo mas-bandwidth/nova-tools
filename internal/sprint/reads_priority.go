@@ -137,6 +137,13 @@ func friendReadsFirst(s *Snapshot, seats []FriendSeat, waiting []*Card, placed P
 // all of it while a read she may take still waits (FriendSeat.ReadsFirst), which the level
 // after the deal reads beside the work dealt (dealt).
 func friendDealByLadder(s *Snapshot, offer []*Card, seats []FriendSeat) (p Plan, out []FriendSeat, dealt, dealtWorking map[string]int) {
+	return friendDealByLadderReclaim(s, offer, seats, true)
+}
+
+// friendDealByLadderReclaim is friendDealByLadder with the reclaim of the fleet's dealt-ahead
+// cards on or off: the deal's work-now part reclaims, its stack part never (TickStack), so the
+// reclaim's bound holds once a tick.
+func friendDealByLadderReclaim(s *Snapshot, offer []*Card, seats []FriendSeat, reclaim bool) (p Plan, out []FriendSeat, dealt, dealtWorking map[string]int) {
 	work := map[int][]*Card{}
 	for _, c := range offer {
 		work[cardRank(c)] = append(work[cardRank(c)], c)
@@ -184,7 +191,7 @@ func friendDealByLadder(s *Snapshot, offer []*Card, seats []FriendSeat) (p Plan,
 			}
 		}
 		held := friendReadsFirst(s, cur, above, Plan{})
-		wp, wd, ww := friendDealPass(s, work[r], held, r == normal)
+		wp, wd, ww := friendDealPass(s, work[r], held, reclaim && r == normal)
 		parts = append(parts, wp)
 		for i := range cur {
 			cur[i].ReadsFirst += wd[cur[i].Name]

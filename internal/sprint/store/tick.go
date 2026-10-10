@@ -608,7 +608,7 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 
 // mirrors says the part's step brings the display cells up to date after it.
 func mirrors(name string) bool {
-	return name == "presence" || name == "deal" || name == "level" || name == "resume" || name == sprint.PartCapDeal || name == sprint.PartFriendStall
+	return name == "presence" || name == "deal" || name == sprint.PartStack || name == "level" || name == "resume" || name == sprint.PartCapDeal || name == sprint.PartFriendStall
 }
 
 // unchangedNotWritten is the plan of a part with the writes that change no
@@ -1154,10 +1154,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 // routesPart says a tick part plans with the routes: the deal and the ask draw
 // from them, and the check asks what the next deal does.
 func routesPart(name string) bool {
-	// the rebalance draws a route for a card it moves off a friend onto a machine
+	// the rebalance draws a route for a card it moves off a friend onto a machine, and the
+	// deal's stack part as its work-now part does
 	// the readers' level too: a fleet reader whose row names no tier reads flash only while
 	// the store holds routes (sprint fleetReadsFlashOnly), so the level plans with them
-	return name == "deal" || name == sprint.PartRebalance || name == "ask" || name == "check" || name == sprint.PartLevelReads || sprint.IsRulePart(name)
+	return name == "deal" || name == sprint.PartRebalance || name == sprint.PartStack || name == "ask" || name == "check" || name == sprint.PartLevelReads || sprint.IsRulePart(name)
 }
 
 // MaxSettle bounds the updates a tick makes past its first pass while the

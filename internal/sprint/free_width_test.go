@@ -53,11 +53,11 @@ func TestAReworkIsNotDealtToAMemberAtDealAheadTimesItsWidth(t *testing.T) {
 	assert.Equal(t, "make the test pass", w.s.Work.Card("s1-1").F("fix"), "the fix rides on the primary until the tick deals it")
 
 	// the tick deals nothing while the member is full ...
-	w.part(TickDeal, TickReq{})
+	w.dealParts(TickReq{})
 	assert.Nil(t, w.s.Fleet.Card("s1-1.w2"))
 	// ... and deals the rework when the member has room
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-2.w1"}}, Gens: gensOf(w.s, "s1-2.w1"), Failed: true, Report: "red"}))
-	w.part(TickDeal, TickReq{})
+	w.dealParts(TickReq{})
 	wc := w.s.Fleet.Card("s1-1.w2")
 	require.NotNil(t, wc)
 	assert.Equal(t, "m1", wc.Row)
@@ -102,7 +102,7 @@ func TestTheTickDealsOnlyWhatIsFree(t *testing.T) {
 				w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-" + itoa(i)}}}))
 				takeCard(w, id)
 			}
-			w.part(TickDeal, TickReq{})
+			w.dealParts(TickReq{})
 			assert.Equal(t, tc.wantHeld, widthHeld(w, "m1"))
 			assert.Equal(t, tc.working, w.s.Fleet.Count("m1", Working), "the tick takes nothing")
 			assert.LessOrEqual(t, w.s.Fleet.Count("m1", Working), tc.width, "a member works at most its width")

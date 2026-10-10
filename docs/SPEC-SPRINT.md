@@ -1371,24 +1371,59 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### The deal by cost: free lanes first, then the stack
+
+**Every free lane across friends and fleet is filled, cheapest first, before any card is
+stacked** (the owner, 2026-10-09: "The best implementation is by cost. friends on sub are $0
+cost."; 2026-10-10: "cards need to fill working slots FIRST across fleet and friends, then go
+to ready overflow up to 2X" and "the deal is lowest cost first"; `TickDeal`, `Rebalance`,
+`TickStack`; the model is tla/DealCost.tla). A dealt card is not working: it holds a lane of
+its row from its deal, and works only once its worker starts it. A row's free lanes are its
+width less every card it holds; its overflow is what it holds past its width. The cost ranks
+are a subscription friend (her row's billing empty or a subscription word: $0), then a
+machine (a metered route), then an API-rate friend (billing api or metered). The work
+table's deal is three parts, each over the store as the part before it left it:
+
+- `deal`, work now: the ready cards fill free lanes alone, a subscription friend's first
+  (her room is her lanes, `RoomLanes`), then the machines' (`DealReq.Lanes`); an API-rate
+  friend is dealt nothing here (`RoomNone`).
+- `rebalance`: each row's overflow, whether or not its own lanes all work, goes to free lanes
+  elsewhere, the cheapest first (below); then a row's ready past its cap, DealAhead (two)
+  times its width, goes back to the pool, the newest first, and so does every unstarted card
+  of a friend down or held (a stack is a reservation the next tick may revoke, never a hold).
+- `stack`: what is left is dealt to the rows below their room, DealAhead times their width,
+  the friends before the machines; a friend's free lane before any friend's stack
+  (`preferredFriend`), and an API-rate friend's lanes alone, never a stack. It raises no
+  judgment.
+
+So no card waits in the pool or in a row's overflow while a row that may take it has a free
+lane, no row's ready passes twice its width, and a frontier card, which no machine route
+serves, never reaches the fleet
+(`TestTheDealFillsEveryFreeLaneBeforeAnyStack`, `TestTheOverflowMovesThoughALaneOfItsOwnIsFree`,
+`TestTheReadyPastTwiceTheWidthReturnsToThePool`, `TestAFrontierCardNeverGoesToTheFleet`,
+`TestTheDealIsLowestCostFirst`, `TestAFriendDownKeepsNoStack`).
+
 ### The rebalance: queued work to idle lanes, across friends and fleet
 
 **The tick rebalances queued work across both sides, within the tier sets** (the owner,
 2026-10-06: "This should be a holistic rebalance, not just across friends, not just across
 tiers, but BOTH, depending on what tiers are enabled per-fleet/friends table." and "When you
 rebalance, always rebalance this way from now on."; `sprint.Rebalance`, `TickRebalance`;
-the model is tla/WhoPreference.tla `Rebalance`). The work table's update runs, in order:
-`drain`, `resolve`, `cap deal`, `deal`, `rebalance`, `accept`. The rebalance is its own part
-after the deal, so it reads the deal applied (every lane the deal could fill is filled, and
-the rows' counts are true without a second count of the plan). A work card dealt and not
+the models are tla/DealCost.tla `WorkNow` and `Return`, and tla/WhoPreference.tla
+`Rebalance`). The work table's update runs, in order: `drain`, `resolve`, `cap deal`,
+`deal`, `rebalance`, `stack`, `accept`. The rebalance is its own part after the deal's
+work-now part, so it reads the deal applied (every free lane the deal could fill is filled,
+and the rows' counts are true without a second count of the plan). A work card dealt and not
 started (ready on its row: a friend has not started it, `friendStarted`; a member has not
-taken it) on a unit whose lanes all work (its working cards, reads at half a slot, at its
-width) goes to a unit of either side with an idle lane (its width less every card it holds,
-ready and working) that may take it: a friend dealable whose tiers and the friends' set hold
+taken it) in a unit's overflow (it holds more cards than its width, reads at half a slot,
+whether or not all its lanes work: on 2026-10-10 a friend at 28 of 32 working held 50 ready
+while another sat at 0 of 32) goes to a unit of either side with an idle lane (its width less
+every card it holds, ready and working) that may take it, at most the unit's overflow: a friend dealable whose tiers and the friends' set hold
 the card's tier (`friendTakes`) and that it has not left (`friends_left`, `taken_from`); a
 member up, while the fleet's work is on, whose side's set holds the tier, with a route of
 the tier to draw (`routeOf`), and not one that refused it at staging; never a row it was
-rebalanced off (`rebalanced_from`). The cheapest unit first: the card's own tier (a member
+rebalanced off (`rebalanced_from`). The cheapest unit first: its cost rank (a subscription
+friend, a machine, an API-rate friend), then the card's own tier (a member
 draws on its tier's routes; a friend whose highest tier is the card's), then one tier up as
 overflow, never more and never below (a pro card never reaches a flash unit); then the most
 idle lanes, then the name. Each card moves at most once a tick, in the deal's order, and the

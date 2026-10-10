@@ -162,6 +162,43 @@ type FriendSeat struct {
 	Evidence   string
 	DaemonOnly bool
 	Current    string
+	// Billing is her nova-config row's billing word (store.FriendRow.Billing): "" or a
+	// subscription word is a friend whose cards cost nothing more, api or metered one billed
+	// per call. The deal by cost reads it (friendCostRank).
+	Billing string
+	// DealRoom is her room in one part of the tick's deal (the deal by cost, tla/DealCost.tla),
+	// set by the deal on the seats it deals to, never read from her row: RoomLanes, her free
+	// lanes alone (the work-now part, before any member is stacked); RoomNone, none; "" her
+	// whole room, DealAhead times her width (the stack part).
+	DealRoom string
+}
+
+// The rooms a part of the tick's deal gives a friend (FriendSeat.DealRoom).
+const (
+	RoomLanes = "lanes"
+	RoomNone  = "none"
+)
+
+// The deal's cost ranks (the owner, 2026-10-09: "The best implementation is by cost. friends on
+// sub are $0 cost. then everything just works." "if there is a fleet route that is cheaper, we
+// should prefer that."; 2026-10-10: "the deal is lowest cost first"): a subscription friend's
+// card costs nothing more, a fleet machine's draws a metered route, and an API-rate friend's is
+// billed per call at her own provider's rate, which the store does not price against the
+// fleet's, so she comes after the fleet. Lower is cheaper; tla/DealCost.tla, Cost.
+const (
+	costRankSubscription = 0
+	costRankFleet        = 1
+	costRankAPI          = 2
+)
+
+// friendCostRank is the friend's cost rank: costRankAPI when her row bills her per call (api or
+// metered, as FriendTokensCell reads the word), else costRankSubscription.
+func friendCostRank(f FriendSeat) int {
+	switch strings.ToLower(strings.TrimSpace(f.Billing)) {
+	case "api", "metered":
+		return costRankAPI
+	}
+	return costRankSubscription
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -316,9 +353,18 @@ func laneRunsIt(s *Snapshot, seats []FriendSeat, c, wc *Card) string {
 // friendRoom is the friend's room and her lanes: DealAhead times her width and her width
 // in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
 // the room less what her reads take first in this deal (FriendSeat.ReadsFirst).
+// In a part of the deal that gives her less (DealRoom), her room is her lanes (RoomLanes) or
+// none (RoomNone).
 func friendRoom(f FriendSeat) (room, width int) {
+	width = f.Width
 	if f.Mode == config.FriendModeOneShot {
-		return 1 - f.ReadsFirst, 1
+		width = 1
+	}
+	switch {
+	case f.DealRoom == RoomNone:
+		return 0, width
+	case f.DealRoom == RoomLanes || f.Mode == config.FriendModeOneShot:
+		return width - f.ReadsFirst, width
 	}
 	return DealAhead*f.Width - f.ReadsFirst, f.Width
 }

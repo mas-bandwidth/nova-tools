@@ -260,7 +260,7 @@ const PartDrain = "drain"
 // none is ("the tick doesn't end until all dirty bits are cleared"). The
 // model is tla/DirtyTick.tla.
 var TickTables = []TableUpdate{
-	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {PartCapDeal, TickCapDeal}, {"deal", TickDeal}, {PartRebalance, TickRebalance}, {"accept", TickAccept}}},
+	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {PartCapDeal, TickCapDeal}, {"deal", TickDeal}, {PartRebalance, TickRebalance}, {PartStack, TickStack}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
 	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}}},
@@ -602,7 +602,55 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 // the fleet has room for goes in the one plan, one step, up to TickMaxDeal;
 // a withdrawn card is dealt again at a new generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
-func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
+//
+// The deal is by cost, and whoever can work now is served first (the owner, 2026-10-10:
+// "cards need to fill working slots FIRST across fleet and friends, then go to ready overflow
+// up to 2X"; "the deal is lowest cost first"; tla/DealCost.tla). It is three parts of the
+// work table's pump, each over the store as the part before it left it: this one, the
+// work-now part, fills free lanes alone, cheapest first (the subscription friends', at
+// RoomLanes, then the machines', DealReq.Lanes; an API-rate friend's, dearer than the fleet,
+// is left to the stack part, which fills her lanes before any stack); the rebalance
+// (Rebalance) moves what any row holds past its lanes to a free lane elsewhere, cheapest
+// first, and returns to the pool what a row holds past its cap; the stack part (TickStack)
+// deals what is left, the friends' stack before the machines', each row to DealAhead times
+// its width. So no card is stacked while a lane that may take it is free.
+func TickDeal(s *Snapshot, r TickReq) (Plan, int) { return dealPart(s, r, false) }
+
+// PartStack is the work table's part after the rebalance: the deal's stack (TickStack).
+const PartStack = "stack"
+
+// TickStack is the deal's stack part (TickDeal): the ready cards no free lane took, dealt
+// cheapest first to the rows below their room, DealAhead times their width (a subscription
+// friend's, then the machines'; an API-rate friend's lanes alone, never a stack). A
+// friend's free lane is filled before any friend is stacked (preferredFriend), and the
+// work-now part and the rebalance filled every other lane that may take a card left here
+// (tla/DealCost.tla, Stack). Its judgments are the work-now part's: it raises none.
+func TickStack(s *Snapshot, r TickReq) (Plan, int) {
+	p, _ := dealPart(s, r, true)
+	return p, 0
+}
+
+// dealSeats is the friends as a part of the deal deals to them (FriendSeat.DealRoom): in the
+// work-now part a subscription friend's lanes and an API-rate friend nothing; in the stack
+// part a subscription friend's whole room and an API-rate friend's lanes.
+func dealSeats(seats []FriendSeat, stack bool) []FriendSeat {
+	out := slices.Clone(seats)
+	for i := range out {
+		api := friendCostRank(out[i]) == costRankAPI
+		switch {
+		case !stack && api:
+			out[i].DealRoom = RoomNone
+		case !stack || api:
+			out[i].DealRoom = RoomLanes
+		default:
+			out[i].DealRoom = ""
+		}
+	}
+	return out
+}
+
+// dealPart is the deal's work-now part (TickDeal), or with stack its stack part (TickStack).
+func dealPart(s *Snapshot, r TickReq, stack bool) (Plan, int) {
 	// the routes resting now, and those the no-result rule rests in this tick (rule 3,
 	// route_rest.go): no card of this tick is drawn on one, and the new rests are written
 	// in its plan
@@ -636,7 +684,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	// the ladder (priority.go, reads_priority.go): the cards above reader, then the friends'
 	// reads, asked and placed in this plan, then normal and low work in the room they leave
-	fp, seats, dealt, dealtWorking := friendDealByLadder(s, dealOrder(s, offer), r.Friends)
+	fp, seats, dealt, dealtWorking := friendDealByLadderReclaim(s, dealOrder(s, offer), dealSeats(r.Friends, stack), !stack)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -792,15 +840,24 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	if len(up) > 0 {
-		room := widthRoom(s, up)
-		n := min(room, TickMaxDeal, len(ready))
-		due = min(room, len(ready)) - n
+		// the work-now part fills the machines' free lanes alone; the stack part their room
+		room, dealable := lanesRoom(s, up), ready
+		if stack {
+			room = widthRoom(s, up)
+		} else {
+			// a card whose WHO line names a friend is the friends' while one may stack it: the
+			// machines take it only in the stack part, after the friends' room (its pin is a
+			// constraint of the deal, as the rebalance keeps it with the friends)
+			dealable = slices.DeleteFunc(slices.Clone(ready), func(c *Card) bool { _, who := FriendCard(c); return who })
+		}
+		n := min(room, TickMaxDeal, len(dealable))
+		due = min(room, len(dealable)) - n
 		if n > 0 {
 			ids := make([]string, n)
 			for i := range ids {
-				ids[i] = ready[i].ID
+				ids[i] = dealable[i].ID
 			}
-			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
+			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who(), Lanes: !stack})
 		}
 	}
 	p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
@@ -810,6 +867,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Units = append(reads.Units, p.Units...)
+	if stack {
+		// the stack part deals and judges nothing: the work-now part's judgments stand
+		return p, 0
+	}
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
@@ -820,6 +881,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		// her (friendUnstartedLevel; docs/SPEC-SPRINT.md section 1, a friend's card is
 		// working once she starts it); the level then neither moves it again nor counts it
 		// on her row
+		// the friends' level moves a card from one friend's row to another's, never from the
+		// pool: it evens their rooms as before, an idle lane first (the work-now part's lanes are
+		// the deal's alone), and an API-rate friend's lanes alone
+		seats = dealSeats(seats, true)
 		up := friendUnstartedLevel(s, seats, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
 		moved := map[string]bool{}
 		for _, u := range up.Units {

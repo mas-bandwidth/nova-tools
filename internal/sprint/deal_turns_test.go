@@ -71,7 +71,7 @@ func lowestWorking(t *testing.T, s *Snapshot, stream string) {
 func TestDealWorksEveryStreamInParallel(t *testing.T) {
 	t.Parallel()
 	w := streamsOf30(t)
-	w.part(TickDeal, TickReq{})
+	w.dealParts(TickReq{})
 	got := workingBy(w.s, "s1", "s2", "s3")
 	require.Equal(t, streamsRoom, got["s1"]+got["s2"]+got["s3"], "working %v, want the room of %d dealt", got, streamsRoom)
 	spread(t, got)
@@ -86,7 +86,7 @@ func TestDealSkipsAStreamWithNoReadyCard(t *testing.T) {
 	for i := 1; i <= 30; i++ {
 		w.place(w.s.Work, fmt.Sprintf("s2-%d", i), "s2", Waiting)
 	}
-	w.part(TickDeal, TickReq{})
+	w.dealParts(TickReq{})
 	got := workingBy(w.s, "s1", "s2", "s3")
 	require.Zero(t, got["s2"], "working %v, want s2 skipped and the room of %d split evenly", got, streamsRoom)
 	require.Equal(t, streamsRoom/2, got["s1"], "working %v, want s2 skipped and the room of %d split evenly", got, streamsRoom)
@@ -102,8 +102,7 @@ func TestTickDealWorksEveryStreamInParallel(t *testing.T) {
 	for _, st := range []string{"s1", "s2", "s3"} {
 		w.must(Add(w.s, AddReq{Stream: st, Count: 30}))
 	}
-	p, _ := TickDeal(w.s, TickReq{})
-	w.must(p)
+	w.dealParts(TickReq{})
 	got := workingBy(w.s, "s1", "s2", "s3")
 	require.Equal(t, streamsRoom, got["s1"]+got["s2"]+got["s3"], "working %v, want the room of %d dealt", got, streamsRoom)
 	spread(t, got)
@@ -175,7 +174,7 @@ func TestPreview(t *testing.T) {
 func TestAHeldReadyCardCountsWhatIsAheadInTheDealsOrder(t *testing.T) {
 	t.Parallel()
 	w := streamsOf30(t)
-	w.part(TickDeal, TickReq{})
+	w.dealParts(TickReq{})
 	h := HeldState{Snap: w.s, Running: true}
 	for id, ahead := range map[string]int{"s3-11": 0, "s1-12": 1, "s2-12": 2, "s3-12": 3, "s1-13": 4, "s2-13": 5} {
 		hd := Holder(h, h.Snap.Now, id)

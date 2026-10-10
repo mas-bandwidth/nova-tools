@@ -147,13 +147,12 @@ func TestARefuserBelowItsRoomDoesNotStallACardItRefused(t *testing.T) {
 	w.must(p)
 	assert.Empty(t, w.notesOf(NStalled), "a card the deal places when a member it may go to has room is no stall")
 
-	dp, _ := TickDeal(w.s, TickReq{})
+	dp, _ := w.dealParts(TickReq{})
 	require.Len(t, dp.Refused, 1)
 	assert.Contains(t, dp.Refused[0].Why, noRoomWhy)
-	w.do(dp)
 	assert.Equal(t, Ready, w.state("s1-1"), "never dealt to the member that refused it")
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-2.w1"}}, Gens: gensOf(w.s, "s1-2.w1")}))
-	w.part(TickDeal, TickReq{})
+	w.dealParts(TickReq{})
 	assert.Equal(t, Working, w.state("s1-1"))
 	assert.Equal(t, y, w.s.Fleet.Card("s1-1.w1").Row, "dealt to the member that has not refused it, not %s", x)
 }

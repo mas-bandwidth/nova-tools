@@ -86,7 +86,7 @@ func TestRebalanceMovesAFlashCardOffAFullFriendToAnIdleMember(t *testing.T) {
 
 	w, wc := setup()
 	p := w.must(Rebalance(w.s, []FriendSeat{amy}, "machine"))
-	require.Equal(t, []string{"rebalanced s1-2.w1 from friend.amy to m1 gen=2 (its lanes all work; an idle lane takes it)"}, rebalanced(p))
+	require.Equal(t, []string{"rebalanced s1-2.w1 from friend.amy to m1 gen=2 (past its lanes; an idle lane takes it)"}, rebalanced(p))
 	got := w.s.Fleet.Card(wc.ID)
 	assert.Equal(t, "m1", got.Row)
 	assert.Equal(t, Ready, got.Col)

@@ -73,7 +73,7 @@ func TestDealSkipsAMachineAtDealAheadTimesItsWidth(t *testing.T) {
 func TestDealAtWidthTwoDealsDealAheadTimesTwo(t *testing.T) {
 	t.Parallel()
 	w := widthFleet(t, 2)
-	p := w.part(TickDeal, TickReq{})
+	p, _ := w.dealParts(TickReq{})
 	require.Len(t, p.Units, 8*DealAhead*2, "dealt %d, want %d", len(p.Units), 8*DealAhead*2)
 	for m, n := range perMember(w.s) {
 		require.Equal(t, DealAhead*2, n, "%s holds %d, want DealAhead times 2", m, n)
@@ -92,10 +92,9 @@ func TestTickDealFillsTheFleetToDealAheadTimesWidth(t *testing.T) {
 	for _, st := range []string{"s1", "s2", "s3"} {
 		w.must(Add(w.s, AddReq{Stream: st, Count: 400}))
 	}
-	p, due := TickDeal(w.s, TickReq{})
+	p, due := w.dealParts(TickReq{})
 	require.Len(t, p.Units, 8*DealAhead*64, "dealt %d (due %d), want the room of %d", len(p.Units), due, 8*DealAhead*64)
 	require.Zero(t, due, "dealt %d (due %d), want the room of %d", len(p.Units), due, 8*DealAhead*64)
-	w.must(p)
 	for m, n := range perMember(w.s) {
 		require.Equal(t, DealAhead*64, n, "%s holds %d, want DealAhead times its width 64", m, n)
 	}
