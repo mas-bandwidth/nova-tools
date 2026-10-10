@@ -70,7 +70,7 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 		require.Contains(t, doc, line, "docs/CLI.md carries the help's line")
 	}
 	for _, text := range []string{
-		"CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>",
+		"CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n> target_invalid=<n>",
 		"broken when the session is marked", "deaf when a delivery in", "silent when", "down by presence", "untrue: shown",
 		"friends[] each with", "daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age}",
 		"failed_of_last20, deferred, delivered, failed, broken,", "bus{friend, real_since, last_real}",

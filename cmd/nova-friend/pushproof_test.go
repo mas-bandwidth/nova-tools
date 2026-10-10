@@ -54,9 +54,11 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-			beats++
-			return "", nil
+		w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+			if words != (friend.BeatWords{}) {
+				beats++ // an up beat carries proof words; the row fetch before it does not
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 		}
 		remedy := "run: start a session in /w/bob with no agent preset and name it with --session <id>"
 		var downs []string
@@ -74,7 +76,12 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		require.NotEmpty(t, downs)
 		assert.Contains(t, downs[0], "push unproven: session check r4nd0m")
 		w = r.world()
-		w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
+		w.exec = func(_ context.Context, _, prog string, args []string, _ string) (string, int, error) {
+			// install records the session on the nova-config friend row before the
+			// delivery check; that call is not the dsh preset refusal.
+			if prog == "nova-config" && len(args) >= 2 && args[0] == "friend" && args[1] == "set" {
+				return "CONFIG SET kind=friend name=bob rev=2 changed=session\n", 0, nil
+			}
 			return `dsh: session "session-z" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 1, nil
 		}
 		cli := cliOf(w)
@@ -95,9 +102,11 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-			beats++
-			return "", nil
+		w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+			if words != (friend.BeatWords{}) {
+				beats++ // an up beat carries proof words; the row fetch before it does not
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 		}
 		var downs []string
 		w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string, _ friend.BeatWords) error {
