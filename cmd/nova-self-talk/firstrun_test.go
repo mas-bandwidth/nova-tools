@@ -160,7 +160,14 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	dir := t.TempDir()
 	copyDir(t, examplePages, filepath.Join(dir, "pages"))
 
-	for _, p := range onboarding.Execute(steps, runDocumentedIn(dir)) {
+	run := runDocumentedIn(dir)
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		res, err := run(s)
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		got = append(got, res)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
 		t.Error(p)
 	}
 }
@@ -186,31 +193,27 @@ func TestHelpExamplesAreTheFirstRunThroughTheComparator(t *testing.T) {
 	steps, err := onboarding.Steps("nova-self-talk", lines)
 	require.NoError(t, err)
 	require.Len(t, steps, len(linesOfTheBanner), "the first run runs %d commands and the banner's example block %d; they are one list", len(steps), len(linesOfTheBanner))
-	pages := filepath.Join(t.TempDir(), "pages")
-	copyDir(t, examplePages, pages)
 	for i, s := range steps {
 		command := "nova-self-talk " + strings.Join(s.Args, " ")
 		require.Equal(t, linesOfTheBanner[i], command, "first-run command %d is %q and the banner's example is %q; they are one list", i+1, command, linesOfTheBanner[i])
-		for j, a := range s.Args {
-			if rest, ok := strings.CutPrefix(a, "./pages/"); ok {
-				steps[i].Args[j] = filepath.Join(pages, rest)
-			}
-		}
 	}
-	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Path("./pages", pages)) {
+	dir := t.TempDir()
+	copyDir(t, examplePages, filepath.Join(dir, "pages"))
+	run := runDocumentedIn(dir)
+	results := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		res, err := run(s)
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		results = append(results, res)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, results, nil) {
 		t.Error(p)
 	}
 }
 
-// runDocumented calls this binary's own entry point with the documented
+// runDocumentedIn calls this binary's own entry point with the documented
 // arguments, keeping the two streams apart. A relative path is read against
-// the process working directory.
-func runDocumented(s onboarding.Step) (onboarding.Result, error) {
-	return runDocumentedIn("")(s)
-}
-
-// runDocumentedIn is runDocumented with the working directory a relative file
-// is read against (docs/STANDARD.md section 8).
+// dir (docs/STANDARD.md section 8).
 func runDocumentedIn(dir string) onboarding.Runner {
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
