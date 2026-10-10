@@ -102,3 +102,62 @@ func TestGateBoundCancelsOnlyItsGate(t *testing.T) {
 	}
 	assert.ErrorIs(t, context.Cause(ctx), errGateBound)
 }
+
+func TestHungBenchIsAbandonedAndNextRingBenchRuns(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	for _, host := range []string{"vision", "space"} {
+		r.ok("fleet beat " + host + " --load 1 --cores 8")
+		r.ok("fleet up " + host)
+	}
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	hosts := []string{"vision", "space"}
+	ring := benchRing("s1", hosts)
+	bound := 3 * time.Minute
+	ticks := make(chan time.Time, 1)
+	r.a.after = func(d time.Duration) <-chan time.Time {
+		require.Equal(t, bound, d)
+		return ticks
+	}
+	var asked []string
+	b := r.a.landState()
+	b.mu.Lock()
+	b.gateBench = func(ctx context.Context, host, _ string, _ [][]string, _ bool) (string, int, error) {
+		asked = append(asked, host)
+		if host == ring[0] {
+			ticks <- time.Time{}
+			<-ctx.Done()
+			return "", 1, ctx.Err()
+		}
+		return "", 0, nil
+	}
+	b.mu.Unlock()
+	l := &lander{a: r.a, st: st, gateKey: "s1", gateBound: bound}
+	why, ran := l.benchGate(context.Background(), hosts, r.clone, gateRuns(false, nil), false)
+	assert.Empty(t, why)
+	assert.True(t, ran)
+	assert.Equal(t, ring, asked)
+	assert.Contains(t, l.ledgerLog, "tree gate: gate abandoned: "+ring[0]+" after 3m0s")
+	assert.Equal(t, ring[1], l.gateHost)
+	assert.NotContains(t, r.ok("lane list"), "held=lander", "the abandoned lane was returned")
+}
+
+func TestLandDeadlineCancelsFlightGateContext(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &landFlight{queued: 1, began: ta.a.now().Add(-LandDeadline - time.Second), coord: "tester", stream: "s1", step: "gate", cancel: cancel}
+	ta.a.raiseIfStuck(context.Background(), "mem:0", f)
+	select {
+	case <-ctx.Done():
+	case <-t.Context().Done():
+		t.Fatal("stuck judgment did not cancel the in-flight gate")
+	}
+	f.mu.Lock()
+	judged := f.judged
+	f.mu.Unlock()
+	assert.True(t, judged)
+}
