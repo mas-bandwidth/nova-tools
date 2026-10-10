@@ -59,7 +59,7 @@ func briefTwin(t *testing.T) (dir, sha string) {
 // header lines of over replacing its own (a value "\x00" drops the line) and task its
 // THE TASK paragraph when not "".
 func twinBrief(repo string, over map[string]string, task string) []byte {
-	order := []string{"REPO", "BASE", "KIND", "START", "PATHS", "NEW", "SHARED", "TEST", "WHO"}
+	order := []string{"REPO", "BASE", "KIND", "START", "PATHS", "NEW", "SHARED", "TEST", "WHO", "SOURCE"}
 	h := map[string]string{
 		"REPO":   repo,
 		"BASE":   "sprint/s1",
@@ -293,6 +293,48 @@ func TestALedgerCardsExistingClassTestPassesDonewhenOnlyWithItsMarker(t *testing
 			require.Len(t, got, 1, "%v", fs)
 			assert.Contains(t, got[0].Excerpt, "exists in", "an existing test with no ledger marker is still refused")
 			assert.Contains(t, got[0].Excerpt, "so it cannot be red there")
+		})
+	}
+}
+
+// TestLintBriefRunsThePersonalNameCheckAtAdd pins that `nova-sprint add` runs the
+// personal-name check on every brief (docs/SPEC-CARD-CONTRACT.md section 6): a name in prose is
+// refused, a path token (a slash or a `.md` suffix) is not a name however it is spelled,
+// a name inside an ordinary word is not the name, and the names come from the caller --
+// the explicit Names and the friends table the add hands over.
+func TestLintBriefRunsThePersonalNameCheckAtAdd(t *testing.T) {
+	t.Parallel()
+	repo, sha := briefTwin(t)
+	bb := BriefBase{Repo: repo, Sha: sha, Listed: []string{"sprint/s1"},
+		Names:   []string{"alice"},
+		Friends: map[string][]string{"bob": {"pro"}}}
+	twinPaths := "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt"
+	for _, tc := range []struct {
+		name   string
+		source string
+		paths  string
+		want   bool
+	}{
+		{name: "a path under a named home is not a name", source: "home/alice/README.md"},
+		{name: "a prose name from the caller is refused", source: "alice keeps the ledger", want: true},
+		{name: "a friend in prose is refused", source: "bob keeps the ledger", want: true},
+		{name: "a path beside a prose name is still the prose", source: "alice keeps the ledger at home/alice/ledger.md", want: true},
+		{name: "a name inside an ordinary word is not the name", source: "every change needs a test"},
+		{name: "a bare name on a PATHS entry is prose", paths: twinPaths + ",alice", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			over := map[string]string{"SOURCE": tc.source}
+			if tc.paths != "" {
+				over["PATHS"] = tc.paths
+			}
+			fs, _ := LintBrief(twinBrief(repo, over, ""), bb)
+			got := findingsFor(fs, "personal-name")
+			if !tc.want {
+				assert.Empty(t, got, "%v", fs)
+				return
+			}
+			require.Len(t, got, 1, "%v", fs)
+			assert.Contains(t, got[0].Excerpt, "in prose")
 		})
 	}
 }
