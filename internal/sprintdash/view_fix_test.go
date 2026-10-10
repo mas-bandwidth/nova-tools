@@ -209,7 +209,7 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	assert.Equal(t, "9 working of 16: 1 blocker, 1 critical, 2 fix, 3 reads", res.BenchTitle)
 	assert.Equal(t, []string{"p-fix", "", "", "", "", "", "", ""}, res.Amy, "amy's second attempt is her purple cell")
 	assert.Equal(t, "", res.FriendsTotal, "no fix figure under the bars (unasked text)")
-	assert.Equal(t, "2 working, 0 review, 1 merging", res.Inflight)
+	assert.Equal(t, "1 working, 0 review, 1 fix, 1 merging", res.Inflight)
 }
 
 // New servers state the priority; legacy attempt inference must not override it.

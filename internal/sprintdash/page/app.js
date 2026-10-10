@@ -730,17 +730,17 @@ function renderPie(d) {
   });
 }
 // the In flight tile's subline (the owner 2026-10-04 3:20 and 3:25 PM): one line, two parts,
-// "<working> working · <review+merging> review + merge", each number white and its words grey;
-// the separate review and merging counts are in the tooltip
+// "<working> working · <review+fix+merging> review + fix + merge", each number white and its words grey;
+// the separate review, fix and merging counts are in the tooltip (the owner 2026-10-09: review-fix-merge)
 var inflightLast = null;
 function renderInflight(sum) {
   var box = $("inflight-sub"); if (!box) return;
   var fx = sum.fix || 0;
-  setTitle(box, (sum.working + fx) + " working, " + sum.review + " review, " + sum.merging + " merging");
+  setTitle(box, sum.working + " working, " + sum.review + " review, " + fx + " fix, " + sum.merging + " merging");
   // the words shorten in turn when the line does not fit the tile (a phone)
-  var forms = [["working", "review + merge"], ["work", "review + merge"], ["work", "rev + merge"], ["work", "rev+mrg"], ["wk", "r+m"]];
+  var forms = [["working", "review + fix + merge"], ["work", "review + fix + merge"], ["work", "rev + fix + merge"], ["work", "rev+fix+mrg"], ["wk", "r+f+m"]];
   var draw = function (w) {
-    var parts = [[sum.working + (sum.fix || 0), w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
+    var parts = [[sum.working, w[0]], [sum.review + fx + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
     box.textContent = "";
     if (!parts.length) box.textContent = "nothing in flight";
     parts.forEach(function (p, i) {
