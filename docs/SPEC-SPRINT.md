@@ -7297,11 +7297,13 @@ nova-config, applied by loops.yml with bootout and bootstrap.
 [--limit <host>] [--receipts <dir>] [--dry-run]` runs the tools play for the seat (the
 `coordinator` group, else the one `--limit` machine, with `localhost` for the build and
 `store_deployer` for the library), `<path>` being a built release directory
-(`<release-out>/<version>`). It prints each step's ADOPT line and `ADOPT ADOPTED` (`ADOPT
-WOULD-ADOPT` under `--dry-run`, the play's `--check`, where a machine with no candidate staged or
-built says `ADOPT step=seat ... WOULD-ADOPT`); a play that stops, or ends without the line of
-every step, is refused at exit 1 naming the step, the refusal said verbatim: a half move is
-never reported as an adoption. A refusal once the window opened is said with what the rollback
+(`<release-out>/<version>`). It prints each step's ADOPT line and `ADOPT ADOPTED`. Under
+`--dry-run`, each step the play would change prints `ADOPT WOULD step=<step> host=<host>`, then
+`ADOPT DRY-RUN OK steps=<n>` gives the number of changed steps; a check-mode fatal prints
+`ADOPT REFUSED step=<step> dry-run=yes: <ansible's one line>`. The play's `--check` says what a
+machine with no candidate staged or built would adopt without opening the window. A play that
+stops, or ends without the line of every step, is refused at exit 1 naming the step, the refusal
+said verbatim: a half move is never reported as an adoption. A refusal once the window opened is said with what the rollback
 did (the tools put back, the library read back, the agents started again) and names the steps
 before it rolled back, not done. No flag runs a step alone: the play calls `nova-sprint server
 switch` only with `--dry-run` (the candidate's shadow tick), loads the library with `nova-redis
