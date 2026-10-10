@@ -5,13 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,15 +102,18 @@ func TestInitBannerExampleThroughTheComparator(t *testing.T) {
 
 	const example = "nova-fuse init --box ./fuse-box.json"
 	require.Equal(t, example, examples(t)[0])
-	box := filepath.Join(t.TempDir(), "fuse-box.json")
-	exit, stdout, stderr := runFuse(t, localize(fields(example), box)...)
+	// The box is typed as written, `./fuse-box.json`, opened against a
+	// directory of the test's own: the tool prints that path back unchanged, so
+	// nothing on the line is rewritten and the comparator is handed no field of
+	// the onboarding.Volatile table.
+	dir := t.TempDir()
+	exit, stdout, stderr := runFuseIn(t, dir, fields(example)...)
 	require.Equal(t, 0, exit, "stderr: %s", stderr)
 	step := onboarding.Step{Line: "$ " + example, Want: []string{
 		"INIT OK box=./fuse-box.json: an empty box, no fuse blown (verified by re-reading the box)",
 	}}
-	path, err := onboarding.Elide("the fresh box path", regexp.QuoteMeta("box="+box+": "), "box=./fuse-box.json: ")
-	require.NoError(t, err)
-	assert.Empty(t, onboarding.Compare(step, onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}, []onboarding.Norm{path}))
+	got := []onboarding.Result{{Code: exit, Stdout: stdout, Stderr: stderr}}
+	assert.Empty(t, onboarding.CompareTranscript([]onboarding.Step{step}, got, nil))
 }
 
 // fields splits an example command line the way the reader's shell does — a
@@ -208,10 +209,11 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 	}
 }
 
-// The `### First run` block of docs/TESTS.md is EXECUTED: every documented
-// command is run, in order, against one box, and its whole output is compared
-// with the block written under it -- same number of lines, same lines, same
-// order.
+// The `### First run` block of the `## nova-fuse` section of docs/TESTS.md is
+// EXECUTED: every documented command is run, in order, against one box, and its
+// whole output is compared with the block written under it -- same number of
+// lines, same lines, same order -- through the one comparator,
+// onboarding.CompareTranscript (docs/SPEC-TOOLWORK.md documents rule 3).
 //
 // WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
 // a `printed map[string]bool`, with "timestamps, surface names and reasons" --
@@ -257,7 +259,15 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "fuse-box.json"), fixture, 0o644))
-	require.Empty(t, onboarding.Execute(steps, documented(t, dir)))
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		res, err := documented(t, dir)(s)
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		got = append(got, res)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+		assert.Fail(t, p.Error())
+	}
 }
 
 // documented runs one line of the transcript with the clock the document was
@@ -282,8 +292,11 @@ func (readsNothing) Error() string {
 var errReadsNothing = readsNothing{}
 
 // The banner's sitting, every line run in order against one box and compared
-// through the comparator with what is written here: the box's path and the
-// clock's instants are the run's; every other byte is the tool's.
+// through the one comparator with what is written here. The sitting runs in a
+// directory of the test's own and the box is typed as written,
+// `./fuse-box.json`: the tool prints that path back unchanged, so every byte of
+// every line is compared as written and the comparator is handed no field of
+// the onboarding.Volatile table.
 func TestTheBannerSittingThroughTheComparator(t *testing.T) {
 	t.Parallel()
 
@@ -308,20 +321,19 @@ func TestTheBannerSittingThroughTheComparator(t *testing.T) {
 	}
 	exs := examples(t)
 	require.Len(t, exs, len(sitting))
-	// Exercise both representations of a path with spaces: the box= field
-	// escapes them, while the remedy preserves them inside shell quotes.
-	box := filepath.Join(t.TempDir(), "fuse box.json")
-	path, err := onboarding.Elide("the fresh box field", regexp.QuoteMeta("box="+oneline.Field(box)+": "), "box=./fuse-box.json: ")
-	require.NoError(t, err)
-	remedy, err := onboarding.Elide("the fresh box in the lift remedy", regexp.QuoteMeta("--box "+oneline.Escape(liftShellWord(box))+" -- "), "--box './fuse-box.json' -- ")
-	require.NoError(t, err)
-	norms := []onboarding.Norm{path, remedy}
+	// The first example is the init that makes the box, so the whole sitting
+	// shares one directory of the test's own.
+	dir := t.TempDir()
+	steps := make([]onboarding.Step, 0, len(sitting))
+	got := make([]onboarding.Result, 0, len(sitting))
 	for i, s := range sitting {
 		require.Equal(t, s.example, exs[i], "example %d", i)
-		exit, stdout, stderr := runFuse(t, localize(fields(s.example), box)...)
-		step := onboarding.Step{Line: "$ " + s.example, Want: s.want}
-		for _, p := range onboarding.Compare(step, onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}, norms) {
-			assert.Fail(t, p.Error())
-		}
+		step := onboarding.Step{Line: "$ " + s.example, Args: fields(s.example), Want: s.want}
+		steps = append(steps, step)
+		exit, stdout, stderr := runFuseIn(t, dir, step.Args...)
+		got = append(got, onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr})
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+		assert.Fail(t, p.Error())
 	}
 }
