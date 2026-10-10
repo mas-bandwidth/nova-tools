@@ -109,6 +109,12 @@ var swarmAudit = audit.Config{
 		"l.Line",
 	},
 	Imports: []string{
+		// cmd/nova-swarm/diskguard.go imports internal/bench only for the shared sweep
+		// bound (bench.RunAgeLimit). The package writes to no stream of this binary: its
+		// only Fprintf sites (bench.go's o.Notes, run.go's SweepRuns out) write to writers
+		// the caller hands it, and diskguard renders every line it keeps through
+		// oneline.Field. It cannot write past the escape.
+		`"github.com/mas-bandwidth/nova-tools/internal/bench"`,
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
