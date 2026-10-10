@@ -68,4 +68,10 @@
    :title "A worker writes its result before the route deadline"
    :text "Children on some direct routes work to the route deadline and never write their result file;
     give the route a longer deadline or reserve a margin to write the result."
-   :origin "fault inventory, 2026-10-10")))
+   :origin "fault inventory, 2026-10-10")
+  (fix "worker-brief-never-rewrites-history" :release "v1.2.6" :status "planned"
+   :title "The worker brief says never amend, rebase or reset onto origin"
+   :text "The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds
+    (its add refuses a held rules file that differs), stops children rewriting history, which caused the
+    does-not-descend refusals. A test pins the file's digest in both repositories."
+   :origin "v1.2.5 candidate list")))
