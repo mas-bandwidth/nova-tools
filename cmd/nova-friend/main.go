@@ -383,7 +383,7 @@ func friendTool(w world) *tool.Tool {
 	}
 	settingFlags := func(f *tool.Flags) {
 		f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)")
-		f.String("model", "", "harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)")
+		f.String("model", "", "harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)")
 	}
 	daemonFlags := func(f *tool.Flags) {
 		f.Required("as", "your name, a nova-config friend row")
@@ -593,8 +593,8 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
-				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Example: "install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
 settings), each merged into what the file holds and read back, one INSTALL WROTE line each: codex,
@@ -603,9 +603,10 @@ agent preset registry's default and selectedDefault "` + friend.DSHPreset + `" i
 (a session keeps the preset it was opened under); grok, the wake file (--session, else
 ~/.nova-friend/<me>/<me>.wake), made empty, and named in the agent; claude, --config-dir (default
 CLAUDE_CONFIG_DIR) made private and named in the agent; opencode, the friend's directory allowed in
-<dir>/opencode.json and --model there when given. The friend's directory, the writable root, the wake
+<dir>/opencode.json and --model there. The friend's directory, the writable root, the wake
 file's directory and the config directory must each be a real directory: a symlink (or a config file
-that is one) is refused and nothing is written or loaded. nova-friend check --settings names drift.
+that is one) is refused and nothing is written or loaded. For opencode, --model is required to
+ensure the friend uses the correct provider key after a machine move. nova-friend check --settings names drift.
 Then writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
 restarted when it dies, pending messages redelivered first), boots out whatever that label runs,
 and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
@@ -647,6 +648,9 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 							if !secretNameRe.MatchString(name) {
 								c.Problem(fmt.Sprintf("--secrets names a secret by its variable name, letters, digits and underscores: %q is none", name))
 							}
+						}
+						if c.Str("harness") == "opencode" && c.Str("model") == "" {
+							c.Problem("--harness opencode wants --model <provider/model>: the provider and model to use; required to ensure the friend uses the correct provider key after a machine move")
 						}
 					})
 				},

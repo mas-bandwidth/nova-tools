@@ -48,7 +48,7 @@
    :text "Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of
     one mirror); make them pass there."
    :origin "v1.2.5 candidate list")
-  (fix "friend-provider-key-after-move" :release "v1.2.6" :status "planned"
+  (fix "friend-provider-key-after-move" :release "v1.2.6" :status "in-progress"
    :title "A friend AI moved to another machine uses the provider key that worked"
    :text "After a move the friend AI ran with a stored provider key that differs from the working one, and
     the provider refused it. The stored key is replaced by the owner, then the friend AI restarts
