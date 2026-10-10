@@ -53,7 +53,7 @@ var coordinatorRules = []string{
 	"A pull request held up by repeated rounds stops: the reviewed head lands as it is and a follow-up card is cut for the rest.",
 	"Landed sprint work is reviewed stream by stream before the sprint branch merges into the release line; a bad hunk becomes a repair card.",
 	"The same finding twice is a brief defect: fix the brief or drop the card, never rework it a third time.",
-	"Work a card needs outside its PATHS means the card's PATHS widened in place (nova-sprint brief <id> --widen), the same card and never a twin, never a diff outside them.",
+	"Work a reader's finding says a card needs outside its PATHS means the card's PATHS widened in place (nova-sprint brief <id> --widen), the same card and never a twin, never a diff outside them.",
 	"A uniform failure shape across one model's cards is our contract failing (prompt or wrapper), fixed per model family; a model is dropped only on a measured quality floor with varied failures.",
 	"Every cold read runs at least one temporal probe (land then reopen, claim during resolve), and each reproduction is kept as a test.",
 	"A score under 10 names its reasons and the work that would reach 10.",

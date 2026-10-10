@@ -214,7 +214,10 @@ func TickRuleWidenRead(s *Snapshot, r TickReq) (Plan, int) {
 				e.Set["fix"], e.Set["finding"] = a.fix, a.fix
 				e.Set[FieldNote], e.Set[FieldRuleAnswer] = said, a.Rule+": "+a.Act+" at "+stamp(s.Now)
 				e.Set[FieldReadWidens] = itoa(pr.Int(FieldReadWidens) + 1) // Brief never resets it
-				keep := []string{"fix", "finding"}
+				// the finding is the broken attempt's: Brief unsets finding_attempt, and with it
+				// finder-first (its finder checks the fix) would be lost on a widen
+				e.Set[FieldFindingAttempt] = pr.F("attempt")
+				keep := []string{"fix", "finding", FieldFindingAttempt}
 				if w := pr.F(FieldWho); w != "" && e.Set[FieldWho] == "" {
 					e.Set[FieldWho] = w // whoever held the work keeps the card
 					keep = append(keep, FieldWho)

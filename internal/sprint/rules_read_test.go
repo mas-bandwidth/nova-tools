@@ -80,6 +80,7 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 		pr := s.Work.Card("r-1")
 		require.Equal(t, 2, pr.Int("attempt"), "reworked by the next tick")
 		assert.Equal(t, finding, pr.F("fix"), "the finding is the fix")
+		assert.Equal(t, "1", pr.F(sprint.FieldFindingAttempt), "the finding stays the broken attempt's: finder-first survives a widen")
 		assert.Empty(t, pr.F(sprint.FieldTier), "on the same tier")
 		assert.Empty(t, r.openOnCard(sprint.NReadBroken, "r-1"), "the judgment is answered")
 		answered := r.answeredBy(sprint.RuleReadBroken)

@@ -693,7 +693,7 @@ R45. **The same finding twice is a brief defect: fix the brief or drop the card,
     Done by: `nova-sprint brief <id> --brief-file <path>`; `nova-sprint recut <id> --brief-file <path>`;
     `nova-sprint set --attempts <n>`.
 
-R46. **Work a card needs outside its PATHS means the card's PATHS widened in place (nova-sprint brief <id> --widen), the same card and never a twin, never a diff outside them.**
+R46. **Work a reader's finding says a card needs outside its PATHS means the card's PATHS widened in place (nova-sprint brief <id> --widen), the same card and never a twin, never a diff outside them.**
     Why: the lander refuses files outside PATHS, and the attempt was spent; a twin wastes the card's
     history and its reads.
     Done by: the `read-broken` and `widen` rules (readers' findings widen one card at most three
