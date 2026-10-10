@@ -68,7 +68,6 @@ cmd/nova-friend/wakeping.go world.pingInstall waits and retries
 internal/friend/launchd.go Install waits and retries
 internal/friend/launchd.go WaitReleased waits and retries
 cmd/nova-sprint/run.go app.awaitGivenUp waits and retries
-cmd/nova-sprint/landpass.go lander.pass waits and retries
 cmd/nova-sandbox/run.go runInVolume waits and retries
 cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries
 cmd/nova-sandbox/runwin_windows.go winPlace.RemoveTree waits and retries
