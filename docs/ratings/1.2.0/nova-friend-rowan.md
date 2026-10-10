@@ -1,6 +1,6 @@
 # nova-friend READ and USE rating, nova-tools 1.2.0
 
-Rater: rowan-mas, mercury-2.5 under opencode
+Rater: a cold rater, mercurys-2.5 under opencode
 Build: 17ec8d256a04943b921987ebd9c17b19e9
 READ: 8/10
 USE: 7.5/10
