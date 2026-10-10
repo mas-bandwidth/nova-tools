@@ -1,10 +1,8 @@
 package main
 
-// set_actor_test.go pins the set verb's actor resolution and the apply no-change
-// line: set takes actor the way apply does (flag, env, login record), refusing
-// only when none resolves and naming the three sources; apply prints "no change:
-// 0 rows differ" when it changes nothing, so an apply after a failed set reads
-// as a no-op at a glance.
+// set_actor_test.go pins the set verb's actor resolution: set takes actor the
+// way apply does (flag, env, login record), refusing only when none resolves
+// and naming the three sources.
 
 import (
 	"testing"
