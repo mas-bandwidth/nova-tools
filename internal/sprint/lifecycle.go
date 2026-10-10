@@ -9,8 +9,8 @@ import (
 
 // The lifecycle of a primary: six states and the legal moves between them,
 // in one table (docs/SPEC-SPRINT.md section 3). The TLA+ model
-// tla/SprintTables.tla has the same states and the same moves; compare the
-// two row by row.
+// tla/CardLifecycle.tla holds the columns, the moves of Moves, the needs
+// rule and the held flag; the store holds every step's plan to it (Lawful).
 //
 // A primary's state is the work-table column it is placed in. A primary that
 // stops any other way than landing leaves the table (drop): its record,
