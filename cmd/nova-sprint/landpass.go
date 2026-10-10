@@ -1041,7 +1041,17 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 	}
 	b, dir := &j.b, j.dir
 	l.ledgerLog = nil
-	merged, failed, baseSha, _, why := l.build(ctx, dir, j.stream, j.cards, b.Times, false)
+	// a batch that ended at a blamed head (a conflict, or its red gate's bisection) merges
+	// again only the heads before it: the blamed head would turn the combined tree red and
+	// refuse the prefix that passed, every pass
+	cards := j.cards
+	if j.failed.id != "" {
+		cards = j.cards[:len(j.merged)]
+	}
+	merged, failed, baseSha, _, why := l.build(ctx, dir, j.stream, cards, b.Times, false)
+	if failed.id == "" && len(merged) == len(cards) {
+		failed = j.failed // the head blamed before keeps its finding, reported after the push
+	}
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
 	if wait := gateWaitWhy(ctx); wait != "" {
 		return wait
