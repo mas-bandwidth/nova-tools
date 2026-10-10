@@ -128,7 +128,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	if err != nil {
 		return nil, "", err
 	}
-	if len(parents) > 1 && promotionCut(root, parents[1]) {
+	if len(parents) > 1 && promotionHead(root, parents[0], parents[1]) {
 		// A promotion merge has the gated base as its first parent and the
 		// throwaway branch as its second. Read declarations from every commit
 		// in that branch since the gated base, rather than only from the merge
@@ -275,6 +275,25 @@ func promotionCut(root, commit string) bool {
 	}
 	subject = strings.TrimSpace(subject)
 	return strings.HasPrefix(subject, "merge origin/") && strings.Contains(subject, " into promo/")
+}
+
+// promotionHead reports whether a merge commit's second parent is a
+// promotion's throwaway head: the frozen merge commit nova-sprint promote cut,
+// whose subject is stable because CI sees the landed commit and not the branch
+// ref the forge deletes after landing, or the sprint tip itself. promote reuses
+// the tip as the cut when origin/<base> is already in it (cmd/nova-sprint/promote.go,
+// mergeTarget: `git merge-base --is-ancestor target tip`), and that reused head
+// has no synthetic subject, so it is recognised the same bounded way it was cut:
+// base, the merge's first parent, is an ancestor of the head. One ancestry
+// check, never a history walk. Reading the branch range is what keeps a
+// promotion from being refused for a deletion declared below its tip
+// (docs/SPEC-CI.md, classtests).
+func promotionHead(root, base, head string) bool {
+	if promotionCut(root, head) {
+		return true
+	}
+	_, err := gitOut(root, "merge-base", "--is-ancestor", base, head)
+	return err == nil
 }
 
 // declaredRowsSince returns the union of rows added by each commit after
@@ -846,6 +865,39 @@ func TestPromotionReadsDeclarationsBelowItsMergeTip(t *testing.T) {
 	m, _, err := readCommitDeletions(r.root, "HEAD", "push", "refs/heads/feature", "")
 	require.NoError(t, err)
 	assert.Empty(t, m.findings(), "the merge tip's tree has no declaration row; only the branch range below it declares the deletion")
+}
+
+// TestPromotionReadsDeclarationsBelowAReusedTip is the reused-tip regression:
+// nova-sprint promote cuts the throwaway branch at the sprint tip itself when
+// origin/<base> is already in it (cmd/nova-sprint/promote.go, mergeTarget), so
+// that promotion head carries no synthetic "merge origin/... into promo/..."
+// subject. The branch declares the deleted test below that tip and drops the
+// row before the merge, so reading only the head would reject the promotion;
+// the reuse is recognised the bounded way it is cut — the base, the merge's
+// first parent, an ancestor of the head — and the declarations are read over
+// the branch range. Removing the reuse signal or the range reading turns the
+// test red.
+func TestPromotionReadsDeclarationsBelowAReusedTip(t *testing.T) {
+	t.Parallel()
+	r := newScratchRepo(t, "dev")
+	r.write("gone_test.go", "package gone\n")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.stage("base")
+	r.write("dev.txt", "dev\n")
+	r.stage("dev moves on")
+	r.git("checkout", "-q", "-b", "sprint/foundation")
+	r.remove("gone_test.go")
+	r.stage("the sprint tip deletes gone_test.go below the reused cut")
+	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\n")
+	r.stage("declare the deletion below the reused tip")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.stage("the sprint tip trims the row before the promotion")
+	r.git("checkout", "-q", "dev")
+	r.git("merge", "-q", "--no-edit", "--no-ff", "sprint/foundation")
+
+	m, _, err := readCommitDeletions(r.root, "HEAD", "push", "refs/heads/feature", "")
+	require.NoError(t, err)
+	assert.Empty(t, m.findings(), "the reused promotion head has no declaration row; only the branch range below it declares the deletion")
 }
 
 // TestPromotionSkipReadsTheEvent pins the one shape that skips the

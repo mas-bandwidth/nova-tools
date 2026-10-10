@@ -2710,6 +2710,7 @@ passes; a head cut from before dev moved is refused naming dev's tip; dev to
 main has no precondition; a one-parent checkout is refused; a depth-2 checkout
 is refused naming the fetch, and passes after it);
 `TestPromotionReadsDeclarationsBelowItsMergeTip` pins the promotion deletion declarations in range: a throwaway branch declares a deleted test in a commit below its tip and drops the row before the merge, so the merge tip's tree and the merge's own change against its first parent both lack the declaration; reading only the merge tip would reject the promotion; reading every commit on the branch since the base keeps it green;
+`TestPromotionReadsDeclarationsBelowAReusedTip` pins the same for the promotion head promote reuses at the sprint tip when origin/<base> is already in it: that head carries no synthetic subject, so the range is entered on the bounded signal that the base, the merge's first parent, is an ancestor of the head (cmd/nova-sprint/promote.go, mergeTarget: `git merge-base --is-ancestor target tip`), and a throwaway branch that declares the deletion below the tip and trims the row before the merge stays green;
 `TestDevRunReadsTheEventRefAndBranch` pins the dev-run shape against its own
 (main's events, another branch's queue, a dev-prefixed branch's queue,
 sprint/foundation's push, a pull request's merge ref, a local run off dev);
@@ -2789,7 +2790,13 @@ this rule having run on it, and a main run excuses it all the same.
 For a promotion merge, declarations are read as the union of rows added by
 every commit on the throwaway branch since the last gated promotion, not only
 the promotion merge tip. This prevents the promotion merge itself from being
-refused for a deletion declared by a commit below it.
+refused for a deletion declared by a commit below it. The range is entered
+either on the throwaway cut's stable `merge origin/<base> into promo/...`
+subject or, when promote reused the sprint tip as the cut because
+origin/<base> was already in it, on the bounded fact that the base, the
+merge's first parent, is an ancestor of the head: a reused head carries no
+synthetic subject, so the subject alone would skip the range and refuse the
+promotion as undeclared.
 
 `origin/dev` is trusted to be dev's; the workflow's own fetch
 (`+dev:refs/remotes/origin/dev`) makes it so.
