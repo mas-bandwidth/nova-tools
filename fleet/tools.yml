@@ -1069,6 +1069,74 @@
           vars:
             seat_back: "{{ (seat_readback.stdout | from_json).library.loaded if (seat_readback.stdout | default('')) is match('[{]') else 'unread' }}"
 
+# The friends of the machines that are not the coordinator (v1.2.2): the seat
+# play above reinstalls the friend daemons of the coordinator only, so a friend
+# on a fleet host kept its old binary after the install play. Here every host
+# the build was installed on, the coordinator excepted, that holds a
+# LaunchAgents directory (nova_seat_agents_dir) is read by the installed
+# nova-sprint live, and each friend daemon whose plist it finds stale takes the
+# same step the seat play runs (seat-friend.yml, one at a time: lanes empty, a
+# reinstall with the flags its plist records, a beat strictly newer than its own
+# cutoff, else ADOPT REFUSED step=friends). --check lists each WOULD-REINSTALL.
+- name: the friends of the fleet hosts reinstalled onto the installed build
+  hosts: all:!coordinator
+  gather_facts: true
+  gather_subset: [min]
+  tags: [seat]
+  environment:
+    PATH: "{{ nova_loop_path }}"
+  vars:
+    seat_env: {}
+    seat_live: >-
+      {{ [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
+          '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl] }}
+  tasks:
+    - name: "friends: the agents directory (a host with none has no friend daemon)"
+      ansible.builtin.stat: { path: "{{ nova_seat_agents_dir }}", get_checksum: false }
+      register: ff_dir
+
+    - name: "friends: the manifest before"
+      ansible.builtin.command: { argv: "{{ seat_live }}" }
+      register: ff_read
+      changed_when: false
+      # ignored: read by the assert below, which names the step
+      failed_when: false
+      check_mode: false
+      when: ff_dir.stat.exists
+
+    - name: "friends: the installed nova-sprint live read the host"
+      ansible.builtin.assert:
+        that: ff_read.rc == 0 and ff_read.stdout is match('[{]')
+        fail_msg: >-
+          ADOPT REFUSED step=friends host={{ inventory_hostname }}: the installed nova-sprint live printed no manifest
+          ({{ (ff_read.stderr or ff_read.stdout) | default('') | truncate(200) }}); no friend was reinstalled
+        quiet: true
+      when: ff_dir.stat.exists
+
+    - name: "friends: the stale friend daemons on this host"
+      ansible.builtin.set_fact:
+        ff_stale: >-
+          {{ ((ff_read.stdout | from_json).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
+              | rejectattr('label', 'in', nova_seat_hold | default([])) | list) if ff_dir.stat.exists else [] }}
+
+    - name: "friends: what --check would reinstall"
+      ansible.builtin.debug:
+        msg: "WOULD-REINSTALL {{ item.friend }} on {{ inventory_hostname }}: {{ item.why }}"
+      loop: "{{ ff_stale }}"
+      loop_control: { label: "{{ item.friend }}" }
+      when: ansible_check_mode
+
+    - name: "friends: one friend at a time: drain, reinstall, a beat after its own reinstall"
+      ansible.builtin.include_tasks: seat-friend.yml
+      loop: "{{ ff_stale if not ansible_check_mode else [] }}"
+      loop_control: { loop_var: seat_friend, label: "{{ seat_friend.friend }}" }
+
+    - name: "friends: the receipt"
+      ansible.builtin.debug:
+        msg: >-
+          ADOPT step=friends host={{ inventory_hostname }} reinstalled={{ ff_stale | map(attribute='friend') | join(',') or 'none' }}
+          {{ ('WOULD-CHANGE' if ff_stale else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if ff_stale else 'UNCHANGED') }}
+
 # The tla play: on every TLC record machine (the inventory's tla group, the
 # machine rows with tla=true), the pinned TLC jar at nova_tla_jar, owned by the
 # login, its SHA-256 the one the repository holds (tla/tla2tools.sha256), and
