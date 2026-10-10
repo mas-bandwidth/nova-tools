@@ -498,13 +498,17 @@ function (docs/SPEC-SPRINT.md section 5, the deadline), set on the card as
 her next on a finish, a level or a redeal), and absent while she has no ok
 attempt: `TestOneDeadlineRuleForMembersAndFriends`), The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
-offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own
-rating, `WHO: friend <name>`, was dealt to another worker): a `WHO: friend <name>` card
-come back by a rework, a return or a redo (its `reworks` or `returns` counted;
-`sprint.ReworkPinned`) is the hard pin `OnlyFriend`, dealt only to her as on its first
-deal, and while she is down, held or without room it waits ready, held as a hard pin is,
-dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone
-(`friend take`) counts neither, so a preference taken back from her is still offered on.
+offer again. A `WHO: friend <name>` card come back by a rework, a return or a redo (the
+owner, 2026-10-05: a rework of a friend's own rating, `WHO: friend <name>`, was dealt to
+another worker; its `reworks` or `returns` counted, `sprint.ReworkPinned`) is hers first:
+dealt only to her as on its first deal while she can take it, and while she is down, held
+or without room it waits ready for her inside the pin bound, the clock started at the
+first tick the deal found her unable (`pin_since`, `FieldPinSince`). This is a soft pin
+like any other named preference: past the bound the pin is waived and the card is dealt
+on, the WHO line kept as her preference (`TestAComeBackPinIsWaivedPastTheBound`,
+`TestAComeBackPinStartsItsClockAndWaitsInsideTheBound`, `TestAReworkKeepsTheWhoPin`). A
+take-back alone (`friend take`) counts neither, so a preference taken back from her is
+still offered on.
 
 A named preference is a preference with a clock, never a hole
 (`sprint.PinWait`, `nova-sprint set --pin-wait <duration|default>`, default 30m).
@@ -513,9 +517,11 @@ knows that has lasted no longer than the pin wait, the card waits ready for her
 and the machines' deal leaves it. A width of 0, a tier or restriction she does
 not take, a friend the card has left, and a row filled by an earlier card of the
 same pass are not that clock: the card is offered on at once, as a preference
-always was. Once the known wait is longer than the pin wait, or the sprint
-cannot tell how long she has been down, held, or full, the pin is waived. The
-card is dealt to the next unit of its tier as if unpinned. The unit's story line
+always was. Once the known wait is longer than the pin wait the pin is waived. A
+first deal whose friend's absence the sprint cannot time is offered on at once, as
+a preference always was; a card come back to her starts the clock instead
+(`pin_since`), so it waits the bound from the tick the deal first found her unable.
+The card is dealt to the next unit of its tier as if unpinned. The unit's story line
 is `pin to <friend> waived after <d>: she is <down|held|full>; dealt to <unit>`.
 `who` stays `friend.<name>` (`preferred`), so the next attempt, and the next
 read when she has room, goes to her first when she is back and free, and
