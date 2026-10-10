@@ -1078,8 +1078,29 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			continue
 		}
 		m := next()
+		if m == "" && isBlocker(c) && len(members) > 0 {
+			m = members[0] // a blocker takes the first row it would be dealt to, whatever the room
+		}
+		if m != "" && isBlocker(c) {
+			// a blocker evicts one running card where the row's lanes are all busy: the lowest
+			// level first, then the one running the shortest, never a blocker (priority_evict.go).
+			// With only blockers running, nothing is evicted and it waits with a judgment.
+			if wc, _ := rowWorking(s, m); wc >= s.Width(m) {
+				if evict := evictRunning(s, m); evict != nil {
+					p.Units = append(p.Units, evictUnit(s, c, evict))
+					q[m]--
+				} else {
+					p.refuse(c.ID, blockerWaitWhy)
+					continue
+				}
+			}
+		}
 		if m == "" {
-			p.refuse(c.ID, roomWhy)
+			if isBlocker(c) {
+				p.refuse(c.ID, blockerWaitWhy)
+			} else {
+				p.refuse(c.ID, roomWhy)
+			}
 			continue
 		}
 		u, why := deal(s, c, c.F("fix"), m, q, ri, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
