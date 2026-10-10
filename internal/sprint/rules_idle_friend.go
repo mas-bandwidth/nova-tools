@@ -315,25 +315,15 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 		reads, work := friendTakenCounts(s, row)
 		width := s.friendWidth(r, friend, row)
 
-		// 1. Bus message (nova-bus2, subject "WIDTH: your row is loaded and idle")
+		// Judgment-free line to seat's inbox feed: "friend <f> idle-loaded <n>m: width goal sent"
 		p.Notes = append(p.Notes, Note{
 			Kind:   Happened,
 			Type:   "friend loaded but idle",
 			Stream: row,
-			What:   WidthGoalText(friend, reads, work, width, idleMinutes),
-			Who:    "rule " + RuleFriendIdle,
-			At:     s.Now,
-			To:     friend,
-		})
-
-		// 2. Judgment-free line to seat's inbox feed: "friend <f> idle-loaded <n>m: width goal sent"
-		p.Notes = append(p.Notes, Note{
-			Kind:   Happened,
-			Type:   "inbox",
-			Stream: row,
 			What:   fmt.Sprintf("friend %s idle-loaded %dm: width goal sent", friend, idleMinutes),
 			Who:    "rule " + RuleFriendIdle,
 			At:     s.Now,
+			To:     s.Coordinator,
 		})
 
 		if r.SendWidthGoal != nil {

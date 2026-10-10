@@ -394,14 +394,10 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	friends := []FriendSeat{{Name: "amy", Width: 8, Status: Up}}
 	p, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends})
 
-	require.Len(t, p.Notes, 2)
+	require.Len(t, p.Notes, 1)
 	assert.Equal(t, Happened, p.Notes[0].Kind)
-	assert.Contains(t, p.Notes[0].What, "Width goal for amy: you are holding 2 reads and 3 work cards (width 8). You have been idle for 20 minutes.")
-	assert.Equal(t, "amy", p.Notes[0].To)
-
-	assert.Equal(t, Happened, p.Notes[1].Kind)
-	assert.Equal(t, "inbox", p.Notes[1].Type)
-	assert.Equal(t, "friend amy idle-loaded 20m: width goal sent", p.Notes[1].What)
+	assert.Equal(t, "friend amy idle-loaded 20m: width goal sent", p.Notes[0].What)
+	assert.Equal(t, s.Coordinator, p.Notes[0].To)
 
 	require.Len(t, p.Units, 1)
 	assert.Equal(t, row, p.Units[0].Key)

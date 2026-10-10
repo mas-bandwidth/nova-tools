@@ -280,9 +280,6 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 // list, a working count or a queue count this beat does not name stays as the
 // store has it; naming the list, including an empty one, replaces it.
 func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64) (sprint.Beat, error) {
-	if rep.Running == nil && !rep.Active.IsZero() && rep.Until.IsZero() && rep.Working == nil {
-		rep.Running = []string{}
-	}
 	b, _, err := st.FriendBeatProof(ctx, friend, rep, load, sprint.BeatWords{})
 	return b, err
 }
