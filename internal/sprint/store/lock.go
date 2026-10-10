@@ -45,7 +45,8 @@ func (st *Store) takeLock(ctx context.Context, step Step, family string) (*OpRec
 }
 
 // Relock hands the fence from the held operation to op, only while it holds
-// it: WATCH on the fence, its id read, then MULTI/EXEC.
+// it: WATCH on the fence, its id read, then MULTI/EXEC, which also applies
+// op's rows, hidden rows and places before the fence write, as Acquire does.
 func (r *Redis) Relock(ctx context.Context, held string, op OpRecord) (bool, error) {
 	body, err := json.Marshal(op)
 	if err != nil {
@@ -57,6 +58,7 @@ func (r *Redis) Relock(ctx context.Context, held string, op OpRecord) (bool, err
 	}
 	prefix := `{"id":` + string(id) + `,`
 	fence := r.key(keyFence)
+	var places []*redis.Cmd
 	err = r.C.Watch(ctx, func(tx *redis.Tx) error {
 		cur, err := tx.GetRange(ctx, fence, 0, int64(len(prefix)-1)).Result()
 		if err != nil {
@@ -66,6 +68,7 @@ func (r *Redis) Relock(ctx context.Context, held string, op OpRecord) (bool, err
 			return errFenceMoved
 		}
 		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			places = r.queueAdds(ctx, p, op)
 			p.Set(ctx, fence, body, 0)
 			return nil
 		})
@@ -74,10 +77,20 @@ func (r *Redis) Relock(ctx context.Context, held string, op OpRecord) (bool, err
 	if errors.Is(err, errFenceMoved) || errors.Is(err, redis.TxFailedErr) {
 		return false, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, err
+	}
+	for i, pl := range op.Places {
+		if err := placeReplyRefusal(places[i]); err != nil {
+			return false, &placeRefused{id: pl.ID, err: err}
+		}
+	}
+	return true, nil
 }
 
-// Relock hands the fence from the held operation to op.
+// Relock hands the fence from the held operation to op, and applies op's
+// rows, hidden rows and places inside the same atomic commit (under m.mu), as
+// Acquire does.
 func (m *Mem) Relock(_ context.Context, held string, op OpRecord) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -85,6 +98,9 @@ func (m *Mem) Relock(_ context.Context, held string, op OpRecord) (bool, error) 
 	l := m.log()
 	if l.fence == nil || l.fence.ID != held {
 		return false, nil
+	}
+	if err := m.applyAdds(op); err != nil {
+		return false, err
 	}
 	cp := op
 	l.fence = &cp

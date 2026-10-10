@@ -10,6 +10,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -193,6 +194,38 @@ type Fence struct {
 	Stuck string
 }
 
+// PlaceAdd is a record the step's commit places back on a cell, after its
+// rows and before its manifests, as the table layer's cell add does (a batch
+// never places a removed member): a removed stream's control card coming back
+// (sprint.PlaceAgain), with the stored table name and stored id.
+type PlaceAdd struct {
+	Table, Row, Col, ID string
+	Score               float64
+	Said                string
+}
+
+// placeRefused is a record the step's commit could not place back on its cell
+// (sprint.PlaceAgain): the store refused the place, so the step refuses whole
+// with the place's id and the store's word (a place another writer made first
+// is not this: it is found made and the commit proceeds).
+type placeRefused struct {
+	id  string
+	err error
+}
+
+func (e *placeRefused) Error() string { return e.id + ": " + e.err.Error() }
+func (e *placeRefused) Unwrap() error { return e.err }
+
+// alreadyPlaced says a place's refusal is that the record is already placed:
+// another writer made the place first, so the plan after it finds it made.
+func alreadyPlaced(err error) bool {
+	if errors.Is(err, ntable.ErrPlaced) {
+		return true
+	}
+	var r *ntable.Refusal
+	return errors.As(err, &r) && r.Code == "MEMBEREXISTS"
+}
+
 // OpRecord is a step's operation, held in the fence while it applies: its
 // manifests in apply order (the work table last), and what it writes at its
 // logical commit, the release: the notifications, the answers, the streams it
@@ -205,14 +238,27 @@ type OpRecord struct {
 	Verb      string                 `json:"verb"`
 	At        time.Time              `json:"at"`
 	Manifests []ntable.BatchManifest `json:"manifests"`
-	Notes     []sprint.Note          `json:"notes,omitempty"`   // happened and judgment, ids assigned
-	Decided   []sprint.Note          `json:"decided,omitempty"` // answers to open judgments
-	Log       []sprint.Line          `json:"log,omitempty"`     // the log's move lines of the step's changes
-	Updates   []sprint.Note          `json:"updates,omitempty"` // open judgments rewritten in place
-	Closes    []string               `json:"closes,omitempty"`  // open keys the step closes
-	Streams   []string               `json:"streams,omitempty"` // streams whose progress it is
-	CallerOp  string                 `json:"caller_op,omitempty"`
-	Result    string                 `json:"result,omitempty"` // the result, recorded under CallerOp
+	// Rows are the rows the step's commit adds, before its manifests, by
+	// stored table name: the plan's row additions (sprint.RowAdd), so one
+	// Acquire or Relock carries them with the step's records (this card's
+	// GOAL: a card added to a new stream is on the table the moment add
+	// returns, or not at all).
+	Rows map[string][]string `json:"rows,omitempty"`
+	// HideRows are the rows of them the same commit hides from the drawn
+	// table, by stored table name: a friend's fleet row (sprint.FriendRow),
+	// as st.addRows did.
+	HideRows map[string][]string `json:"hide_rows,omitempty"`
+	// Places are the records the step's commit places back on a cell, after
+	// its rows and before its manifests (sprint.PlaceAgain).
+	Places   []PlaceAdd    `json:"places,omitempty"`
+	Notes    []sprint.Note `json:"notes,omitempty"`   // happened and judgment, ids assigned
+	Decided  []sprint.Note `json:"decided,omitempty"` // answers to open judgments
+	Log      []sprint.Line `json:"log,omitempty"`     // the log's move lines of the step's changes
+	Updates  []sprint.Note `json:"updates,omitempty"` // open judgments rewritten in place
+	Closes   []string      `json:"closes,omitempty"`  // open keys the step closes
+	Streams  []string      `json:"streams,omitempty"` // streams whose progress it is
+	CallerOp string        `json:"caller_op,omitempty"`
+	Result   string        `json:"result,omitempty"` // the result, recorded under CallerOp
 	// Stuck is the stuck operation this one reports (its judgment is among
 	// Notes): its commit deletes the stuck record.
 	Stuck string `json:"stuck,omitempty"`
