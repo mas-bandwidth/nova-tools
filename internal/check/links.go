@@ -255,6 +255,15 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 						reason = "does not exist"
 					}
 				}
+				// Check fragment anchor if present.
+				if reason == "" && target != "" {
+					if idx := strings.Index(target, "#"); idx >= 0 {
+						fragment := target[idx+1:]
+						if fragment != "" && !anchorExists(resolved, fragment) {
+							reason = fmt.Sprintf("anchor %q not found in target", fragment)
+						}
+					}
+				}
 			}
 			if reason != "" {
 				broken = append(broken, BrokenLink{
@@ -387,6 +396,62 @@ func skipSpaces(s string, i int) int {
 		i++
 	}
 	return i
+}
+
+// anchorExists checks whether a fragment anchor exists in the markdown file at mdPath.
+// It extracts ATX-style headings (# Heading) and converts them to GitHub anchor format:
+// lower-case, spaces to dashes, punctuation dropped.
+func anchorExists(mdPath, fragment string) bool {
+	data, err := readregular.Read(mdPath, readregular.DefaultMax)
+	if err != nil {
+		return false
+	}
+	text := string(data)
+	anchors := extractHeadingsAnchors(text)
+	normalized := normalizeFragment(fragment)
+	for _, a := range anchors {
+		if a == normalized {
+			return true
+		}
+	}
+	return false
+}
+
+// extractHeadingsAnchors extracts all GitHub-style anchors from ATX headings in the text.
+func extractHeadingsAnchors(text string) []string {
+	var anchors []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		headingText := strings.TrimPrefix(trimmed, "#")
+		headingText = strings.TrimLeft(headingText, " \t")
+		if headingText == "" {
+			continue
+		}
+		anchors = append(anchors, normalizeFragment(headingText))
+	}
+	return anchors
+}
+
+// normalizeFragment converts a heading text to GitHub anchor format:
+// lower-case, spaces to dashes, punctuation dropped (except alphanumeric and dashes).
+func normalizeFragment(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+		} else if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
 }
 
 // resolveTarget classifies a link target. skip means the target is out of

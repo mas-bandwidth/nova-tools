@@ -58,6 +58,7 @@ func TestLinks(t *testing.T) {
 			name:        "fragment stripped before resolving",
 			files:       map[string]string{"a.md": "[b](b.md#section)", "b.md": "x"},
 			wantChecked: 1,
+			wantBroken:  []string{"a.md", "b.md#section", "anchor \"section\" not found in target"},
 		},
 		{
 			name:        "percent-escapes decoded",
