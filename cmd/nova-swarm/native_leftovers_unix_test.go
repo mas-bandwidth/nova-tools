@@ -97,6 +97,7 @@ func TestNativeAnOrdinaryHarnessLeavesNoSurvivors(t *testing.T) {
 	require.Equal(t, 0, code, errOut.String())
 	require.Equal(t, 0, res.rc)
 	require.Empty(t, res.survivors, "an ordinary harness leaves nothing to end")
+	require.NoDirExists(t, filepath.Join(slot, "tmp", "ordinary"), "the worker removes its own temp when its slot lease ends")
 }
 
 // TestMemberSeesANativeThatExitedWhateverItsPipes pins the member's wait on native: native's
