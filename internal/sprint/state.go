@@ -65,13 +65,6 @@ func withField(c *Card, name, value string) *Card {
 // Table is one table as observed: its revision, its rows in order, its text
 // cells, and its cards (placed, and any unplaced records the step asked for),
 // which are read by Card and Cards.
-//
-// Any number of goroutines may read one table at once: the indexes a read
-// builds on first use (the ids in order, the cells, the lines) are built under
-// lazy, so a read never writes what another read is reading. A change (Put,
-// Drop, SetRows, SetProp, a card's fields) is the one goroutine's that holds
-// the table, as for any Go value; Frozen is the copy another goroutine reads
-// while the table moves on.
 type Table struct {
 	Name     string // logical name
 	Epoch    uint64
@@ -92,10 +85,6 @@ type Table struct {
 	// tables, the archived streams (stream archive).
 	hidden map[string]bool
 
-	// lazy guards the indexes below, which a read builds on first use: two
-	// reads of one table at once (a snapshot shared by goroutines that only
-	// read it) would otherwise both write them.
-	lazy      sync.Mutex
 	cells     map[[2]string][]*Card // built on first use; Put resets it
 	byPrimary map[string][]*Card
 	lines     map[string][]*Card // each row's cards not landed, in score order; built with cells
@@ -104,6 +93,25 @@ type Table struct {
 	// (sortedIDs) and kept by Put and Drop, so Cards and WithPrefix are a walk,
 	// never a sort of the whole table for each call (a step asks of every primary).
 	ids []string
+
+	mu *sync.RWMutex
+}
+
+var tableMuInit sync.Mutex
+
+func (t *Table) mutex() *sync.RWMutex {
+	if t == nil {
+		return nil
+	}
+	if t.mu != nil {
+		return t.mu
+	}
+	tableMuInit.Lock()
+	if t.mu == nil {
+		t.mu = new(sync.RWMutex)
+	}
+	tableMuInit.Unlock()
+	return t.mu
 }
 
 // Put adds or replaces a card.
@@ -111,6 +119,9 @@ func (t *Table) Put(c *Card) {
 	if c.Fields == nil {
 		c.Fields = map[string]string{}
 	}
+	mu := t.mutex()
+	mu.Lock()
+	defer mu.Unlock()
 	if _, ok := t.cards[c.ID]; !ok && t.ids != nil {
 		i, _ := slices.BinarySearch(t.ids, c.ID)
 		t.ids = slices.Insert(t.ids, i, c.ID)
@@ -128,8 +139,10 @@ func (t *Table) Frozen() *Table {
 	if t == nil {
 		return nil
 	}
-	// field by field, never *t: the copy has its own lazy, and no index
-	c := &Table{Name: t.Name, Epoch: t.Epoch, Revision: t.Revision, hidden: t.hidden}
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
+	c := *t
 	c.cards = make(map[string]*Card, len(t.cards))
 	maps.Copy(c.cards, t.cards)
 	c.props = make(map[string]string, len(t.props))
@@ -137,17 +150,26 @@ func (t *Table) Frozen() *Table {
 	c.Texts = make(map[string]map[string]string, len(t.Texts))
 	maps.Copy(c.Texts, t.Texts)
 	c.rows = append([]string(nil), t.rows...)
-	t.lazy.Lock()
+	c.cells, c.byPrimary, c.lines, c.stops = nil, nil, nil, nil
+	c.ids = nil
 	if len(t.ids) == len(t.cards) {
 		c.ids = slices.Clone(t.ids) // the same cards: their order kept, not sorted again
 	}
-	t.lazy.Unlock()
-	return c
+	c.mu = new(sync.RWMutex)
+	return &c
+}
+
+// Clone is a copy of the table as it is now: Frozen.
+func (t *Table) Clone() *Table {
+	return t.Frozen()
 }
 
 // Drop takes a card out of the table's cards: a record the table no longer
 // holds as a read would find it (store's twin, twin.go).
 func (t *Table) Drop(id string) {
+	mu := t.mutex()
+	mu.Lock()
+	defer mu.Unlock()
 	if _, ok := t.cards[id]; !ok {
 		return
 	}
@@ -161,6 +183,9 @@ func (t *Table) Drop(id string) {
 // SetProp sets one of the table's properties as a write left it (a batch's
 // receipt): the rest are kept.
 func (t *Table) SetProp(name, value string) {
+	mu := t.mutex()
+	mu.Lock()
+	defer mu.Unlock()
 	if t.props == nil {
 		t.props = map[string]string{}
 	}
@@ -169,22 +194,28 @@ func (t *Table) SetProp(name, value string) {
 
 // Props is the table's properties: a copy.
 func (t *Table) Props() map[string]string {
+	if t == nil {
+		return nil
+	}
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
 	out := make(map[string]string, len(t.props))
 	maps.Copy(out, t.props)
 	return out
 }
 
-// index is the table's cells and its placed cards by primary, built on first
-// use under lazy.
-func (t *Table) index() (map[[2]string][]*Card, map[string][]*Card) {
-	t.lazy.Lock()
-	defer t.lazy.Unlock()
-	t.indexLocked()
-	return t.cells, t.byPrimary
-}
+func (t *Table) index() {
+	mu := t.mutex()
+	mu.RLock()
+	if t.cells != nil {
+		mu.RUnlock()
+		return
+	}
+	mu.RUnlock()
 
-// indexLocked builds the cells when they are not built; lazy is held.
-func (t *Table) indexLocked() {
+	mu.Lock()
+	defer mu.Unlock()
 	if t.cells != nil {
 		return
 	}
@@ -211,7 +242,12 @@ func (t *Table) indexLocked() {
 
 // NewTable is an empty observed table.
 func NewTable(name string) *Table {
-	return &Table{Name: name, Texts: map[string]map[string]string{}, cards: map[string]*Card{}}
+	return &Table{
+		Name:  name,
+		Texts: map[string]map[string]string{},
+		cards: map[string]*Card{},
+		mu:    new(sync.RWMutex),
+	}
 }
 
 // Rows are the table's rows in order, not to be changed.
@@ -219,14 +255,25 @@ func (t *Table) Rows() []string {
 	if t == nil {
 		return nil
 	}
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
 	return t.rows
 }
 
 // SetRows sets the table's rows, in order.
-func (t *Table) SetRows(rows []string) { t.rows = rows }
+func (t *Table) SetRows(rows []string) {
+	mu := t.mutex()
+	mu.Lock()
+	defer mu.Unlock()
+	t.rows = rows
+}
 
 // SetProps sets the table's properties as read (a copy).
 func (t *Table) SetProps(p map[string]string) {
+	mu := t.mutex()
+	mu.Lock()
+	defer mu.Unlock()
 	t.props = make(map[string]string, len(p))
 	maps.Copy(t.props, p)
 }
@@ -236,23 +283,41 @@ func (t *Table) Prop(name string) (string, bool) {
 	if t == nil {
 		return "", false
 	}
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
 	v, ok := t.props[name]
 	return v, ok
 }
 
 // HasRow says the table declares the row.
 func (t *Table) HasRow(row string) bool {
+	if t == nil {
+		return false
+	}
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
 	return slices.Contains(t.rows, row)
 }
 
 // Hidden says the row is kept in the table and its folds and not drawn (the
 // table layer's row hide): on the work and merge tables, an archived stream.
 func (t *Table) Hidden(row string) bool {
-	return t != nil && t.hidden[row]
+	if t == nil {
+		return false
+	}
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
+	return t.hidden[row]
 }
 
 // SetHidden marks the row hidden, as read.
 func (t *Table) SetHidden(row string) {
+	mu := t.mutex()
+	mu.Lock()
+	defer mu.Unlock()
 	if t.hidden == nil {
 		t.hidden = map[string]bool{}
 	}
@@ -264,16 +329,23 @@ func (t *Table) Card(id string) *Card {
 	if t == nil {
 		return nil
 	}
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
 	return t.cards[id]
 }
 
 // Cards is every card the table holds, placed or kept, in id order: a copy of
 // the list, of the same cards.
+// Safe for concurrent readers (docs/SPEC-SPRINT.md section 1, the tables).
 func (t *Table) Cards() []*Card {
 	if t == nil {
 		return nil
 	}
 	ids := t.sortedIDs()
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
 	out := make([]*Card, len(ids))
 	for i, id := range ids {
 		out[i] = t.cards[id]
@@ -289,6 +361,9 @@ func (t *Table) WithPrefix(prefix string) []*Card {
 	}
 	ids := t.sortedIDs()
 	i, _ := slices.BinarySearch(ids, prefix)
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
 	var out []*Card
 	for ; i < len(ids) && strings.HasPrefix(ids[i], prefix); i++ {
 		out = append(out, t.cards[ids[i]])
@@ -308,11 +383,20 @@ func (t *Table) AnyWithPrefix(prefix string) bool {
 }
 
 // sortedIDs is every card's id in id order (ids), built once from the cards
-// when it is not yet built, under lazy: the slice returned is read, never
-// written, by the reads that ask for it.
+// when it is not yet built.
+// Safe for concurrent reads (docs/SPEC-SPRINT.md section 1, the tables).
 func (t *Table) sortedIDs() []string {
-	t.lazy.Lock()
-	defer t.lazy.Unlock()
+	mu := t.mutex()
+	mu.RLock()
+	if t.ids != nil && len(t.ids) == len(t.cards) {
+		ids := t.ids
+		mu.RUnlock()
+		return ids
+	}
+	mu.RUnlock()
+
+	mu.Lock()
+	defer mu.Unlock()
 	if t.ids == nil || len(t.ids) != len(t.cards) {
 		t.ids = slices.Sorted(maps.Keys(t.cards))
 	}
@@ -330,19 +414,25 @@ func (t *Table) Placed(id string) *Card {
 
 // Cell is the cards placed at row and column, in score order (then id).
 func (t *Table) Cell(row, col string) []*Card {
-	cells, _ := t.index()
-	return cells[[2]string{row, col}]
+	t.index()
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
+	return t.cells[[2]string{row, col}]
 }
 
 // Column is the cards placed in the column on any row, in score order.
 func (t *Table) Column(cols ...string) []*Card {
-	cells, _ := t.index()
+	t.index()
+	mu := t.mutex()
+	mu.RLock()
 	var out []*Card
 	for _, r := range t.rows {
 		for _, col := range cols {
-			out = append(out, cells[[2]string{r, col}]...)
+			out = append(out, t.cells[[2]string{r, col}]...)
 		}
 	}
+	mu.RUnlock()
 	SortCards(out)
 	return out
 }
@@ -350,14 +440,20 @@ func (t *Table) Column(cols ...string) []*Card {
 // Count is the number of cards at row and column.
 func (t *Table) Count(row, col string) int {
 	k := [2]string{row, col}
-	cells, _ := t.index()
-	return len(cells[k])
+	t.index()
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
+	return len(t.cells[k])
 }
 
 // Of is the placed cards whose primary field names p, in score order.
 func (t *Table) Of(p string) []*Card {
-	_, byPrimary := t.index()
-	return byPrimary[p]
+	t.index()
+	mu := t.mutex()
+	mu.RLock()
+	defer mu.RUnlock()
+	return t.byPrimary[p]
 }
 
 // SortCards orders cards by score, then by id: work order.

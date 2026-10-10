@@ -989,8 +989,9 @@ queued request of the same kind:
   (`TestAFailedCodexQueueLeavesTheOldRequestStanding`).
 - A withdrawal the app refuses is one line, marked superseded. One the
   session took first is one line saying so.
-- A queued message that carries anything else (a bus message, a card dealt)
-  is never withdrawn.
+- A queued message that carries anything else (a bus message) is never
+  withdrawn; a card dealt is a deal notice and coalesces in the daemon
+  (notifications, below).
 
 `CodexCheckRequeue` is the session check's re-ask age (`ReaskAfter`, an hour) less one
 recheck (`RecheckEvery`). The re-ask at the hour therefore always finds the
@@ -1257,11 +1258,18 @@ Plain transport acknowledgments and routine status retain bus/audit handling and
 produce no model wake; `--notify-kinds` opts other kinds in. Requests and blockers
 cannot be filtered out. Genuine ping/wake controls remain separate from card noise.
 
-The server's `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies
-set one global ready-queue bit across all cards. Each receive pass reads at most
-32 entries. `--notify-window` (30 seconds) coalesces a burst across passes; one
-constant ready-queue wake asks the coordinator to read the canonical queue. It
-claims or executes nothing. Child-finish refill belongs to the existing dispatcher.
+The server's deal notices—both per-card `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies and batch `cards dealt: N (...)` notices—are state, not
+events, keyed per friend. One pending deal notice stands per friend: a newer notice replaces
+the older, which is acknowledged as coalesced. Each receive pass reads at most 32 entries.
+`--notify-window` (30 seconds) coalesces a burst across passes. When delivery is due, a
+notice whose named cards have all left her row (taken back, finished or returned, as the
+daemon's card state `held` answers) is withdrawn without a turn; otherwise one turn is
+delivered, carrying the newest notice alongside the canonical ready-queue wake. A batch
+list is cut at ten with a trailing `and N more`, so its named cards are only a subset of the
+deal and are never the whole of it: such a notice is not withdrawn on that subset, because a
+card it omits may still be held. It claims or executes nothing; child-finish refill belongs
+to the existing dispatcher. `TestDealNoticesCoalescePerFriend` pins the coalescing, the
+withdrawal, and the truncated batch that is never withdrawn on its visible subset.
 
 The file-synced atomic journal holds one active immutable batch, at most one deferred
 nonurgent report or notice batch, and one ready bit. The app queue permits one unread notification batch
