@@ -44,7 +44,7 @@ func TestADealDrawsOnlyARouteItsMemberCanLaunch(t *testing.T) {
 
 	s.Routes[1].Enabled = false
 	_, _, why, _ = s.routeOf(card, nil, nil, "m1")
-	assert.Contains(t, why, "member m1 can launch no enabled route of tier flash that serves: flash-claude (runs under claude)")
+	assert.Contains(t, why, "member m1 can launch no route of tier flash that serves: flash-claude (runs under claude)")
 	_, _, why, _ = s.routeOf(card, nil, nil, "m2")
 	assert.Empty(t, why, "m2 launches it")
 
