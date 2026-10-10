@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
+	"github.com/mas-bandwidth/nova-tools/internal/cardlint"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -24,8 +25,11 @@ type briefCheck struct {
 // it to before it leaves (card.Checks): a card brief names a tier on line 1 and a
 // TEST whose package PATHS names; no brief carries the name of the sprint's coordinator,
 // its owner or a friend outside double-quoted words, nor names a card dropped off the
-// table. One red brief refuses the whole call, exit 2, nothing written, every finding on
-// its own LINT DRIFT line.
+// table. It holds the same briefs to the eight admission rules of internal/cardlint
+// (docs/SPEC-CARDS.md): the finish form, the step line, one lane's home, a whole-file
+// read, a truncated finding, a concrete example, a TLA edit without its record step, and
+// a name outside quotes in any paragraph. One red brief refuses the whole call, exit 2,
+// nothing written, every finding on its own LINT DRIFT line.
 func (a *app) holdCardChecks(verbName string, st *store.Store, stderr io.Writer, briefs ...briefCheck) int {
 	var tokens []string
 	given := false
@@ -49,10 +53,14 @@ func (a *app) holdCardChecks(verbName string, st *store.Store, stderr io.Writer,
 	if err != nil {
 		return a.readFailed(verbName, err, stderr)
 	}
-	opts := card.Options{Names: personal(names), Dropped: droppedIDs(s)}
+	names = personal(names)
+	opts := card.Options{Names: names, Dropped: droppedIDs(s)}
 	var red []cardgen.LintFinding
 	for _, b := range briefs {
 		red = append(red, card.Checks(b.id, b.brief, opts)...)
+		for _, f := range cardlint.Lint(b.brief, cardlint.Options{Names: names}) {
+			red = append(red, cardgen.LintFinding{ID: b.id, Check: f.Rule, Line: f.Line, Excerpt: f.Refusal})
+		}
 	}
 	if len(red) == 0 {
 		return 0

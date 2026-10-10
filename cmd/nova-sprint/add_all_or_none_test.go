@@ -17,7 +17,7 @@ func writeBriefDir(t *testing.T, n int) string {
 	t.Helper()
 	dir := t.TempDir()
 	for i := 0; i < n; i++ {
-		writeNeedsBrief(t, dir, fmt.Sprintf("a%02d", i), fmt.Sprintf("Fix a%02d.", i), "")
+		writeNeedsBrief(t, dir, fmt.Sprintf("a%02d", i), fmt.Sprintf("Fix a%02d.\n\nTHE FINISH FORM\nVerdict: LAND|HOLD|FAIL\nHead: <40-hex>", i), "")
 	}
 	return dir
 }
@@ -107,7 +107,7 @@ func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 	cards := func(n int) func(*testApp) {
 		// pro: two readers
 		return func(ta *testApp) {
-			ta.ok(fmt.Sprintf("add --stream s1 --count %d --one --brief-file %s", n, proBriefFile(t)))
+			ta.ok(fmt.Sprintf("add --stream s1 --count %d --one --brief-file %s", n, writeBrief(t, "tier: pro\n\nTHE FINISH FORM\nVerdict: LAND|HOLD|FAIL\nHead: <40-hex>")))
 		}
 	}
 	for _, tc := range []struct {

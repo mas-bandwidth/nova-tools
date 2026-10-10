@@ -15,7 +15,7 @@ import (
 // PATHS: lines, as a card the coordinator writes does, and returns its path.
 func writeHeaderBrief(t *testing.T, dir, id, depends, paths string) string {
 	t.Helper()
-	lead := "RESULT: " + id + " sha=000000000000 tier: flash\nKIND: fix\nDEPENDS-ON: " + depends + "\nPATHS: " + paths + "\n\nFix " + id + "."
+	lead := "RESULT: " + id + " sha=000000000000 tier: flash\nKIND: fix\nDEPENDS-ON: " + depends + "\nPATHS: " + paths + "\n\nTHE FINISH FORM\nVerdict: LAND|HOLD|FAIL\nHead: <40-hex>\n\nFix " + id + "."
 	path := filepath.Join(dir, id+".md")
 	require.NoError(t, os.WriteFile(path, []byte(passingBrief(lead)), 0o600))
 	return path
@@ -78,7 +78,7 @@ func TestAddAdmitsASharedPathBothBriefsDeclare(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	write := func(dir, id, paths, shared string) {
 		t.Helper()
-		lead := "RESULT: " + id + " sha=000000000000 tier: flash\nKIND: fix\nDEPENDS-ON: -\nPATHS: " + paths + "\nSHARED: " + shared + "\n\nFix " + id + "."
+		lead := "RESULT: " + id + " sha=000000000000 tier: flash\nKIND: fix\nDEPENDS-ON: -\nPATHS: " + paths + "\nSHARED: " + shared + "\n\nTHE FINISH FORM\nVerdict: LAND|HOLD|FAIL\nHead: <40-hex>\n\nFix " + id + "."
 		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(lead)), 0o600))
 	}
 	dir := t.TempDir()

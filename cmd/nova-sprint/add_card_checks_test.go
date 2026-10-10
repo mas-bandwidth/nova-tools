@@ -28,18 +28,25 @@ func TestAddHoldsABriefToTheCardChecks(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(passingBrief(text)), 0o600))
 		return path
 	}
-	for _, tc := range []struct{ name, brief, check string }{
-		{"no-tier", "RESULT: c sha=0123456789ab\nPATHS: internal/x/*.go\nTEST: internal/x TestY\n\nTHE TASK. Fix x.", "check=tier-line line=1"},
-		{"test-out", "RESULT: c sha=0123456789ab tier: pro\nPATHS: internal/x/*.go\nTEST: internal/other TestY\n\nTHE TASK. Fix x.", "check=test-outside-paths line=3"},
-		{"named", header + "\nTHE TASK. Fix x as ada asked.", "check=personal-name line=5"},
-		{"dropped", header + "\nTHE TASK. Finish what s0-1 began.", "check=dropped-card line=5"},
+	// the finish form every card brief carries (docs/SPEC-CARDS.md, finish-form-present);
+	// the failing briefs below omit it on purpose, so each refusal also carries that finding.
+	finishForm := "\nTHE FINISH FORM\nVerdict: LAND|HOLD|FAIL\nHead: <40-hex>\n"
+	for _, tc := range []struct {
+		name, brief string
+		checks      []string
+	}{
+		{"no-tier", "RESULT: c sha=0123456789ab\nPATHS: internal/x/*.go\nTEST: internal/x TestY\n\nTHE TASK. Fix x.", []string{"check=tier-line line=1", "check=finish-form-present"}},
+		{"test-out", "RESULT: c sha=0123456789ab tier: pro\nPATHS: internal/x/*.go\nTEST: internal/other TestY\n\nTHE TASK. Fix x.", []string{"check=test-outside-paths line=3", "check=finish-form-present"}},
+		{"named", header + "\nTHE TASK. Fix x as ada asked.", []string{"check=personal-name line=5", "check=no-names-outside-quotes"}},
+		{"dropped", header + "\nTHE TASK. Finish what s0-1 began.", []string{"check=dropped-card line=5", "check=finish-form-present"}},
 	} {
 		code, out, stderr := ta.do("add --stream s1 --one --actor lead --brief-file " + write(tc.name, tc.brief))
 		assert.Equal(t, 2, code, "%s: %s%s", tc.name, out, stderr)
-		assert.Contains(t, stderr, "LINT DRIFT card="+tc.name+" "+tc.check, tc.name)
-		assert.Contains(t, stderr, "nova-sprint add REFUSED: 1 brief finding(s)", tc.name)
+		for _, check := range tc.checks {
+			assert.Contains(t, stderr, "LINT DRIFT card="+tc.name+" "+check, tc.name)
+		}
 		assert.False(t, ta.placed(tc.name), "%s: nothing written", tc.name)
 	}
-	out := ta.ok("add --stream s1 --one --actor lead --brief-file " + write("clean", header+"\nTHE TASK. The owner said \"ada wants x fixed\"; fix x."))
+	out := ta.ok("add --stream s1 --one --actor lead --brief-file " + write("clean", header+finishForm+"\nTHE TASK. The owner said \"ada wants x fixed\"; fix x."))
 	assert.Contains(t, out, "MOVED clean -> ready")
 }

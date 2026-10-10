@@ -61,7 +61,7 @@ func TestAddRunsTheBriefChecksAtTheBase(t *testing.T) {
 		"internal/x/testdata/in.txt": "in\n",
 	}, "sprint/s1")
 	brief := func(base, paths, test string) string {
-		return passingBrief("RESULT: c sha=0123456789ab tier: pro\nREPO: " + remote + "\nBASE: " + base + "\nPATHS: " + paths + "\nTEST: ./internal/x " + test + "\n\nTHE TASK. Fix internal/x/x.go.")
+		return passingBrief("RESULT: c sha=0123456789ab tier: pro\nREPO: " + remote + "\nBASE: " + base + "\nPATHS: " + paths + "\nTEST: ./internal/x " + test + "\n\nTHE FINISH FORM\nVerdict: LAND|HOLD|FAIL\nHead: <40-hex>\n\nTHE TASK. Fix internal/x/x.go.")
 	}
 	write := func(dir, id, text string) string {
 		t.Helper()
