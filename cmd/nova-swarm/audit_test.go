@@ -223,10 +223,6 @@ var swarmAudit = audit.Config{
 		// typedrec (the one-typed-parser rule, #2506) reads a card's RESULT.md into a value
 		// and says whether a string is a commit id; it holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/typedrec"`,
-		// diskguard.go sweeps bench run directories; it reads the RunAgeLimit constant from
-		// internal/bench to know the two-hour threshold for stale runs. It cannot write past
-		// the escape: RunAgeLimit is a time.Duration constant, not a string.
-		`"github.com/mas-bandwidth/nova-tools/internal/bench"`,
 		// atomicfile writes one FILE whole (a temporary beside it, fsync, rename): it takes a
 		// path and the bytes of the file and puts no byte on any stream of this binary. The
 		// audit's Write check lets atomicfile.Write by its package name for that reason.
