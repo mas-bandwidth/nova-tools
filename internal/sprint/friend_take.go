@@ -135,7 +135,17 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		case c == nil:
 			p.refuse(id, "no card "+id+" is dealt to friend "+r.Friend)
 		case c.Row != row:
-			p.refuse(id, fmt.Sprintf("%s is not dealt to friend %s: it is at %s", c.ID, r.Friend, placeOf(c)))
+			// Check if the card is pinned to another friend via its primary
+			who := ""
+			if pr := s.Work.Placed(c.F("primary")); pr != nil {
+				who = pr.F(FieldWho)
+			}
+			whoName, named := FriendOfRow(who)
+			if named {
+				p.refuse(id, fmt.Sprintf("%s is not dealt to friend %s: it is at %s; pinned to friend %s", c.ID, r.Friend, placeOf(c), whoName))
+			} else {
+				p.refuse(id, fmt.Sprintf("%s is not dealt to friend %s: it is at %s", c.ID, r.Friend, placeOf(c)))
+			}
 		case c.Col != Ready && c.Col != Working:
 			p.refuse(id, fmt.Sprintf("%s has started: friend %s finished it (%s), and its primary %s is %s", c.ID, r.Friend, c.Col, c.F("primary"), orDash(s.StateOf(c.F("primary")))))
 		case r.Started[c.ID] != "":

@@ -163,3 +163,22 @@ func TestTheServerRunsAFriendsBeatWithTheCardsSheIsRunning(t *testing.T) {
 		assert.NotEmpty(t, why, "%q", argv)
 	}
 }
+
+func TestFriendTakePrintsEachRefusalsReason(t *testing.T) {
+	t.Parallel()
+	// A pinned card dealt away from a held friend (docs/SPEC-SPRINT.md section 1,
+	// a friend's card taken back; named pin placed on another row is a judgment)
+	ta, root := friendCardApp(t, "friend amy", "amy", "bob")
+	ta.ok("friend down bob")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	// bob is down; s1-1 should be dealt to amy but bob is held
+	ta.ok("friend beat bob --running s1-1.w1")
+	code, _, errs := ta.do("friend take bob s1-1")
+	assert.Equal(t, 1, code)
+	// REFUSED line with reason (pinned) must appear before FAILED line
+	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 is not dealt to friend bob: it is at friend.amy:ready; pinned to friend amy")
+	assert.Contains(t, errs, "FRIEND-TAKE FAILED moved=0 refused=1")
+	ta.clean()
+}
