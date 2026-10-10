@@ -12,7 +12,7 @@ import (
 
 // promoteForge is every forge call a promotion makes (promote.go), so a test
 // stands a fake in for the forge. The one implementation that talks to a forge
-// is ghForge, the gh CLI through internal/subproc.
+// is ghForge, the gh CLI through pkg/subproc.
 type promoteForge interface {
 	// OpenPR opens the pull request of head into base and answers its number.
 	OpenPR(ctx context.Context, base, head, title, body string) (string, error)
@@ -73,7 +73,7 @@ const (
 	promoteQueueQuery   = `query($id:ID!){node(id:$id){... on PullRequest{mergeQueueEntry{id state}}}}`
 )
 
-// ghForge is the forge through gh (promoter.gh: internal/subproc, or the
+// ghForge is the forge through gh (promoter.gh: pkg/subproc, or the
 // promoter's ghRun in a test).
 type ghForge struct{ p *promoter }
 

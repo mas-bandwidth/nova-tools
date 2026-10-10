@@ -8,7 +8,7 @@ only copy of anything.**
 This spec is normative. If the code and this document disagree, one of them
 has a bug, and the tests decide which. It is a sibling of [SPEC.md](SPEC.md),
 whose **Conventions** section — exit codes, no guessed paths, the one-line
-output grammar, `internal/oneline` and `internal/bounded` — applies here
+output grammar, `pkg/oneline` and `pkg/bounded` — applies here
 unchanged and is not restated. Related: [SPEC-SECRETS.md](SPEC-SECRETS.md)
 (auth).
 

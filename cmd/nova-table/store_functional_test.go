@@ -4,9 +4,9 @@ package main
 
 import (
 	"context"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/assert"

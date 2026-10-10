@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // The shadow tick, and the canary before a server swap (docs/SPEC-SPRINT.md

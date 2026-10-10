@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
 // The lander's run-record check (docs/SPEC-SPRINT.md section 7, the lander's checks; tla/README.md,
@@ -130,7 +130,7 @@ func caseTouched(src tlc.Source, c tlc.Case, edited map[string]bool) (touched []
 }
 
 // treeRunner is the runner's result files as the merged tree holds them, so the fingerprint
-// is the one the tree's own tlacheck computes; a tree with no internal/tlc takes the bytes
+// is the one the tree's own tlacheck computes; a tree with no pkg/tlc takes the bytes
 // this binary was built with.
 func treeRunner(dir string) (map[string][]byte, error) {
 	out := map[string][]byte{}

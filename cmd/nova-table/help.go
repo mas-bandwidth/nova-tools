@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 )
 
 // A command's example is the lines its help prints under example:, each a

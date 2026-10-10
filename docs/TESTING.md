@@ -5,7 +5,7 @@ The class tests in `internal/ci` (indexed in [SPEC-CI.md](SPEC-CI.md), under
 Every list only shrinks, and every one is read and written by the one helper,
 `internal/ci/allowlist` (`allowlist.Load` and `allowlist.Check`).
 
-How to run each tier and use the store helpers of `internal/testredis` in a test:
+How to run each tier and use the store helpers of `pkg/testredis` in a test:
 [FOUNDATION-TESTING.md](FOUNDATION-TESTING.md).
 
 ## The two tiers
@@ -50,7 +50,7 @@ type-checked on a pull request rather than only when its nightly job runs.
 
 ### Table epoch actions and receipt replay
 
-`TestTableEpochActionsAndReceiptReplay` in `internal/ntable` runs eight fixed
+`TestTableEpochActionsAndReceiptReplay` in `pkg/ntable` runs eight fixed
 seeds against an owned source/replay Redis pair, reset between seeds. Each seed
 has three generations, 24 random actions per generation, and stale-writer probes
 for every modeled write at each advance. Every action checks placement, score
@@ -71,7 +71,7 @@ bindings, batches, definition edits and row sorting have separate tests.
 ### delivery-conformance-r.w1 — the nightly delivery check
 
 The unit tier proves every harness adapter against fakes
-(`TestEveryAdapterPassesDeliveryConformance`, internal/friend); the live
+(`TestEveryAdapterPassesDeliveryConformance`, pkg/friend); the live
 session is proved once a night by `nova-friend check` on each friend's
 machine, one nova-config loop record per friend (kind loop), never a hand
 loop or a script:

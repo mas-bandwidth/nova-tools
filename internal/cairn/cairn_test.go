@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 

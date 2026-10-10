@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // The seat's push proof (docs/SPEC-SPRINT.md, "The push proof"; the owner,

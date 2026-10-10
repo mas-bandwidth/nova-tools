@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 )
 
 // A friend with room is dealt the fleet's cards of her tier (docs/SPEC-SPRINT.md section 1,

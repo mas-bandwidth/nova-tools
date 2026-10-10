@@ -1,6 +1,6 @@
 // Package seattest builds a real nova-secrets store for a test: a git working
 // copy with an upstream, recovery.pub, .sops.yaml and one seat's file sealed by
-// sops to a fresh age key, laid out where internal/seatcred looks by default
+// sops to a fresh age key, laid out where pkg/seatcred looks by default
 // under a temporary HOME. It shells out to git, age-keygen and sops; a machine
 // without sops or age-keygen skips the test, as the nova-secrets tests do.
 package seattest
@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // Home returns a new HOME holding <home>/nova-bench/secrets (the store, with

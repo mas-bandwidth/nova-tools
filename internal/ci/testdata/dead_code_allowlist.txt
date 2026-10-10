@@ -5,9 +5,9 @@
 # ceiling: 11
 cmd/nova-sandbox 3
 cmd/nova-swarm 2
-internal/filelock 1
-internal/ntable 11
-internal/secrets 1
-internal/swarm 39
-internal/testguard 1
-internal/tool 1
+pkg/filelock 1
+pkg/ntable 11
+pkg/secrets 1
+pkg/swarm 39
+pkg/testguard 1
+pkg/tool 1

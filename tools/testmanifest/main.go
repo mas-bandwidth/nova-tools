@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 type event struct {

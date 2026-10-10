@@ -120,8 +120,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 func Greeting(dir, name string) (string, error) {
@@ -140,8 +140,8 @@ func Greeting(dir, name string) (string, error) {
 	f := fixtureSource(t, "fixture.go", code)
 	shadows := map[string]bool{"oneline": true, "Escape": true, "Field": true, "Err": true}
 	allowed := map[string]bool{
-		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`:    true,
-		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`: true,
+		`"github.com/mas-bandwidth/nova-tools/pkg/oneline"`:    true,
+		`"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"`: true,
 		`"flag"`: true, `"fmt"`: true, `"io"`: true, `"path/filepath"`: true, `"strconv"`: true,
 	}
 	bypassesIn(t, f, shadows, allowed)

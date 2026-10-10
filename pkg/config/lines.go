@@ -1,0 +1,149 @@
+package config
+
+import (
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+)
+
+// The typed lines nova-config prints (docs/SPEC-CONFIG.md, "Lines"). Every
+// line is one event, first token the record, then key=value fields whose
+// values go through oneline.Field, so a whitespace-splitting scanner sees
+// exactly the fields the tool wrote; an empty value prints as "-".
+
+// Value renders one field value.
+func Value(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return oneline.Field(s)
+}
+
+// ListNoteRunes is how many characters of a Cut field (a note) a list line
+// prints before "..." marks the cut.
+const ListNoteRunes = 60
+
+// RowLine is a row: `FRIEND name=<n> <field>=<v> ...`, every field of the
+// kind in declaration order, every value whole.
+func RowLine(k *Kind, row Row) string { return rowLine(k, row, false) }
+
+// ListLine is RowLine for a list: a Cut field longer than ListNoteRunes
+// characters is cut there and ends in "...", so a row is one short line; show
+// and --json print it whole.
+func ListLine(k *Kind, row Row) string { return rowLine(k, row, true) }
+
+func rowLine(k *Kind, row Row, cut bool) string {
+	var b strings.Builder
+	b.WriteString(strings.ToUpper(k.Name))
+	b.WriteString(" name=" + Value(row.Name))
+	for _, f := range k.Fields {
+		v := row.Fields[f.Name]
+		if cut && f.Cut {
+			if r := []rune(v); len(r) > ListNoteRunes {
+				v = string(r[:ListNoteRunes]) + "..."
+			}
+		}
+		b.WriteString(" " + f.Name + "=" + Value(v))
+	}
+	return b.String()
+}
+
+// ShowLine is RowLine with the row's stamps.
+func ShowLine(k *Kind, row Row) string {
+	return RowLine(k, row) + " created=" + Value(row.CreatedAt) + " updated=" + Value(row.UpdatedAt)
+}
+
+// HistoryLine is one change: `HISTORY id=<n> kind=<k> name=<n> op=<add|set|remove>
+// actor=<a> at=<rfc3339>` then, for a set, each changed field as
+// `<field>=<before>><after>`; for an add every field's value; for a remove
+// every field's last value. A write that recorded a reason names it as
+// `reason=<why>` after at=, before the fields, and one that recorded none
+// prints no reason at all.
+func HistoryLine(c Change) string {
+	return fmt.Sprintf("HISTORY id=%d kind=%s name=%s op=%s actor=%s at=%s", c.ID, Value(c.Kind), Value(c.Name), Value(c.Op), Value(c.Actor), Value(c.At)) + reasonField(c) + changeFields(c)
+}
+
+// PlanLine is the change a dry run would record (Plan): `CONFIG DRY-RUN
+// op=<add|set|remove> kind=<k> name=<n> actor=<a> wrote=nothing` then the
+// fields as HistoryLine prints them, and the reason it would record.
+func PlanLine(c Change) string {
+	return "CONFIG DRY-RUN op=" + Value(c.Op) + " kind=" + Value(c.Kind) + " name=" + Value(c.Name) + " actor=" + Value(c.Actor) + " wrote=nothing" + reasonField(c) + changeFields(c)
+}
+
+// reasonField is the reason a write recorded, and nothing when it recorded
+// none: it is optional metadata, so a history row without one is what it was
+// before the reason existed.
+func reasonField(c Change) string {
+	if c.Reason == "" {
+		return ""
+	}
+	return " reason=" + Value(c.Reason)
+}
+
+// changeFields is a change's fields: every value of an add's after and a
+// remove's before, and `<field>=<before>><after>` for each field a set
+// changes.
+func changeFields(c Change) string {
+	var b strings.Builder
+	switch c.Op {
+	case OpAdd:
+		for _, f := range slices.Sorted(maps.Keys(c.After)) {
+			b.WriteString(" " + f + "=" + Value(c.After[f]))
+		}
+	case OpRemove:
+		for _, f := range slices.Sorted(maps.Keys(c.Before)) {
+			b.WriteString(" " + f + "=" + Value(c.Before[f]))
+		}
+	default:
+		for _, f := range slices.Sorted(maps.Keys(c.After)) {
+			if c.Before[f] != c.After[f] {
+				b.WriteString(" " + f + "=" + Value(c.Before[f]) + ">" + Value(c.After[f]))
+			}
+		}
+	}
+	return b.String()
+}
+
+// OpLine is one line of an apply or a check: `APPLY ADD kind=<k> name=<n>`,
+// `APPLY SET kind=<k> name=<n> changed=<f,g>`, `APPLY REMOVE kind=<k>
+// name=<n>`; the first word is CHECK when nothing is written.
+func OpLine(word string, kind string, op Op) string {
+	line := word + " " + strings.ToUpper(op.Op) + " kind=" + Value(kind) + " name=" + Value(op.Name)
+	if op.Op == OpSet {
+		line += " changed=" + Value(strings.Join(op.Changed, ","))
+	}
+	return line
+}
+
+// KindLine is one line of `nova-config kinds`: `CONFIG KIND name=<k>
+// table=config.<t> fields=<f,g,...> required=<f,...> rows=many|one` (one:
+// a singleton kind, whose row the migration creates).
+func KindLine(k *Kind) string {
+	var required []string
+	for _, f := range k.Fields {
+		if f.Required {
+			required = append(required, f.Name)
+		}
+	}
+	rows := "many"
+	if k.Singleton {
+		rows = "one"
+	}
+	return "CONFIG KIND name=" + k.Name + " table=config." + k.Table + " fields=" + Value(strings.Join(k.FieldNames(), ",")) + " required=" + Value(strings.Join(required, ",")) + " rows=" + rows
+}
+
+// LiveLine is the measured facts a machine's list and show lines carry
+// after the declared fields when Redis is at hand (docs/SPEC-CONFIG.md,
+// "Declared and measured"): ` os=<v> arch=<v> cores=<n> memory_gb=<n>
+// beat=<rfc3339>`, each `-` when the beat does not carry it, and
+// `beat=none` alone when the machine has no beat. Nothing here is stored or
+// typed: it is what the machine reported last.
+func LiveLine(b *Beat) string {
+	if b == nil {
+		return " beat=none"
+	}
+	return " os=" + Value(b.OS) + " arch=" + Value(b.Arch) + " cores=" + Value(b.Cores) + " memory_gb=" + Value(b.MemoryGB) + " beat=" + Value(b.At)
+}

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisfn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

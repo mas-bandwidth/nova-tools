@@ -12,14 +12,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // cmdStep is the script-step executor (docs/SPEC-SPRINT.md, a card is a tree of steps;
-// internal/cardtree): it walks a card whose every work step is a script step, in a checkout,
+// pkg/cardtree): it walks a card whose every work step is a script step, in a checkout,
 // with no model: each program, its POST lines and its commit, each command in the step's own
 // wall (the network denied, no credential, the checkout and a private temp the only writes),
 // and it stops at the first step that is not ok. native runs it in place of the harness.

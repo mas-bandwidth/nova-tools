@@ -14,7 +14,7 @@
 //	--run <pattern>  the same
 //
 // Every other argument is a package to check; with none, PKGS names the set,
-// and with no PKGS the set is ./cmd/... ./internal/... .
+// and with no PKGS the set is ./cmd/... ./internal/... ./pkg/... .
 //
 // Environment:
 //
@@ -26,9 +26,9 @@
 //	NOVA_TEST_NO_HOST  the host guard every test runs under (default 1)
 //
 //	example:
-//	  go run ./tools/preflight ./internal/swarm
-//	  go run ./tools/preflight -run TestLease ./internal/swarm ./cmd/nova-swarm
-//	  make preflight PKGS=./internal/swarm RUN=TestLease
+//	  go run ./tools/preflight ./pkg/swarm
+//	  go run ./tools/preflight -run TestLease ./pkg/swarm ./cmd/nova-swarm
+//	  make preflight PKGS=./pkg/swarm RUN=TestLease
 package main
 
 import (
@@ -42,7 +42,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // Exit codes: the exit code of the step that failed, else 0. A gofmt finding,
@@ -55,7 +55,7 @@ const (
 
 // defaultPkgs is the package set when neither the command line nor PKGS names
 // one.
-const defaultPkgs = "./cmd/... ./internal/..."
+const defaultPkgs = "./cmd/... ./internal/... ./pkg/..."
 
 // usage is the help text.
 const usage = `Usage: preflight [flags] [packages...]
@@ -97,7 +97,7 @@ type runner interface {
 
 type execRunner struct{}
 
-// run starts each step as a long-lived child (internal/subproc): gofmt, go vet and
+// run starts each step as a long-lived child (pkg/subproc): gofmt, go vet and
 // the test run take as long as the packages take, and go test bounds itself, so
 // the child has no deadline of its own, only a bounded wait for its pipes.
 func (execRunner) run(c command) (int, error) {

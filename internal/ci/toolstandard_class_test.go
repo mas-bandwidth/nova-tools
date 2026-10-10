@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A tool built on internal/tool meets its banner's standard by construction
+// A tool built on pkg/tool meets its banner's standard by construction
 // except for what only its definition can say: every verb's effect (inspection,
 // local write or delivery) and a how text of at most five lines of at most 100
 // characters. tool.Problems checks both; this holds every package that builds a
@@ -23,7 +23,7 @@ func TestEveryToolDefinitionIsHeldToTheStandard(t *testing.T) {
 	tree := repoTree(t)
 	for _, f := range append(tree.GoFilesUnder(false, "cmd", "internal"), tree.GoFilesUnder(true, "cmd", "internal")...) {
 		dir := path.Dir(f.Rel)
-		if f.HasDirNamed("testdata") || dir == "internal/tool" {
+		if f.HasDirNamed("testdata") || dir == "pkg/tool" {
 			continue
 		}
 		switch {

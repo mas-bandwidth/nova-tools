@@ -8,20 +8,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // cappedReport is the report a friend's capped lane finishes with, in the lane's own words
-// (internal/friend, TestALaneIsCappedByItsTier holds that the lane writes them).
+// (pkg/friend, TestALaneIsCappedByItsTier holds that the lane writes them).
 func cappedReport() string {
 	return "friend bob HOLD: nova-friend lane 1 of bob finished card c1: " + friend.CappedWords(2*time.Minute, "flash", 3*time.Second) +
 		": the card's wall reached its tier's cap and the daemon ended the lane"
 }
 
 // A friend's lane capped by its card's tier (a-lane-is-capped-by-its-tier.w1), as the sprint
-// reads the finish (it was the second half of internal/friend's TestALaneIsCappedByItsTier):
+// reads the finish (it was the second half of pkg/friend's TestALaneIsCappedByItsTier):
 // the first cap re-deals the card once more at the next tier up, its failed count
 // untouched, and the cap and the overrun are on the take's cost record; a second cap counts
 // as a failure.

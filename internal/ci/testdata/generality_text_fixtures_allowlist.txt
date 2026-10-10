@@ -16,8 +16,8 @@ internal/ci/testdata/generality-text/.github/workflows.txt this scan's ledger: e
 internal/ci/testdata/generality-text/docs.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/tla.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/tlc/testdata/temporal-new.log captured TLC model checker output
-internal/tlc/testdata/temporal-old.log captured TLC model checker output
+pkg/tlc/testdata/temporal-new.log captured TLC model checker output
+pkg/tlc/testdata/temporal-old.log captured TLC model checker output
 internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository
 internal/workgh/testdata/reliable/call-02.json recorded GitHub GraphQL reply for a public repository
 internal/workgh/testdata/reliable/call-03.json recorded GitHub GraphQL reply for a public repository

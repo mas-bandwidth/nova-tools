@@ -474,7 +474,7 @@ GATE FAILED rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rul
 ```
 
 The registry is read **first and whole**, before any judgement leans on it — an unreadable or
-malformed one is a refusal, exactly as `internal/fleet` demands, because the half of a
+malformed one is a refusal, exactly as `pkg/fleet` demands, because the half of a
 registry that parses is the half that lets a recipient through. **Without `--machines` the
 rule is dormant, not satisfied**, and the approval line says `machines=-` so that no APPROVE
 is ever read as the fleet having vouched. **The dormancy stands, and is acceptable now that
@@ -764,7 +764,7 @@ unchanged: the shape `seal` opens, which the gate approves with no rule of its o
 
 ### A tool's store login
 
-`secrets.ReadLogin(Login{Store, As, Key, Sops, Name})` (internal/secrets/login.go) reads one name
+`secrets.ReadLogin(Login{Store, As, Key, Sops, Name})` (pkg/secrets/login.go) reads one name
 from one seat in the caller's own process: `OpenSeatFile`, the path `exec` takes before it
 decrypts, then the name. The value comes back as a `Secret` and goes into no environment; a `Login`
 holds no secret, so a tool may record it in its config file and print every field. A field left
@@ -976,7 +976,7 @@ found the store red, exit 1) or `REFUSED` (the verb could not run: exit 2, or 12
 `OK` to stdout and `FAIL` and `REFUSED` to stderr; a refusal made before there is a verb is
 `SECRETS REFUSED:` — with `exec`'s single OK line on **stderr**, the **second
 deviation** from Conventions, because from the next instruction the command owns stdout.
-Every `key=value` field is escaped by the shared `internal/oneline` helper so a field is one
+Every `key=value` field is escaped by the shared `pkg/oneline` helper so a field is one
 token; the free-text tail after `: ` is never scanned for fields. Nothing a file holds and no
 caller argument can author a second line.
 

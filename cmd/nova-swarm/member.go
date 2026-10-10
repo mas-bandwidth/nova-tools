@@ -21,24 +21,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/gocache"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/log"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
+	"github.com/mas-bandwidth/nova-tools/pkg/binstamp"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/gocache"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
+	"github.com/mas-bandwidth/nova-tools/pkg/log"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -46,7 +46,7 @@ import (
 // from the sprint, pushes the commit of every work card whose child ended and
 // reports it, takes up to its width and starts each card taken as one child
 // through `nova-swarm native`. The fleet table is the dispatcher; the loop is
-// internal/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
+// pkg/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
 // run --listen`), the one writer; this machine opens no store. send delivers them: nil is
 // the server's client (sprintwire.Client.Do), a test's is the server's own step.
 func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Context, ...[]string) ([]sprintwire.Result, error)) int {
@@ -200,7 +200,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	// the sprint's verbs go to its server, which runs them beside the store (internal/sprintwire)
+	// the sprint's verbs go to its server, which runs them beside the store (pkg/sprintwire)
 	if send == nil {
 		send = sprintwire.Client{Addr: *server}.Do
 	}
@@ -360,7 +360,7 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 	if lr.stamp != nil {
 		began = lr.stamp()
 	}
-	// the beat goes on its own clock, apart from the work pass (internal/member BeatLoop): one
+	// the beat goes on its own clock, apart from the work pass (pkg/member BeatLoop): one
 	// now, so the member is up before its first pass, then one every interval while the pass
 	// goes on, ending with this loop
 	if err := m.Beat(); err != nil {
@@ -710,7 +710,7 @@ func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline ti
 }
 
 // harnessFor is the binary a packet's child runs under: the member's --harness, or for a
-// route naming a headless harness (internal/harness; docs/SPEC-SWARM.md, the headless
+// route naming a headless harness (pkg/harness; docs/SPEC-SWARM.md, the headless
 // harnesses) that program on this member's PATH. A headless program this machine has not
 // got refuses the launch, so the sprint deals the card to a member that has.
 func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
@@ -1013,7 +1013,7 @@ func (c *nativeChild) Result() member.Result {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 			if m := nativeSpent.FindSubmatch(b); m != nil {
-				// the launch's cost record (internal/cardcost): the wall and the budget word,
+				// the launch's cost record (pkg/cardcost): the wall and the budget word,
 				// and what the job spent by token class with the harness's cost (spend=)
 				u := cardcost.NoUsage()
 				if s := nativeSpend.FindSubmatch(b); s != nil {

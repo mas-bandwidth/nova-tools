@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 // The counted class-rule ledgers only shrink and the slowtests budgets only
@@ -626,7 +626,7 @@ func TestLedgerGrowthComparisonInMemory(t *testing.T) {
 	t.Run("SlowAndSleep", testSlowAndSleepInMemory)
 }
 
-// ratchetGit runs git in dir under the shared test identity (internal/testgit)
+// ratchetGit runs git in dir under the shared test identity (pkg/testgit)
 // and returns its standard output; a failure ends the test.
 func ratchetGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()

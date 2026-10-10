@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +26,7 @@ func TestTheMemberBeatPassesTheServer(t *testing.T) {
 		return []sprintwire.Result{{Code: 0, Stdout: "ok\n"}}, nil
 	}}
 
-	// Member.Beat with a sample: stop-returns, then the load (internal/member).
+	// Member.Beat with a sample: stop-returns, then the load (pkg/member).
 	code, out := w.Run("fleet", "beat", "m", "--stop-returns", "0", "--load", "70.0")
 	require.Equal(t, 0, code, "%s", out)
 

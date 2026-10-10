@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // THE LIVE SAMPLER, IN THE PROCESS THAT HOLDS THE CARD'S DEADLINE.
@@ -22,7 +22,7 @@ import (
 // a failed read, and the deadline and a TERM from outside end the card at their own instants
 // whatever a read is doing." A sample SYNCHRONOUSLY inside the select would make a slow
 // read a stretch of time in which the deadline case cannot run -- the very fault the walWait
-// comment in internal/swarm/opencode.go records, where two slow queries spent ~40s in one sample. On this route the sample runs
+// comment in pkg/swarm/opencode.go records, where two slow queries spent ~40s in one sample. On this route the sample runs
 // beside the select and never inside it, so the longest read this tool can suffer costs the
 // deadline nothing.
 //

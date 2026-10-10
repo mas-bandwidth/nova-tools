@@ -15,16 +15,16 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Moved from internal/friend/chaos_functional_test.go (the nova-sprint split), over
+// Moved from pkg/friend/chaos_functional_test.go (the nova-sprint split), over
 // friend's exported API. The daemon here runs without the unexported noPresent switch
 // the in-package rig set (so its present is live, as in production); on the bench the
 // suite's results were identical with and without it (the same pass, skips and OWED lines).
@@ -509,7 +509,7 @@ func (o *owed) check(ok bool, card, format string, args ...any) {
 // reported failed. A skip here is not a pass anywhere it counts: `release
 // cut` reads each case of this suite on its own, as a promised recovery
 // journey, and an OWED skip is incomplete there until its card lands
-// (internal/release/journeygate.go, docs/SPEC-RELEASE.md rule 14).
+// (pkg/release/journeygate.go, docs/SPEC-RELEASE.md rule 14).
 func (o *owed) settle(t *testing.T) {
 	t.Helper()
 	if len(o.parts) == 0 {

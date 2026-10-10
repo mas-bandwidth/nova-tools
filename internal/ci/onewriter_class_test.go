@@ -32,13 +32,13 @@ import (
 const onewriterModule = "github.com/mas-bandwidth/nova-tools/"
 
 // onewriterWorkerRoots are the packages a worker's machine runs for a sprint.
-var onewriterWorkerRoots = []string{"cmd/nova-swarm", "internal/member", "internal/sprintwire"}
+var onewriterWorkerRoots = []string{"cmd/nova-swarm", "pkg/member", "pkg/sprintwire"}
 
 // onewriterStore are the import path prefixes that open a sprint's store.
 var onewriterStore = []string{
 	onewriterModule + "internal/sprint/store",
-	onewriterModule + "internal/redisconn",
-	onewriterModule + "internal/ntable",
+	onewriterModule + "pkg/redisconn",
+	onewriterModule + "pkg/ntable",
 	onewriterModule + "internal/nsprint/store",
 	"github.com/redis/",
 }
@@ -108,7 +108,7 @@ func TestAWorkerDoesNotOpenTheStore(t *testing.T) {
 	for _, root := range onewriterWorkerRoots {
 		require.NotEmpty(t, imports[root], "%s has no imports: this test is looking in the wrong place and would pass by checking nothing", root)
 		chain := onewriterReach(imports, root, map[string]bool{})
-		assert.Empty(t, chain, "%s reaches the store: %s; remedy=\"a worker is a client: ask the sprint's server (internal/sprintwire) and never open the store from a worker's machine (docs/SPEC-CI.md, onewriter)\"", root, strings.Join(chain, " -> "))
+		assert.Empty(t, chain, "%s reaches the store: %s; remedy=\"a worker is a client: ask the sprint's server (pkg/sprintwire) and never open the store from a worker's machine (docs/SPEC-CI.md, onewriter)\"", root, strings.Join(chain, " -> "))
 	}
 }
 
@@ -135,5 +135,5 @@ func TestOneWriterFindsAChainToTheStore(t *testing.T) {
 	assert.Equal(t, []string{"cmd/outside", "pkg/bridge", onewriterModule + "internal/sprint/store"}, onewriterReach(imports, "cmd/outside", map[string]bool{}), "and read, its chain is followed wherever it stands in the tree")
 	roots := append([]string(nil), onewriterWorkerRoots...)
 	sort.Strings(roots)
-	assert.Equal(t, []string{"cmd/nova-swarm", "internal/member", "internal/sprintwire"}, roots)
+	assert.Equal(t, []string{"cmd/nova-swarm", "pkg/member", "pkg/sprintwire"}, roots)
 }

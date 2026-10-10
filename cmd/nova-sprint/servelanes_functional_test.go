@@ -20,10 +20,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 )
 
 // The server under the load of 2026-10-04 2:13 PM, on a scratch Redis made far (each

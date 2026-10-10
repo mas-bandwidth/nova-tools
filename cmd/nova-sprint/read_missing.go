@@ -5,11 +5,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // headsFn is origin's branches of a repository matching a pattern (git ls-remote --heads),

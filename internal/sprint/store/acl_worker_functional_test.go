@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
 )
 
-// A worker's steps run as the fleet's member user, under the ACL internal/redisacl
+// A worker's steps run as the fleet's member user, under the ACL pkg/redisacl
 // renders for it, on a real store: take, finish (ok and failed, each with usage, so
 // it prices with the routes) and read (ok, broken and return, each with usage). The
 // fleet's finish was refused NOPERM on 2026-10-01 because it read the tiers' arrays;

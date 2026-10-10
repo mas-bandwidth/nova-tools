@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 )
 
 // Every verb that writes takes --dry-run that writes nothing (docs/STANDARD.md, the

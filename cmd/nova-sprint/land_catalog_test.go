@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/diffcheck"
 )
 
 // catalogBase is a catalog with one existing row. A card that adds a package appends

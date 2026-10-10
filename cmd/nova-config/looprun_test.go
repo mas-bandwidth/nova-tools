@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,7 +218,7 @@ func TestLoopRunsRealRunnerReportsASignalDeathAsItsStatus(t *testing.T) {
 	assert.Equal(t, 128+int(syscall.SIGTERM), code, errb.String())
 }
 
-// The tool skeleton cancels the context it hands a verb on SIGINT (internal/tool's
+// The tool skeleton cancels the context it hands a verb on SIGINT (pkg/tool's
 // RunContext); loop run passes SIGINT and SIGTERM on to the command instead of
 // letting that cancellation kill it, so a context already cancelled still runs
 // the command to its own end.

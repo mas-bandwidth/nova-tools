@@ -8,16 +8,16 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/provbalance"
 )
 
 // THE BALANCE POLL (nova-tools#5199; the owner, 2026-10-03: "provider out of funds should
 // never be a mystery failure."). run reads each provider's balance when it begins and every
 // sprint.BalancePollEvery after, through the seat's key in its own environment
-// (internal/provbalance), and writes the reads with the rests they call for in one step
+// (pkg/provbalance), and writes the reads with the rests they call for in one step
 // (sprint.Balance), held to the server's one line of control as a tick is. The HTTP is
 // here, outside every tick: no tick waits on a provider.
 

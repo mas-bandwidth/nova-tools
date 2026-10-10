@@ -43,7 +43,7 @@ internal/docs/cli_spec_slots_release_force_test.go held docs/SPEC-SWARM.md's slo
 internal/docs/specwake_awake_door_test.go held cmd/nova-wake/main.go's awake refusals against docs/SPEC-WAKE.md; both moved to deprecated/ with nova-wake (Glenn 2026-09-27: not proven)
 internal/ci/workflows_rows_test.go TestWorkflowsKeepOnlyRunnerOnlyRows held the NOVA_CI_CARDS gate (#2925) on every Linux/darwin go-test job and its skip allowance in ci-ok; ci cards were cut and run only by nova-sprint (cmd/nova-sprint ci, internal/nsprint/ci), which moved to deprecated/cmd/nova-sprint, so the gates and this test are retired together
 internal/nsprint/webhook/webhook_test.go a functional test of deprecated nsprint code that drove internal/post/hook's handler as its fixture; internal/post moved to deprecated/ with nova-post, and deprecated code is not tested
-internal/swarm/grammar_run_test.go swarm.Run has had no caller since 5f9e39d0 on 09-24; the pool last ran by hand on 09-11/12; sprint v1's dispatch layer supersedes it
+pkg/swarm/grammar_run_test.go swarm.Run has had no caller since 5f9e39d0 on 09-24; the pool last ran by hand on 09-11/12; sprint v1's dispatch layer supersedes it
 internal/ci/ci_spin_class_test.go reverted with #4685: the class test enforced no ceiling (it built its entries from the ceiling itself and never compared with the first parent)
 internal/ci/testdata/ci_spin.txt reverted with #4685: the class test enforced no ceiling (it built its entries from the ceiling itself and never compared with the first parent)
 deprecated/cmd/nova-board/add_firstuse_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
@@ -340,7 +340,7 @@ deprecated/internal/board/eff84_board_efficiency_spec_test.go deleted 2026-09-30
 deprecated/internal/board/event_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
 deprecated/internal/board/issue_author_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
 deprecated/internal/board/issue_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
-deprecated/internal/decide/redtriage/triage_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
+deprecated/pkg/decide/redtriage/triage_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
 deprecated/internal/dispatch/dispatch_test.go deleted 2026-09-30 from deprecated/; nova-wake support package, replaced by the tick-end wake, cmd/nova-sprint inbox --wait
 deprecated/internal/docs/capacity_proposal_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
 deprecated/internal/docs/issue2206_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
@@ -358,7 +358,7 @@ deprecated/internal/docs/windows_bench_standard_test.go deleted 2026-09-30 from 
 deprecated/internal/friendread/count_test.go deleted 2026-09-30 from deprecated/; nova-merge support package, replaced by cmd/nova-sprint merge and the lander
 deprecated/internal/jevcalib/prompt_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
 deprecated/internal/jevcalib/rule_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
-deprecated/internal/nsprint/fn/probe_sets_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
+deprecated/pkg/nsprint/fn/probe_sets_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
 deprecated/internal/nsprint/store/acl_cards_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
 deprecated/internal/nsprint/store/acl_epoch_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
 deprecated/internal/post/hook/hook_test.go deleted 2026-09-30 from deprecated/; nova-post support package, retired, unproven, the owner 2026-09-30
@@ -376,14 +376,14 @@ deprecated/internal/review/openfindings_travel_test.go deleted 2026-09-30 from d
 deprecated/internal/review/record_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
 deprecated/internal/review/revert_nocompile_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
 deprecated/internal/review/seed_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
-deprecated/internal/swarm/effort_spec_test.go deleted 2026-09-30 from deprecated/; a wording guard of SPEC-SWARM-PROFILES.md, replaced by cmd/nova-swarm and docs/SPEC-SWARM.md
+deprecated/pkg/swarm/effort_spec_test.go deleted 2026-09-30 from deprecated/; a wording guard of SPEC-SWARM-PROFILES.md, replaced by cmd/nova-swarm and docs/SPEC-SWARM.md
 deprecated/nova-bus-decide/decide_test.go deleted 2026-09-30 from deprecated/; nova-bus inbox --decide classifier, replaced by cmd/nova-bus carrying messages only
 deprecated/nova-bus-decide/private_test.go deleted 2026-09-30 from deprecated/; nova-bus inbox --decide classifier, replaced by cmd/nova-bus carrying messages only
 deprecated/tools/testdur/benches_test.go deleted 2026-09-30 from deprecated/; nova-test support tool, replaced by cmd/nova-ci slowtests
 internal/civerdict/civerdict_test.go dead: no living importer, the owner 2026-09-30
 internal/ctxindex/ctxindex_test.go dead: no living importer, the owner 2026-09-30
-internal/fleet/state/redis_test.go dead: no living importer, the owner 2026-09-30
-internal/fleet/state/state_test.go dead: no living importer, the owner 2026-09-30
+pkg/fleet/state/redis_test.go dead: no living importer, the owner 2026-09-30
+pkg/fleet/state/state_test.go dead: no living importer, the owner 2026-09-30
 internal/gh/await_functional_test.go dead: no living importer, the owner 2026-09-30
 internal/gh/client_test.go dead: no living importer, the owner 2026-09-30
 internal/gh/oneclient_test.go dead: no living importer, the owner 2026-09-30
@@ -839,10 +839,10 @@ internal/wake/busprogress_test.go internal/wake is deleted (dead code: the retir
 internal/wake/daemon_test.go internal/wake is deleted (dead code; the tick-end wake of cmd/nova-sprint replaced the serve loop)
 internal/wake/evgithub_test.go the ev:github reader moved to internal/ghevent (Reader, opened through redisconn); its cases are exercised by the receipt functional tests in internal/cireceipt and cmd/nova-ci
 internal/wake/laneread_functional_test.go internal/wake is deleted (dead code: the retired nova-wake lane reads)
-internal/wake/resp3_functional_test.go internal/wake is deleted (dead code: a second Redis connection pool beside internal/redisconn)
-internal/wake/resp3_test.go internal/wake is deleted (dead code: a second Redis connection pool beside internal/redisconn)
-internal/wake/slotlease_functional_test.go internal/wake is deleted (dead code: a second slot-lease format; internal/swarm/lease.go owns leases)
-internal/wake/slotlease_test.go internal/wake is deleted (dead code: a second slot-lease format; internal/swarm/lease.go owns leases)
+internal/wake/resp3_functional_test.go internal/wake is deleted (dead code: a second Redis connection pool beside pkg/redisconn)
+internal/wake/resp3_test.go internal/wake is deleted (dead code: a second Redis connection pool beside pkg/redisconn)
+internal/wake/slotlease_functional_test.go internal/wake is deleted (dead code: a second slot-lease format; pkg/swarm/lease.go owns leases)
+internal/wake/slotlease_test.go internal/wake is deleted (dead code: a second slot-lease format; pkg/swarm/lease.go owns leases)
 internal/wake/state_test.go internal/wake is deleted (dead code: the retired nova-wake watch state)
 internal/wake/waitbookkeeping_test.go internal/wake is deleted (dead code: the retired nova-wake wait bookkeeping)
 internal/wake/waitbookkeepingspec_test.go internal/wake is deleted (dead code: the retired nova-wake wait bookkeeping spec)
@@ -858,50 +858,50 @@ internal/worklang/expand_test.go worklang's plan expansion (ExpandPlan, ExpandDi
 internal/worklang/expandfields_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
 internal/worklang/issue2187_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
 internal/worklang/issue2246_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
-internal/swarm/pull_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
-internal/swarm/pullbatch_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
-internal/swarm/pullcard_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
-internal/swarm/pullsubmit_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
-internal/swarm/pullworker_functional_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
-internal/swarm/pullworker_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+pkg/swarm/pull_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+pkg/swarm/pullbatch_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+pkg/swarm/pullcard_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+pkg/swarm/pullsubmit_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+pkg/swarm/pullworker_functional_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+pkg/swarm/pullworker_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
 internal/play/issue2194_test.go internal/play/play.go is deleted (dead code: the annotation, reply and export library has no caller; nova-memory view uses view.go alone, whose tests stay)
 internal/play/play_test.go internal/play/play.go is deleted (dead code: the annotation, reply and export library has no caller; nova-memory view uses view.go alone, whose tests stay); writeSource moved to view_test.go
-internal/decide/chain_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/decisions_test.go the decisions table is deleted with OpenDecisions and UseDecisions (dead code: nothing in a shipped tool attached a table, so Client.record wrote no row)
-internal/decide/floors_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/harvestclass_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/help_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/issue2254_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/ledgerstream_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/logsink_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/questionfile_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/questions/questions_test.go internal/decide/questions is deleted (dead code: imported only by the deleted decide chain and harvest classifier)
-internal/decide/readers_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/record_concurrent_test.go the decisions table is deleted with OpenDecisions and UseDecisions (dead code: nothing in a shipped tool attached a table, so Client.record wrote no row)
-internal/decide/testline_grammar_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/tune1_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/tune_default_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/tune_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
-internal/decide/worktype_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/chain_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/decisions_test.go the decisions table is deleted with OpenDecisions and UseDecisions (dead code: nothing in a shipped tool attached a table, so Client.record wrote no row)
+pkg/decide/floors_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/harvestclass_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/help_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/issue2254_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/ledgerstream_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/logsink_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/questionfile_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/questions/questions_test.go pkg/decide/questions is deleted (dead code: imported only by the deleted decide chain and harvest classifier)
+pkg/decide/readers_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/record_concurrent_test.go the decisions table is deleted with OpenDecisions and UseDecisions (dead code: nothing in a shipped tool attached a table, so Client.record wrote no row)
+pkg/decide/testline_grammar_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/tune1_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/tune_default_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/tune_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+pkg/decide/worktype_test.go the file it tested in pkg/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
 internal/events/decide_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
 internal/events/fold_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
 internal/events/redis_integration_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
 internal/events/slow_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
-internal/swarm/decide_export_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/decide_triage_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/launch_bound_functional_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/prepare_recovery_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/read6_budgetword_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/read6_recovery_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/run_slots_identity_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/stop_remedy_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
-internal/swarm/unreadable_slot_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/decide_export_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/decide_triage_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/launch_bound_functional_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/prepare_recovery_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/read6_budgetword_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/read6_recovery_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/run_slots_identity_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/stop_remedy_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+pkg/swarm/unreadable_slot_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
 internal/ci/benchhygienehome_test.go its only subject, scripts/bench-hygiene.sh, is deleted: nothing ran it, and the timer that ran it on the benches is retired
 internal/ci/benchstandard_disk_functional_test.go the bench standard is Go now (tools/benchstandard); the disk-headroom cases are unit tests of it (TestDiskHeadroomDriftsAndNamesTheThreeLargest) with a fake df and du
 internal/ci/benchstandard_go_functional_test.go the bench standard is Go now (tools/benchstandard); the go.mod-tracks-the-wanted-go cases are unit tests of it (TestTheWantedGoTracksGoMod and its neighbours)
 internal/ci/benchstandard_wall_toolchain_functional_test.go the bench standard is Go now (tools/benchstandard); the wall-executable cases are unit tests of it in tools/benchstandard/wall_test.go, and the list agreement stays in benchstandard_wall_toolchain_test.go
-internal/secrets/benchstandard_seatprefix_test.go the bench standard is Go now (tools/benchstandard); TestBenchStandardChecksOneSeatKeyPerOwnerPrefix moved to tools/benchstandard/seat_test.go with the same cases
-internal/secrets/one_seat_per_os_user_test.go the bench standard is Go now (tools/benchstandard); TestOneSeatPerOSUser moved to tools/benchstandard/seat_test.go with the same cases
+pkg/secrets/benchstandard_seatprefix_test.go the bench standard is Go now (tools/benchstandard); TestBenchStandardChecksOneSeatKeyPerOwnerPrefix moved to tools/benchstandard/seat_test.go with the same cases
+pkg/secrets/one_seat_per_os_user_test.go the bench standard is Go now (tools/benchstandard); TestOneSeatPerOSUser moved to tools/benchstandard/seat_test.go with the same cases
 internal/worklang/attempt_test.go the work-set half of worklang is deleted (the work-set half was theoretical and nova-sprint's cards supersede work sets; nova-tokens fold --units appeared in the token reports only 2026-09-20 to 09-22 and in no loop since); internal/worklang keeps the reader and reader_test.go
 internal/worklang/graph_test.go the work-set half of worklang is deleted (the work-set half was theoretical and nova-sprint's cards supersede work sets; nova-tokens fold --units appeared in the token reports only 2026-09-20 to 09-22 and in no loop since); internal/worklang keeps the reader and reader_test.go
 internal/worklang/issue2243_test.go the work-set half of worklang is deleted (the work-set half was theoretical and nova-sprint's cards supersede work sets; nova-tokens fold --units appeared in the token reports only 2026-09-20 to 09-22 and in no loop since); internal/worklang keeps the reader and reader_test.go
@@ -923,96 +923,96 @@ cmd/nova-tokens/foldpool_test.go nova-tokens sum --swarm-root, fold-pool and rep
 cmd/nova-tokens/reportledger_test.go nova-tokens sum --swarm-root, fold-pool and report --ledger are deleted: the pool ledgers, superseded by fold and sum --month day files
 cmd/nova-tokens/sumswarm_completed_test.go nova-tokens sum --swarm-root, fold-pool and report --ledger are deleted: the pool ledgers, superseded by fold and sum --month day files
 cmd/nova-tokens/sumswarm_test.go nova-tokens sum --swarm-root, fold-pool and report --ledger are deleted: the pool ledgers, superseded by fold and sum --month day files
-internal/ci/epochnames_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through internal/ntable
-internal/ci/tablemoves_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through internal/ntable
-internal/ci/taskwriter_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through internal/ntable
+internal/ci/epochnames_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through pkg/ntable
+internal/ci/tablemoves_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through pkg/ntable
+internal/ci/taskwriter_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through pkg/ntable
 internal/cicost/cicost_test.go nova-ci cost is deleted: its CI step was reverted (#4701) and nothing reads ci:cost
-internal/decide/answers_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/decide_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/doc_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/friends_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/hold_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/kind_alias_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/ladder_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/latency_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/mechanicaloffer_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/public_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/questions_envelope_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/registry_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/routelog_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/rule_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/securityread_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/stepup_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/transcript_kind_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/decide/usage_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
-internal/docs/issue1501_test.go it read internal/decide/registry.json, deleted with internal/decide
+pkg/decide/answers_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/decide_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/doc_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/friends_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/hold_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/kind_alias_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/ladder_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/latency_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/mechanicaloffer_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/public_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/questions_envelope_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/registry_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/routelog_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/rule_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/securityread_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/stepup_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/transcript_kind_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+pkg/decide/usage_test.go pkg/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/docs/issue1501_test.go it read pkg/decide/registry.json, deleted with pkg/decide
 internal/events/events_test.go internal/events is deleted: the cards:done writer behind native --events-store had no living reader; a card's end is its row in the sprint's work table
 internal/events/issue3277_test.go internal/events is deleted: the cards:done writer behind native --events-store had no living reader; a card's end is its row in the sprint's work table
 internal/events/writer_test.go internal/events is deleted: the cards:done writer behind native --events-store had no living reader; a card's end is its row in the sprint's work table
-internal/nsprint/fn/probe_sets_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
-internal/nsprint/fn/tableset_add_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
-internal/nsprint/fn/taskwriter_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
-internal/nsprint/fn/waiting_resolve_owner_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+pkg/nsprint/fn/probe_sets_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+pkg/nsprint/fn/tableset_add_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+pkg/nsprint/fn/taskwriter_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+pkg/nsprint/fn/waiting_resolve_owner_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
 internal/play/view_test.go nova-memory view and internal/play are deleted: the nova-play companion view, retired with nova-play
-internal/swarm/admitrepo_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_clock_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_clock_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_idle_dribble_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_idle_dribble_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_idle_explore_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_issue618_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_label_name_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_native_636_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_native_636_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_reliability_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_reliability_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_route_cap_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_tokens_13d_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_tree_640_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/batch_usage_reaped_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/bench_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/bench_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/benchpull_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/cardshape_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/cardunit_chore_alias_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/contained_below_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/cost_by_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/cost_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/endwith_live_group_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/finalize_malformed_slot_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/inflight_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/issue2035_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/issue2370_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/issue2371_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/linttestgate_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/native_verdict_line_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/pipeline_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/planted_gather_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/profile_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/publicbatch_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/quarantine_stress_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/quarantine_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/queue_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/resultlint_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/route_core_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/routeladder_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/share_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/signature_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/slotwait_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/sparse_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/testline_grammar_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/usagecard_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/usagecard_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/wall_batch_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/wallterms_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/warm_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/swarm/warm_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
-internal/typedrec/cardline_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
-internal/typedrec/kind_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
-internal/typedrec/pathsrefusal_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
-internal/swarm/sparse_test.go its one test held SPEC-SWARM's sparse-checkout section, deleted with internal/swarm/sparse.go (reached only by nova-swarm batch)
-internal/typedrec/evidence_functional_test.go its one test drove ns_card_result, a function of the old card machine's Lua, which is deleted
+pkg/swarm/admitrepo_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_clock_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_clock_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_idle_dribble_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_idle_dribble_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_idle_explore_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_issue618_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_label_name_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_native_636_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_native_636_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_reliability_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_reliability_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_route_cap_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_tokens_13d_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_tree_640_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/batch_usage_reaped_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/bench_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/bench_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/benchpull_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/cardshape_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/cardunit_chore_alias_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/contained_below_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/cost_by_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/cost_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/endwith_live_group_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/finalize_malformed_slot_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/inflight_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/issue2035_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/issue2370_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/issue2371_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/linttestgate_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/native_verdict_line_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/pipeline_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/planted_gather_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/profile_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/publicbatch_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/quarantine_stress_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/quarantine_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/queue_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/resultlint_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/route_core_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/routeladder_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/share_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/signature_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/slotwait_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/sparse_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/testline_grammar_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/usagecard_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/usagecard_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/wall_batch_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/wallterms_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/warm_functional_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/swarm/warm_test.go pkg/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+pkg/typedrec/cardline_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
+pkg/typedrec/kind_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
+pkg/typedrec/pathsrefusal_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
+pkg/swarm/sparse_test.go its one test held SPEC-SWARM's sparse-checkout section, deleted with pkg/swarm/sparse.go (reached only by nova-swarm batch)
+pkg/typedrec/evidence_functional_test.go its one test drove ns_card_result, a function of the old card machine's Lua, which is deleted
 # internal/check/issue2295_test.go it drove NoCode's index path (Stage: true), which no caller sets; the verb's staged check is cmd/nova-check/staged.go with its own tests (nocode_staged_index_contract_test.go); the row is a consumed declaration: the log header says old rows may be trimmed, and any commit that re-adds the row re-declares the deletion and stays red on the classtests rule
 internal/records/adversarial_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
 internal/records/canonical_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
@@ -1039,16 +1039,16 @@ internal/tokens/package_test.go it tested internal/tokens/package.go, deleted: e
 internal/tokens/publish_frictions_test.go it tested internal/tokens/publish_frictions.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
 internal/tokens/rates_test.go it tested internal/tokens/rates.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
 internal/tokens/receipt_test.go it tested internal/tokens/receipt.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
-internal/nsprint/fn/profile_sprint_intents_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/profile_sprint_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/profile_sprint_queries_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/profile_sprint_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/sprint_j_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/sprint_parts_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/sprint_x_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/tset_loader_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/tset_score_functional_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
-internal/nsprint/fn/tset_static_boundaries_functional_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/profile_sprint_intents_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/profile_sprint_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/profile_sprint_queries_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/profile_sprint_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/sprint_j_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/sprint_parts_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/sprint_x_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/tset_loader_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/tset_score_functional_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+pkg/nsprint/fn/tset_static_boundaries_functional_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
 internal/sprint/sprintfn/client_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
 internal/sprint/sprintfn/compose_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
 internal/sprint/sprintfn/helpers_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
@@ -1180,7 +1180,7 @@ internal/tset/write_record_budget_functional_test.go internal/tset is deleted: t
 internal/tset/zguard_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
 tools/sprintsize/tset_test.go tools/sprintsize's --tset-* size run is deleted with internal/tset; main.go's size run of the present build stays with main_test.go
 internal/ci/failed_test.go internal/ci/failed.go and failed_forge.go (the `nova-ci failed` job-log reader) are deleted: no cmd, tool or workflow called them; nova-ci has no failed verb
-internal/fleet/certified_test.go Registry.CertifiedBenchNames and Machine.Certified are deleted (no verb derived a pool from the registry notes); the live certification record is fleet.ReadCertificates and fleet.Certified, tested in certify_test.go
+pkg/fleet/certified_test.go Registry.CertifiedBenchNames and Machine.Certified are deleted (no verb derived a pool from the registry notes); the live certification record is fleet.ReadCertificates and fleet.Certified, tested in certify_test.go
 internal/sprint/rules_time_test.go the old event-driven rule path is deleted (rules_time.go, R11-R14, R17, R18 on the rule registry; no cmd reached it after the dirty tick); TickDeadlines and TickOverdue hold the living laws: store TestDeadlinesCountRunningTimeAndNotifyOnce, TestTwoLateReadsOfOnePrimaryAreTwoJudgments, TestARedealtCardAfterATakeIsLateNotTaken, TestAnOverdueMarkFollowsTheDueTime, TestAWaitedTickJudgmentComesBackAfterItsTime, the store remind tests. Dropped with the rules, no tick law: the replacement of a late card (R11) and behind (R18); the idle notice (the inbox's NStreamStale group stands in its place); the read limit that halves then parks; the inclusive due boundary (TestDueBoundaryIsInclusive: the tick's lateness is strict, d > limit in TickDeadlines)
 internal/sprint/rules_time_stopped_test.go R17 (the stopped look) on the deleted rule path; store TestAStoppedTickSaysItLooked, TestAStoppedMachineMovesNothing, TestNoPartBeginsAfterStop, TestAudit2ClosedClearLeavesTheMachineStoppedSilently, and TestHeldByTheTickWhileTheMachineIsStopped hold the stopped machine's laws
 internal/sprint/rules_held_test.go R16 as a registered rule over agenda keys is deleted with the rule path; held.go's Holder and TickCheck hold its law: held_test.go (TestHeldByTheNextTick, TestTheCheckWritesAStallOnceAndClosesItWhenItClears, TestAStallOffersOnlyEnabledDecisions and the rest). Not held: one note per cause for any number of cards (TestHeldOneNotePerCauseForAnyNumberOfCards); TickCheck writes one stall judgment per unrooted card; a follow-up card
@@ -1219,30 +1219,30 @@ internal/ci/testdata/testify_allowlist.txt counted rows move without growth into
 internal/sprint/route_test.go the weighted draw's salt-parity test goes with the weighted draw and its mixer: the deal takes a tier's route by a rolling index modulo its array, pinned in internal/sprint/store/route_test.go
 cmd/nova-swarm/recovery_test.go no test was left in it: its twelve helpers were reached by nothing (deadcode -test, tags functional,slow, darwin, linux and windows); waitForFile, its one live helper, moves beside its one user, native_idle_test.go
 internal/ghevent/event_test.go the webhook decoder it drove (ghevent.Decode, Accept) is gone: its last command caller, internal/nsprint/webhook, went in #4866; Publish and Fields keep their tests in internal/cireceipt
-internal/ghevent/disposition_text_test.go the webhook decoder it drove (ghevent.Decode) is gone with event_test.go; the DISPOSITION parser keeps its tests in internal/typedrec and internal/textbody
+internal/ghevent/disposition_text_test.go the webhook decoder it drove (ghevent.Decode) is gone with event_test.go; the DISPOSITION parser keeps its tests in pkg/typedrec and internal/textbody
 internal/ci/testdata/generality-text/internal/ghevent/testdata.txt its four rows named the decoder's fixtures under internal/ghevent/testdata, deleted with the decoder; no row was left
 internal/ci/testdata/testify/internal/ghevent.txt its one row counted the bare assertions in the decoder's tests, deleted with the decoder; internal/ghevent has no test file left
-internal/fleet/parallel_test.go its four tests tested only RunBenchesConcurrently, which no command calls (deadcode, tags functional,slow,perf,swarmtest, darwin and linux); both go
+pkg/fleet/parallel_test.go its four tests tested only RunBenchesConcurrently, which no command calls (deadcode, tags functional,slow,perf,swarmtest, darwin and linux); both go
 internal/nsprint/store/census_test.go the census read (CensusSet, CensusKeys, RunCensus) has no verb left (the old nova-sprint census went with deprecated/); no command calls it, so it and its tests go
 internal/nsprint/store/census_cards_test.go RefuseCardCensus and CardCensusRequest have no verb left; no command calls them, so they and their tests go
 internal/nsprint/store/census_functional_test.go the census read it drove has no verb left; no command calls it, so it and its tests go
 # internal/nsprint/store/reach_test.go its one test drove OpenProbe, Reach and Unreachable, which no command calls (nova-sprint doctor no longer opens through them); they go with it, and TestOpenSendsNoCommandBeforeTheCallersFirstBatch still holds that Open sends nothing; the row is a consumed declaration: the log header says old rows may be trimmed, and any commit that re-adds the row re-declares the deletion and stays red on the classtests rule
 cmd/nova-ci/issue2255_test.go no test was left in it: its one helper, makeFlakes, was reached by nothing (deadcode -test, tags functional,slow,perf,swarmtest,shippedsmoke, darwin, linux and windows)
-internal/bounded/issue2209_test.go it tested only bounded.Receipt, which goes with it: the receipt was for the nova-test verb, now under deprecated/, and nothing living builds one
-internal/log/slog_test.go it tested only log.LongVerb, which goes with it: the long-running verbs it was built for (nova-pulse harvest, the pull worker) are gone and nothing living builds one; docs/SPEC-LOGS.md drops its part and test 10
-internal/swarm/cardbudget_functional_test.go its one test drove the pool route's harness.log turn count and RESULT.md PROMPT-DEFECT append (CountCardTurns, AppendPromptDefect), which no command reaches; the native route's CountCardTurnsIn and OverCardBudget keep their own tests
-internal/swarm/batch_helpers_test.go no test was left in it: its three card fixture helpers (itoa, writeCard, writeCards) were reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
-internal/swarm/benchpull_test.go no test was left in it: stepClock, its one type, was reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
-internal/swarm/slot_race_test.go its one test (skipped since #4221) drove the pool's slot files (OpenPool, Reserve, claimFree, Free), which no command reaches; the pool and its slot files are deleted
-internal/swarm/reap_test.go its tests drove ReapSlots and ReapAtTaskEnd, the pool's slot reaper, which no command reaches; both are deleted
-internal/swarm/prewarm_functional_test.go its one test drove CacheEnv, which no command reaches; native builds the child's cache environment itself, and cmd/nova-swarm native_test.go holds the private Lisp overlay it carries
-internal/swarm/f2_forged_exit_test.go its one test marshalled PidRecord, a record no command writes or reads; the type is deleted
-internal/swarm/d5_ratelimit_test.go its one test drove rateLimitedOutcome, the pool's finish-step 429 rewrite, which no command reaches; it is deleted
-internal/swarm/delta2_ratelimit_reap_test.go its one test drove rateLimitedOutcome and reapEnd, which no command reaches; both are deleted
+pkg/bounded/issue2209_test.go it tested only bounded.Receipt, which goes with it: the receipt was for the nova-test verb, now under deprecated/, and nothing living builds one
+pkg/log/slog_test.go it tested only log.LongVerb, which goes with it: the long-running verbs it was built for (nova-pulse harvest, the pull worker) are gone and nothing living builds one; docs/SPEC-LOGS.md drops its part and test 10
+pkg/swarm/cardbudget_functional_test.go its one test drove the pool route's harness.log turn count and RESULT.md PROMPT-DEFECT append (CountCardTurns, AppendPromptDefect), which no command reaches; the native route's CountCardTurnsIn and OverCardBudget keep their own tests
+pkg/swarm/batch_helpers_test.go no test was left in it: its three card fixture helpers (itoa, writeCard, writeCards) were reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
+pkg/swarm/benchpull_test.go no test was left in it: stepClock, its one type, was reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
+pkg/swarm/slot_race_test.go its one test (skipped since #4221) drove the pool's slot files (OpenPool, Reserve, claimFree, Free), which no command reaches; the pool and its slot files are deleted
+pkg/swarm/reap_test.go its tests drove ReapSlots and ReapAtTaskEnd, the pool's slot reaper, which no command reaches; both are deleted
+pkg/swarm/prewarm_functional_test.go its one test drove CacheEnv, which no command reaches; native builds the child's cache environment itself, and cmd/nova-swarm native_test.go holds the private Lisp overlay it carries
+pkg/swarm/f2_forged_exit_test.go its one test marshalled PidRecord, a record no command writes or reads; the type is deleted
+pkg/swarm/d5_ratelimit_test.go its one test drove rateLimitedOutcome, the pool's finish-step 429 rewrite, which no command reaches; it is deleted
+pkg/swarm/delta2_ratelimit_reap_test.go its one test drove rateLimitedOutcome and reapEnd, which no command reaches; both are deleted
 cmd/nova-swarm/fixture_guards_test.go its tests guarded the bench's add and run helpers, which drove the `add` and `run` verbs nova-swarm no longer has; the helpers and the slow tests that used them are deleted
-internal/swarm/benchsize_test.go its tests drove the bench-size doubling and launch headroom (SizeRoundHolds, MeasureWidthFromRounds, Headroom, PlanBenchLaunch), which no command reaches; they are deleted, Version8 stays
-internal/swarm/d13_refusals_test.go its one test drove CountRefusals and its refusal marks, the pool's refusals= diagnosis, which no command reaches; both are deleted
-internal/swarm/slot_holdings_test.go its one test drove SlotHoldings, the read a status verb printed, which no command reaches; it is deleted
+pkg/swarm/benchsize_test.go its tests drove the bench-size doubling and launch headroom (SizeRoundHolds, MeasureWidthFromRounds, Headroom, PlanBenchLaunch), which no command reaches; they are deleted, Version8 stays
+pkg/swarm/d13_refusals_test.go its one test drove CountRefusals and its refusal marks, the pool's refusals= diagnosis, which no command reaches; both are deleted
+pkg/swarm/slot_holdings_test.go its one test drove SlotHoldings, the read a status verb printed, which no command reaches; it is deleted
 deprecated/cmd/nova-work/accept_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/cmd/nova-work/ask_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/cmd/nova-work/audit_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
@@ -1310,140 +1310,140 @@ deprecated/internal/workreconcile/reconcile_test.go deprecated/ removed 2026-10-
 deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
-internal/ntable/oset_cover_test.go tested Add, Remove, Move, Card, MembersOf and CountCmd.Val, deleted as dead by the sprint card fix-dead-ntable-oset (ec32ea87b3) before the coverage card cover-internal-ntable-oset landed on dev; its stand-in store served only them (promotion of sprint/mechanical-2026-10-02, 2026-10-04)
-cmd/nova-bus/audit_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/bare_verb_door_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/beat_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/bodies_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/broadcast_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/buscheck_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/close_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/closecollision_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/closing_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/continuation_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/cursor_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/cursor_helpers_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/decide_retired_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/decide_retired_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/draft_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/draft_open_error_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/draft_out_placeholder_body_bytes_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/draft_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/dryreal_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/dryrun_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/efficiency_card_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/firstrun_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/firstsend_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/friendsequence_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/host_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/inbox_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/main_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/main_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/main_helpers_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/missing_flags_order_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/norace_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/preflight_reply_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/prepared_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/protocol_stream_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/protocol_stream_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/race_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/readhalf_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/refusal_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/reply_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/reply_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/robustness_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/robustness_helpers_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/roster_help_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/rosterrecipe_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/send_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/setup_roster_supports_both_readers_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/slow_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/standalone_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/status_grammar_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/synopsis_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/timing_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/typed_flags_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/version_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_helpers_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_no_beat_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_on_note_empty_tick_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_repair_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/wait_timeout_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/waitblind_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/walk_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-cmd/nova-bus/walk_helpers_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/address_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/address_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/buscheck_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/config_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/conflict_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/cursor_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/cursor_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/draft_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/fifo_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/git_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/git_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/giterror_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/held_other_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/held_windows_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/helpers_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/host_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/index_lock_fresh_stale_sequence_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/known_foreign_git_keeps_lock_darwin_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/lock_collision_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/lock_recovery_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/lock_replaced_during_scan_retained_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/lock_replaced_same_owner_inode_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/lock_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/lock_windows_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/nondumpable_account_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/nondumpable_same_account_git_unknown_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/note_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/ops_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/ops_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/pagination_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/pagination_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/planted_index_sequence_unix_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/prepared_delivery_refuses_unrelated_content_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/prepared_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/protocol_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/relay_attribution_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/repair_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/repair_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/repair_proc_darwin_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/repair_proc_darwin_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/repair_proc_linux_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/repair_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/reply_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/replydraft_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/seams_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/since_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/symlink_discipline_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/timeout_functional_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/timeout_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/unaddressed_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/bus/unreadable_cwd_git_keeps_lock_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/ci/bus_dependencies_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/ci/busprogress_class_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/docs/bus_transactions_proposal_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/docs/cli_bus_verbcount_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/ci/testdata/generality/internal/bus.txt the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/ci/testdata/testify/cmd/nova-bus.txt the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/ci/testdata/testify/internal/bus.txt the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/ci/testdata/toolanswers/cmd/nova-bus.txt the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
-internal/cardhdr/invariant_test.go dead: the one-invariant lint it exercises (LintOneInvariant, LintTitleKind, ParseInvariant, lintWith, readCard and the Refusal family) is unreachable from cmd/... on linux, darwin and windows and is retired whole, so the test proves nothing that lives (dead-code pass 2026-10-04)
-internal/secrets/storepull_test.go dead: its only subject is the store pull path (PullStore, StorePullSSHCommand, StorePullKey, privateKeyPublicBlob) deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
-cmd/nova-bus/draft_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
-internal/bus/bus_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
-internal/bus/draft_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
-internal/bus/instrument_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
-internal/bus/lock_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
-internal/bus/lock_unix_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
-internal/bus/noreplace_other_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
-internal/bus/replydraft_cover_test.go the git bus (cmd/nova-bus, internal/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/ntable/oset_cover_test.go tested Add, Remove, Move, Card, MembersOf and CountCmd.Val, deleted as dead by the sprint card fix-dead-ntable-oset (ec32ea87b3) before the coverage card cover-internal-ntable-oset landed on dev; its stand-in store served only them (promotion of sprint/mechanical-2026-10-02, 2026-10-04)
+cmd/nova-bus/audit_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/bare_verb_door_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/beat_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/bodies_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/broadcast_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/buscheck_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/close_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/closecollision_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/closing_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/continuation_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/cursor_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/cursor_helpers_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/decide_retired_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/decide_retired_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/draft_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/draft_open_error_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/draft_out_placeholder_body_bytes_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/draft_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/dryreal_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/dryrun_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/efficiency_card_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/firstrun_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/firstsend_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/friendsequence_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/host_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/inbox_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/main_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/main_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/main_helpers_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/missing_flags_order_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/norace_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/preflight_reply_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/prepared_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/protocol_stream_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/protocol_stream_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/race_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/readhalf_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/refusal_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/reply_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/reply_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/robustness_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/robustness_helpers_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/roster_help_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/rosterrecipe_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/send_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/setup_roster_supports_both_readers_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/slow_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/standalone_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/status_grammar_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/synopsis_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/timing_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/typed_flags_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/version_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_helpers_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_no_beat_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_on_note_empty_tick_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_repair_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/wait_timeout_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/waitblind_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/walk_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+cmd/nova-bus/walk_helpers_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/address_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/address_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/buscheck_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/config_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/conflict_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/cursor_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/cursor_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/draft_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/fifo_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/git_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/git_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/giterror_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/held_other_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/held_windows_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/helpers_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/host_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/index_lock_fresh_stale_sequence_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/known_foreign_git_keeps_lock_darwin_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/lock_collision_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/lock_recovery_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/lock_replaced_during_scan_retained_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/lock_replaced_same_owner_inode_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/lock_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/lock_windows_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/nondumpable_account_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/nondumpable_same_account_git_unknown_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/note_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/ops_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/ops_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/pagination_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/pagination_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/planted_index_sequence_unix_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/prepared_delivery_refuses_unrelated_content_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/prepared_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/protocol_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/relay_attribution_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/repair_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/repair_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/repair_proc_darwin_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/repair_proc_darwin_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/repair_proc_linux_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/repair_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/reply_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/replydraft_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/seams_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/since_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/symlink_discipline_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/timeout_functional_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/timeout_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/unaddressed_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/bus/unreadable_cwd_git_keeps_lock_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/ci/bus_dependencies_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/ci/busprogress_class_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/docs/bus_transactions_proposal_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/docs/cli_bus_verbcount_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/ci/testdata/generality/pkg/bus.txt the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/ci/testdata/testify/cmd/nova-bus.txt the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/ci/testdata/testify/pkg/bus.txt the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+internal/ci/testdata/toolanswers/cmd/nova-bus.txt the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it (the order of 2026-10-04: remove the old nova-bus tool fully)
+pkg/cardhdr/invariant_test.go dead: the one-invariant lint it exercises (LintOneInvariant, LintTitleKind, ParseInvariant, lintWith, readCard and the Refusal family) is unreachable from cmd/... on linux, darwin and windows and is retired whole, so the test proves nothing that lives (dead-code pass 2026-10-04)
+pkg/secrets/storepull_test.go dead: its only subject is the store pull path (PullStore, StorePullSSHCommand, StorePullKey, privateKeyPublicBlob) deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
+cmd/nova-bus/draft_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/bus/bus_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/bus/draft_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/bus/instrument_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/bus/lock_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/bus/lock_unix_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/bus/noreplace_other_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
+pkg/bus/replydraft_cover_test.go the git bus (cmd/nova-bus, pkg/bus) is removed 2026-10-04; the Redis bus replaces it, and this cover test pinned the git bus's code
 internal/update/join_test.go the git bus's two-phase delivery (prepare, a pending artifact, a real bare-Git remote) went with that bus, 2026-10-04; nova-update report --send and watch hand one note to nova-bus send on the Redis bus (delivery_test.go, redis_bus_test.go, adopt_test.go)
 internal/update/slow_test.go the git bus's two-phase delivery (prepare, a pending artifact, a real bare-Git remote) went with that bus, 2026-10-04; nova-update report --send and watch hand one note to nova-bus send on the Redis bus (delivery_test.go, redis_bus_test.go, adopt_test.go)
 cmd/nova-dev/firstrun_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
@@ -1451,11 +1451,11 @@ cmd/nova-dev/status_grammar_test.go the one-base merge of 2026-10-04 took dev's 
 cmd/nova-sprint/hold_verb_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 cmd/nova-sprint/seatinstall_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 cmd/nova-sprint/where_tick_late_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
-internal/bus/storecontract_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
+pkg/bus/storecontract_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/ci/generality_machine_hosts_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/ci/generality_text_html_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/ci/testdata/testify/cmd/nova-dev.txt the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
-internal/config/pg_parse_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
+pkg/config/pg_parse_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/sprint/bench_deal_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/sprint/control_line_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/sprint/hold_twin_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
@@ -1463,13 +1463,13 @@ internal/sprint/seatinstall_test.go the one-base merge of 2026-10-04 took dev's 
 internal/update/dialguard_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/update/fleetdrift_functional_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 tools/citiming/main_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
-internal/nsprint/fn/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
+pkg/nsprint/fn/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 tools/tlacheck/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card is listed in tmp/onebase-dropped for re-landing
-internal/tool/usage_test.go internal/tool returns to the green one-base gate (37e9e9fa2e): the toolkit changes landed after it broke cmd/nova-bus and cmd/nova-cairn (a nil help panic, the value quoting); they are redone as cards gated on every command's tests
+pkg/tool/usage_test.go pkg/tool returns to the green one-base gate (37e9e9fa2e): the toolkit changes landed after it broke cmd/nova-bus and cmd/nova-cairn (a nil help panic, the value quoting); they are redone as cards gated on every command's tests
 internal/nsprint/store/acl_cover_test.go its tests drove only DeployACLs and aclArgs, which no command calls; both functions go, and ACLRules stays for the tests that apply the rules themselves
 internal/docs/cli_dogfood_gate_flags_test.go the reference line it hand-held is generated now: the clidoc block pastes `nova-check dogfood gate -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 internal/docs/cli_links_flags_test.go the reference line it hand-held is generated now: the clidoc block pastes `nova-check links -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 internal/docs/cli_memory_flags_test.go the reference lines it hand-held are generated now: the clidoc block pastes each `nova-memory <verb> -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 internal/docs/cli_spelling_flags_test.go the reference line it hand-held is generated now: the clidoc block pastes `nova-check spelling -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 cmd/nova-sprint/recut_widen_test.go recut --widen is retired; TestBriefWidenKeepsTheId and TestAWidenReadsThePathBeforeTheProse cover the in-place brief --widen replacement
-internal/friend/adapter_standalone_test.go replaced by TestOpenCodeRunsStandaloneWhenTheHarnessOffersIt in internal/friend/adapter_test.go per sprint card opencode-run-standalone
+pkg/friend/adapter_standalone_test.go replaced by TestOpenCodeRunsStandaloneWhenTheHarnessOffersIt in pkg/friend/adapter_test.go per sprint card opencode-run-standalone

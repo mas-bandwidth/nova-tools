@@ -90,7 +90,7 @@ Payload: exactly one line of JSON on stdout, the sorted groups that hold a requi
 matrix a CI run derives), or with --stale the groups that need a run. Nothing else is printed
 there; refusals go to stderr. Exit 0, or 2 when the case plan or the records cannot be read or
 The result files this binary was built from must be the ones under --root (when --root holds
-internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+pkg/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
 checkout would call the wrong records stale, so with --stale the verb refuses and says to build tlacheck from
 this tree.
 are refused.
@@ -117,7 +117,7 @@ the plan no longer declares is dropped and named (DROP OK config= why=not-in-the
 another column layout than this tool writes is refused naming both layouts.
 
 The result files this binary was built from must be the ones under --root (when --root holds
-internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+pkg/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
 checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
 this tree.
 
@@ -202,7 +202,7 @@ and the models' digests are kept in trace.json.
 
 output: REPLAY OK step= verdict= ..., then REPLAY OK|FAIL seconds=. Exit 0 all steps, 1 a check
         failed, 2 could not run.
-first run: tlacheck replay --root . --source internal/nsprint/fn/lua/table.lua --jar /path/to/tla2tools.jar --dir /tmp/replay-out
+first run: tlacheck replay --root . --source pkg/nsprint/fn/lua/table.lua --jar /path/to/tla2tools.jar --dir /tmp/replay-out
 `
 
 const helpWitnesses = `tlacheck witnesses: replay the table model's findings against a table.lua.
@@ -223,7 +223,7 @@ run: the source no longer has that defect, and the finding is retired or the mod
 
 output: WITNESS OK result=confirmed|pass name=<finding>: <what>, then WITNESS OK|FAIL
         findings=. Exit 0 every finding as named, 1 one differed, 2 could not run.
-first run: git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
+first run: git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
            tlacheck witnesses /tmp/table-pinned.lua
 `
 
@@ -238,15 +238,15 @@ usage: tlacheck inputs --case <config> [--root <checkout>]
 The inputs are the case's configuration; the module CASES.tsv gives it and every module that
 one EXTENDS or INSTANCEs, transitively (a name with no file under tla/ must be one of TLC's
 standard modules, which read nothing from the tree: the ten the jar bundles, listed in
-standardModules in internal/tlc/inputs.go); the case's own row of CASES.tsv under
-its header; and the runner's result files (outcome.go, run.go and suite.go of internal/tlc: the command
+standardModules in pkg/tlc/inputs.go); the case's own row of CASES.tsv under
+its header; and the runner's result files (outcome.go, run.go and suite.go of pkg/tlc: the command
 line, flags, workers and timeouts of a run and the reading of its output) as this binary was
 built. The package's other files are bookkeeping and in no fingerprint.
 The fingerprint in a record is the SHA-256 over the paths and hashes listed here, in path
 order, and the record's input_files is their count. A change to none of them leaves the
 record current. The jar is not an input: a record names it in its own column.
 The result files this binary was built from must be the ones under --root (when --root holds
-internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+pkg/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
 checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
 this tree.
 

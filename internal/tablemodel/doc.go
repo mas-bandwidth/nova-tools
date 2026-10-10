@@ -24,7 +24,7 @@
 // credential.
 //
 // Everything that can be checked without java or a store is a pure function
-// over recorded data (the reading of TLC's output is internal/tlc's; the
+// over recorded data (the reading of TLC's output is pkg/tlc's; the
 // rendering of a trace as a TLA+ module, the receipt-delta check and the
 // planning of suites are here), and the unit tests hold them to recorded
 // fixtures.

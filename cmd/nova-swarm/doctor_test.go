@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // THE RED TESTS FOR `nova-swarm doctor` (2026-09-17 shadowed-binary incident).

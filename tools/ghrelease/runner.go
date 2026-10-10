@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // command is one program run: where, with which added variables, what.
@@ -34,7 +34,7 @@ type runner interface {
 type osRunner struct{}
 
 // cmd prepares c through the one door every child of this repository goes
-// through (internal/subproc): the budget of its kind (git, gh, go, any other
+// through (pkg/subproc): the budget of its kind (git, gh, go, any other
 // tool) and a bounded wait for its pipes once it ends.
 func (osRunner) cmd(c command) subproc.Bounded {
 	b := subproc.Prepare(context.Background(), subproc.BudgetOf(c.name, c.args), c.name, c.args...)

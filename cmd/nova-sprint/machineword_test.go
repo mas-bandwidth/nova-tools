@@ -8,7 +8,7 @@ import (
 )
 
 // A worker's verb carries the machine's word, so a member cancels its lanes on STOPPED
-// (internal/member machineStop) and a friend's daemon too (internal/friend/stop.go): the
+// (pkg/member machineStop) and a friend's daemon too (pkg/friend/stop.go): the
 // queue's JSON has "machine", the friend's beat answer "machine=", each RUNNING or STOPPED
 // from the machine's first record (init writes one: a new sprint is STOPPED), and nothing
 // on a store without the records. The beat also takes the stop-returns a friend's

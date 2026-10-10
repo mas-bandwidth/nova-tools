@@ -12,16 +12,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/secretcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 	sprintstore "github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/secretcheck"
 )
 
 // THE CLASS RULE: NO SECRET REACHES AN ERROR (docs/SPEC-CI.md, `secrets-never-in-errors`),
 // over nova-sprint's own paths. internal/ci's TestNoSecretReachesAnError holds it over the
 // rest of the tree and leaves these out; this is the same rule with the same harness
-// (internal/secretcheck), its table and allowlist the rows that were internal/ci's for
+// (pkg/secretcheck), its table and allowlist the rows that were internal/ci's for
 // these paths.
 
 // sprintSecretRoots are nova-sprint's paths the walk reads, from the repository's root.

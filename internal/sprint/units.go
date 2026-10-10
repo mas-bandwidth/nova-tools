@@ -1,8 +1,8 @@
 package sprint
 
-import "github.com/mas-bandwidth/nova-tools/internal/units"
+import "github.com/mas-bandwidth/nova-tools/pkg/units"
 
-// The unit text, the install and the check live in internal/units, which a worker's
+// The unit text, the install and the check live in pkg/units, which a worker's
 // binary may import. These names are the ones nova-sprint, nova-redis and the tests
 // already call. The loader is the caller's, so a test loads nothing on its machine.
 

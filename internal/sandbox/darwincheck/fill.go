@@ -8,10 +8,10 @@ import (
 )
 
 // The hand filler. It fills profiles/darwin.sb.tmpl for a scratch write set
-// WITHOUT asking the tool that generates the same profile (internal/sandbox):
+// WITHOUT asking the tool that generates the same profile (pkg/sandbox):
 // the point of the check is one text filled two ways, so that a drift between
 // the generator and the hand is a named FAIL here rather than a job that dies
-// in its first second. The filler therefore reads no code of internal/sandbox;
+// in its first second. The filler therefore reads no code of pkg/sandbox;
 // it follows the template's own header, which says what each marker becomes.
 
 // The markers of the template, each a whole line.
@@ -59,7 +59,7 @@ type fsProbe interface {
 // optionalRoots are the documented darwin optional roots and nothing else: a
 // check that grants a root the spec's table does not name tests a broader policy
 // than the document. A root is skipped when absent, and when the template
-// already grants it as a subpath, matching internal/sandbox.OptionalRoots
+// already grants it as a subpath, matching pkg/sandbox.OptionalRoots
 // (including /Library: CommandLineTools lives there). gitDir is the directory of
 // the git the check runs, which is an optional root when it is under neither.
 //
@@ -181,7 +181,7 @@ func fillTemplate(tmpl string, in fillInput) string {
 // *_AGENT_INFO, *_AGENT_SOCK. It is NOT "every name containing AGENT": that width
 // was measured to drop AI_AGENT and CLAUDE_AGENT_SDK_VERSION, which say what is
 // running the job and address nothing. The tool's own scrub is asserted in
-// internal/sandbox; this filter is the check's, so it can only agree with itself.
+// pkg/sandbox; this filter is the check's, so it can only agree with itself.
 func agentVariable(name string) bool {
 	switch {
 	case name == "SSH_AUTH_SOCK", name == "GPG_AGENT_INFO", strings.HasPrefix(name, "SSH_AGENT_"):

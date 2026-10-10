@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
 // landRig is the sprint over the in-memory store beside a local bare git
@@ -708,7 +708,7 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 	}
 }
 
-// The lander's mechanical checks (internal/diffcheck; docs/SPEC-SPRINT.md section 7) end
+// The lander's mechanical checks (pkg/diffcheck; docs/SPEC-SPRINT.md section 7) end
 // the batch at a card whose merged diff changes a file outside its PATHS (E12) or leaves
 // a stranded sentence fragment (E4), as a head that does not merge ends it: the cards
 // before it land, it is reported with the conflict fact naming what failed, it is off the

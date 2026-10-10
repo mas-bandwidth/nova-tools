@@ -101,7 +101,7 @@ func Actions() []Action {
 // fcallName is the registered function that runs a table verb: every verb of
 // table.lua is registered as ns_table_<verb>. The name is formatted from the
 // verb, so the source carries no complete quoted ns_ literal that is only a
-// prefix: internal/nsprint/fn reads every such literal as a function name and
+// prefix: pkg/nsprint/fn reads every such literal as a function name and
 // requires a Lua file to register it.
 func fcallName(verb string) string { return fmt.Sprintf("ns_table_%s", verb) }
 

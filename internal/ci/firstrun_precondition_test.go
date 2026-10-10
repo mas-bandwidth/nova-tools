@@ -16,7 +16,7 @@ import (
 // false.
 //
 // This guards the document rather than the harness: `Requires:`/`Platform:` are
-// read and `SKIP-PRECONDITION` is emitted by internal/onboarding, and the
+// read and `SKIP-PRECONDITION` is emitted by pkg/onboarding, and the
 // file's header is the one place a reader -- and a harness told to grade from
 // this file -- learns that a step skipped for a reason the file does not state
 // is a defect in the file, not a pass.

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
 // The models of the rig: MCA extends A, MCB stands alone, each case in its own group.

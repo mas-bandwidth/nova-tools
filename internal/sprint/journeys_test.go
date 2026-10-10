@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/mas-bandwidth/nova-tools/pkg/release"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Moved from internal/release/journeygate_test.go (the nova-sprint split): the chaos
+// Moved from pkg/release/journeygate_test.go (the nova-sprint split): the chaos
 // suite lives with the sprint, so its promise is checked beside it.
 
 // The promise names the chaos suite's own subtests: a journey renamed there

@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/check"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // seams are the process-wide resources a run reads: the git program the
@@ -37,7 +37,7 @@ func main() { os.Exit(novaCheck(seams{}).Main()) }
 // exitCodes is the one exit table of every verb (docs/STANDARD.md section 2).
 const exitCodes = "0 pass, 1 check failed, 2 could not run (bad invocation)"
 
-// novaCheck is the tool: its verbs and their flags, run by internal/tool, which
+// novaCheck is the tool: its verbs and their flags, run by pkg/tool, which
 // holds the dispatch, the banner, -h, --json, --max with its MORE line, the
 // refusal grammar and the exit table.
 func novaCheck(s seams) *tool.Tool {

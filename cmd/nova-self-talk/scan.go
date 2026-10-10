@@ -12,11 +12,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // note prints on every completed run, pass or fail: a green from a partial
@@ -299,7 +299,7 @@ func cannotRead(name string, err error) string {
 	return what
 }
 
-// out is the one value a scan prints (internal/tool's Out): every skip, banner and
+// out is the one value a scan prints (pkg/tool's Out): every skip, banner and
 // finding as an item in file order, each kind capped at --max on its own (six hundred
 // STANDING claims must not eat the one INSTALLATION finding, the class a reader is
 // least likely to know about), the closing counts as facts, and the notes. The typed

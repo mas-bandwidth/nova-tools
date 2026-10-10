@@ -315,7 +315,7 @@ func TestUpLocalStopsOnWhatItCannotProvide(t *testing.T) {
 
 // TestUpRefusesWhatItCannotRun: the bare command and a run without --local
 // are refusals at exit 2 naming what is wanted, and the definition meets the
-// standard internal/tool holds every tool to.
+// standard pkg/tool holds every tool to.
 func TestUpRefusesWhatItCannotRun(t *testing.T) {
 	t.Parallel()
 	f := newFake(t)

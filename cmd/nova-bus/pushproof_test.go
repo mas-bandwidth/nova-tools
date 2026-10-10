@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 )
 
 // Glenn, 2026-10-05: "nova-bus is useless if the friend using it is deaf and

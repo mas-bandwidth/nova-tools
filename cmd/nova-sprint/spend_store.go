@@ -1,6 +1,6 @@
 package main
 
-// The release spend gate's store readout (internal/release, spendcheck.go): what the sprint's
+// The release spend gate's store readout (pkg/release, spendcheck.go): what the sprint's
 // store recorded over a release's window. The store's tables are the sprint's, so the reader
 // lives here and is handed to the release library, which reads no sprint store of its own.
 
@@ -8,11 +8,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/release"
 )
 
 func init() { release.SpendStore = spendStore }

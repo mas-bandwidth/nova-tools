@@ -20,7 +20,7 @@
 # The build and the install each remove, last, the old version directories of
 # their own root (the build's out, the machine's release directory), keeping
 # the version just made, the one installed before it and the 3 newest besides;
-# a removal that fails never fails the play (internal/release/prune.go). On
+# a removal that fails never fails the play (pkg/release/prune.go). On
 # the coordinator (the store_deployer machine) the new build's checks run
 # first and change nothing; then the seat play's window stops its old server
 # and member, migrates the configuration store (`nova-config migrate --window`
@@ -1075,7 +1075,7 @@
 # a java that runs. It downloads and copies nothing: a jar that is missing or
 # differs refuses the play with the scp line that places it (tla/README.md,
 # "The record machines"). A record machine is Linux: TLC records are measured
-# there only (internal/tlc/records.go, Platforms). sudo is used only to make
+# there only (pkg/tlc/records.go, Platforms). sudo is used only to make
 # the directory, or hand it or the jar to the login, when it is not the
 # login's already; a converged machine changes nothing. Run it alone with
 # --tags tla.

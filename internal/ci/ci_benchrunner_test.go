@@ -22,13 +22,13 @@ const benchRunnerBaseSHA = "ce8631be6"
 // site retired by #3350 or #3291 leaves the allow file (NOVA_CI_UPDATE=1 drops
 // the row); it may stay here, where it allows nothing.
 var benchRunnerAtBase = []string{
-	"internal/release/edges.go ExecSSH.Fetch",
-	"internal/release/edges.go ExecSSH.Run",
-	"internal/release/edges.go ExecSSH.Send",
-	"internal/secrets/place.go sshPlaceSecret",
-	"internal/swarm/bench.go remoteRun",
-	"internal/swarm/benchpull.go sshOutput",
-	"internal/swarm/benchpull.go sshRun",
+	"pkg/release/edges.go ExecSSH.Fetch",
+	"pkg/release/edges.go ExecSSH.Run",
+	"pkg/release/edges.go ExecSSH.Send",
+	"pkg/secrets/place.go sshPlaceSecret",
+	"pkg/swarm/bench.go remoteRun",
+	"pkg/swarm/benchpull.go sshOutput",
+	"pkg/swarm/benchpull.go sshRun",
 }
 
 // benchRunnerAllowOptions keys a row of the allow file by `<file> <func>`, the
@@ -51,7 +51,7 @@ func readBenchRunnerAllow(t *testing.T) *allowlist.List {
 }
 
 // TestCIOneBenchRunner (#2932 control 4): every ssh exec site outside
-// internal/bench is a row of testdata/bench-runners.allow, every row is
+// pkg/bench is a row of testdata/bench-runners.allow, every row is
 // still a site (the file shrinks as sites retire), and no row is added after
 // the base the inventory was derived at.
 func TestCIOneBenchRunner(t *testing.T) {
@@ -96,7 +96,7 @@ func TestCIOneBenchRunner(t *testing.T) {
 
 	t.Run("git-transport-excluded", func(t *testing.T) {
 		fixture := `package x
-import ("os/exec"; "github.com/mas-bandwidth/nova-tools/internal/testguard")
+import ("os/exec"; "github.com/mas-bandwidth/nova-tools/pkg/testguard")
 func transportCmd(host string) string { testguard.RefuseHosts("ssh", host); return "ssh -o BatchMode=yes" }
 func pull(host string) error {
 	c := exec.Command("git", "fetch", host)

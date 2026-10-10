@@ -121,20 +121,20 @@ jobs:
     # A green whole-tree race run took 421 s of test step on `ubuntu-latest` and 497 s on
     # `macos-latest` under a 15-minute cap in run 36137551959. The cap stays two minutes;
     # the legs meet it by shard count, with the deal of ci.yml's test-hosted (heavy packages
-    # first, one per shard, then round-robin) over the live packages only (internal/pkgselect/DEPRECATED:
+    # first, one per shard, then round-robin) over the live packages only (pkg/pkgselect/DEPRECATED:
     # deprecated packages are never tested).
     #
     # THE HEAVY LIST is measured, not named: the per-package times this job's own legs report
     # (`ok <pkg> <seconds>`), the larger of ubuntu-latest and macos-latest, in the cold run
     # 36375296705 at 3314df055 plus this change: internal/ci 49.3 s, cmd/nova-tokens 46.4,
     # cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
-    # internal/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the 75 s test
+    # pkg/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the 75 s test
     # timeout alongside internal/ci on macOS. Run 37159703304 puts internal/sprint/store
     # (65.470 s on Linux) alongside cmd/nova-sandbox on a capped leg. Run 37165758129
     # caps Linux shard 1 with internal/ci 67.708 s, internal/sprint/refmodel 60.236,
     # cmd/nova-swarm 44.763 and internal/docs 18.834 together. Its completed legs also
-    # measure internal/sprint 15.951 s, internal/redisconn 18.169, internal/config 17.741
-    # and internal/secrets 15.577. Sixteen measured heavy packages each have a shard;
+    # measure internal/sprint 15.951 s, pkg/redisconn 18.169, pkg/config 17.741
+    # and pkg/secrets 15.577. Sixteen measured heavy packages each have a shard;
     # the other live packages are dealt round-robin.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
@@ -231,7 +231,7 @@ jobs:
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-sprint internal/sprint/store cmd/nova-swarm internal/sprint/refmodel internal/docs internal/sprint internal/redisconn internal/config internal/secrets"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-sprint internal/sprint/store cmd/nova-swarm internal/sprint/refmodel internal/docs internal/sprint pkg/redisconn pkg/config pkg/secrets"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the

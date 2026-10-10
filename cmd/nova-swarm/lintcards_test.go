@@ -34,7 +34,7 @@ import (
 // The quoted `../` must not be a drift: that was the measured false positive, and a
 // manager who sees a DRIFT line has to be able to believe it. The two tools11 cards
 // also carry `KIND: dogfood`, which is a decide routing kind and not a name in
-// internal/hygiene/kinds.txt; #1853 makes that a true `kind-declared` finding. The
+// pkg/hygiene/kinds.txt; #1853 makes that a true `kind-declared` finding. The
 // fixtures stay byte for byte. The control card (`KIND: fix-red`) stays fully clean.
 //
 // The two tools11 cards were chosen over tools10's because tools10's cards also draw

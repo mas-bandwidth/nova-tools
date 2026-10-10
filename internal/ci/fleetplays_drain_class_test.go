@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // TestMemberUnitsStopByDraining: a member loop's unit stops it by draining

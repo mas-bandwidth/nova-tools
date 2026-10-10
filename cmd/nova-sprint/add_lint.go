@@ -10,9 +10,9 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // briefCheck is one brief of an add held to the card checks, under the id it is admitted as.

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // Rules 16 and 18, the halves that are about what does NOT decide an answer: the checkout's

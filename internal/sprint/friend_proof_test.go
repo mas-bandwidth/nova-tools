@@ -13,15 +13,15 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Moved from internal/friend/proof_test.go (the nova-sprint split): the tests that read the
+// Moved from pkg/friend/proof_test.go (the nova-sprint split): the tests that read the
 // sprint server's own rules (sprint.ProveBeat, sprint.FriendEvidence), over friend's exported API.
 //
 // The findings of 2026-10-06 on the new build, one test each: the daemon knew its
@@ -30,7 +30,7 @@ import (
 // answered within five minutes exited, and launchd restarted it into the same wait for
 // ever; a headless dsh daemon owed its check for twenty minutes with no turn running.
 
-// proofT0 is friend's test clock origin (internal/friend machine_test.go t0).
+// proofT0 is friend's test clock origin (pkg/friend machine_test.go t0).
 var proofT0 = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 
 // checkLine is a session check as the session reads it: its nonce.
@@ -285,7 +285,7 @@ func checks(texts []string) []string {
 	return out
 }
 
-// proofTwinRow is friend's twinRow (internal/friend inbox_test.go): the sprint server's
+// proofTwinRow is friend's twinRow (pkg/friend inbox_test.go): the sprint server's
 // answer to friend cards <friend>, the cards on her row however they got there.
 type proofTwinRow struct {
 	mu    sync.Mutex

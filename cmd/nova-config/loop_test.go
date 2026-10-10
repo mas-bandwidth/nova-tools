@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -235,7 +235,7 @@ func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-swarm","member","--as","reader-m1","--reader"]`, "the plays render the argv the row holds, with no width:\n%s", out)
 }
 
-// A loop whose verb is gone (internal/config/loop.go) is refused at add and at
+// A loop whose verb is gone (pkg/config/loop.go) is refused at add and at
 // set, and named by status with its remove: each nova program the argv runs is
 // asked through the probe, here a fake one over the verbs each program has.
 func TestALoopWhoseVerbIsGoneIsRefusedAndNamed(t *testing.T) {

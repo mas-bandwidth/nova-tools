@@ -41,7 +41,7 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    announce flags no merged binary has, and `moved` cannot, because every flag it
    announces is read off the binary's own help.
 6. **`moved` is bounded and clockless.** It prints one line, caps every child through
-   `internal/bounded`, takes its clock from the injected seam, and fetches nothing: a
+   `pkg/bounded`, takes its clock from the injected seam, and fetches nothing: a
    missing revision is refused.
 
 ### Tests this section demands
@@ -51,7 +51,7 @@ nova-version diff --from <a.tsv> --to <b.tsv>
 1. `TestMovedReadsTheBuildNeverAList`: a fake `<tool> help` at `--from` without `--decide` and at `--to` with it yields `added=decide`, and a flag a hand list would name but neither help prints is absent.
 2. `TestMovedNeverInfersARename`: a tool present only at `--from` and a differently named tool present only at `--to` whose helps are identical yield `deleted=1 added=1 renamed=0`, and the same pair with the rename stated by the commit message or a `MOVED` file yields `renamed=1`.
 3. `TestMovedEmptyDiffIsNotARefusal`: an empty diff is `added=0 deleted=0 renamed=0`, exit 0.
-4. `TestMovedIsBoundedByTheClock`: every child is capped through `internal/bounded` and the clock is the injected seam.
+4. `TestMovedIsBoundedByTheClock`: every child is capped through `pkg/bounded` and the clock is the injected seam.
 
 ## nova-version snapshot and nova-version diff
 
@@ -63,7 +63,7 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    together are refused.
 2. **`snapshot` reads each binary's own `version`, never the file's name.** It lists every
    `nova-*` regular file in `--bin`, runs each one's `version`, and parses the Conventions
-   line with `internal/buildinfo`'s `Parse` — the package that also WRITES that line — so
+   line with `pkg/buildinfo`'s `Parse` — the package that also WRITES that line — so
    the four mandatory tokens are read and a tool's named `key=value` extras (`nova-sandbox`'s
    `backend=` and `platform=`) are metadata rather than a broken binary;
    `name` is the executable's name, and its `stamp`, `revision` and `platform` are read off
@@ -116,7 +116,7 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    several stamps, one of them answering `version` in a syntax of its own, shows neither
    fact in one command.
 10. **Both are bounded and clockless.** Each prints one line beyond the changed-binary rows
-    `diff` exists to print, caps every child through `internal/bounded`, takes its clock
+    `diff` exists to print, caps every child through `pkg/bounded`, takes its clock
     from the injected seam, and touches no network.
 11. **`snapshot`'s bounds are the caller's, and its per-binary default is thirty seconds
     because its first exec is always a cold one.** `--timeout <d>` bounds one binary's

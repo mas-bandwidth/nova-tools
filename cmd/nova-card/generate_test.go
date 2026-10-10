@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // fixtureCheckout is a one-commit repository on branch dev with an origin, the
@@ -44,7 +44,7 @@ func fixtureCheckout(t *testing.T, files map[string]string) (dir string, git fun
 // readCheckout reads the branch off a checkout's HEAD, and a detached HEAD names
 // none, so generate refuses rather than writing BASE: HEAD into every card. The
 // branch is read by git symbolic-ref, never by comparing a name to HEAD
-// (internal/typedrec TestOneTypedParser holds the tree to that).
+// (pkg/typedrec TestOneTypedParser holds the tree to that).
 func TestReadCheckoutReadsTheBranchAndNoneAtADetachedHEAD(t *testing.T) {
 	t.Parallel()
 	dir, git := fixtureCheckout(t, map[string]string{"a.txt": "a\n"})
@@ -182,7 +182,7 @@ func TestGenerateRefusesABriefWithTheCardChecksFinding(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	findings := filepath.Join(dir, "f.tsv")
-	require.NoError(t, os.WriteFile(findings, []byte("internal/bus/send.go:1\tthe receipt ada filed is lost\tkeep it\tinternal/bus TestX\n"), 0o644))
+	require.NoError(t, os.WriteFile(findings, []byte("pkg/bus/send.go:1\tthe receipt ada filed is lost\tkeep it\tinternal/bus TestX\n"), 0o644))
 	out := filepath.Join(dir, "cards")
 	args := []string{"generate", "--from", "findings", "--file", findings, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out}
 	exit, stdout, stderr := runCard(append(args, "--name", "bench7,ada")...)

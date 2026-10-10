@@ -114,7 +114,7 @@ func memberLoads(s *Snapshot, up []string) map[string]int {
 // DealAhead is how many widths of cards a member may hold, ready and working
 // together: its width working and as many again ready behind them, so a lane
 // that frees takes its next card at once and never waits for a tick. The
-// member itself runs at most its width (the fleet row's, internal/member);
+// member itself runs at most its width (the fleet row's, pkg/member);
 // the rest wait in its ready column.
 const DealAhead = 2
 

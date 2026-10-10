@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // seat install and seat uninstall (docs/SPEC-SPRINT.md, "Handing over the seat"; the

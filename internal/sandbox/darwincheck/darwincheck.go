@@ -38,7 +38,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 )
 
 // Options is how a caller that is a TEST rather than an operator changes the run.

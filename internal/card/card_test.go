@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 var header = cardgen.Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567"}
@@ -20,21 +20,21 @@ var header = cardgen.Header{Repo: "example/repo", Base: "dev", Sha: "0123456789a
 // its TEST package is in its PATHS and line 1 names its tier.
 func TestGeneratedPathsAreThePackagesOfStart(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, []string{"internal/bus/*.go", "internal/bus/*_test.go", "docs/X.md"},
-		PackagePaths([]string{"internal/bus/send.go", "./internal/bus/recv.go", "internal/bus"}, []string{"docs/X.md"}),
+	assert.Equal(t, []string{"pkg/bus/*.go", "pkg/bus/*_test.go", "docs/X.md"},
+		PackagePaths([]string{"pkg/bus/send.go", "./pkg/bus/recv.go", "pkg/bus"}, []string{"docs/X.md"}),
 		"files of one package and the package itself are one pair of globs")
 	assert.Equal(t, []string{"internal/ci/testdata/x.txt"}, PackagePaths([]string{"internal/ci/testdata/x.txt", "nova-bus"}, nil),
 		"a non-Go file is itself and a bare word names no path")
 	assert.Equal(t, []string{"docs/CLI.md", "internal/ci/testdata/l.txt"},
 		Docs([]string{"cmd/x/main.go", "cmd/x/*_test.go", "docs/CLI.md", "internal/y", "internal/ci/testdata/l.txt"}))
 
-	fs, _ := cardgen.ParseFindings("internal/bus/send.go:12\tlost\tkeep it\tinternal/ci TestX\nfleet/roles/a.yml:3\twrong\tfix it\tinternal/fleet TestRole\n")
+	fs, _ := cardgen.ParseFindings("pkg/bus/send.go:12\tlost\tkeep it\tinternal/ci TestX\nfleet/roles/a.yml:3\twrong\tfix it\tinternal/fleet TestRole\n")
 	fp := cardgen.PlanFindings(fs, "", "", 0)
 	require.Len(t, fp.Cards, 2)
 	help := cardgen.PlanHelp("nova-x", "x\n", "TestExamples", "", "")
 	want := [][]string{
-		{"internal/bus/*.go", "internal/bus/*_test.go", "internal/ci/*.go", "internal/ci/*_test.go"},
-		{"fleet/roles/a.yml", "internal/fleet/*.go", "internal/fleet/*_test.go"},
+		{"pkg/bus/*.go", "pkg/bus/*_test.go", "internal/ci/*.go", "internal/ci/*_test.go"},
+		{"fleet/roles/a.yml", "pkg/fleet/*.go", "pkg/fleet/*_test.go"},
 		{"cmd/nova-x/*.go", "cmd/nova-x/*_test.go", "docs/CLI.md"},
 	}
 	for i, c := range append(fp.Cards, help) {

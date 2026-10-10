@@ -97,7 +97,7 @@ func (r WaitsResult) ExitCode() int {
 
 // checkWaitsDirs are the trees the CI path runs: every _test.go under internal/
 // and cmd/.
-var checkWaitsDirs = []string{"internal", "cmd"}
+var checkWaitsDirs = []string{"internal", "pkg", "cmd"}
 
 // walkCITestFilesWith reads every _test.go under root/internal and root/cmd -- the
 // two trees checkWaitsDirs names -- and calls fn with the repo-relative slash

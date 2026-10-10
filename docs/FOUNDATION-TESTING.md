@@ -1,7 +1,7 @@
 # FOUNDATION-TESTING.md: the two tiers, the class tests and the four store helpers
 
 How to run each tier of the tests, and how a test uses the four helpers of
-`internal/testredis` that check what a change did to a store: `Image` and `Diff`
+`pkg/testredis` that check what a change did to a store: `Image` and `Diff`
 (what changed), `OnlyFCALL` (only FCALL writes), `RoundTrips` (how many times the
 client waited) and `Far` (a store at a distance). What the two tiers are, and how
 the class tests' allowlists are regenerated, is in [TESTING.md](TESTING.md); how
@@ -15,7 +15,7 @@ way CI runs them:
 
 ```
 nova-ci local --base origin/sprint/foundation
-make test PKGS=./internal/testredis/
+make test PKGS=./pkg/testredis/
 ```
 
 `nova-ci local` selects the packages from your committed diff, prints one `PKG`
@@ -29,8 +29,8 @@ nova-ci local: packages=2 seconds=7.8s red=0 make-exit=0
 `go test -json`; the lines that carry the verdict are the `CI-` ones:
 
 ```
-make test PKGS=./internal/testredis/ 2>&1 | grep -E '^(CI-SLOW|--- FAIL|FAIL)'
-CI-SLOW OK packages=1 slowest=github.com/mas-bandwidth/nova-tools/internal/testredis:0.2s
+make test PKGS=./pkg/testredis/ 2>&1 | grep -E '^(CI-SLOW|--- FAIL|FAIL)'
+CI-SLOW OK packages=1 slowest=github.com/mas-bandwidth/nova-tools/pkg/testredis:0.2s
 ```
 
 Seconds differ from machine to machine; `OK` is the verdict.
@@ -42,15 +42,15 @@ A test that needs a real `redis-server` lives in a `_test.go` whose first line i
 Name the packages:
 
 ```
-make test-functional-container PKGS="./internal/testredis/ ./tools/fardelay/" FUNCTIONAL_FLAGS=--fresh-gocache FUNCTIONAL_DEADLINE=15m
+make test-functional-container PKGS="./pkg/testredis/ ./tools/fardelay/" FUNCTIONAL_FLAGS=--fresh-gocache FUNCTIONAL_DEADLINE=15m
 ```
 
 The run prints the packages it selected, one line for each package that ran, and
 ends with the container's own line (the run id differs on every run):
 
 ```
-functional: ./internal/testredis/ ./tools/fardelay/
-ok  	github.com/mas-bandwidth/nova-tools/internal/testredis	1.560s
+functional: ./pkg/testredis/ ./tools/fardelay/
+ok  	github.com/mas-bandwidth/nova-tools/pkg/testredis	1.560s
 ok  	github.com/mas-bandwidth/nova-tools/tools/fardelay	1.848s
 FUNCTIONAL RUN run=<id> ended=finished exit=0 wall=2.5s build=0.0s modcache=0.4s total=3.4s containers_left=0
 ```
@@ -86,7 +86,7 @@ what it refuses. A failure names the file and the remedy.
 
 ## The helpers
 
-All four are in `internal/testredis`. `Image`, the FCALL-only hook and the round-trip counter panic outside a test binary; `Diff` is a plain function over two images.
+All four are in `pkg/testredis`. `Image`, the FCALL-only hook and the round-trip counter panic outside a test binary; `Diff` is a plain function over two images.
 `testredis.Start(t)` runs a `redis-server` of the test's alone on a loopback port
 and returns its `host:port`; the test's cleanup kills it. A missing
 `redis-server` skips the test on a laptop and fails it under `NOVA_CI=1`. The

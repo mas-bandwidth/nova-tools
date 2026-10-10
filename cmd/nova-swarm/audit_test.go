@@ -7,7 +7,7 @@ import (
 )
 
 // The source-level tripwire behind the one-line guarantee: every argument this binary
-// prints is quoted, numeric, literal, escaped through internal/oneline, or exempted here
+// prints is quoted, numeric, literal, escaped through pkg/oneline, or exempted here
 // with its reason. See package audit for what the two walks see and what they cannot.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 	t.Parallel()
@@ -45,7 +45,7 @@ var swarmAudit = audit.Config{
 		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
-	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// every one of its four fields through oneline.Field inside pkg/buildinfo, where
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
@@ -95,14 +95,14 @@ var swarmAudit = audit.Config{
 		"stoppedSuffix",
 		// swarm.PublicRefusalLine (CARD-8390) renders the whole CARD REFUSED line and
 		// puts the repo and the worker name through oneline.Field inside
-		// internal/swarm before returning, so the line it returns is already one
+		// pkg/swarm before returning, so the line it returns is already one
 		// safe token. The repo comes from the card's own text -- a file a card
 		// author writes -- and the worker name from the description, so nothing
 		// but Field-escaped fields can come back.
 		"swarm.PublicRefusalLine",
 		// l.Line (nova-tools#2033) is SlotLease.Line: every field of the SLOT list
 		// row -- id, owner, label, until, state, kind, weight, stranded -- goes
-		// through oneline.Field (or a numeric verb) inside internal/swarm before
+		// through oneline.Field (or a numeric verb) inside pkg/swarm before
 		// the string returns, so cmdSlotsList printing it whole cannot write past
 		// the escape. TestSlotsListMarksADeadHolderStrandedWithItsLabel is the
 		// behavioural test for this site.
@@ -112,16 +112,16 @@ var swarmAudit = audit.Config{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"`,
 		// main.go's flag refusal: tool.FlagRefusal returns a STRING (the unknown flag, the
 		// nearest and the verb's flag names) and writes nothing; refuse prints it through
 		// oneline.Escape, so a flag a caller typed with a newline in it stays one line.
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/tool"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"`,
 		// package flag's two mouths are closed in newFlags: SetOutput(io.Discard) and a
 		// no-op Usage, so it cannot print an argument this audit never sees. fmt, io, os,
 		// os/exec, path/filepath, strings and time hold writers, and none here writes to a
@@ -155,42 +155,42 @@ var swarmAudit = audit.Config{
 		// member.go: bufio only scans a RESULT.md line by line and holds no writer; what
 		// it reads is kept as values (the head, the one-line report) that reach a stream
 		// only as arguments of nova-sprint's verbs, never as a print of this binary.
-		// internal/member is the fleet member's loop; it prints only through the writer
+		// pkg/member is the fleet member's loop; it prints only through the writer
 		// this verb hands it, and every argument it prints is a card id, a count or a
 		// verb name from the sprint's own JSON.
-		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/internal/member"`,
+		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/pkg/member"`,
 		// member.go calls only log.Redact, a pure string transformer, on what a failed
 		// sprint verb printed, as the server answered it, before it reaches the member's
 		// writer. It holds no writer here; the transformed value is escaped and bounded by
-		// sprintFailureOutput before internal/member can print it.
-		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
-		// member.go hands internal/sprintwire's Worker to the member as its sprint (--server):
+		// sprintFailureOutput before pkg/member can print it.
+		`"github.com/mas-bandwidth/nova-tools/pkg/log"`,
+		// member.go hands pkg/sprintwire's Worker to the member as its sprint (--server):
 		// it sends a verb's arguments to the sprint's server and returns the answer as a
 		// value. It holds no writer and prints nothing; a failed verb's words go through
-		// sprintFailureOutput before internal/member can print them.
-		`"github.com/mas-bandwidth/nova-tools/internal/sprintwire"`,
+		// sprintFailureOutput before pkg/member can print them.
+		`"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts
 		// its own two fields -- the kind and the remedy -- through oneline before writing
 		// them. It writes to the stream the caller hands it and to nothing else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/bounded"`,
 		// swarm builds the report, triage, cost, status and finalize lines. Every one of
 		// them is rendered by a fmt.Sprintf inside that package, so this walk cannot see
 		// its arguments; the values that reach one are put through oneline by that package,
 		// and the two lines this binary prints whole are the two exempted verbatim sites
 		// above.
-		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/swarm"`,
 		// cardlimits holds two integer constants (the card lint's size advice and the bound
 		// nova-sprint add refuses a brief over) and no code: it prints nothing and holds no
 		// writer; the numbers reach a line only through numeric verbs of the size note and
 		// the LINT OK and LINT SIZE lines.
-		`"github.com/mas-bandwidth/nova-tools/internal/cardlimits"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/cardlimits"`,
 		// safepath (issue #1923) answers ONE question about a string -- NameOK, is this a
 		// name and not a path -- and returns a bool. It holds no writer of any kind and
 		// prints nothing; the label it judges is rendered by this package through
 		// oneline.Field in the refusal that follows.
-		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/safepath"`,
 		// nogh (nova-tools #3600) installs the refusing gh file into <slot>/shim beside the
 		// shell wrappers and returns its path or an error. It prints nothing to any stream
 		// of this binary: the one line it holds is the gh script's own stderr, written by
@@ -200,66 +200,66 @@ var swarmAudit = audit.Config{
 		// profile's shims into <slot>/shim -- through atomicfile, and reads RESULT.md and
 		// pushed.tsv into values. It prints nothing to any stream of this binary; the lines
 		// the shims print are their own, in the card's shell, never nova-swarm's.
-		`"github.com/mas-bandwidth/nova-tools/internal/cardcontract"`,
-		// cardtree (internal/cardtree) reads a card into a tree of steps, lints it into
+		`"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"`,
+		// cardtree (pkg/cardtree) reads a card into a tree of steps, lints it into
 		// findings and runs a script step into a Result value; it holds no writer of this
 		// binary's and prints nothing: its programs' output is captured into an error's
 		// words, which this package prints through oneline.
-		`"github.com/mas-bandwidth/nova-tools/internal/cardtree"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/cardtree"`,
 		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
 		// one parser the frame and the deal share. It holds no writer and prints nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/cardhdr"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"`,
 		// harness (doctor.go, member.go, native.go) is the harness words: which program a
 		// binary is (KindOf) and whether it is headless. Standard library only, no writer,
 		// prints nothing; a kind reaches a line only through oneline.Field.
-		`"github.com/mas-bandwidth/nova-tools/internal/harness"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/harness"`,
 		// cardcost (native.go, member.go) folds what a run spent into a value and spells it
 		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
 		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.
-		`"github.com/mas-bandwidth/nova-tools/internal/cardcost"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/cardcost"`,
 		// math/big (main.go, native.go, nativesample.go) holds the dollar budget and compares
 		// a cost with it (#5094): exact arithmetic on values, no writer, no stream.
 		`"math/big"`,
 		// typedrec (the one-typed-parser rule, #2506) reads a card's RESULT.md into a value
 		// and says whether a string is a commit id; it holds no writer and prints nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/typedrec"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/typedrec"`,
 		// atomicfile writes one FILE whole (a temporary beside it, fsync, rename): it takes a
 		// path and the bytes of the file and puts no byte on any stream of this binary. The
 		// audit's Write check lets atomicfile.Write by its package name for that reason.
-		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"`,
 		// subproc starts one child under a deadline (Command) or a cancellable context
 		// (Long) and returns the *exec.Cmd to this package, which wires the streams. It
 		// holds no writer of this package's stream and prints nothing itself.
 		// binstamp (member.go) reads one file's size and modification time and returns a
 		// string to this package, which compares it and prints nothing of it.
-		`"github.com/mas-bandwidth/nova-tools/internal/binstamp"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/binstamp"`,
 		// hostload (member.go) samples the machine's CPU percent once a second into a
 		// ring the member's beat reads; it returns numbers and prints nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/hostload"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/hostload"`,
 		// yield (native.go, member.go) calls setpriority on this process and returns an error,
 		// or is a constant (Supported); it holds no writer and prints nothing. Its error
 		// reaches a stream only through refuseNative, which escapes it.
 		`"github.com/mas-bandwidth/nova-tools/internal/yield"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/subproc"`,
 		// gitrun (memberpush.go) runs one git under its budget and returns its two streams
 		// as bytes to this package; it holds no writer of this package's stream and prints
 		// nothing. What the push keeps from them reaches a stream only as a member.Push
 		// value the member loop folds onto one line.
-		`"github.com/mas-bandwidth/nova-tools/internal/gitrun"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/gitrun"`,
 		// gocache (lazyclean.go, member.go) holds the pool's Go build cache under its
 		// limit and returns counts and a failure's path and reason to this package; it holds
 		// no writer and prints nothing. Its reason reaches a stream only through the CLEAN
 		// line, which escapes it.
-		`"github.com/mas-bandwidth/nova-tools/internal/gocache"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/gocache"`,
 		// diffcheck (nativedecide.go) parses the work's diff to name the files it changes; it
 		// holds no writer and prints nothing, and those names reach a stream only inside the
 		// decide read's finding, which is escaped.
-		`"github.com/mas-bandwidth/nova-tools/internal/diffcheck"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/diffcheck"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the
 		// chosen id -- is put through oneline.Field before it is printed.
-		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/decide"`,
 		// events (nova-tools #2563) writes the card-end entry to the cards:done stream, and
 		// it IS a writer of this package's stream: `native` hands events.Writer the run's
 		// own stderr so a card that could not be measured says so. It cannot write past
@@ -270,12 +270,12 @@ var swarmAudit = audit.Config{
 		// else in that package holds a writer: Emit goes to Redis, and Validate refuses a
 		// field with a control character in it before it ever reaches the store.
 		`"github.com/mas-bandwidth/nova-tools/internal/events"`,
-		// internal/seatcred is --seat / NOVA_SEAT (#4052): it takes the flag out
+		// pkg/seatcred is --seat / NOVA_SEAT (#4052): it takes the flag out
 		// of the arguments and resolves the seat's Redis login for the card-end
 		// writer, in memory. It writes nothing to any writer, and the one line
 		// this tool prints about it goes through oneline.Escape; it never carries
 		// a password.
-		`"github.com/mas-bandwidth/nova-tools/internal/seatcred"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/seatcred"`,
 		// native.go (issue #296) needs these and none of them writes a stream, so
 		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
@@ -327,13 +327,13 @@ var swarmAudit = audit.Config{
 		// memory -- the lint's rule names, the cache's hours, PATHEXT's suffixes -- and return
 		// them; neither holds a writer or writes a stream, so neither can write past the escape.
 		`"slices"`, `"maps"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/decide"`,
 		// testguard (bench.go) is the host guard: one atomic load on the way to an ssh
 		// child, and nothing at all when NOVA_TEST_NO_HOST is unset, which is every
 		// production run. It holds no writer and writes no stream. Its one output is a
 		// PANIC under the test guard, which the runtime writes, in a test process, on a
 		// path this binary never takes in production.
-		`"github.com/mas-bandwidth/nova-tools/internal/testguard"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/testguard"`,
 		// keys.go and member.go read the unit's named secrets in this process
 		// (the seat login's keys, docs/SPEC-SECRETS.md "A tool's store login").
 		// Secret's String, GoString and Format are the word redacted; the value
@@ -342,7 +342,7 @@ var swarmAudit = audit.Config{
 		// returns Secrets and an error; a refusal names the secret's name and
 		// the next command, never the value. The package holds no writer of
 		// this binary's stream.
-		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/secrets"`,
 	},
 	MinClassified: 40,
 }

@@ -32,7 +32,7 @@ import (
 //
 // WHICH PACKAGES: the rule was written over cmd/nova-sprint and
 // internal/nsprint. nova-sprint is deprecated (Glenn 2026-09-27: deprecated
-// code is not tested and never blocks CI; internal/pkgselect/DEPRECATED), and a class
+// code is not tested and never blocks CI; pkg/pkgselect/DEPRECATED), and a class
 // rule over it is a test of it, so the rule reads the live packages
 // (liveTree, the reading CI's selection uses) that select a seat: a package
 // whose Go calls seatcred's FromArgs, directly or on seatcred.Process().

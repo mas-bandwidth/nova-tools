@@ -88,7 +88,7 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 	seen := map[string]bool{}
 	var violations []string
 
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		for _, src := range tree.GoFilesUnder(true, dir) {
 			// testdata holds the fixtures this very test reads, so reading it
 			// would find the offenders it is meant to find.

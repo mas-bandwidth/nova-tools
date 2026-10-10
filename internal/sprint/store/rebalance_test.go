@@ -18,7 +18,7 @@ import (
 // the start of every tick.
 
 // takeWidth has a member take its width of ready cards, as the member loop
-// does (internal/member: width less what it runs).
+// does (pkg/member: width less what it runs).
 func (h *harness) takeWidth(m string) {
 	h.t.Helper()
 	s := h.snap()

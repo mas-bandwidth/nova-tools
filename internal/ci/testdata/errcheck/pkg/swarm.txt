@@ -1,0 +1,3 @@
+# The unchecked errors in this package when the rule landed; shrink-only (docs/SPEC-CI.md, errcheck).
+# ceiling: 1
+pkg/swarm:unchecked 44 measured when the rule landed; a checked or reasoned call lowers the count

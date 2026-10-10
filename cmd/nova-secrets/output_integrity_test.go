@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +50,7 @@ type goListPackage struct {
 // Test 16: TestNoKeychainAndNoCryptoDependency
 func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 	t.Parallel()
-	pkgs := []string{"cmd/nova-secrets", "internal/secrets"}
+	pkgs := []string{"cmd/nova-secrets", "pkg/secrets"}
 
 	forbiddenImports := []string{
 		"filippo.io/age",

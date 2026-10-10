@@ -6,12 +6,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
 )
 
 // The sprint's own keys are the redisacl family "sprint": the store's ACL roles reach
-// them by that family's patterns (it was a row of internal/redisacl's
+// them by that family's patterns (it was a row of pkg/redisacl's
 // TestFamiliesAreTheOwnersKeys).
 func TestTheSprintsKeysAreItsRedisACLFamily(t *testing.T) {
 	t.Parallel()

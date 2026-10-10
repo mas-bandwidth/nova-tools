@@ -83,11 +83,11 @@ const (
 )
 
 // refusalGrammarRemedy is, for each kind, what a tool's author does to clear it;
-// on internal/tool every one of them holds by construction.
+// on pkg/tool every one of them holds by construction.
 var refusalGrammarRemedy = map[string]string{
-	refuseBare:  "the bare command refuses through internal/tool's Run: `<TOKEN> REFUSED: no verb given; the verbs are ...; run: <tool> help` on stderr at exit 2",
-	refuseVerb:  "the unknown verb refuses through internal/tool's Run: `<TOKEN> REFUSED: unknown verb \"x\"; the verbs are ...; run: <tool> help`",
-	refuseFlag:  "the verb parses its flags through internal/tool's Flags (or verbflag.Explain): `<VERB> REFUSED: unknown flag --x; ...; run: <tool> help <verb>`",
+	refuseBare:  "the bare command refuses through pkg/tool's Run: `<TOKEN> REFUSED: no verb given; the verbs are ...; run: <tool> help` on stderr at exit 2",
+	refuseVerb:  "the unknown verb refuses through pkg/tool's Run: `<TOKEN> REFUSED: unknown verb \"x\"; the verbs are ...; run: <tool> help`",
+	refuseFlag:  "the verb parses its flags through pkg/tool's Flags (or verbflag.Explain): `<VERB> REFUSED: unknown flag --x; ...; run: <tool> help <verb>`",
 	refuseNoArg: "the verb returns tool.Refuse(...) (or Refused()) with its problem and its remedy, so the skeleton renders `<VERB> REFUSED[ k=v ...]: <why>; run: <remedy>` on stderr",
 }
 
@@ -132,7 +132,7 @@ func (g *refusalGrammar) check(t *testing.T, tools int) {
 		t.Logf("refusal-grammar: %d of %d tools measured; the ledger is checked only when every tool is", g.settled, tools)
 		return
 	}
-	for _, v := range g.ledger.violations(t, "every refusal is one line in the one grammar on stderr; on internal/tool it is by construction (a row's count only falls)") {
+	for _, v := range g.ledger.violations(t, "every refusal is one line in the one grammar on stderr; on pkg/tool it is by construction (a row's count only falls)") {
 		assert.Fail(t, v)
 	}
 }

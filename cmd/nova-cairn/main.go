@@ -8,7 +8,7 @@
 // environment variable and no discovery: a missing flag is a refusal, never a
 // guess. The publication policy is named once, at open, and an append carries
 // it. The dispatch, the banner, the help, the version verb, the refusals and
-// the output envelope are internal/tool's.
+// the output envelope are pkg/tool's.
 package main
 
 import (
@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 var version string

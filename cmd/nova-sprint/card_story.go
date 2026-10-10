@@ -6,9 +6,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // storyLine is one event of a card's timeline as card prints it: its local

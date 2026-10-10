@@ -125,7 +125,7 @@ BUS FAILED <path, path:line, or lane>: <reason>
 
 `OK` lines go to stdout; `FAIL` and `FAILED` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
 
-**One value, two renderings.** A tool built on `internal/tool` returns one result
+**One value, two renderings.** A tool built on `pkg/tool` returns one result
 per verb and prints it as lines or, with `--json` (every verb takes it), as one
 JSON object on stdout holding the same value:
 `{"result":{"verb","status":"ok|failed|refused","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],"more":[{"kind","shown","total","remedy"}],"notes":[]}`.
@@ -138,7 +138,7 @@ with the verb's effect: inspection, local write, or delivery.
 
 **An event is exactly one line, and nothing a caller supplies or a file holds
 can add a second.** This is one guarantee, stated once here and met by every
-binary the same way, through `internal/oneline`. Every path, file name, reason,
+binary the same way, through `pkg/oneline`. Every path, file name, reason,
 stored key, stamp, claim, frontmatter value and error text that reaches an
 event line, a refusal or a note is printed with its control characters
 escaped — `\xNN` for a code point below U+0080, `\uNNNN` above it, lower-case
@@ -220,12 +220,12 @@ lines for two lines of verdict; and a 674-entry open list is more than a
 - **An unusable invocation costs ONE line.** A flag typo, an unknown verb or a
   bare invocation prints `<TOKEN> REFUSED: <what was wrong>; run: <tool> help`
   (`<tool>[ <verb>]: <what was wrong>; run: <tool> help` on a tool not yet built
-  on `internal/tool`), one line per problem, and never the usage banner, which is 32 to 102 lines depending on the binary.
+  on `pkg/tool`), one line per problem, and never the usage banner, which is 32 to 102 lines depending on the binary.
   `<tool> help` prints it, on stdout, exit 0. Where this repo's guidance law
   requires a refusal to say what the input WANTS, the hint follows on one
   further line.
 
-The shape is one implementation, `internal/bounded`, used by every binary, so
+The shape is one implementation, `pkg/bounded`, used by every binary, so
 that the promise is made in one place and met in the same way — as the escape
 is.
 
@@ -252,7 +252,7 @@ is not, then `<utc revision time>-<12 hex of the revision>[-dirty]` from the vcs
 stamp, and the word `devel` for a build with none of those. **It is never a
 dotted number this repo made up**: a version string nobody can trace invites
 the comparison it cannot support. Every binary under `cmd/` takes its resolution
-order, its line and its extras from `internal/buildinfo`, and `buildinfo.Parse`
+order, its line and its extras from `pkg/buildinfo`, and `buildinfo.Parse`
 is the ONE reader of that line: writer and reader are one pair, so a tool that
 adds a fact cannot break a consumer that never heard of it.
 
@@ -271,7 +271,7 @@ tomorrow is held to the grammar on the day it appears. The verb takes no flags
 and no arguments — a second output shape is a second thing to agree about — and
 refuses at exit 2 with one line when it is given any.
 
-**A line is bounded as well as single.** `internal/oneline`'s `Escape` and
+**A line is bounded as well as single.** `pkg/oneline`'s `Escape` and
 `Field` never shorten anything, which is right for what they are, and it left
 the other half unmade: a stored subject, a ledger row or an embedded `git`
 output can be a megabyte on one line. So free-text tails are capped by their
@@ -331,7 +331,7 @@ this tool names its build.
 
 **The one-line guarantee, met here.** Every `<path>`, `<file>`, `<target>` and
 `<reason>` on the lines above, and every path an error's text carries into a
-refusal or a note, renders through `internal/oneline`; `ledger=` on
+refusal or a note, renders through `pkg/oneline`; `ledger=` on
 `CORPUS OK` is a field and prints as one token; `deny-list=` names one of
 three constants from the deny-list machinery, so it is not caller text — and
 it is a field, so it is one token whoever wrote it. Each label is spelled as
@@ -343,7 +343,7 @@ the summary line with nothing to decode. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
 one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
 and nothing else — at exit 2. `-h` after a verb is not a refusal: it prints that
-verb's help on stdout at exit 0 (internal/nsprint/verbflag). Pinned by
+verb's help on stdout at exit 0 (pkg/nsprint/verbflag). Pinned by
 `TestNoCallerPathCanForgeALine` and by the source audit every binary runs
 (`internal/oneline/audit`), which classifies every printed argument as
 quoted, numeric, literal, escaped or exempted with a stated reason, and fails
@@ -1380,7 +1380,7 @@ them a merge (`identity`), does every changed path match one of the declared
 globs (`out-of-path`), was anything added that does not belong in a
 repository (`stray-file`), and does any added line have the SHAPE of a key
 (`secret`). None of the four reads prose and none needs a model. They are one
-package with one entry point, `internal/hygiene.Check`, and this verb is its
+package with one entry point, `pkg/hygiene.Check`, and this verb is its
 door: a second copy of these rules is a second definition, and the day the two
 drift is the day a branch passes one and fails the other with nobody able to
 say which is right.
@@ -1756,7 +1756,7 @@ relocated, or kept is the writer's judgment, and the tool must never make it.
 
 **The one-line guarantee, met here.** The `<file>` on every line is a caller's
 argument and the `<claim>` or `<sentence>` beside it is the file's own text;
-both render through `internal/oneline`, so a file named with a newline or a
+both render through `pkg/oneline`, so a file named with a newline or a
 sentence holding a bidi override prints escaped inside its one line. The flag
 parser is given no stream. Pinned by `TestNoFileNameOrClaimCanForgeALine` and
 by the shared source audit.
@@ -2075,7 +2075,7 @@ same box, same bytes (quarantines sort; the clock is injected).
 
 **An event is exactly one line, and nothing a box or an argument contains can
 add a second.** The guarantee is the one stated once under Conventions, and
-this tool meets it through `internal/oneline` on every `<reason>`, `<name>`,
+this tool meets it through `pkg/oneline` on every `<reason>`, `<name>`,
 `<surface>` and `<t>` above, on the box path and the error text inside every
 refusal and note, and on the stored names a `LIFT FAIL` lists. A newline in a
 hand-edited reason therefore arrives as `\x0a` inside its own line rather than
@@ -2286,7 +2286,7 @@ caller passes is what another sees — without ever touching the box itself.
 6. Blowing either requires no confirmation, no reason-quality bar, no quorum.
 7. **An event is exactly one line, whatever the box contains** — every reason,
    surface name, timestamp, error and path printed on an event, a refusal or a
-   note is escaped through `internal/oneline` (control characters, U+2028 and
+   note is escaped through `pkg/oneline` (control characters, U+2028 and
    U+2029, and the bidi controls), and every field is one token, so nothing a
    hand-edited box or an argument holds can forge a second line or a second
    field in this grammar; `path` prints a value and is exempt by name. This
@@ -2402,7 +2402,7 @@ tail, the path escaped for one line and keeping its spaces, and the tail is neve
 fields, as Conventions says. `MEMORY CAND`'s candidate and `VERIFY INFO`'s detail sit after the
 same `: ` for the same reason. The root, the candidate and the gold file in every
 refusal, and the detail of every `verify` finding, render through
-`internal/oneline`. The flag parser is given no stream. Pinned by
+`pkg/oneline`. The flag parser is given no stream. Pinned by
 `TestNoCorpusOrCallerTextCanForgeALine` and by the shared source audit.
 
 
@@ -2888,7 +2888,7 @@ measure instead of believe.
 updates and reporting. UPDATE/APPLY/REPORT are the primary tokens. TOOL, UNKNOWN,
 CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
 informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
-refusal. All data fields use internal/oneline.
+refusal. All data fields use pkg/oneline.
 
 ## The efficiency card, nova-check
 
@@ -2953,7 +2953,7 @@ is trusted.
 
 ## Tests this spec demands
 
-These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md), promised once and met through the shared packages `internal/oneline`, `internal/bounded` and `internal/buildinfo`. Their tests are pure unit tests over bytes and strings — no network, no temp dirs, no fakes — plus one CI class test that walks the real `cmd/nova-*` binaries, and per-binary acceptance tests that run the built tools against `t.TempDir()` boxes and injected clocks; each is proven able to fail before it is trusted.
+These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md), promised once and met through the shared packages `pkg/oneline`, `pkg/bounded` and `pkg/buildinfo`. Their tests are pure unit tests over bytes and strings — no network, no temp dirs, no fakes — plus one CI class test that walks the real `cmd/nova-*` binaries, and per-binary acceptance tests that run the built tools against `t.TempDir()` boxes and injected clocks; each is proven able to fail before it is trusted.
 
 1. `repo-a-1` `TestExitCodes` — the three-purpose exit table: 0 the check ran and passed, 1 the check ran and **failed** (that is the check working), 2 could not run (missing flag, unreadable input, bad invocation).
 2. `repo-a-2` `TestNoDefaultBoxRefusesToGuess` — there are no default directories and no default files; every path comes from a flag or a named argument.
@@ -2984,7 +2984,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 27. `repo-a-27` `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no test asserts a literal wall-clock bound under ten seconds; the CI budget test refuses any such `_test.go` line except a `// wall-ok:` fake.
 28. `repo-a-28` `TestEveryToolPrintsTheOneVersionLine` — `<tool> version`/`--version` prints ONE line, exit 0, on stdout: four mandatory tokens then any number of `key=value` extras.
 29. `repo-a-29` `TestResolveOrder` / `TestTheFloorIsAWordAndNotANumber` — the field-two identity resolves ldflags stamp -> module version -> vcs `<utc time>-<12 hex>[-dirty]` -> `devel`; never a repo-made dotted number.
-30. `repo-a-30` `TestParseTakesEveryToolsLineApart` — every `cmd/` binary takes its line from `internal/buildinfo`, and `buildinfo.Parse` is the ONE reader of that line.
+30. `repo-a-30` `TestParseTakesEveryToolsLineApart` — every `cmd/` binary takes its line from `pkg/buildinfo`, and `buildinfo.Parse` is the ONE reader of that line.
 31. `repo-a-31` `TestParseRefusesWhatIsNotAVersionLine` / `TestLineRefusesAnExtraThatIsNotKeyValue` — an extra is a named fact, never a loose token; a second line shape is forbidden.
 32. `repo-a-32` `TestVersionRefusesFlagsAndArguments` — the `version` verb takes no flags and no arguments, and refuses at exit 2 with one line when it is given any.
 33. `repo-a-33` `TestCapLeavesAnythingUnderTheCeilingAlone` — free-text tails are capped at 500 bytes (`oneline.TailBytes`) for a subject, a quoted sentence or a finding's detail.
@@ -2994,7 +2994,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 37. `repo-a-37` `TestStatusReportsAndNeverGates` — `nova-fuse status` exits 0 even when a fuse is blown, because answering is `status`'s whole job and `check` is the gate.
 38. `repo-a-38` `TestSkipReportsAndDoesNotAffectExit` / `TestRuleDocIsScannedAndBannered` / `TestNotePrintedOnEveryRun` — `nova-self-talk`'s four informational second tokens (`DATED`, `SKIP`, `RULEDOC`, `NOTE`) all print on stdout.
 39. `repo-a-39` — the soft hyphen (U+00AD) and the byte order mark (U+FEFF) pass through unescaped, because they do not reorder what an operator sees.
-40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds a blank (`\x20`), and no caller path can forge a line.
+40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `pkg/oneline`; a field is one token even when it holds a blank (`\x20`), and no caller path can forge a line.
 41. `TestFailMaxWidensAndZeroPrintsAll` — every listing takes `--fail-max` (default 20, `0` = all) and prints its count line on both success and failure.
 42. `TestAFlagTypoIsOneLine` — an unknown flag after a verb is the one-line refusal `nova-check <verb>: …; run: nova-check help`, exit 2.
 43. `TestVersionLineShape` — `nova-check version` prints the Conventions build line, exit 0.
@@ -3035,7 +3035,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 78. `TestAnEmptyFragmentIsRefusedRatherThanPassingForever` (and the whole Says NO list) — empty/absolute/escaping home, ledger-as-own-home, wrong column count, separator in body, unrenderable table, indented abutting row, foreign/lone row, unterminated fence, duplicate, and `< --min-anchors` are each a `CORPUS FAIL`.
 79. `TestAllFailuresReportInOneRun` — every row is reported in one run, never first-only; an all-malformed ledger exits 1, not 2.
 80. `TestAnEmptyLedgerIsAnErrorNotAPass`, `TestAnAbsentRootIsARefusalNotACorpusWipe`, `TestARootThatIsNotADirectoryIsARefusal`, `TestLosingLedgerRowsIsItselfRed` — missing flags, non-positive `--min-anchors`, unreadable ledger, no rows, or a non-directory root is a refusal.
-81. `TestHygienePassesACleanRange`, `TestHygieneRejectsAForeignCommitter`, `TestHygieneRejectsAMergeCommit` — identity (own commits, no merges) from one package, `internal/hygiene.Check`.
+81. `TestHygienePassesACleanRange`, `TestHygieneRejectsAForeignCommitter`, `TestHygieneRejectsAMergeCommit` — identity (own commits, no merges) from one package, `pkg/hygiene.Check`.
 82. `TestHygieneVerbRefusesWithoutAnIdentity`, `TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared`, `TestValidatePathsRefusesDotDotAndBareDoubleStar`, `TestValidatePathsRefusesAGlobThatBoundsNothing` — `--identity` required/repeatable; `--paths` absent prints `paths=-`; given, it is validated (≤8 globs, no `..`, bounds something).
 83. `TestCheckRefusesRatherThanReportingClean` — exit codes 0/1/2, and a run that could not run is never reported clean.
 84. `TestHygieneRejectsAKeyShapeAndNeverPrintsIt` and `TestHygieneVerbNeverPrintsTheKey` — never prints matched secret text, only path/line/shape name; never opens `RESULT.md`.
@@ -3074,7 +3074,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 117. `TestScanCapsFindingsAndCountsTheDated` / `TestScanCapsEachClassSeparately` — one `SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>` line per elided class (line 1655).
 118. `TestDatedClaimIsReportedAndExitsZero` / `TestScanCapsFindingsAndCountsTheDated` — a dated claim is never listed; it prints as `SELFTALK DATED n=<k> files=<n>`, one line however many there are (line 1657).
 119. `TestScanCapsFindingsAndCountsTheDated` — the count line prints whichever way the run went, including on failure (line 1657).
-120. `TestNoFileNameOrClaimCanForgeALine` / `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — every `<file>` and `<claim>` renders through `internal/oneline`, so a newline filename or bidi override prints escaped (line 1667).
+120. `TestNoFileNameOrClaimCanForgeALine` / `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — every `<file>` and `<claim>` renders through `pkg/oneline`, so a newline filename or bidi override prints escaped (line 1667).
 121. `TestA1_CapabilityDenialIsStanding` — a first-person capability denial carrying negative vocabulary is STANDING (line 1676).
 122. `TestA2_DatedClaimIsARecord` — the same sentence carrying a date marker is DATED, a record, not a standing claim (line 1676).
 123. `TestSpecimen13StaysInTheFirstClass` — the two classes are disjoint and the seam is `I cannot`, which the second class does NOT re-detect (line 1684).
@@ -3179,7 +3179,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 222. `TestNoCorpusOrCallerTextCanForgeALine` — a receipt's `class=`/`name=`/`type=` are the corpus's own text, one token each.
 223. `TestACallersQueryCannotPoseAsAField` — the caller's `query=` is argv and prints escaped as one token, never a second `class=` field.
 224. `TestAReceiptsPathAndSnippetSitAfterTheFieldBoundary` — a receipt's fields end at the `: ` after `type=`; the tail is never scanned for fields.
-225. `TestNoCorpusOrCallerTextCanForgeALine` / `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — root, candidate, gold-file and verify-detail render through `internal/oneline`, so none can forge a line.
+225. `TestNoCorpusOrCallerTextCanForgeALine` / `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — root, candidate, gold-file and verify-detail render through `pkg/oneline`, so none can forge a line.
 226. `TestRootIsNeverTakenFromTheEnvironment` — `--root` is required; no environment variable and no working-directory discovery.
 227. `TestSearchSpansMultipleRoots` — `--root` is repeatable and each receipt names `root=`.
 228. `-` — `verify` takes exactly one root and refuses two.

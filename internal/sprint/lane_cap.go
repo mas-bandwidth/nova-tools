@@ -7,18 +7,18 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 )
 
 // A lane's wall time is capped by its card's tier (a-lane-is-capped-by-its-tier.w1;
-// internal/friend lane_cap.go): a friend's lane whose card reached its tier's cap is ended
+// pkg/friend lane_cap.go): a friend's lane whose card reached its tier's cap is ended
 // by her daemon, which finishes the card failed with a HOLD that names `capped at <cap>
 // (tier <t>, overrun <d>)`. Such a finish is no failure yet: the first time a primary is
 // capped it goes back to ready on the next tier up (capLadder), its failed count untouched,
 // and the tick's deal cuts its next attempt there; a second cap, or a cap with no tier
 // above it, is failed work as any other. Either way the cap and the overrun are on the work
 // card and in the take's cost record on the primary (Consumer.Cap, Consumer.Overrun). The
-// model is internal/friend/tla/LaneEnd.tla, CapRedeal and RedealOnce.
+// model is pkg/friend/tla/LaneEnd.tla, CapRedeal and RedealOnce.
 
 // The fields of a capped take: on the work card the cap and the overrun its finish named,
 // and on the primary the re-deal the cap spent (`<from> -> <to>`), once per card.

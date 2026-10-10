@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/stretchr/testify/require"
 )
 

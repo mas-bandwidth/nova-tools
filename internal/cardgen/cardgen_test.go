@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/pkg/hygiene"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 const serialFixture = `# The tests that do not open with t.Parallel()
@@ -20,8 +20,8 @@ const serialFixture = `# The tests that do not open with t.Parallel()
 cmd/nova-bus/a_test.go:TestOne serial: t.Setenv
 cmd/nova-bus/a_test.go:TestTwo serial: t.Chdir
 cmd/nova-bus/b_test.go:TestThree serial: swaps package var main.x
-internal/swarm/c_test.go:TestFour serial: os.Setenv
-internal/swarm/d_test.go:TestFive serial: t.Setenv
+pkg/swarm/c_test.go:TestFour serial: os.Setenv
+pkg/swarm/d_test.go:TestFive serial: t.Setenv
 this row has no colon
 `
 
@@ -60,7 +60,7 @@ func TestALedgerCardStopsWhenItsLedgerEntryShrinks(t *testing.T) {
 	d := Ledgers["dead-code"]
 	drows, _ := ParseLedger(d, "# ceiling: 3\ninternal/bounded 3\n")
 	dc := PlanLedger(d, drows, "", "", 0).Cards[0]
-	assert.Contains(t, Render(header, dc), "\nSTOP: the count on the ledger row for internal/bounded in internal/ci/testdata/dead_code_allowlist.txt shrinks from 3 to 0 and the class test TestDeadCode stays green, and the STEP 4 gate passes\n")
+	assert.Contains(t, Render(header, dc), "\nSTOP: the count on the ledger row for pkg/bounded in internal/ci/testdata/dead_code_allowlist.txt shrinks from 3 to 0 and the class test TestDeadCode stays green, and the STEP 4 gate passes\n")
 
 	other := Render(header, Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."})
 	assert.Contains(t, other, "\nSTOP: the test TestA is red before the change and green after it, and the STEP 4 gate passes\n")
@@ -76,9 +76,9 @@ func TestLedgerPathsAreTheFileItsPackageTestsAndTheLedger(t *testing.T) {
 	assert.Equal(t, []string{"cmd/nova-bus/a_test.go", "cmd/nova-bus/*_test.go", l.File}, p.Cards[0].Paths)
 	assert.Equal(t, "internal/ci TestEveryTestOpensWithTParallel", p.Cards[0].Test)
 	// a package row (sleeps-skips) takes the package's go files
-	pkg, _ := ParseLedger(Ledgers["sleeps-skips"], "internal/bus\tTestX\t#1 calls time.Sleep\n")
+	pkg, _ := ParseLedger(Ledgers["sleeps-skips"], "pkg/bus\tTestX\t#1 calls time.Sleep\n")
 	pp := PlanLedger(Ledgers["sleeps-skips"], pkg, "", "", 0)
-	assert.Equal(t, []string{"internal/bus/*.go", Ledgers["sleeps-skips"].File}, pp.Cards[0].Paths)
+	assert.Equal(t, []string{"pkg/bus/*.go", Ledgers["sleeps-skips"].File}, pp.Cards[0].Paths)
 	// a bare name (transcripts) adds no package glob
 	tr, _ := ParseLedger(Ledgers["transcripts"], "nova-bus      # #1654 -- collects\n")
 	tp := PlanLedger(Ledgers["transcripts"], tr, "", "", 0)
@@ -113,9 +113,9 @@ func TestALedgerPlanIsOneWaveWithSharedPathsAndNoDependencyChain(t *testing.T) {
 	rows, _ := ParseLedger(l, "# ceiling: 5\n"+
 		"cmd/nova-bus/a_test.go:TestOne serial: t.Setenv\n"+
 		"cmd/nova-bus/b_test.go:TestTwo serial: t.Chdir\n"+
-		"internal/swarm/c_test.go:TestThree serial: os.Setenv\n"+
-		"internal/swarm/d_test.go:TestFour serial: t.Setenv\n"+
-		"internal/bus/e_test.go:TestFive serial: os.Setenv\n")
+		"pkg/swarm/c_test.go:TestThree serial: os.Setenv\n"+
+		"pkg/swarm/d_test.go:TestFour serial: t.Setenv\n"+
+		"pkg/bus/e_test.go:TestFive serial: os.Setenv\n")
 	require.Len(t, rows, 5, "the plan under test covers a ledger of five rows")
 	p := PlanLedger(l, rows, "", "", 0)
 	assert.Equal(t, 1, p.Waves, "a ledger plan is one wave")
@@ -146,7 +146,7 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 		var text string
 		switch name {
 		case "sleeps-skips":
-			text = "internal/bus\tTestX\t#1 calls time.Sleep\n"
+			text = "pkg/bus\tTestX\t#1 calls time.Sleep\n"
 		case "dead-code":
 			text = "# ceiling: 3\ninternal/bounded 3\n"
 		case "fixed-waits":
@@ -199,8 +199,8 @@ func TestTheLintNamesWhatTheAddWouldRefuse(t *testing.T) {
 func TestFindingsAreOneCardPerFile(t *testing.T) {
 	t.Parallel()
 	tsv := "file\tfinding\tremedy\ttest\n" +
-		"internal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n" +
-		"internal/bus/send.go:40\tthe error is swallowed\treturn it\t\n" +
+		"pkg/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n" +
+		"pkg/bus/send.go:40\tthe error is swallowed\treturn it\t\n" +
 		"cmd/nova-bus/main.go:9\tthe banner names a verb that is gone\tdrop the line\n" +
 		"short row\n"
 	fs, skipped := ParseFindings(tsv)
@@ -209,10 +209,10 @@ func TestFindingsAreOneCardPerFile(t *testing.T) {
 	p := PlanFindings(fs, "", "", 0)
 	require.Len(t, p.Cards, 2)
 	assert.Equal(t, "finding-internal-bus-send", p.Cards[0].ID)
-	assert.Equal(t, "internal/bus TestReceiptIsFsynced", p.Cards[0].Test)
-	assert.Equal(t, []string{"internal/bus/send.go", "internal/bus/*_test.go"}, p.Cards[0].Paths)
+	assert.Equal(t, "pkg/bus TestReceiptIsFsynced", p.Cards[0].Test)
+	assert.Equal(t, []string{"pkg/bus/send.go", "pkg/bus/*_test.go"}, p.Cards[0].Paths)
 	assert.Contains(t, p.Cards[0].Task, "2 of them")
-	assert.Contains(t, p.Cards[0].Task, "At internal/bus/send.go:40: the error is swallowed. Remedy: return it.")
+	assert.Contains(t, p.Cards[0].Task, "At pkg/bus/send.go:40: the error is swallowed. Remedy: return it.")
 	assert.Equal(t, "cmd/nova-bus TestFindingMain", p.Cards[1].Test, "a finding with no test is given the one it must write")
 	assert.Equal(t, "pro", p.Tier)
 	for _, c := range p.Cards {
@@ -368,7 +368,7 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 		return ""
 	}
 	for _, paths := range [][]string{{"tla/Land.tla", "tla/MCLand.cfg"}, {"tla/*", "internal/sprint/land*.go"}, {"tla/**"}} {
-		c := Card{ID: "model-land", File: paths[0], Paths: paths, Test: "internal/tlc TestTLCRecordsCoverCurrentModels", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix the model."}
+		c := Card{ID: "model-land", File: paths[0], Paths: paths, Test: "pkg/tlc TestTLCRecordsCoverCurrentModels", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix the model."}
 		brief := Render(header, c)
 		step := gateStep(brief)
 		assert.Contains(t, step, "make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g", paths)
@@ -492,7 +492,7 @@ func TestTheDeadlineLineSaysTheJudgmentIsTheCoordinators(t *testing.T) {
 	assert.Empty(t, Lint(lp.Cards[0].ID, ledgerBrief))
 
 	// 3. Findings generator
-	findings, _ := ParseFindings("internal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n")
+	findings, _ := ParseFindings("pkg/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n")
 	fp := PlanFindings(findings, "", "", 1)
 	require.NotEmpty(t, fp.Cards)
 	findingsBrief := Render(header, fp.Cards[0])

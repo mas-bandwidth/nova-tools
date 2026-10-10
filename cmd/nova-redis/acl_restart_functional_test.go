@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 )
 
 // readyWriter is serve's stdout in the test: it keeps what was written and

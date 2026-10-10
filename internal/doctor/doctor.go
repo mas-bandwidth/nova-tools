@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // Status is one check's verdict.
@@ -259,7 +259,7 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 }
 
 // Main runs nova-doctor over args. No arguments is refused at exit 2 with the
-// verbs and `run: nova-doctor help` (internal/tool's Run), never a run: a
+// verbs and `run: nova-doctor help` (pkg/tool's Run), never a run: a
 // bare command is no invocation (docs/ONBOARDING.md point 1).
 func Main(reg *Registry, env Env, stamp string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return Tool(reg, env, stamp).Run(args, stdin, stdout, stderr)

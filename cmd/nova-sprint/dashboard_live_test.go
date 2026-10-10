@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 )
 
 // The owner, 2026-10-04: "I need to be able to always trust the dashboard"; "Golang

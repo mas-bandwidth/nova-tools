@@ -1,4 +1,4 @@
 # no-hand-printing: hand printing in a tool package; each row's count only falls
 # ceiling: 2
 cmd/nova-sprint:exit 1 the profiled run's signal handler ends the process once it has written the profile of the ticks it made: the exit is the signal path's and not a verb's answer, and it leaves when the run's signal handling moves behind the skeleton
-cmd/nova-sprint:verbflag 3 three verbs build their flag set through verbflag.New: the tool is not on internal/tool, so each verb parses its own flags until the port
+cmd/nova-sprint:verbflag 3 three verbs build their flag set through verbflag.New: the tool is not on pkg/tool, so each verb parses its own flags until the port

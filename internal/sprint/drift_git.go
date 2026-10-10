@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // GitRunner runs git in a clone and returns its output, trimmed. RunGit is the tree's; a
@@ -14,7 +14,7 @@ import (
 // one; it is the test's until the binding reads the drift, export_test.go).
 type GitRunner func(ctx context.Context, dir string, args ...string) (string, error)
 
-// RunGit is git through the tree's runner (internal/subproc): bounded by git's budget, and
+// RunGit is git through the tree's runner (pkg/subproc): bounded by git's budget, and
 // its stderr in the error.
 func RunGit(ctx context.Context, dir string, args ...string) (string, error) {
 	var out, errs bytes.Buffer

@@ -28,7 +28,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // Shape names the grammatical family a finding belongs to. It is reported beside every finding

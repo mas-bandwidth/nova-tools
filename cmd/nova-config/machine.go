@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // The machine kind's two queries beside its six verbs: self, the machine's
 // own name, and width, the width of the sprint's member on a machine. Both
 // read the one inventory and type nothing into it (docs/SPEC-CONFIG.md, "The
-// sprint's width"; internal/config/kind.go, the machine kind's fields).
+// sprint's width"; pkg/config/kind.go, the machine kind's fields).
 
 // Exit codes of machine self. They are the family's: 0 done, 2 a finding (the
 // name is no machine row) or an invocation that could not run, 3 the name or

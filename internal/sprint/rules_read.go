@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/hygiene"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // Answered by rule: a reader found it broken (docs/SPEC-SPRINT.md section 8, the rules table's

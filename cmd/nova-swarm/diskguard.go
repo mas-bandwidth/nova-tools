@@ -15,14 +15,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/gocache"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/gocache"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // THE DISK GUARD (docs/SPEC-SWARM.md, `disk-guard`; docs/FLEET.md, loops.yml).
@@ -38,7 +38,7 @@ import (
 // (fleet/loops.yml adds the row to every machine), one pass, and each pass:
 //
 //   - holds every Go build cache it knows under --cache-max-gb by the member's own trim
-//     (internal/gocache): entries used longest ago first, never one used in the last
+//     (pkg/gocache): entries used longest ago first, never one used in the last
 //     two hours, so a build running against the cache never loses what it is reading;
 //   - empties a module cache over --modcache-max-gb, as go clean -modcache does, only
 //     while no go command runs on the machine and no process holds a file in it;
@@ -353,7 +353,7 @@ func rotate(path string, keep int, dry bool) (freed int64, err error) {
 
 // buildCaches holds every Go build cache under the cap: one walk measures it, and one more,
 // only when it is over, removes its entries used longest ago until it is under the cap less
-// a fifth (internal/gocache, the member's trim, with the whole cache in one round).
+// a fifth (pkg/gocache, the member's trim, with the whole cache in one round).
 func (g *guard) buildCaches() {
 	for _, dir := range g.caches {
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {

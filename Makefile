@@ -5,7 +5,7 @@
 # `test-full`; `check` is what CI runs on a pull request.
 #
 # PKGS is the package set. It defaults to ./... and every caller may narrow it
-# with `make test PKGS=./cmd/nova-swarm ./internal/swarm`, which is how the sharded
+# with `make test PKGS=./cmd/nova-swarm ./pkg/swarm`, which is how the sharded
 # CI legs hand their shard to the same target.
 
 GO ?= go
@@ -13,7 +13,7 @@ PKGS ?= ./...
 export PKGS
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
 # `go run ./tools/ci select-packages --all` lists every package under cmd/,
-# internal/ and tools/ and drops the ones internal/pkgselect/DEPRECATED names (a
+# internal/ and tools/ and drops the ones pkg/pkgselect/DEPRECATED names (a
 # deprecated package is never tested), or fails loudly when `go list` fails; it
 # never selects nothing in silence. Recursive (`=`), and the `test` and
 # `test-functional` lines that take it are recursive too, so the go list runs
@@ -21,7 +21,7 @@ export PKGS
 # PKGS=<shard>` never runs it.
 CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all)
 
-# THE HOST GUARD, on for every target. internal/testguard makes every ssh, scp
+# THE HOST GUARD, on for every target. pkg/testguard makes every ssh, scp
 # and rsync seam in this tree panic with its command line when this is 1, so a
 # unit test that constructs production code and injects no fake refuses HERE
 # instead of reaching a bench. It is exported once, at the top, rather than per
@@ -133,7 +133,7 @@ tlc-full:
 	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s" --manual
 
 tlc-test:
-	$(GO) test -count=1 ./internal/tlc ./internal/tablemodel ./tools/tlacheck
+	$(GO) test -count=1 ./pkg/tlc ./internal/tablemodel ./tools/tlacheck
 
 tlc-groups:
 	@$(GO) run ./tools/tlacheck groups --root .
@@ -390,7 +390,7 @@ test-e2e:
 
 test-prewarm-done:
 	$(GO) test -count=1 ./tools/testmanifest
-	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./internal/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
+	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./pkg/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
 # The Lisp tier. The old nova-work's Lisp kernel, the one Lisp system, lives in
 # the repository nova-work-old, for reference only (the deprecated/

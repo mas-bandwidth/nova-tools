@@ -241,7 +241,7 @@ func TestTheServerRefusesAMalformedPacketsAsk(t *testing.T) {
 // TestAServerRefusesAQueueFlagItDoesNotKnowInTheWordsAMemberReads: a server from before
 // --packets refuses it as the verb's parse refuses any flag it does not define, and a
 // member installed ahead of its server asks again the old way on those words
-// (internal/member queueOf): they are pinned here.
+// (pkg/member queueOf): they are pinned here.
 func TestAServerRefusesAQueueFlagItDoesNotKnowInTheWordsAMemberReads(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, twoLanes()...)

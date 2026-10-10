@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -207,7 +207,7 @@ func (p *cmdPackage) text(n ast.Node) string {
 	return b.String()
 }
 
-// hasRemedy is the house definition of a remedy (internal/oneline.HasRemedy),
+// hasRemedy is the house definition of a remedy (pkg/oneline.HasRemedy),
 // read over the source text a print would print: the rule and the printers
 // agree on what a remedy is because they read one list.
 func hasRemedy(s string) bool { return oneline.HasRemedy(s) }

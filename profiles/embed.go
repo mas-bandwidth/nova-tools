@@ -3,7 +3,7 @@
 // (SPEC-SANDBOX rule 15, and the work list's "the file is embedded with go:embed").
 //
 // The go:embed directive cannot reach outside its own directory, so the embed lives beside the
-// template rather than in internal/sandbox. Nothing else belongs here: this package
+// template rather than in pkg/sandbox. Nothing else belongs here: this package
 // carries no logic, so that the only way the profile text can change is by editing the
 // template a reader can read.
 package profiles
@@ -11,7 +11,7 @@ package profiles
 import _ "embed"
 
 // DarwinTemplate is profiles/darwin.sb.tmpl verbatim, markers and all. The generator in
-// internal/sandbox replaces the five marker lines the template's own header documents.
+// pkg/sandbox replaces the five marker lines the template's own header documents.
 //
 //go:embed darwin.sb.tmpl
 var DarwinTemplate string

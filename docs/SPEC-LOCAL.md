@@ -16,7 +16,7 @@ context you chose** (`serve`), **a description the thing that will call it accep
 answers at all; `serve` and `worker` are walls.
 
 This spec is normative; if the code and this document disagree, one of them has a bug
-and the tests decide which. It is built on `internal/tool` (docs/STANDARD.md): the
+and the tests decide which. It is built on `pkg/tool` (docs/STANDARD.md): the
 banner, the help, `--json`, the refusal line and the exit table are the skeleton's, and
 are not restated. The command is `cmd/nova-local`, and the engines (`engine.go`,
 `ollama.go`), the box (`box*.go`), the shared store (`store.go`), the serving-host rule
@@ -218,7 +218,7 @@ flags; `stat`s the key file and the worker directory; writes exactly one file.
 WORKER OK engine=<e> model=<tag> out=<path> workers=1 provider=<p> harness=<cmd> deadline=<d> base=<url>
 ```
 
-The description is `nova-swarm`'s worker schema (`internal/swarm.Worker`, decoded with
+The description is `nova-swarm`'s worker schema (`pkg/swarm.Worker`, decoded with
 unknown fields refused): `name`, `provider`, `model`, `base_url`, `env_var`,
 `key_file`, `usage`, `harness`, `harness_args`, `worker_dir`, `deadline`, and `board`
 when given. It carries no `temperature`, `seed` or `num_ctx` — `serve` baked them into

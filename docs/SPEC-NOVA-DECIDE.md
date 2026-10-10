@@ -62,7 +62,7 @@ A backend is `Name()` and `Ask(ctx, schema, state) (answers, usage, error)`.
   number is never read as 0, which would be a confident "no". The HTTP client is
   a `Send` function injected into the backend, so the decision is made apart
   from its transport and every test runs on a fake; `HTTPSend`, the real one, is
-  the only code in `internal/decide` that opens a socket, and its test answers
+  the only code in `pkg/decide` that opens a socket, and its test answers
   through an `http.RoundTripper` in process. The key is read from the
   environment variable `JEV_API_KEY`, which `nova-secrets exec --only
   JEV_API_KEY -- nova-decide ...` sets; it is never a flag, a file, or printed.
@@ -118,7 +118,7 @@ the first reader of the record beside calibrate.
 - `--judgments <dir>` with `--log <file>`: the judgment files (`<judgment id>.md`), each labelled by the verb of the last line of a `nova-sprint log --json` export whose `answers` names the judgment, kind `judgment`. A judgment nothing answers is counted as `unanswered` and not recorded.
 - `--reports <glob>`: `REPORT.md` files whose first line is `Verdict: HOLD`, label `HOLD`, kind `report`.
 
-An item's id is its kind and the hash of its absolute source path and content, so a second import adds nothing and an edited source is a new item. The import is one write under the record's lock. It prints `IMPORT OK` with `<kind>_new` and `<kind>_existing` per kind, and `unanswered`. The model is `internal/decide/import.go`; the pin is `TestImportIsIdempotentAndCountsPerKind`.
+An item's id is its kind and the hash of its absolute source path and content, so a second import adds nothing and an edited source is a new item. The import is one write under the record's lock. It prints `IMPORT OK` with `<kind>_new` and `<kind>_existing` per kind, and `unanswered`. The model is `pkg/decide/import.go`; the pin is `TestImportIsIdempotentAndCountsPerKind`.
 
 ## 5. Calibration
 
@@ -180,7 +180,7 @@ choice has none; a gate decides on
 
 ## 7. Output, refusals and exits
 
-Every verb prints one result through internal/tool: the typed line
+Every verb prints one result through pkg/tool: the typed line
 (`READ OK id=... verdict=... p=...`, `ATTEMPT OK ... class=... p=...`,
 `GRADE OK ... grade=... p=...`, one `<VERB> ANSWER` item per question) or,
 with `--json`, the same value as one JSON object. A choice with an empty
@@ -393,7 +393,7 @@ is empty by default, the grade a hint; 0.7 is the starting point.
 ### 11.1 Few-shot calibration
 
 `grade --examples <jsonl> [--held-out <ids>] [--seed <s>]` puts ten landed cards per class
-ahead of the card under grade (`GradeStateWith`, `PickExamples`, `internal/decide/gradefewshot.go`).
+ahead of the card under grade (`GradeStateWith`, `PickExamples`, `pkg/decide/gradefewshot.go`).
 Each example is one line: the brief's heading, its `PATHS`, its `KIND` and the label of its
 outcome, never the brief's text. The labels are `flash` (landed on flash within 2 attempts),
 `pro` (needed pro) and `heavy` (needed heavy). The library reads no sprint store: the caller
@@ -481,7 +481,7 @@ machine's environment (a store absent for that run), not the card's under either
 but a label the record cannot yet tell from pre-existing is the reason the bars ship
 empty. With the base not run,
 p(caused) 0.8, p(pre-existing) 0.522 (no separation), p(flaky) 0.72. Both records are
-`internal/decide/testdata/gate-calibration-base-run.jsonl` and `...-base-not-run.jsonl`,
+`pkg/decide/testdata/gate-calibration-base-run.jsonl` and `...-base-not-run.jsonl`,
 pinned by `TestTheGateCalibrationRecordsSupportTheBars`.
 
 The sprint asks it through the library (docs/SPEC-SPRINT.md section 5, the gate verdict,
@@ -569,10 +569,10 @@ reworked again. One ask may take `--timeout` (60s by default, `JevTimeout`); an 
 past it is that card's `failed` row and records nothing. Its outcome is attached once the card's state says it (`JudgmentOutcome`):
 `landed`, `dropped` (off the table), or `came-back` (another judgment open on it).
 
-The in-sample fixture (`internal/decide/testdata/judgment-insample.jsonl`) is 100
+The in-sample fixture (`pkg/decide/testdata/judgment-insample.jsonl`) is 100
 judgments the coordinator answered on 2026-10-02 and 03, read from the sprint's log,
 each with the coordinator's verb and the card's outcome; the record of Jev's answers to
-them is `internal/decide/testdata/judgment-record.jsonl`, and
+them is `pkg/decide/testdata/judgment-record.jsonl`, and
 `TestJudgmentInSampleAgreement` recomputes the agreement it states. Each state is
 built by `JudgmentState` from the card's log up to the second the coordinator answered,
 as answer builds it live (one card a judgment), with the fleet's machine,

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 // TestLandReturnsAnEmptyCommitLandingToReview tests that land refuses a landing whose head
@@ -55,7 +55,7 @@ func TestLandReturnsAnEmptyCommitLandingToReview(t *testing.T) {
 	r.clean()
 }
 
-// commitEmpty is one empty commit under the shared test identity (internal/testgit).
+// commitEmpty is one empty commit under the shared test identity (pkg/testgit).
 func commitEmpty(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("git", "commit", "--allow-empty", "-q", "-m", "empty commit for s1-1")
