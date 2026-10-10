@@ -76,7 +76,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight docs-check test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -113,12 +113,15 @@ help:
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
-	@echo "make docs-check    run docs CI: docs guards, link check, CLI check, terminology lint"
 
+# tdocs-docs-ci-b.w9: the docs gate the docs workflow runs on every docs change.
+# One command a line, no shell control flow: the internal/docs tests, the link
+# check, and the generated CLI reference check (the clidoc target builds the
+# tool binaries and then runs the reference generator over them).
 docs-check:
-	$(GO) test -count=1 ./internal/docs
+	$(GO) test -count=1 ./internal/docs/...
 	$(GO) run ./cmd/nova-check links --dir .
-	$(GO) run ./tools/clidoc --bin ./bin
+	$(MAKE) clidoc
 
 map:
 	$(GO) run ./tools/agentsmap

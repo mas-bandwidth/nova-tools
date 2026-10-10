@@ -1,17 +1,17 @@
 # Docs CI for nova-tools.
 #
 # Why this exists: documentation breaks quietly unless something runs on every
-# change. This workflow ensures that docs/**, READMEs, verb help, and CLI
-# reference docs stay in sync with the tools.
+# change. This workflow runs the docs gates on every pull request and push that
+# touches docs/**, a README, a verbhelp.go or tools/clidoc/**.
 #
-# When it runs: on pull requests and pushes that touch docs/**, **/README.md,
-# cmd/*/verbhelp.go or tools/clidoc/**.
+# It follows .github/workflows/ci.yml: a self-hosted Linux runner that already
+# carries Go, so there is no setup-go download and no build-cache step. A
+# self-hosted runner is persistent and keeps its Go build cache on disk, so an
+# actions/cache or setup-go cache there is pure cost (ci.yml explains the rule).
 #
-# What it runs: make docs-check, which runs:
-#   - internal/docs tests (docs guards and map generation)
-#   - nova-check links --dir . (link check)
-#   - make clidoc (generated CLI reference check)
-#   - glossary/terminology lint (tdocs-glossary-terminology-lint)
+# What it runs: `make docs-check`, which runs the internal/docs tests, the link
+# check and the generated CLI reference check. Every step is one command; no
+# step or recipe line carries shell control flow.
 
 name: docs
 
@@ -31,8 +31,8 @@ on:
 
 jobs:
   docs-check:
-    runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 5
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 2
     steps:
       - name: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -40,19 +40,7 @@ jobs:
           fetch-depth: 2
 
       - name: use the installed Go toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
-          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
-          sdk=
-          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
-          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true)
-          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
-          done
-          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
-          go version
+        run: go version
 
       - name: docs-check
         run: make docs-check
