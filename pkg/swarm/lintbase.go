@@ -17,7 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
-// THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
+// THE BASE CHECKS: SIX RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
 //
 // The first four are each one class of the 2026-09-22 sprint's failed cards (a friend's
 // reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
@@ -39,6 +39,9 @@ import (
 //	               2). 321 of 543 post-tune ledger rows read `donewhen missing`: the
 //	               card never named a control a test could fail. "applied cleanly" and
 //	               "make preflight" are English outcomes, not controls.
+//	personal-name  a SOURCE or PATHS line names no person in prose; the names come from
+//	               the caller and a token with a slash or a `.md` suffix is a path, not a
+//	               name (docs/SPEC-CARD-CONTRACT.md §2). `nova-sprint add` runs it too.
 //
 // NO EVIDENCE IS NOT NEGATIVE EVIDENCE. A check whose evidence was not handed over
 // (no repository, a base-sha the repository does not hold, no leg table, no p95
@@ -46,12 +49,16 @@ import (
 // excerpt, naming what to hand over. `--base-check` is the ask for these checks,
 // and a check that could not run is not a check that passed.
 
-// BaseCheck is the evidence the five checks read. A nil table or an empty Repo
+// BaseCheck is the evidence the checks read. A nil table or an empty Repo
 // means that evidence was not handed over.
 type BaseCheck struct {
 	Repo string    // a git repository holding the card's base-sha
 	Legs FleetLegs // the fleet's leg table
 	P95  KindP95   // p95 wall seconds of DONE cards, by KIND; `*` answers for any kind
+	// Names are the personal names a brief may not carry in prose, from the caller: the
+	// coordinator's, the owner's and the friends table's. A name inside a path token (a
+	// slash or a `.md` suffix) is not a personal name (docs/SPEC-CARD-CONTRACT.md §2).
+	Names []string
 }
 
 // FleetLegs is the set of legs some bench of the fleet carries, lower case.
@@ -70,7 +77,7 @@ var CardBaseRemedies = map[string]string{
 	"leg-in-fleet":       "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>`",
 	"donewhen-test-name": "DONE-WHEN: names the runner and a literal test that does not exist at the card's base-sha -- `go test ./<pkg> -run <TestName>`, `pytest <file>::<test_name>` (or `-k <test_name>`), `cargo test <name>` -- so the test can be red on base and green at head; an English outcome (\"applied cleanly\", \"make preflight\") or a runner with no test named is not a control, and the repository holding base-sha is handed over with `--repo <dir>`",
 	"deadline-p95":       "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first",
-	"personal-name":      "SOURCE and PATHS lines may not contain file paths with a person's name (like `/home/alice/...`); paths with a slash or ending in `.md` are ignored",
+	"personal-name":      "a SOURCE or PATHS line refuses a person's name in prose; a token containing a slash or ending in `.md` is a path, not a name, and a name matches only as a whole word (`every` is not `eve`). The names come from the caller -- the coordinator, the owner and the friends table -- so name the role (the owner, a friend), never the person",
 }
 
 // LintCardBase returns the base-check findings for one card, in the order the
@@ -239,14 +246,15 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 		}
 	}
 
-	// 6. personal-name.
+	// 6. personal-name: the names come from the caller and a path token is not a name
+	// (docs/SPEC-CARD-CONTRACT.md §2).
 	source, sourceLine := h["SOURCE"].value, h["SOURCE"].line
 	paths, pathsLine := h["PATHS"].value, h["PATHS"].line
-	if source != "" && hasPersonalName(source) {
-		add("personal-name", sourceLine, fmt.Sprintf("SOURCE %q contains a person's name in a path", oneLineCap(source, 80)))
+	if name, ok := hasPersonalName(source, bc.Names); ok {
+		add("personal-name", sourceLine, fmt.Sprintf("SOURCE %q names the person %q in prose", oneLineCap(source, 80), name))
 	}
-	if paths != "" && hasPersonalName(paths) {
-		add("personal-name", pathsLine, fmt.Sprintf("PATHS %q contains a person's name in a path", oneLineCap(paths, 80)))
+	if name, ok := hasPersonalName(paths, bc.Names); ok {
+		add("personal-name", pathsLine, fmt.Sprintf("PATHS %q names the person %q in prose", oneLineCap(paths, 80), name))
 	}
 	return out
 }
@@ -736,21 +744,35 @@ func tableRows(p string) ([][]string, error) {
 	return rows, nil
 }
 
-// hasPersonalName reports whether v contains a person's name in a file path.
-// Path tokens (anything containing a slash or ending in .md) are ignored.
-func hasPersonalName(v string) bool {
-	// Ignore path tokens: anything containing a slash or ending in .md
-	if strings.Contains(v, "/") || strings.HasSuffix(strings.ToLower(v), ".md") {
-		return false
+// personalValueSplitRE breaks a header value on its blanks and commas; personalWordRE is
+// one word of a token, a run of letters, so a name is matched whole and "every" is never
+// read as "eve".
+var (
+	personalValueSplitRE = regexp.MustCompile(`[,\s]+`)
+	personalWordRE       = regexp.MustCompile(`\p{L}+`)
+)
+
+// hasPersonalName returns the caller's name that v carries in prose, and whether v carries
+// one. The names come from the caller -- the coordinator, the owner and the friends table
+// -- and are never a list typed here (docs/SPEC-CARD-CONTRACT.md §2, `personal-name`: "the
+// names come from the caller"). A path token, anything containing a slash or ending in
+// `.md`, is not a personal name and is skipped; a name matches only as a whole word, so a
+// name inside an ordinary word (`every`, `summary`) is not the name.
+func hasPersonalName(v string, names []string) (string, bool) {
+	if len(names) == 0 {
+		return "", false
 	}
-	// Check for common person name patterns in prose (not in paths)
-	// This is a simple heuristic: look for lowercase words that look like names
-	// that might appear in prose about a person
-	personalWords := []string{"alice", "bob", "charlie", "dave", "eve", "frank", "grace", "heidi", "ivan", "judy", "kai", "laura", "mallory", "nina", "oscar", "peggy", "quinn", "randy", "sybil", "trent", "ursula", "victor", "walter", "xena", "yuri", "zoe", "john", "mary", "jane", "mike", "joe", "sarah", "tom", "lisa", "david", "linda", "richard", "patricia", "charles", "jennifer", "robert", "elizabeth", "michael", "susan", "william", "jessica", "james", "judy"}
-	for _, word := range personalWords {
-		if strings.Contains(strings.ToLower(v), word) {
-			return true
+	for _, tok := range personalValueSplitRE.Split(v, -1) {
+		if strings.Contains(tok, "/") || strings.HasSuffix(strings.ToLower(tok), ".md") {
+			continue // a path token is not a personal name
+		}
+		for _, word := range personalWordRE.FindAllString(tok, -1) {
+			for _, name := range names {
+				if strings.EqualFold(word, name) {
+					return name, true
+				}
+			}
 		}
 	}
-	return false
+	return "", false
 }

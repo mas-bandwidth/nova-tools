@@ -105,4 +105,12 @@
     retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
     empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
     stale session never carries across a clear."
-   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")))
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")
+  (fix "card-lint-ignores-names-in-paths" :release "v1.2.6" :status "in-progress"
+  :title "The card lint reads a person's name in prose, not a path"
+  :text "A brief whose SOURCE or PATHS names a path under a person's home (a ledger at /home/<name>/...)
+    drew personal-name, though a path is not a person; the check skips a token with a slash or a `.md`
+    suffix, matches a name only as a whole word (`every` is not `eve`), and takes the names from the
+    caller -- the coordinator, the owner and the friends table -- so a bare name in prose is refused
+    and an ordinary word that merely holds a name is not."
+  :origin "dogfood 2026-10-10: add refused briefs over a path segment")))

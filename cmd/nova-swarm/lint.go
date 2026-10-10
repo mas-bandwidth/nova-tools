@@ -71,9 +71,10 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // live in pkg/swarm/lintheader.go, beside a note on the
 // gate parser they have to agree with,
 // and `depends-on`, which fires only under `--typed`, and the base checks of
-// pkg/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
-// `deadline-p95` -- with `donewhen-test-name`, which fire only under
-// `--base-check`.
+// pkg/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet`,
+// `deadline-p95` and `personal-name` -- with `donewhen-test-name`, which fire
+// only under `--base-check`; `personal-name` reads its names from the caller,
+// and `nova-sprint add` runs the same check on every brief (pkg/swarm/lintpaths.go).
 //
 // The child rules of pkg/swarm/lintchild.go -- one `rule-<name>` per sentence of the
 // brief the coordinator gives every child and one `step-<what>` per forbidden command --

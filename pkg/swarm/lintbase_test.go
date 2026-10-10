@@ -233,28 +233,48 @@ func TestTestDefinedAtRefusesATreeThatIsNotAFullSha(t *testing.T) {
 	}
 }
 
-// TestPersonalNameCheck tests that the personal-name check refuses SOURCE or PATHS
-// lines containing a person's name in a file path, but ignores path tokens.
+// TestPersonalNameCheck pins the personal-name check: it refuses a person's name in
+// prose on a SOURCE or PATHS line, takes the names from the caller, and reads a path
+// token (a slash or a `.md` suffix) and an ordinary word that merely holds a name as
+// not the name. The check is the one `nova-sprint add` runs too (lintpaths.go).
 func TestPersonalNameCheck(t *testing.T) {
 	t.Parallel()
 
-	// SOURCE without a slash or .md suffix containing a person's name should be refused.
-	cardWithPersonalName := baseCard(map[string]string{"SOURCE": "home alice project README"})
-	fs := findingsFor(LintCardBase(cardWithPersonalName, BaseCheck{}), "personal-name")
-	require.Len(t, fs, 1, "SOURCE with person's name should be refused, got %v", fs)
-
-	// SOURCE with a path token (containing a slash) should pass.
-	cardWithPathToken := baseCard(map[string]string{"SOURCE": "home/alice/README.md"})
-	fs = findingsFor(LintCardBase(cardWithPathToken, BaseCheck{}), "personal-name")
-	require.Empty(t, fs, "SOURCE with path token should pass, got %v", fs)
-
-	// PATHS with a path token (ending in .md) should pass.
-	cardWithPathS := baseCard(map[string]string{"PATHS": "home/bob/README.md"})
-	fs = findingsFor(LintCardBase(cardWithPathS, BaseCheck{}), "personal-name")
-	require.Empty(t, fs, "PATHS with path token should pass, got %v", fs)
-
-	// PATHS without a person's name should pass.
-	cardWithPathsWithoutPersonalName := baseCard(map[string]string{"PATHS": "pkg/foo, cmd/bar"})
-	fs = findingsFor(LintCardBase(cardWithPathsWithoutPersonalName, BaseCheck{}), "personal-name")
-	require.Empty(t, fs, "PATHS without person's name should pass, got %v", fs)
+	for _, tc := range []struct {
+		name   string
+		header map[string]string
+		names  []string
+		want   string // a phrase the excerpt must carry; "" means no finding
+	}{
+		{name: "a prose name is refused",
+			header: map[string]string{"SOURCE": "alice keeps the ledger"}, names: []string{"alice"},
+			want: `names the person "alice" in prose`},
+		{name: "a path under a named home is not a name",
+			header: map[string]string{"SOURCE": "home/alice/README.md"}, names: []string{"alice"}},
+		{name: "a path beside a prose name is still the prose",
+			header: map[string]string{"SOURCE": "alice keeps the ledger at /home/alice/ledger.md"}, names: []string{"alice"},
+			want: `names the person "alice" in prose`},
+		{name: "PATHS path tokens carry no prose name",
+			header: map[string]string{"PATHS": "pkg/foo, cmd/bar"}, names: []string{"alice"}},
+		{name: "a bare name on a PATHS entry is prose",
+			header: map[string]string{"PATHS": "pkg/foo, alice"}, names: []string{"alice"},
+			want: `names the person "alice" in prose`},
+		{name: "a name inside an ordinary word is not the name",
+			header: map[string]string{"SOURCE": "every change needs a test"}, names: []string{"eve"}},
+		{name: "a whole word that is the name is refused",
+			header: map[string]string{"SOURCE": "eve reviews the change"}, names: []string{"eve"},
+			want: `names the person "eve" in prose`},
+		{name: "no names handed over checks nothing",
+			header: map[string]string{"SOURCE": "alice keeps the ledger"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := findingsFor(LintCardBase(baseCard(tc.header), BaseCheck{Names: tc.names}), "personal-name")
+			if tc.want == "" {
+				assert.Empty(t, fs, tc.name)
+				return
+			}
+			require.Len(t, fs, 1, tc.name)
+			assert.Contains(t, fs[0].Excerpt, tc.want, tc.name)
+		})
+	}
 }
