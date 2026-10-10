@@ -69,5 +69,3 @@ func TestMainCoverStringSliceSetBacksTheRequireFlagThroughTheParser(t *testing.T
 		})
 	}
 }
-
-

@@ -24,8 +24,6 @@ var sopsIdentityEnv = []string{
 	"SOPS_KEYSERVICE",
 }
 
-
-
 func runExecCLI(args []string, s streams) int {
 	// The flags stand before '--' and the command after it. With no '--' every argument
 	// is a flag, and the missing command is named with the missing flags, in one line.
@@ -52,8 +50,6 @@ func runExecCLI(args []string, s streams) int {
 	if err := parseVerb(fs, flagArgs); err != nil {
 		return s.refuse("exec", 125, err)
 	}
-
-
 
 	if len(fs.Args()) > 0 {
 		return s.refuse("exec", 125, fmt.Errorf("unexpected argument %s before '--'; the command goes after '--': nova-secrets exec <flags> -- <cmd> [args...]", oneline.Quote(fs.Args()[0])))

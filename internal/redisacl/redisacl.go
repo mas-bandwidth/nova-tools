@@ -51,7 +51,7 @@ var Families = []Family{
 	{"machines", []string{"machine:*", "machines"}, "internal/config MachineKey, MachineCeilingKey, MachinesKey"},
 	{"beats", []string{"bench:*"}, "internal/config BeatKey: a machine's measured facts"},
 	{"friends", []string{"friends", "friends:*", "friend:*:beat", "friend:*:desired", "friend:*:roles"}, "internal/config FriendBeatKey, FriendsKey: a friend's beat, desired slots, mode and roles"},
-{"friendWidth", []string{"friend:*:width"}, "internal/config FriendBeatKey: a friend's working count"},
+	{"friendWidth", []string{"friend:*:width"}, "internal/config FriendBeatKey: a friend's working count"},
 	{"fleet", []string{"fleet:*"}, "internal/config FleetKey"},
 	{"loops", []string{"loops", "loop:*"}, "internal/config LoopsKey, LoopKey"},
 	{"routes", []string{"routes", "route:*"}, "internal/config RoutesKey, RouteKey"},
