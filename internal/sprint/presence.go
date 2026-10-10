@@ -224,7 +224,9 @@ func FriendStatus(f FriendPresence, now time.Time) string {
 // "finish 12m0s ago"); for down, what is missing, each with the age of the
 // last one seen, and the beat's age when she beats, so a row read down while
 // her daemon beats says why; for a beat that says down, until when and why;
-// for held, "held".
+// for held, "held". The health pong, the beat proof and the finish are the
+// bound session's only: a rebind drops the previous session's before this is
+// called, because either of those still inside its window reads up.
 func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if f.Held {
 		return Held, "held"

@@ -886,7 +886,7 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 			proofs = append(proofs, words.Pong)
 		}
 		mu.Unlock()
-		return "", nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 	}
 	var downs []string
 	w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string, _ friend.BeatWords) error {
@@ -1102,7 +1102,7 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 	beats := 0
 	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		beats++
-		return "", nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 	}
 	stopAfter(&w, &cancel, 5*time.Minute)
 	dir := t.TempDir()

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +19,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
+
+// target-invalid and target-state are beat flags of a gone session. The
+// server's check is friendBeatFlags (serve.go); these keys are added beside
+// the beat that sends them, and the refusal list is rebuilt to name them.
+func init() {
+	friendBeatFlags["--target-invalid"] = oneLineText
+	friendBeatFlags["--target-state"] = oneLineText
+	friendBeatServed = strings.Join(slices.Sorted(maps.Keys(friendBeatFlags)), ", ")
+}
 
 // The friends table (docs/SPEC-SPRINT.md section 1; the owner, 2026-10-02: "add a
 // friends table, above fleet and below merge. friends | status for now.
@@ -237,7 +247,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"], Session: r.Fields["session"]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -374,6 +384,8 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	run := fs.String("run", "", "her daemon's run, its generation: a check proves only when its answer names the run that asked it")
 	until := fs.String("until", "", "her daemon's word that she is down until then, RFC3339: her harness at its usage limit or out of credits")
 	reason := fs.String("reason", "", "why she is down until --until, as her daemon read it")
+	gone := fs.String("target-invalid", "", "the session her daemon delivers into, found gone (archived, deleted, moved, or not her row's): her row reads target-invalid, never down, until a beat without it")
+	goneState := fs.String("target-state", "", "with --target-invalid: the state her daemon found the session in, and its detail")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -412,6 +424,13 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		rep.Until, rep.Reason = at.UTC().Truncate(time.Second), oneline.Escape(*reason)
 	case *reason != "":
 		return refuse(stderr, name, "--reason says why she is down, and wants --until")
+	}
+	var target *store.GoneTarget
+	switch {
+	case *gone != "":
+		target = &store.GoneTarget{Session: oneline.Escape(*gone), State: oneline.Escape(*goneState)}
+	case *goneState != "":
+		return refuse(stderr, name, "--target-state says what her daemon found the session in, and wants --target-invalid")
 	}
 	if *active != "" {
 		at, err := time.Parse(time.RFC3339, *active)
@@ -465,7 +484,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, proof, err := st.FriendBeatProof(ctx, friend, rep, given, words)
+	b, proof, err := st.FriendBeatFull(ctx, friend, rep, given, words, target)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
@@ -509,6 +528,10 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		}
 		line += fmt.Sprintf(" row_token_cap=%d", capN)
 		facts["row_token_cap"] = capN
+		if spec.Session != "" { // the session her daemon must deliver into: any other is target-invalid
+			line += " row_session=" + spec.Session
+			facts["row_session"] = spec.Session
+		}
 	}
 	for _, n := range []struct {
 		key string
@@ -543,6 +566,10 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if len(rep.Running) > 0 {
 		line += " running=" + strings.Join(rep.Running, ",")
 		facts["running"] = rep.Running
+	}
+	if target != nil {
+		line += " target_invalid=" + oneline.Field(target.Session)
+		facts["target_invalid"], facts["target_state"] = target.Session, target.State
 	}
 	if !rep.Until.IsZero() {
 		line += " down=true until=" + rep.Until.Format(time.RFC3339)

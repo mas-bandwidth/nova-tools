@@ -200,7 +200,22 @@ release without it leaves the width as it is;
 statuses are `up`, `held` and `down`, the same words as the fleet table's, and
 nothing else is ever shown (the owner, 2026-10-04 11:42 AM ET: "a friend is up
 or down"; "anything but up is down"; "sleeping = down"; held means exactly one
-thing, "the coordinator has specifically decided to hold this friend"). A
+thing, "the coordinator has specifically decided to hold this friend"), with
+one exception, `target-invalid` (the card a-gone-session-target-is-invalid-not-retried,
+2026-10-06): while her daemon's beat says the session it delivers into is gone
+(`friend beat --target-invalid <id> --target-state <state>`; archived, deleted,
+moved, or not the session her nova-config row names: docs/SPEC-FRIEND.md, "A
+gone session target") her row reads `target-invalid`, not `down`, because the
+remedy is hers (`nova-friend rebind`) and not a wait. It is not `up`, so
+nothing is dealt to her; `held` comes first; a beat without the flag clears it
+(`TestAGoneTargetReadsTargetInvalidOnHerRow`). A rebind that changes a session
+already set on her roster (friend sync) drops every presence signal of that
+session: the beat's proof, the friend-health session pong, and the finish.
+FriendEvidence reads the pong or the finish as up inside its window, so leaving
+either would keep her row up and eligible before the new session answers a
+check (`TestAReboundSessionDropsTheOldProofUntilANewCheck`,
+`TestAReboundDropsTheHealthPongAndTheFinish`). Her beat also answers her row's
+`session` as `row_session=<id>`, beside `row_mode` and `row_width`. A
 friend held or down with a reason shows it in her status cell, `down (opus
 rate limited, until 6:00 PM)`: `friend down <friend> [--reason <text>]
 [--until <RFC3339>]` records why and when the coordinator expects her back

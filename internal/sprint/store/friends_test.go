@@ -203,3 +203,171 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	assert.Equal(t, 0, snap.Fleet.Count(amyRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-4.w1").Col)
 }
+
+// A beat that says her named session is gone (friend beat --target-invalid) reads
+// target-invalid on her row, its own word and never down, even with a session pong in
+// its window: she is not up, the seat's why names the rebind, and her row's session
+// rides the roster (friend sync) for her beat to answer. A beat without it clears it;
+// the coordinator's hold comes first.
+func TestAGoneTargetReadsTargetInvalidOnHerRow(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "stella", Width: 2, Session: "019a-new"}})
+	require.NoError(t, err)
+	spec, err := h.st.FriendSpecOf(h.ctx, "stella")
+	require.NoError(t, err)
+	assert.Equal(t, "019a-new", spec.Session)
+	_, _, _, err = h.health("stella", "tester", sprint.Up, h.now, 1)
+	require.NoError(t, err)
+	_, err = h.st.FriendBeatGone(h.ctx, "stella", sprint.FriendReport{}, nil, time.Time{}, &GoneTarget{Session: "01a10e84", State: "archived: the thread's rollout is under archived_sessions"})
+	require.NoError(t, err)
+
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, TargetInvalid, rows[0].Status)
+	assert.NotEqual(t, sprint.Down, rows[0].Status)
+	assert.Contains(t, rows[0].Evidence, "01a10e84")
+	assert.Contains(t, rows[0].Evidence, "nova-friend rebind --as stella --session <id>")
+	seats, err := h.st.FriendSeats(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, TargetInvalid, seats[0].Status, "nothing is dealt to her")
+	assert.Contains(t, seats[0].Why, "target is invalid")
+
+	_, err = h.st.FriendBeat(h.ctx, "stella")
+	require.NoError(t, err)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Up, rows[0].Status, "a beat without it clears it")
+
+	_, err = h.st.FriendBeatGone(h.ctx, "stella", sprint.FriendReport{}, nil, time.Time{}, &GoneTarget{Session: "01a10e84", State: "archived"})
+	require.NoError(t, err)
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "stella", true, "c", "", time.Time{}, 0))
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Held, rows[0].Status, "the hold comes first")
+}
+
+// The beat record keeps her proof on its outer pong, and that field owns the json
+// name the beat's Proof also uses. Her row reads the beat, so an answered check is up.
+func TestAProvedBeatReadsUpFromTheRecordsPong(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}})
+	require.NoError(t, err)
+	_, proof, err := h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Check: "n1", Pong: "n1"})
+	require.NoError(t, err)
+	require.True(t, proof.Proved)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Up, rows[0].Status)
+	assert.Equal(t, proof.Proof, rows[0].Proof)
+	assert.Contains(t, rows[0].Evidence, "session proof")
+}
+
+// A rebind that changes a session already on her roster drops that session
+// proof. Her row is not up on the old answer before a check through the new
+// session, and a pong of the old nonce does not restore it.
+func TestAReboundSessionDropsTheOldProofUntilANewCheck(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_old"}})
+	require.NoError(t, err)
+	_, proof, err := h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Check: "n1", Pong: "n1"})
+	require.NoError(t, err)
+	require.True(t, proof.Proved)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Up, rows[0].Status)
+	assert.False(t, rows[0].Proof.IsZero())
+
+	_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"amy"}, updated)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rows[0].Status, "the old session proof is not evidence after rebind")
+	assert.True(t, rows[0].Proof.IsZero())
+
+	_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Pong: "n1"})
+	require.NoError(t, err)
+	assert.False(t, proof.Proved, "the nonce the old session was asked is not evidence")
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rows[0].Status)
+
+	_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r2", Check: "n2", Pong: "n2"})
+	require.NoError(t, err)
+	require.True(t, proof.Proved)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Up, rows[0].Status, "a check through the new session proves her")
+}
+
+// A rebind immediately after a health pong, and immediately after a finish,
+// drops those signals with the beat's proof. FriendEvidence reads either as
+// up inside its window, so clearing only the beat record's pong would leave
+// her up and eligible before the new session answers a check.
+func TestAReboundDropsTheHealthPongAndTheFinish(t *testing.T) {
+	t.Parallel()
+	t.Run("health pong", func(t *testing.T) {
+		h := newHarness(t)
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_old"}})
+		require.NoError(t, err)
+		_, _, _, err = h.health("amy", "tester", sprint.Up, h.now, 1)
+		require.NoError(t, err)
+		rows, err := h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, sprint.Up, rows[0].Status)
+		assert.Equal(t, "session pong 0s ago", rows[0].Evidence)
+
+		_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"amy"}, updated)
+		_, ok, err := h.m.GetKey(h.ctx, friendHealthKey("amy"))
+		require.NoError(t, err)
+		assert.False(t, ok, "the old session pong is dropped")
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, rows[0].Status, "a health pong of the old session is not up")
+		assert.NotContains(t, rows[0].Evidence, "session pong")
+		seats, err := h.st.FriendSeats(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, seats[0].Status, "not eligible for new work")
+
+		_, proof, err := h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Check: "n1", Pong: "n1"})
+		require.NoError(t, err)
+		require.True(t, proof.Proved)
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Up, rows[0].Status, "a check through the new session proves her")
+	})
+	t.Run("finish", func(t *testing.T) {
+		h := newHarness(t)
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_old"}})
+		require.NoError(t, err)
+		require.NoError(t, h.st.FriendFinished(h.ctx, "amy", h.now))
+		rows, err := h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, sprint.Up, rows[0].Status)
+		assert.Equal(t, "finish 0s ago", rows[0].Evidence)
+
+		_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"amy"}, updated)
+		_, ok, err := h.m.GetKey(h.ctx, friendFinishKey("amy"))
+		require.NoError(t, err)
+		assert.False(t, ok, "the old finish is dropped")
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, rows[0].Status, "a finish of the old session is not up")
+		assert.NotContains(t, rows[0].Evidence, "finish 0s ago")
+		seats, err := h.st.FriendSeats(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, seats[0].Status, "not eligible for new work")
+	})
+}
