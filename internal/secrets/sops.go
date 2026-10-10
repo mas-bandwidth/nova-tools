@@ -3,6 +3,7 @@ package secrets
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"os"
 	"regexp"
 	"strconv"
@@ -73,7 +74,7 @@ func sopsDecryptFailure(keyPath, filePath, stderr string) string {
 // CheckSopsVersion probes the sops binary with --disable-version-check to prevent network calls.
 func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 	if !filepathIsExecutable(sopsPath) {
-		return "", fmt.Errorf("sops binary %s is absent or not executable; run: brew install sops", sopsPath)
+		return "", fmt.Errorf("sops binary %s is absent or not executable; run: %s", sopsPath, sopsRemedy())
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", sopsPath, "--version", "--disable-version-check")
@@ -96,7 +97,7 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 3 || (major == 3 && minor < 13) || (major == 3 && minor == 13 && patch < 3) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: brew upgrade sops", major, minor, patch, MinSopsVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinSopsVersion, sopsRemedy())
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
@@ -105,7 +106,7 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 // CheckAgeKeygenVersion probes the age-keygen binary.
 func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error) {
 	if !filepathIsExecutable(ageKeygenPath) {
-		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: brew install age", ageKeygenPath)
+		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: %s", ageKeygenPath, ageRemedy())
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", ageKeygenPath, "--version")
@@ -124,10 +125,32 @@ func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 1 || (major == 1 && minor < 3) || (major == 1 && minor == 3 && patch < 2) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: brew upgrade age", major, minor, patch, MinAgeKeygenVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinAgeKeygenVersion, ageRemedy())
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
+}
+
+func ageRemedy() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "brew upgrade age"
+	case "linux":
+		return "sudo apt-get install age (Debian/Ubuntu) or sudo dnf install age (Fedora) or download release binary from github.com/age-encryption/age"
+	default:
+		return "install age from your package manager or download release binary from github.com/age-encryption/age"
+	}
+}
+
+func sopsRemedy() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "brew upgrade sops"
+	case "linux":
+		return "sudo apt-get install sops (Debian/Ubuntu) or sudo dnf install sops (Fedora) or download release binary from github.com/stance/sops"
+	default:
+		return "install sops from your package manager or download release binary from github.com/stance/sops"
+	}
 }
 
 func filepathIsExecutable(path string) bool {
