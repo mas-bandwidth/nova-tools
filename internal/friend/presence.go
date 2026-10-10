@@ -35,6 +35,12 @@ const (
 	// session has not read it: a queueing harness keeps every copy, so a check is asked
 	// again early only once the session has read the last (Presence.Read).
 	ReaskAfter = time.Hour
+	// BehindCap is the most wall clock an unanswered check is held off by the
+	// daemon's batch turns, from the first time it went behind one until an answer:
+	// above the 20 to 40 minute turns measured 2026-10-10, so a working batch session
+	// is never called down mid-turn, and bounded, so back-to-back turns never hold a
+	// deaf one up (Presence.Tick).
+	BehindCap = 45 * time.Minute
 
 	NoSessionAnswer = "no session answer"
 	NotYetAnswered  = "no session answer yet" // the daemon started; nothing has answered
@@ -83,6 +89,11 @@ type Presence struct {
 	// turn: the session cannot answer until that turn ends, so no bound runs against
 	// it until then (the owner's definition: deaf is a message to her not seen).
 	Behind bool
+	// BehindSince is when the unanswered check first went behind a batch turn, and
+	// Capped that BehindCap from then has been reached and said: only an answer
+	// clears them, so a turn's start or a check asked again never buys more time.
+	BehindSince time.Time
+	Capped      bool
 }
 
 // StartPresence is the presence as the daemon comes up at now: down, not yet
@@ -115,6 +126,7 @@ func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 		return false
 	}
 	p.Up, p.Reason, p.LastHeard, p.Answered, p.Nonce, p.Open, p.Owed, p.Answers, p.Proven, p.Behind = true, "", now, nonce, "", false, false, p.Answers+1, true, false
+	p.BehindSince, p.Capped = time.Time{}, false
 	return true
 }
 
@@ -131,11 +143,24 @@ func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 // turn ends. At the turn's end the bound starts again (restarted): a check the
 // session read (or one already owed again) is asked again and its bound runs
 // from that ask; one it has not read waits in its queue, asked again only after
-// ReaskAfter as before, and its bound runs from the turn's end.
-func (p *Presence) Tick(now, turn time.Time) (behind, restarted bool) {
+// ReaskAfter as before, and its bound runs from the turn's end. The exemption
+// lasts BehindCap of wall clock from the first time the unanswered check went
+// behind a turn, never reset by a turn's start or a check asked again, only by an
+// answer: back-to-back turns never hold the bound off longer (capped: the cap
+// reached this tick; from then the bounds run through the turn).
+func (p *Presence) Tick(now, turn time.Time) (behind, restarted, capped bool) {
 	running := !turn.IsZero()
-	if running && !p.Behind && p.Nonce != "" {
-		p.Behind, behind = true, true
+	if running && p.Nonce != "" {
+		if p.BehindSince.IsZero() {
+			p.BehindSince = now
+		}
+		if !p.Behind {
+			p.Behind, behind = true, true
+		}
+	}
+	over := p.Behind && now.Sub(p.BehindSince) >= BehindCap
+	if running && over && !p.Capped {
+		p.Capped, capped = true, true
 	}
 	if !running && p.Behind {
 		p.Behind, restarted = false, true
@@ -146,7 +171,8 @@ func (p *Presence) Tick(now, turn time.Time) (behind, restarted bool) {
 			p.Open = true
 		}
 	}
-	if !running && p.Open && now.Sub(p.Bounded) >= p.Bound {
+	held := running && p.Behind && !over // the bounds wait for the turn
+	if !held && p.Open && now.Sub(p.Bounded) >= p.Bound {
 		p.Open = false
 		if !p.Up || p.LastHeard.Before(p.Bounded) {
 			p.Up, p.Reason = false, NoSessionAnswer
@@ -159,11 +185,11 @@ func (p *Presence) Tick(now, turn time.Time) (behind, restarted bool) {
 	if p.Bounded.After(last) {
 		last = p.Bounded
 	}
-	if !running && p.Up && !p.Open && p.Nonce != "" && now.Sub(last) >= p.Quiet+p.Bound {
+	if !held && p.Up && !p.Open && p.Nonce != "" && now.Sub(last) >= p.Quiet+p.Bound {
 		p.Up, p.Reason = false, NoSessionAnswer
 	}
 	if p.Open || p.Owed {
-		return behind, restarted
+		return behind, restarted, capped
 	}
 	since, every := now.Sub(p.Asked), ProveEvery // from the ask: a slow answer never stretches the cycle
 	if !p.Up {
@@ -175,7 +201,7 @@ func (p *Presence) Tick(now, turn time.Time) (behind, restarted bool) {
 	if since >= every {
 		p.Owed = true
 	}
-	return behind, restarted
+	return behind, restarted, capped
 }
 
 // SessionCheckText is the check as the session reads it: the nonce, and the
@@ -259,11 +285,15 @@ type SessionCheck struct {
 	gated      int       // turns at the gate, from before any wait under it to their end
 	gatedSince time.Time // when the first of them came to the gate
 	batchSince time.Time // when the daemon's own batch turn under way began (BatchTurn); zero while none runs
+	// the batch Deliver calls holding the gate (inSession), and since when: a turn
+	// told running that still waits at the gate is not in the session
+	holding      int
+	holdingSince time.Time
 }
 
 // BatchTurn is the daemon's word on its own batch turn (Daemon.BatchTurn): since
-// is when the turn under way began, zero once it ended. While it runs the bound
-// of an unanswered check waits (Presence.Tick).
+// is when the turn under way began, zero once it ended. While it runs and holds
+// the gate (inSession) the bound of an unanswered check waits (Presence.Tick).
 func (s *SessionCheck) BatchTurn(since time.Time) {
 	s.mu.Lock()
 	s.batchSince = since
@@ -368,7 +398,38 @@ func (g turnGated) Deliver(ctx context.Context, text string) (int, error) {
 	defer g.s.enter()()
 	g.s.turn.RLock()
 	defer g.s.turn.RUnlock()
+	defer g.s.inSession()()
 	return g.Deliverer.Deliver(ctx, text)
+}
+
+// inSession is a batch turn holding the gate, from when it took the turn shared
+// until it returns: only then is it in the session. A turn the daemon started that
+// still waits at the gate (behind a check holding it alone) is not, so it never
+// holds a check's bound off: that check's bound runs, its down cancels it, and the
+// gate frees (the cold read of 7077ed131: told running from startTurn, a hung check
+// and the turn behind it held each other, the session up for ever).
+func (s *SessionCheck) inSession() func() {
+	s.mu.Lock()
+	if s.holding == 0 {
+		s.holdingSince = s.Now()
+	}
+	s.holding++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.holding--
+		s.mu.Unlock()
+	}
+}
+
+// batchTurn is when the daemon's batch turn now in the session began, zero while
+// none is: the daemon says one runs (BatchTurn, in batch mode) and a Deliver holds
+// the gate. Called with mu held.
+func (s *SessionCheck) batchTurn() time.Time {
+	if s.batchSince.IsZero() || s.holding == 0 {
+		return time.Time{}
+	}
+	return s.holdingSince
 }
 
 // enter is a turn at the gate, from before any wait under it (the limit gate's
@@ -568,9 +629,9 @@ func (s *SessionCheck) Step(ctx context.Context) {
 	proven := s.m.Proven
 	answered, rose, err := s.read(ctx, now)
 	was := s.m.Reason
-	turn := s.batchSince
-	behind, restarted := s.m.Tick(now, turn)
-	waitingNonce, again := s.m.Nonce, s.m.Owed
+	turn := s.batchTurn()
+	behind, restarted, capped := s.m.Tick(now, turn)
+	waitingNonce, again, behindSince := s.m.Nonce, s.m.Owed, s.m.BehindSince
 	fell := was != NoSessionAnswer && s.m.Reason == NoSessionAnswer
 	if !s.m.Up && !s.m.Open && s.cancel != nil {
 		s.cancel() // never answered: the check's turn ends with its bound
@@ -599,6 +660,9 @@ func (s *SessionCheck) Step(ctx context.Context) {
 	}
 	if behind {
 		s.record(now, fmt.Sprintf("presence: session check %s waits behind the batch turn under way since %s: the session cannot answer until it ends, and the %s bound does not run until then", waitingNonce, turn.UTC().Format(time.RFC3339), SessionBound))
+	}
+	if capped {
+		s.record(now, fmt.Sprintf("presence: session check %s has waited behind batch turns since %s: the %s cap is reached, and the %s bound runs through the turn", waitingNonce, behindSince.UTC().Format(time.RFC3339), BehindCap, SessionBound))
 	}
 	if restarted && again {
 		s.record(now, fmt.Sprintf("presence: the batch turn ended; session check %s goes in again, and the %s bound runs from that ask", waitingNonce, SessionBound))
