@@ -293,6 +293,7 @@ func (l *loop) outboxStep(now time.Time) {
 			}
 		}
 		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, written, h.Col, words))
+		l.releaseJob(job, now)
 	}
 }
 
