@@ -76,9 +76,6 @@ func init() { Reload() }
 // path needs it.
 func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
-// Refusing reports whether the process-wide guard is armed.
-func Refusing() bool { return defaultGuard.refusing.Load() }
-
 // AllowHosts opens a scope in which a seam may run a child, and returns the
 // function that closes it. The one honest use is a test that has installed its
 // own fake on PATH:

@@ -624,7 +624,7 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop, remot
 	inLoop = b.flight != nil
 	seam := b.gateBench
 	b.mu.Unlock()
-	if !inLoop || (testguard.Refusing() && seam == nil) {
+	if !inLoop || (os.Getenv(testguard.EnvNoHost) == "1" && seam == nil) {
 		return nil, inLoop, false
 	}
 	l.a.serial.Lock()
