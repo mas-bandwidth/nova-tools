@@ -240,10 +240,12 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 		Down:  func(until time.Time, reason string) { downs = append(downs, told{until, reason}) },
 		Up:    func(nonce string) { ups = append(ups, nonce) },
 	}
-	// the fake harness: out of credits, then not running, then back
+	// the fake harness: out of credits, then not running, then back; it says its
+	// refusal on its own stderr, the channel credits are read from (the joined
+	// stdout answer is the model's words and is never read for credits)
 	running := true
 	var texts []string
-	harness := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+	harness := func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
 		text := args[len(args)-1]
 		if !running {
 			return "", -1, errors.New("exec: the harness app is not running")
@@ -251,7 +253,11 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 		texts = append(texts, text)
 		switch {
 		case len(texts) == 1:
-			return "working on card c1\nError: Insufficient AI Credits. Your credits will refresh 6:52 PM.\n", 1, nil
+			const refusal = "Error: Insufficient AI Credits. Your credits will refresh 6:52 PM.\n"
+			if w := CapturedStderr(ctx); w != nil {
+				_, _ = w.Write([]byte(refusal))
+			}
+			return "working on card c1\n" + refusal, 1, nil
 		case strings.Contains(text, "back22"):
 			return "back22\n", 0, nil
 		}
