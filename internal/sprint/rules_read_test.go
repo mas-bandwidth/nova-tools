@@ -126,7 +126,7 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 		t.Parallel()
 		r := newConflictRig(t)
 		r.readCard()
-		r.brokenRead("r-1", "the change misses a caller outside PATHS; rename it too")
+		r.brokenRead("r-1", "the change breaks STEP 3: a caller outside PATHS keeps the old name; rename it too")
 		r.tick()
 		require.Equal(t, 2, r.snap().Work.Card("r-1").Int("attempt"), "a finding naming no file is reworked")
 		finding := "internal/y/b.go:40 still calls the old name, outside PATHS; rename the call too"
