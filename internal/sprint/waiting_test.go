@@ -190,6 +190,27 @@ func TestClassifyWaitingReasonsAndChains(t *testing.T) {
 		assert.Equal(t, 2, byID["m1"].Length)
 	})
 
+	t.Run("chain of two whose root is an unreleased sentinel", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		w.s.Work.Put(&Card{ID: "stop", Row: "s1", Col: Waiting, Fields: map[string]string{"kind": "sentinel"}})
+		w.s.Work.Put(&Card{ID: "c1", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "stop"}})
+		w.s.Work.Put(&Card{ID: "c2", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "c1"}})
+		v := ClassifyWaiting(w.s, "s1")
+		byID := map[string]WaitingCard{}
+		for _, c := range v.Cards {
+			byID[c.ID] = c
+		}
+		assert.Equal(t, WaitBehind, byID["c1"].Kind)
+		assert.Equal(t, "behind sentinel stop not released", byID["c1"].Reason)
+		assert.Equal(t, "stop", byID["c1"].Head)
+		assert.Equal(t, 1, byID["c1"].Length)
+		assert.Equal(t, WaitBehind, byID["c2"].Kind)
+		assert.Equal(t, "behind sentinel stop not released", byID["c2"].Reason)
+		assert.Equal(t, "stop", byID["c2"].Head)
+		assert.Equal(t, 2, byID["c2"].Length)
+	})
+
 	t.Run("cycle reported as cycle", func(t *testing.T) {
 		t.Parallel()
 		w := setup(t, 0)
