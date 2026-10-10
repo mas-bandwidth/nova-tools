@@ -524,3 +524,29 @@ func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) 
 	// Help send should contain the full precedence
 	assert.Contains(t, sendHelp, precedence, "help send should name the full Redis address precedence")
 }
+
+func TestBusLogFiltersBySenderAndRecipient(t *testing.T) {
+	t.Parallel()
+	r := newRig("a", "b", "c")
+	cli := r.cli()
+
+	// Send six messages among the three names
+	id1 := id(t, cli.OK(t, "send", "--as", "a", "--to", "b", "--subject", "a to b", "--body", "msg1").Stdout)
+	id2 := id(t, cli.OK(t, "send", "--as", "a", "--to", "c", "--subject", "a to c", "--body", "msg2").Stdout)
+	id3 := id(t, cli.OK(t, "send", "--as", "b", "--to", "a", "--subject", "b to a", "--body", "msg3").Stdout)
+	id4 := id(t, cli.OK(t, "send", "--as", "b", "--to", "c", "--subject", "b to c", "--body", "msg4").Stdout)
+	id5 := id(t, cli.OK(t, "send", "--as", "c", "--to", "a", "--subject", "c to a", "--body", "msg5").Stdout)
+	id6 := id(t, cli.OK(t, "send", "--as", "c", "--to", "b", "--subject", "c to b", "--body", "msg6").Stdout)
+
+	// --from a lists only a's messages
+	cli.Do(t, "log", "--from", "a").Exit(0).Out("LOG OK total=2", "id="+id1, "id="+id2).NotOut("id="+id3, "id="+id4, "id="+id5, "id="+id6)
+
+	// --to b lists only messages to b
+	cli.Do(t, "log", "--to", "b").Exit(0).Out("LOG OK total=2", "id="+id1, "id="+id6).NotOut("id="+id2, "id="+id3, "id="+id4, "id="+id5)
+
+	// both together list only a → b
+	cli.Do(t, "log", "--from", "a", "--to", "b").Exit(0).Out("LOG OK total=1", "id="+id1).NotOut("id="+id2, "id="+id3, "id="+id4, "id="+id5, "id="+id6)
+
+	// --max 1 returns the oldest match (log reads oldest first)
+	cli.Do(t, "log", "--from", "a", "--to", "b", "--max", "1").Exit(0).Out("LOG OK total=1", "id="+id1).NotOut("id="+id6)
+}
