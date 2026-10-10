@@ -887,6 +887,6 @@ A registry that stops answering registry-v2 JSON is UNKNOWN, never OK.
 arrive either way and the two disagree by days. Default: the file names the source
 that installed the copy on this box; a mismatch is a one-line fix to the file, not a
 second source per entry.
-4. **Delivery is one send on the Redis bus.**  the reporter and watch hand one note to `nova-bus send`,
+4. **Delivery is one send on the Redis bus.** The reporter and watch hand one note to `nova-bus send`,
 one transaction that answers with the message id (rule 24). No timer or reporter-owned
 network is added.
