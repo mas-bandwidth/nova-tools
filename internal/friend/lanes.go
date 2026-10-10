@@ -8,7 +8,9 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +36,256 @@ const CardTurns = 2
 // LaneOpenRetry is how long a lane whose session could not be opened waits
 // before it tries again.
 const LaneOpenRetry = time.Minute
+
+// StageFailLimit is how many stage failures of one card are stood before the card is
+// finished FAIL with the stage reason, never "wrote no report" (docs/SPEC-FRIEND.md,
+// the stage contract).
+const StageFailLimit = 3
+
+// StageFailure is a card whose stage did not write what a lane must find before it
+// starts: a readable regular brief, the job's JOB.md, or a validated checkout.
+// What is the piece that is missing, Why the reason the lane is not started.
+type StageFailure struct {
+	Card string
+	What string
+	Why  string
+}
+
+// Reason is What and Why as one line, What alone when there is no Why.
+func (f StageFailure) Reason() string {
+	if f.Why == "" {
+		return f.What
+	}
+	return f.What + ": " + f.Why
+}
+
+// Error is the stage failure as one line: stage failed for <card>: <what is missing>:
+// <why>.
+func (f StageFailure) Error() string { return "stage failed for " + f.Card + ": " + f.Reason() }
+
+// GoOnPath is the host seam: whether the go command is on this host's PATH. It is a
+// value so a test stands a host with no go; StageGate takes it as a parameter.
+var GoOnPath = func() bool {
+	_, err := exec.LookPath("go")
+	return err == nil
+}
+
+// doneWhenLineRE is the start of a DONE WHEN gate. The gate runs on past that line.
+var doneWhenLineRE = regexp.MustCompile(`^DONE[ -]WHEN:\s*(.*)$`)
+
+// goCmdRE is a go command a card's gate names.
+var goCmdRE = regexp.MustCompile(`\bgo (?:build|vet|test|run)\b`)
+
+// stagedCheckoutRE is the checkout path JOB.md records (JobText).
+var stagedCheckoutRE = regexp.MustCompile(`The staged checkout: (\S+)`)
+
+// stagedBriefRE is the brief path JOB.md records when the stage names it.
+var stagedBriefRE = regexp.MustCompile(`(?m)^The brief the stage wrote: (\S+)\s*$`)
+
+// gateText is the card's DONE WHEN gate, the header line and every continuation
+// until a blank line or the next section header. A go command on a later line of
+// the same gate is part of it; one in a later section is not.
+func gateText(brief string) string {
+	var b strings.Builder
+	in := false
+	for _, line := range strings.Split(brief, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if !in {
+			m := doneWhenLineRE.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			in = true
+			b.WriteString(m[1])
+			b.WriteByte('\n')
+			continue
+		}
+		if strings.TrimSpace(line) == "" || sectionHeader(line) {
+			break
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// sectionHeader says line is a card section header (DONE WHEN, RULES, PATHS), not a
+// continuation of the gate.
+func sectionHeader(line string) bool {
+	i := strings.IndexByte(line, ':')
+	if i <= 0 {
+		return false
+	}
+	key := line[:i]
+	if strings.TrimSpace(key) != key {
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == ' ' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// NeedsGo says the card's brief names a go command in its gate, the whole gate,
+// not only the DONE WHEN line.
+func NeedsGo(brief string) bool { return goCmdRE.MatchString(gateText(brief)) }
+
+// stageRecord is what the stage wrote for one job, read back from JOB.md. Brief and
+// Checkout are absolute paths the record carries. The lane does not compose them.
+type stageRecord struct {
+	Brief    string
+	Checkout string
+}
+
+// stageRecordOf reads the stage record of job under dir. The brief is the path the
+// record names (The brief the stage wrote); when that line is absent, it is the
+// brief beside the checkout the record names. ok is false when JOB.md names neither.
+func stageRecordOf(dir, job string) (stageRecord, bool) {
+	if !validJob(job) {
+		return stageRecord{}, false
+	}
+	raw, err := os.ReadFile(filepath.Join(JobDir(dir, job), JobFile))
+	if err != nil {
+		return stageRecord{}, false
+	}
+	rec := parseStageRecord(string(raw))
+	if rec.Brief == "" && rec.Checkout != "" {
+		if b, ok := briefBesideCheckout(rec.Checkout); ok {
+			rec.Brief = b
+		}
+	}
+	if rec.Brief == "" && rec.Checkout == "" {
+		return stageRecord{}, false
+	}
+	return rec, true
+}
+
+func parseStageRecord(text string) stageRecord {
+	var rec stageRecord
+	if m := stagedBriefRE.FindStringSubmatch(text); m != nil {
+		rec.Brief = m[1]
+	}
+	if m := stagedCheckoutRE.FindStringSubmatch(text); m != nil {
+		rec.Checkout = m[1]
+	}
+	return rec
+}
+
+// briefBesideCheckout is the brief the stage required for the checkout JOB.md names:
+// <root>/inbox/<job>/BRIEF.md, where the checkout is <root>/jobs/<job>/repo.
+func briefBesideCheckout(checkout string) (string, bool) {
+	jobDir := filepath.Dir(checkout)
+	jobs := filepath.Dir(jobDir)
+	if filepath.Base(jobs) != JobsDir {
+		return "", false
+	}
+	job := filepath.Base(jobDir)
+	if !validJob(job) {
+		return "", false
+	}
+	return filepath.Join(filepath.Dir(jobs), "inbox", job, "BRIEF.md"), true
+}
+
+// carryStagedBrief sets c.Brief to the absolute path the stage record carries for
+// the card's job. A path the lane composed is replaced. A card the record does not
+// name is left as it is.
+func carryStagedBrief(dir string, c Card) Card {
+	rec, ok := stageRecordOf(dir, filepath.Base(c.Outbox))
+	if ok && rec.Brief != "" {
+		c.Brief = rec.Brief
+	}
+	return c
+}
+
+// readableRegular says path is a regular file that can be opened. A directory, a
+// missing path and an unreadable file are not a brief.
+func readableRegular(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	_ = f.Close() // ignored: a read-only file; the open is the check
+	return true
+}
+
+// validCheckout says path is a git checkout: a directory whose .git is a worktree
+// file (gitdir: an absolute path) or a git directory with a readable HEAD. A file,
+// an empty directory and a path that merely exists are not a checkout.
+func validCheckout(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	git := filepath.Join(path, ".git")
+	gi, err := os.Lstat(git)
+	if err != nil {
+		return false
+	}
+	if gi.IsDir() {
+		f, err := os.Open(filepath.Join(git, "HEAD"))
+		if err != nil {
+			return false
+		}
+		_ = f.Close() // ignored: a read-only file; the open is the check
+		return true
+	}
+	if !gi.Mode().IsRegular() {
+		return false
+	}
+	raw, err := os.ReadFile(git)
+	if err != nil {
+		return false
+	}
+	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir: ")
+	return ok && gitdir != "" && filepath.IsAbs(gitdir)
+}
+
+// StageGate is the stage contract at the lane: what a card's stage must have written
+// before the lane starts. It answers false when the lane may start, else the StageFailure
+// naming the first piece that is missing. The brief path is the one the stage record
+// carries, never one the lane composes. A directory brief and a path that is not a git
+// checkout are missing. A card whose gate names a go command on a host with no go is
+// refused before the checkout is read. goOnPath is the host's Go test.
+func StageGate(dir string, c Card, job, brief string, goOnPath func() bool) (StageFailure, bool) {
+	if goOnPath != nil && NeedsGo(brief) && !goOnPath() {
+		return StageFailure{Card: c.ID, What: "go is not on this host; the card's gates run on a bench"}, true
+	}
+	briefPath := c.Brief
+	checkout := ""
+	if rec, ok := stageRecordOf(dir, job); ok {
+		if rec.Brief != "" {
+			briefPath = rec.Brief
+		}
+		checkout = rec.Checkout
+	}
+	if briefPath == "" || !readableRegular(briefPath) {
+		why := "the stage wrote no BRIEF.md for the lane"
+		if fi, err := os.Stat(briefPath); err == nil && !fi.Mode().IsRegular() {
+			why = "the brief is not a readable regular file"
+		}
+		return StageFailure{Card: c.ID, What: "its brief " + dash(briefPath), Why: why}, true
+	}
+	if !readableRegular(filepath.Join(JobDir(dir, job), JobFile)) {
+		return StageFailure{Card: c.ID, What: JobFile + " is not in " + filepath.Join(JobsDir, job), Why: "the stage did not finish"}, true
+	}
+	if checkout == "" {
+		checkout = filepath.Join(JobDir(dir, job), "repo")
+	}
+	if !validCheckout(checkout) {
+		return StageFailure{Card: c.ID, What: "the checkout " + checkout, Why: "the stage wrote no checkout"}, true
+	}
+	return StageFailure{}, false
+}
 
 // LaneState is what the lanes keep across restarts, in the state directory
 // (lanes.json): each lane's session, so a lane is the same friend's session
@@ -245,22 +497,26 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
-	lanes   []*lane
-	stopped bool // the machine's word is STOPPED (stopStep): said once each way
-	given   map[string]bool
-	state   LaneState
-	loaded  bool
-	results chan laneResult
-	refused map[string]string // each job a lane was refused, and who held it, said once while it stands
-	gov     LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	pace    Pacer             // the effective width under the subscription windows (pacing.go)
-	paced   int               // the paced width at the last step
-	width   int               // the row's width at the last step
-	now     time.Time         // the last step's clock
-	marked  bool              // the hold in force is the pause marker's (a person lifts it)
-	loaded1 bool              // lanes are held to the load width
-	took    map[string]bool
-	faults  FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
+	lanes      []*lane
+	stopped    bool // the machine's word is STOPPED (stopStep): said once each way
+	given      map[string]bool
+	state      LaneState
+	loaded     bool
+	results    chan laneResult
+	refused    map[string]string    // each job a lane was refused, and who held it, said once while it stands
+	stageFails map[string]int       // each held job's stage failures, ended at StageFailLimit
+	stageSaid  map[string]bool      // the stage failures said once while they stand
+	stageSeen  map[string]time.Time // the stage retry last counted for a job
+	stageAt    map[string]time.Time // when the gate last counted a failure the daemon did not stage
+	gov        LaneGovernor         // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace       Pacer                // the effective width under the subscription windows (pacing.go)
+	paced      int                  // the paced width at the last step
+	width      int                  // the row's width at the last step
+	now        time.Time            // the last step's clock
+	marked     bool                 // the hold in force is the pause marker's (a person lifts it)
+	loaded1    bool                 // lanes are held to the load width
+	took       map[string]bool
+	faults     FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
 }
 
 func (s *laneSet) running() bool {
@@ -336,7 +592,8 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 // CardText is one lane turn: the card and its three steps, every path absolute, the
 // brief's text inline (a model that reads a path relative still has it), then what else
 // rides along (the pong line first, the word about the coordinator, the bus messages
-// waiting, each labelled by its sender's authority against seat).
+// waiting, each labelled by its sender's authority against seat). job.Card.Brief is the
+// absolute path the stage record carried (carryStagedBrief). CardText does not compose it.
 func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat string, msgs []bus.Message) string {
 	c := job.Card
 	var b strings.Builder
@@ -364,6 +621,154 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 		b.WriteString("\nAlso for you, after the card:\n\n" + BatchFor(seat, msgs, "", ""))
 	}
 	return b.String()
+}
+
+// stageHandsOver says a card may be handed to a lane: the daemon stages nothing here, the
+// card is not one it stages, or its stage wrote a readable regular brief, the JOB.md and
+// a validated checkout (StageGate). A read has its own staged files (ReadStageGate): its
+// inbox BRIEF.md, and no work JOB.md or checkout. The brief path is the stage record's. It
+// is the one gate every hand goes through (laneStep's held).
+func (l *loop) stageHandsOver(c Card) bool {
+	d := l.d
+	if d.Stage == nil {
+		return true // the daemon stages nothing here: a card is handed on its brief alone
+	}
+	h, ok := d.heldOf(filepath.Base(c.Outbox))
+	if !ok {
+		return true // not a card on her row: nothing is staged for it here
+	}
+	if h.Kind == "read" {
+		_, refused := ReadStageGate(d.Dir, Card{ID: h.Card, Outbox: c.Outbox}, h.Job)
+		return !refused
+	}
+	if _, ok := PacketOf(h); !ok {
+		return true // a card with no REPO: nothing is staged for it
+	}
+	c = carryStagedBrief(d.Dir, c)
+	var brief []byte
+	if c.Brief != "" {
+		if raw, err := os.ReadFile(c.Brief); err == nil {
+			brief = raw
+		}
+	}
+	_, refused := StageGate(d.Dir, c, h.Job, string(brief), GoOnPath)
+	return !refused
+}
+
+// stageLaneStep is the stage contract at the lane, once a step: every held card whose
+// stage has not written the brief, the JOB.md and the checkout is counted and never
+// handed to a lane. A read is counted on its own staged files (ReadStageGate): its inbox
+// BRIEF.md, and no work JOB.md. The brief path is the stage record's, never one composed
+// here. Each failure is said once on the record and once as a judgment to the
+// coordinator, and waits StageRetryEvery before it is counted again; after
+// StageFailLimit stage failures the card is finished FAIL with the stage reason.
+func (l *loop) stageLaneStep(now time.Time) {
+	d, s := l.d, l.lanes
+	if d.Stage == nil {
+		return // the daemon stages nothing here: a card is handed on its brief alone
+	}
+	if s.stageFails == nil {
+		s.stageFails = map[string]int{}
+	}
+	if s.stageSaid == nil {
+		s.stageSaid = map[string]bool{}
+	}
+	if s.stageSeen == nil {
+		s.stageSeen = map[string]time.Time{}
+	}
+	if s.stageAt == nil {
+		s.stageAt = map[string]time.Time{}
+	}
+	if d.staging == nil {
+		d.staging = map[string]bool{}
+	}
+	if d.stageRetry == nil {
+		d.stageRetry = map[string]time.Time{}
+	}
+	for _, h := range d.heldCards {
+		if !validJob(h.Job) || s.given[h.Job] {
+			continue
+		}
+		c := Card{ID: h.Card, Outbox: filepath.Join(d.Dir, "outbox", h.Job)}
+		var f StageFailure
+		var refused bool
+		if h.Kind == "read" {
+			f, refused = ReadStageGate(d.Dir, c, h.Job)
+		} else {
+			if _, ok := PacketOf(h); !ok {
+				continue // a card with no REPO: nothing is staged for it
+			}
+			c = carryStagedBrief(d.Dir, c)
+			var brief []byte
+			if c.Brief != "" {
+				if raw, err := os.ReadFile(c.Brief); err == nil {
+					brief = raw
+				}
+			}
+			f, refused = StageGate(d.Dir, c, h.Job, string(brief), GoOnPath)
+		}
+		if !refused {
+			delete(s.stageFails, h.Job)
+			delete(s.stageSaid, h.Job)
+			delete(s.stageSeen, h.Job)
+			delete(s.stageAt, h.Job)
+			continue
+		}
+		retry := d.stageRetry[h.Job]
+		fresh := retry.After(s.stageSeen[h.Job]) // the daemon recorded a stage failure since the last count
+		due := !d.staging[h.Job] && !now.Before(retry) && (s.stageAt[h.Job].IsZero() || now.Sub(s.stageAt[h.Job]) >= StageRetryEvery)
+		if !fresh && !due {
+			continue // a stage is under way, or this failure was already counted
+		}
+		if fresh {
+			s.stageSeen[h.Job] = retry
+		}
+		if due {
+			s.stageAt[h.Job] = now
+			if !retry.After(now) {
+				d.stageRetry[h.Job] = now.Add(StageRetryEvery)
+				s.stageSeen[h.Job] = d.stageRetry[h.Job]
+			}
+		}
+		s.stageFails[h.Job]++
+		if !s.stageSaid[h.Job] {
+			s.stageSaid[h.Job] = true
+			d.Record(fmt.Sprintf("%s stage: not staged %s/%s: %s; the lane is not started, and it is staged again in %s", now.UTC().Format(time.RFC3339), JobsDir, h.Job, oneLine(f.Error(), 400), StageRetryEvery))
+			l.tellKind(bus.KindBlocker, fmt.Sprintf("judgment: card %s stage failed on %s", h.Card, d.Friend), f.Error()+". No lane is started; the daemon stages the job again, and after "+strconv.Itoa(StageFailLimit)+" stage failures the card is finished FAIL with this reason. The remedy: write what is missing, or rework the card.\n", now)
+		}
+		if s.stageFails[h.Job] >= StageFailLimit {
+			l.finishStageFailed(c, h, f, now)
+		}
+	}
+}
+
+// finishStageFailed finishes a card FAIL at the stage limit: the lane's report says FAIL
+// and names the stage reason (never "wrote no report"), the failed finish goes to the
+// sprint server when it is wired, else friend sync reads the report, and the card is set
+// aside so no lane is handed it again.
+func (l *loop) finishStageFailed(c Card, h HeldCard, f StageFailure, now time.Time) {
+	d, s := l.d, l.lanes
+	report := "Verdict: FAIL\n\n" + f.Error() + " (after " + strconv.Itoa(StageFailLimit) + " stage failures).\n"
+	if err := os.MkdirAll(c.Outbox, 0o755); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " stage: " + c.ID + ": the outbox cannot be made: " + oneLine(err.Error(), 300))
+	} else if err := atomicfile.WriteFile(c.Report(), []byte(report), 0o644); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " stage: " + c.ID + ": the report cannot be written: " + oneLine(err.Error(), 300))
+	}
+	if d.Finish != nil {
+		head, branch := PushedHead(d.Dir, c)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+		defer cancel()
+		if err := d.Finish(ctx, FinishArgv(d.Friend, c, report, head, branch)); err != nil {
+			d.Record(now.UTC().Format(time.RFC3339) + " stage: " + c.ID + ": the finish was not sent: " + oneLine(err.Error(), 300))
+		}
+	}
+	if s.given == nil {
+		s.given = map[string]bool{}
+	}
+	s.given[h.Job] = true
+	s.state.GivenUp = append(s.state.GivenUp, h.Job)
+	l.saveLanes(now)
+	d.Record(fmt.Sprintf("%s stage: finished card %s FAIL after %d stage failures: %s", now.UTC().Format(time.RFC3339), c.ID, StageFailLimit, oneLine(f.Error(), 400)))
 }
 
 // laneStep starts what the lanes owe: a session for a lane that has none,
@@ -429,10 +834,14 @@ func (l *loop) laneStep(now time.Time, width int) {
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
 	l.oneLaneStep(now)
+	l.stageLaneStep(now)
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
 	asking := 0 // the lane the hand is asked for
 	held := func(c Card) bool {
+		if !l.stageHandsOver(c) {
+			return true // the stage has not written the brief, the JOB.md or the checkout: no lane
+		}
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
 		if s.given[id] || (legacy && s.given[c.ID]) {
@@ -497,6 +906,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			if !found {
 				continue // messages wait: they ride only with a card
 			}
+			c = carryStagedBrief(d.Dir, c) // the prompt names the stage record's brief, never a path composed here
 			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
 			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
 			if err != nil {

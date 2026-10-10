@@ -1614,14 +1614,41 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   mirror, where `PushedHead` reads it through the worktree's `.git` file. `JOB.md` is
   written last (`JobText`, the card-contract shape of docs/SPEC-CARD-CONTRACT.md: `# JOB: work
   <card>, attempt <n>`, the checkout, the repository, base and commit, the branch and its push,
-  the outbox `REPORT.md` and `RESULT.md`, and the `no push` HOLD). A job with a `JOB.md` is
-  never staged again, and is never written over.
+  the outbox `REPORT.md` and `RESULT.md`, and the `no push` HOLD). A job with a complete stage record,
+  readable brief and validated checkout is never staged again, and is never written over.
 - Each stage runs on a goroutine of its own, so the loop beats on while a mirror is fetched
   (`MirrorCloneBudget`, 30 minutes, bounds a fetch; the first is the slow one); a repository's
   fetch, its worktrees added and its worktrees pruned run one at a time. A stage the daemon's stop ends is said nowhere and runs again on
   the next start.
 - No lane is handed a card whose job the daemon stages until its `JOB.md` is there, and in
   batch mode the session is told of such a brief once its job is staged.
+- Every retry revalidates the files named by the stage record. A surviving `JOB.md`
+  does not suppress a retry for a missing brief or checkout. Staging restores a missing
+  recorded brief from the canonical inbox copy, and recreates a missing checkout on its
+  existing branch without resetting work; a successful retry clears the lane's failure count.
+- **The stage contract** (`internal/friend/lanes.go`, `StageGate`): a lane starts only once
+  the stage has written all three of a readable regular brief (a directory is not a brief),
+  the job's `JOB.md`, and a validated checkout (a git checkout, not a path that merely
+  exists and not a file standing in for `jobs/<job>/repo`). The brief the prompt names is
+  the absolute path the stage record carries: `JOB.md`'s line `The brief the stage wrote:
+  <path>`, or, when that line is absent, the brief beside the checkout the record names.
+  The lane does not compose that path. A missing piece is a stage failure, not a lane that
+  discovers it: the card stays in the queue, the failure is said once on the record
+  (`stage: not staged jobs/<job>: stage failed for <card>: <what is missing>: <why>`) and
+  once as a judgment to the coordinator, and it is counted again at most once a
+  `StageRetryEvery`. The third stage failure of one card finishes it FAIL with that stage
+  reason (`Verdict: FAIL`, the reason in the report), never "wrote no report". A card whose
+  `DONE WHEN` gate names a go command (`go build`, `go vet`, `go test` or `go run`), the
+  whole gate including a command on a continuation line, on a host with no `go` on `PATH`
+  is refused at stage with "go is not on this host; the card's gates run on a bench", and
+  the card is handed back, never started. A prompt whose brief path does not exist is
+  refused before the harness runs.
+- **The read stage contract** (`internal/friend/stage.go`, `ReadStageGate`): a read
+  (`HeldCard.Kind == "read"`) is its own case. It has no `JOB.md` and no staged checkout
+  (its lane clones the work under review itself), so its staged files are its inbox
+  `BRIEF.md`, the line friend sync writes for a held card; a read whose `BRIEF.md` is
+  missing is the same stage failure as a work card's, counted and said the same way. The
+  read's files never require a work `JOB.md`; requiring one would refuse every read.
 - A repository her account cannot reach (its first or any later fetch fails, named on the job
   it was staging: `her account cannot reach <repo> (staging jobs/<job>): ...`), or a base it
   does not hold, is one judgment to the coordinator (a blocker message, `judgment: <friend> cannot reach
@@ -1634,9 +1661,17 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
 `TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile` pins it with a local bare repository:
 two cards on one repository are staged at its base on their branches from one mirror, with
 origin the repository and their `JOB.md`; two cards on a repository that is not there are one
-judgment and no checkout; a card with no `REPO` and a read are handed on their briefs, the
+judgment and no checkout; a card with no `REPO` is handed on its brief, and a read is handed
+on its staged inbox `BRIEF.md` (no work `JOB.md` is required of it); the
 unstaged cards are handed to no lane, and later loops stage nothing again.
 `TestAStageEndedByTheDaemonsStopIsStagedAgain` and `TestPacketOfAndItsRefusals` pin the rest.
+`TestAStageMissingItsBriefStartsNoLaneAndRaisesOneJudgment`,
+`TestThreeStageFailuresFinishTheCardFailWithItsReason`,
+`TestAPromptNamingABriefThatIsNotThereIsRefused`,
+`TestAGoGateOnAHostWithNoGoIsRefusedAtStage`,
+`TestAReadMissingItsBriefIsAStageFailure` and
+`TestAPartialStagedJobIsRepairedAcrossPasses` (internal/friend/lanes_stage_test.go) pin the
+stage contract above.
 The machine is modelled in `tla/FriendStage.tla` (`MCFriendStage*`): a lane is handed a card
 only once its `JOB.md` is there, one judgment per repository or card while it stands, a stop
 says nothing, and a failed job is staged again once its remedy lands; three reversed witnesses
