@@ -119,8 +119,9 @@ type Server struct {
 	copy    *sprintCopy   // the last good read as the pull routes read it; nil before one
 	gen     uint64        // the good reads so far: an /events client sends each new one
 	changed chan struct{} // closed, and replaced, at each good read
-	samples []sample
-	stats   readStats
+	samples        []sample
+	lastStatsSince *time.Time
+	stats          readStats
 	fresh   freshness
 }
 
@@ -333,9 +334,10 @@ func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err err
 		// them again; a sprint done (done) carries the epoch's in landed already, so it is
 		// landed alone then, and the finish is no spike
 		var v struct {
-			Landed         int64 `json:"landed"`
-			ArchivedLanded int64 `json:"archived_landed"`
-			Done           bool  `json:"done"`
+			Landed         int64      `json:"landed"`
+			ArchivedLanded int64      `json:"archived_landed"`
+			Done           bool       `json:"done"`
+			StatsSince     *time.Time `json:"stats_since"`
 		}
 		// ignored: sprintJSON has read body as JSON; a landed that is no number is 0
 		_ = json.Unmarshal(body, &v)
@@ -343,8 +345,14 @@ func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err err
 		if up != nil {
 			at, rate, minutes = *up.FetchedAt, up.Throughput, up.ThroughputMinutes
 		} else {
+			tidyChanged := (s.lastStatsSince == nil && v.StatsSince != nil) ||
+				(s.lastStatsSince != nil && (v.StatsSince == nil || !s.lastStatsSince.Equal(*v.StatsSince)))
+			if tidyChanged {
+				s.samples = s.samples[:0]
+			}
+			s.lastStatsSince = v.StatsSince
 			epoch := v.Landed
-			if !v.Done {
+			if !v.Done && v.StatsSince == nil {
 				epoch += v.ArchivedLanded
 			}
 			rate, minutes = s.sampleLanded(start, epoch)

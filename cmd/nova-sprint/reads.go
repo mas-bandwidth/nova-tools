@@ -46,12 +46,23 @@ import (
 // behind a sentinel not released, or admitted held), shown apart as held=N
 // when there are any, and counted in the ETA.
 func summary(t ntable.Table, held, eta int64) string {
-	line := progress(t)
+	landed, all := counts(t)
+	return summarySince(t, landed, all, time.Time{}, held, eta)
+}
+
+func summarySince(t ntable.Table, landed, all int64, statsSince time.Time, held, eta int64) string {
+	line := progressOf(landed, all)
+	if !statsSince.IsZero() {
+		line = sprint.ProgressLine(landed, all, statsSince)
+	}
 	if held > 0 {
 		line += fmt.Sprintf(" held=%d", held)
 	}
 	switch {
 	case sprintDone(t):
+		if !statsSince.IsZero() {
+			return sprint.ProgressLine(landed, all, statsSince) + " done"
+		}
 		return doneLine(t)
 	case eta >= 24*60:
 		h := (eta + 59) / 60
@@ -70,9 +81,20 @@ func summary(t ntable.Table, held, eta int64) string {
 // the rate counts them; nothing left; or no rate).
 func etaMinutes(t ntable.Table, rate float64) int64 {
 	landed, all := counts(t)
-	gone, _ := archivedCounts(t)
+	return etaMinutesSince(t, landed, all, time.Time{}, rate)
+}
+
+func etaMinutesSince(t ntable.Table, landed, all int64, statsSince time.Time, rate float64) int64 {
+	if statsSince.IsZero() {
+		gone, _ := archivedCounts(t)
+		left := all - landed
+		if rate <= 0 || landed+gone < 5 || left <= 0 {
+			return 0
+		}
+		return int64(math.Ceil(float64(left) * 60 / rate))
+	}
 	left := all - landed
-	if rate <= 0 || landed+gone < 5 || left <= 0 {
+	if rate <= 0 || landed < 5 || left <= 0 {
 		return 0
 	}
 	return int64(math.Ceil(float64(left) * 60 / rate))
@@ -158,12 +180,12 @@ func progressOf(landed, all int64) string {
 // table: an archived stream's row (archivedRow) is not counted (archivedCounts
 // counts those).
 func counts(t ntable.Table) (landed, all int64) {
-	return countRows(t, false)
+	return sprint.WorkTableCounts(t)
 }
 
 // archivedCounts is the landed and all primaries of the archived streams.
 func archivedCounts(t ntable.Table) (landed, all int64) {
-	return countRows(t, true)
+	return sprint.ArchivedTableCounts(t)
 }
 
 // archivedRow is whether a work row is an archived stream's: hidden (stream
@@ -171,16 +193,7 @@ func archivedCounts(t ntable.Table) (landed, all int64) {
 // landed again (an add to it) is back on the table, counted in the headline,
 // before the next tick draws it again.
 func archivedRow(t ntable.Table, r ntable.Row) bool {
-	if !r.Hidden {
-		return false
-	}
-	j := t.Column(sprint.Landed)
-	for k, c := range t.Columns {
-		if c.Projection == ntable.Count && k != j && k < len(r.Cells) && r.Cells[k].Count > 0 {
-			return false
-		}
-	}
-	return true
+	return sprint.ArchivedWorkRow(t, r)
 }
 
 func countRows(t ntable.Table, archived bool) (landed, all int64) {
@@ -554,11 +567,12 @@ func noSprintYet(err error) error {
 
 // whereView is the view, for a program.
 type whereView struct {
-	At      time.Time `json:"at"`
-	Landed  int64     `json:"landed"`
-	All     int64     `json:"all"`
-	Held    int64     `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
-	Summary string    `json:"summary"`
+	At         time.Time  `json:"at"`
+	Landed     int64      `json:"landed"`
+	All        int64      `json:"all"`
+	Held       int64      `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
+	Summary    string     `json:"summary"`
+	StatsSince *time.Time `json:"stats_since,omitempty"`
 	// ArchivedCards and ArchivedLanded are the cards of the archived streams (stream
 	// archive) and those landed, beside the headline, which counts only the streams on the
 	// table: All+ArchivedCards and Landed+ArchivedLanded are the whole epoch's.
@@ -1162,10 +1176,22 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if v.Epoch == es.N {
 		v.Cleared = es.Cleared
 	}
-	v.Landed, v.All = counts(shapes[0])
 	v.Archived = archivedOf(shapes[0])
 	if v.Archived != nil {
 		v.ArchivedCards, v.ArchivedLanded = v.Archived.Cards, v.Archived.Landed
+	}
+	rec, _ := st.StatsTidied(ctx)
+	var bases map[string]sprint.StreamBase
+	var statsSince time.Time
+	if rec.Epoch == v.Epoch && !rec.Since.IsZero() {
+		statsSince = rec.Since.UTC()
+		v.StatsSince = &statsSince
+		bases = rec.Streams
+	}
+	if !statsSince.IsZero() {
+		v.Landed, v.All = sprint.HeadlineCounts(shapes[0], bases, statsSince)
+	} else {
+		v.Landed, v.All = counts(shapes[0])
 	}
 	// the held cards and the landings of the hour from the tick's where
 	// record: no card is read (store.WhereFacts)
@@ -1192,11 +1218,29 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		v.StageTimes = &facts.StageTimes
 	}
 	// the rate is the epoch's landings, an archived stream's too: archiving lands nothing
-	rate := sprint.LandingRate(facts.Landed, v.Landed+v.ArchivedLanded, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
-	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All + v.ArchivedCards, v.Held}, etaMinutes(shapes[0], rate)))
+	rateLanded := facts.Landed
+	rateTotal := v.Landed + v.ArchivedLanded
+	rateStart := facts.Machine.FirstStart(es.Cleared)
+	k := etaKey{v.All + v.ArchivedCards, v.Held}
+	if !statsSince.IsZero() {
+		var sinceLanded []time.Time
+		for _, at := range facts.Landed {
+			if !at.Before(statsSince) {
+				sinceLanded = append(sinceLanded, at)
+			}
+		}
+		rateLanded = sinceLanded
+		rateTotal = v.Landed
+		rateStart = statsSince
+		k = etaKey{v.All, v.Held}
+	}
+	rate := sprint.LandingRate(rateLanded, rateTotal, facts.Machine.Spans, rateStart, now)
+	v.Summary = summarySince(shapes[0], v.Landed, v.All, statsSince, v.Held, a.heldETA(now, k, etaMinutesSince(shapes[0], v.Landed, v.All, statsSince, rate)))
 	if v.Done = sprintDone(shapes[0]); v.Done {
 		// a sprint done: the headline is the epoch's, as the done line counts it
-		v.Landed, v.All = v.Landed+v.ArchivedLanded, v.All+v.ArchivedCards
+		if statsSince.IsZero() {
+			v.Landed, v.All = v.Landed+v.ArchivedLanded, v.All+v.ArchivedCards
+		}
 	}
 	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
 	if err != nil {
@@ -1272,7 +1316,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		if logical == sprint.Work {
 			// dollars per landed card, a column of the text table and a field of each row;
 			// the tiers and the spend by tier go to StreamCosts, from the tick's record (cost_view.go)
-			t = perLandedColumn(t, facts.Streams)
+			t = perLandedColumn(t, facts.Streams, bases)
 			for _, r := range t.Rows {
 				// an archived stream's costs stay in stream_costs, its row or not
 				if tc, ok := facts.Streams[r.Key]; ok {
@@ -1440,9 +1484,9 @@ const (
 
 // perLandedColumn is the work table with the per-landed column added: each stream's
 // dollars per landed card from the tick's record (sprint.TierCosts) when it has one, else
-// from the row's own cost cell over its landed count (sprint.PerLandedOf). The column
-// folds nothing: the sprint's figure is the hero's.
-func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts) ntable.Table {
+// from the row's own cost cell over its landed count (sprint.PerLandedOf, or sprint.PerLandedSince
+// when a tidy is recorded). The column folds nothing: the sprint's figure is the hero's.
+func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts, bases map[string]sprint.StreamBase) ntable.Table {
 	t.Columns = append(slices.Clone(t.Columns), ntable.Column{Name: perLandedColumnName, Projection: ntable.Text, Fold: ntable.None})
 	rows := make([]ntable.Row, len(t.Rows))
 	for i, r := range t.Rows {
@@ -1455,7 +1499,11 @@ func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts) ntable
 			if j := t.Column(sprint.Landed); j >= 0 && j < len(r.Cells) && !r.Cells[j].Unread {
 				landed = int(r.Cells[j].Count)
 			}
-			texts[perLandedColumnName] = sprint.PerLandedOf(r.Texts[sprint.Cost], landed)
+			if b, ok := bases[r.Key]; ok {
+				texts[perLandedColumnName] = sprint.PerLandedSince(r.Texts[sprint.Cost], landed, b)
+			} else {
+				texts[perLandedColumnName] = sprint.PerLandedOf(r.Texts[sprint.Cost], landed)
+			}
 		}
 		r.Texts = texts
 		rows[i] = r
