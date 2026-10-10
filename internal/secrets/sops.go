@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,19 @@ import (
 
 const MinSopsVersion = "3.13.3"
 const MinAgeKeygenVersion = "1.3.2"
+
+// ageUpgradeCmd returns the GOOS-specific command to upgrade age.
+func ageUpgradeCmd() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "brew upgrade age"
+	case "linux":
+		// Try apt-get first (Debian/Ubuntu), then dnf (Fedora), then curl from release
+		return "sudo apt-get install --only-upgrade age || sudo dnf upgrade age || curl -L https://github.com/FiloSottile/age/releases/download/v" + MinAgeKeygenVersion + "/age-" + MinAgeKeygenVersion + "-linux-amd64.tar.gz | tar xz && sudo mv age/age /usr/local/bin/ && sudo mv age/age-keygen /usr/local/bin/"
+	default:
+		return "brew upgrade age"
+	}
+}
 
 var sopsVersionRegex = regexp.MustCompile(`^sops (\d+)\.(\d+)\.(\d+)`)
 var ageKeygenVersionRegex = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)`)
@@ -105,7 +119,7 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 // CheckAgeKeygenVersion probes the age-keygen binary.
 func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error) {
 	if !filepathIsExecutable(ageKeygenPath) {
-		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: brew install age", ageKeygenPath)
+		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: %s", ageKeygenPath, ageUpgradeCmd())
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", ageKeygenPath, "--version")
@@ -124,7 +138,7 @@ func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 1 || (major == 1 && minor < 3) || (major == 1 && minor == 3 && patch < 2) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: brew upgrade age", major, minor, patch, MinAgeKeygenVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinAgeKeygenVersion, ageUpgradeCmd())
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
