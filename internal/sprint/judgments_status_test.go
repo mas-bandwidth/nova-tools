@@ -170,11 +170,11 @@ func TestAFriendComingUpPushesTheFourStepsToTheSeat(t *testing.T) {
 	n := notes[0]
 	assert.Equal(t, sprint.Judgment, n.Kind, "a judgment, pushed to the seat inbox as every judgment is")
 	at := r.st.Now().UTC().Format(time.RFC3339)
-	assert.Equal(t, "friend amy is up (was down) at "+at+", transition 1, on session pong 0s ago; bring her up in four steps: "+
+	assert.Equal(t, "friend amy is up (was down) at "+at+", transition 1, on daemon up, session pong 0s ago; bring her up in four steps: "+
 		"1 update: her daemon runs "+current+", the current build is "+current+": an unstamped build cannot be compared; run: nova-update, then launchctl kickstart -k gui/$(id -u)/com.nova.friend-amy (to do); "+
-		"2 check: daemon beating (0s ago), her daemon started at "+start.Format(time.RFC3339)+" and has beat since; no harness check reported, presence session pong 0s ago; run: nova-friend check amy and read its CHECK DAEMON, CHECK HARNESS and presence lines (to do); "+
+		"2 check: daemon beating (0s ago), her daemon started at "+start.Format(time.RFC3339)+" and has beat since; no harness check reported, presence daemon up, session pong 0s ago; run: nova-friend check amy and read its CHECK DAEMON, CHECK HARNESS and presence lines (to do); "+
 		"3 snap to present: her daemon sent the present on its start at "+start.Format(time.RFC3339)+" (done); "+
-		"4 into the sprint: not held, evidence session pong 0s ago, no take within 10m0s; run: nova-sprint where, and nova-friend ping --as coordinator --to amy --wake (to do)",
+		"4 into the sprint: not held, evidence daemon up, session pong 0s ago, no take within 10m0s; run: nova-sprint where, and nova-friend ping --as coordinator --to amy --wake (to do)",
 		n.What)
 	assert.Equal(t, []string{"ack", "wait"}, n.Decisions, "the verbs are in the text; ack or wait answers it")
 	assert.Equal(t, []string{row}, n.Primaries)
@@ -187,6 +187,7 @@ func TestAFriendComingUpPushesTheFourStepsToTheSeat(t *testing.T) {
 	r2.answered()
 	r2.tick(time.Second)
 	r2.advance(sprint.StatusDwell)
+	r2.daemon("", time.Time{}, time.Time{})
 	r2.answered()
 	r2.tick(0)
 	notes = r2.statusNotes(row)
@@ -216,9 +217,12 @@ func TestATransitionRaisesExactlyOneJudgment(t *testing.T) {
 	r := newTransitionRig(t)
 	row := sprint.FriendRow("amy")
 	r.tick(time.Second)
+	r.daemon("", time.Time{}, time.Time{})
 	r.answered()
 	for range 10 {
-		r.tick(15 * time.Second)
+		r.advance(15 * time.Second)
+		r.daemon("", time.Time{}, time.Time{})
+		r.tick(0)
 		r.answered()
 	}
 	notes := r.statusNotes(row)
@@ -418,6 +422,7 @@ func TestAFriendFlappingWithNoJudgmentOpenRaisesFlappingOnce(t *testing.T) {
 	before, _ := r.pushes(row)
 
 	down := func() { // her daemon answers the wake ping and her session does not: down
+		r.daemon("", time.Time{}, time.Time{})
 		_, _, _, err := r.st.FriendHealth(r.ctx, "amy", "coordinator", sprint.FriendHealth{State: sprint.DaemonPong, Seen: r.st.Now(), Generation: sprint.FirstSeatGeneration}, "")
 		require.NoError(t, err)
 	}

@@ -49,6 +49,9 @@ func (r *passRig) laneTick(d time.Duration, friend string, running ...string) {
 		rep := sprint.FriendReport{Active: r.clock()}
 		if f == friend {
 			rep.Running = running
+			if rep.Running == nil {
+				rep.Running = []string{} // a named empty list clears the last known lane
+			}
 		}
 		_, err := r.st.FriendBeatReport(r.ctx, f, rep, nil)
 		require.NoError(r.t, err)
