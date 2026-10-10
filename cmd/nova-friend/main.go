@@ -1416,6 +1416,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return w.finish(ctx, server, argv)
 		},
 		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
+		BatchTurn: sc.BatchTurn, // a check's bound waits for the batch turn under way to end
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at

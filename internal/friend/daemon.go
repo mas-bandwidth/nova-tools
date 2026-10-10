@@ -257,6 +257,12 @@ type Daemon struct {
 	// it is a new session, owed the present (present.go). Nil reads none: the daemon's start
 	// and the stale bound still bring the present.
 	Session func() string
+	// BatchTurn is told, each time it changes, when the daemon's own batch turn began
+	// (in batch mode, a Deliver it started and that has not ended), and the zero time
+	// once that turn ends (SessionCheck.BatchTurn): while it runs the session cannot
+	// answer a check, so the check's bound waits for its end. Nil tells no one; in
+	// one-shot mode it is always zero (batchTurnSince).
+	BatchTurn func(since time.Time)
 
 	// NotificationOnly uses the notification receiver without any sprint or job hooks (SPEC-FRIEND.md, notifications).
 	NotificationOnly     bool
@@ -567,6 +573,7 @@ type loop struct {
 	presentRetry time.Time       // when a present whose turn failed is tried again
 	delivered    time.Time       // when the session last took a turn: the stale bound runs from it
 	session      string          // the session id as last read (Session)
+	turnTold     time.Time       // the batch turn's start BatchTurn was last told, zero for none
 }
 
 // beatState is the cadence worker's last result. The main loop owns Status and
@@ -786,6 +793,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.m.Pong(p.At, p.Nonce)
 			}
 		}
+		l.tellBatchTurn()
 		d.flush(now)
 	}
 	return nil
@@ -1288,6 +1296,28 @@ func queue[T any](ctx context.Context, ch chan<- T, v T) {
 		default:
 		}
 	}
+}
+
+// batchTurnSince is when the daemon's own batch turn began, zero while none runs: in
+// batch mode, the turn in hand whose Deliver is under way (a deferred turn waiting for
+// its retry runs nothing). One-shot mode is always zero: its lanes are its turns, and
+// its primary session answers the check.
+func batchTurnSince(mode string, busy *turn) time.Time {
+	if mode != ModeBatch || busy == nil || !busy.running {
+		return time.Time{}
+	}
+	return busy.started
+}
+
+// tellBatchTurn tells BatchTurn the batch turn's start when it changed since the last
+// telling: a turn began, ended, or another began in the same step.
+func (l *loop) tellBatchTurn() {
+	since := batchTurnSince(l.mode, l.busy)
+	if since.Equal(l.turnTold) || l.d.BatchTurn == nil {
+		return
+	}
+	l.turnTold = since
+	l.d.BatchTurn(since)
 }
 
 // turnEnded calls the daemon's test hook, if any, once a turn's result is queued.

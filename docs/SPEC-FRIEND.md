@@ -213,6 +213,36 @@ Presence is therefore the session's, never the daemon's:
   run`, `gemini --resume`) is present on its answers as one in an app is, and
   the harness check reads it by its own turns, never by an app (The harness
   check, below).
+- In batch mode, while the daemon's own batch turn is in the session, an
+  unanswered check is not late: deaf is a message to her not seen, and she
+  cannot answer until that turn ends. A turn is in the session only once the
+  daemon says it runs and it holds the gate (it has taken the turn shared): a
+  turn waiting at the gate behind a check that holds it alone is not, so a hung
+  check's bound still runs, its down cancels it, and the gate frees (the cold
+  read of 2026-10-10). Neither bound runs against the check while the turn is in
+  the session (`presence: session check <nonce> waits behind the batch turn
+  under way since <t>`); when the turn ends the bound starts again (`presence:
+  the batch turn ended; ...`): a check the session read goes in again and its
+  bound runs from that ask, one it has not read waits in its queue
+  (`ReaskAfter` as before) and its bound runs from the turn's end.
+- Turns that follow each other carry the check behind them from one to the
+  next: a turn that ends and the next that starts in the same step are never
+  seen apart, and a turn that takes the gate before the check goes in again
+  holds it off once more. So the exemption is capped by wall clock, `BehindCap`
+  (45 minutes, above the 20 to 40 minute turns measured), from the first time
+  the unanswered check went behind a turn; neither a turn's start nor the check
+  asked again resets it, only an answer does. At the cap the bounds run through
+  the turn (`presence: session check <nonce> has waited behind batch turns since
+  <t>: the 45m0s cap is reached ...`), and a check unanswered since before then
+  is down at once.
+- She is still down when silent for the bound with no turn in the session, when
+  the check goes unanswered for the bound after the turn, at `BehindCap`, and on
+  the harness's limits and repeated failures; a turn silent past `SilentStop` is
+  stopped. One-shot mode is unchanged: its lanes are its turns, and its primary
+  session answers the check (the finding of 2026-10-10 on two batch friends,
+  whose 20 to 40 minute turns called them down mid-turn). The sprint server does
+  not yet hear of the turn: it still reads her down once her last proof is
+  older than `FriendProofLive` with no card finished.
 - A daemon that starts is down, `no session answer yet`, with a check owed at
   once: coming up proves nothing about the session. A check the session has not
   read is never asked again before `ReaskAfter` (an hour): a queueing harness
