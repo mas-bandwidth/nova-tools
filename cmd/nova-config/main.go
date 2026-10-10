@@ -697,7 +697,8 @@ func liveRedisAddress(flagValue string, getenv func(string) string) string {
 	return ""
 }
 
-// actorName resolves --actor: the flag, else NOVA_FRIEND, else the seat name.
+// actorName resolves --actor: the flag, else NOVA_FRIEND, else the seat login's
+// recorded actor. When none resolves, it refuses naming all three sources.
 func actorName(flagValue string, getenv func(string) string, seatValues ...string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -717,7 +718,7 @@ func actorName(flagValue string, getenv func(string) string, seatValues ...strin
 			return v, nil
 		}
 	}
-	return "", fmt.Errorf("--actor is required: the name the write is recorded under (or %s)", envActor)
+	return "", fmt.Errorf("--actor is required: the name the write is recorded under (from --actor flag, NOVA_FRIEND, or the seat login's recorded actor)")
 }
 
 // --- kinds ------------------------------------------------------------------

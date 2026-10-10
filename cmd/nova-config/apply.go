@@ -93,6 +93,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	}
 	o := tool.Done().Fact("dry_run", *check)
 	o.Verb = verb
+	var changed bool
 	for _, kn := range kinds {
 		start := d.now()
 		applyKind := config.Apply
@@ -112,6 +113,9 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 			}
 			return storeErr(stderr, verb, err, toolName+" apply --dry-run")
 		}
+		if res.Add > 0 || res.Set > 0 || res.Remove > 0 {
+			changed = true
+		}
 		if *asJSON {
 			o.Item("kind", "kind", kn, "add", res.Add, "set", res.Set, "remove", res.Remove, "rev", res.Rev, "applied", res.RedisRev)
 			continue
@@ -121,6 +125,9 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 			continue
 		}
 		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
+	}
+	if !*check && !*asJSON && !changed {
+		fmt.Fprintln(stdout, "no change: 0 rows differ")
 	}
 	note := actorAliasNote(fs)
 	if note != "" {
