@@ -365,7 +365,7 @@ func backupReadme(epoch uint64, base string, parts []string, textSum, xzSum stri
 	if level == store.RestoreSemantic {
 		proved = "with the same counts and the same sprint state"
 	}
-	fmt.Fprintf(&b, "Written by `nova-sprint backup --out`: the sprint store's keys of epoch %d and the keys every epoch shares, one `RESTORE <key> <ttl ms> <payload>` line a key (`%s`), compressed with `xz -9` (`%s.xz`) and split into %d parts under 100 MB. It holds %s; it was restored into a throwaway store under %s %s, and scanned for every nova-secrets value with no match.\n\n", epoch, base, base, len(parts), c.Text(), library, proved)
+	fmt.Fprintf(&b, "Written by `nova-sprint backup --out`: the sprint store's keys of epoch %d, the keys every epoch shares and the records an older epoch left, one `RESTORE <key> <ttl ms> <payload>` line a key (`%s`), compressed with `xz -9` (`%s.xz`) and split into %d parts under 100 MB. It holds %s; it was restored into a throwaway store under %s %s, and scanned for every nova-secrets value with no match.\n\n", epoch, base, base, len(parts), c.Text(), library, proved)
 	b.WriteString("| order | file | sha256 |\n|---|---|---|\n")
 	for i, n := range names {
 		fmt.Fprintf(&b, "| %d | `%s` | `%s` |\n", i+1, n, partSums[i])
@@ -599,8 +599,9 @@ func (t *memTwin) Library() string { return "twin" }
 func (t *memTwin) Close()          {}
 
 // redisBackup is a Redis store as a backup's source: SCAN for the sprint's
-// keys (store.SprintKey) of its epoch and the shared ones (store.InBackup),
-// then DUMP and PTTL of each, a pipeline a batch.
+// keys (store.SprintKey) of its epoch, the shared ones and the records of
+// every epoch (store.BackupKey), then DUMP and PTTL of each, a pipeline a
+// batch.
 type redisBackup struct {
 	b     *store.Redis
 	names sprint.Names
@@ -614,7 +615,7 @@ func (r redisBackup) Take(ctx context.Context) (uint64, []store.DumpKey, map[str
 	var names []string
 	it := r.b.C.Scan(ctx, 0, "*", 1000).Iterator()
 	for it.Next(ctx) {
-		if k := it.Val(); store.SprintKey(r.names, k) && store.InBackup(k, es.N) {
+		if k := it.Val(); store.BackupKey(r.names, k, es.N) {
 			names = append(names, k)
 		}
 	}

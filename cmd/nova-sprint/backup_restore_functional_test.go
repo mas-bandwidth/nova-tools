@@ -126,3 +126,63 @@ func TestRedisBackupOutIsSemantic(t *testing.T) {
 		})
 	}
 }
+
+// A store some clears old holds records of older epochs, and its work table's
+// change log still names them; at the active epoch the table refuses to read
+// them (MEMBEREPOCH). The backup of 2026-10-10 refused on one of epoch 7 at
+// epoch 15. A backup takes every record whatever its epoch, reads it as the
+// store holds it, and still proves the restore semantic. Epoch 0's records
+// carry no epoch in their ids, epoch 1's do: both paths are read.
+func TestRedisBackupOutTakesTheRecordsOfOlderEpochs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
+	t.Cleanup(func() { _ = c.Close() }) // ignored: the owned test server is cleaned up by its fixture
+	require.NoError(t, fn.Load(ctx, c))
+	names := sprint.Names{Prefix: "r-"}
+	b := &store.Redis{C: c, Names: names, Now: time.Now}
+	st := &store.Store{B: b, Names: names, Actor: "tester"}
+	require.NoError(t, st.Init(ctx))
+	for i, stream := range []string{"s1", "s2", "s3"} {
+		if i > 0 {
+			_, err := st.Clear(ctx)
+			require.NoError(t, err)
+		}
+		res, err := st.Run(ctx, store.AddStep(sprint.AddReq{Stream: stream, Count: 1, Brief: "c: one card\nREPO: mas-bandwidth/nova-tools\n\nThe task."}))
+		require.NoError(t, err)
+		require.Empty(t, res.Refused)
+	}
+	es, err := b.Epoch(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), es.N)
+	work := names.Table(sprint.Work)
+	ids, err := b.RecordIDs(ctx, work)
+	require.NoError(t, err)
+	_, err = b.AtEpoch(es.N, false).ReadSet(ctx, work, ids)
+	require.ErrorContains(t, err, "MEMBEREPOCH", "the read set at the active epoch refuses an older record")
+
+	src := redisBackup{b: b, names: names}
+	_, keys, _, err := src.Take(ctx)
+	require.NoError(t, err)
+	older := map[uint64]bool{}
+	for _, k := range keys {
+		if e, ok := store.KeyEpoch(k.Key); ok && e != es.N {
+			require.True(t, store.IsRecordKey(names, k.Key), "only a record of another epoch is taken: %s", k.Key)
+			older[e] = true
+		}
+	}
+	require.True(t, older[1], "the dump takes epoch 1's records")
+
+	self, err := os.Executable()
+	require.NoError(t, err)
+	out := filepath.Join(t.TempDir(), "backup")
+	backup := backupOut{out: out, partBytes: 600, src: src, xz: "xz", split: "split",
+		twin: func(ctx context.Context, work string) (backupTwin, error) {
+			return startServerTwin(ctx, "redis-server", work, names)
+		},
+		scan: backupScanner{bin: fakeSecrets(t, "nsv_FAKE_FOR_OLDER_EPOCH_TEST"), store: t.TempDir(), as: "tester", key: "unused", sops: "/bin/true", self: self}}
+	result, err := backup.run(ctx)
+	require.NoError(t, err, "a backup never refuses on a record of an older epoch")
+	require.Contains(t, result.line, "epoch=2 ")
+	require.Contains(t, result.line, "restore=semantic compared=state+counts")
+}
