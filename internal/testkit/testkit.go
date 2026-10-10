@@ -37,6 +37,8 @@ import (
 // Clock is a virtual clock for tests. Now returns the virtual time and Advance
 // moves it. It is safe for concurrent use. Pass time as an argument
 // (now func() time.Time) wherever possible; where code takes a clock, use Clock.
+// See docs/STANDARD.md section 8 (Tests): tests open with t.Parallel(), are
+// table-driven with t.Run, and use testify with require in setup and assert in rows.
 type Clock struct {
 	mu  sync.Mutex
 	now time.Time

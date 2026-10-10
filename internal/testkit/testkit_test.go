@@ -135,24 +135,19 @@ func TestClockAdvancesFromManyGoroutinesLoseNoTime(t *testing.T) {
 	c := testkit.NewClock(start)
 	const goroutines = 10
 	const steps = 10
-	startAdvance := make(chan struct{})
-	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
+	ready := make(chan struct{})
 	for range goroutines {
 		go func() {
 			defer wg.Done()
-			<-startAdvance
+			<-ready
 			for range steps {
 				c.Advance(time.Second)
 			}
 		}()
 	}
-	close(startAdvance)
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-	<-done
+	close(ready)
+	wg.Wait()
 	assert.Equal(t, start.Add(100*time.Second), c.Now())
 }

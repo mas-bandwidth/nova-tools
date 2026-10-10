@@ -16,12 +16,6 @@ type clockAdapter struct {
 	start time.Time
 }
 
-// newLockStepClock returns a clock for tests (deprecated: use newClockForTest).
-// This exists for backwards compatibility with filelock_test.go.
-func newLockStepClock(start time.Time) *clockAdapter {
-	return newClockForTest(start)
-}
-
 func newClockForTest(start time.Time) *clockAdapter {
 	c := testkit.NewClock(start)
 	return &clockAdapter{c: c, start: c.Now()}
