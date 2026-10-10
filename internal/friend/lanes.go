@@ -672,6 +672,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
 		line += " card=done " + l.endCard(ln.n, card, end, now)
+		l.releaseJob(filepath.Base(card.Outbox), now)
 		l.finishNote(ln, card, now.Sub(t.started), now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
@@ -685,6 +686,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		ln.attempts++
 		job := filepath.Base(card.Outbox)
 		d.Record(line + fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)) + l.endCard(ln.n, card, end, now))
+		l.releaseJob(job, now)
 		s.given[job] = true
 		s.state.GivenUp = append(s.state.GivenUp, job)
 		l.saveLanes(now)
@@ -714,6 +716,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
+	l.releaseJob(filepath.Base(card.Outbox), now)
 	l.finishNote(ln, card, now.Sub(t.started), now)
 	job := filepath.Base(card.Outbox)
 	s.given[job] = true
