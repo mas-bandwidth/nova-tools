@@ -111,6 +111,9 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 			if name, ok := FriendCard(pr); ok && g.friend && name == g.name {
 				continue // its pin is honoured where it sits
 			}
+			if pr.F(FieldPinWaived) != "" && pinCardStarted(s, g.seat, pr, wc) {
+				continue // a waived pin that has started stays where it started
+			}
 			if g.friend && friendStarted(s, g.seat, wc) {
 				continue
 			}
@@ -177,6 +180,17 @@ func rebalanceTo(s *Snapshot, units []*rebalanceUnit, g *rebalanceUnit, pr, wc *
 	if len(may) == 0 {
 		return nil
 	}
+	// a waived pin that has not started goes back to the preferred friend when she
+	// is one of the units that may take it, ahead of a cheaper row
+	if pr.F(FieldPinWaived) != "" {
+		if name, ok := FriendCard(pr); ok && name != "" {
+			for _, u := range may {
+				if u.friend && u.name == name {
+					return u
+				}
+			}
+		}
+	}
 	slices.SortStableFunc(may, func(a, b *rebalanceUnit) int {
 		return cmp.Or(cmp.Compare(dist[a], dist[b]), cmp.Compare(b.idle(), a.idle()), cmp.Compare(a.name, b.name))
 	})
@@ -217,8 +231,12 @@ func rebalanceMove(s *Snapshot, p *Plan, declared map[string]bool, ri routeIndex
 		s.movedDeadline(to.name, wc, set) // machine to machine: its route kept, as the level's
 	}
 	changes := []Change{change(Fleet, moveEntry(wc, to.row, Ready, set, unset...))}
-	if len(prim) > 0 {
-		changes = append(changes, change(Work, setEntry(pr, prim)))
+	var clear []string
+	if name, ok := FriendCard(pr); ok && to.friend && name == to.name && pr.Has(FieldPinWaived) {
+		clear = []string{FieldPinWaived, FieldPinSince} // her preference honoured: the waiver and the clock end
+	}
+	if len(prim) > 0 || len(clear) > 0 {
+		changes = append(changes, change(Work, setEntry(pr, prim, clear...)))
 	}
 	what := fmt.Sprintf("rebalanced %s from %s to %s", wc.ID, g.row, to.row)
 	n := happened(NRebalanced, pr.Row, s.Now, pr.ID)

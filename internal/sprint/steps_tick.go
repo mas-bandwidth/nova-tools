@@ -648,8 +648,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		if StreamHeld(s, c.Row) {
 			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
 		}
-		if friendPlaced[c.ID] || OnlyFriend(c) {
-			continue
+		if friendPlaced[c.ID] || pinHolds(s, c, seats) {
+			continue // placed, a hard pin, or a come-back pin still inside its clock
 		}
 		if wc := AtRedealBound(s, c); wc != nil {
 			cd := cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID}, what: boundWhat(wc, c.ID)}
