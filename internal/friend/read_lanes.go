@@ -319,10 +319,10 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 	d.Record(fmt.Sprintf("%s read %s: begun tier=%s model=%s", now.UTC().Format(time.RFC3339), r.ID, dash(r.Packet.Tier), dash(model)))
 	rctx, cancel := context.WithCancel(l.ctx)
 	s.cancel[r.ID], s.active[r.ID] = cancel, r
-	go func() {
+	l.work(func() {
 		defer cancel()
 		res := readResult{read: r, model: model, dir: dir, start: now}
-		defer func() { s.results <- res }()
+		defer func() { queue(l.ctx, s.results, res) }()
 		_ = os.Remove(filepath.Join(dir, "RESULT.md")) // ignored: a result of an earlier attempt is not this read's
 		if res.err = os.MkdirAll(dir, 0o755); res.err != nil {
 			return
@@ -341,7 +341,7 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 		default:
 			res.err = errors.New("the harness runs no one-shot")
 		}
-	}()
+	})
 }
 
 // readDone records a read that ended: the verdict its RESULT.md names, else a return with
