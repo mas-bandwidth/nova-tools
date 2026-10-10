@@ -85,14 +85,16 @@ type landShared struct {
 	treesMu sync.Mutex
 	// pruned is each clone whose stale worktrees this pass has pruned; used is each clone's
 	// streams that worked in a worktree of it this pass, for the removal of the rest.
-	pruned map[string]bool
-	used   map[string]map[string]bool
+	pruned       map[string]bool
+	used         map[string]map[string]bool
+	benchFaults  map[string]benchFaultRecord
+	faultsRaised bool
 }
 
 // locks is the pass's shared locks, made once.
 func (l *lander) locks() *landShared {
 	if l.shared == nil {
-		l.shared = &landShared{pruned: map[string]bool{}, used: map[string]map[string]bool{}}
+		l.shared = &landShared{pruned: map[string]bool{}, used: map[string]map[string]bool{}, benchFaults: map[string]benchFaultRecord{}}
 	}
 	return l.shared
 }
@@ -719,6 +721,10 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 		}
 		if red == benchGateUnavailableWhy {
 			j.refuse(red + "; no card is blamed and nothing was pushed or reported")
+			return
+		}
+		if strings.HasPrefix(red, "LAND DEFERRED") {
+			j.refuse(red)
 			return
 		}
 		if red == "" {
