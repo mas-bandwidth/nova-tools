@@ -254,9 +254,9 @@ func (a *app) raiseBenchTmp(st *store.Store, serr error, machine string, tmp spr
 		fmt.Fprintf(stdout, "GC WOULD-NOTE %s\n", oneline.Escape(n.What))
 		return
 	}
-	if serr != nil {
+	if serr != nil { // ignored: no store holds the judgment, so it is said and not kept
 		fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(n.What))
-		return // ignored: no store holds the judgment, so it is said and not kept
+		return
 	}
 	if _, err := st.Run(context.Background(), store.NoteStep("gc", n)); err != nil {
 		fmt.Fprintf(stderr, "%s gc: GC FAILED machine=%s: the /tmp judgment was not written: %s\n", prog, oneline.Escape(machine), oneline.Err(err))
