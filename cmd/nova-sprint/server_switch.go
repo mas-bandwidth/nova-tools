@@ -130,7 +130,7 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 
 	if *rollback {
 		// the swapped server is on probation for its first N ticks
-		// (docs/SPEC-SPRINT.md section 14, install-rollback-on-missed-ticks-b.w2)
+		// (docs/SPEC-SPRINT.md section 14, install-rollback-on-missed-ticks-b.w6)
 		rec := probationRecord{Target: targetPath, Binary: candidate, Previous: targetPath + ".prev", N: *probationN, Changed: a.now()}
 		if err := writeProbationRecord(targetPath, rec); err != nil {
 			fmt.Fprintf(stderr, "%s server switch: switched, and the probation record %s.probation.json was not written: %s\n", prog, targetPath, oneline.Escape(err.Error()))

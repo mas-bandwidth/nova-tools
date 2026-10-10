@@ -388,7 +388,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	// a swapped server is on probation for its first N ticks (server switch
 	// --probation): a run that begins inside the probation after one before it
 	// exited rolls the previous binary back and exits so the supervisor starts
-	// it (docs/SPEC-SPRINT.md section 14, install-rollback-on-missed-ticks-b.w2;
+	// it (docs/SPEC-SPRINT.md section 14, install-rollback-on-missed-ticks-b.w6;
 	// the model is tla/ServerInstall.tla)
 	if target := a.serverTargetPath(); target != "" {
 		if rec, ok := readProbationRecord(target); ok && rec.Good < rec.N {
