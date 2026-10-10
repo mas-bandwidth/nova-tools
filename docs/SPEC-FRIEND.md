@@ -213,6 +213,20 @@ Presence is therefore the session's, never the daemon's:
   run`, `gemini --resume`) is present on its answers as one in an app is, and
   the harness check reads it by its own turns, never by an app (The harness
   check, below).
+- In batch mode, while the daemon's own batch turn runs (a delivery it started
+  that has not ended), an unanswered check is not late: deaf is a message to
+  her not seen, and she cannot answer until that turn ends. Neither bound runs
+  against the check while the turn runs (`presence: session check <nonce> waits
+  behind the batch turn under way since <t>`); when the turn ends the bound
+  starts again (`presence: the batch turn ended; ...`): a check the session read
+  goes in again and its bound runs from that ask, one it has not read waits in
+  its queue (`ReaskAfter` as before) and its bound runs from the turn's end. She
+  is still down when silent for the bound with no turn running, when the check
+  goes unanswered for the bound after the turn, and on the harness's limits and
+  repeated failures; a turn silent past `SilentStop` is stopped, so no hung turn
+  holds the bound off for ever. One-shot mode is unchanged: its lanes are its
+  turns, and its primary session answers the check (the finding of 2026-10-10 on
+  two batch friends, whose 20 to 40 minute turns called them down mid-turn).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
   once: coming up proves nothing about the session. A check the session has not
   read is never asked again before `ReaskAfter` (an hour): a queueing harness

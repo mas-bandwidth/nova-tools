@@ -232,3 +232,215 @@ func (h *heldApp) got() []string {
 	defer h.mu.Unlock()
 	return append([]string(nil), h.texts...)
 }
+
+// upWithOpenCheck is a presence proved and up at t0, its next check n2 asked at
+// t0 plus ProveEvery and unanswered: the state a batch friend is in when her
+// daemon starts the turn that takes every waiting card.
+func upWithOpenCheck(t *testing.T) (*Presence, time.Time) {
+	t.Helper()
+	p := StartPresence()
+	p.Ask(t0, "n1")
+	require.True(t, p.Answer(t0.Add(time.Minute), "n1"))
+	asked := t0.Add(ProveEvery)
+	p.Tick(asked, time.Time{})
+	require.True(t, p.Owed, "the next check is due ProveEvery after the last ask")
+	p.Ask(asked, "n2")
+	require.True(t, p.Up)
+	return p, asked
+}
+
+// TestACheckWaitsForTheBatchTurnUnderWay: the finding of 2026-10-10 on two batch
+// friends (dsh and opencode, mini-m5): her session took every waiting card in one
+// turn of 20 to 40 minutes, the check could not be answered until it ended, and the
+// bound called her down mid-turn. Deaf is a message to her not seen: while the
+// daemon's own batch turn runs, no bound runs against the check; it starts when the
+// turn ends.
+func TestACheckWaitsForTheBatchTurnUnderWay(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a turn running 20m with no answer: still up", func(t *testing.T) {
+		t.Parallel()
+		p, asked := upWithOpenCheck(t)
+		turn := asked.Add(time.Second)
+		behind, _ := p.Tick(turn, turn)
+		assert.True(t, behind, "the open check goes behind the turn, said once")
+		for at := turn; at.Sub(turn) <= 20*time.Minute; at = at.Add(time.Minute) {
+			behind, restarted := p.Tick(at, turn)
+			assert.False(t, behind || restarted, "said once while the turn runs")
+			require.True(t, p.Up, "%s into the turn: no bound runs while she cannot answer", at.Sub(turn))
+		}
+		assert.True(t, p.Open, "the check stays open, never asked again under the turn")
+	})
+
+	t.Run("the turn ends, no answer for the bound: down", func(t *testing.T) {
+		t.Parallel()
+		p, asked := upWithOpenCheck(t)
+		turn, end := asked.Add(time.Second), asked.Add(30*time.Minute)
+		p.Tick(turn, turn)
+		_, restarted := p.Tick(end, time.Time{})
+		assert.True(t, restarted, "the bound starts again at the turn's end")
+		assert.True(t, p.Open, "unread, it waits in her queue: not asked again before ReaskAfter")
+		assert.False(t, p.Owed)
+		p.Tick(end.Add(SessionBound-time.Second), time.Time{})
+		assert.True(t, p.Up, "within the bound from the turn's end")
+		p.Tick(end.Add(SessionBound), time.Time{})
+		assert.False(t, p.Up, "the bound from the turn's end, unanswered")
+		assert.Equal(t, NoSessionAnswer, p.Reason)
+	})
+
+	t.Run("the turn ends, a read check is asked again and its bound runs from the ask", func(t *testing.T) {
+		t.Parallel()
+		p, asked := upWithOpenCheck(t)
+		p.Read = true // a headless turn of its own that the session took (ReadOnReturn) and did not answer
+		turn, end := asked.Add(time.Second), asked.Add(40*time.Minute)
+		p.Tick(turn, turn)
+		_, restarted := p.Tick(end, time.Time{})
+		assert.True(t, restarted)
+		assert.True(t, p.Owed, "asked again at the turn's end")
+		assert.False(t, p.Open)
+		again := end.Add(2 * time.Second) // the ask goes in on a later step
+		p.Ask(again, "n3")
+		p.Tick(again.Add(SessionBound-time.Second), time.Time{})
+		assert.True(t, p.Up)
+		p.Tick(again.Add(SessionBound), time.Time{})
+		assert.False(t, p.Up, "unanswered for the bound from the ask")
+	})
+
+	t.Run("the turn ends, answered within the bound: up", func(t *testing.T) {
+		t.Parallel()
+		p, asked := upWithOpenCheck(t)
+		turn, end := asked.Add(time.Second), asked.Add(25*time.Minute)
+		p.Tick(turn, turn)
+		p.Tick(end, time.Time{})
+		assert.True(t, p.Answer(end.Add(SessionBound-time.Minute), "n2"))
+		p.Tick(end.Add(SessionBound+time.Minute), time.Time{})
+		assert.True(t, p.Up)
+		assert.False(t, p.Behind)
+	})
+
+	t.Run("an answer during the turn clears it: nothing restarts", func(t *testing.T) {
+		t.Parallel()
+		p, asked := upWithOpenCheck(t)
+		turn := asked.Add(time.Second)
+		p.Tick(turn, turn)
+		assert.True(t, p.Answer(turn.Add(10*time.Minute), "n2"))
+		_, restarted := p.Tick(turn.Add(30*time.Minute), time.Time{})
+		assert.False(t, restarted)
+		assert.True(t, p.Up)
+	})
+
+	t.Run("no turn running, no answer for the bound: down, as before", func(t *testing.T) {
+		t.Parallel()
+		p, asked := upWithOpenCheck(t)
+		p.Tick(asked.Add(SessionBound-time.Second), time.Time{})
+		assert.True(t, p.Up)
+		behind, restarted := p.Tick(asked.Add(SessionBound), time.Time{})
+		assert.False(t, behind || restarted)
+		assert.False(t, p.Up)
+		assert.Equal(t, NoSessionAnswer, p.Reason)
+	})
+
+	t.Run("a turn never stretches silence after it: the quiet rule from the turn's end", func(t *testing.T) {
+		t.Parallel()
+		p, asked := upWithOpenCheck(t)
+		p.Heard(asked.Add(time.Minute)) // she spoke, so the expiry leaves her up
+		p.Tick(asked.Add(SessionBound), time.Time{})
+		require.True(t, p.Up)
+		require.False(t, p.Open)
+		turn := asked.Add(SessionBound + time.Minute)
+		behind, _ := p.Tick(turn, turn)
+		assert.True(t, behind, "an unanswered check goes behind the turn even once its bound passed")
+		p.Tick(turn.Add(SessionQuiet+SessionBound+time.Minute), turn)
+		assert.True(t, p.Up, "no quiet rule while the turn runs")
+		end := turn.Add(30 * time.Minute)
+		p.Tick(end, time.Time{})
+		p.Tick(end.Add(SessionBound), time.Time{})
+		assert.False(t, p.Up, "unanswered for the bound after the turn, the session silent since")
+	})
+}
+
+// TestOneShotModeTellsNoBatchTurn: one-shot mode is unchanged, its lanes are its
+// turns and its primary session answers the check, so the daemon tells no batch
+// turn; in batch mode it tells the turn whose Deliver is under way, once per change.
+func TestOneShotModeTellsNoBatchTurn(t *testing.T) {
+	t.Parallel()
+	running := &turn{started: t0, running: true}
+	assert.True(t, batchTurnSince(ModeOneShot, running).IsZero(), "one-shot: no batch turn")
+	assert.True(t, batchTurnSince(ModeBatch, nil).IsZero())
+	assert.True(t, batchTurnSince(ModeBatch, &turn{started: t0}).IsZero(), "a deferred turn in hand runs nothing")
+	assert.Equal(t, t0, batchTurnSince(ModeBatch, running))
+
+	var told []time.Time
+	l := &loop{d: &Daemon{BatchTurn: func(since time.Time) { told = append(told, since) }}, mode: ModeOneShot, busy: running}
+	l.tellBatchTurn()
+	assert.Empty(t, told, "one-shot: nothing told")
+	l.mode = ModeBatch
+	l.tellBatchTurn()
+	l.tellBatchTurn()
+	l.busy = nil
+	l.tellBatchTurn()
+	assert.Equal(t, []time.Time{t0, {}}, told, "the start once, then the end")
+
+	p := StartPresence() // and a presence that hears no turn keeps the rule it had
+	p.Ask(t0, "n1")
+	p.Tick(t0.Add(SessionBound), time.Time{})
+	assert.Equal(t, NoSessionAnswer, p.Reason)
+}
+
+// readApp is a headless harness whose delivery returns once the session took the
+// text (ReadOnReturn), and which never answers.
+type readApp struct{ closedApp }
+
+func (*readApp) ReadOnReturn() {}
+
+// TestTheSessionCheckWaitsForTheDaemonsBatchTurn: through the SessionCheck, the
+// daemon's word on its batch turn holds the bound, the deferral and the restart
+// are said once each, the read check goes in again at the turn's end, and its
+// bound then runs.
+func TestTheSessionCheckWaitsForTheDaemonsBatchTurn(t *testing.T) {
+	t.Parallel()
+	r := newPresenceRig(t)
+	app := &readApp{}
+	r.sc.Deliver = r.sc.Gate(app)
+	var mu sync.Mutex
+	var lines []string
+	r.sc.Record = func(line string) { mu.Lock(); lines = append(lines, line); mu.Unlock() }
+	said := func(part string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, l := range lines {
+			if strings.Contains(l, part) {
+				n++
+			}
+		}
+		return n
+	}
+
+	r.step(t, BeatEvery)
+	require.Len(t, app.got(), 1)
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
+	r.step(t, BeatEvery)
+	up, _ := r.present(t)
+	require.True(t, up)
+
+	r.step(t, ProveEvery)
+	require.Len(t, app.got(), 2, "the next check goes in")
+	r.sc.BatchTurn(r.now) // the daemon's batch turn takes every waiting card
+	for range 30 {
+		r.step(t, time.Minute)
+		up, _ = r.present(t)
+		require.True(t, up, "no bound runs while her batch turn runs")
+	}
+	assert.Equal(t, 1, said("waits behind the batch turn under way since"))
+	assert.Len(t, app.got(), 2, "never asked again under the turn")
+
+	r.sc.BatchTurn(time.Time{})
+	r.step(t, BeatEvery)
+	assert.Equal(t, 1, said("the batch turn ended; session check n2 goes in again"))
+	require.Len(t, app.got(), 3, "the read check goes in again at the turn's end")
+	r.step(t, SessionBound)
+	up, reason := r.present(t)
+	assert.False(t, up, "unanswered for the bound after the turn")
+	assert.Equal(t, NoSessionAnswer, reason)
+}
