@@ -63,24 +63,28 @@ func TestSprintSelectBatchCoverNoneSelected(t *testing.T) {
 // no placed card or that the rest of the selector does not hold of.
 func TestSprintSelectBatchCoverSelected(t *testing.T) {
 	t.Parallel()
-	w := newWorld(t)
-	s := w.s
-	s.Work.SetRows([]string{"s1", "s2"})
-	s.Work.Put(&Card{ID: "b", Row: "s1", Col: Ready, Score: 2, Rev: 1, Fields: map[string]string{}})
-	s.Work.Put(&Card{ID: "a", Row: "s1", Col: Ready, Score: 1, Rev: 1, Fields: map[string]string{}})
-	s.Work.Put(&Card{ID: "c", Row: "s2", Col: Ready, Score: 0, Rev: 1, Fields: map[string]string{}})
-	s.Work.Put(&Card{ID: "x", Row: "s2", Col: Ready, Score: 5, Rev: 1, Fields: map[string]string{}})
+	// A snapshot per subtest: the tables cache on first read, so parallel
+	// subtests must not share one (the race rule).
+	snapshot := func(t *testing.T) *Snapshot {
+		s := newWorld(t).s
+		s.Work.SetRows([]string{"s1", "s2"})
+		s.Work.Put(&Card{ID: "b", Row: "s1", Col: Ready, Score: 2, Rev: 1, Fields: map[string]string{}})
+		s.Work.Put(&Card{ID: "a", Row: "s1", Col: Ready, Score: 1, Rev: 1, Fields: map[string]string{}})
+		s.Work.Put(&Card{ID: "c", Row: "s2", Col: Ready, Score: 0, Rev: 1, Fields: map[string]string{}})
+		s.Work.Put(&Card{ID: "x", Row: "s2", Col: Ready, Score: 5, Rev: 1, Fields: map[string]string{}})
+		return s
+	}
 
 	t.Run("the order is stream, then score, then id", func(t *testing.T) {
 		t.Parallel()
-		ids, refused := Selected(s, Selector{})
+		ids, refused := Selected(snapshot(t), Selector{})
 		assert.Equal(t, []string{"a", "b", "c", "x"}, ids)
 		assert.Empty(t, refused)
 	})
 	t.Run("an --ids-file id is refused when named twice, unplaced, or not held by the rest", func(t *testing.T) {
 		t.Parallel()
 		q := Selector{Stream: "s1", IDs: []string{"a", "a", "nope", "x"}}
-		ids, refused := Selected(s, q)
+		ids, refused := Selected(snapshot(t), q)
 		assert.Equal(t, []string{"a"}, ids)
 		assert.Equal(t, []Refusal{
 			{"a", "named twice in --ids-file"},
@@ -94,14 +98,19 @@ func TestSprintSelectBatchCoverSelected(t *testing.T) {
 // folds their changes into one entry per card, and is all or none.
 func TestSprintSelectBatchCoverBatch(t *testing.T) {
 	t.Parallel()
-	s := newWorld(t).s
-	s.Work.SetRows([]string{"s1", "s2"})
-	s.Work.Put(&Card{ID: "s1-1", Row: "s1", Col: Ready, Score: 1, Rev: 1, Fields: map[string]string{"stage": "zero"}})
+	// A snapshot per subtest: the tables cache on first read, so parallel
+	// subtests must not share one (the race rule).
+	snapshot := func(t *testing.T) *Snapshot {
+		s := newWorld(t).s
+		s.Work.SetRows([]string{"s1", "s2"})
+		s.Work.Put(&Card{ID: "s1-1", Row: "s1", Col: Ready, Score: 1, Rev: 1, Fields: map[string]string{"stage": "zero"}})
+		return s
+	}
 
 	t.Run("a later step is planned on the state the steps before it leave", func(t *testing.T) {
 		t.Parallel()
 		seen := ""
-		p := Batch(s, []func(*Snapshot) Plan{
+		p := Batch(snapshot(t), []func(*Snapshot) Plan{
 			func(cur *Snapshot) Plan {
 				c := cur.Work.Card("s1-1")
 				return Plan{Units: []Unit{{Key: c.ID, Changes: []Change{change(Work, setEntry(c, map[string]string{"stage": "one"}))}}}}
@@ -117,7 +126,7 @@ func TestSprintSelectBatchCoverBatch(t *testing.T) {
 
 	t.Run("a refusal of any step refuses the whole plan with every step's refusals", func(t *testing.T) {
 		t.Parallel()
-		p := Batch(s, []func(*Snapshot) Plan{
+		p := Batch(snapshot(t), []func(*Snapshot) Plan{
 			func(*Snapshot) Plan { return Plan{Refused: []Refusal{{"a", "one"}}} },
 			func(*Snapshot) Plan { return Plan{Refused: []Refusal{{"b", "two"}}} },
 		})
@@ -127,7 +136,7 @@ func TestSprintSelectBatchCoverBatch(t *testing.T) {
 
 	t.Run("a property written twice keeps one write with the last value", func(t *testing.T) {
 		t.Parallel()
-		p := Batch(s, []func(*Snapshot) Plan{
+		p := Batch(snapshot(t), []func(*Snapshot) Plan{
 			func(*Snapshot) Plan { return Plan{Props: []PropWrite{{Table: Readers, Name: "hint", Value: "one"}}} },
 			func(*Snapshot) Plan { return Plan{Props: []PropWrite{{Table: Readers, Name: "hint", Value: "two"}}} },
 		})
@@ -137,7 +146,7 @@ func TestSprintSelectBatchCoverBatch(t *testing.T) {
 
 	t.Run("a row added twice is one row", func(t *testing.T) {
 		t.Parallel()
-		p := Batch(s, []func(*Snapshot) Plan{
+		p := Batch(snapshot(t), []func(*Snapshot) Plan{
 			func(*Snapshot) Plan { return Plan{Rows: []RowAdd{{Table: Work, Row: "s2"}}} },
 			func(*Snapshot) Plan { return Plan{Rows: []RowAdd{{Table: Work, Row: "s2"}}} },
 		})
@@ -146,7 +155,7 @@ func TestSprintSelectBatchCoverBatch(t *testing.T) {
 
 	t.Run("two creates of one card are refused under the key batch", func(t *testing.T) {
 		t.Parallel()
-		p := Batch(s, []func(*Snapshot) Plan{
+		p := Batch(snapshot(t), []func(*Snapshot) Plan{
 			func(*Snapshot) Plan {
 				return Plan{Units: []Unit{{Key: "n", Changes: []Change{change(Work, createEntry("n", "s1", Ready, 1, nil))}}}}
 			},
@@ -233,10 +242,10 @@ func TestSprintSelectBatchCoverApplyEntry(t *testing.T) {
 // card re-cut as its twin in one step, all or none.
 func TestSprintSelectBatchCoverRecutSel(t *testing.T) {
 	t.Parallel()
-	w := setup(t, 2)
 
 	t.Run("a refused selection passes through", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := RecutSel(w.s, RecutSelReq{Sel: Selector{IDs: []string{"nope"}}})
 		require.Len(t, p.Refused, 1)
 		assert.Equal(t, "nope", p.Refused[0].Key)
@@ -245,6 +254,7 @@ func TestSprintSelectBatchCoverRecutSel(t *testing.T) {
 	})
 	t.Run("an empty selection is refused under the selector key", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := RecutSel(w.s, RecutSelReq{Sel: Selector{Stream: "s9"}})
 		require.Len(t, p.Refused, 1)
 		assert.Equal(t, "selector", p.Refused[0].Key)
@@ -252,12 +262,14 @@ func TestSprintSelectBatchCoverRecutSel(t *testing.T) {
 	})
 	t.Run("DropWho on a brief with no WHO line and no tier refuses its twin", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := RecutSel(w.s, RecutSelReq{Sel: Selector{Stream: "s1"}, Edit: BriefEdit{DropWho: true}})
 		require.Len(t, p.Refused, 2)
 		assert.Contains(t, p.Refused[0].Why, "its twin would change nothing")
 	})
 	t.Run("SetBase plans every card and says one line each and the total", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := RecutSel(w.s, RecutSelReq{Sel: Selector{Stream: "s1"}, Edit: BriefEdit{SetBase: "dev"}})
 		assert.Empty(t, p.Refused)
 		require.NotEmpty(t, p.Said)
@@ -271,10 +283,10 @@ func TestSprintSelectBatchCoverRecutSel(t *testing.T) {
 // transform made, and re-tiered with a tier, in one step.
 func TestSprintSelectBatchCoverBriefSel(t *testing.T) {
 	t.Parallel()
-	w := setup(t, 2)
 
 	t.Run("a refused selection passes through", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := BriefSel(w.s, BriefSelReq{Sel: Selector{IDs: []string{"nope"}}})
 		require.Len(t, p.Refused, 1)
 		assert.Equal(t, "nope", p.Refused[0].Key)
@@ -283,6 +295,7 @@ func TestSprintSelectBatchCoverBriefSel(t *testing.T) {
 	})
 	t.Run("an empty selection is refused under the selector key", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := BriefSel(w.s, BriefSelReq{Sel: Selector{Stream: "s9"}})
 		require.Len(t, p.Refused, 1)
 		assert.Equal(t, "selector", p.Refused[0].Key)
@@ -290,12 +303,14 @@ func TestSprintSelectBatchCoverBriefSel(t *testing.T) {
 	})
 	t.Run("DropWho on a brief with no WHO line and no tier leaves the brief of each card", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := BriefSel(w.s, BriefSelReq{Sel: Selector{Stream: "s1"}, Edit: BriefEdit{DropWho: true}})
 		require.Len(t, p.Refused, 2)
 		assert.Contains(t, p.Refused[0].Why, "leaves the brief of")
 	})
 	t.Run("a tier with an unchanged brief passes every card over without a refusal", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := BriefSel(w.s, BriefSelReq{Sel: Selector{Stream: "s1"}, Tier: "pro", Edit: BriefEdit{DropWho: true}})
 		assert.Empty(t, p.Refused)
 	})
@@ -305,10 +320,10 @@ func TestSprintSelectBatchCoverBriefSel(t *testing.T) {
 // selection made on the snapshot is handed to the plan as the ids it names.
 func TestSprintSelectBatchCoverSelectIDs(t *testing.T) {
 	t.Parallel()
-	w := setup(t, 2)
 
 	t.Run("the ids are handed in work order and the plan is said per card and total", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		var got []string
 		p := SelectIDs(w.s, "rework", Selector{Stream: "s1"}, func(ids []string) Plan {
 			got = ids
@@ -321,6 +336,7 @@ func TestSprintSelectBatchCoverSelectIDs(t *testing.T) {
 	})
 	t.Run("a refused plan is returned unchanged with no selected lines", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := SelectIDs(w.s, "rework", Selector{Stream: "s1"}, func(ids []string) Plan {
 			return Plan{Refused: []Refusal{{ids[0], "no"}}}
 		})
@@ -329,6 +345,7 @@ func TestSprintSelectBatchCoverSelectIDs(t *testing.T) {
 	})
 	t.Run("an empty selection is refused under the selector key", func(t *testing.T) {
 		t.Parallel()
+		w := setup(t, 2)
 		p := SelectIDs(w.s, "rework", Selector{Stream: "s9"}, func([]string) Plan { return Plan{} })
 		require.Len(t, p.Refused, 1)
 		assert.Equal(t, "selector", p.Refused[0].Key)
