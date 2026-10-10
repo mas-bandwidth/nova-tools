@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,24 +35,22 @@ func newSyncRepo(t *testing.T) *syncRepo {
 	t.Helper()
 	root := t.TempDir()
 	r := &syncRepo{t: t, origin: filepath.Join(root, "origin.git"), dev: filepath.Join(root, "dev"), land: filepath.Join(root, "land"),
-		env: append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-			"GIT_AUTHOR_NAME=sync-test", "GIT_AUTHOR_EMAIL=sync-test@example.com",
-			"GIT_COMMITTER_NAME=sync-test", "GIT_COMMITTER_EMAIL=sync-test@example.com")}
-	r.git(root, "init", "-q", "--bare", "-b", "main", r.origin)
-	r.git(root, "clone", "-q", r.origin, r.dev)
+		env: testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")}
+	r.syncGit(root, "init", "-q", "--bare", "-b", "main", r.origin)
+	r.syncGit(root, "clone", "-q", r.origin, r.dev)
 	require.NoError(t, os.WriteFile(filepath.Join(r.dev, "README.md"), []byte("# repo\n"), 0o644))
-	r.git(r.dev, "add", "README.md")
-	r.git(r.dev, "commit", "-q", "-m", "initial commit")
-	r.git(r.dev, "push", "-q", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/dev", "HEAD:refs/heads/"+syncBase)
-	r.git(root, "clone", "-q", r.origin, r.land)
+	r.syncGit(r.dev, "add", "README.md")
+	r.syncGit(r.dev, "commit", "-q", "-m", "initial commit")
+	r.syncGit(r.dev, "push", "-q", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/dev", "HEAD:refs/heads/"+syncBase)
+	r.syncGit(root, "clone", "-q", r.origin, r.land)
 	return r
 }
 
-func (r *syncRepo) git(dir string, args ...string) string {
+func (r *syncRepo) syncGit(dir string, args ...string) string {
 	r.t.Helper()
 	cmd := exec.CommandContext(r.t.Context(), "git", args...)
 	cmd.Dir = dir
-	cmd.Env = r.env
+	cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	require.NoError(r.t, err, "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))
@@ -60,15 +59,15 @@ func (r *syncRepo) git(dir string, args ...string) string {
 // commit is a developer's commit of file on branch, pushed.
 func (r *syncRepo) commit(branch, file, content, msg string) {
 	r.t.Helper()
-	r.git(r.dev, "fetch", "-q", "origin")
-	r.git(r.dev, "checkout", "-q", "-B", branch, "origin/"+branch)
+	r.syncGit(r.dev, "fetch", "-q", "origin")
+	r.syncGit(r.dev, "checkout", "-q", "-B", branch, "origin/"+branch)
 	require.NoError(r.t, os.WriteFile(filepath.Join(r.dev, file), []byte(content), 0o644))
-	r.git(r.dev, "add", file)
-	r.git(r.dev, "commit", "-q", "-m", msg)
-	r.git(r.dev, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+	r.syncGit(r.dev, "add", file)
+	r.syncGit(r.dev, "commit", "-q", "-m", msg)
+	r.syncGit(r.dev, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
 }
 
-func (r *syncRepo) tip(branch string) string { return r.git(r.origin, "rev-parse", branch) }
+func (r *syncRepo) tip(branch string) string { return r.syncGit(r.origin, "rev-parse", branch) }
 
 func (r *syncRepo) has(branch, rev string) bool {
 	cmd := exec.CommandContext(r.t.Context(), "git", "merge-base", "--is-ancestor", rev, branch)
@@ -189,7 +188,7 @@ func TestTheBaseTakesTheDevelopmentBranchEveryCycle(t *testing.T) {
 	require.ErrorContains(t, err, "vet: red")
 	assert.True(t, due)
 	assert.Equal(t, f.MergeSha, repo.tip(syncBase), "a red gate pushes nothing")
-	assert.Empty(t, repo.git(repo.land, "status", "--porcelain"), "the clone is clean")
+	assert.Empty(t, repo.syncGit(repo.land, "status", "--porcelain"), "the clone is clean")
 	r.red = nil
 
 	// the base and dev both change one file: a conflict stops every stream with ONE
@@ -220,14 +219,14 @@ func TestTheBaseTakesTheDevelopmentBranchEveryCycle(t *testing.T) {
 
 	// merged by hand: the next cycle finds the base holds dev, closes the judgment and
 	// resumes both streams
-	repo.git(repo.dev, "fetch", "-q", "origin")
-	repo.git(repo.dev, "checkout", "-q", "-B", syncBase, "origin/"+syncBase)
+	repo.syncGit(repo.dev, "fetch", "-q", "origin")
+	repo.syncGit(repo.dev, "checkout", "-q", "-B", syncBase, "origin/"+syncBase)
 	cmd := exec.CommandContext(t.Context(), "git", "merge", "-q", "origin/dev")
 	cmd.Dir, cmd.Env = repo.dev, repo.env
 	require.Error(t, cmd.Run(), "the hand merge conflicts as the cycle's did")
 	require.NoError(t, os.WriteFile(filepath.Join(repo.dev, "feature.go"), []byte("package f // both\n"), 0o644))
-	repo.git(repo.dev, "commit", "-q", "-am", "merge dev by hand")
-	repo.git(repo.dev, "push", "-q", "origin", "HEAD:refs/heads/"+syncBase)
+	repo.syncGit(repo.dev, "commit", "-q", "-am", "merge dev by hand")
+	repo.syncGit(repo.dev, "push", "-q", "origin", "HEAD:refs/heads/"+syncBase)
 	r.tick(time.Minute)
 	f, due, err = r.cycle()
 	require.NoError(t, err)

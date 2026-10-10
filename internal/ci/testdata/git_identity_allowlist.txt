@@ -61,6 +61,4 @@ internal/secrets/gate_test.go 2 predates the rule; route its commits through tes
 internal/secrets/model_invariants_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/secrets/seal_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/secrets/store_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/sprint/land_cure_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/sprint/store/branch_redeal_push_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/sprint/sync_twin_test.go 2 predates the rule; route its commits through testgit.Environ
