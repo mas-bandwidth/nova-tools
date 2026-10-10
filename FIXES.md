@@ -35,3 +35,9 @@ The fixes held during the split, the point-release candidates found on 2026-10-1
 - **A worker writes its result before the route deadline** (planned). Children on some direct routes work to the route deadline and never write their result file; give the route a longer deadline or reserve a margin to write the result. From: fault inventory, 2026-10-10.
 - **A draining member's beat carries this tick's no-room word** (in-progress). The member asks Room every tick before the drain return, so a member that drained under its disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla, WordIsThisTicks). From: v1.2.5 candidate 5; the PR #5569 follow-up.
 - **A friend's lane runs only a card the server has taken for her** (in-progress). A free lane takes its card by id and starts nothing until the take is answered OK; a refused take (the machine STOPPED) is asked again on a later pass, a batch daemon takes her ready cards, and a card set aside on a refused take or finish is taken again (tla/FriendLaneTake.tla). From: a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside.
+
+## v1.2.9 (planned)
+
+The point release after v1.2.6: the sprint store cards that are point-release work, each written in this repository, then cut as one release.
+
+- **nova-swarm doctor checks the running executable, not only PATH** (in-progress). The launch preflight refuses a new binary found on PATH but passes the same binary by absolute path. It checks the executable that is actually running. From: issue #3469.

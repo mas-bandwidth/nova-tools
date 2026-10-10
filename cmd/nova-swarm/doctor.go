@@ -9,6 +9,11 @@
 // somebody notices. It invents no version of its own: pkg/buildinfo produces the line
 // and this file only reads what a binary said.
 //
+// The launch the preflight guards runs the process's own binary, so that is the one it
+// reads: a nova-swarm started by absolute path answers the same check as one the shell
+// found on PATH, and the installed binary itself passes whatever a stale copy elsewhere on
+// PATH answers with. When the running file cannot be named, PATH's answer stands in.
+//
 // `DOCTOR OK stamp=<line>` says the two agree, or that there is one binary to read. A
 // mismatch is exit 2 with both stamps and one remedy, because a refusal that does not say
 // which line is stale sends the reader back to run the check by hand.
@@ -59,6 +64,10 @@ var doctorLookPath = exec.LookPath
 // doctorHomeDir is where the literal ~/.local/bin lives. A package var so a test's home is
 // its own temp directory.
 var doctorHomeDir = os.UserHomeDir
+
+// doctorExecutable is the file this process is running from (docs/SPEC-SWARM.md, "The
+// doctor"). A package var so a test names the binary a launch would run.
+var doctorExecutable = os.Executable
 
 // doctorReadVersion reads the one `version` line a binary prints. A package var so a test
 // never runs a binary it went looking for.
@@ -199,6 +208,9 @@ type doctorEnv struct {
 	lookPath func(string) (string, error)
 	homeDir  func() (string, error)
 	read     func(string) (string, error)
+	// exe names the file the process is running from; nil, or one that cannot name it,
+	// falls back to the PATH lookup (runningBinary).
+	exe func() (string, error)
 	// run runs a headless harness's verb (`<binary> --version`, its login verb) under the
 	// doctor's deadline: its first line and its exit code; nil runs it (runVerbLine).
 	run func(binary string, args ...string) (line string, rc int)
@@ -206,7 +218,7 @@ type doctorEnv struct {
 
 // liveDoctorEnv is the machine's environment through the package seams.
 func liveDoctorEnv() doctorEnv {
-	return doctorEnv{lookPath: doctorLookPath, homeDir: doctorHomeDir, read: doctorReadVersion, run: runVerbLine}
+	return doctorEnv{lookPath: doctorLookPath, homeDir: doctorHomeDir, read: doctorReadVersion, run: runVerbLine, exe: doctorExecutable}
 }
 
 // runVerbLine runs `<binary> <args...>` under the version deadline, stdin closed, and
@@ -283,10 +295,11 @@ func writeHeadlessReports(w io.Writer, reports []headlessReport) {
 	}
 }
 
-// resolveBinaries answers the two questions in one place: which nova-swarm comes
-// first on PATH, and where the literal ~/.local/bin copy is. The overrides are the verb's
-// --path and --local; empty means resolve. A name that cannot be resolved is the empty
-// string, which the comparison reads as "nothing to compare" rather than as a mismatch.
+// resolveBinaries answers the two questions in one place: which nova-swarm the check asks
+// about first, and where the literal ~/.local/bin copy is. The overrides name the pair to
+// compare -- the verb's --path and --local; empty means resolve, PATH's nova-swarm for the
+// verb and the running executable for the preflight. A name that cannot be resolved is the
+// empty string, which the comparison reads as "nothing to compare" rather than as a mismatch.
 func (e doctorEnv) resolveBinaries(pathOverride, localOverride string) (onPath, local string) {
 	onPath = strings.TrimSpace(pathOverride)
 	if onPath == "" {
@@ -301,6 +314,22 @@ func (e doctorEnv) resolveBinaries(pathOverride, localOverride string) (onPath, 
 		}
 	}
 	return onPath, local
+}
+
+// runningBinary names the binary the launch would run: the file the process is executing
+// (docs/SPEC-SWARM.md, "The doctor"), which is PATH's answer when nova-swarm was started by
+// name and the only truth when it was started by absolute path. When it cannot be named,
+// PATH's answer is what is known.
+func (e doctorEnv) runningBinary() string {
+	if e.exe != nil {
+		if self, err := e.exe(); err == nil && strings.TrimSpace(self) != "" {
+			return self
+		}
+	}
+	if found, err := e.lookPath("nova-swarm"); err == nil {
+		return found
+	}
+	return ""
 }
 
 // doctorRead is one binary's answer: the first line it printed (kept even when the run then
@@ -509,10 +538,10 @@ func doctorOtherSentence(r doctorReport, role string) string {
 func doctorLaunchVerb(v string) bool { return v == "native" }
 
 // preflightDoctor is what main calls before the dispatcher. It is at the process boundary
-// rather than inside cmdRun/cmdNative on purpose: the question is about the real PATH and
-// the real home, and the dispatcher is the thing tests call with fake ones. A shadowed pair
-// stops the launch with exit 2 before run() is reached; every other verb, and an
-// unresolvable pair, proceeds untouched.
+// rather than inside cmdRun/cmdNative on purpose: the question is about the binary the
+// process is running, the real PATH and the real home, and the dispatcher is the thing
+// tests call with fake ones. A shadowed pair stops the launch with exit 2 before run() is
+// reached; every other verb, and an unresolvable pair, proceeds untouched.
 func preflightDoctor(args []string, stderr io.Writer) (int, bool) {
 	return liveDoctorEnv().preflight(args, stderr)
 }
@@ -529,7 +558,12 @@ func (e doctorEnv) preflight(args []string, stderr io.Writer) (int, bool) {
 	if len(args) == 0 || !doctorLaunchVerb(args[0]) || doctorLaunchHelp(args[0], args[1:]) {
 		return 0, false
 	}
-	r := e.compareBinaries(e.resolveBinaries("", ""))
+	// The launch runs this binary, so the stamp the preflight vouches for is the running
+	// executable's, not PATH's (docs/SPEC-SWARM.md, "The doctor"): a nova-swarm started by
+	// absolute path answers the same check as one the shell found on PATH, and the launch
+	// stops whenever what runs is not the installed build. A file that cannot be named falls
+	// back to the PATH lookup (runningBinary).
+	r := e.compareBinaries(e.resolveBinaries(e.runningBinary(), ""))
 	if !r.refused() {
 		return 0, false
 	}
