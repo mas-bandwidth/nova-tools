@@ -1,0 +1,39 @@
+# Shrink-only ledger of the duplicate paths in cmd/nova-sprint, internal/sprint/...,
+# cmd/nova-friend and internal/friend: one row per pair, `<file:func> <file:func> <why>`.
+# The class test internal/ci/duplicate_paths_class_test.go reads every non-test function
+# body, normalises it (identifiers renamed in order of first use, literals kept, comments
+# dropped), and holds a pair of bodies of at least eight statements whose hash occurs twice.
+# It also holds two verbs whose help usage line is one line under two names. A pair not
+# listed here is red; a row whose pair is gone is stale. The deletion card for each pair is
+# named after the why and written in docs/STOPGAPS.md, "duplicate paths". The list only shrinks.
+cmd/nova-friend/main.go:commaList cmd/nova-friend/main.go:secretNames duppath-split-comma: keep internal/sprint/state.go:Split; cmd/nova-friend calls it and drops its two copies
+cmd/nova-friend/main.go:commaList internal/sprint/state.go:Split duppath-split-comma: keep internal/sprint/state.go:Split; cmd/nova-friend calls it and drops its two copies
+cmd/nova-friend/main.go:secretNames internal/sprint/state.go:Split duppath-split-comma: keep internal/sprint/state.go:Split; cmd/nova-friend calls it and drops its two copies
+cmd/nova-sprint/cost_attach.go:attachUnset internal/sprint/plan.go:unsetPresent duppath-unset-present: keep internal/sprint/plan.go:unsetPresent; cost_attach.go calls it
+internal/friend/outbox.go:RunnerEnded internal/sprint/collect.go:RunnerEnded duppath-outbox-collect: one runner-log reader in internal/sprint/collect.go; internal/friend calls it
+internal/friend/outbox.go:reportPara internal/sprint/collect.go:collectPara duppath-outbox-collect: one runner-log reader in internal/sprint/collect.go; internal/friend calls it
+internal/friend/outbox.go:reportVerdict internal/sprint/collect.go:CollectVerdict duppath-outbox-collect: one runner-log reader in internal/sprint/collect.go; internal/friend calls it
+internal/sprint/brief_bound.go:capJudgments internal/sprint/steps_merge.go:deadBaseOpen duppath-brief-judgments: one pair-lookup over the judgments slice
+internal/sprint/coordinator_pass.go:Snapshot.FriendFinishAfter internal/sprint/friend_start.go:Snapshot.FriendStartMax duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/coordinator_pass.go:Snapshot.FriendFinishAfter internal/sprint/settings.go:Snapshot.DealtMax duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/coordinator_pass.go:Snapshot.FriendFinishAfter internal/sprint/settings.go:Snapshot.FriendIdleAfter duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/coordinator_pass.go:Snapshot.FriendFinishAfter internal/sprint/settings.go:Snapshot.FriendStallAfter duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/coordinator_pass.go:Snapshot.FriendFinishAfter internal/sprint/settings.go:Snapshot.FriendStallStep duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/friend_start.go:Snapshot.FriendStartMax internal/sprint/settings.go:Snapshot.DealtMax duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/friend_start.go:Snapshot.FriendStartMax internal/sprint/settings.go:Snapshot.FriendIdleAfter duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/friend_start.go:Snapshot.FriendStartMax internal/sprint/settings.go:Snapshot.FriendStallAfter duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/friend_start.go:Snapshot.FriendStartMax internal/sprint/settings.go:Snapshot.FriendStallStep duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/idle.go:waitingCards internal/sprint/stats.go:statsPrimaries duppath-idle-stats: one primary-card count over the rows; idle.go and stats.go call it
+internal/sprint/land_base.go:BaseGreenStreams internal/sprint/land_base.go:BaseRedStreams duppath-land-base-streams: keep BaseGreenStreams and give it the predicate BaseRedStreams varies
+internal/sprint/readers.go:placedReadsAt internal/sprint/steps_review.go:readsAt duppath-reads-at: keep readsAt in steps_review.go and call it from readers.go
+internal/sprint/refmodel/actions.go:State.ReaderLoad internal/sprint/refmodel/state.go:State.Load duppath-refmodel-load: one refmodel load over the state the reader names
+internal/sprint/refmodel/state.go:without internal/sprint/steps_review.go:removeDecision duppath-without-remove: one decision-list without the id; the refmodel and the review step call it
+internal/sprint/seat_unit_friendsync.go:FriendSyncUnitFile internal/sprint/seatinstall.go:SeatUnitFile duppath-unit-file: one unit-file renderer in seatinstall.go; the friend-sync row calls it
+internal/sprint/settings.go:Snapshot.DealtMax internal/sprint/settings.go:Snapshot.FriendIdleAfter duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/settings.go:Snapshot.DealtMax internal/sprint/settings.go:Snapshot.FriendStallAfter duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/settings.go:Snapshot.DealtMax internal/sprint/settings.go:Snapshot.FriendStallStep duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/settings.go:Snapshot.FriendIdleAfter internal/sprint/settings.go:Snapshot.FriendStallAfter duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/settings.go:Snapshot.FriendIdleAfter internal/sprint/settings.go:Snapshot.FriendStallStep duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/settings.go:Snapshot.FriendStallAfter internal/sprint/settings.go:Snapshot.FriendStallStep duppath-snapshot-duration: one Snapshot.duration(prop, default) reader; keep Snapshot.DealtMax's body and rewrite every getter over it
+internal/sprint/steps_sentinel.go:sentinelAfter internal/sprint/steps_sentinel.go:sentinelBefore duppath-sentinel-edge: one sentinel edge lookup with the direction as an argument
+internal/sprint/streams_view.go:StreamBasesOf internal/sprint/streams_view.go:StreamRepos duppath-streams-view: one streams_view projector over the row field the caller names
