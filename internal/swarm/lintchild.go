@@ -284,7 +284,7 @@ func childNamesClassTest(raw []byte) bool {
 
 // CardChildRemedies is what each child-rule token of the default set wants, in the table
 // shape of CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. It
-// is built from DefaultChildRules and childScans: one row each, never a second list. A rule
+// is built from DefaultChildRules, childScans and the standalone attribution check. A rule
 // of a rules file is not in it; ChildRemedy answers for those.
 var CardChildRemedies = map[string]string{}
 
@@ -302,6 +302,7 @@ func init() {
 	}
 	CardChildRemedies[LibrariesConsideredRule] = LibrariesConsideredRemedy
 	CardChildRemedies[EmptyCardCheck] = EmptyCardRemedy
+	CardChildRemedies[HonestAttributionCheck] = HonestAttributionRemedy
 }
 
 // ruleRemedy is what a missing rule wants: its sentence, verbatim, and where it came from.
@@ -334,6 +335,8 @@ func ChildRemedy(rules []ChildRule, check string) string {
 		return LibrariesConsideredRemedy
 	case EmptyCardCheck:
 		return EmptyCardRemedy
+	case HonestAttributionCheck:
+		return HonestAttributionRemedy
 	}
 	return ""
 }
@@ -501,6 +504,14 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 			out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: 1, Excerpt: "missing: Libraries considered: <what was found, why used or not>"})
 		}
 	}
+	childLines(raw, func(n int, line string) {
+		for _, pat := range attributionPatterns {
+			if pat.MatchString(line) {
+				out = append(out, CardHeaderFinding{Check: HonestAttributionCheck, Line: n, Excerpt: line})
+				break
+			}
+		}
+	})
 	return out
 }
 
@@ -544,4 +555,23 @@ func childNegationInClause(clause string) bool {
 		words = words[len(words)-3:]
 	}
 	return childNegation.MatchString(strings.Join(words, " "))
+}
+
+// HonestAttributionCheck is the finding for instructions to hide or misstate the worker's
+// model or harness. Honest directions to name the actual model and harness pass.
+const HonestAttributionCheck = "honest-attribution"
+
+// HonestAttributionRemedy is what the honest-attribution finding wants.
+const HonestAttributionRemedy = "name the actual model and harness; never tell the worker to hide, deny, omit or misstate them, claim another model, sign as another model, or use a fixed-model Co-Authored-By trailer"
+
+// attributionPatterns is the documented list of hiding forms. Keep each pattern covered by
+// TestLintRefusesABriefThatHidesTheModel; scan only outside RULES, where prohibitions are quoted.
+var attributionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bnever\s+claim\s+(?:claude|another\s+model|a\s+different\s+model)\b`),
+	regexp.MustCompile(`(?i)\bdo\s+not\s+mention\s+(?:the\s+)?(?:model|harness)\b`),
+	regexp.MustCompile(`(?i)\bnot\s+mention\s+(?:the\s+)?(?:model|harness)\b`),
+	regexp.MustCompile(`(?i)\b(?:hide|deny|omit|misstate|misrepresent)\s+(?:the\s+)?(?:model|harness)\b`),
+	regexp.MustCompile(`(?i)\bsign\s+as\s+another\s+(?:model|harness)\b`),
+	regexp.MustCompile(`(?i)\buse\s+a\s+co-authored-by\s+trailer\s+naming\s+a\s+fixed\s+model\b`),
+	regexp.MustCompile(`(?i)\bco-authored-by:\s*(?:claude|gpt[- ]?[a-z0-9.]+|gemini(?:[- ][a-z0-9.]+)?|llama(?:[- ][a-z0-9.]+)?)\b`),
 }

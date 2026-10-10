@@ -103,9 +103,9 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 			assert.True(t, found, "scan %s needs the rule %q, which this repository's file does not carry", s.Check, s.Needs)
 		}
 	}
-	// one per default rule, one per scan, the libraries-considered line of the lint and the empty card
-	want := len(DefaultChildRules) + len(childScans) + 2
-	assert.Len(t, CardChildRemedies, want, "the remedy table holds %d tokens, want %d: one per default rule and one per scan, the libraries-considered line and the empty card", len(CardChildRemedies), want)
+	// one per default rule, one per scan, the libraries-considered line, the empty card and attribution
+	want := len(DefaultChildRules) + len(childScans) + 3
+	assert.Len(t, CardChildRemedies, want, "the remedy table holds %d tokens, want %d: one per default rule and scan, plus libraries, empty and attribution checks", len(CardChildRemedies), want)
 	got := ChildRemedy(DefaultChildRules, "rule-nothing")
 	assert.Empty(t, got, "a token that is no rule has the remedy %q", got)
 	// the general set is only the general rules: nothing of one repository's

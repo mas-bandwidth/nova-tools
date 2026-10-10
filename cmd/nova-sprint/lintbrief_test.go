@@ -242,3 +242,28 @@ func TestAddReadsTheBriefsModelLines(t *testing.T) {
 		assert.Contains(t, errs, want, lead)
 	}
 }
+
+// TestAddRefusesABriefThatHidesTheModel checks that add refuses briefs that tell the worker
+// to hide or misstate their model or harness (nova-swarm lint's honest-attribution check).
+func TestAddRefusesABriefThatHidesTheModel(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+
+	// Brief that passes: tells worker to name the actual model
+	passingBrief := "result: c sha=0123456789ab tier: pro\nPATHS: .\nTHE TASK. Fix something.\n\n" + swarm.ChildRulesParagraph() + "\nATTRIBUTION. name the actual model and harness and never claim one you are not"
+	code, out, errs := ta.do("add --stream s1 --count 1 --one --brief '" + strings.ReplaceAll(passingBrief, "'", "") + "'")
+	require.Equal(t, 0, code, "a passing brief: exit %d\nout=%q\nerrs=%q", code, out, errs)
+
+	// Brief that fails: tells worker to never claim Claude
+	hidingBrief := "result: c sha=0123456789ab tier: pro\nPATHS: .\nTHE TASK. Fix something.\n\n" + swarm.ChildRulesParagraph() + "\nATTRIBUTION. never claim Claude or another model"
+	code, out, errs = ta.do("add --stream s1 --count 1 --one --brief '" + strings.ReplaceAll(hidingBrief, "'", "") + "'")
+	require.Equal(t, 2, code, "a hiding brief: exit %d\nout=%q\nerrs=%q", code, out, errs)
+	assert.Contains(t, errs, "LINT DRIFT brief honest-attribution", "stderr should name honest-attribution")
+
+	// Brief that fails: tells worker to sign as another model
+	hidingBrief2 := "result: c sha=0123456789ab tier: pro\nPATHS: .\nTHE TASK. Fix something.\n\n" + swarm.ChildRulesParagraph() + "\nATTRIBUTION. sign as another model"
+	code, _, errs = ta.do("add --stream s1 --count 1 --one --brief '" + strings.ReplaceAll(hidingBrief2, "'", "") + "'")
+	require.Equal(t, 2, code, "another hiding brief: exit %d\n%s", code, errs)
+	assert.Contains(t, errs, "LINT DRIFT brief honest-attribution", "stderr should name honest-attribution")
+}
