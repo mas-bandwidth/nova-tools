@@ -16,14 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Printed marks that a turn has printed output: the daemon's watch uses
-// this to track when a turn has produced output but then stopped making progress.
-func Printed(ctx context.Context, data []byte) {
-	if f, ok := ctx.Value(outputKey{}).(func()); ok {
-		f()
-	}
-}
-
 // recoverHarness is a fake harness for the recovery tests: every delivery
 // answers the outcome the test queued (the last repeats), and RecoverSession
 // records the handoff and answers a fresh id. It is the seam a real adapter

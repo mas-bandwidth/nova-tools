@@ -86,10 +86,6 @@ type Exec func(ctx context.Context, dir, name string, args []string, stdin strin
 // record: the head, enough to see what the session did with the message.
 const OutputKept = 2048
 
-// outputKey carries, in a delivery's context, what to call when the command
-// prints: the daemon's watch on a running turn (WithOutputSeen).
-type outputKey struct{}
-
 // WithOutputSeen is ctx carrying seen, called each time the command a
 // delivery runs prints to stdout or stderr: a turn that prints is working,
 // and only a turn silent past the daemon's SilentStop is stopped.

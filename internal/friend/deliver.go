@@ -7,6 +7,23 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
+// outputKey carries, in a delivery's context, what to call when the command
+// prints: the daemon's watch on a running turn (WithOutputSeen).
+type outputKey struct{}
+
+// Printed records that a turn produced output during testing, so a test
+// harness can distinguish a turn that is printing from one that is stuck.
+func Printed(ctx context.Context, data []byte) {
+	select {
+	case <-ctx.Done():
+	default:
+		// trigger the daemon's output tracking by calling the seen callback
+		if seen, ok := ctx.Value(outputKey{}).(func()); ok && seen != nil {
+			seen()
+		}
+	}
+}
+
 // Courier is how the sprint server sends its notes to friends: each send on
 // the bus, its result watched, so a store that refuses the login or cannot
 // be reached is one alarm to the coordinator, raised at the first failure
