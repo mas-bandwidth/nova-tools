@@ -5,277 +5,396 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// coverGradeDecision builds a grade Decision answering value with probability p in the
+// shape ScoreGrades reads: Answers[GradeQuestion] = Answer{Value, P}.
+func coverGradeDecision(id, at, value string, p float64) Decision {
+	return Decision{
+		ID:       id,
+		Decision: GradeName,
+		At:       at,
+		Answers:  map[string]Answer{GradeQuestion: {Value: value, P: map[string]float64{value: p}}},
+	}
+}
+
+// TestDecideGradescoreCoverReadLog pins ReadLog: a non-export is refused with the
+// nova-sprint log sentence, a line with no primary is skipped, a work-table line places
+// the primary, a removed line with outcome=dropped settles LabelDropped, another card's
+// cost_record still counts, and a card never placed settles "unplaced".
 func TestDecideGradescoreCoverReadLog(t *testing.T) {
 	t.Parallel()
-	// ReadLog refusing input that is not JSON
-	t.Run("notJSON", func(t *testing.T) {
-		t.Parallel()
-		facts, err := ReadLog(strings.NewReader("not json"))
-		require.Error(t, err)
-		require.Nil(t, facts)
-		require.Contains(t, err.Error(), "not a nova-sprint log --json export")
-	})
-	// a line with no primary skipped
-	t.Run("noPrimary", func(t *testing.T) {
-		t.Parallel()
-		facts, err := ReadLog(strings.NewReader(`{"lines":[{"card":"C1","table":"work","to":"landed"}]}`))
-		require.NoError(t, err)
-		require.Empty(t, facts)
-	})
-	// a work-table line for the primary itself placing it (To "work:landed" gives State landed)
-	t.Run("workTablePlaced", func(t *testing.T) {
-		t.Parallel()
-		facts, err := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"}]}`))
-		require.NoError(t, err)
-		require.Equal(t, "landed", facts["P1"].State)
-	})
-	// a removed line with set outcome=dropped giving LabelDropped
-	t.Run("removedDropped", func(t *testing.T) {
-		t.Parallel()
-		facts, err := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed","removed":true,"set":{"outcome":"dropped"}}]}`))
-		require.NoError(t, err)
-		require.Equal(t, LabelDropped, facts["P1"].State)
-	})
-	// a line for another card under the same primary that does not move State but whose cost_record:* keys still count
-	t.Run("otherCardCost", func(t *testing.T) {
-		t.Parallel()
-		facts, err := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`))
-		require.NoError(t, err)
-		require.Equal(t, 1, facts["P1"].MaxAttempt)
-		require.Equal(t, "flash", facts["P1"].attempts[1].tier)
-	})
-	// a card never placed settling as "unplaced"
-	t.Run("neverPlaced", func(t *testing.T) {
-		t.Parallel()
-		facts, err := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`))
-		require.NoError(t, err)
-		require.Equal(t, "unplaced", facts["P1"].State)
-	})
+	for _, tc := range []struct {
+		name        string
+		log         string
+		wantErr     bool
+		errContains string
+		wantEmpty   bool
+		primary     string
+		wantState   string
+		wantMax     int
+		wantStart   string
+	}{
+		{
+			name:        "not JSON is refused",
+			log:         "not json",
+			wantErr:     true,
+			errContains: "not a nova-sprint log --json export",
+		},
+		{
+			name:      "a line with no primary is skipped",
+			log:       `{"lines":[{"card":"C1","table":"work","to":"landed"}]}`,
+			wantEmpty: true,
+		},
+		{
+			name:      "a work-table line places the primary",
+			log:       `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"}]}`,
+			primary:   "P1",
+			wantState: "landed",
+		},
+		{
+			name:      "a removed line with outcome dropped is LabelDropped",
+			log:       `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed","removed":true,"set":{"outcome":"dropped"}}]}`,
+			primary:   "P1",
+			wantState: LabelDropped,
+		},
+		{
+			name:      "another card's cost_record still counts",
+			log:       `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`,
+			primary:   "P1",
+			wantState: "landed",
+			wantMax:   1,
+			wantStart: GradeFlash,
+		},
+		{
+			name:      "a card never placed settles unplaced",
+			log:       `{"lines":[{"card":"P1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`,
+			primary:   "P1",
+			wantState: "unplaced",
+			wantMax:   1,
+			wantStart: GradeFlash,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			facts, err := ReadLog(strings.NewReader(tc.log))
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Nil(t, facts)
+				assert.Contains(t, err.Error(), tc.errContains)
+				return
+			}
+			require.NoError(t, err)
+			if tc.wantEmpty {
+				assert.Empty(t, facts)
+				return
+			}
+			f := facts[tc.primary]
+			require.NotNil(t, f)
+			if tc.wantState != "" {
+				assert.Equal(t, tc.wantState, f.State)
+			}
+			if tc.wantMax != 0 {
+				assert.Equal(t, tc.wantMax, f.MaxAttempt)
+			}
+			if tc.wantStart != "" {
+				assert.Equal(t, tc.wantStart, f.Start)
+			}
+		})
+	}
 }
 
+// TestDecideGradescoreCoverParseCost pins parseCost: a kind=work record carries attempt,
+// on_tier, end and on_route; any other kind has attempt 0; a non-numeric attempt is 0.
 func TestDecideGradescoreCoverParseCost(t *testing.T) {
 	t.Parallel()
-	// a kind=work record with attempt, on_tier, end and on_route
-	t.Run("workRecord", func(t *testing.T) {
-		t.Parallel()
-		r := parseCost("kind=work attempt=1 on_tier=flash end=ok on_route=-")
-		require.Equal(t, 1, r.attempt)
-		require.Equal(t, "flash", r.tier)
-		require.Equal(t, "ok", r.end)
-		require.Equal(t, "-", r.route)
-	})
-	// a kind other than work giving attempt 0
-	t.Run("notWork", func(t *testing.T) {
-		t.Parallel()
-		r := parseCost("kind=gate attempt=1 on_tier=flash end=ok")
-		require.Equal(t, 0, r.attempt)
-	})
-	// a non-numeric attempt giving 0
-	t.Run("nonNumericAttempt", func(t *testing.T) {
-		t.Parallel()
-		r := parseCost("kind=work attempt=bad on_tier=flash end=ok")
-		require.Equal(t, 0, r.attempt)
-	})
+	for _, tc := range []struct {
+		name   string
+		record string
+		want   costRecord
+	}{
+		{
+			name:   "a work record carries attempt tier end route",
+			record: "kind=work attempt=1 on_tier=flash end=ok on_route=-",
+			want:   costRecord{attempt: 1, tier: GradeFlash, end: "ok", route: "-"},
+		},
+		{
+			name:   "another kind has attempt 0",
+			record: "kind=gate attempt=1 on_tier=flash end=ok",
+			want:   costRecord{tier: GradeFlash, end: "ok"},
+		},
+		{
+			name:   "a non-numeric attempt is 0",
+			record: "kind=work attempt=bad on_tier=flash end=ok",
+			want:   costRecord{tier: GradeFlash, end: "ok"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, parseCost(tc.record))
+		})
+	}
 }
 
+// TestDecideGradescoreCoverSettle pins settle: the state defaults to "unplaced",
+// MaxAttempt is the highest attempt, any pro attempt escalates, the fleet only counts a
+// route other than "-", and Start and FirstFailed come from attempt 1.
 func TestDecideGradescoreCoverSettle(t *testing.T) {
 	t.Parallel()
-	// MaxAttempt is the highest attempt
-	t.Run("maxAttempt", func(t *testing.T) {
-		t.Parallel()
-		f := &CardFacts{attempts: map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "ok", route: "-"}, 2: {attempt: 2, tier: GradeFlash, end: "ok", route: "fleet"}}}
-		f.settle()
-		require.Equal(t, 2, f.MaxAttempt)
-	})
-	// Escalated when any attempt ran on pro
-	t.Run("escalated", func(t *testing.T) {
-		t.Parallel()
-		f := &CardFacts{attempts: map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "failed", route: "fleet"}, 2: {attempt: 2, tier: GradePro, end: "ok", route: "fleet"}}}
-		f.settle()
-		require.True(t, f.Escalated)
-	})
-	// the card counts as dealt on the fleet only when some route is not "-"
-	t.Run("dealtOnFleet", func(t *testing.T) {
-		t.Parallel()
-		f := &CardFacts{attempts: map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "ok", route: "-"}}}
-		f.settle()
-		require.False(t, f.dealtOnFleet)
-		f2 := &CardFacts{attempts: map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "ok", route: "fleet"}}}
-		f2.settle()
-		require.True(t, f2.dealtOnFleet)
-	})
-	// Start and FirstFailed come from attempt 1 (end=ok is not failed)
-	t.Run("startAndFirstFailed", func(t *testing.T) {
-		t.Parallel()
-		f := &CardFacts{attempts: map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "ok", route: "fleet"}}}
-		f.settle()
-		require.Equal(t, GradeFlash, f.Start)
-		require.False(t, f.FirstFailed)
-		f2 := &CardFacts{attempts: map[int]costRecord{1: {attempt: 1, tier: GradePro, end: "failed", route: "fleet"}}}
-		f2.settle()
-		require.Equal(t, GradePro, f2.Start)
-		require.True(t, f2.FirstFailed)
-	})
+	for _, tc := range []struct {
+		name          string
+		attempts      map[int]costRecord
+		wantMax       int
+		wantEscalated bool
+		wantDealt     bool
+		wantStart     string
+		wantFailed    bool
+	}{
+		{
+			name:      "max attempt is the highest",
+			attempts:  map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "ok", route: "-"}, 2: {attempt: 2, tier: GradeFlash, end: "ok", route: "fleet"}},
+			wantMax:   2,
+			wantDealt: true,
+			wantStart: GradeFlash,
+		},
+		{
+			name:          "pro on any attempt escalates",
+			attempts:      map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "failed", route: "fleet"}, 2: {attempt: 2, tier: GradePro, end: "ok", route: "fleet"}},
+			wantMax:       2,
+			wantEscalated: true,
+			wantDealt:     true,
+			wantStart:     GradeFlash,
+			wantFailed:    true,
+		},
+		{
+			name:      "a dash route is not dealt on the fleet",
+			attempts:  map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "ok", route: "-"}},
+			wantMax:   1,
+			wantStart: GradeFlash,
+		},
+		{
+			name:      "a non-dash route is dealt on the fleet",
+			attempts:  map[int]costRecord{1: {attempt: 1, tier: GradeFlash, end: "ok", route: "fleet"}},
+			wantMax:   1,
+			wantDealt: true,
+			wantStart: GradeFlash,
+		},
+		{
+			name:          "first failed comes from attempt 1",
+			attempts:      map[int]costRecord{1: {attempt: 1, tier: GradePro, end: "failed", route: "fleet"}},
+			wantMax:       1,
+			wantEscalated: true,
+			wantDealt:     true,
+			wantStart:     GradePro,
+			wantFailed:    true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &CardFacts{attempts: tc.attempts}
+			f.settle()
+			assert.Equal(t, "unplaced", f.State)
+			assert.Equal(t, tc.wantMax, f.MaxAttempt)
+			assert.Equal(t, tc.wantEscalated, f.Escalated)
+			assert.Equal(t, tc.wantDealt, f.dealtOnFleet)
+			assert.Equal(t, tc.wantStart, f.Start)
+			assert.Equal(t, tc.wantFailed, f.FirstFailed)
+		})
+	}
 }
 
+// TestDecideGradescoreCoverScoreGrades pins ScoreGrades end to end: the [from, to)
+// window, the skip rules, the card id before "@", the newest grade per card winning,
+// NoLog, the friend's/never-dealt exclusions, row and bucket order, Landed2, ToPro,
+// Dropped and Open. cell and b2i are covered through these tables.
 func TestDecideGradescoreCoverScoreGrades(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
 	from := now.Add(-24 * time.Hour)
 	to := now
+	at := func(d time.Duration) string { return from.Add(d).Format(time.RFC3339) }
 
-	// a decision at from is in and one at to is out
-	t.Run("fromToWindow", func(t *testing.T) {
-		t.Parallel()
-		facts, err := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
-		require.NoError(t, err)
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-			{ID: "P1@D2", Decision: GradeName, At: to.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.9}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 1, s.Decisions)
-		require.Equal(t, 1, s.Cards)
-	})
-	// an unparseable At is skipped
-	t.Run("unparseableAt", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: "not-a-date", Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 0, s.Decisions)
-	})
-	// a decision whose name is not GradeName is skipped
-	t.Run("notGradeName", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: "attempt", At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 0, s.Decisions)
-	})
-	// the card id is the part of ID before "@"
-	t.Run("cardIdBeforeAt", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1@extra", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 1, s.Decisions)
-		require.Equal(t, 0, s.NoLog)
-		require.Equal(t, 1, s.Rows[0].N)
-	})
-	// the newest grade per card wins
-	t.Run("newestWins", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradePro, P: map[string]float64{GradeFlash: 0.1, GradePro: 0.9}}}},
-			{ID: "P1@D2", Decision: GradeName, At: now.Add(-1 * time.Second).Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.9}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 2, s.Decisions)
-		// newest grade is flash so should be in flash-dealt row
-		require.Equal(t, 1, s.Rows[0].N)
-	})
-	// a card the facts lack counts NoLog
-	t.Run("missingFacts", func(t *testing.T) {
-		t.Parallel()
-		facts := map[string]*CardFacts{}
-		ds := []Decision{
-			{ID: "D1@C1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 1, s.NoLog)
-	})
-	// a card only ever routed "-" (a friend's) and a card never dealt are counted in Cards and left out of the tables
-	t.Run("friendAndNeverDealt", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-			{ID: "P2@D2", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-			{ID: "P3@D3", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 3, s.Decisions)
-		require.Equal(t, 3, s.Cards)
-		require.Equal(t, 0, s.NoLog)
-		require.Len(t, s.Rows, 1)
-		require.Equal(t, 1, s.Rows[0].N)
-	})
-	// Rows come in the order flash, pro, script by dealt flash, pro
-	t.Run("rowOrder", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"P4","primary":"P4","table":"work","to":"work:landed"},{"card":"P5","primary":"P5","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}},{"card":"C3","primary":"P3","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C4","primary":"P4","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}},{"card":"C5","primary":"P5","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-			{ID: "P2@D2", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-			{ID: "P3@D3", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradePro, P: map[string]float64{GradePro: 0.8}}}},
-			{ID: "P4@D4", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradePro, P: map[string]float64{GradePro: 0.8}}}},
-			{ID: "P5@D5", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeScript, P: map[string]float64{GradeScript: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Len(t, s.Rows, 5)
-		require.Equal(t, [2]string{GradeFlash, GradeFlash}, [2]string{s.Rows[0].Grade, s.Rows[0].Dealt})
-		require.Equal(t, [2]string{GradeFlash, GradePro}, [2]string{s.Rows[1].Grade, s.Rows[1].Dealt})
-		require.Equal(t, [2]string{GradePro, GradeFlash}, [2]string{s.Rows[2].Grade, s.Rows[2].Dealt})
-		require.Equal(t, [2]string{GradePro, GradePro}, [2]string{s.Rows[3].Grade, s.Rows[3].Dealt})
-		require.Equal(t, [2]string{GradeScript, GradeFlash}, [2]string{s.Rows[4].Grade, s.Rows[4].Dealt})
-	})
-	// Landed2 counts a landing by attempt 2 and not by attempt 3
-	t.Run("landed2", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet","cost_record:2":"kind=work attempt=2 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet","cost_record:2":"kind=work attempt=2 on_tier=flash end=failed on_route=fleet","cost_record:3":"kind=work attempt=3 on_tier=flash end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 1, s.Rows[0].Landed2)
-	})
-	// ToPro counts a flash start that escalated
-	t.Run("toPro", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet","cost_record:2":"kind=work attempt=2 on_tier=pro end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 1, s.Rows[0].ToPro)
-	})
-	// Open counts a card neither landed nor dropped
-	t.Run("open", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:in_progress"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 1, s.Rows[0].Open)
-	})
-	// Buckets hold only flash-dealt, non-script grades, with p 0.7 in "0.7-0.85" and p 0.95 in ">=0.95"
-	t.Run("buckets", func(t *testing.T) {
-		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"P4","primary":"P4","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C3","primary":"P3","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C4","primary":"P4","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}}]}`))
-		ds := []Decision{
-			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.7}}}},
-			{ID: "P2@D2", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.95}}}},
-			{ID: "P3@D3", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeScript, P: map[string]float64{GradeScript: 0.7}}}},
-			{ID: "P4@D4", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.7}}}},
-		}
-		s := ScoreGrades(ds, facts, from, to)
-		require.Len(t, s.Buckets, 2)
-		require.Equal(t, [2]string{GradeFlash, "0.7-0.85"}, [2]string{s.Buckets[0].Grade, s.Buckets[0].Bucket})
-		require.Equal(t, 1, s.Buckets[0].N)
-		require.Equal(t, [2]string{GradeFlash, ">=0.95"}, [2]string{s.Buckets[1].Grade, s.Buckets[1].Bucket})
-		require.Equal(t, 1, s.Buckets[1].N)
-	})
-	// cell and b2i are covered through ScoreGrades (implicit via above tests)
+	// one card P1 landed on flash, on the fleet, by attempt 1
+	placed := `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`
+
+	for _, tc := range []struct {
+		name      string
+		log       string
+		decisions []Decision
+		want      GradeScore
+	}{
+		{
+			name: "from is in and to is out",
+			log:  placed,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.8),
+				coverGradeDecision("P1@D2", at(24*time.Hour), GradeFlash, 0.9),
+			},
+			want: GradeScore{
+				Decisions: 1, Cards: 1,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1, Landed2: 1}},
+			},
+		},
+		{
+			name:      "an unparseable At is skipped",
+			log:       placed,
+			decisions: []Decision{coverGradeDecision("P1@D1", "not-a-date", GradeFlash, 0.8)},
+			want:      GradeScore{},
+		},
+		{
+			name:      "a decision that is not the grade name is skipped",
+			log:       placed,
+			decisions: []Decision{{ID: "P1@D1", Decision: "attempt", At: at(0), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}}},
+			want:      GradeScore{},
+		},
+		{
+			name:      "the card id is the part before @",
+			log:       placed,
+			decisions: []Decision{coverGradeDecision("P1@D1@extra", at(0), GradeFlash, 0.8)},
+			want: GradeScore{
+				Decisions: 1, Cards: 1,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1, Landed2: 1}},
+			},
+		},
+		{
+			name: "the newest grade per card wins",
+			log:  placed,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradePro, 0.9),
+				coverGradeDecision("P1@D2", at(time.Hour), GradeFlash, 0.9),
+			},
+			want: GradeScore{
+				Decisions: 2, Cards: 1,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.85-0.95", N: 1, Landed2: 1}},
+			},
+		},
+		{
+			name:      "a card the facts lack counts NoLog",
+			log:       `{"lines":[]}`,
+			decisions: []Decision{coverGradeDecision("D1@C1", at(0), GradeFlash, 0.8)},
+			want:      GradeScore{Decisions: 1, Cards: 1, NoLog: 1},
+		},
+		{
+			name: "a friend's and a never-dealt card count but are not tabled",
+			log:  `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.8),
+				coverGradeDecision("P2@D2", at(0), GradeFlash, 0.8),
+				coverGradeDecision("P3@D3", at(0), GradeFlash, 0.8),
+			},
+			want: GradeScore{
+				Decisions: 3, Cards: 3,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1, Landed2: 1}},
+			},
+		},
+		{
+			name: "rows are flash, pro, script by dealt flash, pro",
+			log:  `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"P4","primary":"P4","table":"work","to":"work:landed"},{"card":"P5","primary":"P5","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}},{"card":"C3","primary":"P3","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C4","primary":"P4","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}},{"card":"C5","primary":"P5","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.8),
+				coverGradeDecision("P2@D2", at(0), GradeFlash, 0.8),
+				coverGradeDecision("P3@D3", at(0), GradePro, 0.8),
+				coverGradeDecision("P4@D4", at(0), GradePro, 0.8),
+				coverGradeDecision("P5@D5", at(0), GradeScript, 0.8),
+			},
+			want: GradeScore{
+				Decisions: 5, Cards: 5,
+				Rows: []GradeRow{
+					{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1},
+					{Grade: GradeFlash, Dealt: GradePro, N: 1, Landed2: 1, Landed: 1},
+					{Grade: GradePro, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1},
+					{Grade: GradePro, Dealt: GradePro, N: 1, Landed2: 1, Landed: 1},
+					{Grade: GradeScript, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1},
+				},
+				Buckets: []BucketRow{
+					{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1, Landed2: 1},
+					{Grade: GradePro, Bucket: "0.7-0.85", N: 1, Landed2: 1},
+				},
+			},
+		},
+		{
+			name: "Landed2 counts a landing by attempt 2 and not by attempt 3",
+			log:  `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet","cost_record:2":"kind=work attempt=2 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet","cost_record:2":"kind=work attempt=2 on_tier=flash end=failed on_route=fleet","cost_record:3":"kind=work attempt=3 on_tier=flash end=ok on_route=fleet"}}]}`,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.8),
+				coverGradeDecision("P2@D2", at(0), GradeFlash, 0.8),
+			},
+			want: GradeScore{
+				Decisions: 2, Cards: 2,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 2, Landed2: 1, Landed: 2}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.7-0.85", N: 2, Landed2: 1}},
+			},
+		},
+		{
+			name: "ToPro counts a flash start that escalated",
+			log:  `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet","cost_record:2":"kind=work attempt=2 on_tier=pro end=ok on_route=fleet"}}]}`,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.8),
+			},
+			want: GradeScore{
+				Decisions: 1, Cards: 1,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1, ToPro: 1}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1, Landed2: 1}},
+			},
+		},
+		{
+			name: "Open counts a card neither landed nor dropped",
+			log:  `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:in_progress"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.8),
+			},
+			want: GradeScore{
+				Decisions: 1, Cards: 1,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Open: 1}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1}},
+			},
+		},
+		{
+			name: "a dropped card counts Dropped and not Open",
+			log:  `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed","removed":true,"set":{"outcome":"dropped"}},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.8),
+			},
+			want: GradeScore{
+				Decisions: 1, Cards: 1,
+				Rows:    []GradeRow{{Grade: GradeFlash, Dealt: GradeFlash, N: 1, Dropped: 1}},
+				Buckets: []BucketRow{{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1}},
+			},
+		},
+		{
+			name: "buckets hold flash-dealt non-script grades at their p",
+			log:  `{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"P4","primary":"P4","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C3","primary":"P3","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C4","primary":"P4","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}}]}`,
+			decisions: []Decision{
+				coverGradeDecision("P1@D1", at(0), GradeFlash, 0.7),
+				coverGradeDecision("P2@D2", at(0), GradeFlash, 0.95),
+				coverGradeDecision("P3@D3", at(0), GradeScript, 0.7),
+				coverGradeDecision("P4@D4", at(0), GradeFlash, 0.7),
+			},
+			want: GradeScore{
+				Decisions: 4, Cards: 4,
+				Rows: []GradeRow{
+					{Grade: GradeFlash, Dealt: GradeFlash, N: 2, Landed2: 2, Landed: 2},
+					{Grade: GradeFlash, Dealt: GradePro, N: 1, Landed2: 1, Landed: 1},
+					{Grade: GradeScript, Dealt: GradeFlash, N: 1, Landed2: 1, Landed: 1},
+				},
+				Buckets: []BucketRow{
+					{Grade: GradeFlash, Bucket: "0.7-0.85", N: 1, Landed2: 1},
+					{Grade: GradeFlash, Bucket: ">=0.95", N: 1, Landed2: 1},
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			facts, err := ReadLog(strings.NewReader(tc.log))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, ScoreGrades(tc.decisions, facts, from, to))
+		})
+	}
 }
