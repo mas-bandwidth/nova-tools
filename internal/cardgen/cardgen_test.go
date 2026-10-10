@@ -245,6 +245,16 @@ func TestTheOKLineAndTheDeadline(t *testing.T) {
 	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc"}, c), "\nNEW: x/z_test.go\n")
 }
 
+// The generated brief carries the bench a lane gates on (docs/SPEC-SPRINT.md section 5,
+// "the bench a lane gates on") when the header names one, and none when it names none.
+func TestTheBriefCarriesTheBenchTheLaneGatesOn(t *testing.T) {
+	t.Parallel()
+	c := Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."}
+	line := "BENCH: idle (load 1.0 of 32 cores; crushed 164)"
+	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", Bench: line}, c), "\n"+line+"\n")
+	assert.NotContains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc"}, c), "BENCH:")
+}
+
 // --max cuts before the plan is rendered: the kept cards are the whole plan, so no
 // card needs a cut one (the add refuses a need that is no card of the add), the
 // plan is one wave, and the kept cards share the ledger with no need between them.

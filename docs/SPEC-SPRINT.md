@@ -3089,13 +3089,16 @@ and its line carries the choice and the reason beside it:
 
     BENCH: idle (load 1.0 of 32 cores; crushed 164)
 
-`sprint.BenchRows` joins the members with their beats and `sprint.BenchLoad` reads a
-beat's percent of all its cores as the load average the pick compares. `view
-coordinator` carries the line as its `bench` field and appends it to its summary, so a
-reader sees where new lanes go. The brief's STATUS line, the read prompt and the fleet
-table's go-process count take the bench from this same function; that wiring is owed
-and is not in this change. The twin test is
-`TestTheBenchIsTheLeastLoadedMachineNotAName`.
+`sprint.BenchRows` joins the members with their beats and their go-process count
+(`sprint.GoProcessCounts` over the go lanes) and `sprint.BenchLoad` reads a
+beat's percent of all its cores as the load average the pick compares; a tie of load
+goes to the fewer go processes. `view coordinator` carries the line as its `bench`
+field and appends it to its summary, so a reader sees where new lanes go, and its
+machine rows carry each machine's load and go-process count. The generated brief
+(`cardgen.Header.Bench`), the read card brief's STATUS line (`sprint.ReadCardBrief`)
+and the read prompt's bench rule (`friend.BenchRule`, `friend.ReadText`) all take the
+bench from this same function, so no brief and no read prompt spells a bench by name.
+The twin test is `TestTheBenchIsTheLeastLoadedMachineNotAName`.
 
 ## 6. The readers
 

@@ -526,6 +526,11 @@ with no clock and no store). What it holds:
   carries); the `ATTRIBUTION:` line (`cardgen.Attribution`); the task from the
   source's template with the rows substituted; the template's steps; and the
   `AS A READ` section (`cardgen.AsARead`), the text a reader of the work is given.
+  A generation whose header names a bench (`cardgen.Header.Bench`, the
+  `sprint.BenchLine` of the bench a lane gates on, docs/SPEC-SPRINT.md section 5)
+  writes it as a line of the brief after the header block, so a lane runs its go
+  commands on the chosen bench and never one by name; a header that names none
+  writes no line.
 - No brief names its author. A commit names the worker who did the work, and the
   deal may hand any card, a pinned one too, to any worker, a friend or a fleet
   machine, so the brief cannot know who that is: its `ATTRIBUTION:` line reads
