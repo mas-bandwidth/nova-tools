@@ -113,7 +113,7 @@ var DefaultCatalog = []Entry{
 	E("internal/shippedsmoke", "the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow", "go test -tags shippedsmoke ./internal/shippedsmoke", "NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke"),
 	E("internal/sprint", "the sprint table's pure core (lifecycle, steps, check, inbox) and its binding to the table layer (store) and its driver (play)", "go test ./internal/sprint/...", "go test ./internal/sprint/..."),
 	E("internal/member", "a sprint fleet member's loop: beat, queue, push and judge the finish, take to width, each card a child", "go test ./internal/member", "go test ./internal/member"),
-	E("internal/sprintdash", "the sprint dashboard (nova-sprint dashboard): the page embedded in the binary, a cached copy of where --json, and the check that holds the page equal to docs/SPEC-SPRINT-DASHBOARD.md", "go test ./internal/sprintdash", "go test ./internal/sprintdash"),
+	E("internal/sprintdash", "the sprint dashboard (nova-sprint dashboard): the page embedded in the binary, a cached copy of where --json, and the check that holds the page equal to the dashboard spec, which nova-sprint keeps", "go test ./internal/sprintdash", "go test ./internal/sprintdash"),
 	E("internal/sprintwire", "how a worker talks to the sprint's server (nova-sprint run --listen): the request and reply of a batch of verbs, the client, and the member's sprint over it", "go test ./internal/sprintwire", "go test ./internal/sprintwire"),
 	E("internal/subproc", "the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children", "go test ./internal/subproc", "go test ./internal/subproc"),
 	E("internal/swarm", "the native card runner: staging, the wall, budgets, slot leases and card lint", "go test ./internal/swarm", "go test ./internal/swarm"),
@@ -145,7 +145,6 @@ var DefaultCatalog = []Entry{
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/sprint", "the nova-sprint 1.0.0 glossary, which moves to nova-sprint's docs/ at the split", "go test ./internal/docs", "go test ./internal/docs -run TestRetiredWordsAppearOnlyInRecords"),
 	E("docs/ratings", "cold ratings of the tools, one file per rater and tool", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/stranger", "cold stranger runs of the tools, one file per run, every stumble with its proposed card", "go test ./internal/docs", "go test ./internal/docs"),
 

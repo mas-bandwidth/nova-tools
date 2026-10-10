@@ -2400,7 +2400,7 @@ tables and the `sprint` view. A card is one unit of work in a stream. Each tick
 deals ready cards to members (machines with a width), sends finished work to
 readers and queues passed work for merging by stream. Decisions it cannot
 make go to the coordinator's inbox. The contract is
-[SPEC-SPRINT.md](SPEC-SPRINT.md).
+[SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md).
 
 ### First run
 
@@ -2439,7 +2439,7 @@ refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 
 ### Landed series
 
-`where --json` carries `landedSeries`: cards landed per 10 minutes over the last 24 hours, 144 buckets, split `friends` and `fleet`. A landing is a work-table move to `<stream>:landed` from any state but waiting. A sentinel's release is not work. Each card counts once, the first landing. The worker is the last `<who>:ok` of the card's work attempt (`<card>.wN`): `friend.<name>` is a friend and anything else is a fleet machine. The lander is not the worker. `where -h` states it. The text frame does not carry the series. `dashboard` reads one `where --json` and the series is on that object, so the page does not loop the log. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the `where` frame.
+`where --json` carries `landedSeries`: cards landed per 10 minutes over the last 24 hours, 144 buckets, split `friends` and `fleet`. A landing is a work-table move to `<stream>:landed` from any state but waiting. A sentinel's release is not work. Each card counts once, the first landing. The worker is the last `<who>:ok` of the card's work attempt (`<card>.wN`): `friend.<name>` is a friend and anything else is a fleet machine. The lander is not the worker. `where -h` states it. The text frame does not carry the series. `dashboard` reads one `where --json` and the series is on that object, so the page does not loop the log. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), the `where` frame.
 
 ### Verbs
 
@@ -2620,11 +2620,11 @@ state (`backup: reads (review ... > working ...)`) while there is one
 
 ### The seat's store login
 
-`nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. `nova-sprint run --keys <NAME,...>` records the decision key and each provider key in `keys.json` beside that login (names only, never a value) and the run process reads each one from the seat; a name that cannot be read refuses at start, naming the name. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login) and [SPEC-SECRETS.md](SPEC-SECRETS.md) ("A tool's store login").
+`nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. `nova-sprint run --keys <NAME,...>` records the decision key and each provider key in `keys.json` beside that login (names only, never a value) and the run process reads each one from the seat; a name that cannot be read refuses at start, naming the name. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#the-seats-store-login) and [SPEC-SECRETS.md](SPEC-SECRETS.md) ("A tool's store login").
 
-The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness with no deliver command uses the folder adapter: install resolves `--target` to an absolute existing directory, and the push loop writes `PROOF-<nonce>` there. The actual nonce appears only in that filename; status, refusals, errors, and pong responses never reveal it. `seat push --json` reports `proof=none|pending|proven` without `nonce` or `pong_of`; `live` separately reports whether the proof is still valid. Run the printed Monitor command, `nova-sprint seat watch <dir>`, from inside the session, then answer each proof filename with `seat pong`. The native Monitor prints complete regular files already present and each new file every second, one flushed path per line (`--json`: one object with `path` per file); it skips dot files and directories, prints a removed name again when it reappears, writes nothing, runs locally, and stops on an interrupt. `seat check` prints `proven=<age> ago` on OK and `proven=-` plus both commands on DOWN.
+The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness with no deliver command uses the folder adapter: install resolves `--target` to an absolute existing directory, and the push loop writes `PROOF-<nonce>` there. The actual nonce appears only in that filename; status, refusals, errors, and pong responses never reveal it. `seat push --json` reports `proof=none|pending|proven` without `nonce` or `pong_of`; `live` separately reports whether the proof is still valid. Run the printed Monitor command, `nova-sprint seat watch <dir>`, from inside the session, then answer each proof filename with `seat pong`. The native Monitor prints complete regular files already present and each new file every second, one flushed path per line (`--json`: one object with `path` per file); it skips dot files and directories, prints a removed name again when it reappears, writes nothing, runs locally, and stops on an interrupt. `seat check` prints `proven=<age> ago` on OK and `proven=-` plus both commands on DOWN.
 
-`nova-sprint seat install --server <host:port> --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>` (beside the push loop's unit) records the sprint's server in `seat.json` beside that login and writes the nova-config seat profile, the row `<name>\t<dsn>\t<NAME>` of `~/.config/nova-config/seats.tsv`. After it, `nova-sprint seat check` measures the recorded server when `NOVA_SPRINT_SERVER` is not set and prints `MACHINERY config OK seat=<name> …` (or DOWN with the remedy), and `nova-config <verb> --seat <name>` (or `NOVA_SEAT`) reaches the config store with no `nova-secrets exec`: the password is read in process from the store login's nova-secrets seat under `<NAME>` when that variable is not set and `NOVA_PG_PASSWORD_ENV` is not given (`NOVA_PG_PASSWORD_ENV` given still wins). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#handing-over-the-seat) and [SPEC-CONFIG.md](SPEC-CONFIG.md#connecting).
+`nova-sprint seat install --server <host:port> --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>` (beside the push loop's unit) records the sprint's server in `seat.json` beside that login and writes the nova-config seat profile, the row `<name>\t<dsn>\t<NAME>` of `~/.config/nova-config/seats.tsv`. After it, `nova-sprint seat check` measures the recorded server when `NOVA_SPRINT_SERVER` is not set and prints `MACHINERY config OK seat=<name> …` (or DOWN with the remedy), and `nova-config <verb> --seat <name>` (or `NOVA_SEAT`) reaches the config store with no `nova-secrets exec`: the password is read in process from the store login's nova-secrets seat under `<NAME>` when that variable is not set and `NOVA_PG_PASSWORD_ENV` is not given (`NOVA_PG_PASSWORD_ENV` given still wins). The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#handing-over-the-seat) and [SPEC-CONFIG.md](SPEC-CONFIG.md#connecting).
 
 A fleet member back from down adopts the latest before it is dealt when the
 coordinator's machine sets `NOVA_SPRINT_ADOPT_FLAGS` to `nova-update release adopt`'s
@@ -2642,17 +2642,17 @@ A running sprint needs nine units on its coordinator's machine: the store and th
 
 ### The sprint backup
 
-`nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store (on a twin store its sprint state part for part; on a Redis the RDB's header and checksum alone), and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restore=<semantic|integrity> compared=<state+document+counts|header+checksum> secrets=none`, and a backup checked at the integrity level ends it `; integrity only, not a semantic restore: the sprint's state was not loaded and compared`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).
+`nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store (on a twin store its sprint state part for part; on a Redis the RDB's header and checksum alone), and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restore=<semantic|integrity> compared=<state+document+counts|header+checksum> secrets=none`, and a backup checked at the integrity level ends it `; integrity only, not a semantic restore: the sprint's state was not loaded and compared`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#sprint-backup-verb).
 
-`nova-sprint backup --out <dir>` is the backup for the work record: the sprint's keys of its epoch, the keys every epoch shares and the records an older epoch left as a RESTORE text dump (`sprint-epoch<n>.restore.txt`, one `RESTORE <key> <ttl ms> <payload>` line a key), compressed with `xz -9` and split into parts under 100 MB (`--part-bytes`, default 95000000). It records the sums of the text and of the xz (and of each part) in `SHA256SUMS`, puts the parts together again, checks both sums, restores the dump into a throwaway store (a `redis-server` on a unix socket holding this build's function library, or a twin) and compares the keys and the cards of each column with the store's, and the sprint state part for part on both a twin and Redis; it then scans the dump and the restored values for every sealed nova-secrets value of the seat (`--secrets-store`, `--secrets-as`, `--secrets-key`, `--sops`, default the seat login's) in a child of `nova-secrets exec`, which prints counts only; and it writes `README.md`, naming the parts in order, the sums and the load command. `--out` must not exist or be empty; it is written only when every step passed. It prints one `BACKUP FILE <name> bytes=<n> sha256=<hex>` line per file and `BACKUP OK out=<dir> epoch=<n> keys=<n> cards=<n> (<col>=<n> ...) restored=<twin> keys=<n> cards=<n> (...) parts=<n> text_sha256=<hex> xz_sha256=<hex> secrets=<n> matched=0 restore=<semantic|integrity> compared=<state+counts|counts>`, and a count-only fallback, whose source or loader cannot expose logical state, ends it `; integrity only, not a semantic restore: the sprint's state was not loaded and compared`. A match fails it with exit 1 and `secrets=<n> matched=<k>`, never a value or where it was. It needs `xz` and `split` on PATH (`--xz`, `--split`), and `redis-server` (`--redis-server`) for a Redis store. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-out).
+`nova-sprint backup --out <dir>` is the backup for the work record: the sprint's keys of its epoch, the keys every epoch shares and the records an older epoch left as a RESTORE text dump (`sprint-epoch<n>.restore.txt`, one `RESTORE <key> <ttl ms> <payload>` line a key), compressed with `xz -9` and split into parts under 100 MB (`--part-bytes`, default 95000000). It records the sums of the text and of the xz (and of each part) in `SHA256SUMS`, puts the parts together again, checks both sums, restores the dump into a throwaway store (a `redis-server` on a unix socket holding this build's function library, or a twin) and compares the keys and the cards of each column with the store's, and the sprint state part for part on both a twin and Redis; it then scans the dump and the restored values for every sealed nova-secrets value of the seat (`--secrets-store`, `--secrets-as`, `--secrets-key`, `--sops`, default the seat login's) in a child of `nova-secrets exec`, which prints counts only; and it writes `README.md`, naming the parts in order, the sums and the load command. `--out` must not exist or be empty; it is written only when every step passed. It prints one `BACKUP FILE <name> bytes=<n> sha256=<hex>` line per file and `BACKUP OK out=<dir> epoch=<n> keys=<n> cards=<n> (<col>=<n> ...) restored=<twin> keys=<n> cards=<n> (...) parts=<n> text_sha256=<hex> xz_sha256=<hex> secrets=<n> matched=0 restore=<semantic|integrity> compared=<state+counts|counts>`, and a count-only fallback, whose source or loader cannot expose logical state, ends it `; integrity only, not a semantic restore: the sprint's state was not loaded and compared`. A match fails it with exit 1 and `secrets=<n> matched=<k>`, never a value or where it was. It needs `xz` and `split` on PATH (`--xz`, `--split`), and `redis-server` (`--redis-server`) for a Redis store. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#sprint-backup-out).
 
 ### A backup as a demo
 
-`nova-sprint demo load sprint-store-2026-10-04-2336.redis.txt.xz.part-*` loads a store backup (the RESTORE text dump, xz, split into parts) into a throwaway Redis on a free 127.0.0.1 port, with the function library of this nova-sprint binary (never the installed nova-redis's), and prints `where` against it and the line `DEMO UP --addr 127.0.0.1:<port>`: point any read verb at the demo with `--redis 127.0.0.1:<port>`. The parts are joined in name order and checked against the sum beside them when there is one: `<file>.sha256` (the hand backup's), else the line of `SHA256SUMS` naming the joined file (`backup --out`'s), or `--sha256 <hex>`. It takes no `--redis`: the only store it opens is the one it starts. The server's directory and the state file (`demo.json`: address, port, pid, directory) are under `--dir`, by default the user cache directory's `nova-sprint/demo`; a second load while one is up is refused. `nova-sprint demo stop` stops that Redis by the pid it recorded, only when the Redis at the recorded address is that pid, and removes the recorded directory and nothing else. The live store is never opened. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#demo-load-verb).
+`nova-sprint demo load sprint-store-2026-10-04-2336.redis.txt.xz.part-*` loads a store backup (the RESTORE text dump, xz, split into parts) into a throwaway Redis on a free 127.0.0.1 port, with the function library of this nova-sprint binary (never the installed nova-redis's), and prints `where` against it and the line `DEMO UP --addr 127.0.0.1:<port>`: point any read verb at the demo with `--redis 127.0.0.1:<port>`. The parts are joined in name order and checked against the sum beside them when there is one: `<file>.sha256` (the hand backup's), else the line of `SHA256SUMS` naming the joined file (`backup --out`'s), or `--sha256 <hex>`. It takes no `--redis`: the only store it opens is the one it starts. The server's directory and the state file (`demo.json`: address, port, pid, directory) are under `--dir`, by default the user cache directory's `nova-sprint/demo`; a second load while one is up is refused. `nova-sprint demo stop` stops that Redis by the pid it recorded, only when the Redis at the recorded address is that pid, and removes the recorded directory and nothing else. The live store is never opened. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#demo-load-verb).
 
 ### The machinery's scratch
 
-`nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]` reclaims, on the machine it runs on (or, with `--machine`, on that machine through the fleet runner, which runs the same verb there), exactly the scratch the machinery made and no longer needs: the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees, bench directories under `~/nova-bench` older than `--max-age` (default `2d`; days or a Go duration), and the go caches trimmed to their cap. It refuses a path under no known scratch root (the AI root: `--ai-root`, else `NOVA_AI_ROOT`, else `~/ai`, else the one the home's `<name>-working` links name, `<root>/<name>/working` or `<root>/buds/<name>/working`, as on a machine that exports none; the bench root; land's clone root; a plain `<home>/<name>-working` directory, as a bench keeps one), and keeps a clone with uncommitted work, a stash or unpushed commits. It prints one line per class, `GC jobs|reads|landers|bench|cache count=<n> bytes=<b> kept=<n> refused=<n> failed=<n>`, and `GC OK freed=<bytes> volume=<use%>`; `--dry-run` says `GC WOULD-REMOVE` and removes nothing. `nova-sprint run` runs it on every machine once an hour and as soon as a machine's volume is at 80%. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 1, "gc".
+`nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]` reclaims, on the machine it runs on (or, with `--machine`, on that machine through the fleet runner, which runs the same verb there), exactly the scratch the machinery made and no longer needs: the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees, bench directories under `~/nova-bench` older than `--max-age` (default `2d`; days or a Go duration), and the go caches trimmed to their cap. It refuses a path under no known scratch root (the AI root: `--ai-root`, else `NOVA_AI_ROOT`, else `~/ai`, else the one the home's `<name>-working` links name, `<root>/<name>/working` or `<root>/buds/<name>/working`, as on a machine that exports none; the bench root; land's clone root; a plain `<home>/<name>-working` directory, as a bench keeps one), and keeps a clone with uncommitted work, a stash or unpushed commits. It prints one line per class, `GC jobs|reads|landers|bench|cache count=<n> bytes=<b> kept=<n> refused=<n> failed=<n>`, and `GC OK freed=<bytes> volume=<use%>`; `--dry-run` says `GC WOULD-REMOVE` and removes nothing. `nova-sprint run` runs it on every machine once an hour and as soon as a machine's volume is at 80%. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) section 1, "gc".
 
 ### A card re-cut as its twin
 
@@ -2662,7 +2662,7 @@ every waiting card that needed the old id need the twin instead (`card <dependen
 the new need), drops the old card `replaced by lint-pkg-cairn-tb`, and raises no "blocked
 on something dropped" judgment, in one step. Where the drop and the add were made apart,
 `relink lint-pkg-cairn-t lint-pkg-cairn-tb` re-points the edges and answers the blocked
-judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
+judgments of that pair. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) section 2, "A
 card replaced by its twin".
 
 ### A sentinel whose cards were deferred
@@ -2673,7 +2673,7 @@ its stream and its log, and the log gains one line with the needs before and aft
 need that is no card on the table is refused, naming every one, and nothing changes;
 `--needs ""` is refused, since a sentinel with nothing to wait on is released
 (`release v1 --reason '<why>'`), not emptied. The contract is
-[SPEC-SPRINT.md](SPEC-SPRINT.md) section 16.
+[SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) section 16.
 
 ### A merging card whose base is gone
 
@@ -2685,7 +2685,7 @@ card's origin first and one not there is refused, nothing changed; else the brie
 `BASE:` line names the new branch, the judgment is answered, the card's work and reads are
 kept, the log gains one line, `<id> BASE <old> -> <new>`, and the next land pass tries the
 card once. `ack` of the judgment has the next pass try the card once on its old base. The
-contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 7, a dead base.
+contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) section 7, a dead base.
 
 ### Role views: what a model reads instead of the dashboard
 
@@ -2712,7 +2712,7 @@ The sprint's server (`run --listen`) serves them read-only at `/api/view/coordin
 `/api/view/worker?as=<name>`. `nova-sprint view cards --col review --by tier --json` counts the primaries by column, tier, stream or holder (also `/api/view/cards?col=review&by=tier`). `nova-sprint friend cards <friend> --json` is every card held on
 a friend's row (working, then ready) with its packet and its `BRIEF.md` as friend sync writes
 it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
-her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
+her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), section 11,
 "Role views".
 
 ### A worker's own view: the dashboard's pull routes
@@ -2732,7 +2732,7 @@ the cards she holds; `/api/team`, `/api/friend/<name>`,
 `/events/machine/<name>` push each new copy as server-sent events. All of it is read-only,
 no-store, carries the copy's time in `Sprint-At`, and comes from one copy of `where --json
 --cards` read at most once a second however many pull. An unknown name is a 404 of one
-line; `where --json` also carries `landedSeries` (cards landed per 10-minute bucket over 24 hours, split between friends and fleet). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
+line; `where --json` also carries `landedSeries` (cards landed per 10-minute bucket over 24 hours, split between friends and fleet). The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), the dashboard.
 
 ### A provider out of funds
 
@@ -2748,7 +2748,7 @@ payment is the owner's`). `where --json` carries the `providers` table (balance,
 state) and `routes` each route's `balance=`. When every provider is out of credit, the tick
 stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
 until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
-says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+says one was paid. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), "A provider out of funds".
 
 ### Answered by rule
 
@@ -2764,7 +2764,7 @@ again after 2 and 5 minutes before the third failure stops the stream with the e
 reader's finding stays yours. `nova-sprint rules` prints what the rules would answer now and
 Xoff, and nova-config's sprint row turns single ones off: `nova-config sprint set
 --answer_rules_off late,conflict`, then `nova-config apply`. The contract is
-[SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-rule).
+[SPEC-SPRINT.md section 8](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#answered-by-rule).
 
 ### Promoting the sprint branch into dev
 
@@ -2784,7 +2784,7 @@ cleanup that fails is a refusal naming the keys that remain. Every step prints a
 (`PROMOTE WAIT ... checks pending: <names>`), looking again every `--poll` (default 1m).
 Without `--once` the verb repeats every `--every`. `--dry-run` prints the cut it would make,
 or the promotion in flight, and writes, enqueues and records nothing. The contract is
-[SPEC-SPRINT.md section 11](SPEC-SPRINT.md), promote.
+[SPEC-SPRINT.md section 11](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), promote.
 
 ### The fleet is idle
 
@@ -2793,7 +2793,7 @@ tick pushes you one note, `the fleet is idle`: `fleet 4/68: 311 behind 21 drop-b
 judgments (oldest 1h50m); 89 behind md-secrets (a card reached its bound, 40m)`, every
 waiting card traced to the root of its chain and the roots named by the cards behind
 them; once an episode, and `the fleet is working again` when it recovers. `run
---idle-alarm=false` turns it off. The contract is [SPEC-SPRINT.md section 14](SPEC-SPRINT.md#the-fleet-is-idle).
+--idle-alarm=false` turns it off. The contract is [SPEC-SPRINT.md section 14](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#the-fleet-is-idle).
 
 ### Answering the routine judgments
 
@@ -2817,7 +2817,7 @@ through the same op and nothing is applied twice. One ask may take `--timeout`
 nothing is applied for it, and the pass exits 1. `--dry-run` applies and records
 nothing; `--every 60s` runs it as the seat's loop until the machine is STOPPED. Jev's key comes from `JEV_API_KEY`:
 `nova-secrets exec --only JEV_API_KEY -- nova-sprint answer`. The
-contract is [SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)
+contract is [SPEC-SPRINT.md section 8](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#answered-by-nova-decide)
 and [SPEC-NOVA-DECIDE.md section 13](SPEC-NOVA-DECIDE.md#13-the-judgment-decision).
 
 `add` under `JEV_API_KEY` (`nova-secrets exec --only JEV_API_KEY -- nova-sprint add
@@ -2840,7 +2840,7 @@ remedy=<remedy>` line and each corrected header line a `LINT FIX card=<id> <line
 `PATHS:`, `NEW:` or `SHARED:` line, or line 1, with every addition applied), then one refusal,
 exit 2, nothing written. A base that cannot be read refuses with `MISSING: <what>`; a brief
 naming no `REPO:` or no `BASE:` is held only to the checks that need no tree
-([SPEC-SPRINT.md](SPEC-SPRINT.md) section 11, the brief checks).
+([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) section 11, the brief checks).
 
 ### install-canary-shadow-tick-r.w1: the shadow tick before a server swap
 
@@ -2852,7 +2852,7 @@ opened read-only, every write a refusal, and each part's plan is printed (`SHADO
 the old server running, when the shadow exits non-zero, panics, misses `--tick-deadline`
 (default 10s) or prints no plan; on a pass it switches and keeps the shadow's plan size and time
 at `<target>.shadow.json`, beside the switch record. The contract is
-[SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
+[SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
 
 ### Adopting a build: nova-sprint live and nova-sprint adopt
 
@@ -2887,7 +2887,7 @@ what it would change); 1 refused, `ADOPT REFUSED step=<step>` said verbatim, whe
 or ends without a step's line (the steps before it are done; a refusal once the seat play's
 window opened is said with what the rollback did and names those steps rolled back; the same
 command again finishes it), or when `--source` holds no
-`fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14,
+`fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) section 14,
 "Adopting a build".
 
 ### Exit codes
@@ -4648,7 +4648,7 @@ nova-work is pre-alpha: not ready for production use.
 
 Every issue of every repository of a GitHub organization in one tree file, with
 each issue's full contents, and a check that the file holds exactly what GitHub
-holds. The design is [SPEC-WORK-V1.md](SPEC-WORK-V1.md); this section is how to
+holds. The design is [SPEC-WORK-V1.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-WORK-V1.md); this section is how to
 use it. It reads GitHub only (no GitLab, no Gitea), never writes to GitHub (the
 seam refuses any GraphQL document that is not a query), and captures the fields
 SPEC-WORK-V1 section 1.3 lists, not reactions or other timeline events.

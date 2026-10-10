@@ -47,8 +47,8 @@ root (`~/nova`, or `--root <dir>`). The design is [SPEC-UP.md](SPEC-UP.md).
    nova-sprint where
    ```
 
-   The coordinator's day is [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md); its seat is
-   [SPRINT-COORDINATOR-SEAT.md](SPRINT-COORDINATOR-SEAT.md).
+   The coordinator's day is [SPRINT-COORDINATOR.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR.md); its seat is
+   [SPRINT-COORDINATOR-SEAT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR-SEAT.md).
 
 What `--local` never touches, and how each step decides it has nothing to do, is in
 [SPEC-UP.md](SPEC-UP.md).
@@ -76,7 +76,7 @@ contract is [SPEC-DOCTOR.md](SPEC-DOCTOR.md).
 Every nova-config route names a provider and a model, and the sprint's friends and native
 runs spend through them: the deal draws a route per card, the harness launches with that
 provider's key, and the balance poll rests a provider whose funds reach zero
-([SPEC-SPRINT.md](SPEC-SPRINT.md), `internal/sprint/provider_funds.go`). A route whose
+([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), `internal/sprint/provider_funds.go`). A route whose
 provider has no key, or whose provider is out of funds, is a hidden dependency: the tool
 runs until a take is refused, and the refusal is a mystery to a person who did not set the
 route up.
@@ -229,7 +229,7 @@ nova-config loop add sprint-dashboard --machine <m> --argv '["env","NOVA_SPRINT_
 
 It serves the page on `127.0.0.1:7390` and reads the sprint once a second whether or not
 a page is open; `--logo` is optional. The contract is
-[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
+[SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
 [FLEET.md](FLEET.md). `nova-doctor --check dashboard` says `ok` when the loop record's unit
 is installed and its loopback port answers, `warn` when no loop record runs the dashboard
 on this machine or a hand unit serves it, and `fail` when the unit is there and the port

@@ -28,7 +28,7 @@ daemon wakes on her bus stream, beats, and delivers each card she is dealt
 **bud** — a friend who is not the coordinator. A deal to a bud is delivered on
 the bus, enrolled at her first deal, and a judgment a rule does not answer
 climbs from a rule to a bud, then to the coordinator
-([SPEC-FRIEND.md](SPEC-FRIEND.md), [SPEC-SPRINT.md](SPEC-SPRINT.md)).
+([SPEC-FRIEND.md](SPEC-FRIEND.md), [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 **card** — the whole brief one worker is handed: one task, its rules, its gate
 and its finish, with a PATHS set the worker may touch and a result line it
@@ -37,7 +37,7 @@ run of a task ([SPEC-CARD-CONTRACT.md](SPEC-CARD-CONTRACT.md)).
 
 **sprint** — a coordinated run of cards dealt to a fleet of workers and read
 before they land, kept as four tables over the table layer: work, readers,
-merge and friends ([SPEC-SPRINT.md](SPEC-SPRINT.md)).
+merge and friends ([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 **bus** — messages between AIs as Redis streams, one stream per recipient
 under a consumer group, one log, pending until acknowledged, run by `nova-bus`
@@ -47,12 +47,12 @@ under a consumer group, one log, pending until acknowledged, run by `nova-bus`
 the secrets-store seat that machine opens its credentials from; a seat can
 decrypt the files its rules name and no other, and the coordinator's store
 login is a seat setting of `nova-sprint` ([SPEC-CONFIG.md](SPEC-CONFIG.md),
-[SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-SPRINT.md](SPEC-SPRINT.md)).
+[SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 **coordinator** — the friend who holds the coordinator role, the one field of
 the sprint config row. Her loops run on the coordinator's machine, and nothing
 leaves review except by her ([SPEC-CONFIG.md](SPEC-CONFIG.md),
-[SPEC-SPRINT.md](SPEC-SPRINT.md)).
+[SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 **bench** — a machine of the fleet that runs work or CI, named by its tailnet
 host. Its declared facts are a machine config row; its measured facts come
@@ -62,7 +62,7 @@ from its beat, `bench:<name>:beat` ([SPEC-CONFIG.md](SPEC-CONFIG.md)).
 its one writer; Redis is a copy `apply` writes, so it can be lost and rebuilt.
 `nova-sprint` can also run on a twin, an in-memory file store (`mem:<file>`)
 with no server, for learning and tests ([SPEC-CONFIG.md](SPEC-CONFIG.md),
-[SPEC-SPRINT.md](SPEC-SPRINT.md)).
+[SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 **loop record** — a supervised process someone decides runs on one machine: a
 `nova-config loop` row names the machine, the command, the seat and the secret
@@ -89,14 +89,14 @@ names it opens, and whether it runs every n seconds or is kept alive
 | `nova-sandbox` | run one command inside an OS-enforced wall around the directories you name | [SPEC-SANDBOX.md](SPEC-SANDBOX.md) |
 | `nova-secrets` | encrypted secrets in a git repository, handed to one command at a time | [SPEC-SECRETS.md](SPEC-SECRETS.md) |
 | `nova-self-talk` | flags sentences where a writer passes a standing verdict on themselves | [SPEC.md](SPEC.md) |
-| `nova-sprint` | a sprint of work cards, dealt to a fleet of workers and read before they land | [SPEC-SPRINT.md](SPEC-SPRINT.md) |
+| `nova-sprint` | a sprint of work cards, dealt to a fleet of workers and read before they land | [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) |
 | `nova-swarm` | one-task AI workers, each run in the sandbox with a deadline and a token budget; bench slot leases and card lint | [SPEC-SWARM.md](SPEC-SWARM.md) |
 | `nova-table` | tables whose cells are ordered sets, kept in Redis and drawn as text | [SPEC-NOVA-TABLE.md](SPEC-NOVA-TABLE.md) |
 | `nova-tokens` | token spend per day, model and repository, read from AI session logs | [SPEC-TOKENS.md](SPEC-TOKENS.md) |
 | `nova-up` | set nova up on one machine: plan every step, then apply, from nothing to a first sprint | [SPEC-UP.md](SPEC-UP.md) |
 | `nova-update` | compare installed tools with their latest releases, and update one when asked | [SPEC-UPDATE.md](SPEC-UPDATE.md) |
 | `nova-version` | which version of each tool is installed, recorded and compared | [SPEC-VERSION.md](SPEC-VERSION.md) |
-| `nova-work` | every issue of an organization's repositories in one tree file, verified field for field (pre-alpha) | [SPEC-WORK-V1.md](SPEC-WORK-V1.md) |
+| `nova-work` | every issue of an organization's repositories in one tree file, verified field for field (pre-alpha) | [SPEC-WORK-V1.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-WORK-V1.md) |
 
 ## The stores
 
@@ -133,7 +133,7 @@ are:
 
 The users are the tools' own defaults: a fleet member's loop logs in as the
 member user, and the table reader and a friend's daemon use the `ns-` users
-the tools name ([SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-SPRINT.md](SPEC-SPRINT.md)).
+the tools name ([SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 ### Postgres, through nova-config
 
@@ -161,7 +161,7 @@ the store and hands one command at a time the credentials it names
 Git is the record: the repositories, the branches, the briefs and the reports.
 A member pushes a card's branch, the sprint's lander gates a base's tip before
 it merges, and a landing puts the code on the development branch
-([SPEC-SPRINT.md](SPEC-SPRINT.md)). The secrets store is itself a git
+([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)). The secrets store is itself a git
 repository, written through a branch and a review, never a direct push
 ([SPEC-SECRETS.md](SPEC-SECRETS.md)).
 
@@ -171,13 +171,13 @@ repository, written through a branch and a review, never a direct push
 fleet row's `coordinator` field. It runs the sprint's store and the friends'
 bus, the sprint server, its member, the seat's push loop, the friend sync
 loop, the live table, the disk guard and the dashboard
-([SPEC-CONFIG.md](SPEC-CONFIG.md), [SPEC-SPRINT.md](SPEC-SPRINT.md)).
+([SPEC-CONFIG.md](SPEC-CONFIG.md), [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 **The benches** — machines of the fleet that run work or CI, named by their
 tailnet hosts. Each is a machine config row (its declared user, seat, slots,
 runners, width and tla flag) plus a beat in Redis that carries its measured
 facts; the coordinator's machine builds and tests nothing
-([SPEC-CONFIG.md](SPEC-CONFIG.md), [SPEC-SPRINT.md](SPEC-SPRINT.md)).
+([SPEC-CONFIG.md](SPEC-CONFIG.md), [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 
 **The tailnet** — the network every fleet machine is on and reachable by ssh.
 `nova-redis serve` binds loopback and the tailnet only, never a public
@@ -200,10 +200,10 @@ interface, with auth from the secrets store at run time
 
 `add` admits a primary waiting, or ready when nothing holds it; a primary
 moves only by a row of the lifecycle table, and landed is final and means the
-code is on the development branch ([SPEC-SPRINT.md](SPEC-SPRINT.md)). Waiting
+code is on the development branch ([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)). Waiting
 to ready needs every need landed or waived; ready to working is the deal's
 cut; working to review is the work card's finish; review to merging is accept,
 with the readers a flash card or a pro card needs; merging to landed is the
-batch, green on the stream branch and merged ([SPEC-SPRINT.md](SPEC-SPRINT.md)).
+batch, green on the stream branch and merged ([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).
 Rework, return and drop are the coordinator's verbs, and nothing retries by
-itself ([SPEC-SPRINT.md](SPEC-SPRINT.md)).
+itself ([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md)).

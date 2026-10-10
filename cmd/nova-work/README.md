@@ -59,4 +59,4 @@ The [nova-work section of the command reference](../../docs/CLI.md#nova-work) do
 
 ## Spec
 
-The contract is [docs/SPEC-WORK-V1.md](../../docs/SPEC-WORK-V1.md).
+The contract is [docs/SPEC-WORK-V1.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-WORK-V1.md).

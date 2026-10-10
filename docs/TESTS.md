@@ -1121,7 +1121,7 @@ MERGE OK moved=1 refused=0 notes=2 op=merge-t36-1
 ### Answered by nova-decide
 
 The routine judgments answered by the judgment decision
-([SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)): two cards
+([SPEC-SPRINT.md section 8](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#answered-by-nova-decide)): two cards
 come back failed in one note, and `answer` asks the decision for each
 card. With no `decide_judgment_bar` set (the sprint row ships it empty) and no
 `--bar`, it applies nothing: it records each decision and lists what a bar would

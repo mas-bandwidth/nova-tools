@@ -7,8 +7,8 @@ loop, what it does in one line, and either the nova verb lines that do the same 
 with the verb it needs and the PATHS that card would edit. A verb line here is checked against the tool's
 own verb table and FlagSet by `TestEveryCoordinatorToolMapsToARealNovaVerb`
 (`internal/docs/coordinator_tools_test.go`), so a line that names a verb or a flag the tool does not carry
-fails the build. The runbook is [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md); the seat's wrapper for the
-unserved verbs is [SPRINT-COORDINATOR-SEAT.md](SPRINT-COORDINATOR-SEAT.md); loop rows are
+fails the build. The runbook is [SPRINT-COORDINATOR.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR.md); the seat's wrapper for the
+unserved verbs is [SPRINT-COORDINATOR-SEAT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR-SEAT.md); loop rows are
 [FLEET.md](FLEET.md).
 
 No secret, key or password is on this page: secrets are named, never valued, and every `<...>` is filled

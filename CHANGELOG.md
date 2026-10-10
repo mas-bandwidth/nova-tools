@@ -1,5 +1,9 @@
 # nova-tools changelog
 
+## v1.2.3 — unreleased
+
+- split (layer L5): the sprint's TLA+ models, docs and roadmap half move to mas-bandwidth/nova-sprint. 24 modules that model only nova-sprint, nova-card and nova-work code leave `tla/` with their MC modules, 328 configurations, `CASES.tsv` and `RUNS.tsv` rows, 15 `COVERAGE.tsv` rows, READMEs and benches (CardMachine, CardContract, the Friend* models and StopReturn stay beside the code they model). SPEC-SPRINT.md, SPEC-SPRINT-DASHBOARD.md, SPRINT-COORDINATOR.md, SPRINT-COORDINATOR-SEAT.md, SPEC-WORK-V1.md, SPEC-WORKLANG.md, docs/sprint/GLOSSARY.md and the sprint and work ratings move; links to them point at nova-sprint. The "Push, not poll" loop table, which covers every nova-tools loop, stays here as docs/PUSH-NOT-POLL.md. docs/roadmap.sexp keeps 17 items; the 21 nova-sprint items move to nova-sprint's roadmap.
+
 ## v1.2.1 — unreleased
 
 - docs: ROADMAP.md returns, generated. #4855 deleted the hand-written ROADMAP.md because it was out of date, and said a roadmap is rendered from data, never written by hand. It comes back in that form: the data is docs/roadmap.sexp, read through internal/worklang into internal/roadmap; `make roadmap` (tools/roadmap) writes ROADMAP.md; and TestRoadmapIsGeneratedFromTheSexp fails when the page differs from what the data renders. It holds the work after v1.4 (the owner's release ladder, 2026-10-09: v1.2.1 small fixes, v1.3 larger fixes, v1.4 tests and cleanup, then stop), including the lessons from Prime Intellect's Prime Agent rewrite.
