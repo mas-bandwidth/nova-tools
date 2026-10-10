@@ -80,6 +80,13 @@ type friendEntry struct {
 	// Session is her row's session, the one her daemon delivers into as nova-friend
 	// rebind or install last recorded it, which her beat answers (row_session=).
 	Session string `json:"session,omitempty"`
+	// RebindOwed says the roster's session changed and the presence proof of
+	// the session before it (her beat's pong, her health pong, her finish) is
+	// not reset for the new session yet. It rides the same record as the
+	// change, so a reset that fails is owed again and never lost; while it is
+	// set the old presence is not evidence (friendRows), so she is not up
+	// before the reset. friend sync clears it once the reset is done.
+	RebindOwed bool `json:"rebind_owed,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -228,13 +235,16 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		return nil, nil, nil, err
 	}
 	want := map[string]FriendSpec{}
-	rebound := map[string]string{} // a session that changed (named, cleared, or named for the first time): the old presence is not evidence
+	owed := map[string]string{} // friend -> the session her proofs must be reset to, this sync or a reset left over from one that failed
 	rosterChanged := false
 	for _, s := range specs {
 		want[s.Name] = s
 		e, had := r[s.Name]
-		if had && e.Session != s.Session {
-			rebound[s.Name] = s.Session
+		changed := had && e.Session != s.Session
+		if changed {
+			owed[s.Name] = s.Session
+		} else if had && e.RebindOwed {
+			owed[s.Name] = s.Session // a reset that failed before: run it again
 		}
 		switch {
 		case !had:
@@ -245,6 +255,7 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 			rosterChanged = true
 		}
 		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds, e.Session = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds, s.Session
+		e.RebindOwed = e.RebindOwed || changed
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -257,9 +268,13 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	slices.Sort(added)
 	slices.Sort(removed)
 	slices.Sort(updated)
-	if !rosterChanged {
+	if !rosterChanged && len(owed) == 0 {
 		return nil, nil, nil, nil
 	}
+	// The roster (the new session, and the reset obligation with it) is written
+	// before any proof is cleared, so a reset that fails leaves the obligation
+	// on the row: no old presence is eligible against the new session, and the
+	// next sync runs the reset again instead of skipping it.
 	if err := putRoster(ctx, kv, r); err != nil {
 		return nil, nil, nil, err
 	}
@@ -272,12 +287,30 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 			return added, removed, updated, err
 		}
 	}
-	for _, n := range slices.Sorted(maps.Keys(rebound)) {
-		if err := st.dropReboundProof(ctx, kv, n, rebound[n]); err != nil {
+	for _, n := range slices.Sorted(maps.Keys(owed)) {
+		if err := st.dropReboundProof(ctx, kv, n, owed[n]); err != nil {
 			return added, removed, updated, err
 		}
 	}
+	// The reset is done: the obligation is cleared, one record with the rest.
+	if err := clearReboundOwed(ctx, kv, r, owed); err != nil {
+		return added, removed, updated, err
+	}
 	return added, removed, updated, nil
+}
+
+// clearReboundOwed clears the reset obligation of every friend whose proofs
+// were just reset, in one roster write, so the row no longer holds them owed.
+func clearReboundOwed(ctx context.Context, kv KV, r map[string]friendEntry, owed map[string]string) error {
+	if len(owed) == 0 {
+		return nil
+	}
+	for n := range owed {
+		e := r[n]
+		e.RebindOwed = false
+		r[n] = e
+	}
+	return putRoster(ctx, kv, r)
 }
 
 // dropReboundProof clears every presence signal of a friend after her roster
@@ -614,6 +647,14 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		// A reader of the beat alone fills Proof; a reader of the record fills Pong.
 		// Status reads the beat, so the proof it sees is the record's pong.
 		b.Proof = rec.Pong
+		if r[n].RebindOwed {
+			// a session change whose proof reset is not done: the old presence
+			// is not evidence against the new session, so none of it is shown or
+			// read as up until the reset runs (friend sync retries it).
+			b.Proof = time.Time{}
+			h = sprint.FriendHealth{}
+			fin = time.Time{}
+		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
 		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}

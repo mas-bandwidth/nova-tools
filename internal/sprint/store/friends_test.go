@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -534,4 +536,66 @@ func TestALegacyEmptySessionProofIsKeptWhileTheRosterNamesNone(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, sprint.Up, rows[0].Status, "the empty roster and the empty record agree: still up")
+}
+
+// failDeleteKeys is a store whose proof reset (the beat, health and finish
+// clears of dropReboundProof) fails once, after the roster already carries
+// the new session: the reset error the fix persists an obligation for.
+type failDeleteKeys struct {
+	*Mem
+	err error
+	hit bool
+}
+
+func (f *failDeleteKeys) DeleteKeys(ctx context.Context, keys []string) (int, error) {
+	if !f.hit {
+		f.hit = true
+		return 0, f.err
+	}
+	return f.Mem.DeleteKeys(ctx, keys)
+}
+
+// A rebind's proof reset that fails after the roster is committed (a
+// connection reset on the clear of the old presence) leaves the new session on
+// the row but the old presence still owed its reset: she is not up on the old
+// proof against the new session, and a retried sync runs the reset it would
+// otherwise skip, because the obligation rides the row (SyncFriends, the
+// rebind's reset is owed, not lost).
+func TestAResetFailureLeavesTheRebindOwedAndNotUp(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_old"}})
+	require.NoError(t, err)
+	_, _, _, err = h.health("amy", "tester", sprint.Up, h.now, 1)
+	require.NoError(t, err)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Equal(t, sprint.Up, rows[0].Status, "up on the old session before the rebind")
+
+	// a store whose proof reset fails once, after the roster is written
+	st := *h.st
+	st.B = &failDeleteKeys{Mem: h.m, err: errors.New("connection reset")}
+	_, _, updated, err := st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+	require.Error(t, err, "the reset failed and was reported")
+	assert.Equal(t, []string{"amy"}, updated, "the session change is reported even though the reset failed")
+
+	// the roster names the new session, and the old presence is not evidence:
+	// she is not up before the reset runs
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Equal(t, sprint.Down, rows[0].Status, "the old proof is not evidence against the new session")
+	seats, err := h.st.FriendSeats(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, seats[0].Status, "not eligible for new work")
+
+	// a retried sync runs the reset it did not skip: the old pong goes, and she
+	// stays down until a check through the new session proves her
+	_, _, _, err = h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+	require.NoError(t, err)
+	_, ok, err := h.m.GetKey(h.ctx, friendHealthKey("amy"))
+	require.NoError(t, err)
+	assert.False(t, ok, "the old session pong is dropped by the retry")
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rows[0].Status, "still down: no proof through the new session")
 }
