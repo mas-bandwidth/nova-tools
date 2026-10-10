@@ -33,15 +33,16 @@ func TestTreeGateWords(t *testing.T) {
 		{"go", "vet", "./..."},
 		{"go", "vet", "-tags", "functional", "./..."},
 	}
-	assert.Equal(t, basics, gateRuns(false, []string{"internal/docs"}))
-	assert.Equal(t, basics, gateRuns(true, nil))
-	runs := gateRuns(true, []string{"internal/docs", "internal/ci"})
+	assert.Equal(t, basics, gateRuns(false, []string{"internal/docs"}, nil))
+	assert.Equal(t, basics, gateRuns(true, nil, nil))
+	runs := gateRuns(true, []string{"internal/docs", "internal/ci"}, nil)
 	assert.Equal(t, basics, runs[:4])
-	require.Len(t, runs, 8)
+	require.Len(t, runs, 9)
 	for i, test := range []string{"^TestStaticcheckFindings$", "^TestUncheckedErrors$", "^TestDeadCode$"} {
 		assert.Equal(t, []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", test, "./internal/ci/"}, runs[i+4])
 	}
 	assert.Equal(t, []string{"go", "test", "-count=1", "-timeout", "600s", "./internal/docs/", "./internal/ci/"}, runs[7])
+	assert.Equal(t, []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", "^TestEveryCommandMeetsTheOnboardingStandard$", "./internal/ci/"}, runs[8])
 	for p, want := range map[string]bool{
 		"docs/CLI.md":            true,
 		"a/b_test.go":            true,
