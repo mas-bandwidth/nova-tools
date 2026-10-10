@@ -4364,6 +4364,56 @@ lines that until 2026-10-07 made a committed landing `LAND FAILED ... NOT report
 N+k)`, stopped the stream's next batches, exited 2 and could roll the server back
 (`movedExactly`). The lines a pass prints keep their form and their stream order.
 
+**The base gate first: a red base is said once, on the base, never on each batch** (the
+owner, 2026-10-07, 9:20 PM: anything found running the candidate is fixed as critical. Found
+dogfooding the v1.2 candidate that evening: the base's tree gate went red from a landing at
+about 7:30 PM while `baseGateCache` held that tip as green, from 8:10 PM to 9:50 PM every
+batch's gate failed on every bench, the lander refused each batch as the card's conflict, the
+seat blamed the benches, held and unheld machines, and nothing landed for 100 minutes until the
+gate was run by hand; cmd/nova-sprint/land.go `sayBaseRed`, landpass.go `baseRegate`, landgo.go
+`secondOpinion`; `TestARedBaseIsSaidOnceAndBlamesNoCard`). Before a pass gates any batch, the
+lander gates the base's tip itself, once, serial, in the streams' order (`prepare`, `cut`,
+`gateBase`; the cache consulted first, so a tip a pass pushed as gated is not gated again). A
+base whose tip fails a test ends the pass at once with one line, `BASE RED <tip>: <first
+failing test>` (stderr, where the loop shows what went wrong; `--json`: `base_red`), and one
+judgment to the seat: the base-gate rule's (`stream stopped: the base fails its tree gate`,
+`sprint.LandBaseRefused`), on the first stream in order to meet the red base, which stops and
+is resumed by rule when a land pass finds the base green again (section 8, the base re-check);
+every other stream that meets the red base is refused under that judgment and never stopped,
+so one judgment stands per base. No batch is refused, no card is blamed, nothing is merged onto
+the red base: the batches prepared before it and the rest of the pass are left queued with no
+line of their own, and the next pass says the line again until the base is green. The judgment
+names the landing that turned the base red: the commits behind the tip on the base's first-parent
+line are walked from the tip to the newest whose tree the cache holds green (the last green),
+and the commit just after it is the suspect, as git logs it (`<sha> land <id> (sprint stream
+<s>)`; with no tip behind it recorded green, the oldest commit walked is named and the note
+says so). The judgment also opens the fix by rule: one card per failing test the finding names,
+in the stream `critical-base-red` at `PRIORITY: critical`, its id `red-<TestName>`, its brief
+`sprint.FixBrief`'s form (the heavy tier, `REPO:` and `BASE:` the card's, `START:` the test and
+its failing line, `STOP:` the test green, `PATHS:` the failing test's named file and its
+package, `TEST:` the test) with the base's own task (the tip, the suspect, what the gate said),
+held to the card lint as `add` holds a brief, ranked first and deduplicated by test name against
+the open cards inside the one add step (`sprint.FixCards`: a test an open card's `TEST:` line
+names is cut by no one), recorded as the machine's; so the fix is dealt within the tick, and the
+base cure (section 8) lands it first once it is queued. The dashboard's merge row reads the
+failing test out of the open judgment and shows the gate red until the base is green again
+(internal/sprintdash, `MergeRowOf`). A base red with no test named (a build or a vet failure,
+the toolchain's transient of 2026-10-04) stays the base-gate rule's: retried at 2 and 5
+minutes, the stream stopped on the third failure, as before.
+
+**A red batch gate gates the base before any head is blamed.** The tip the cache holds green
+can be red (a gate on one bench said green; the tree is red): when a batch's one gate is red,
+the base's tip itself is gated again in the stream's worktree, the cache set aside
+(`baseRegate`). Red, the base is said once as above and the pass ends, no head blamed; green,
+the tip is recorded so and each head is gated alone from the base as before, the red one
+blamed with the finding. **Two benches alike are the tree's.** A gate red on a bench is asked
+of one more bench of the ring before it is believed (`secondOpinion`; the seat, 2026-10-07,
+blamed the benches): two findings alike, the benches' names and the runs' seconds set aside
+(`sameFinding`), are the tree's finding, said (`tree gate: gate red on <a> and on <b> alike`),
+and no other bench is asked; two that differ, or a second bench green, are a bench's own trouble
+and nobody's finding, said, and the gate runs here instead. With one bench up, the one finding
+stands as before (`TestAGateRedAlikeOnTwoBenchesIsTheBases`, `TestSameFindingSetsAsideTheBenchAndTheSeconds`).
+
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
 (`sprint.ScopeAmended`): the change also changes a file of its own (in `PATHS`), and the
