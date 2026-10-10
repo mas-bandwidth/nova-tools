@@ -210,6 +210,10 @@ type Note struct {
 	To string `json:"to,omitempty"`
 	// Hint is what to do next, in words, for a note addressed to someone.
 	Hint string `json:"hint,omitempty"`
+	// Waited is a decided note's wait: the judgment's raise to its answer, on the step's
+	// clock (decided; docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w1). A judgment a rule
+	// answers in the step that raises it is a decided note with no Answers and no wait.
+	Waited time.Duration `json:"waited_ns,omitempty"`
 }
 
 // NTickEnd is the tick's end note: written once at the
