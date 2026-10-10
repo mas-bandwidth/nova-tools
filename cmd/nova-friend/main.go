@@ -5,8 +5,8 @@
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, beat, install, uninstall, check, status, pong,
-// ping, wait-pong, watch, host, serve and reach; the
+// second. The verbs are run, beat, install, uninstall, check, contract, status,
+// pong, ping, wait-pong, watch, host, serve and reach; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -983,6 +983,24 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 				Run: w.status,
 			},
 			{
+				Name:    "contract",
+				Usage:   "contract --as <me> [--dir <d>] [--state-dir <d>]",
+				Example: "", // reads the contract a running daemon wrote: the example block has no line that runs
+				Effect:  tool.Inspection,
+				Hidden:  true, // the session's verb, named in the contract it prints; off the banner until docs/CLI.md is regenerated with it
+				Detail: `Prints the contract the daemon last told her session (docs/SPEC-FRIEND.md, the session contract), as its state
+directory's ` + friend.ContractFile + ` holds it: the wake file and the exact monitor line, the pong line to answer a nonce with,
+the start stamp to run when a child begins a card (nova-sprint progress --as friend.<me> <card>@<gen> --epoch <n>), the
+finish form, the server and the epoch. On start and on reinstall the daemon pushes one message, subject "your contract", body that text, on the same path a card takes; every session check carries it until the session answers one, and a change of the wake path, the server or the epoch (the first epoch included) is pushed the same way. A check deferred because the session runs no monitor is pushed as a message that still carries the contract.`,
+				ExitTable: "0 printed, 2 could not run (no daemon has written a contract in the state directory).",
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name")
+					f.String("dir", "", "the friend's working directory, whose state directory holds the contract (default: found by --as)")
+					stateDir(f)
+				},
+				Run: w.contract,
+			},
+			{
 				Name:    "refuse-go",
 				Usage:   "refuse-go --name go|gofmt",
 				Example: "", // refuses, by design: the example block has no line that runs
@@ -1268,11 +1286,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// when the sprint server last took her session's answer to a check as its proof (the up
 	// beat's answer says proved=<nonce>): status proof_sent, check proof=sent
 	var sent atomic.Pointer[time.Time]
+	// the session contract (daemon.go): owed to her checks, pushed on a change, and her down
+	// reason once three checks in a row found no monitor over her wake file; set once the
+	// store is open, nil for a harness with no session
+	var sct *sessionContract
 	// the presence file says a limit while there is one, whatever the session check saw; the
-	// harness's process never decides it (friend.HarnessWatch is advisory)
+	// harness's process never decides it (friend.HarnessWatch is advisory); a session that runs
+	// no monitor over her wake file is down with that reason
 	writePresence := func(p friend.PresenceStatus) error {
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
+		} else if why, down := sct.downReason(); down {
+			p.Presence, p.Reason = friend.PresenceDown, why
 		}
 		return friend.WritePresence(state, p)
 	}
@@ -1349,13 +1374,27 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if pr, found, err := friend.ReadPresence(state); err == nil && found {
 		keep = pr.Nonce // the last run's check, never answered: its answer still proves the push
 	}
-	sc := &friend.SessionCheck{
-		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
+	// the session's pong line for a nonce: the one line a check asks her to run
+	pongLine := func(nonce string) string {
+		return w.pongCommand(name, nonce, state, c.Str("redis"), dir)
+	}
+	var sc *friend.SessionCheck
+	sc = &friend.SessionCheck{
+		Friend: name, Store: st, Now: w.now, Nonce: w.random, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
 		Go:   w.checkGo,
 		Save: prover.Save(writePresence),
+		// each check's line read by the contract too: an answer, or a check deferred for no monitor.
+		// a no-monitor deferral queued nothing, so the next check is owed on the check cadence,
+		// not after ReaskAfter (SessionCheck.NoteNoMonitor)
+		Record: func(line string) {
+			record(line)
+			sct.line(ctx, line)
+			sc.NoteNoMonitor(line)
+		},
+		// the check, and the contract after it until the session answers one
 		Text: func(nonce string) string {
-			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
+			return sct.checkText(friend.SessionCheckText(nonce, pongLine(nonce), answerTo()))
 		},
 	}
 	laneDeliver := sc.Gate(fl.Gate(deliver)) // the daemon's: her turns, or her card runner
@@ -1363,6 +1402,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if perCard {
 		// the check goes in by the folder, ungated: her lanes hold no turn of the session
 		sc.Deliver = &friend.FolderCheck{Friend: name, Dir: dir}
+	} else {
+		// the contract and a deferred check go in through the harness's own deliver command,
+		// the path a card takes (docs/SPEC-FRIEND.md, the session contract)
+		channel := contractChannel(c.Str("harness"), c.Str("session"), dir, deliver, watched, c.Stdout)
+		sct = w.newSessionContract(ctx, c, name, dir, state, deliverPush(channel), record, func(nonce string) string {
+			if to := answerTo(); to != "" {
+				return pongLine(nonce) + " --to " + to
+			}
+			return pongLine(nonce)
+		})
 	}
 	prover.Deliver = sc.Deliver
 	tellSeat = func(subject, body string) {
@@ -1511,6 +1560,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 				sessionDown := func(ctx context.Context, until time.Time, reason string) error {
 					if u, r, limited := fl.Limited(); limited {
 						until, reason = u, "harness limit: "+r
+					} else if why, noMonitor := sct.downReason(); noMonitor {
+						// three no-monitor checks, on the check cadence: said as soon as the third is unanswered
+						reason = why
 					}
 					return down(ctx, until, reason)
 				}
@@ -1579,7 +1631,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return nil
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
+		Held:      sct.heldStamping(w.held(name, server), w.progressTo(server), w.now, record),
 		Seat:      w.seat(server),
 		Stage:     stager.stage(),
 		Prune:     stager.prune(),
@@ -1707,6 +1759,14 @@ func (w world) sprintAsk(server string) func(context.Context, []string) (string,
 		return nil
 	}
 	return func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }
+}
+
+// progressTo is one progress verb to server (a start stamp); nil in a world that sends none.
+func (w world) progressTo(server string) func(context.Context, []string) error {
+	if w.progress == nil {
+		return nil
+	}
+	return func(ctx context.Context, argv []string) error { return w.progress(ctx, server, argv) }
 }
 
 // held is the daemon's Held: the cards on her row, asked of the sprint server each loop, its

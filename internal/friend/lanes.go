@@ -543,6 +543,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
+			l.stampStart(ln, t, now)
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
 				lt, err := runner.RunCard(WithLaneDir(LaneContext(ctx), dir), c)
 				return laneResult{ln: ln, turn: lt, err: err, t: t}
@@ -565,11 +566,29 @@ func (l *loop) laneStep(now time.Time, width int) {
 		t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
 		ln.t = t
 		dir := ln.job.Dir
+		l.stampStart(ln, t, now)
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
 			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), dir), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}
+}
+
+// stampStart stamps a lane's card started as its turn starts (docs/SPEC-FRIEND.md, the
+// session contract): the sprint counts a card of hers working only once it is stamped, and the
+// daemon that started the lane can see the start, so it never waits for the turn to print. The
+// turn's stamp clock starts here, so the next stamp is the output since, ProgressEvery on. A
+// stamp that fails is said and the output stamps that follow carry the card.
+func (l *loop) stampStart(ln *lane, t *turn, now time.Time) {
+	if l.d.Progress == nil || ln.card == nil {
+		return
+	}
+	t.stamped = now
+	if err := l.d.Progress(l.ctx, []Card{*ln.card}); err != nil {
+		l.d.Record(fmt.Sprintf("%s progress: lane %d's card %s not stamped started: %s; its output stamps it from %s on", now.UTC().Format(time.RFC3339), ln.n, ln.card.ID, oneLine(err.Error(), 300), ProgressEvery))
+		return
+	}
+	l.d.Record(fmt.Sprintf("%s progress: lane %d's card %s stamped started", now.UTC().Format(time.RFC3339), ln.n, ln.card.ID))
 }
 
 // laneDone is a lane's open or turn ending: a session kept, or a card done,

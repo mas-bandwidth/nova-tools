@@ -1481,6 +1481,92 @@ The proof is the presence model's Ask then Answer within the bound
 (tla/FriendPresence.tla); `install` alone asks it before anything runs, and
 `run`'s proof is the daemon's own first check.
 
+## The session contract (internal/friend/session_contract.go)
+
+The finding of 2026-10-07: a session friend's daemon was reinstalled by an adopt and began waking
+her through a new wake file. It said "the session runs no monitor over <file>; in that session:
+monitor `tail -F <file>`" only in its own log, so her presence fell, the bus refused her as deaf,
+and the owner saw a working friend listed down with cards in her queue. The same day the sprint
+took hundreds of cards back from three friends ("has not started <card> past its bound: taken back
+and dealt again, never to her"), because a card counts as started only once it is stamped with
+`nova-sprint progress`, a contract no session had been told. Now the daemon tells the session
+everything the machine expects of it, the moment it changes.
+
+The contract (`friend.Contract`, `Contract.Text`) is one message titled `your contract`:
+
+- `Wake file:` the file the session's monitor tails (grok: `--session`), or none;
+- `Monitor:` the exact line the session runs (grok: monitor `tail -n 0 -F <file>`), or none when
+  every delivery is a turn the daemon runs by the harness's deliver command;
+- `Pong:` the one line that answers a `SESSION CHECK <nonce>`;
+- `Start:` the stamp a session or a child runs when it begins a card,
+  `NOVA_SPRINT_SERVER=<server> nova-sprint progress --as friend.<me> <card>@<gen> --epoch <n>`;
+- `Finish:` `<dir>/outbox/<job>/REPORT.md`, first line exactly `Verdict: LAND|HOLD|FAIL`, second
+  line exactly `Head: <40-hex>` (blank for HOLD and FAIL);
+- `Server:` and `Epoch:` (the highest epoch of the cards on her row, once the server has said one);
+- how to read it again: `nova-friend contract --as <me>`.
+
+How it is told (`friend.ContractTeller`, wired by `cmd/nova-friend/daemon.go`):
+
+- On the daemon's start, a restart and a reinstall alike, the daemon pushes one message, subject
+  `your contract`, body the contract's text, through the harness's own deliver command — the same
+  path a card's deal takes into her session (`cmd/nova-friend/daemon.go`, `deliverPush`), never a
+  message left on her bus stream. For grok the channel is the file a monitor actually tails
+  (`Grok` with `Wake ""`): a wake path that changed leaves the session's monitor on the old file
+  until the contract tells it the new one, so a push to the configured path alone would defer —
+  the exact session that was never told. Every session check also carries it after
+  the check's own lines (the first line stays `SESSION CHECK <nonce>`), the same delivery path the
+  check takes, until the session answers one. The daemon's start reads the last run's
+  `CONTRACT.md`; one whose wake path, server or epoch differs is said as a reinstall
+  (`contract: reinstall: the wake path (<old> -> <new>) since the last run: ...`) and that start
+  pushes the new contract once, the same way.
+- Whenever the wake path, the server or the epoch changes while it runs (the epoch is read off
+  each answer of the cards on her row), the contract is pushed again as one message through the
+  harness's deliver command (subject `your contract`), the path a card's deal takes into her
+  session, and the next check carries it again. The first epoch the server says, empty to a
+  number, is a change and is pushed the same way a later epoch change is; it is not a silent fill.
+- Every telling writes `<state-dir>/CONTRACT.md`, which `nova-friend contract --as <me>` prints
+  (exit 2 when no daemon has written one). The verb is off the banner until docs/CLI.md is
+  regenerated with it; it answers `-h` like any verb.
+
+A session check deferred because the session runs no monitor over its wake file
+(`friend.MonitorWatch`, reading the check's own record line, `DeferredCheckOf`) is pushed as a
+message through the harness's deliver command, subject `SESSION CHECK <nonce>`, body
+`answer <nonce>: <pong line>` and then the contract (the wake file, the exact monitor command,
+the start stamp and the finish form). A grok deliver with no monitor at all defers with it, so
+nothing is written; when the session's monitor runs over another file (a wake path that changed),
+the same grok channel (`Wake ""`) reaches it there, so that pushed message is what still carries
+the contract. It is never left in the log alone (`presence: session check <nonce> pushed
+as a message: the session runs no monitor over <file> (<n> of 3 unanswered)`). After `NoMonitorChecks` (three) such checks in a row
+with no answer, the friend is down with the reason `session runs no monitor over <file>`
+(`presence: down: ...`): her down beat and her presence file say those words, so the dashboard's
+reason is the true one, as soon as the third is unanswered. A no-monitor deferral writes nothing
+and queues nothing, so the check is marked read (`SessionCheck.NoteNoMonitor`): the next is owed
+on the check cadence, `ProveEvery` while she is up and `SessionQuiet` while she is down, measured
+from the ask, not after `ReaskAfter` (that wait is only for a check a queueing session still
+holds). Any answer from the session, or any bus message she writes, starts the
+count again. A check deferred for any other reason (a turn under way, no window open) is not a
+missing monitor.
+
+The start is stamped by the daemon wherever it can see it:
+
+- a lane it starts is stamped started as its turn starts (`loop.stampStart`, lanes.go), before the
+  turn prints; the output stamps follow from there every `ProgressEvery`;
+- for a session friend, the inbox pass (`friend.StartWatch`, `cmd/nova-friend/inbox.go`) stamps
+  each work card on her row once a run when its job directory shows work begun: a checkout in
+  `jobs/<job>/` that the stager did not make, the staged worktree's index written after its
+  `JOB.md`, or origin's ref of the card's branch in a checkout's git directory (a push). It reads
+  files only, no git and no network; the verb is `progress --as friend.<me> <card>@<gen> --epoch
+  <n>` (the bare card when the server named no generation). A stamp the server refuses is sent
+  again after `StartRetry` (a minute), and said.
+
+Tests: `internal/friend/session_contract_test.go` (pure, a fake deliver, no sockets, no real time):
+`TestStartAndReinstallPushTheContractOnce`, `TestAWakePathChangePushesTheContractAgain`,
+`TestADeferredCheckIsPushedAsAMessage`, `TestThreeUnansweredNoMonitorChecksAreDownWithTheExactReason`,
+`TestAJobDirectoryGainingABranchPushStampsTheStart`, `TestALaneItStartedIsStampedAtStart`; and
+`cmd/nova-friend/daemon_test.go` pins the channel itself: `TestTheContractGoesInThroughTheHarnessDeliverCommand`,
+`TestTheContractChannelIsTheMonitorAGrokSessionActuallyRuns`,
+`TestALaneHarnessWithNoSessionNamedPushesNothing`.
+
 ## The daemon writes every card she holds (internal/friend/inbox.go)
 
 On 2026-10-05 from about 18:59 the daemons of two friends held cards on
