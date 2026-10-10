@@ -229,7 +229,7 @@ nova-config loop add sprint-dashboard --machine <m> --argv '["env","NOVA_SPRINT_
 
 It serves the page on `127.0.0.1:7390` and reads the sprint once a second whether or not
 a page is open; `--logo` is optional. The contract is
-[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
+[SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
 [FLEET.md](FLEET.md). `nova-doctor --check dashboard` says `ok` when the loop record's unit
 is installed and its loopback port answers, `warn` when no loop record runs the dashboard
 on this machine or a hand unit serves it, and `fail` when the unit is there and the port

@@ -16,8 +16,9 @@ A row's fields: `Path:` (the script, or the launchd label), `Replacement:` (a ve
 comma separated, or `none yet`), `Tool:` (only a retired row), `STATUS:`, then `Behaviours:`
 and a numbered list. The replacement names are cards of this stream: `claude-oneshot-lanesb`
 (headless claude one-shot lanes for the buds; the script headers call the earlier card
-claude-oneshot-lanes), `coordinator-wake-verb`, `coordinator-ping-verb`, `friend-token-cap`,
-`sprint-dashboard-verb`.
+claude-oneshot-lanes), `coordinator-wake-verb`, `coordinator-ping-verb` and `friend-token-cap`. The `sprint-dashboard` stopgap, retired into
+`nova-sprint dashboard` on 2026-10-07, left with nova-sprint for
+[mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint).
 
 ## coordinator-wake
 
@@ -133,49 +134,3 @@ Behaviours:
 2. While that process runs it runs `nova-sprint friend beat <name>` with NOVA_SPRINT_SERVER=127.0.0.1:6390 and NOVA_SPRINT_ACTOR=<name>, output discarded.
 3. While it does not run it beats nothing, so the friend reads down.
 4. launchd keeps it alive (RunAtLoad, KeepAlive, 10 s throttle) and writes its output to ~/nova-bench/loops/friend-beat-<name>.log.
-
-## sprint-dashboard
-
-Path: <bench-dir>/dashboard/server.py (Python)
-Replacement: dashboard
-Tool: nova-sprint
-STATUS: retired 2026-10-07
-
-Behaviours:
-1. It serves one page and its files (app.js, the font, OFL.txt, the logo and favicons) on DASHBOARD_HOST:DASHBOARD_PORT (127.0.0.1:7390 by default), every answer no-store, and `/healthz` answers `ok` (test: TestDashboardServesThePageNoStore).
-2. One poller thread runs `$SPRINT_CMD where --json` with NOVA_SPRINT_SERVER set, back to back, no sooner than DASHBOARD_MIN_INTERVAL after the last start, with a timeout of DASHBOARD_POLL_TIMEOUT (60 s) (test: TestDashboardServesWhatServerPyServedFromOnePoller).
-3. `/api/sprint` returns the cached snapshot with ok, fetchedAt, attemptAt, error, readSeconds, minInterval and the build id, and never runs the command itself (test: TestDashboardServesWhatServerPyServedFromOnePoller).
-4. A failed poll (timeout, bad exit, no JSON, no tables) keeps the last good snapshot, sets ok false with a short reason, and never serves the command's stderr (test: TestDashboardServesWhatServerPyServedFromOnePoller).
-5. It computes cards landed per hour from the landed count over the last hour of samples, shown once ten minutes of samples exist; a drop in the count restarts the samples (test: TestDashboardThroughput).
-6. With DASHBOARD_UPSTREAM set it reads another server's snapshot instead of the sprint, so a check adds no load to the sprint server (test: TestThePullerServesTheUpstreamsCopy).
-7. It puts logo.svg into the page title inline in the text colour and serves it as /favicon.svg, else a raster logo at /logo-icon.png, /favicon.png, /logo-tile-192.png, /logo-tile-384.png, /logo.webp and /logo.png (test: TestDashboardServesWhatServerPyServedFromOnePoller).
-8. It stamps the page's script link with a build id that changes with the served files, and the page reloads itself when it changes (test: TestDashboardServesTheLogoAndItsBuild).
-9. It logs a read-time summary line once a minute and each new failure once (test: TestDashboardLogsAReadSummaryAMinute).
-
-### sprint-dashboard-verb-r-b.w7
-
-`nova-sprint dashboard` holds every behaviour above; each line cites the test that holds
-it in the verb, and `docs/CLI.md` names `dashboard` in the nova-sprint verb table, so the
-stopgap class test (`internal/ci/stopgaps_class_test.go`) reads the retired row as true.
-Two parts of the script are not carried over, by design: it derived its raster logos by
-running ffmpeg (a white-key and crop) and sips (192 and 384 px tiles), and the verb runs no
-outside program, so the image `--logo` names is served as given at every logo route and is
-prepared once by hand; and it filtered the `SECRETS` line of a wrapper script, where the
-verb reads the sprint in its own process and has no wrapper. The doctor's `dashboard` check
-holds that the dashboard runs as a loop record and answers on loopback (docs/SETUP.md).
-
-### sprint-dashboard-verb-r-b.w8
-
-The doctor's `dashboard` check fails, not passes, when the loop record's `--listen` names
-no loopback address: a unit that serves no page on loopback is a fault the check can see,
-and its fix line names the loop record and a loopback address to add. The logo routes type
-the image by its magic bytes before its file name, so a WebP image named `logo.png` is
-served `image/webp`. Tests: `TestDashboardCheck` (internal/doctor) and
-`TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).
-
-### sprint-dashboard-verb-r-b.w9
-
-The carried dashboard work now merges with the current sprint base: its doctor check
-requires a loopback page to answer, and image routes identify raster content from the
-bytes before the file extension. Tests: `TestDashboardCheck` (internal/doctor) and
-`TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).

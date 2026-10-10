@@ -36,7 +36,6 @@ var requiredStopgaps = []string{
 	"security-friend-runner",
 	"friend-ping",
 	"friend-beat-loops",
-	"sprint-dashboard",
 }
 
 var (

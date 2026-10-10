@@ -514,7 +514,7 @@ recovers. It proved none of that.
 
 **The promise is the checkout's.** A checkout that ships `internal/sprint` promises the journeys in
 `release.PromisedJourneys`, one per chaos subtest; `TestThePromisedJourneysAreTheChaosSuitesSubtests`
-(`internal/sprint/journeys_test.go`, beside the suite) holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
+(nova-sprint's `journeys_test.go`, beside the suite, in mas-bandwidth/nova-sprint) holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
 the receipt says `journeys=none-promised`.
 
 **The evidence is bound to the revision.** `cut --journeys <file>` names a file whose first line is

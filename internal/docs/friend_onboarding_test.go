@@ -51,6 +51,9 @@ func TestFriendOnboardingGuideCoversJoinToFirstCard(t *testing.T) {
 				toolName := m[1]
 				verbAndFlags := m[2]
 
+				if _, ok := externalTools[toolName]; ok {
+					continue
+				}
 				tool, ok := tools[toolName]
 				if !ok {
 					problems = append(problems, toolName+" is a nova tool this test reads no verb table of")

@@ -19,7 +19,7 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 | 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, which staging carries onto the tip of the base branch, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
 | 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin), a rework at the tip of its base branch with that commit's work carried on top where it applies cleanly, and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch`, `TestAReworkIsStagedAtTheTipOfItsBase`, `TestAReworkCarriesThePreviousWorkThatApplies`, `TestAReworkWhoseWorkDoesNotApplyIsTheBareTip` (functional tier) |
 | 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `pkg/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
-| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `pkg/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
+| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `pkg/member`, the twin tests in mas-bandwidth/nova-sprint, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
 
 `STAGE OK` reports total staging `secs` and cumulative Git command seconds for `clone`
@@ -410,7 +410,7 @@ head as it stages a rework at its last pushed head (`member.Carried`), as does a
 
 `nova-sprint add`, `brief` and `recut` check a brief that names `PATHS:`, `REPO:` and `BASE:`
 against the BASE tip of that repository before the brief is admitted
-(`sprint.PathsAdmission`, `cmd/nova-sprint/add.go`). The tree is the lander's clone, fetched
+(`sprint.PathsAdmission`, in nova-sprint's `add` verb). The tree is the lander's clone, fetched
 shallow into `refs/nova-add/<base>` (or the commit `BASE:` pins), cached per tip for the call.
 A literal PATHS entry must be a file or a directory there. A glob must match at least one file.
 A new `*_test` file, and an entry a `NEW:` line names, may be absent. A brief whose header
@@ -505,7 +505,7 @@ no supported backend; otherwise it asserts the named real backend and the child'
 A card is written by a program from the source the work comes from whenever the
 source is structured: a ratchet ledger of `internal/ci`, a reader's findings
 file, a tool's rendered help. `nova-card generate` is that program
-(`cmd/nova-card`; the planner is `internal/cardgen`, pure functions over text
+(nova-card, in mas-bandwidth/nova-sprint; the planner is its cardgen package, pure functions over text
 with no clock and no store). What it holds:
 
 - One card per file the source names, its id `<prefix>-<slug of the file>`,

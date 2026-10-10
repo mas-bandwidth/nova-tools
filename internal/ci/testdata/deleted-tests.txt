@@ -2314,3 +2314,7 @@ internal/ci/missed_08_card_reads_work_table_test.go it parsed cmd/nova-sprint/re
 internal/sprint/fleet_noroom_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
 internal/sprint/store/noroom_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
 internal/sprint/store/restore_older_epoch_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
+internal/docs/processor_doc_test.go docs/PROCESSOR.md (the sprint as a processor) left with nova-sprint for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); its metaphor-to-mechanism check goes with the page and is owed in nova-sprint
+internal/docs/coordinator_tools_test.go docs/COORDINATOR-TOOLS.md maps the sprint coordinator's wrappers to nova-sprint verbs, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); its verb-line check is owed in nova-sprint, and the verb-table readers the onboarding guide's test shares moved to internal/docs/novatools_test.go
+internal/docs/coordtools_class_test.go the coordinator stopgaps it held name nova-sprint verbs, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); owed in nova-sprint
+internal/ci/seatplay_functional_test.go the seat play's adoption test builds and runs ./cmd/nova-sprint, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); owed in nova-sprint

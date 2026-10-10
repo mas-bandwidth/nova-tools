@@ -8,6 +8,9 @@ with the worker verbs, read, and landed on that origin by the server's own landi
 process of the run, the Redis and the server included, ran inside one container and died with
 it. Nothing was pushed to the forge.
 
+The run was in nova-tools. Since v1.2.3 nova-sprint is its own repository,
+mas-bandwidth/nova-sprint: the cmd/nova-sprint paths named below are there.
+
 ## Setup
 
 - Bench: the fleet's first Linux bench (Linux, x86_64, 64 cores, podman 5.7.0), load average about 100 to 170 from

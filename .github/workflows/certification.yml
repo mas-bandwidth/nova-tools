@@ -134,7 +134,8 @@ jobs:
     # caps Linux shard 1 with internal/ci 67.708 s, internal/sprint/refmodel 60.236,
     # cmd/nova-swarm 44.763 and internal/docs 18.834 together. Its completed legs also
     # measure internal/sprint 15.951 s, pkg/redisconn 18.169, pkg/config 17.741
-    # and pkg/secrets 15.577. Sixteen measured heavy packages each have a shard;
+    # and pkg/secrets 15.577. The measured heavy packages left here (the sprint's went with
+    # nova-sprint, the split) each have a shard;
     # the other live packages are dealt round-robin.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and

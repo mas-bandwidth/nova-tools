@@ -109,7 +109,7 @@ concepts after: 1
 - `internal/sprint/held.go`: `WaitOf`, `CardWait`, the one wait hold, sentinel
   and wave read through; `FieldHeld`, `IsHeld`, `heldWave`, `HeldBack`, and the
   no-stall rule's hold.
-- `internal/sprint/steps_sentinel.go`: `IsSentinel`, `WaitsFor`, `Reachable`,
+- nova-sprint's `steps_sentinel.go`: `IsSentinel`, `WaitsFor`, `Reachable`,
   `Release`, the sentinel's release, which is the same wait.
 - `pkg/hygiene/kinds.txt`: the one list of work kinds.
 - `pkg/cardtree/tree.go`: the script step, which runs with no model.
