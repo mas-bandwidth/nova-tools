@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -393,7 +392,7 @@ func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
 		pid := HolderPID(filepath.Join(dir, LockName))
 		assert.NotEqual(t, Dash, pid, "the lock file holds no pid, so a waiter could not name the holder")
 	}
-	_, err = TakeFoldLock(dir, 50*time.Millisecond)
+	_, err = TakeFoldLock(dir, 0)
 	require.Error(t, err, "a second fold took the lock")
 	assert.Truef(t, strings.Contains(err.Error(), LockName), "the refusal does not name the lock: %v", err)
 	release()
