@@ -195,6 +195,41 @@ func TestAFriendsDirectoryComesFromHerRowNotASymlink(t *testing.T) {
 	assert.NoDirExists(t, amyAlias, "and still nothing at <root>/amy-working")
 }
 
+// A long-running inbox --wait --push seat rereads the friend rows at every look
+// (seat.go follow, inboxwait.go's wait callback): after nova-config friend set
+// <holder> --dir <new path> the next look swaps the push to the new directory and
+// says the seat's NOTE once, so the push does not silently stop writing to the old
+// path when it goes away. The new directory's keys are read on their first use.
+func TestTheSeatPushFollowsTheHoldersNewDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	first, second := filepath.Join(root, "first"), filepath.Join(root, "second")
+	for _, dir := range []string{first, second} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
+	}
+
+	ta := newTestApp(t)
+	dir := first
+	ta.a.friends = func(context.Context, string) ([]config.Row, error) {
+		return []config.Row{{Name: "amy", Fields: map[string]string{"dir": dir}}}, nil
+	}
+
+	p := &pushTarget{a: ta.a, seen: map[string]map[string]bool{}}
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, 0, p.follow("amy", true, &stdout, &stderr), "first look: %s%s", stdout.String(), stderr.String())
+	require.Equal(t, filepath.Join(first, "inbox", "sprint-judgments"), p.dirOf("amy", sprint.Group{}))
+
+	// the row's dir moves between two looks with the same holder
+	dir = second
+	stdout.Reset()
+	stderr.Reset()
+	require.Equal(t, 0, p.follow("amy", false, &stdout, &stderr), "second look: %s%s", stdout.String(), stderr.String())
+	assert.Equal(t, "NOTE the seat is amy's: pushing to "+filepath.Join(second, "inbox", "sprint-judgments")+"\n", stdout.String())
+	assert.Empty(t, stderr.String(), "an unchanged holder with a new dir is not a failure")
+	assert.Equal(t, filepath.Join(second, "inbox", "sprint-judgments"), p.dirOf("amy", sprint.Group{}), "the next note lands in the new directory")
+	assert.NotContains(t, p.seen, filepath.Join(second, "inbox", "sprint-judgments"), "the new directory's keys are read on first use")
+}
+
 // A seat whose app has the real friend reader, and no config store named, keeps
 // ~/<name>-working. Tests of inbox --push seat and the folder proof stand up
 // that fixture and never stub friends (seat_test.go, pushproof_test.go).

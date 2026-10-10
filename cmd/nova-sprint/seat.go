@@ -508,12 +508,12 @@ type pushTarget struct {
 	fixed     string                     // --push <dir>; "" follows the seat
 	seen      map[string]map[string]bool // each directory's keys, read once
 	holder    string                     // the holder last pushed for
-	dirs      map[string]string          // the friend rows' dirs, read again at each seat move (friendRowDirs)
+	dirs      map[string]string          // the friend rows' dirs, read again at every look (friendRowDirs)
 	note      io.Writer                  // where a fallback to ~/<name>-working is said once
 	followErr error                      // a friend-row read failure, surfaced by unseen in the wait callback
 }
 
-// inbox is seatInbox for name, from the friend rows' dirs as read at the last seat move.
+// inbox is seatInbox for name, from the friend rows' dirs as read at the last look.
 func (p *pushTarget) inbox(name string) (dir, parent string, ok bool) {
 	return p.a.seatInbox(name, p.dirs[name], p.note)
 }
@@ -577,15 +577,12 @@ func (p *pushTarget) unseen(l inboxLook) ([]sprint.Group, error) {
 	return out, nil
 }
 
-// follow says where a loop following the seat writes, once for each holder: a
-// line when the seat moved, and whether the holder has an inbox. A loop
-// started for a holder with none is refused (exit 2, naming it).
+// follow says where a loop following the seat writes, from the friend rows read
+// at this look: a line when the holder or her directory moved, and whether the
+// holder has an inbox. A loop started for a holder with none is refused (exit 2,
+// naming it).
 func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer) int {
 	if p.fixed != "" {
-		return 0
-	}
-	if holder == p.holder {
-		p.followErr = nil
 		return 0
 	}
 	dirs, err := p.a.friendRowDirs(context.Background())
@@ -594,6 +591,10 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 		p.followErr = &exitErr{code: code}
 		return code
 	}
+	moved := holder != p.holder
+	if !moved {
+		moved = dirs[holder] != p.dirs[holder]
+	}
 	p.holder, p.dirs, p.note, p.followErr = holder, dirs, stderr, nil
 	dir, parent, ok := p.inbox(holder)
 	switch {
@@ -601,7 +602,7 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 		return refuse(stderr, "inbox", fmt.Sprintf("--push seat writes to the holder's inbox, %s, and %s is not there: make it, or give --push <dir>", dir, parent))
 	case !ok:
 		fmt.Fprintf(stdout, "NOTE the seat is %s's, and %s is not there: nothing is pushed until it is\n", oneline.Field(holder), oneline.Field(parent))
-	case !first:
+	case !first && moved:
 		fmt.Fprintf(stdout, "NOTE the seat is %s's: pushing to %s\n", oneline.Field(holder), oneline.Field(dir))
 	}
 	return 0
