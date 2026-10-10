@@ -107,8 +107,11 @@ func TestSeatPlayPassesStoppedAgentsAsAdoptWindowFlags(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "fleet", "tools.yml"))
 	require.NoError(t, err)
 	play := string(raw)
-	require.Regexp(t, regexp.MustCompile(`seat_window_flags:\s*"\{\{[^\n]*\+ \['--stopped', item\.label ~ '='`), play,
+	fact := regexp.MustCompile(`(?m)^\s*seat_window_flags:.*$`).FindString(play)
+	require.NotEmpty(t, fact, "the live seat play must build its stopped-agent argv")
+	require.Regexp(t, regexp.MustCompile(`\+ \['--stopped', item\.label ~ '='`), fact,
 		"the live seat play must build a --stopped flag before each label=pid")
-	require.Contains(t, play, "'--window', nova_seat_quiet ~ 's'] + (seat_window_flags | default([]))",
+	window := regexp.MustCompile(`(?s)- name: "window: only those agents are waited on.*?register: seat_quiet`).FindString(play)
+	require.Contains(t, window, "'--window', nova_seat_quiet ~ 's'] + (seat_window_flags | default([]))",
 		"the adopt window argv must append the stopped flag/value pairs")
 }
