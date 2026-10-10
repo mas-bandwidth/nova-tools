@@ -139,7 +139,7 @@ nothing invented.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
-| `nova_root` | text | (unset) | `internal/layout`: the nova root for all derived paths; unset (the default, or --nova_root '') is ~/nova; the bench, secrets, loop logs, and mirrors derive from it | `machine:<m>` |
+| `nova_root` | text | (unset) | `internal/layout`: the nova root for all derived paths; unset (the default, or --nova_root '') is ~/nova; from it derive ai/<name>/working (friends), ai/buds/<name>/working (buds), ai/shared, bench, bench/secrets, bench/loops, bench/mirror | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are

@@ -90,7 +90,7 @@ func friendServerBriefAtDir(name, dir string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
-	fmt.Fprintf(&b, "Work in %[1]s/jobs/%[2]s/: every clone, worktree and build output goes inside it, "+strings.ReplaceAll(swarm.FriendGoCacheLine(name), "~/"+name+"-working", friendWorkDir(name, dir))+", and the report goes to %[1]s/outbox/%[2]s/REPORT.md.\n", friendWorkDir(name, dir), job)
+	fmt.Fprintf(&b, "Work in %[1]s/jobs/%[2]s/: every clone, worktree and build output goes inside it, "+strings.ReplaceAll(swarm.FriendGoCacheLine(name), "~/"+name+"-working", friendWorkDir("", name, dir))+", and the report goes to %[1]s/outbox/%[2]s/REPORT.md.\n", friendWorkDir("", name, dir), job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a card brief --widen widened starts from the held attempt's head (member.Carried)
 		p.BaseHead, p.BaseAttempt = c.Head, c.Attempt
@@ -1004,7 +1004,7 @@ func friendReadTextAtDir(st *store.Store, name, dir string, p sprint.Packet, c *
 	if !found {
 		return text
 	}
-	return strings.ReplaceAll(header, "~/"+name+"-working", friendWorkDir(name, dir)) + "\n\n" + body
+	return strings.ReplaceAll(header, "~/"+name+"-working", friendWorkDir("", name, dir)) + "\n\n" + body
 }
 
 // friendReadOf delivers one friend's read and closes it from the friend's

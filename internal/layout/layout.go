@@ -29,6 +29,17 @@ type Root struct {
 	Mirrors string
 }
 
+// Bud returns the bud's working path.
+// name is the bud's name.
+func (r Root) Bud(name string) string {
+	return filepath.Join(r.AI, "buds", name, "working")
+}
+
+// Shared returns the shared directory.
+func (r Root) Shared() string {
+	return filepath.Join(r.AI, "shared")
+}
+
 // Friend holds a friend's working path.
 type Friend struct {
 	// Working is the friend's working directory. Default is AI/<name>/working.
@@ -89,13 +100,13 @@ func ResolveRoot(novaRoot string) Root {
 }
 
 // ResolveFriend returns the friend's working path.
-// novaRoot is the machine's nova_root setting.
+// novaRoot is the machine's nova_root setting (empty uses default).
 // name is the friend's name.
 // dir is the friend's dir setting (empty uses default).
 func ResolveFriend(novaRoot string, name, dir string) Friend {
 	if dir == "" {
-		aiRoot := ExpandHome(novaRoot)
-		dir = filepath.Join(aiRoot, "ai", name, "working")
+		root := ResolveRoot(novaRoot)
+		dir = filepath.Join(root.AI, name, "working")
 	}
 	return Friend{Working: dir}
 }

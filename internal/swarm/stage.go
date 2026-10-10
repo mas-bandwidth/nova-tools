@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/layout"
 )
 
 // DefaultStageTimeout is the hard timeout for card staging (120 s).
@@ -157,11 +158,10 @@ func CardStageBranch(card []byte) string {
 // FindBenchMirror finds the path to the bench's local mirror for baseRepo.
 // Candidate locations:
 // - baseRepo itself, if it is a directory on disk that exists
-// - $HOME/nova-bench/mirror/<repo>.git
-// - $HOME/nova-bench/mirror/<repo>
+// - mirrorDir/<repo>.git
 // - /tmp/<repo>-mirror.git
 // - /tmp/<repo>.git
-func FindBenchMirror(benchHome, baseRepo string) string {
+func FindBenchMirror(mirrorDir, baseRepo string) string {
 	if baseRepo == "" {
 		return ""
 	}
@@ -170,21 +170,18 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 			return baseRepo
 		}
 	}
-	if benchHome == "" {
-		benchHome = os.Getenv("HOME")
-		if benchHome == "" {
-			benchHome, _ = os.UserHomeDir()
-		}
+	if mirrorDir == "" {
+		mirrorDir = layout.ResolveRoot("").Mirrors
 	}
 	repoName := filepath.Base(baseRepo)
 	repoName = strings.TrimSuffix(repoName, ".git")
 	repoName = strings.TrimSuffix(repoName, "-mirror")
 
 	var candidates []string
-	if benchHome != "" {
+	if mirrorDir != "" {
 		candidates = append(candidates,
-			filepath.Join(benchHome, "nova-bench", "mirror", repoName+".git"),
-			filepath.Join(benchHome, "nova-bench", "mirror", repoName),
+			filepath.Join(mirrorDir, repoName+".git"),
+			filepath.Join(mirrorDir, repoName),
 		)
 	}
 	candidates = append(candidates,

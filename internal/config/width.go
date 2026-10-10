@@ -27,13 +27,15 @@ import (
 // resolves (the owner, 2026-10-02: "default is CPUs/2"; sprint.WidthOfCores):
 // the config holds no number for it.
 
-// MachineWidth is one machine row's width.
+// MachineWidth is one machine row's width and root paths.
 type MachineWidth struct {
 	Machine string
 	// Width is the row's width field; 0 when Default.
 	Width int
 	// Default says the row has no width: the default, resolved from the cores.
 	Default bool
+	// NovaRoot is the row's nova_root field; empty when unset.
+	NovaRoot string
 }
 
 // Member says whether the machine is a member of the sprint's fleet: its
@@ -49,7 +51,7 @@ func Widths(ctx context.Context, st Store) ([]MachineWidth, error) {
 	}
 	out := make([]MachineWidth, 0, len(machines))
 	for _, m := range machines {
-		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == ""})
+		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == "", NovaRoot: m.Fields["nova_root"]})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Machine < out[j].Machine })
 	return out, nil

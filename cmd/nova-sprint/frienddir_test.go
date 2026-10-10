@@ -270,11 +270,11 @@ func TestFriendDirectoryFallbackCanBeNotedAfterSilentLookup(t *testing.T) {
 	t.Parallel()
 	a := &app{}
 	// The fallback path uses the layout package
-	home := os.Getenv("HOME")
-	if home == "" {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		home = t.TempDir()
 	}
-	fallback := filepath.Join(home, "ai", "amy", "working")
+	fallback := filepath.Join(home, "nova", "ai", "amy", "working")
 	assert.Equal(t, fallback, a.friendDir("amy", "", nil), "a nil writer does not consume the note")
 	var note bytes.Buffer
 	assert.Equal(t, fallback, a.friendDir("amy", "", &note))

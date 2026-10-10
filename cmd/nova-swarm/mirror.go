@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/layout"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -107,7 +108,7 @@ func cmdMirror(args []string, stdout, stderr io.Writer) int {
 
 func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func(context.Context, time.Duration) bool) int {
 	f := newFlags("mirror")
-	dir := f.fs.String("dir", "", "the `dir` the bare mirrors <repo>.git live in (default: layout.Root.Mirrors)")
+	dir := f.fs.String("dir", "", "the `dir` the bare mirrors <repo>.git live in (default: from machine row's nova_root)")
 	repos := f.fs.String("repos", "", "the repository names to mirror, a comma-separated `list`")
 	base := f.fs.String("base", "", "the `url` each repository is fetched from, <url>/<name>.git, such as https://github.com/<org> or git@<alias>:<org>")
 	every := f.fs.Duration("every", 0, "refresh again after this `duration`, until stopped; 0 refreshes once (default 0)")
@@ -139,7 +140,9 @@ func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func
 		return 2
 	}
 	d := *dir
-	if rest, ok := strings.CutPrefix(d, "~/"); ok {
+	if d == "" {
+		d = layout.ResolveRoot("").Mirrors
+	} else if rest, ok := strings.CutPrefix(d, "~/"); ok {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return refuse(stderr, " mirror", "the user's home could not be read: "+err.Error())

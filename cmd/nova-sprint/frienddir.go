@@ -34,7 +34,21 @@ func (a *app) friendDir(friend, dir string, note io.Writer) string {
 	if dir != "" {
 		return dir
 	}
-	fallback := layout.ResolveFriend("", friend, "").Working
+	// Read machine's nova_root
+	var machineNovaRoot string
+	if a.inventory != nil {
+		// Find the machine this app is running on (use "self" or env var)
+		if machines, err := a.inventory(context.Background(), a.getenv("NOVA_PG_DSN")); err == nil && len(machines) > 0 {
+			// For now, use the first machine; in practice, we'd find the right one
+			for _, m := range machines {
+				if m.NovaRoot != "" {
+					machineNovaRoot = m.NovaRoot
+					break
+				}
+			}
+		}
+	}
+	fallback := layout.ResolveFriend(machineNovaRoot, friend, "").Working
 	if note != nil {
 		if _, said := friendDirNoted.LoadOrStore(friendDirKey{a, friend}, true); !said {
 			fmt.Fprintf(note, "NOTE friend=%s has no dir on her nova-config row, so her working directory is %s; run: nova-config friend set %s --dir <her real working directory>\n", friend, oneline.Field(fallback), friend)
@@ -45,11 +59,11 @@ func (a *app) friendDir(friend, dir string, note io.Writer) string {
 
 // friendWorkDir is the friend's working directory as a brief or a view names it to her:
 // dir, her row's, when it is set, so no symlink is needed; else <nova-root>/ai/<name>/working.
-func friendWorkDir(friend, dir string) string {
+func friendWorkDir(novaRoot, friend, dir string) string {
 	if dir != "" {
 		return dir
 	}
-	return layout.ResolveFriend("", friend, "").Working
+	return layout.ResolveFriend(novaRoot, friend, "").Working
 }
 
 // friendRowDirs is each friend's dir as nova-config's friend rows say it, by name (a
