@@ -294,7 +294,10 @@ func (g *guard) run() int {
 	// hold and the judgment), and the run ends STOP, exit 3, so the loop row's
 	// supervisor stops the loops; never the server's deals.
 	if act.HoldDeals {
-		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d %s\n", g.freed, act.Judgment)
+		// The judgment carries the host and the guarded volume's name, text from
+		// outside the binary, so it goes through oneline.Escape like say's lines
+		// (law #2573): a name with a newline in it can never split this line.
+		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d %s\n", g.freed, oneline.Escape(act.Judgment))
 		return 3
 	}
 	if stop {
