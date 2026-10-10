@@ -43,6 +43,7 @@ func (c StreamClock) Stalled(now time.Time, stale time.Duration) bool {
 	return c.State != StreamLanded && stale > 0 && !c.Progress.IsZero() && now.Sub(c.Progress) > stale
 }
 
+// The model is tla/Judgments.tla: raised by the tick, pushed, answered, and stale.
 // InboxReq is what the inbox is computed from, at read time: the open
 // judgments, the notifications since the cursor, the streams' clocks, and the
 // clock reading of the read. Overdue is computed here, so a dead coordinator
