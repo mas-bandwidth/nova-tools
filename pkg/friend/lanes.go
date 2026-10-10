@@ -234,6 +234,7 @@ type lane struct {
 	baseOK   bool
 	polled   time.Time // when the card's tokens were last read for the cap
 	capped   bool      // stopped at the row's token cap
+	renewed  int       // how many sessions this card has renewed (renew.go): one per card
 	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
 }
 
@@ -547,6 +548,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue
 			}
 			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
+			ln.renewed = 0 // the renewal is once per card (renew.go)
 			ln.tier = d.cardTier(c)
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
@@ -653,6 +655,13 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	if !t.stopped && !t.capped {
 		s.gov.Clean(now)
+	}
+	// A session the turn could not take because it is full or missing is the
+	// session's fault, never the card's (renew.go): the lane renews its
+	// session itself and the card continues in the fresh one.
+	if why, detail := laneSessionEnd(r, t, ln); why != "" {
+		l.renewLaneSession(ln, t, why, detail, now)
+		return
 	}
 	ok := r.err == nil && r.turn.Exit == 0 && !t.stopped && !t.capped
 	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", at, ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
