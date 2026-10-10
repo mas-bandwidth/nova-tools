@@ -168,8 +168,20 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 			}
 		}
 	}
+	liveCoordinator := ""
+	if kind == KindFriend {
+		// The coordinator role follows the live seat, not the stored sprint
+		// row (docs/SPEC-CONFIG.md, "sprint"): read sprint:coordinator
+		// through the Applier, the same view reportSeatHold reads as
+		// op.Prev, and pass it to the friend derive.
+		sprintView, _, err := ap.Read(ctx, KindSprint)
+		if err != nil {
+			return Result{}, err
+		}
+		liveCoordinator = sprintView[KindSprint]["coordinator"]
+	}
 	if k.Derive != nil {
-		if rows, err = k.Derive(ctx, st, rows); err != nil {
+		if rows, err = k.Derive(ctx, st, liveCoordinator, rows); err != nil {
 			return Result{}, err
 		}
 	}
