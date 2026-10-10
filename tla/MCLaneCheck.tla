@@ -1,7 +1,9 @@
 ----------------------------- MODULE MCLaneCheck -----------------------------
 EXTENDS LaneCheck
 
-Symmetry == Permutations(Cards)
+\* The two friend-level keys obey the same filter; permuting their names
+\* preserves their distinct identities and every subset offered by a tick.
+Symmetry == Permutations(Cards) \cup Permutations(FriendKeys)
 \* The counters never enable an action. Both translate by the same amount in
 \* the correct machine and reset together; only their difference is observed
 \* by CountedOncePerSpan. This quotient retains every invariant and transition,

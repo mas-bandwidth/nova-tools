@@ -7,7 +7,7 @@ EXTENDS Naturals, Integers, FiniteSets, TLC
 \* ending closes its open judgment; a continuing open judgment is never filtered.
 \* Type and subject form the key: card lateness, friend-name stall, friend-row idle.
 \* ReadersFull and ReadTierRule are outside this model.
-CONSTANTS Cards, Cap, FriendLaneLive, MaxClock, Broken
+CONSTANTS Cards, FriendKeys, Cap, FriendLaneLive, MaxClock, Broken
 VARIABLES clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
           epoch, open, previous, countEpoch, suppressed, spans,
           noRise, noMiss, noStale, epochRestartOK
@@ -15,7 +15,10 @@ VARIABLES clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
 vars == <<clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
           epoch, open, previous, countEpoch, suppressed, spans,
           noRise, noMiss, noStale, epochRestartOK>>
-Judgments == ({"late"} \X Cards) \cup {<<"stall", "friend">>, <<"idle", "row">>}
+\* FriendKeys has two distinct opaque type/subject keys: stall-on-name and
+\* idle-on-row. Both use friendLive; their identities remain distinct in the
+\* open set, previous quiets and count. Card lateness retains the card key.
+Judgments == ({"late"} \X Cards) \cup FriendKeys
 \* Ages are an exact freshness quotient: -1 is a future timestamp, and Live+1
 \* represents every stale timestamp. A seat with age -2 has no stored timestamp;
 \* production accepts that direct daemon observation without an age test.
@@ -29,10 +32,10 @@ MachineNamed(c) ==
     (c \in beatRunning /\ (Broken = "StaleBeat" \/ Fresh(beatAge))) \/
     (c \in seatRunning /\ (seatAge = -2 \/ Broken = "StaleBeat" \/ Fresh(seatAge)))
 MachineLive(c) == Active(c) /\ MachineNamed(c) /\ (Broken = "NoCap" \/ ran[c] < Cap)
-Kept(j) == IF j[1] = "late" THEN MachineLive(j[2])
-           ELSE \E c \in Cards : MachineLive(c)
-ShouldKeep(j) == IF j[1] = "late" THEN Live(j[2])
-                ELSE \E c \in Cards : Live(c)
+Kept(j) == IF j \in FriendKeys THEN \E c \in Cards : MachineLive(c)
+           ELSE MachineLive(j[2])
+ShouldKeep(j) == IF j \in FriendKeys THEN \E c \in Cards : Live(c)
+                ELSE Live(j[2])
 
 Init ==
     /\ clock = 0
