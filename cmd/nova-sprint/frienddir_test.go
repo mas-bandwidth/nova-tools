@@ -321,7 +321,7 @@ func TestFriendReviewBriefNamesHerRowDirectory(t *testing.T) {
 	require.NoError(t, err)
 	dir := t.TempDir()
 	p := sprint.Packet{Card: "s1-1.r1", Primary: "s1-1", Brief: "REPO: example/tools\nKeep ~/amy-working in the quoted evidence.\n"}
-	text := friendReadTextAtDir(st, "amy", dir, p, nil)
+	text := friendReadTextAtDir(st, "amy", dir, p, nil, "")
 	assert.Contains(t, text, "Work in "+dir+"/jobs/")
 	assert.Contains(t, text, "the report goes to "+dir+"/outbox/")
 	assert.Contains(t, text, "Keep ~/amy-working in the quoted evidence.")

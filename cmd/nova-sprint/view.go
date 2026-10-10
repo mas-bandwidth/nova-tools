@@ -108,6 +108,8 @@ type viewRow struct {
 	F30 int    `json:"f30"`           // finished in the last 30m
 	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
 	Run string `json:"run,omitempty"` // a friend's live lane that kept a judgment quiet: "running 32m of 90m"
+	Ld  string `json:"ld,omitempty"`  // a machine's load, as the fleet table's load cell says it
+	Go  int    `json:"go,omitempty"`  // a machine's go processes, its go lane's holders
 }
 
 // coordCounts are the sprint's counts, always carried: the work table's primaries by state,
@@ -163,10 +165,19 @@ type coordinatorView struct {
 	FriendsTiers []string    `json:"friends_tiers,omitempty"`
 	Cursor       string      `json:"cursor"`
 	N            coordCounts `json:"n"`
-	Items        []viewItem  `json:"items"`
-	Rows         []viewRow   `json:"rows,omitempty"`
-	Same         int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone         int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	// Bench is the bench a lane gates on now: the least loaded of the fleet's benches
+	// under its load cap, with its reason (sprint.BenchLine), so the reader sees where
+	// new lanes go; empty when no member has beaten (docs/SPEC-SPRINT.md section 5,
+	// "the bench a lane gates on").
+	Bench string `json:"bench,omitempty"`
+	// BenchName is the chosen bench's name alone (the PickBench pick), empty when no
+	// bench is under its cap: the word the read prompt's bench rule writes into its ssh
+	// command (docs/SPEC-SPRINT.md section 5, "the bench a lane gates on").
+	BenchName string     `json:"bench_name,omitempty"`
+	Items     []viewItem `json:"items"`
+	Rows      []viewRow  `json:"rows,omitempty"`
+	Same      int        `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone      int        `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -332,6 +343,16 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	if err != nil {
 		return v, err
 	}
+	lanes, err := st.LaneRows(ctx)
+	if err != nil {
+		return v, err
+	}
+	goProcs := sprint.GoProcessCounts(lanes)
+	benchRows := sprint.BenchRows(members, beats, goProcs)
+	v.Bench = sprint.BenchLine(benchRows, sprint.BenchCapFactor)
+	if pick, ok := sprint.PickBench(benchRows, sprint.BenchCapFactor); ok {
+		v.BenchName = pick.Name
+	}
 	if v.Seat, err = st.B.Coordinator(ctx); err != nil {
 		return v, err
 	}
@@ -452,11 +473,13 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		}
 		rep := "never"
 		var since time.Duration
+		ld := ""
 		if b, ok := beats[m]; ok && b.Beaten() {
 			since = now.Sub(b.At)
 			rep = ageWord(since)
+			ld = sprint.LoadText(b, now)
 		}
-		rows = append(rows, viewRow{K: "m:" + m, St: cmp.Or(status, sprint.Down), R: r, W: w, Wd: width, F30: finished(m), Rep: rep})
+		rows = append(rows, viewRow{K: "m:" + m, St: cmp.Or(status, sprint.Down), R: r, W: w, Wd: width, F30: finished(m), Rep: rep, Ld: ld, Go: goProcs[m]})
 		if status != sprint.Up && status != sprint.Held && width > 0 {
 			v.Items = append(v.Items, viewItem{K: "m:" + m, T: itemMachine, W: "machine down", B: r + w, S: m + " is down and not held (width " + strconv.Itoa(width) + "); last beat " + rep,
 				Next: "nova-sprint log --member " + m + " --since 1h", age: since})
@@ -722,6 +745,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	}
 	if line := switchesLine(v.Fleet, v.Friends, v.FleetTiers, v.FriendsTiers); line != "" {
 		sum += " | " + line
+	}
+	if v.Bench != "" {
+		sum += " | " + v.Bench
 	}
 	return sum
 }
@@ -1014,7 +1040,7 @@ func (it viewItem) digest() uint32 {
 }
 
 func (r viewRow) digest() uint32 {
-	r.Rep = "" // its age moves every read
+	r.Rep, r.Ld = "", "" // its age and its load move every read
 	return digest(r.K, r)
 }
 

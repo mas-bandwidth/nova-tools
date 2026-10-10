@@ -3134,6 +3134,28 @@ no fleet member, and an `--end` with no quiet in force are refused, nothing writ
 rule is `internal/sprint/fleet_quiet.go`; the twin test is
 `TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds`.
 
+### the-bench-is-chosen-by-load-t.w2: the bench a lane gates on
+
+A lane no longer gates on one bench by habit. The bench is chosen at lane start from
+the fleet's rows: the benches (machines with the bench role, their cores from
+nova-config) and the load their beats carry, least loaded first, and a bench whose
+load is over its cap (`BenchCapFactor`, 1.5, times its cores) is skipped. One
+function decides for every generator, `sprint.BenchLine` (`internal/sprint/bench_pick.go`),
+and its line carries the choice and the reason beside it:
+
+    BENCH: idle (load 1.0 of 32 cores; crushed 164)
+
+`sprint.BenchRows` joins the members with their beats and their go-process count
+(`sprint.GoProcessCounts` over the go lanes) and `sprint.BenchLoad` reads a
+beat's percent of all its cores as the load average the pick compares; a tie of load
+goes to the fewer go processes. `view coordinator` carries the line as its `bench`
+field and appends it to its summary, so a reader sees where new lanes go, and its
+machine rows carry each machine's load and go-process count. The generated brief
+(`cardgen.Header.Bench`), the read card brief's STATUS line (`sprint.ReadCardBrief`)
+and the read prompt's bench rule (`friend.BenchRule`, `friend.ReadText`) all take the
+bench from this same function, so no brief and no read prompt spells a bench by name.
+The twin test is `TestTheBenchIsTheLeastLoadedMachineNotAName`.
+
 ## 6. The readers
 
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
