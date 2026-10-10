@@ -56,7 +56,7 @@ func TestRenderGrantsEachRoleItsFilesFunctions(t *testing.T) {
 		{Coordinator, []string{"~*", "+fcall|ns_capacity_machine", "+fcall|ns_friend_roles", "+fcall|ns_table_set", "+fcall_ro|ns_table_read", "+function|load"}, nil},
 		{Member, []string{"~table:*", "~sprint:*", "~bench:*", "~tokens:ledger:*", "~ev:github", "%R~machine:*", "%R~loop:*", "%R~config:decl", "+function|list", "+fcall|ns_ping", "+fcall|ns_table_set", "+fcall|ns_table_read", "+fcall_ro|ns_table_read"},
 			[]string{"~*", "+fcall|ns_capacity_machine", "+function|load"}},
-		{Friend, []string{"~view:*", "~friend:*", "%R~bench:*", "+function|list", "+fcall|ns_table_set"}, []string{"+fcall|ns_friend_roles", "+function|load", "~bench:*"}},
+		{Friend, []string{"~view:*", "~friend:*:beat", "~friend:*:desired", "~friend:*:roles", "%R~bench:*", "+function|list", "+fcall|ns_table_set"}, []string{"+fcall|ns_friend_roles", "+function|load", "~bench:*", "~friend:*"}},
 		{Table, []string{"%R~table:*", "%R~sprint:*", "%R~bench:*", "+function|list", "+fcall_ro|ns_table_read"},
 			[]string{"~table:*", "+fcall|ns_table_set", "+fcall|ns_table_read", "+@write", "+fcall|ns_ping"}},
 	}
