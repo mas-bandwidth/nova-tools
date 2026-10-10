@@ -410,7 +410,9 @@ func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
 			n.rests[name] = x
 		}
 	}
-	return &n, due
+	// the routes' lane counts and caps are settled with the rests, once (route.go): a
+	// step that deals or checks draws on them without a fleet scan per card
+	return n.withLanePlan(), due
 }
 
 // resting is the rest that holds a route at s.Now, and whether one does: the rests a step

@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,6 +56,11 @@ type Route struct {
 	// First is the route's first field. A route with it set is drawn before the
 	// others of its tier (preferFirst; docs/SPEC-SPRINT.md, the deal).
 	First bool `json:"first"`
+	// Lanes is the route's lane cap: the most lanes in flight on it at once
+	// (route_lanes.go). The deal skips it while that many cards or reads run on
+	// it and takes the next route of the tier; a provider rate limit halves it
+	// for RouteLaneRateWindow. 0 is unlimited, the default.
+	Lanes int `json:"lanes"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
 	// is priced by (cost.go); every price "" when the route has none.
 	Prices cardcost.Prices `json:"prices"`
@@ -229,6 +235,173 @@ func preferFirst(arr []string, served map[string]Route, skip []string, hold bool
 	return take(false)
 }
 
+// A route's lane cap (docs/SPEC-SPRINT.md, the deal): the most lanes in flight on
+// one route at once, so a key shared across a tier's routes is never overrun. A
+// lane is a card or a read started on the route and not finished: the fleet
+// table's ready, working, asked and reading cards that name it. The deal counts
+// them and skips a route at its cap, taking the next route of the tier; when every
+// route of a tier is at its cap the card waits and the tier's one judgment says so
+// once a tick. A provider rate limit (class rate-limited, an HTTP 429, "rate
+// limit", "too many requests") on a route halves its cap for RouteLaneRateWindow
+// from the take that named it, read from the route's ended takes, then restores;
+// the route is never disabled by the machine for it.
+
+// RouteLaneRateWindow is how long a provider rate limit halves a route's lane cap:
+// ten minutes from the take that named it.
+const RouteLaneRateWindow = 10 * time.Minute
+
+// NRouteLaneCap is the words the deal says once a tick when every route of a tier is at
+// its lane cap: the card waits, and the tier's one judgment names it.
+const NRouteLaneCap = "every route at its lane cap"
+
+// rateLimitRE reads a provider line as a rate limit: the class the member records
+// (internal/swarm, CauseRateLimited), an HTTP 429, or the words that carry one.
+var rateLimitRE = regexp.MustCompile(`(?i)\bclass=rate-limited\b|\bstatus=429\b|rate[ _-]?limit|too many requests`)
+
+// laneLimit is the route's lane cap at a moment: 0 (unlimited) for a route that names
+// none, else its Lanes, or half of them (never below one) while a rate limit holds.
+func laneLimit(r Route, limited bool) int {
+	if r.Lanes <= 0 {
+		return 0
+	}
+	if limited {
+		return max(1, r.Lanes/2)
+	}
+	return r.Lanes
+}
+
+// routeLanes is the lanes in flight on the route now: the fleet table's cards dealt or
+// started on it (ready, working, asked or reading) that have not finished. A friend's
+// card counts when it names the route its runner took; a read card counts when the deal
+// drew the route for it.
+func routeLanes(fleet *Table, route string) int {
+	lanes, _ := fleetLanes(fleet)
+	return lanes[route]
+}
+
+// fleetLanes is the lanes in flight on each route and when each route was last rate
+// limited, in one scan of the fleet table: the ready, working, asked and reading cards
+// that name a route, and the ended takes whose provider line names a rate limit.
+func fleetLanes(fleet *Table) (lanes map[string]int, limited map[string]time.Time) {
+	lanes, limited = map[string]int{}, map[string]time.Time{}
+	if fleet == nil {
+		return lanes, limited
+	}
+	for _, c := range fleet.Column(Ready, Working, Asked, Reading) {
+		if r := c.F(FieldRoute); r != "" {
+			lanes[r]++
+		}
+	}
+	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn) {
+		takes, _ := ProviderTakes(c)
+		for _, t := range takes {
+			if t.Route == "" || !rateLimitRE.MatchString(t.Error) {
+				continue
+			}
+			if at, err := time.Parse(time.RFC3339, t.Finished); err == nil && at.After(limited[t.Route]) {
+				limited[t.Route] = at
+			}
+		}
+	}
+	return lanes, limited
+}
+
+// routeLimitedAt is when the route was last rate limited and whether the window holds at
+// now: the finish of the newest ended take on the route whose provider line names a rate
+// limit, from the fleet table's records (ProviderTakes).
+func routeLimitedAt(fleet *Table, route string, now time.Time) (time.Time, bool) {
+	_, limited := fleetLanes(fleet)
+	at := limited[route]
+	return at, !at.IsZero() && now.Sub(at) < RouteLaneRateWindow
+}
+
+// routeLaneLimit is the route's effective lane cap at s.Now: 0 unlimited, halved while a
+// rate limit on it is within RouteLaneRateWindow.
+func (s *Snapshot) routeLaneLimit(r Route) int {
+	_, limited := routeLimitedAt(s.Fleet, r.Name, s.Now)
+	return laneLimit(r, limited)
+}
+
+// laneBase is the lanes in flight on the route as this deal counts them: the plan's count
+// when one is settled (lanePlan), else the fleet table's cards.
+func (s *Snapshot) laneBase(route string) int {
+	if s.lanePlan != nil {
+		return s.lanePlan[route]
+	}
+	return routeLanes(s.Fleet, route)
+}
+
+// laneCap is the route's effective lane cap as this deal reads it: the settled one when a
+// plan is settled (laneCaps, withLanePlan), else computed now.
+func (s *Snapshot) laneCap(r Route) int {
+	if s.laneCaps != nil {
+		return s.laneCaps[r.Name]
+	}
+	return s.routeLaneLimit(r)
+}
+
+// withLanePlan is the snapshot with the routes' lane counts and effective caps settled for
+// one dealing step: each route's lanes in flight and its cap at s.Now, so a step that deals
+// several cards of one tier never overshoots a route's cap (routeOf adds each draw) and the
+// fleet table is scanned once, never per card. A snapshot that has one already is returned
+// as it is.
+func (s *Snapshot) withLanePlan() *Snapshot {
+	if s.lanePlan != nil {
+		return s
+	}
+	n := *s
+	n.lanePlan, n.laneCaps = map[string]int{}, map[string]int{}
+	capped := false
+	for _, r := range s.Routes {
+		if r.Lanes > 0 {
+			capped = true
+			break
+		}
+	}
+	if !capped {
+		return &n
+	}
+	lanes, limited := fleetLanes(s.Fleet)
+	for _, r := range s.Routes {
+		if r.Lanes <= 0 {
+			continue
+		}
+		n.lanePlan[r.Name] = lanes[r.Name]
+		at := limited[r.Name]
+		n.laneCaps[r.Name] = laneLimit(r, !at.IsZero() && s.Now.Sub(at) < RouteLaneRateWindow)
+	}
+	return &n
+}
+
+// laneCapped is whether the route is at its lane cap at s.Now: its effective cap is above
+// 0 and that many lanes are in flight on it. A route with no lane cap (Lanes 0) is never
+// capped, and reads no fleet table.
+func (s *Snapshot) laneCapped(r Route) bool {
+	if r.Lanes <= 0 {
+		return false
+	}
+	if lim := s.laneCap(r); lim > 0 {
+		return s.laneBase(r.Name) >= lim
+	}
+	return false
+}
+
+// tierRouteCount is how many enabled routes of the tier the store holds.
+func (s *Snapshot) tierRouteCount(tier string) int {
+	n := 0
+	for _, r := range s.Routes {
+		if r.Tier == tier && r.Enabled {
+			n++
+		}
+	}
+	return n
+}
+
+// laneCapWhy is why a tier's card waits: every route of it at its lane cap.
+func laneCapWhy(tier string) string {
+	return NRouteLaneCap + ": every route of tier " + tier + " has its lanes in flight; the deal draws one when a lane frees, or raise a cap (nova-config route set <name> --lanes <n>)"
+}
+
 // routeOf is the route fields of one deal of the primary c; wc is the work card dealt
 // again (nil for a new attempt), whose own route is left out too. With ri the tier's
 // index moves past the entry taken and every entry skipped before it, recorded under
@@ -263,15 +436,20 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	if len(s.Routes) == 0 {
 		return nil, "", "", false
 	}
-	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
+	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends,
+	// and a route at its lane cap (route.go, the deal) draws no new lane
 	served := map[string]Route{}
-	var rested []string
+	var rested, capped []string
 	for _, r := range s.Routes {
 		if r.Tier != tier || !r.Enabled {
 			continue
 		}
 		if rest, ok := s.resting(r.Name); ok {
 			rested = append(rested, r.Name+" until "+rest.UntilSaid()+": "+rest.Said())
+			continue
+		}
+		if s.laneCapped(r) {
+			capped = append(capped, r.Name)
 			continue
 		}
 		served[r.Name] = r
@@ -299,6 +477,9 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		if ri != nil {
 			ri[tier].r.count += steps
 			ri[tier].moves[c.ID] = strconv.FormatUint(steps, 10)
+			if s.lanePlan != nil {
+				s.lanePlan[r.Name]++ // the plan's own lane, so the next draw of this tick counts it
+			}
 		}
 		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
@@ -306,6 +487,11 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
 		}
 		return set, tier, "", false
+	}
+	if len(capped) > 0 && len(capped) == s.tierRouteCount(tier) {
+		// every enabled route of the tier is at its lane cap: the card waits, and the
+		// tier's one judgment says so once a tick (TickDeal, NNoRoute)
+		return nil, tier, laneCapWhy(tier), false
 	}
 	up, why := s.tierServed(tier, rested)
 	return nil, tier, why, len(up) > 0
@@ -489,7 +675,9 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 	}
 	served := map[string]Route{}
 	for _, r := range s.Routes {
-		if r.Tier == tier && r.Enabled {
+		// a route at its lane cap draws no read either: the read takes the next route
+		// of its tier, or carries none (route.go, the deal)
+		if r.Tier == tier && r.Enabled && !s.laneCapped(r) {
 			served[r.Name] = r
 		}
 	}
@@ -507,6 +695,9 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 	ri[tier].r.count += steps
 	was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
 	ri[tier].moves[key] = strconv.FormatUint(was+steps, 10)
+	if s.lanePlan != nil {
+		s.lanePlan[r.Name]++ // the plan's own read lane, so the next read of this tick counts it
+	}
 	return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
 		FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
 }
@@ -683,6 +874,10 @@ type RouteStat struct {
 	// RestedUntil is when the route's rest ends while it rests (rule 3, route_rest.go):
 	// RFC3339, "" when it does not rest; `routes` fills it at its clock.
 	RestedUntil string `json:"rested_until,omitempty"`
+	// RateLimited is when the route last took a provider rate limit, RFC3339, "" when it
+	// never has: the note that halves its lane cap for RouteLaneRateWindow from then
+	// (route.go, the deal). `routes` prints it as rate_limited=.
+	RateLimited string `json:"rate_limited,omitempty"`
 	// RestedFor is why it rests (RouteRest.Cause and its words), and Balance and
 	// BalanceAt its provider's balance as the balance poll last read it (balance.go):
 	// dollars and cents rounded up, or "unknown"; "" before any read.
@@ -769,6 +964,15 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 				sum += w
 			}
 			out[i].MeanWall = (sum / time.Duration(len(ws))).Round(time.Second).String()
+		}
+	}
+	// the last rate limit on each route (route.go, the deal): the note `routes` prints,
+	// and the window its lane cap is halved for
+	if _, limited := fleetLanes(fleet); len(limited) > 0 {
+		for i := range out {
+			if at := limited[out[i].Route.Name]; !at.IsZero() {
+				out[i].RateLimited = at.UTC().Format(time.RFC3339)
+			}
 		}
 	}
 	return out

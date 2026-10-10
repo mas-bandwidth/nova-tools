@@ -3116,6 +3116,34 @@ no fleet member, and an `--end` with no quiet in force are refused, nothing writ
 rule is `internal/sprint/fleet_quiet.go`; the twin test is
 `TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds`.
 
+### a-route-has-a-lane-cap-bb.w2: a route's lane cap
+
+A route row carries a lane cap, `lanes` (`nova-config route set <r> --lanes <n>`, migration
+0036): the most lanes in flight on that route at once. `route list` prints `lanes=<n>`, and 0
+(the default) is unlimited. A lane is a card or a read started on the route and not finished:
+the fleet table's ready, working, asked and reading cards whose `route` field names it, a
+machine's and a friend's alike (a friend's card counts when it names the route its runner
+took, and a read card when the deal drew the route for it). The deal counts the lanes on the
+routes of the card's tier and skips a route at its cap, taking the next route of the tier by
+the walk of `preferFirst`, so a `first` route at its cap yields to the next drawable one; the
+read-card ask and the readers' ask draw a read the same way. When every route of a tier is at
+its cap the card waits, and the tier's one judgment says so once a tick: `every route at its
+lane cap: every route of tier <t> has its lanes in flight; the deal draws one when a lane
+frees, or raise a cap`. The count is settled once a step with the resting routes
+(`withRests`, `withLanePlan`), and a plan's own draws are added as it is built, so one tick's
+plan never overshoots a cap. The count and the skip are `internal/sprint/route.go`; the twin
+tests are `TestARouteAtItsLaneCapIsSkippedForTheNext`,
+`TestEveryRouteAtItsLaneCapWaitsWithTheLine` and `TestAFriendsLaneOnTheRouteCounts`.
+
+A provider rate limit on a route halves its effective lane cap for ten minutes, then
+restores; the route is never disabled by the machine for it. A take whose provider line names
+one (`class=rate-limited`, an HTTP 429, `rate limit`, `too many requests`; internal/swarm,
+`CauseRateLimited`) halves `lanes` (integer division, never below one) from the take's finish
+for `RouteLaneRateWindow` (10m), read from the route's ended takes; `routes` prints the last
+one as `rate_limited=<RFC3339>`. The window and the effective cap are `laneLimit` and
+`RouteLaneRateWindow` in `internal/sprint/route.go`; the twin test is
+`TestARateLimitHalvesTheLaneCapForTheWindowAndRestores`.
+
 ## 6. The readers
 
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
