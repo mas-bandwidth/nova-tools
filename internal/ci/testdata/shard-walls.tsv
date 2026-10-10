@@ -102,6 +102,8 @@ pkg/pkgselect	0.2	@local	-
 pkg/provbalance	0.0	@run37518625834	self-hosted
 pkg/readregular	0.2	@local	-
 internal/record	0.0	@run37411066588	self-hosted
+internal/roadmap	0.1	@local	-
+internal/roadmap/sexp	0.0	@local	-
 pkg/redisacl	0.2	@local	-
 pkg/redisconn	0.6	@run37411066588	self-hosted
 pkg/redisfn	0.3	@run37411066588	self-hosted
