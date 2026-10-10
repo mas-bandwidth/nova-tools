@@ -164,8 +164,11 @@ func rebalanceTo(s *Snapshot, units []*rebalanceUnit, g *rebalanceUnit, pr, wc *
 			if !s.FleetTakes(tier) || slices.Contains(StagingRefusers(wc), u.name) {
 				continue
 			}
-			if _, _, why, byFriend := s.routeOf(pr, wc, nil); why != "" || byFriend {
+			if _, _, why, byFriend := s.routeFor(pr, wc, nil, u.name); why != "" || byFriend {
 				continue
+			}
+			if !g.friend && !s.Launches(u.name, Route{Harness: wc.F(FieldHarness)}) {
+				continue // machine to machine keeps its route: never to one that cannot launch it
 			}
 		}
 		if want < 0 || d < 0 || d > 1 {
@@ -204,7 +207,7 @@ func rebalanceMove(s *Snapshot, p *Plan, declared map[string]bool, ri routeIndex
 		}
 	case g.friend:
 		// off a friend's row onto a machine: a route of its tier, as a deal draws one
-		route, _, _, _ := s.routeOf(pr, wc, ri)
+		route, _, _, _ := s.routeFor(pr, wc, ri, to.name)
 		w, pm := splitRoute(route)
 		s.dealDeadline(to.name, w)
 		for k, v := range w {

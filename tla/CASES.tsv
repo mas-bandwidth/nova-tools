@@ -296,6 +296,8 @@ MCRouteIndexBrokenRandom.cfg	MCRouteIndex.tla	invariant	RouteFair	ignore-termina
 MCRouteIndexBrokenNoAdvance.cfg	MCRouteIndex.tla	invariant	ExcludedNeverDrawn	ignore-terminal	routeindex	required	-
 MCRouteIndexReachSkip.cfg	MCRouteIndex.tla	invariant	ReachSkip	ignore-terminal	routeindex	required	-
 MCRouteIndexBrokenReadApart.cfg	MCRouteIndex.tla	invariant	RouteIndexAdvancesOncePerCard	ignore-terminal	routeindex	required	-
+MCRouteIndexHarness.cfg	MCRouteIndex.tla	pass	-	ignore-terminal	routeindex	required	-
+MCRouteIndexBrokenHarnessBlind.cfg	MCRouteIndex.tla	invariant	NeverUnlaunchable	ignore-terminal	routeindex	required	-
 MCLand.cfg	MCLand.tla	pass	-	ignore-terminal	land	required	-
 MCLandRecovers.cfg	MCLand.tla	pass	-	ignore-terminal	land	required	-
 MCLandBrokenReportFirst.cfg	MCLand.tla	invariant	LandedInBase	ignore-terminal	land	required	-

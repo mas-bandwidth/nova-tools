@@ -40,7 +40,10 @@ has room for is withdrawn and dealt again where there is room), up
 the deadline every card dealt to the member gets (--deadline default takes the
 pin off): a card's deadline is otherwise the larger of its own and three times
 the member's median run wall over its last fifty ok attempts, so a slow
-machine does not time out twice as often. The load cell is the machine's CPU busy percent of all
+machine does not time out twice as often. fleet up --harnesses <h,...> names
+the headless harnesses (claude, codex, grok) on the member's PATH, none
+clears them: the deal draws a route that runs under one only for a member
+that names it, and moves a card on one only to such a member. The load cell is the machine's CPU busy percent of all
 its cores (the one-minute load average over the cores where that cannot be
 measured), the highest of the last `+sprint.LoadWindow.String()+`. A beat measures the
 machine's open file descriptors beside its load, given or measured: over --fd-warn
@@ -99,8 +102,8 @@ it back.`) + "\n"
 // counts as a beat of the member, and brings it up at once when it is alive, and sets its
 // width when width is above zero, and drains it at a width of 0; level evens
 // the ready queues (fleet down is hold --return, hold.go).
-func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drain bool, deadline int, deadlineOff bool) store.Step {
-	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain, Deadline: deadline, DeadlineOff: deadlineOff}
+func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drain bool, deadline int, deadlineOff bool, harnesses string) store.Step {
+	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain, Deadline: deadline, DeadlineOff: deadlineOff, Harnesses: harnesses}
 	switch op {
 	case "up":
 		r.Op = "release"

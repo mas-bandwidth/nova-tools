@@ -10,6 +10,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 )
 
 // The card decides the model it runs on.
@@ -35,7 +36,55 @@ import (
 //     judgment for the tier;
 //   - a card whose tier (flash when line 1 names none) has no enabled route in its
 //     array is not dealt, one judgment for the tier;
-//   - a route with first set is drawn before the others of its tier (preferFirst).
+//   - a route with first set is drawn before the others of its tier (preferFirst);
+//   - a deal to a member draws only a route that member can launch (Launches): a route
+//     whose harness is headless (claude, codex, grok) only when the member's control
+//     card names it (fleet up --harnesses), else it is walked past as an unserved entry
+//     is (fault 10, 2026-10-10; tla/RouteIndex.tla, NeverUnlaunchable).
+
+// FieldHarnesses is a member's control card field: the headless harnesses
+// (internal/harness) its PATH holds and the deal may launch there, comma-separated, as
+// fleet up --harnesses declares them; absent, the member runs opencode routes only.
+const FieldHarnesses = "harnesses"
+
+// Launches says the member can launch a card on route r: any route for a deal that
+// names no member (a check of the tier alone), an opencode route anywhere, and a route
+// of a headless harness only on a member whose control card names that harness.
+func (s *Snapshot) Launches(member string, r Route) bool {
+	if member == "" || !harness.IsHeadless(r.Harness) {
+		return true
+	}
+	ctl := s.MemberCtl(member)
+	return ctl != nil && slices.Contains(Split(ctl.F(FieldHarnesses)), r.Harness)
+}
+
+// HarnessesWhy is why a --harnesses word is refused, "" when it is one: "", HarnessesNone,
+// or a comma list of headless harnesses (internal/harness Headless).
+func HarnessesWhy(words string) string {
+	if words == "" || strings.TrimSpace(words) == HarnessesNone {
+		return ""
+	}
+	for _, h := range Split(words) {
+		if !harness.IsHeadless(h) {
+			return "--harnesses names " + h + ", which is no headless harness (" + strings.Join(harness.Headless, ", ") + "; opencode runs on every member): a comma list of them, or " + HarnessesNone
+		}
+	}
+	return ""
+}
+
+// notLaunching is the members of up that cannot launch the work card c on the route it
+// carries (Launches): what a move of a dealt card (a member down, the level, the
+// rebalance), which keeps its route, avoids as it avoids a member that refused it.
+func notLaunching(s *Snapshot, up []string, c *Card) []string {
+	r := Route{Harness: c.F(FieldHarness)}
+	var out []string
+	for _, m := range up {
+		if !s.Launches(m, r) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
 
 // Route is one route of a model tier as the store holds it (config.RouteKey).
 type Route struct {
@@ -234,8 +283,16 @@ func preferFirst(arr []string, served map[string]Route, skip []string, hold bool
 // index moves past the entry taken and every entry skipped before it, recorded under
 // c's unit; nil reads the index and moves nothing (tla/RouteIndex.tla: Deal, Redeal, Pin).
 // An entry that names no enabled route of the tier (a route disabled or removed since
-// the array was set) is skipped as an excluded one is.
+// the array was set) is skipped as an excluded one is. It names no member: every route
+// is drawable (routeFor draws for one).
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string, byFriend bool) {
+	return s.routeFor(c, wc, ri, "")
+}
+
+// routeFor is routeOf for a deal to the member: an entry whose route that member cannot
+// launch (Launches) is skipped as an unserved one is, and a tier with no route it can
+// launch is not dealt to it, why naming the routes and the member.
+func (s *Snapshot) routeFor(c, wc *Card, ri routeIndexes, member string) (set map[string]string, tier, why string, byFriend bool) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	tier = drawTier(c, m)
 	if tier == "" {
@@ -265,13 +322,17 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	}
 	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
-	var rested []string
+	var rested, unlaunchable []string
 	for _, r := range s.Routes {
 		if r.Tier != tier || !r.Enabled {
 			continue
 		}
 		if rest, ok := s.resting(r.Name); ok {
 			rested = append(rested, r.Name+" until "+rest.UntilSaid()+": "+rest.Said())
+			continue
+		}
+		if !s.Launches(member, r) {
+			unlaunchable = append(unlaunchable, r.Name+" (runs under "+r.Harness+")")
 			continue
 		}
 		served[r.Name] = r
@@ -308,6 +369,9 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		return set, tier, "", false
 	}
 	up, why := s.tierServed(tier, rested)
+	if len(up) == 0 && len(unlaunchable) > 0 {
+		why = "member " + member + " can launch no enabled route of tier " + tier + " that serves: " + strings.Join(unlaunchable, ", ") + " and its control card names no such harness (fleet up " + member + " --harnesses <h,...> declares the ones on its PATH); the deal deals it to a member that can"
+	}
 	return nil, tier, why, len(up) > 0
 }
 

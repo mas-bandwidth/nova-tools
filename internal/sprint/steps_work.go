@@ -1105,7 +1105,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	route, _, why, _ := s.routeOf(c, nil, ri)
+	route, _, why, _ := s.routeFor(c, nil, ri, m)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -1173,7 +1173,7 @@ func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int,
 // (tla/DirtyTick.tla DealOne). Its route is the next at its tier's index that the
 // card was not dealt on (ri, moved past it and the entries skipped: route.go).
 func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexes) (Unit, string) {
-	route, _, why, _ := s.routeOf(c, wc, ri)
+	route, _, why, _ := s.routeFor(c, wc, ri, m)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -2012,6 +2012,10 @@ type FleetReq struct {
 	// release (deadline.go); DeadlineOff takes the pin off; neither leaves it as it is.
 	Deadline    int  `json:",omitempty"`
 	DeadlineOff bool `json:",omitempty"`
+	// Harnesses, set by up or release, is the headless harnesses the member's PATH holds
+	// (FieldHarnesses, route.go Launches): a comma list, HarnessesNone to clear them, ""
+	// to leave them as they are.
+	Harnesses string `json:",omitempty"`
 	// Sync, with Op sync, is every machine the inventory says is a member
 	// and its width (fleet_sync.go); Member is empty.
 	Sync []SyncMember `json:",omitempty"`
@@ -2096,6 +2100,29 @@ func headOf(p *Plan, member string, head []Change, n *Note, line string) {
 	}
 }
 
+// HarnessesNone is the fleet up --harnesses word that clears a member's headless
+// harnesses: it then runs opencode routes only.
+const HarnessesNone = "none"
+
+// harnessesValue is the control card's value of a --harnesses word: the names sorted and
+// each once, "" for HarnessesNone or "".
+func harnessesValue(words string) string {
+	if strings.TrimSpace(words) == HarnessesNone {
+		return ""
+	}
+	names := Split(words)
+	slices.Sort(names)
+	return strings.Join(slices.Compact(names), ",")
+}
+
+// cmpOrNone is a harnesses value as a line says it: HarnessesNone for "".
+func cmpOrNone(v string) string {
+	if v == "" {
+		return HarnessesNone
+	}
+	return v
+}
+
 // statusNote is the happened notification of a member's change of status.
 func statusNote(s *Snapshot, r FleetReq, typ, word string) *Note {
 	n := happened(typ, "", s.Now)
@@ -2116,6 +2143,10 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		if r.Width < 0 || r.Width > MaxWidth {
 			p.refuse(r.Member, fmt.Sprintf("a width wants a whole number from 1 to %d", MaxWidth))
+			return p
+		}
+		if why := HarnessesWhy(r.Harnesses); why != "" {
+			p.refuse(r.Member, why)
 			return p
 		}
 		if !s.Fleet.HasRow(r.Member) {
@@ -2142,6 +2173,9 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			if r.Deadline > 0 {
 				fields[FieldMemberDeadline] = itoa(r.Deadline)
 			}
+			if h := harnessesValue(r.Harnesses); h != "" {
+				fields[FieldHarnesses] = h
+			}
 			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0, fields)))
 		default:
 			set := map[string]string{}
@@ -2158,6 +2192,13 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			}
 			if r.DeadlineOff && ctl.F(FieldMemberDeadline) != "" {
 				unset = append(unset, FieldMemberDeadline)
+			}
+			if h := harnessesValue(r.Harnesses); r.Harnesses != "" && ctl.F(FieldHarnesses) != h {
+				if h == "" {
+					unset = append(unset, FieldHarnesses)
+				} else {
+					set[FieldHarnesses] = h
+				}
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
 				unset = append(unset, "held", FieldHeldBy, FieldHeldReason, FieldHeldFinish)
@@ -2180,6 +2221,9 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		if r.DeadlineOff && ctl != nil && ctl.F(FieldMemberDeadline) != "" {
 			line += " deadline=the card's, or " + itoa(DeadlineK) + " times the member's median run wall (the pin taken off)"
+		}
+		if h := harnessesValue(r.Harnesses); r.Harnesses != "" && (ctl == nil || ctl.F(FieldHarnesses) != h) {
+			line += " harnesses=" + cmpOrNone(h)
 		}
 		if comeUp {
 			// a quiet member is levelled no card (fleet_quiet.go)
@@ -2309,7 +2353,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// member at its width takes no more.
 			// a bench card goes to a member of its bench alone: with none of it up it is
 			// withdrawn, and waits ready for its bench (bench_deal.go)
-			if m := rr.next(onlyBench(without(up, StagingRefusers(c)), benchOfWork(s, c)), q, widths, ""); m != "" {
+			if m := rr.next(onlyBench(without(without(up, StagingRefusers(c)), notLaunching(s, up, c)), benchOfWork(s, c)), q, widths, ""); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
 				q[m]++
@@ -2462,7 +2506,8 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 		for ; i >= 0 && to == ""; i-- {
 			// a bench card is never moved off its bench: the members its BENCH line does not
 			// name are avoided as a member that refused it at staging is (bench_deal.go)
-			to = target(rr, up, n, held, widths, long, append(StagingRefusers(q[i]), notBench(up, benchOfWork(s, q[i]))...))
+			// nor a member that cannot launch its route (notLaunching: fault 10)
+			to = target(rr, up, n, held, widths, long, append(append(StagingRefusers(q[i]), notBench(up, benchOfWork(s, q[i]))...), notLaunching(s, up, q[i])...))
 		}
 		if to == "" {
 			return

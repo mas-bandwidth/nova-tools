@@ -41,12 +41,25 @@
 \* again: a read handed back is asked again on its own card or on a new one,
 \* each a deal of its own (internal/sprint Ask).
 \*
+\* THE MEMBER'S HARNESSES (fault 10, 2026-10-10: cards on heavy-opus-claude were
+\* dealt to batman, space, superman and vision, which have no claude, and every
+\* launch was refused). Unlaunch is the routes the dealing member cannot launch:
+\* a route whose harness is headless (claude, codex, grok) that the member's
+\* control card does not name (fleet up --harnesses). The work deal and the
+\* redeal walk past such an entry as they walk past one that names no enabled
+\* route: it is never taken, however the exclusion of a redeal lapses, and the
+\* index moves past it; a card whose tier has no launchable entry is not dealt
+\* to that member (it waits for one that can). A read is drawn by the ask, not
+\* for a member, and is outside this rule.
+\*
 \* Broken: "none" is the design; "random" takes any entry of the array (the
 \* weighted draw this replaces: RouteFair fails); "noadvance" is a redeal that
 \* takes the entry at the place without moving past the excluded one
 \* (ExcludedNeverDrawn fails); "readapart" is a read that takes the entry at
 \* the place and leaves the index where it is, a read kept apart from the
-\* tier's rotation (RouteIndexAdvancesOncePerCard fails).
+\* tier's rotation (RouteIndexAdvancesOncePerCard fails); "harnessblind" is the
+\* deal before fault 10, drawing the entry at the place whatever the member can
+\* launch (NeverUnlaunchable fails).
 \*
 \* WHAT IS NOT MODELLED. Members, widths and the tick (DirtyTick.tla); an entry
 \* that names no enabled route (the deal skips it as it skips an excluded one,
@@ -56,7 +69,7 @@
 \* takes an entry does not change what the index does.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, Reads, MaxRedeals, Broken
+CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, Reads, MaxRedeals, Broken, Unlaunch
 
 VARIABLES ridx, st, route, drawn, rdl, deals, skipped, hist, last
 
@@ -76,10 +89,17 @@ Steps(t, i, ex) ==
          /\ At(t, i + s - 1) \notin ex
          /\ \A u \in 1..(s - 1) : At(t, i + u - 1) \in ex
 
+\* The routes a card's deal walks past whatever else: those the member cannot
+\* launch, for a work card (a read is the ask's).
+Blind(c) == IF c \in Reads THEN {} ELSE Unlaunch
+
+\* Whether tier t's array holds an entry outside ex.
+Open(t, ex) == \E k \in 1..Len(Arr[t]) : Arr[t][k] \notin ex
+
 \* A pick: the card, the tier, the route, what it left out, whether an entry was
 \* not left out (the exclusion held), and the entries passed over by the rule.
 Pick(c, r, ex, by) == [c |-> c, t |-> TierOf[c], r |-> r, ex |-> ex,
-                       fresh |-> \E k \in 1..Len(Arr[TierOf[c]]) : Arr[TierOf[c]][k] \notin ex,
+                       fresh |-> Open(TierOf[c], ex \cup Blind(c)),
                        sk |-> by - 1]
 
 TypeOK ==
@@ -113,17 +133,24 @@ Take(c, r, adv, by) ==
   /\ hist' = [hist EXCEPT ![t] = Append(@, [r |-> r, sk |-> by > 1])]
   /\ last' = Pick(c, r, drawn[c], by)
 
-\* The deal of a ready card that pins no model: the entry at the place, one step.
+\* The deal of a ready card that pins no model: the entry at the place, one step,
+\* or the first from it the member can launch, the index moved past those walked.
 Deal(c) ==
+  LET t == TierOf[c]
+      s == Steps(t, ridx[t], Blind(c))
+  IN
   /\ c \notin Pinned
   /\ st[c] = "ready"
+  /\ Broken = "harnessblind" \/ Open(t, Blind(c))
   /\ st' = [st EXCEPT ![c] = "dealt"]
   /\ UNCHANGED rdl
   /\ IF Broken = "random"
-     THEN \E k \in 1..Len(Arr[TierOf[c]]) : Take(c, Arr[TierOf[c]][k], 1, 1)
+     THEN \E k \in 1..Len(Arr[t]) : Take(c, Arr[t][k], 1, 1)
      ELSE IF Broken = "readapart" /\ c \in Reads
-     THEN Take(c, At(TierOf[c], ridx[TierOf[c]]), 0, 1)
-     ELSE Take(c, At(TierOf[c], ridx[TierOf[c]]), 1, 1)
+     THEN Take(c, At(t, ridx[t]), 0, 1)
+     ELSE IF Broken = "harnessblind"
+     THEN Take(c, At(t, ridx[t]), 1, 1)
+     ELSE Take(c, At(t, ridx[t] + s - 1), s, s)
 
 \* A pinned card is dealt on its pin: the array and the index untouched.
 Pin(c) ==
@@ -143,16 +170,22 @@ Withdraw(c) ==
   /\ UNCHANGED <<ridx, route, drawn, rdl, deals, skipped, hist, last>>
 
 \* The redeal: the next entry from the place that is not left out, the index
-\* moved past it and every entry skipped.
+\* moved past it and every entry skipped. The routes already taken are left out
+\* while a launchable entry is not one of them (else that exclusion lapses); an
+\* entry the member cannot launch is never taken.
 Redeal(c) ==
   LET t == TierOf[c]
-      s == Steps(t, ridx[t], drawn[c])
+      ex == IF Open(t, drawn[c] \cup Blind(c)) THEN drawn[c] \cup Blind(c) ELSE Blind(c)
+      s == Steps(t, ridx[t], ex)
   IN
   /\ st[c] = "withdrawn"
+  /\ Broken = "harnessblind" \/ Open(t, Blind(c))
   /\ st' = [st EXCEPT ![c] = "dealt"]
   /\ rdl' = [rdl EXCEPT ![c] = @ + 1]
   /\ IF Broken = "noadvance"
      THEN Take(c, At(t, ridx[t]), 1, s)
+     ELSE IF Broken = "harnessblind"
+     THEN LET sb == Steps(t, ridx[t], drawn[c]) IN Take(c, At(t, ridx[t] + sb - 1), sb, sb)
      ELSE Take(c, At(t, ridx[t] + s - 1), s, s)
 
 \* A card that finishes is one that is not withdrawn again: no action of its own.
@@ -182,6 +215,9 @@ PinNeverAdvances == [][\A c \in Pinned : (st[c] = "ready" /\ st'[c] = "dealt") =
 
 \* A redeal never takes a route left out while an entry of the array is not.
 ExcludedNeverDrawn == last.fresh => last.r \notin last.ex
+
+\* A work card is never dealt on a route its member cannot launch (fault 10).
+NeverUnlaunchable == last.c \notin Reads => last.r \notin Unlaunch
 
 \* Reachability (a reversed witness, written to be false where the design must
 \* reach): a redeal that passed over an entry it left out.
