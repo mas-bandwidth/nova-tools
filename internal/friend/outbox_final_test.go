@@ -142,6 +142,28 @@ func TestAReportThatIsNotFinalIsLeftUntilTheCardsDeadline(t *testing.T) {
 	assert.Len(t, f.got(), 2, "a report that changes after collection is not collected again")
 }
 
+// A report with no Verdict line is pending too: the first line, even when
+// empty, is named by the same once-only note as every other non-final report.
+func TestAMissingVerdictUsesTheNotFinalNote(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &finishes{}
+	r.d.Finish = f.finish
+	empty := workCard("empty.w1", "working")
+	missing := workCard("missing.w1", "working")
+	r.d.heldCards = []HeldCard{empty, missing}
+	outboxReport(t, r.d.Dir, empty.Job, "")
+	outboxReport(t, r.d.Dir, missing.Job, "notes only\n")
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+
+	l.outboxStep(t0)
+	l.outboxStep(t0.Add(time.Second))
+
+	assert.Empty(t, f.got(), "neither incomplete report is collected")
+	assert.Equal(t, 1, strings.Count(r.recordText(), "report not final yet: empty.w1: "), "the empty first line is noted once")
+	assert.Equal(t, 1, strings.Count(r.recordText(), "report not final yet: missing.w1: notes only"), "the missing verdict is noted once with its first line")
+}
+
 // A parsed LAND, HOLD or FAIL does not bypass Final: a verdict whose second line is
 // not a Head, and a verdict that is not the first line, are not final, are left before
 // the card's deadline, and are collected as FAIL past it
