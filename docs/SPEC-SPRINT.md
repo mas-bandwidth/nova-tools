@@ -5681,6 +5681,20 @@ a stream's retirement closes still shows its wait"
 internal/sprint/judgment_wait_test.go) retires a judgment two hours after its raise and holds
 `n=1 wait p50=2h0m0s p90=2h0m0s`.
 
+#### judgment-answer-latencyb-t-bcb.w6
+
+The tree gate of the carried head (the landing's refusal of
+`judgment-answer-latencyb-t-bcb`: `go build ./...` exited 127, `sh: 1: go: not found`): the
+refusal was the bench's `go` missing from the gate's shell, not a red tree. This attempt
+re-cuts the carried work (attempt 5, ffca1c1f0bde) on the current tip of the base,
+sprint/mechanical-2026-10-02 (29df2818a802), and holds the tree gate green there, `go build
+./...` exiting 0. The carry found no conflict: the base's newer commits change
+cmd/nova-sprint/promote.go, friends.go and their tests, internal/sprint/store/friends.go,
+docs/FRIENDS.md and the promotion section of this file, none of the files this card's change
+touches. The answer at raise, the needs order, the recorded wait and the `where` line stand
+as attempt 5 left them (`TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait`,
+internal/sprint/judgment_wait_test.go).
+
 ### wait-many-notes-b.w2
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).
