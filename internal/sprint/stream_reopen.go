@@ -152,6 +152,17 @@ func PushedUnreportedMatches(s *Snapshot, id string) bool {
 		pr.F("head") == m.F(FieldPushedHead) && pr.F("attempt") == m.F(FieldPushedAttempt)
 }
 
+// PushedRecoveryPin is the head and attempt a pushed-unreported receipt recorded
+// for id (docs/SPEC-SPRINT.md section 7). ok is false when the card is no longer
+// that revision, so recovery does not land a replacement head from an earlier push.
+func PushedRecoveryPin(s *Snapshot, id string) (head, attempt string, ok bool) {
+	if !PushedUnreportedMatches(s, id) {
+		return "", "", false
+	}
+	m := s.Merge.Placed(id)
+	return m.F(FieldPushedHead), m.F(FieldPushedAttempt), true
+}
+
 // PushedUnreportedIDs are the stream's queued cards marked pushed and not
 // reported, whose work card is missing or still merging.
 func PushedUnreportedIDs(s *Snapshot, stream string) []string {

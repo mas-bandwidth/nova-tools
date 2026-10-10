@@ -1130,10 +1130,10 @@ func (l *lander) recordPushed(ctx context.Context, s *sprint.Snapshot, order []s
 			continue
 		}
 		pins := l.pinsOf(s, ids)
-		if len(pins) == 0 {
+		if len(pins) != len(ids) {
 			sha := sprint.PushedUnreportedSHA(s, ids[0])
 			l.keep(landBatch{Stream: stream, Status: "failed", IDs: ids, Cards: len(ids), Tip: sha,
-				Reason: sprint.ReportRefusedReason("-", sha, "the marked card is not merging") + "; " + againRemedy(stream)})
+				Reason: sprint.ReportRefusedReason("-", sha, pushedRecoveryWhy(s, ids)) + "; " + againRemedy(stream)})
 			stuck = true
 			continue
 		}
@@ -1194,29 +1194,46 @@ func stillQueued(s *sprint.Snapshot, order []string) []string {
 	return keep
 }
 
-// pinsOf is the pinned cards of ids that are still merging, read from the
-// snapshot, so a record of a pushed batch builds no git.
+// pinsOf is the pinned cards of ids that are still the revision that was pushed
+// (sprint.PushedRecoveryPin, docs/SPEC-SPRINT.md section 7). The head and attempt
+// are that receipt, never the card's current revision, so a replacement head is
+// not recorded from an earlier push. A record of a pushed batch builds no git.
 func (l *lander) pinsOf(s *sprint.Snapshot, ids []string) []landCard {
 	if s == nil || s.Work == nil {
 		return nil
 	}
 	var out []landCard
 	for _, id := range ids {
-		pr := s.Work.Placed(id)
-		if pr == nil || pr.Col != sprint.Merging {
+		head, attempt, ok := sprint.PushedRecoveryPin(s, id)
+		if !ok {
 			continue
 		}
+		pr := s.Work.Placed(id)
 		cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 		base := cb.Ref
 		if base == "" {
 			base = l.base
 		}
 		out = append(out, landCard{
-			id: id, head: pr.F("head"), attempt: pr.F("attempt"),
+			id: id, head: head, attempt: attempt,
 			repo: cb.Repo, base: base, primary: pr, brief: pr.F("brief"),
 		})
 	}
 	return out
+}
+
+// pushedRecoveryWhy is why a marked batch is not recorded: the card is no longer
+// merging, or it is merging at a head and attempt the push did not carry.
+func pushedRecoveryWhy(s *sprint.Snapshot, ids []string) string {
+	for _, id := range ids {
+		if _, _, ok := sprint.PushedRecoveryPin(s, id); ok {
+			continue
+		}
+		if pr := s.Work.Placed(id); pr != nil && pr.Col == sprint.Merging {
+			return "the marked card is not the head and attempt that were pushed"
+		}
+	}
+	return "the marked card is not merging"
 }
 
 // hidePushed takes still-queued marked cards out of this snapshot's merge queue.

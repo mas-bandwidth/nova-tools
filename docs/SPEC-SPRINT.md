@@ -3872,9 +3872,12 @@ comes back `waiting`.
 A stream never refuses a landing it dealt. The merge step of a stream marked
 `landed` still records a queued card that is merging in work. When the lander's
 report does not go through after the push, the loop line names the store's
-reason and the timeline is marked `pushed-unreported <sha>`. The next land
-records that card through the merge step before any new merge, and does not
-merge it again.
+reason and the timeline is marked `pushed-unreported <sha>`. The receipt keeps
+the head and the attempt that were pushed. The next land records that card
+through the merge step before any new merge, and does not merge it again, only
+while the card is still that head and attempt. A card reworked since is not
+that push: the mark is cleared, a new mark of the old head is refused, and the
+replacement head is never recorded from the earlier push.
 
 `where --json` and `streams` say `closed` when the control card says landed and
 a card of the stream is still open, and `landed` when none is. A STREAM line

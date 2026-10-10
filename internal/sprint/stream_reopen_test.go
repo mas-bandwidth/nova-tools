@@ -163,6 +163,9 @@ func TestPushedUnreportedMarkAndReportReason(t *testing.T) {
 	assert.Contains(t, why, "sprint/base")
 }
 
+// TestPushedReceiptCannotFollowAReworkedCard is the recovery regression. The
+// land command records only PushedRecoveryPin, so a replacement head is never
+// landed from an earlier push (docs/SPEC-SPRINT.md section 7).
 func TestPushedReceiptCannotFollowAReworkedCard(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
@@ -175,13 +178,24 @@ func TestPushedReceiptCannotFollowAReworkedCard(t *testing.T) {
 	old := []PushedPin{{ID: "s1-1", Head: "head-a", Attempt: "1"}}
 	w.must(MarkPushedUnreported(w.s, "s1", "merge-a", old))
 	require.Equal(t, []string{"s1-1"}, PushedUnreportedIDs(w.s, "s1"))
+	head, attempt, ok := PushedRecoveryPin(w.s, "s1-1")
+	require.True(t, ok)
+	assert.Equal(t, "head-a", head, "recovery is the pushed head, not a later one")
+	assert.Equal(t, "1", attempt, "recovery is the pushed attempt")
 	pr = w.s.Work.Placed("s1-1")
 	pr.Fields["head"], pr.Fields["attempt"] = "head-b", "2"
 	w.s.Work.Put(pr)
+	assert.Equal(t, "head-a", w.s.Merge.Placed("s1-1").F(FieldPushedHead), "the receipt keeps the pushed head")
+	assert.Equal(t, "1", w.s.Merge.Placed("s1-1").F(FieldPushedAttempt), "the receipt keeps the pushed attempt")
+	assert.Equal(t, "head-b", w.s.Work.Placed("s1-1").F("head"))
+	_, _, ok = PushedRecoveryPin(w.s, "s1-1")
+	assert.False(t, ok, "a replacement head is never recovered from the earlier push")
 	assert.Empty(t, PushedUnreportedIDs(w.s, "s1"), "the old receipt must not recover the new head")
 	assert.Empty(t, MarkPushedUnreported(w.s, "s1", "merge-a", old).Units, "obsolete head cannot receive a new receipt")
 	w.must(ClearObsoletePushedUnreported(w.s, "s1"))
 	assert.Empty(t, PushedUnreportedSHA(w.s, "s1-1"))
+	_, _, ok = PushedRecoveryPin(w.s, "s1-1")
+	assert.False(t, ok, "a cleared mark is not a recovery")
 }
 
 func TestShownStreamStateIsClosedWhileACardIsOpen(t *testing.T) {
