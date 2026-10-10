@@ -179,3 +179,22 @@ The carried dashboard work now merges with the current sprint base: its doctor c
 requires a loopback page to answer, and image routes identify raster content from the
 bytes before the file extension. Tests: `TestDashboardCheck` (internal/doctor) and
 `TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).
+
+## duplicate paths
+
+Path: internal/ci/duplicate_paths_class_test.go
+Replacement: none yet
+STATUS: live
+
+Behaviours:
+1. It reads every non-test function body under cmd/nova-sprint, internal/sprint/..., cmd/nova-friend and internal/friend, normalises it (identifiers renamed in order of first use, literals kept, comments dropped) and fails on a body of at least eight statements whose hash is shared with another and missing from internal/ci/testdata/duplicate-paths-ledger.txt, and on a verb help usage line that names one verb under two names.
+
+### simp-duplicate-paths-b.w4~15.g4
+
+The ledger records today's five pairs. One deletion card each (id, PATHS, the side that stays and why):
+
+- simp-duplicate-paths-b.w4.d1: PATHS internal/friend/outbox.go; keep internal/sprint/collect.go:RunnerEnded (exported, the sprint owns the runner record) and delete the friend's copy, calling sprint.RunnerEnded; why: the two bodies are the same runner-log scan.
+- simp-duplicate-paths-b.w4.d2: PATHS internal/friend/outbox.go,internal/sprint/collect.go; keep internal/sprint/collect.go:CollectVerdict (exported) and give it the line-key reader the friend passes, deleting reportVerdict; why: the two bodies differ only in collectKey and reportKey.
+- simp-duplicate-paths-b.w4.d3: PATHS internal/sprint/cifix.go,internal/sprint/gate_wall.go; keep internal/sprint/cifix.go:RedTestOf as the exported door and add one unexported test-list lookup both call, so gatePackage returns its Package field; why: the two bodies differ only in the field they return.
+- simp-duplicate-paths-b.w4.d4: PATHS internal/sprint/readers.go,internal/sprint/steps_review.go; keep internal/sprint/readers.go:placedReadsAt (the readers own placement) and delete readsAt, calling placedReadsAt; why: the two bodies are identical.
+- simp-duplicate-paths-b.w4.d5: PATHS internal/sprint/streams_view.go; keep both exported verbs but share one streamFields body that takes the field, deleting the two copies; why: the bodies differ only in FieldRepo and FieldBase.

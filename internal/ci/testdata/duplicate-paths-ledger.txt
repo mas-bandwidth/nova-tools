@@ -1,0 +1,9 @@
+# duplicate-paths ledger: function bodies that normalise to the same hash
+# One row per pair: `<file:func> <file:func> <why>`. The list only shrinks:
+# NOVA_CI_UPDATE=1 drops a stale row and refuses to add a row for a new pair.
+# Held by TestDuplicatePathsLedgerOnlyShrinks in internal/ci/duplicate_paths_class_test.go.
+internal/friend/outbox.go:RunnerEnded internal/sprint/collect.go:RunnerEnded identical runner-log scan in the friend outbox and the sprint collect
+internal/friend/outbox.go:reportVerdict internal/sprint/collect.go:CollectVerdict same verdict and head scan; differ only in the line-key reader
+internal/sprint/cifix.go:RedTestOf internal/sprint/gate_wall.go:gatePackage both read the brief's TEST line; differ only in the returned field
+internal/sprint/readers.go:placedReadsAt internal/sprint/steps_review.go:readsAt identical placed-read scan
+internal/sprint/streams_view.go:StreamBasesOf internal/sprint/streams_view.go:StreamRepos same stream field scan; differ only in the field read
