@@ -61,6 +61,11 @@ const WaitPongEvery = time.Second
 // that does not answer.
 const OpenRetryMax = 30 * time.Second
 
+// sprintBeatDeadline is how long one beat may wait for the sprint server's
+// answer: under one second, so a server that does not answer never delays a
+// delivery, a pong or a presence write (docs/SPEC-FRIEND.md, Presence).
+const sprintBeatDeadline = 900 * time.Millisecond
+
 // world is what the tool reaches outside itself; main passes the real one,
 // a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
@@ -148,11 +153,19 @@ func sprintAsk(ctx context.Context, server string, argv []string) (string, error
 }
 
 // sprintBeat sends one friend beat to the sprint server and answers its FRIEND-BEAT line,
-// or its refusal as an error.
+// or its refusal as an error. The beat runs under sprintBeatDeadline, under one
+// second, so a server that does not answer never delays a delivery, a pong or a
+// presence write.
 func sprintBeat(ctx context.Context, server string, argv []string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	return sprintBeatClient(ctx, server, argv, nil)
+}
+
+// sprintBeatClient is sprintBeat over an injected HTTP client; nil is the
+// default client. A test passes its own transport to read the beat's deadline.
+func sprintBeatClient(ctx context.Context, server string, argv []string, hc *http.Client) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, sprintBeatDeadline)
 	defer cancel()
-	res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
+	res, err := sprintwire.Client{Addr: server, HTTP: hc}.Do(ctx, argv)
 	if err != nil {
 		return "", err
 	}

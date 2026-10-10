@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/friend/friendtest"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1340,3 +1343,31 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		assert.Fail(t, "the help example differs", p.Message)
 	}
 }
+
+// sprintBeatClient is the production beat's transport; the deadline it puts on
+// its request must stay under one second, so a server that does not answer
+// never delays a delivery, a pong or a presence write (docs/SPEC-FRIEND.md,
+// Presence).
+func TestSprintBeatRunsUnderASubsecondDeadline(t *testing.T) {
+	t.Parallel()
+	var got context.Context
+	hc := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		got = r.Context()
+		rec := httptest.NewRecorder()
+		_ = json.NewEncoder(rec).Encode(sprintwire.Response{Results: []sprintwire.Result{{Code: 0, Stdout: "FRIEND-BEAT OK bob at=x row_mode=batch row_width=1"}}}) // ignored: the recorder takes every write
+		return rec.Result(), nil
+	})}
+	out, err := sprintBeatClient(context.Background(), "sprint.test:6390", []string{"friend", "beat", "bob"}, hc)
+	require.NoError(t, err)
+	assert.Equal(t, "FRIEND-BEAT OK bob at=x row_mode=batch row_width=1", out)
+	require.NotNil(t, got)
+	dl, ok := got.Deadline()
+	require.True(t, ok, "the beat carries a deadline")
+	remain := time.Until(dl)
+	assert.Less(t, remain, time.Second, "the beat's deadline is under one second")
+	assert.Greater(t, remain, time.Duration(0), "the beat's deadline is in the future")
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
