@@ -38,7 +38,7 @@ func TestFsckFindsLandedRecordsMissingFromTheBase(t *testing.T) {
 		return 0, "", ""
 	}
 
-	findings := LandOnBase(w.s, runGit)
+	findings := LandOnBase(w.s, nil, runGit)
 	require.Len(t, findings, 2)
 	for _, f := range findings {
 		assert.Equal(t, FsckCheckName, f.Check)
@@ -71,8 +71,41 @@ func TestFsckOkWhenAllLandedOnBase(t *testing.T) {
 		return 0, "", ""
 	}
 
-	findings := LandOnBase(w.s, runGit)
+	findings := LandOnBase(w.s, nil, runGit)
 	require.Len(t, findings, 1)
 	assert.True(t, findings[0].Ancestor)
 	assert.Contains(t, findings[0].Line(), "FSCK OK")
+}
+
+// TestFsckCheckFilter verifies the --check flag filters checks properly.
+func TestFsckCheckFilter(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.s.Work.SetRows([]string{"s1"})
+	pr := &Card{ID: "s1-1", Row: "s1", Col: Landed, Fields: map[string]string{
+		"brief": "REPO: example.com/foo\nBASE: main\nHEAD: abc123456789",
+		"head":  "abc123456789",
+	}}
+	w.s.Work.Put(pr)
+	runGit := func(cmd string, args ...string) (int, string, string) {
+		if len(args) >= 3 && args[0] == "ls-remote" {
+			return 0, "1234567890abcdef refs/heads/main\n", ""
+		}
+		if len(args) >= 3 && args[0] == "merge-base" && args[1] == "--is-ancestor" {
+			return 1, "", "" // not ancestor
+		}
+		return 0, "", ""
+	}
+
+	// empty checks means all checks
+	findings := LandOnBase(w.s, nil, runGit)
+	require.Len(t, findings, 1)
+
+	// filtering to a non-existent check returns nothing
+	findings = LandOnBase(w.s, []string{"other-check"}, runGit)
+	require.Len(t, findings, 0)
+
+	// filtering to landed-on-base returns the finding
+	findings = LandOnBase(w.s, []string{FsckCheckName}, runGit)
+	require.Len(t, findings, 1)
 }

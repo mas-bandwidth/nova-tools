@@ -45,14 +45,15 @@ func (f LandOnBaseFinding) Line() string {
 }
 
 // LandOnBase is the landed-on-base check over a snapshot with git facts filled by runGit.
+// checks is the list of check names to filter (empty means all checks).
 // runGit runs git commands and returns exit code, stdout, stderr.
-func LandOnBase(snap *Snapshot, runGit func(cmd string, args ...string) (int, string, string)) []LandOnBaseFinding {
+func LandOnBase(snap *Snapshot, checks []string, runGit func(cmd string, args ...string) (int, string, string)) []LandOnBaseFinding {
 	var findings []LandOnBaseFinding
 	for _, pr := range snap.Work.Column(Landed) {
 		if IsSentinel(pr) {
 			continue
 		}
-		f := checkLandOnBase(pr, runGit)
+		f := checkLandOnBase(pr, checks, runGit)
 		if f.ID != "" {
 			findings = append(findings, f)
 		}
@@ -61,7 +62,11 @@ func LandOnBase(snap *Snapshot, runGit func(cmd string, args ...string) (int, st
 }
 
 // checkLandOnBase checks one landed card: its head is an ancestor of origin/<base>.
-func checkLandOnBase(pr *Card, runGit func(cmd string, args ...string) (int, string, string)) LandOnBaseFinding {
+func checkLandOnBase(pr *Card, checks []string, runGit func(cmd string, args ...string) (int, string, string)) LandOnBaseFinding {
+	// check if FsckCheckName is in the checks filter (empty checks means all checks)
+	if len(checks) > 0 && !hasCheck(checks, FsckCheckName) {
+		return LandOnBaseFinding{}
+	}
 	cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 	f := LandOnBaseFinding{Check: FsckCheckName, ID: pr.ID, Stream: pr.Row,
 		Head: pr.F("head"), Repo: cb.Named, Base: "", Fix: "nova-sprint reopen " + pr.ID + " --reason <text>"}
@@ -97,4 +102,13 @@ func checkLandOnBase(pr *Card, runGit func(cmd string, args ...string) (int, str
 	exit, _, _ := runGit("git", "merge-base", "--is-ancestor", f.Head, f.Tip)
 	f.Ancestor = (exit == 0)
 	return f
+}
+
+func hasCheck(s []string, e string) bool {
+	for _, v := range s {
+		if v == e {
+			return true
+		}
+	}
+	return false
 }

@@ -48,7 +48,7 @@ func (a *app) cmdFsck(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("fsck", err, stderr)
 	}
 	runGit := a.gitRunner(*c)
-	results := sprint.LandOnBase(snap, runGit)
+	results := sprint.LandOnBase(snap, checks, runGit)
 	if c.json {
 		var items []fsckResult
 		for _, f := range results {
