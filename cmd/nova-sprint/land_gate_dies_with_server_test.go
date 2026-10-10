@@ -48,17 +48,22 @@ func TestTheLandingGateDiesWithTheServer(t *testing.T) {
 		a.killStaleGate(&out)
 		assert.Contains(t, out.String(), "pid="+strconv.Itoa(gate.Process.Pid), "the line names the gate the earlier run left")
 
-		gone := false
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) {
-			var status syscall.WaitStatus
-			if pid, err := syscall.Wait4(gate.Process.Pid, &status, syscall.WNOHANG, nil); err == nil && pid == gate.Process.Pid {
-				gone = true
-				break
-			}
-			runtime.Gosched()
-		}
-		assert.True(t, gone, "the fake gate is gone after the next run's start")
+		assert.True(t, gateGone(t, gate.Process.Pid), "the fake gate is gone after the next run's start")
+	})
+
+	t.Run("the server's exit ends a gate it left running", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		a := newGateTestApp(dir)
+
+		gate := exec.Command("sleep", "60")
+		gate.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		require.NoError(t, gate.Start(), "the fake gate starts in its own process group")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".gate_pid"), []byte(strconv.Itoa(gate.Process.Pid)+"\n"), 0o600))
+
+		a.endGate()
+
+		assert.True(t, gateGone(t, gate.Process.Pid), "the fake gate is gone after the server's exit ends its group")
 	})
 
 	t.Run("runs the gate in its own process group", func(t *testing.T) {
@@ -94,6 +99,21 @@ func TestTheLandingGateDiesWithTheServer(t *testing.T) {
 		<-done
 		assert.Greater(t, seen, 0, "the gate was alive in its own group while the pid file held its PID")
 	})
+}
+
+// gateGone waits up to ten seconds for the process pid to be reaped, so a kill
+// the kernel has accepted but not yet reported is not read as a live gate.
+func gateGone(t *testing.T, pid int) bool {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var status syscall.WaitStatus
+		if got, err := syscall.Wait4(pid, &status, syscall.WNOHANG, nil); err == nil && got == pid {
+			return true
+		}
+		runtime.Gosched()
+	}
+	return false
 }
 
 // newGateTestApp is the app a gate test runs land through: its land root is dir, so

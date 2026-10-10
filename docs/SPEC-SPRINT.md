@@ -4002,7 +4002,10 @@ not marked for promotion, its remedy the sprint branch (re-cut the card with
 runs. A land run that finds a gate from an earlier run still recorded there ends that
 group before it starts another, one `LAND KILLED gate pid=<n> from an earlier run` line, so
 a gate whose server died is never left running under the supervisor to load the machine
-the next tick runs on.
+the next tick runs on. And the group ends with the server: a cancelled land ends the whole
+group (not only the shell that leads it), and every exit of the server — a wedged tick's
+`exit 4`, a replaced binary, a signal, a refusal — ends the recorded group before the
+process goes (`endGate`, which is the next run's start kill without its line).
 
 **The rebase verb.** `nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]` moves every unlanded card whose brief's `BASE:` line names
 `--from` to `--to`, on a RUNNING machine as on a STOPPED one. It exists because a

@@ -49,7 +49,9 @@ func main() {
 	a.briefRecord = a.defaultBriefRecord // a test's app has none: no brief record, no brief decision
 	a.seatLoginOn()                      // a test's app has none: no recorded store login (storelogin.go)
 	defer a.close()
-	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
+	code := a.run(os.Args[1:], os.Stdout, os.Stderr)
+	a.endGate() // a land gate left running dies with the process, whatever the exit (land.go)
+	os.Exit(code)
 }
 
 // app is one process's view of the store: its connection, opened once and

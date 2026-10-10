@@ -2032,6 +2032,12 @@ func (a *app) killStaleGate(stdout io.Writer) {
 	fmt.Fprintf(stdout, "LAND KILLED gate pid=%d from an earlier run\n", pid)
 }
 
+// endGate ends a gate left under the land root the same way the next run's start
+// does (killStaleGate) but without its line: every exit of the server takes the
+// gate's whole group with it, so a gate whose server died is never left running
+// under the supervisor (docs/SPEC-SPRINT.md, the landing step).
+func (a *app) endGate() { a.killStaleGate(io.Discard) }
+
 // runCheck runs --check in the clone: why "" when it passed or there is none, and its
 // output. The check runs in its own process group so it is terminated with the server.
 func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
@@ -2041,6 +2047,18 @@ func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
 	b.Cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// a cancelled land (the server's signal or its exit) ends the whole group, not
+	// only the shell that leads it, so no go test or git it started is left behind
+	b.Cmd.Cancel = func() error {
+		if b.Cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		err := syscall.Kill(-b.Cmd.Process.Pid, syscall.SIGKILL)
+		if err == syscall.ESRCH {
+			return os.ErrProcessDone
+		}
+		return err
+	}
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
 	var buf bytes.Buffer
 	b.Cmd.Stdout = &buf

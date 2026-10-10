@@ -336,6 +336,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 		go func() {
 			<-sigs
+			a.endGate()
 			stopped()
 			os.Exit(0)
 		}()
@@ -354,6 +355,15 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "run", err.Error())
 		}
 	}
+	// a termination ends the run loop and the land loop together: both run under
+	// the interrupt context, so a signal cancels the land's gate and the process
+	// goes only after the gate's group is ended (main, endGate)
+	ctx := context.Background()
+	if a.notify != nil {
+		var stop context.CancelFunc
+		ctx, stop = a.notify(ctx)
+		defer stop()
+	}
 	if land {
 		if landParallel != landParallelDefault {
 			b := a.landState()
@@ -361,7 +371,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 			b.landMore = append(b.landMore, "--land-parallel", strconv.Itoa(landParallel))
 			b.mu.Unlock()
 		}
-		go a.landLoop(context.Background(), c.redis, stdout)
+		go a.landLoop(ctx, c.redis, stdout)
 	}
 	// the providers' balances, read outside every tick (balance.go)
 	go a.balanceLoop(context.Background(), st, stdout)
@@ -386,7 +396,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	_ = a.serverStart(context.Background(), st)
 
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
-	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
+	if a.runLoop(ctx, st, c.max, 0, stdout, stderr) {
 		return exitReplaced
 	}
 	return 0
@@ -653,6 +663,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			lift = liftAfterOverrun(a.tickDeadline, deadline)
 			if !a.awaitGivenUp(ended, deadline, began, &wedged, stdout, stderr) {
 				// serial stays held: the tick's goroutine is still in its plan
+				a.endGate()
 				a.exit(exitTickDeadline)
 				return false
 			}
