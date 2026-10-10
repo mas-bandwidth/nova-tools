@@ -239,6 +239,59 @@ func TestFriendRowReplacesAWrongTypeAndCountsDown(t *testing.T) {
 	}
 }
 
+// TestFriendRowTurnSinceKeepsFriendUp: a friend with a batch turn under way
+// reads up while the turn is within BEHIND_CAP (45 minutes) from turn-start,
+// even if the beat is older than PL_ROW_UP_MS.
+func TestFriendRowTurnSinceKeepsFriendUp(t *testing.T) {
+	t.Parallel()
+
+	st, client, _ := controlRedis(t)
+	ctx := context.Background()
+
+	// Set up friend with desired
+
+ client.HSet(ctx, "friend:turn-friend:desired", "slots", "2", "machine", "studio")
+	client.SAdd(ctx, "friends", "turn-friend")
+
+	// Beat is 1 minute old (beyond PL_ROW_UP_MS=60s)
+	beatTime := time.Now().Add(-time.Minute)
+	client.HSet(ctx, "friend:turn-friend:beat", "at", strconv.FormatInt(beatTime.UnixMilli(), 10))
+
+	// Turn started 30 minutes ago (within BEHIND_CAP=45m)
+	turnStart := time.Now().Add(-30 * time.Minute)
+	client.HSet(ctx, "friend:turn-friend:beat", "turn-since", strconv.FormatInt(turnStart.UnixMilli(), 10))
+
+	at := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	res, err := life.FriendRow(ctx, st, life.FriendRowRequest{Friend: "turn-friend", Sprint: "s1", At: at})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Up {
+		t.Fatal("friend with turn under way should read up")
+	}
+
+	// Test 2: Turn is 50 minutes old (beyond BEHIND_CAP=45m)
+	turnStart = time.Now().Add(-50 * time.Minute)
+	client.HSet(ctx, "friend:turn-friend:beat", "turn-since", strconv.FormatInt(turnStart.UnixMilli(), 10))
+	res, err = life.FriendRow(ctx, st, life.FriendRowRequest{Friend: "turn-friend", Sprint: "s1", At: at})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Up {
+		t.Fatal("friend with turn older than BEHIND_CAP should read down")
+	}
+
+	// Test 3: No turn-since field (old behavior)
+	client.HDel(ctx, "friend:turn-friend:beat", "turn-since")
+	res, err = life.FriendRow(ctx, st, life.FriendRowRequest{Friend: "turn-friend", Sprint: "s1", At: at})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Up {
+		t.Fatal("friend without turn-since and old beat should read down")
+	}
+}
+
 // TestBenchBeatWithoutRowStampWritesNoRow: a beat with no RowAt (callers
 // before #3440) leaves bench:<b> alone.
 func TestBenchBeatWithoutRowStampWritesNoRow(t *testing.T) {

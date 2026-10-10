@@ -37,6 +37,9 @@ type FriendBeatRequest struct {
 	// the observation (nova-friend here names its own); empty writes
 	// FriendBeatHarness.
 	Harness string
+	// TurnSince is the session's batch turn start time in ms (from the
+	// daemon's SessionCheck batch turn; zero when none).
+	TurnSince int64
 	// Process and ObserverHost are observation seams. Production uses the
 	// kernel probe and the actual local hostname, independently of Host's
 	// presentation label.
@@ -90,7 +93,7 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	if harness == "" {
 		harness = FriendBeatHarness
 	}
-	fields := []any{"host", host, "at", strconv.FormatInt(ms, 10), "harness", harness}
+	fields := []any{"host", host, "at", strconv.FormatInt(ms, 10), "harness", harness, "turn-since", strconv.FormatInt(req.TurnSince, 10)}
 	if v := strings.TrimSpace(req.Load1); v != "" {
 		fields = append(fields, "load1", v)
 	}

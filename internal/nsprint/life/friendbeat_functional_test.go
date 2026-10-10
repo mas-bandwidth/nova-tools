@@ -65,7 +65,7 @@ func TestFriendBeatRenewsObservedOwnersAndPreservesPresence(t *testing.T) {
 	}
 	beat := client.HGetAll(ctx, "friend:rowan:beat").Val()
 	want := map[string]string{"session": "s1", "host": "laptop", "at": strconv.FormatInt(at.UnixMilli(), 10),
-		"harness": life.FriendBeatHarness, "models": "", "load1": "0.50", "ncpu": "8", "cpu": "12.5"}
+		"harness": life.FriendBeatHarness, "models": "", "load1": "0.50", "ncpu": "8", "cpu": "12.5", "turn-since": "0"}
 	for k, v := range want {
 		if beat[k] != v {
 			t.Fatalf("friend:rowan:beat %s = %q, want %q (%v)", k, beat[k], v, beat)

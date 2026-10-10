@@ -34,6 +34,9 @@ local PL_BEAT_MS = 5000
 -- PL_ROW_UP_MS is how old a friend's beat may be for its row to read up
 -- (the consumer table's own minute, #4233).
 local PL_ROW_UP_MS = 60000
+-- BEHIND_CAP is the cap for how long a batch turn under way keeps a friend
+-- up on the dashboard (45 minutes from turn-start, #5540).
+local BEHIND_CAP = 2700000
 local PL_LIVE_SEP = '\31'
 
 local function pl_now_ms()
@@ -55,6 +58,7 @@ local function friend_hello(keys, args)
   local slots = tonumber(args[2]) -- compatibility argument; deliberately ignored
   local harness, host, session = args[3], args[4], args[5]
   local machine_hint, actor, idem = args[6], args[7], args[8]
+  local turn_since = tonumber(args[9]) or 0
   if not friend or friend == '' or
       not host or host == '' or not session or session == '' then
     return { 'INVALID' }
@@ -115,7 +119,7 @@ local function friend_hello(keys, args)
   end
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host, 'session', session,
-    'at', tostring(at))
+    'at', tostring(at), 'turn-since', tostring(turn_since))
   redis.call('PEXPIRE', beat_key, PL_BEAT_MS)
   if was_up == 0 then
     pl_caplog('friend-up', friend, '', actor, idem, at)
@@ -128,6 +132,7 @@ end
 -- args[5] is the count of CI legs running on the friend's machine (one
 -- Runner.Worker per running job, nova-tools#4293), on the beat as ci every
 -- beat; the deal takes them off the friend's slots. Empty when unmeasured.
+-- args[6] is the turn-since field in ms.
 local function friend_beat(keys, args)
   local friend, harness, host, session = args[1], args[2], args[3], args[4]
   if not friend or friend == '' then
@@ -141,9 +146,10 @@ local function friend_beat(keys, args)
     return { 'FENCED' }
   end
   local at = pl_now_ms()
+  local turn_since = tonumber(args[6]) or 0
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host or '', 'session', session,
-    'ci', args[5] or '', 'at', tostring(at))
+    'ci', args[5] or '', 'at', tostring(at), 'turn-since', tostring(turn_since))
   redis.call('PEXPIRE', beat_key, PL_BEAT_MS)
   return { 'OK' }
 end
@@ -375,10 +381,18 @@ local function friend_row(keys, args)
   end
   -- up is reader-judged from the beat's at (#4233: a friend beat has no
   -- TTL; keys do not expire): under PL_ROW_UP_MS old is up, else down.
+  -- With #5540, a friend with a batch turn under way reads up while the turn
+  -- is within BEHIND_CAP from turn-start, even if the beat is older.
   local up = 0
   local beat_at = tonumber(redis.call('HGET', 'friend:' .. friend .. ':beat', 'at') or '')
   if beat_at and pl_now_ms() - beat_at <= PL_ROW_UP_MS then
     up = 1
+  end
+  if up == 0 then
+    local turn_since = tonumber(redis.call('HGET', 'friend:' .. friend .. ':beat', 'turn-since') or '')
+    if turn_since and pl_now_ms() - turn_since <= BEHIND_CAP then
+      up = 1
+    end
   end
   local row = 'friend:' .. friend
   local kind = redis.call('TYPE', row)

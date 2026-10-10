@@ -61,6 +61,9 @@ type HelloRequest struct {
 	// Logins are `--login` aliases (#3092 rev 6); ns_friend_hello is the
 	// only writer of friends:login and refuses a clashing alias.
 	Logins []string
+	// TurnSince is the session's batch turn start time in ms (from the
+	// daemon's SessionCheck batch turn; zero when none).
+	TurnSince int64
 }
 
 // HelloResult is one friend hello. Claims are the friend's own queued tasks
@@ -89,7 +92,7 @@ func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult,
 		return HelloResult{}, fmt.Errorf("friend hello %s: actor %q is not --as; want --as equal to NOVA_FRIEND", req.As, req.Actor)
 	}
 	fargs := []any{req.As, req.Slots, req.Harness, req.Host, req.Session,
-		req.Machine, req.Actor, req.Idem}
+		req.Machine, req.Actor, req.Idem, req.TurnSince}
 	for _, alias := range req.Logins {
 		fargs = append(fargs, alias)
 	}
@@ -142,6 +145,9 @@ type Presence struct {
 	// (CILegsNow; nova-tools#4293), on the beat as ci; empty when
 	// unmeasured. The deal takes them off the friend's slots.
 	CI string
+	// TurnSince is the session's batch turn start time in ms (from the
+	// daemon's SessionCheck batch turn; zero when none).
+	TurnSince int64
 }
 
 // Beat refreshes one live friend's beat. A friend that is not registered
@@ -151,7 +157,7 @@ func Beat(ctx context.Context, st *store.Store, p Presence) error {
 		return fmt.Errorf("friend beat: store and friend are required")
 	}
 	reply, err := st.Client().FCall(ctx, FunctionBeat, nil,
-		p.Friend, p.Harness, p.Host, p.Session, p.CI).Result()
+		p.Friend, p.Harness, p.Host, p.Session, p.CI, p.TurnSince).Result()
 	if err != nil {
 		return fmt.Errorf("friend beat %s: %w", p.Friend, err)
 	}
