@@ -700,7 +700,8 @@ func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, 
 func (l *lander) merge(ctx context.Context, j *landJob) {
 	b, stream, dir := &j.b, j.stream, j.dir
 	baseSha := j.cut.baseSha
-	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false)
+	behind := len(j.rem) > 0
+	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false, behind)
 	if why := gateWaitWhy(ctx); why != "" {
 		j.refuse(why)
 		return
@@ -726,7 +727,6 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 			j.gated = true
 		} else {
 			l.ledgerLog = nil // the second build logs the same resolutions
-			behind := len(j.rem) > 0
 			merged, failed, baseSha, _, why = l.build(ctx, dir, stream, j.cards, b.Times, true, behind)
 			if why := gateWaitWhy(ctx); why != "" {
 				j.refuse(why)
