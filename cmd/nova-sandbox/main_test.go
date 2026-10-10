@@ -707,6 +707,8 @@ func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
 
 // repoRoot walks up from this package to the module root, so the test can find the
 // script without a guessed path (SPEC.md: no guessed paths).
+//
+//lint:ignore U1000 used by the darwin and functional tagged tests, which staticcheck reads without build tags
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -1175,6 +1177,7 @@ func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
 				select {
 				case <-stop:
 					return
+				//lint:ignore SA5004 the spin is the load this test makes on purpose; the cleanup closes stop
 				default:
 				}
 			}
@@ -1351,6 +1354,8 @@ func TestProbeRefusesWhenItCannotAnswerTheQuestion(t *testing.T) {
 // toolBinary builds nova-sandbox once for a test that needs a REAL process, not run() in
 // this one: a process group is a property of a process, and the tests above that call
 // run() in process share the test binary's group.
+//
+//lint:ignore U1000 used by the darwin and functional tagged tests, which staticcheck reads without build tags
 func toolBinary(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "nova-sandbox")
@@ -1550,7 +1555,7 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "help")
-	require.Equal(t, 0, code, "help exit %d", code)
+	require.Equal(t, 0, code, "help exit %d, stderr %q", code, errOut)
 	probe := ""
 	for _, block := range strings.Split(out, "\n\n") {
 		if strings.Contains(block, "nova-sandbox probe ") {
