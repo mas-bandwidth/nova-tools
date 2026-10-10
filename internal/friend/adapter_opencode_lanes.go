@@ -195,7 +195,7 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 }
 
 func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
-	listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
+	listing, exit, err := o.Run(withoutTurnAcceptance(ctx), o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
 	if err != nil {
 		return nil, fmt.Errorf("opencode session list: %w", err)
 	}
@@ -391,7 +391,7 @@ func SessionCost(export string) (float64, error) {
 // price reads the session's record and says the run's cost on the record;
 // a record that cannot be read is said there, and the turn stands.
 func (p *OpenCodePriced) price(ctx context.Context, id string) {
-	out, exit, err := p.Run(ctx, p.Dir, p.program(), []string{"export", id}, "")
+	out, exit, err := p.Run(withoutTurnAcceptance(ctx), p.Dir, p.program(), []string{"export", id}, "")
 	if err == nil && exit != 0 {
 		err = fmt.Errorf("exited %d: %s", exit, oneLine(out, 200))
 	}

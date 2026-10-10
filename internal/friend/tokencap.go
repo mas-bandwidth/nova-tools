@@ -366,7 +366,7 @@ func (p *OpenCodePriced) tick(d time.Duration) (<-chan time.Time, func()) {
 
 // sessionTokens is a session's tokens from its export.
 func (p *OpenCodePriced) sessionTokens(ctx context.Context, id string) (Tokens, error) {
-	out, exit, err := p.Run(ctx, p.Dir, p.program(), []string{"export", id}, "")
+	out, exit, err := p.Run(withoutTurnAcceptance(ctx), p.Dir, p.program(), []string{"export", id}, "")
 	if err == nil && exit != 0 {
 		err = fmt.Errorf("exited %d: %s", exit, oneLine(out, 200))
 	}

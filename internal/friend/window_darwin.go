@@ -18,7 +18,7 @@ func PlatformPermitted(ctx context.Context, run Exec) (bool, error) {
 	if accessibilityAsks(AccessibilityCheckScript) {
 		return false, fmt.Errorf("the check script asks for accessibility permission")
 	}
-	out, exit, err := run(ctx, "", "osascript", []string{"-e", AccessibilityCheckScript}, "")
+	out, exit, err := run(withoutTurnAcceptance(ctx), "", "osascript", []string{"-e", AccessibilityCheckScript}, "")
 	if err != nil {
 		return false, fmt.Errorf("osascript: %w", err)
 	}

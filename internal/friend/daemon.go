@@ -62,13 +62,6 @@ const (
 	BatchBytes = 256 << 10
 )
 
-// ActedKept is how many message ids the daemon remembers it pushed into a
-// turn that ended acted: a second delivery of one (the claim hands a message
-// in again when its ack was lost) is dropped and acked, never pushed in twice.
-// Past the memory, the message's receipt says acted all the same (Entry.Stage;
-// docs/SPEC-BUS.md, message-receipts; tla/Bus2Receipts.tla, Take).
-const ActedKept = 4096
-
 // SeatCacheFor is how long the daemon keeps the seat holder it read from the
 // sprint server: the authority of a message is never older than this
 // (docs/SPEC-FRIEND.md, bus-authority-labels.w3).
@@ -308,24 +301,26 @@ const IdleWalkEvery = time.Minute
 // turn is one delivery into the session: the messages it carries (acked
 // together at exit 0) and the daemon's word about the coordinator, if any.
 type turn struct {
-	entries  []string // the stream entries to ack
-	msgs     []bus.Message
-	notice   *Notice
-	text     string
-	started  time.Time
-	running  bool // a Deliver is under way (false while a deferral waits)
-	cancel   context.CancelFunc
-	seen     *atomic.Int64 // outputs the command printed
-	seenN    int64
-	lastOut  time.Time // when the daemon last saw the turn print, or its start
-	stopped  bool      // the daemon stopped it: silent past SilentStop
-	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
-	held     bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
-	byStop   bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
-	tail     *outputTail
-	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
-	subjects string
-	present  bool // the present turn (present.go)
+	entries     []string // the stream entries to ack
+	msgs        []bus.Message
+	notice      *Notice
+	text        string
+	started     time.Time
+	running     bool // a Deliver is under way (false while a deferral waits)
+	cancel      context.CancelFunc
+	seen        *atomic.Int64 // outputs the command printed
+	seenN       int64
+	accepted    atomic.Bool // only the adapter acceptance signal sets it
+	readStamped bool
+	lastOut     time.Time // when the daemon last saw the turn print, or its start
+	stopped     bool      // the daemon stopped it: silent past SilentStop
+	capped      bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
+	held        bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
+	byStop      bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
+	tail        *outputTail
+	stamped     time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
+	subjects    string
+	present     bool // the present turn (present.go)
 }
 
 type result struct {
@@ -528,8 +523,8 @@ type loop struct {
 	silentStop   time.Duration
 	brokenAfter  int
 	answered     map[string]bool // entries whose ping the daemon has ponged
-	acted        map[string]bool // message ids pushed into a turn that ended acted, at most ActedKept
-	actedOrder   []string        // the same ids, oldest first, for the bound
+	receiptErr   error           // recv could not consult the durable duplicate authority
+	completed    []*turn         // successful turns awaiting their durable receipt write
 	now          time.Time       // the step's clock, for a line said beside a verb (OnStampError)
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
@@ -638,8 +633,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
 	_, l.passive = d.Deliver.(interface{ Passive() })
-	l.acted = map[string]bool{}
-	l.b.OnStampError = func(err error) { d.Record(l.now.UTC().Format(time.RFC3339) + " " + oneLine(err.Error(), 300)) }
+	l.b.OnStampError = func(err error) {
+		l.receiptErr = err
+		d.Record(l.now.UTC().Format(time.RFC3339) + " " + oneLine(err.Error(), 300))
+	}
 	if l.silentStop <= 0 {
 		l.silentStop = DefaultSilentStop
 	}
@@ -668,6 +665,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		now := d.Now()
 		l.now = now
+		l.flushCompleted(now)
 		for _, p := range d.m.Tick(now) {
 			l.say(p, now)
 		}
@@ -1067,6 +1065,17 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 	}
 }
 
+// recv refuses a take when its store receipt cannot be consulted: an unknown
+// receipt is never proof that an id is safe to push (SPEC-BUS.md, message-receipts).
+func (l *loop) recv(block time.Duration) (bus.Entry, bool, error) {
+	l.receiptErr = nil
+	e, ok, err := l.b.Recv(l.ctx, l.d.Friend, block)
+	if err == nil && l.receiptErr != nil {
+		return e, false, l.receiptErr
+	}
+	return e, ok, err
+}
+
 // read is the step's one look at the stream: every pending message taken
 // into the hand when the session can take them (no batch turn running, the
 // session not broken), else a peek that answers pings.
@@ -1075,7 +1084,7 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 // It answers whether the store answered.
 func (l *loop) read(now time.Time) bool {
 	d, b := l.d, l.b
-	if l.busy == nil && !l.passive && !l.broken {
+	if l.busy == nil && len(l.completed) == 0 && !l.passive && !l.broken {
 		// in one-shot mode the lanes' turns run while the loop reads: it reads
 		// at once and pauses after, so a lane's result is never a block behind
 		block := BeatEvery
@@ -1083,7 +1092,7 @@ func (l *loop) read(now time.Time) bool {
 			block = 0
 			defer d.Pause(l.ctx, BeatEvery)
 		}
-		e, ok, err := b.Recv(l.ctx, d.Friend, block)
+		e, ok, err := l.recv(block)
 		for err == nil && ok {
 			msg := e.Message()
 			if l.lost[e.Entry] && !l.inHand[e.Entry] {
@@ -1115,7 +1124,7 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
-			} else if l.acted[msg.ID] || e.Stage == bus.Acted {
+			} else if e.Stage == bus.Acted {
 				// a second delivery of a message a turn acted on: dropped and acked, never pushed in twice
 				d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
 				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
@@ -1135,7 +1144,7 @@ func (l *loop) read(now time.Time) bool {
 			if l.presentDue && !d.noPresent && len(l.hand) >= MaxBatch {
 				break
 			}
-			e, ok, err = b.Recv(l.ctx, d.Friend, 0) // the rest of what is pending, at once
+			e, ok, err = l.recv(0) // the rest of what is pending, at once
 		}
 		if err != nil && l.ctx.Err() == nil {
 			d.status.StoreError = err.Error()
@@ -1257,6 +1266,9 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	tctx, cancel := context.WithCancel(l.ctx)
 	seen := &atomic.Int64{}
 	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
+	t.accepted.Store(false)
+	t.readStamped = false // a reused deferral can stamp read again
+	tctx = WithTurnAccepted(tctx, func() { t.accepted.Store(true) })
 	tail := &outputTail{}
 	tctx = WithOutputTail(tctx, tail.add)
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped, t.capped, t.tail = now, true, cancel, seen, 0, now, false, false, tail
@@ -1264,7 +1276,15 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	case func(context.Context) result:
 		go func() { r := f(tctx); cancel(); l.results <- r; l.turnEnded() }()
 	case func(context.Context) laneResult:
-		go func() { r := f(tctx); cancel(); l.lanes.results <- r; l.turnEnded() }()
+		go func() {
+			r := f(tctx)
+			if r.err == nil && r.turn.Exit == 0 {
+				TurnAccepted(tctx)
+			}
+			cancel()
+			l.lanes.results <- r
+			l.turnEnded()
+		}()
 	}
 }
 
@@ -1278,6 +1298,9 @@ func (l *loop) turnEnded() {
 func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	return func(ctx context.Context) result {
 		exit, err := l.d.Deliver.Deliver(ctx, t.text)
+		if exit == 0 && err == nil {
+			TurnAccepted(ctx) // a successful adapter return confirms acceptance even without output
+		}
 		return result{t, exit, err}
 	}
 }
@@ -1315,10 +1338,14 @@ func (l *loop) startBatch(now time.Time) {
 // watch is the silence watch on a running turn: a turn that prints is
 // working; one silent past SilentStop is stopped, said on the record.
 func (l *loop) watch(t *turn, now time.Time) {
-	if n := t.seen.Load(); n != t.seenN {
-		if t.seenN == 0 {
-			l.stampTurn(t, bus.Read) // the session took the turn: it printed
+	if t.accepted.Load() && !t.readStamped {
+		if line := l.stampTurn(t, bus.Read); line != "" {
+			l.d.Record(now.UTC().Format(time.RFC3339) + line)
+		} else {
+			t.readStamped = true
 		}
+	}
+	if n := t.seen.Load(); n != t.seenN {
 		t.seenN, t.lastOut = n, now
 	}
 	if !t.stopped && !t.capped && now.Sub(t.lastOut) >= l.silentStop {
@@ -1367,15 +1394,17 @@ func (l *loop) stampProgress(now time.Time) {
 func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	d := l.d
 	line := ""
-	for _, e := range t.entries {
-		delete(l.inHand, e) // acked below, or pending for the claim to hand in again
-	}
 	var refused ProviderRefused
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
-		l.remember(t)
-		line += l.stampTurn(t, bus.Acted)
+		if failed := l.stampTurn(t, bus.Acted); failed != "" {
+			l.completed = append(l.completed, t)
+			return line + failed + " ack=waiting-for-durable-receipt"
+		}
+		for _, e := range t.entries {
+			delete(l.inHand, e)
+		}
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -1389,6 +1418,9 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 			}
 		}
 	case errors.As(err, &refused) && !t.stopped:
+		for _, e := range t.entries {
+			delete(l.inHand, e)
+		}
 		// the session is at fault, not the messages: they stay pending, counted toward nothing
 		if refused.Reason == l.refusal {
 			l.streak++
@@ -1403,7 +1435,12 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		}
 	default:
 		l.streak, l.refusal = 0, ""
-		line += l.stampTurn(t, bus.Read) // the turn ran and failed: read, never acted
+		if t.accepted.Load() {
+			line += l.stampTurn(t, bus.Read)
+		}
+		for _, e := range t.entries {
+			delete(l.inHand, e)
+		}
 		var given []string
 		for _, e := range t.entries {
 			l.failed[e]++
@@ -1458,20 +1495,16 @@ func (l *loop) stampTurn(t *turn, state string) string {
 	return ""
 }
 
-// remember keeps the ids of the messages t carried, a turn that ended acted,
-// the newest ActedKept of them: what the take drops when the claim hands one
-// in again.
-func (l *loop) remember(t *turn) {
-	for _, m := range t.msgs {
-		if l.acted[m.ID] {
-			continue
+// flushCompleted retries only receipt commits, never the accepted turn. The
+// store is the duplicate authority (SPEC-BUS.md, message-receipts).
+func (l *loop) flushCompleted(now time.Time) {
+	waiting := l.completed
+	l.completed = nil
+	for _, t := range waiting {
+		line := l.settle(t, true, nil, now)
+		if line != "" {
+			l.d.Record(now.UTC().Format(time.RFC3339) + line)
 		}
-		l.acted[m.ID] = true
-		l.actedOrder = append(l.actedOrder, m.ID)
-	}
-	for len(l.actedOrder) > ActedKept {
-		delete(l.acted, l.actedOrder[0])
-		l.actedOrder = l.actedOrder[1:]
 	}
 }
 
