@@ -6,8 +6,7 @@ nothing else: no git, no file twin, no mode that works without a server. Redis
 is the source of truth for the bus's messages and receipts, and their backups,
 restore, acceptable loss and retention are [DATA.md](DATA.md)'s. The
 tool is `cmd/nova-bus`, the rules are `internal/bus`, the delivery machine is
-`tla/Bus2.tla`. It was built as nova-bus2 beside the git bus and took the name
-nova-bus on 2026-10-04, when the git bus was removed.
+`tla/Bus2.tla`.
 
 ## The data
 
