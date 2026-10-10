@@ -160,6 +160,8 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 			continue // ticks for ever; tick is its one tick
 		case "dashboard":
 			continue // serves until interrupted, and reads as where does, which is here
+		case "view seat":
+			continue // reads a dashboard, never the store (its own tests)
 		case "play":
 			lines = append(lines, v.example+" --ticks 2")
 			continue
