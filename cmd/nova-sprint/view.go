@@ -167,6 +167,17 @@ type coordinatorView struct {
 	Rows         []viewRow   `json:"rows,omitempty"`
 	Same         int         `json:"same,omitempty"` // with --since: items left out, unchanged
 	Gone         int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	// Cost is the epoch's complete recorded spend (sprint.SprintCost): the four
+	// parts beside the total, and per_landed over the cards landed. Absent when
+	// nothing was priced. Adding it does not change what an existing field means.
+	Cost *viewCost `json:"cost,omitempty"`
+}
+
+// viewCost is the coordinator view's cost: the four parts of the complete spend
+// beside the total, and that total over the cards landed.
+type viewCost struct {
+	sprint.CostParts
+	PerLanded string `json:"per_landed"`
 }
 
 // workerCard is one of a worker's cards.
@@ -608,6 +619,9 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		return cmp.Or(cmp.Compare(y.B, x.B), cmp.Compare(itemRank[x.T], itemRank[y.T]), cmp.Compare(y.age, x.age), cmp.Compare(x.K, y.K))
 	})
 	v.Cursor = cursorOf(itemDigests(v.Items), rowDigests(v.Rows))
+	if parts, per := sprint.SprintCost(s); parts.TotalCost != "" {
+		v.Cost = &viewCost{CostParts: parts, PerLanded: per}
+	}
 	v.Sum = coordinatorSum(v, merr == nil, machine)
 	return v, nil
 }
@@ -721,6 +735,17 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	}
 	if line := switchesLine(v.Fleet, v.Friends, v.FleetTiers, v.FriendsTiers); line != "" {
 		sum += " | " + line
+	}
+	if v.Cost != nil {
+		c := v.Cost
+		dash := func(s string) string {
+			if s == "" {
+				return "-"
+			}
+			return s
+		}
+		sum += fmt.Sprintf(" | total_cost %s cost_work %s cost_reads %s cost_land %s cost_unanswered %s per_landed %s",
+			dash(c.TotalCost), dash(c.CostWork), dash(c.CostReads), dash(c.CostLand), dash(c.CostUnanswered), dash(c.PerLanded))
 	}
 	return sum
 }

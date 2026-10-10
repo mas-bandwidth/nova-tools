@@ -144,23 +144,12 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 		return err
 	}
 	r := whereOf(snap, m, st.now())
-	// per landed since the last tidy of the streams (stats tidy, sprint.PerLandedSince)
-	var bases map[string]sprint.StreamBase
-	if stats.Epoch == st.epoch {
-		bases = stats.Streams
-	}
-	for stream, b := range bases {
-		tc, ok := r.Streams[stream]
-		if !ok {
-			continue
-		}
-		cost := ""
-		if ctl := snap.StreamCtl(stream); ctl != nil {
-			cost = ctl.F(sprint.FieldCost)
-		}
-		tc.PerLanded = sprint.PerLandedSince(cost, snap.Work.Count(stream, sprint.Landed), b)
-		r.Streams[stream] = tc
-	}
+	// The stats record is read in this exchange with the where record. A streams
+	// tidy does not replace per_landed: the record keeps the complete spend
+	// (sprint.StreamTierCosts, whereOf). The cost cell is the tidy window
+	// (sprint.StreamCostSince, the mirror sync). sprint.PerLandedSince stays the
+	// window over that cell and is not written onto the where record.
+	_ = stats
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
