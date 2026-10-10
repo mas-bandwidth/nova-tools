@@ -47,8 +47,14 @@ A refusal leaves the member drained (width 0), so nothing is dealt it, and the
 same command run again finishes what is still missing or stale. The play's
 variables `nova_member`, `nova_member_width` and `nova_member_reader` name the
 host, its width and its reader (`reader-<host>`); the rest are defaults in
-`fleet/group_vars/all.yml` (the mirror list `nova_member_repos` and the url they
-are fetched from, `nova_member_mirror_base`, come from the run). The loop
+`fleet/group_vars/all.yml`. The verb fills three of them itself, so the
+credential and mirror steps do their work rather than standing in: the route
+credential names (`nova_member_route_key`, one `<PROVIDER>_API_KEY` per enabled
+route, comma separated) come from the store's routes, and the repository mirrors
+(`nova_member_repos`) and the url they are fetched from
+(`nova_member_mirror_base`) come from the repository every live work card names
+on its `REPO:` line. `--route-key`, `--repos` and `--mirror-base` stand in where
+the store names none. The loop
 records the play adds are ordinary `nova-config` loop rows: the play applies
 them and refreshes the inventory before `fleet/loops.yml` reads it, so the
 member's and reader's units exist in the run that adds them.

@@ -147,14 +147,16 @@
           member={{ fleet_add_member }} reader={{ nova_member_reader }} records=2
 
     # the route credential: nova-secrets opens the seat with sops and only the
-    # named key, and the tool reads it in its own process. The play prints no
-    # secret and takes no secret value.
+    # named keys (a comma list, one per route provider), and the tool reads them
+    # in its own process. --only refuses a name the seat does not hold, so the
+    # step proves the seat holds every route key. The play prints no secret and
+    # takes no secret value.
     - name: the route credential through the sealed-secrets path
       ansible.builtin.command:
         argv: >-
           {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
               '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops,
-              '--only', nova_member_route_key, '--require=' ~ nova_member_route_key, '--',
+              '--only', nova_member_route_key, '--',
               nova_bin_dir ~ '/nova-sprint', 'routes'] }}
       register: fleet_add_credential
       changed_when: false

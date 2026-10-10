@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // fakeFleetAddPlay is the play runner fleet add is driven through in the tests:
@@ -96,6 +97,12 @@ func TestFleetAddPlayEmitsEveryStepByTheVerbsReading(t *testing.T) {
 	for _, step := range fleetAddPlaySteps {
 		assert.Contains(t, play, "FLEET-ADD step="+step+" ", "fleet/member.yml and fleet/tools.yml print no FLEET-ADD step=%s line, and the verb refuses a run without it", step)
 	}
+	// The content, not only the line: the credential and mirror steps the verb
+	// drives must read the run's own variables, so a play whose step line stands
+	// in for work the verb never supplies is refused here.
+	assert.Contains(t, play, "'--only', nova_member_route_key", "the credential step must read the route key the verb passes (nova_member_route_key)")
+	assert.Contains(t, play, "'--repos', nova_member_repos", "the mirror step must read the repository list the verb passes (nova_member_repos)")
+	assert.Contains(t, play, "'--base', nova_member_mirror_base", "the mirror step must read the mirror base the verb passes (nova_member_mirror_base)")
 }
 
 // fleetAddWidth is the member's width on the fleet table: -1 when it has no row.
@@ -127,10 +134,14 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(src, "fleet", "member.yml"), []byte("[]\n"), 0o644))
 	base := []string{"--source", src, "--inventory", "/inv/nova-inventory"}
 
-	// one member, no others: the new member alone is dealt the ready cards
+	// A live card names a repository the member must mirror, and the store's
+	// routes name the credential it must read: fleet add derives both from the
+	// store, so the play's credential and mirror steps do their work.
+	brief := writeBrief(t, "c: a card that names a repository\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s")
 	setup := func(ta *testApp) {
 		ta.ok("init --readers reader-a,reader-b")
-		ta.ok("add --stream s1 --count 4")
+		ta.m.SetRoutes([]sprint.Route{{Name: "flash-or", Tier: "flash", Provider: "deepseek", Model: "deepseek-v4-flash", Enabled: true}})
+		ta.ok("add --stream s1 --count 4 --brief-file " + brief)
 		ta.ok("start")
 		ta.live = []string{"bench-c"}      // only the member being added beats
 		ta.ok("reader add reader-bench-c") // its row beats with every command from here
@@ -176,10 +187,19 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 	assert.Contains(t, out, "step=probe host=bench-c done", "the probe step's line")
 	assert.Contains(t, out, "FLEET-ADD OK host=bench-c width=2", "the receipt")
 	assert.Equal(t, 2, fleetAddWidth(t, okta, "bench-c"), "the member is widened only after the check")
-	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "nova_member=bench-c"), "the play is told the member: %v", ok.argv)
-	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "nova_member_width=2"), "the play is told the width: %v", ok.argv)
-	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "nova_member_reader=reader-bench-c"), "the play is told the reader: %v", ok.argv)
-	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "--limit bench-c"), "the play is limited to the host: %v", ok.argv)
+	argvLine := strings.Join(ok.argv, " ")
+	assert.True(t, strings.Contains(argvLine, "nova_member=bench-c"), "the play is told the member: %v", ok.argv)
+	assert.True(t, strings.Contains(argvLine, "nova_member_width=2"), "the play is told the width: %v", ok.argv)
+	assert.True(t, strings.Contains(argvLine, "nova_member_reader=reader-bench-c"), "the play is told the reader: %v", ok.argv)
+	assert.True(t, strings.Contains(argvLine, "--limit bench-c"), "the play is limited to the host: %v", ok.argv)
+	// the run's own variables, derived from the store: the repository the live
+	// card names, the base its mirror is fetched from, and the route credential
+	// the store's routes name. The play's credential and mirror steps are no-ops
+	// without them.
+	_, wantBase := mirrorNameBase(swarm.CardRepoURL("mas-bandwidth/nova-tools"))
+	assert.Contains(t, argvLine, "nova_member_repos=nova-tools", "the verb passes the repository a live card names: %v", ok.argv)
+	assert.Contains(t, argvLine, "nova_member_mirror_base="+wantBase, "the verb passes the base the live card's repository is fetched from: %v", ok.argv)
+	assert.Contains(t, argvLine, "nova_member_route_key=DEEPSEEK_API_KEY", "the verb passes the route credential the store's routes name: %v", ok.argv)
 	require.Contains(t, ok.argv, filepath.Join(src, "fleet", "member.yml"), "the play is fleet/member.yml")
 
 	okta.ok("tick")

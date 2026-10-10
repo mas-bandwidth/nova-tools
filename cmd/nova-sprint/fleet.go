@@ -18,8 +18,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // fleetWords is how a fleet member's status comes about, in nova-sprint help
@@ -359,6 +361,125 @@ func fleetAddFailedStep(output string) string {
 	return step
 }
 
+// fleetAddInputs are the values fleet add supplies to fleet/member.yml from the
+// store when the caller names none: the sealed secret names the member's routes
+// read (routeKey), the repository names its mirrors cover (repos) and the url
+// each is fetched from (mirrorBase).
+type fleetAddInputs struct {
+	routeKey   string
+	repos      []string
+	mirrorBase string
+}
+
+// fleetAddDerive reads the store for what a member add supplies itself: the live
+// work cards name the repositories the member must mirror, and the enabled
+// routes name the credentials it must be able to read. A value the caller names
+// (--route-key, --repos, --mirror-base) wins over the derived one, so an
+// operator can stand in where the store names none.
+func (a *app) fleetAddDerive(ctx context.Context, st *store.Store, routeKey, repos, mirrorBase string) (fleetAddInputs, error) {
+	in := fleetAddInputs{routeKey: routeKey, mirrorBase: mirrorBase}
+	if routeKey == "" {
+		derived, err := a.fleetAddRouteKey(ctx, st)
+		if err != nil {
+			return in, err
+		}
+		in.routeKey = derived
+	}
+	names, bases, err := a.fleetAddMirrors(ctx, st)
+	if err != nil {
+		return in, err
+	}
+	if repos == "" {
+		in.repos = names
+	} else {
+		in.repos = splitCSV(repos)
+	}
+	if in.mirrorBase == "" && len(in.repos) > 0 {
+		base := ""
+		for _, n := range in.repos {
+			b, ok := bases[n]
+			if !ok {
+				return in, fmt.Errorf("--repos names %s, which no live work card names, so its base is unknown; name the base with --mirror-base <url>, or admit a card whose REPO: line names it", n)
+			}
+			if base == "" {
+				base = b
+			} else if base != b {
+				return in, fmt.Errorf("the repositories to mirror live under more than one base (%s and %s); one mirror fetches one base", base, b)
+			}
+		}
+		in.mirrorBase = base
+	}
+	return in, nil
+}
+
+// fleetAddMirrors reads the live work cards' briefs for the repositories a
+// member must mirror: each repository name and the base url its REPO: line
+// resolves to (<base>/<name>.git, the shape nova-swarm mirror takes). A
+// repository two live cards name under two bases is a refusal: one mirror
+// fetches one base.
+func (a *app) fleetAddMirrors(ctx context.Context, st *store.Store) (names []string, bases map[string]string, err error) {
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	bases = map[string]string{}
+	for _, c := range snap.Work.Column(sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging) {
+		cb := swarm.ReadCardBase([]byte(c.F("brief")))
+		name, base := mirrorNameBase(cb.Repo)
+		if name == "" {
+			continue
+		}
+		if prev, ok := bases[name]; ok && prev != base {
+			return nil, nil, fmt.Errorf("the live cards name %s under two bases (%s and %s); one mirror fetches one base", name, prev, base)
+		}
+		bases[name] = base
+	}
+	for n := range bases {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names, bases, nil
+}
+
+// mirrorNameBase is a repository clone url as nova-swarm mirror takes it: the
+// repository name and the base url it is fetched from, <base>/<name>.git. ""
+// when the url names no repository under a base.
+func mirrorNameBase(repo string) (name, base string) {
+	r := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(repo), "/"), ".git")
+	i := strings.LastIndex(r, "/")
+	if i <= 0 || i == len(r)-1 {
+		return "", ""
+	}
+	return r[i+1:], r[:i]
+}
+
+// fleetAddRouteKey is the sealed secret names the member's routes read: the
+// provider key of every enabled route (<PROVIDER>_API_KEY), in name order,
+// comma separated. A provider whose key name is no secret name is skipped (a
+// headless harness's subscription login holds no such secret); "" when no route
+// needs one.
+func (a *app) fleetAddRouteKey(ctx context.Context, st *store.Store) (string, error) {
+	routes, _, err := st.Routes(ctx)
+	if err != nil {
+		return "", err
+	}
+	seen := map[string]bool{}
+	var keys []string
+	for _, r := range routes {
+		if !r.Enabled || r.Provider == "" {
+			continue
+		}
+		k := strings.ToUpper(r.Provider) + "_API_KEY"
+		if !secrets.IsValidEnvVar(k) || seen[k] {
+			continue
+		}
+		seen[k] = true
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return strings.Join(keys, ","), nil
+}
+
 func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 	const name = "fleet add"
 	fs, c := a.verbSetup(name)
@@ -366,6 +487,9 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 	source := fs.String("source", "", "the nova-tools checkout whose fleet/member.yml is the play")
 	inventory := fs.String("inventory", a.getenv("NOVA_INVENTORY"), "the inventory the play reads, the nova-inventory script (else NOVA_INVENTORY)")
 	ansible := fs.String("ansible", "ansible-playbook", "the ansible-playbook binary")
+	routeKey := fs.String("route-key", "", "the sealed secret names the member's routes read, comma separated, read in the seat's own process; else derived from the store's enabled routes")
+	repos := fs.String("repos", "", "the repository names the member mirrors, a comma-separated list; else every repository a live work card names")
+	mirrorBase := fs.String("mirror-base", "", "the url each mirrored repository is fetched from, <base>/<name>.git; else derived from the repositories the live work cards name")
 	dry := fs.Bool("dry-run", false, "run the play with --check, list every step and write nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -404,6 +528,15 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	reader := "reader-" + host
 	again := "fix the cause and run the same fleet add again (it changes only what is still missing or stale)"
+	// the run's own variables, from the store or the caller: the route credential
+	// the member reads, and the repository mirrors every live card names. The
+	// play's credential and mirror steps are driven by these; without them the
+	// member is set up with neither.
+	inputs, err := a.fleetAddDerive(ctx, st, *routeKey, *repos, *mirrorBase)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s fleet add REFUSED step=inputs host=%s: %s; nothing was run; %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
+		return 1
+	}
 	// the probe card this run deals the member: the member is widened to one for
 	// it, so every refusal after the deal drains it again (proven is set once the
 	// member is widened for real)
@@ -415,6 +548,12 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 	}()
 	argv := []string{"-i", *inventory, play, "-e", "nova_member=" + host,
 		"-e", "nova_member_width=" + strconv.Itoa(w), "-e", "nova_member_reader=" + reader, "--limit", host}
+	if inputs.routeKey != "" {
+		argv = append(argv, "-e", "nova_member_route_key="+inputs.routeKey)
+	}
+	if len(inputs.repos) > 0 {
+		argv = append(argv, "-e", "nova_member_repos="+strings.Join(inputs.repos, ","), "-e", "nova_member_mirror_base="+inputs.mirrorBase)
+	}
 	if *dry {
 		argv = append(argv, "--check")
 	}
