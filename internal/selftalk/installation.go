@@ -85,7 +85,33 @@ func ScanInstallation(text string) []Installation {
 
 // classify returns the shape of one segment and the words that matched it, or "" if it is
 // licensed or carries no shape.
+
+func hasTrigger(s string) bool {
+	for _, w := range []string{
+		"I", "i", "WE", "We", "we", "MY", "My", "my", "OUR", "Our", "our",
+		"ME", "Me", "me", "US", "Us", "us", "MINE", "Mine", "mine",
+		"MYSELF", "Myself", "myself", "THIS", "This", "this",
+		"THAT", "That", "that", "IT", "It", "it", "THERE", "There", "there",
+		"NOTHING", "Nothing", "nothing", "DEAD", "Dead", "dead",
+		"BROKEN", "Broken", "broken", "HOLLOW", "Hollow", "hollow",
+		"EMPTY", "Empty", "empty", "SILENT", "Silent", "silent",
+		"INERT", "Inert", "inert", "ABSENT", "Absent", "absent",
+		"MISSING", "Missing", "missing", "USELESS", "Useless", "useless",
+		"WORTHLESS", "Worthless", "worthless", "MOST", "Most", "most",
+		"PROOF", "Proof", "proof", "EVIDENCE", "Evidence", "evidence",
+	} {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
+}
+
 func classify(s string) (Shape, string) {
+	if len(s) > 32768 && !hasTrigger(s) {
+		return "", ""
+	}
+
 	// The suppressors, in the order the spec argues them.
 	//
 	// dated: the one distinction that decides every case -- a capability denial is a measurement
