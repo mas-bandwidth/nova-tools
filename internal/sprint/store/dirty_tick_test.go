@@ -232,6 +232,31 @@ func TestOneTickEndNoteOnlyWhenTheTickAddressedTheCoordinator(t *testing.T) {
 	require.EqualValues(t, 2, ends(), "a quiet tick wrote a tick-end note: %d", ends())
 }
 
+// The backup edge's judgment is pushed to the seat like the others
+// (docs/SPEC-SPRINT.md section 1, "the backup state"; sprint.TickBackup): a
+// tick whose review rises above working opens one "reads are backed up"
+// judgment, and a tick that holds the predicate writes none more.
+func TestABackupEdgeOpensOneJudgmentOnTheSeat(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	h.machine() // deals: nothing in review, no judgment
+	require.Empty(t, h.openOf(sprint.NReadsBackedUp), "nothing in review raises no backup judgment")
+	h.work("m1")
+	h.work("m2")
+	h.machine() // to review: review above working, one judgment at the edge
+	open := h.openOf(sprint.NReadsBackedUp)
+	require.Len(t, open, 1, "one reads-backed-up judgment at the edge")
+	require.Equal(t, sprint.Judgment, open[0].Note.Kind)
+	require.True(t, open[0].Note.StreamLevel)
+	require.Contains(t, open[0].Note.What, "review 2 is above working 0")
+	require.Contains(t, open[0].Note.What, "oldest in review is")
+	// the predicate holds: no second judgment
+	h.machine()
+	require.Len(t, h.openOf(sprint.NReadsBackedUp), 1, "still one while review stays above working")
+}
+
 // A drain a step makes before it plans is said, never silent: a pump part
 // that finds a change queued after the tick's first read drains it first and
 // the tick names that drain among its parts; a verb on a STOPPED machine
