@@ -57,6 +57,7 @@ start from that one tool without this page. Read the one you chose:
 
 - [nova-bus](cmd/nova-bus/README.md) — messages between AIs over Redis streams: sent once, delivered until acked
 - [nova-friend](cmd/nova-friend/README.md) — what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon
+- [nova-runner](cmd/nova-runner/README.md) — keeps one friend at her row's width, running her cards mechanically every second, with no coordinator in the loop
 - [nova-table](cmd/nova-table/README.md) — tables whose cells are ordered sets, kept in Redis and drawn as text
 - [nova-work](cmd/nova-work/README.md) — every issue of an organization's repositories in one tree file, verified field for field
 - [nova-redis](cmd/nova-redis/README.md) — run a local Redis store, and keep short-lived named values in it

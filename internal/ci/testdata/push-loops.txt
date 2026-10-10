@@ -19,6 +19,9 @@ cmd/nova-friend/wakeping.go world.wakeFriends wake ping
 cmd/nova-friend/wakeping.go world.wakePass wake ping
 cmd/nova-friend/main.go world.waitPong wake ping pong wait
 
+# the friend's mechanical runner (cmd/nova-runner)
+cmd/nova-runner/runner.go Runner.Run friend runner
+
 # the fleet member and reader (cmd/nova-swarm member, internal/member)
 cmd/nova-swarm/member.go cmdMember member pass
 cmd/nova-swarm/member.go memberLoop member pass
