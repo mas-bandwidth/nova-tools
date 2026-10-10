@@ -159,8 +159,8 @@ Each card is "make it usable by a stranger building a different workflow". The v
   `RUNS.tsv` rows. CardContract (nova-swarm and member) and CardMachine (the Lua in `nsprint/fn`) stay in nova-tools
   beside the code they model. The TLC runner is still nova-tools' `tools/tlacheck`, so nova-sprint needs its own runner
   or an imported one.
-- **Tests**: every test of the moved packages moved with them. `internal/ci/sprint_tables_lock_class_test.go` became
-  the sprint package's tables_lock_test.go, beside `TABLES.lock`. Certification's `tick-gate` job (the
+- **Tests**: every test of the moved packages moved with them. internal/ci's sprint tables lock test became
+  `internal/sprint/tables_lock_test.go`, beside `TABLES.lock`. Certification's `tick-gate` job (the
   sprint tick's wall clock) left nova-tools; nova-sprint's CI does not have it yet.
 - **Ledgers, in nova-tools**: 410 `deleted-tests.txt` rows; the testify, discarded, remedy, toolanswers and generality
   shards of the moved packages; `compared_examples`, `dead_code_allowlist`, `generality-text/tla`,
