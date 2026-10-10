@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -148,6 +149,9 @@ type reconcileReq struct {
 	op, who     string
 	say         func(string)
 	push        bool
+	// readReport reads a card's outbox report (friendReadReport when nil): the run loop's
+	// pass gives one bounded by FriendReadDeadline (friendreconcile_tick.go)
+	readReport func(dir, job string) (report, why string, at time.Time, err error)
 }
 
 // reconcileTally is what one reconcile did: the cards working on her row it read, each
@@ -186,7 +190,11 @@ func (a *app) reconcileFriend(ctx context.Context, st *store.Store, r reconcileR
 	for _, p := range packets {
 		job := friendJobOf(p)
 		held = append(held, p.Card, job)
-		report, bad, at, err := friendReadReport(dir, job)
+		readReport := r.readReport
+		if readReport == nil {
+			readReport = friendReadReport
+		}
+		report, bad, at, err := readReport(dir, job)
 		if err != nil {
 			return t, err
 		}

@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,4 +117,52 @@ func TestRunReconcilesFriendsEveryTick(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(out, "friend amy agrees with her QUEUE.json again"), out)
 		assert.Equal(t, sprint.Working, primary(ta, "s1-1").Primary.Col, "a disagreement is said, never acted on")
 	})
+}
+
+// TestRunReconcilePassesOverAStalledFriendDirectory pins the reconcile's deadline
+// (friendreconcile_tick.go, FriendReadDeadline): the pass runs in the tick's turn of the
+// line, so a friend's directory that does not answer (a stalled mount: here a read held
+// by the test's hook) passes her over for that tick, said once and pushed to the
+// coordinator once, nothing of hers moved, and the loop goes on ticking; once her
+// directory answers, her next pass gets through. The deadline is the app's clock
+// (a.after), fired at once here: no wall clock.
+func TestRunReconcilePassesOverAStalledFriendDirectory(t *testing.T) {
+	t.Parallel()
+	ta, root := tickReconcileApp(t, 2)
+	writeTestQueueFile(t, ta, root, "amy", `{"tasks":[]}`)
+	hers := filepath.Join(root, "amy-working")
+	block := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-block:
+		default:
+			close(block)
+		}
+	})
+	ta.a.friendDirHook = func(dir string) {
+		if dir == hers {
+			<-block
+		}
+	}
+	prev := ta.a.after
+	ta.a.after = func(d time.Duration) <-chan time.Time {
+		if d == FriendReadDeadline {
+			now := make(chan time.Time, 1)
+			now <- time.Time{}
+			return now
+		}
+		return prev(d)
+	}
+	out := runTicks(t, ta, 3)
+	assert.Equal(t, 1, strings.Count(out, "FRIEND-RECONCILE SKIPPED friend=amy: "+hers+" did not answer"), out)
+	assert.Equal(t, 3, strings.Count(out, "TICK OK"), "the loop ticks on past her: %s", out)
+	assert.NotContains(t, out, "RETURNED", "nothing of hers is moved while her directory does not answer")
+	assert.Equal(t, 1, strings.Count(ta.ok("inbox"), "a friend's directory did not answer the reconcile"), "pushed to the coordinator once")
+
+	close(block)
+	ta.a.after = prev
+	out = runTicks(t, ta, 1)
+	for _, id := range []string{"s1-1", "s1-2"} {
+		assert.Contains(t, out, "FRIEND-RECONCILE RETURNED friend=amy card="+id+".w1", "her directory answers again: her pass gets through (%s)", id)
+	}
 }
