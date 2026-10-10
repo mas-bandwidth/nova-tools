@@ -15,3 +15,4 @@ cmd/nova-swarm/lint_test.go:21 url 2026-09-17 a github.com clone line in a card 
 cmd/nova-swarm/lint_test.go:61 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
 cmd/nova-swarm/lint_test.go:86 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
 cmd/nova-swarm/profile_test.go:93 url 2026-09-17 a github.com clone line in a log fixture, not a live call; predates the checker
+internal/sandbox/policy_unit_cover_test.go:147 hostport 2026-10-10 test data for loopbackHostText policy, not a live endpoint
