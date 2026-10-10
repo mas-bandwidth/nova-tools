@@ -61,10 +61,12 @@ const (
 // Packet is what a held work card says about its checkout: the repository (owner/name), the
 // base it starts at (a branch, a tag or a full sha) and its pin (BaseSha, the commit a
 // `BASE: <ref>@<sha40>` names; "" when unpinned), the branch its work is pushed to, and its
-// attempt.
+// attempt. Carry is the head of an earlier attempt the stage merges onto the base tip before
+// the lane starts (the brief's CARRY: line, stage_carry.go); "" when there is none.
 type Packet struct {
 	Card, Job, Repo, Base, BaseSha, Branch string
 	Attempt                                int
+	Carry                                  string
 }
 
 var (
@@ -100,6 +102,9 @@ func PacketOf(h HeldCard) (Packet, bool) {
 	// does not read stays as written, for check to refuse
 	if ref, sha, ok := cardhdr.ParseBase(p.Base); ok && p.BaseSha == "" {
 		p.Base, p.BaseSha = ref, sha
+	}
+	if v, ok := cardhdr.Value(h.Brief, "CARRY"); ok {
+		p.Carry = carryHead(v)
 	}
 	return p, p.Repo != ""
 }
@@ -245,11 +250,11 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 		if err != nil || branch != p.Branch {
 			return "", fmt.Errorf("%s/%s/repo is there with no %s and is not on %s (%q); it is left as found", JobsDir, p.Job, JobFile, p.Branch, branch)
 		}
-		sha, err := s.git(ctx, 0, "-C", checkout, "rev-parse", "HEAD")
+		sha, conflicts, err := s.resumeCarry(ctx, checkout, p)
 		if err != nil {
 			return "", err
 		}
-		return sha, s.writeJob(p, sha)
+		return sha, s.writeJob(p, sha, conflicts)
 	}
 	lock := s.repoLock(p.Repo)
 	lock.Lock()
@@ -295,7 +300,14 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return head, s.writeJob(p, head)
+	head, conflicts, err := s.carryStep(ctx, checkout, mirror, p, head)
+	if err != nil {
+		// a carried head that is gone: the checkout is removed so a later stage of the job
+		// starts from nothing, never from a checkout that looks staged but carries no JOB.md
+		s.dropCarried(ctx, mirror, checkout, p.Branch, created)
+		return "", err
+	}
+	return head, s.writeJob(p, head, conflicts)
 }
 
 // stageScratch is where a job's worktree is added before it is moved in, under its job dir.
@@ -578,21 +590,26 @@ func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
 }
 
 // JobText is a staged job's JOB.md: the card-contract shape (docs/SPEC-CARD-CONTRACT.md), the
-// checkout, the branch, the outbox report and the finish.
-func JobText(dir string, p Packet, sha string) string {
+// checkout, the branch, the outbox report and the finish, and, for a carry merge that
+// conflicted, the CONFLICTS section listing the two sides and the files.
+func JobText(dir string, p Packet, sha string, conflicts []string) string {
 	attempt := max(p.Attempt, 1)
 	checkout := filepath.Join(JobDir(dir, p.Job), "repo")
 	outbox := filepath.Join(dir, "outbox", p.Job)
-	return fmt.Sprintf("# JOB: work %s, attempt %d\n\n"+
+	text := fmt.Sprintf("# JOB: work %s, attempt %d\n\n"+
 		"The staged checkout: %s (a git worktree of %s at %s, %s, on branch %s).\n"+
 		"Work there; commit as the brief says; push the branch (git push -u origin %s).\n"+
 		"Finish: write %s with 'Verdict: LAND|HOLD|FAIL' and 'Head: <sha>' on the first two lines, then the report; RESULT.md beside it with the same head. The coordinator syncs the outbox.\n"+
 		"If the push is refused, leave the report with Verdict: HOLD naming 'no push' and the coordinator pushes from this checkout.\n",
 		p.Card, attempt, checkout, p.Repo, p.Base, sha, p.Branch, p.Branch, filepath.Join(outbox, "REPORT.md"))
+	if len(conflicts) > 0 {
+		text += conflictsSection(sha, p.Carry, conflicts)
+	}
+	return text
 }
 
-func (s *Stager) writeJob(p Packet, sha string) error {
-	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(JobText(s.Dir, p, sha)), 0o644, atomicfile.NoReplace())
+func (s *Stager) writeJob(p Packet, sha string, conflicts []string) error {
+	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(JobText(s.Dir, p, sha, conflicts)), 0o644, atomicfile.NoReplace())
 	if errors.Is(err, fs.ErrExist) {
 		return nil // staged by another hand between the look and the write
 	}

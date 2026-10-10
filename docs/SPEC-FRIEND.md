@@ -1708,6 +1708,31 @@ Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
 
+The stage carries a prior attempt onto the base tip (internal/friend/stage_carry.go), before the
+lane starts and before `JOB.md` is written. A work card whose brief carries a `CARRY: <card>
+attempt <n> head=<sha40>` line (the member's `CarryLine`; read through `cardhdr.Value` into
+`Packet.Carry`, its trailing `head=` a full sha, and no carry when it is none) is staged at the
+base tip with that head merged onto it — the finding of 2026-10-07, when every rework's model
+fetched the base, merged the CARRY head onto it, resolved the merge and re-ran the gates before
+its own work began: the strong models compensated and spent the tokens, the flash models failed.
+A clean merge is one commit `carry <head> onto <base tip>` (both full shas), the checkout starts
+from it, and `JOB.md` names it. A merge with conflicts is not resolved by the stage: the
+conflicted files stay in the checkout, no commit is made, `JOB.md` lists them under `CONFLICTS:`
+with the two sides' shas (`ours=` the base tip, `theirs=` the carried head), and the lane's
+prompt opens with that list (`CarryPromptOf`), the model resolving the conflicts as its first
+step and nothing else about the base. A carried head the mirror does not hold (its branch was
+pruned from the remote) is a stage fault: the card's `REPORT.md` is written `Verdict: FAIL` with
+the exact line `carry head <sha> is gone`, the checkout is removed and the job is never started,
+and the judgment names the head. The head must still be reachable from a freshly fetched
+remote-tracking branch or tag; a commit left only in the mirror's local object store or an old
+job branch after remote pruning is gone for this purpose. If staging stopped after moving the
+checkout but before writing `JOB.md`, its retry completes the carry before publishing that job.
+One-shot Claude lanes open with the same conflict list by reading a private card prompt in the
+job directory; the delivered inbox brief remains untouched. A card with no `CARRY:` line is
+staged as before.
+`TestACarryMergesThePriorHeadOntoTheBaseTipAsOneCommit`, `TestAConflictingCarryListsTheFilesAndMakesNoCommit`,
+`TestACarriedHeadThatIsGoneFailsTheCard` and `TestACardWithNoCarryLineStagesAtTheBase` pin it.
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
