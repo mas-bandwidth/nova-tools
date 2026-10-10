@@ -1302,10 +1302,17 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			planned = p
 			stop = p.Stop
 			if part.Name == sprint.PartDone {
+				// The done part may be composed with another part that writes
+				// notes of its own (the review alarm, steps_review.go), so the
+				// sprint-done note is the one whose type is NSprintDone, never
+				// simply the first.
 				done = nil
-				if len(p.Notes) > 0 {
-					n := p.Notes[0]
-					done = &n
+				for i := range p.Notes {
+					if p.Notes[i].Type == sprint.NSprintDone {
+						n := p.Notes[i]
+						done = &n
+						break
+					}
 				}
 			}
 			return p, d
