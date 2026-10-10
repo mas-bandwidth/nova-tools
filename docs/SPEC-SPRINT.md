@@ -6171,10 +6171,15 @@ The check also reads the process table of the machine it runs on (`ps -axww -o p
 the coordinator's stopgaps (docs/STOPGAPS.md, `sprint.Stopgaps`; card the-stopgaps-retire2) and
 prints, after the `MACHINERY` lines and before the summary, one line per stopgap found alive:
 `STOPGAP <name> still running pids=<pid,...> state=<owed|landed|retired> card=<card> verb="<verb>"`.
-An owed or landed stopgap's line is a note; a retired one (its card landed and a real run of its
-verb recorded) still running is DOWN with `remedy="kill <pid> ..."`, so the check exits 1 until it
-is removed. The summary's `n` counts these lines with the checks'. The server's own check, and a
-process table that cannot be read, print no stopgap line. `--json` carries them as `stopgaps`.
+A row's state is the register's rule: Landed `no` and Real run `owed` is owed; a landed commit
+with Real run still `owed` is landed, a note and never retired; a landed commit with a run is
+retired, DOWN while it still runs. A run is written only by the seat, as `<YYYY-MM-DD> <host>:
+<what ran and what it did>`. An owed or landed stopgap's line is a note; a retired one (its card
+landed and a real run of its verb recorded) still running is DOWN with `remedy="kill <pid> ..."`,
+so the check exits 1 until it is removed. The summary's `n` counts these lines with the checks'.
+The server's own check prints no stopgap line; a process table that cannot be read is a DOWN line
+`MACHINERY stopgaps DOWN why="process scan failed: <err>" remedy="ps -axww -o pid=,args="`, so the
+check exits 1. `--json` carries them as `stopgaps`.
 Tests: `TestEveryStopgapNamesItsVerbAndProof` (the table against `sprint.Stopgaps`, row for row,
 refusing a row with no card, verb or test, a landed row whose test is not in the tree, and a real
 run of a verb not landed), `TestTheStopgapTableRefusesARowWithNoVerbOrProof`,

@@ -30,6 +30,7 @@ const stopgapHeader = "| Stopgap | What it did | Card | Verb | Test | Landed | R
 var (
 	testNameRE = regexp.MustCompile(`^Test[A-Z][A-Za-z0-9_]*$`)
 	commitRE   = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	runRE      = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2} [^ ]+:`)
 )
 
 // parseStopgapTable reads the register's table out of docs/STOPGAPS.md: one
@@ -109,8 +110,12 @@ func checkStopgaps(rows []Stopgap, testInTree func(string) bool) []string {
 		if s.Landed != "" && !commitRE.MatchString(s.Landed) {
 			refusals = append(refusals, name+": Landed "+s.Landed+" is neither a commit nor no")
 		}
-		if s.Run != "" && s.Landed == "" {
-			refusals = append(refusals, name+": a real run of a verb that has not landed")
+		if s.Run != "" {
+			if s.Landed == "" {
+				refusals = append(refusals, name+": a real run of a verb that has not landed")
+			} else if !runRE.MatchString(s.Run) {
+				refusals = append(refusals, name+": Real run "+s.Run+" does not start with a date, a host and a colon")
+			}
 		}
 	}
 	for _, n := range stopgapNames {
@@ -188,6 +193,7 @@ func TestTheStopgapTableRefusesARowWithNoVerbOrProof(t *testing.T) {
 		{"landed test not in tree", func(s *Stopgap) { s.Landed, s.Test = "abc1234", "TestGone" }, "runner.zsh: landed, and its test TestGone is not in the tree"},
 		{"landed not a commit", func(s *Stopgap) { s.Landed = "yes" }, "runner.zsh: Landed yes is neither a commit nor no"},
 		{"run of an unlanded verb", func(s *Stopgap) { s.Run = "bench 2026-10-06" }, "runner.zsh: a real run of a verb that has not landed"},
+		{"a run that is no date, host and colon", func(s *Stopgap) { s.Landed, s.Run = "abc1234", "yesterday on the bench" }, "runner.zsh: Real run yesterday on the bench does not start with a date, a host and a colon"},
 	} {
 		rows := whole()
 		c.break_(&rows[0])
@@ -270,9 +276,18 @@ func TestTheSeatCheckPrintsEveryStopgapStillRunning(t *testing.T) {
 	assert.Empty(t, r.Stopgaps)
 	assert.NotContains(t, r.Text(), StopgapToken)
 
-	// Not measured (the server's own check, or a ps that failed): no line.
+	// Not measured (the server's own check): no line, exit 0.
+	m.Stopgaps = StopgapsM{}
+	r = JudgeSeatCheck(m, now)
+	assert.Empty(t, r.Stopgaps)
+	assert.NotContains(t, r.Text(), "stopgaps")
+	assert.Equal(t, 0, r.ExitCode, "a check that read no process table is not DOWN")
+
+	// A ps that failed: DOWN, exit 1, never MACHINERY OK.
 	m.Stopgaps = StopgapsM{Err: "ps: exit 1"}
-	assert.Empty(t, JudgeSeatCheck(m, now).Stopgaps)
+	r = JudgeSeatCheck(m, now)
+	assert.Equal(t, 1, r.ExitCode, "a failed process scan is DOWN")
+	assert.Contains(t, r.Text(), `MACHINERY stopgaps DOWN why="process scan failed: ps: exit 1" remedy="ps -axww -o pid=,args="`)
 }
 
 func TestARetiredStopgapStillRunningIsDownInTheReport(t *testing.T) {

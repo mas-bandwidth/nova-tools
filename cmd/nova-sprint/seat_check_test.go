@@ -169,4 +169,14 @@ func TestSeatCheckPrintsAStopgapStillRunning(t *testing.T) {
 	}
 	ta.a.outside = o
 	assert.NotContains(t, ta.ok("seat check"), sprint.StopgapToken)
+
+	// A ps that failed: DOWN, exit 1, never MACHINERY OK.
+	o.serverAddr = func() (string, bool) { return "127.0.0.1:7399", false }
+	o.processes = func(ctx context.Context) ([]sprint.Proc, error) {
+		return nil, fmt.Errorf("ps: exit 1")
+	}
+	ta.a.outside = o
+	code, out, _ := ta.do("seat check")
+	assert.Equal(t, 1, code, "a failed process scan exits 1")
+	assert.Contains(t, out, `MACHINERY stopgaps DOWN why="process scan failed: ps: exit 1" remedy="ps -axww -o pid=,args="`)
 }

@@ -30,6 +30,7 @@ const (
 	SeatCheckQueue     = "queue"
 	SeatCheckVersions  = "versions"
 	SeatCheckPush      = "push"
+	SeatCheckStopgaps  = "stopgaps"
 )
 
 // SeatCheckToken is the first word of every line.
@@ -570,7 +571,15 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 	}
 
 	// 13. the stopgaps alive on the seat's machine: a note while the verb that
-	// replaces one is owed, DOWN once it is retired and still runs
+	// replaces one is owed, DOWN once it is retired and still runs; a process
+	// scan that failed is DOWN, never silent
+	if m.Stopgaps.Err != "" {
+		add(SeatCheckLine{
+			Thing:  SeatCheckStopgaps,
+			Facts:  []string{"why=" + quoteSeatCheck("process scan failed: "+m.Stopgaps.Err)},
+			Remedy: "ps -axww -o pid=,args=",
+		})
+	}
 	for _, l := range JudgeStopgaps(Stopgaps, m.Stopgaps) {
 		if !l.Up {
 			r.Down++
