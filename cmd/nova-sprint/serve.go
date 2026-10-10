@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -317,6 +318,36 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 	}
 	if r.URL.Path != sprintwire.Path || r.Method != http.MethodPost {
 		http.Error(w, "the sprint server takes POST "+sprintwire.Path, http.StatusNotFound)
+		return
+	}
+	targetPath := a.getenv("NOVA_SPRINT_SERVER_BIN")
+	if targetPath == "" {
+		if exe, err := os.Executable(); err == nil {
+			targetPath = exe
+		}
+	}
+	if sprint.IsRestarting(targetPath) {
+		// A server switch is under way: answer a typed Restarting result, one a
+		// verb, so the client waits and resends rather than learn nothing is known
+		// (docs/SPEC-SPRINT.md, section "Server Switch Restarting and Bounded Wait").
+		// ignored: read request body for restarting check
+		body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, sprintwire.MaxRequest)) // ignored: request body read for restarting check
+		var req sprintwire.Request
+		// ignored: unmarshal request body for restarting check
+		_ = json.Unmarshal(body, &req) // ignored: unmarshal request body
+		n := len(req.Verbs)
+		if n == 0 {
+			n = 1
+		}
+		resp := sprintwire.Response{
+			Results: make([]sprintwire.Result, n),
+		}
+		for i := range resp.Results {
+			resp.Results[i] = sprintwire.Result{Restarting: true}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// ignored: encode restarting response
+		_ = json.NewEncoder(w).Encode(resp) // ignored: encode restarting response
 		return
 	}
 	var req sprintwire.Request
