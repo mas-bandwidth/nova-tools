@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // An installed sync pass must leave a stageable work brief to the daemon. The
@@ -19,6 +19,7 @@ import (
 func TestFriendSyncLeavesAStageableWorkBriefToTheDaemon(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.syncStage = false // expose the real sync path before the daemon stages
 	ta.ok("tick")
 	job := "s1-1.w1"
 	dir := filepath.Join(root, "amy-working")
@@ -34,7 +35,10 @@ func TestFriendSyncLeavesAStageableWorkBriefToTheDaemon(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(jobDir, "repo"), 0o755); err != nil {
 			return "", err
 		}
-		return "", os.WriteFile(filepath.Join(jobDir, friend.JobFile), []byte("# JOB: staged\n"), 0o644)
+		if err := os.WriteFile(filepath.Join(jobDir, friend.JobFile), []byte("# JOB: staged\n"), 0o644); err != nil {
+			return "", err
+		}
+		return strings.Repeat("a", 40), nil
 	}}
 	o := delivery.One(context.Background(), held[0])
 	require.NoError(t, o.Err)

@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +44,9 @@ type testApp struct {
 	quiet map[string]bool
 	// queue is the merge queues land asks, a fake: no forge is asked
 	queue *heldQueue
+	// syncStage simulates a friend's daemon staging its held work before a
+	// coordinator sync pass in the legacy transport tests.
+	syncStage bool
 }
 
 func newTestApp(t *testing.T) *testApp {
@@ -118,8 +124,41 @@ func (ta *testApp) beat() {
 func (ta *testApp) do(line string) (int, string, string) {
 	var out, errb bytes.Buffer
 	ta.beat()
+	if ta.syncStage && strings.HasPrefix(line, "friend sync") {
+		ta.stageSyncFixtures(split(line))
+	}
 	code := ta.a.run(ta.withEpoch(split(line)), &out, &errb)
 	return code, out.String(), errb.String()
+}
+
+func (ta *testApp) stageSyncFixtures(args []string) {
+	ta.t.Helper()
+	root := ""
+	for i, arg := range args {
+		if arg == "--root" && i+1 < len(args) {
+			root = args[i+1]
+		}
+	}
+	if root == "" {
+		return
+	}
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	names, err := st.FriendNames(context.Background())
+	require.NoError(ta.t, err)
+	for _, name := range names {
+		held, err := friendCardsOf(context.Background(), st, name)
+		require.NoError(ta.t, err)
+		dir := filepath.Join(root, name+"-working")
+		for _, h := range held {
+			if _, stageable := friend.PacketOf(h); !stageable || friend.Staged(dir, h.Job) {
+				continue
+			}
+			job := friend.JobDir(dir, h.Job)
+			require.NoError(ta.t, os.MkdirAll(filepath.Join(job, "repo"), 0o755))
+			require.NoError(ta.t, os.WriteFile(filepath.Join(job, friend.JobFile), []byte("# JOB: test daemon staged this work\n"), 0o644))
+		}
+	}
 }
 
 // withEpoch is a report as an outside actor makes it: with the epoch its

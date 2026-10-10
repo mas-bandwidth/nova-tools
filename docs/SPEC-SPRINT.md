@@ -766,8 +766,11 @@ nor a lateness (`TestAWithdrawnFriendReadIsAskedAgain`,
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard
 (docs/FRIENDS.md, a sprint card): for each card working or ready on a friend's
-row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so
-with one nova-bus message from the coordinator to her, subject `card <card>
+row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so,
+except that work naming a repository waits for its staged `JOB.md` so the
+daemon cannot lose the stage-before-brief race. The daemon may write that brief
+first; sync still collects the card's report. When sync writes a brief, it
+announces it with one nova-bus message from the coordinator to her, subject `card <card>
 dealt: <the FRIEND-CARD DELIVERED line>`, the inbox path in the body (her
 daemon pushes it into her session, which the inbox file alone never does; the
 store is `NOVA_BUS_REDIS`; `NOVA_BUS_REDIS_USER` names its ACL user and

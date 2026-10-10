@@ -1687,7 +1687,10 @@ same code path (`friend.Delivery.One`):
   (`SyncInboxOwed` counts it staging, never missing); the stage's goroutine stages the job and
   then writes `inbox/<job>/BRIEF.md`, and the record says `stage: staged ...` before `inbox:
   wrote ...`. A stage that fails writes no brief, so no runner meets the card at all; a read,
-  and a card naming no `REPO`, have their brief written alone.
+  and a card naming no `REPO`, have their brief written alone. Coordinator `friend sync`
+  also leaves a stageable work brief unwritten until `jobs/<job>/JOB.md` is present;
+  the daemon owns that stage and may write the brief itself. Sync still collects a
+  report while a stage is pending.
 - **Clones come from a full local mirror.** A blob-less partial mirror breaks the clone ("pack
   has unresolved deltas"), so a mirror whose `extensions.partialclone` or
   `remote.origin.promisor` is set is refused naming its remedy (remove it, and the next stage

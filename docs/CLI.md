@@ -2726,7 +2726,8 @@ daemon's delivery, by the same code: each card on her row has its job staged and
 written under `<root>/<friend>-working`, one `DELIVER <job> staged|brief|skipped [<why>]` line
 each; `--stages runner` for a friend whose runner stages its own jobs (her daemon's `nova-friend
 run --stages runner`), `--mirrors <dir>` the bare mirrors (default: under her daemon's state
-dir). The order and its rules are [SPEC-FRIEND.md](SPEC-FRIEND.md), "The delivery order".
+dir). `friend sync` waits for a stageable work job's `JOB.md` before writing its brief;
+the daemon may write that brief first. The order and its rules are [SPEC-FRIEND.md](SPEC-FRIEND.md), "The delivery order".
 
 ### A worker's own view: the dashboard's pull routes
 
