@@ -114,6 +114,15 @@ help:
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 
+# tdocs-docs-ci-b.w9: the docs gate the docs workflow runs on every docs change.
+# One command a line, no shell control flow: the internal/docs tests, the link
+# check, and the generated CLI reference check (the clidoc target builds the
+# tool binaries and then runs the reference generator over them).
+docs-check:
+	$(GO) test -count=1 ./internal/docs/...
+	$(GO) run ./cmd/nova-check links --dir .
+	$(MAKE) clidoc
+
 map:
 	$(GO) run ./tools/agentsmap
 
