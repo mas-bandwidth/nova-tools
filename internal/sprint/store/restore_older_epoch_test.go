@@ -68,7 +68,7 @@ func TestTheStateAndTheDumpHoldTheRecordsOfAnOlderEpoch(t *testing.T) {
 	for _, k := range dump {
 		keys[k.Key] = true
 		if e, ok := KeyEpoch(k.Key); ok && e != es.N {
-			require.True(t, IsRecordKey(sprint.Names{}, k.Key), "only a record of another epoch is taken: %s", k.Key)
+			require.True(t, IsRecordKey(h.st.Names, k.Key), "only a record of another epoch is taken: %s", k.Key)
 		}
 	}
 	for _, id := range one {
@@ -102,7 +102,7 @@ func TestBackupKeyTakesRecordsOfEveryEpoch(t *testing.T) {
 		{n.KeyAt("fence", 15), true},
 		{"table:" + n.Table(sprint.Work) + ":7:epoch", false},
 		{"table:" + n.Table(sprint.Work) + ":15:epoch", true},
-		{n.MemberPrefix(sprint.Work), false},
+		{n.MemberPrefix(sprint.Work), true}, // a sprint key with no epoch, shared
 		{"other:sprint:w:x~7", false},
 	} {
 		require.Equal(t, c.want, BackupKey(n, c.key, 15), c.key)
