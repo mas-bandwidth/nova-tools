@@ -1671,6 +1671,94 @@ Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
 
+## A friend's models (internal/config/friendmodel.go, internal/sprint/friend_model.go, internal/friend/models.go)
+
+The owner, 2026-10-05: "how do friends know which of THEIR models should be used per-tier?",
+"Is the decision made here? Do they decide? Do they even know?" and "Should this be made part
+of the friend configuration?" Before this, nobody decided: a friend row listed tiers and no
+models, and a session friend ran a heavy card on whatever model her window was set to. Now her
+nova-config friend row is the one source:
+
+```sh
+nova-config friend set amy --model flash=<m>,pro=<m>,heavy=<m>,frontier=<m>
+nova-config friend set bob --children no --mode one-shot --width 12
+```
+
+`model` maps each tier she serves to the model she runs it on; `children` (yes or no) says
+whether her harness runs child agents, and `child_model` (yes or no) whether a child's model
+can be chosen ("Not all friends can do child agents."). How a card runs on its tier's model
+follows from the row (`config.FriendHow`):
+
+| row | how | width |
+|---|---|---|
+| mode one-shot | `lane`: each card a headless process, launched with the harness's model flag (`opencode run --model <m>`, `claude --model <m> -p`) | `width` lanes |
+| batch, children yes, child_model yes | `child`: each card in a child agent on the tier's model | `width` |
+| batch, children of one model, or none | `session`: every card on her session's model; her row may name only one model | `width`, or 1 with `children no` |
+
+Going wide is width either way, child agents inside one session or one-shot lanes; only a
+friend in one interactive session with neither runs one card at a time. The one question she
+answers when she takes a card is which model the child that runs it runs on, and the card
+answers it. The machine makes sure she knows:
+
+1. **Told with every card.** The deal writes the tier and her row's model for it on the work
+   card it places on her row (`FieldTier`, `FieldModel`; `withFriendModel`), so the card's
+   packet carries `model`. A card the level moves (friend level, and the start bound's move)
+   goes with the receiver's model written on it, never the giver's, and a card that carries a
+   model goes only to a friend whose row names one for its tier (`friendReceives`): a friend
+   who takes the tier with none is refused, the card's refusal saying `not moved: tier <t> has
+   no model on the row of friend <f>`; a card that carries none moves as before. Friend sync
+   then sets every work packet's model from her row at delivery (`sprint.FriendRowModels`), so
+   a tier her row names none for clears a model the card carried: no tier line, no model
+   flag, no model check. Her brief's tier line is
+   `tier: heavy model: claude-opus-5-5`, in the prelude before the first blank line, with the
+   sentence to run it on that model (a reworked brief puts `THE ONE THING LEFT` first, so the
+   tier line follows it and the finish reads it wherever it stands); the bus
+   message that wakes her daemon starts with `Run this card in a child on <model>`, so a
+   session friend's turn begins with it; a lane's turn says `This card runs on <model>` and is
+   launched on it (`opencode run --model <m>`; a claude lane, which runs the brief alone, is
+   `claude --model <m> -p <brief>`, the brief's tier line saying the same). A packet's tier is
+   filled from the card's primary for every work card, so a card with no model carries no
+   tier line and no `tier` in her queue file, as before. Her queue file carries each card's `tier` and `model` and her row (`row`:
+   tiers, models, mode, width, children, child_model).
+2. **Told on change.** When her row differs from the row her queue file carries, friend sync
+   pushes her a bus note (`FRIEND-ROW CHANGED`), "your row changed: tiers=... models=...". A
+   friend with no card on her row whose queue file is there (or a probe owed) is told the same,
+   and her queue file carries her row, so `whoami` reads it before her first card.
+3. **She can ask.** `nova-friend whoami --as <me> --dir <d>` prints her row from her queue
+   file: `WHOAMI friend= tiers= models=<tier>=<model>,... how= mode= width= lanes= children=
+   child_model= dir= session=`, then a WARN line per tier with no model and a REFUSED line per
+   thing her harness cannot do. A lane's seed tells her it exists.
+4. **Verified on every finish.** Her REPORT.md names the model (`Model: <m>`, or `model=<m>`
+   on its `Usage:` line); a LAND on a card that carries a model whose report names none, or
+   another, is finished failed ("friend <f> LAND on the wrong model: ..."), the "work came back
+   failed" judgment to the coordinator (`sprint.FriendModelMismatch`). The model checked is
+   the one her delivered brief's tier line names, not her row's at the finish, so a model the
+   coordinator changes while the card is in flight does not refuse the work she did on the one
+   she was told; a brief with no tier line is not checked.
+5. **Proven before first use.** A tier her row maps to a model is dealt no real card until her
+   probe of it has reported that model (`sprint.FriendProven`, part of `friendTakes`, so the
+   deal and the level both hold it; a card pinned to her waits ready). Friend sync writes the
+   probe, `inbox/probe-<tier>-<model>/BRIEF.md` (`FriendProbeBrief`: run it in a child on the
+   model, report `Model:` and `Harness:`), adds it to her queue file as a task with its tier
+   and model (so a lane runs it on the model's flag), and wakes her with it
+   (`FRIEND-PROBE DELIVERED`). When `outbox/probe-<tier>-<model>/REPORT.md` is there, the model
+   it names is recorded on her seat (`store.SetFriendProbe`, the roster's `probes`, which a
+   sync keeps): her row's model opens the tier (`FRIEND-PROBE PROVEN`); another keeps it
+   closed (`FRIEND-PROBE WRONG ... reported=<m>`, said once) until she reports again. A changed
+   model is a new probe, by its own job. A tier with no model needs no probe.
+
+`nova-friend check` adds, for each friend whose queue file carries her row, `CHECK MODELS
+friend= tiers= models= how= children= child_model= lanes= harness= warn= refused=`: a tier with
+no model is a warning; a row whose cards all run on her session's model naming two models, and
+a one-shot row on a harness with no lane model flag (`friend.ModelFlags`), are refused, and the
+check exits 1. `nova-config` refuses the first of those, and a model for a tier she does not
+serve, at the row (docs/SPEC-CONFIG.md, friend).
+
+A tier with no model is still served, as every tier was before migration 0037: its card
+carries no model and no tier line, and she runs it on her session's model until the
+coordinator fills it. The test is `TestAFriendIsToldVerifiedAndProbedForEveryTiersModel`
+(internal/sprint).
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
