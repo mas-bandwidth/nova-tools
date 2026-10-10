@@ -165,10 +165,12 @@ func TestDecideGradescoreCoverScoreGrades(t *testing.T) {
 		t.Parallel()
 		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
 		ds := []Decision{
-			{ID: "D1@P1@extra", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
+			{ID: "P1@D1@extra", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
 		}
 		s := ScoreGrades(ds, facts, from, to)
 		require.Equal(t, 1, s.Decisions)
+		require.Equal(t, 0, s.NoLog)
+		require.Equal(t, 1, s.Rows[0].N)
 	})
 	// the newest grade per card wins
 	t.Run("newestWins", func(t *testing.T) {
@@ -194,33 +196,39 @@ func TestDecideGradescoreCoverScoreGrades(t *testing.T) {
 		require.Equal(t, 1, s.NoLog)
 	})
 	// a card only ever routed "-" (a friend's) and a card never dealt are counted in Cards and left out of the tables
-	t.Run("friendCard", func(t *testing.T) {
+	t.Run("friendAndNeverDealt", func(t *testing.T) {
 		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}},{"card":"C2","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`))
+		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=-"}}]}`))
 		ds := []Decision{
 			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
+			{ID: "P2@D2", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
+			{ID: "P3@D3", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
 		}
 		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 1, s.Cards)
-		require.Empty(t, s.Rows)
+		require.Equal(t, 3, s.Decisions)
+		require.Equal(t, 3, s.Cards)
+		require.Equal(t, 0, s.NoLog)
+		require.Len(t, s.Rows, 1)
+		require.Equal(t, 1, s.Rows[0].N)
 	})
 	// Rows come in the order flash, pro, script by dealt flash, pro
 	t.Run("rowOrder", func(t *testing.T) {
 		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C3","primary":"P3","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
+		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"P4","primary":"P4","table":"work","to":"work:landed"},{"card":"P5","primary":"P5","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}},{"card":"C3","primary":"P3","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C4","primary":"P4","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}},{"card":"C5","primary":"P5","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
 		ds := []Decision{
 			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
-			{ID: "P2@D2", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradePro, P: map[string]float64{GradePro: 0.8}}}},
-			{ID: "P3@D3", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeScript, P: map[string]float64{GradeScript: 0.8}}}},
+			{ID: "P2@D2", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.8}}}},
+			{ID: "P3@D3", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradePro, P: map[string]float64{GradePro: 0.8}}}},
+			{ID: "P4@D4", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradePro, P: map[string]float64{GradePro: 0.8}}}},
+			{ID: "P5@D5", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeScript, P: map[string]float64{GradeScript: 0.8}}}},
 		}
 		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 3, len(s.Rows))
-		require.Equal(t, GradeFlash, s.Rows[0].Grade)
-		require.Equal(t, GradeFlash, s.Rows[0].Dealt)
-		require.Equal(t, GradePro, s.Rows[1].Grade)
-		require.Equal(t, GradeFlash, s.Rows[1].Dealt)
-		require.Equal(t, GradeScript, s.Rows[2].Grade)
-		require.Equal(t, GradeFlash, s.Rows[2].Dealt)
+		require.Len(t, s.Rows, 5)
+		require.Equal(t, [2]string{GradeFlash, GradeFlash}, [2]string{s.Rows[0].Grade, s.Rows[0].Dealt})
+		require.Equal(t, [2]string{GradeFlash, GradePro}, [2]string{s.Rows[1].Grade, s.Rows[1].Dealt})
+		require.Equal(t, [2]string{GradePro, GradeFlash}, [2]string{s.Rows[2].Grade, s.Rows[2].Dealt})
+		require.Equal(t, [2]string{GradePro, GradePro}, [2]string{s.Rows[3].Grade, s.Rows[3].Dealt})
+		require.Equal(t, [2]string{GradeScript, GradeFlash}, [2]string{s.Rows[4].Grade, s.Rows[4].Dealt})
 	})
 	// Landed2 counts a landing by attempt 2 and not by attempt 3
 	t.Run("landed2", func(t *testing.T) {
@@ -255,13 +263,19 @@ func TestDecideGradescoreCoverScoreGrades(t *testing.T) {
 	// Buckets hold only flash-dealt, non-script grades, with p 0.7 in "0.7-0.85" and p 0.95 in ">=0.95"
 	t.Run("buckets", func(t *testing.T) {
 		t.Parallel()
-		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}}]}`))
+		facts, _ := ReadLog(strings.NewReader(`{"lines":[{"card":"P1","primary":"P1","table":"work","to":"work:landed"},{"card":"P2","primary":"P2","table":"work","to":"work:landed"},{"card":"P3","primary":"P3","table":"work","to":"work:landed"},{"card":"P4","primary":"P4","table":"work","to":"work:landed"},{"card":"C1","primary":"P1","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C2","primary":"P2","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C3","primary":"P3","set":{"cost_record:1":"kind=work attempt=1 on_tier=flash end=ok on_route=fleet"}},{"card":"C4","primary":"P4","set":{"cost_record:1":"kind=work attempt=1 on_tier=pro end=ok on_route=fleet"}}]}`))
 		ds := []Decision{
 			{ID: "P1@D1", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.7}}}},
 			{ID: "P2@D2", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.95}}}},
+			{ID: "P3@D3", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeScript, P: map[string]float64{GradeScript: 0.7}}}},
+			{ID: "P4@D4", Decision: GradeName, At: from.Format(time.RFC3339), Answers: map[string]Answer{GradeQuestion: {Value: GradeFlash, P: map[string]float64{GradeFlash: 0.7}}}},
 		}
 		s := ScoreGrades(ds, facts, from, to)
-		require.Equal(t, 2, len(s.Buckets))
+		require.Len(t, s.Buckets, 2)
+		require.Equal(t, [2]string{GradeFlash, "0.7-0.85"}, [2]string{s.Buckets[0].Grade, s.Buckets[0].Bucket})
+		require.Equal(t, 1, s.Buckets[0].N)
+		require.Equal(t, [2]string{GradeFlash, ">=0.95"}, [2]string{s.Buckets[1].Grade, s.Buckets[1].Bucket})
+		require.Equal(t, 1, s.Buckets[1].N)
 	})
 	// cell and b2i are covered through ScoreGrades (implicit via above tests)
 }
