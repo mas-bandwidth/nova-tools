@@ -816,6 +816,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	}
 	// the loop: every message in turn, each a line of its own, until a signal
 	// or a command that fails; a NONE is a wait that ran out, not a line
+	lastSeatBeat := time.Time{}
 	for {
 		res, ok := one(ForeverBlock)
 		switch {
@@ -828,6 +829,11 @@ func (w world) recv(c *tool.Call) *tool.Out {
 			res.Verb = "recv"
 			res.Render(c.Stderr, c.Bool("json"))
 			return tool.Exit(res.Exit)
+		}
+		var err error
+		lastSeatBeat, err = w.receiverSeatBeat(ctx, as, lastSeatBeat)
+		if err != nil {
+			return tool.Fail("seat bus push proof failed: " + err.Error())
 		}
 	}
 }

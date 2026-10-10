@@ -177,11 +177,7 @@ func writePush(ctx context.Context, st *store.Store, rec sprint.PushRecord) erro
 	if !ok {
 		return errors.New("this store keeps no keys, and the push record is one")
 	}
-	b, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	if err := kv.SetKey(ctx, keySeatPush(rec.Name), string(b)); err != nil {
+	if err := st.UpdateSeatPushes(ctx, rec.Name, func(set *sprint.SeatPushSet) error { set.PushRecord = rec; return nil }); err != nil {
 		return err
 	}
 	// the name joins the list teardown deletes the records by
@@ -206,6 +202,35 @@ func writePush(ctx context.Context, st *store.Store, rec sprint.PushRecord) erro
 // pushGate is the line name's coordinator verbs are refused with while its seat
 // has no live proof (sprint.PushDown), "" when it has one or is not armed.
 func pushGate(ctx context.Context, st *store.Store, name string, now time.Time) (string, error) {
+	if !pushArmed(name) {
+		return "", nil
+	}
+	rec, ok, err := readPush(ctx, st, name)
+	if err != nil {
+		return "", err
+	}
+	if why := sprint.PushDown(name, rec, ok, now); why != "" {
+		return why, nil
+	}
+	set, _, err := st.SeatPushes(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	seat, err := st.SeatState(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range sprint.SeatPushLines(set, ok, seat.Epoch, seat.Generation, now) {
+		if !row.Live {
+			return fmt.Sprintf("PUSH DOWN: %s %s: %s; nothing was changed; run: %s", name, row.Source, row.Why, row.Command), nil
+		}
+	}
+	return "", nil
+}
+
+// targetJudgmentGate is the next holder's nonce proof before the seat moves.
+// Observers belong to the current seat, and rebind after handover (SPEC-SPRINT 8).
+func targetJudgmentGate(ctx context.Context, st *store.Store, name string, now time.Time) (string, error) {
 	if !pushArmed(name) {
 		return "", nil
 	}
@@ -253,7 +278,12 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	target := fs.String("target", "", "with --harness, the session's directory, where the adapter delivers (for the folder adapter, the directory the session watches, which must be there)")
 	session := fs.String("session", "", "with --harness, the session's id, for a harness that names one (default: the adapter's newest in --target)")
 	sent := fs.String("sent", "", "the push loop's report: the nonce of the check it delivered")
-	failed := fs.String("failed", "", "with --sent, why the delivery of the check failed")
+	failed := fs.String("failed", "", "with --sent or --beat, why the completed push pass failed")
+	generation := fs.Uint64("seat-generation", 0, "with --beat, the seat generation the completed observation read; with --epoch and --observed-target")
+	observedTarget := fs.String("observed-target", "", "with --beat and --seat-generation, the observation's delivery target")
+	observedSession := fs.String("observed-session", "", "with --beat and --seat-generation, the observation's session id")
+	observe := fs.String("observe", "", "native observer read: friends or transitions, with --json")
+	beat := fs.String("beat", "", "native observer receipt: bus, friends or transitions; records a completed pass, never a session pong")
 	dry := fs.Bool("dry-run", false, "check the flags and the record and print what would be recorded, and write nothing")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
@@ -261,8 +291,17 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	if c.actor == "" {
 		return refuse(stderr, name, "seat push wants --actor <name> (or NOVA_SPRINT_ACTOR): the seat whose push record it is; nothing was changed")
 	}
-	if *failed != "" && *sent == "" {
-		return refuse(stderr, name, "--failed goes with --sent")
+	if *failed != "" && *sent == "" && *beat == "" {
+		return refuse(stderr, name, "--failed goes with --sent or --beat")
+	}
+	if (*generation != 0 || *observedTarget != "" || *observedSession != "") && *beat == "" {
+		return refuse(stderr, name, "observed binding flags go with --beat")
+	}
+	if *generation == 0 && (*observedTarget != "" || *observedSession != "") {
+		return refuse(stderr, name, "observed target flags require --seat-generation")
+	}
+	if *generation != 0 && c.epoch < 0 {
+		return refuse(stderr, name, "--seat-generation requires the observation's --epoch")
 	}
 	if *sent != "" && *harness != "" {
 		return refuse(stderr, name, "--sent is the push loop's report and --harness the setup: one at a time")
@@ -272,6 +311,37 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, name, err.Error())
 	}
 	ctx := context.Background()
+	if *observe != "" {
+		if !c.json || *beat != "" || *sent != "" || *harness != "" || *failed != "" {
+			return refuse(stderr, name, "--observe wants --json and no proof write flags")
+		}
+		observation, err := observeSeatPush(ctx, st, c.actor, *observe)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		body, err := json.Marshal(observation)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		fmt.Fprintln(stdout, string(body))
+		return 0
+	}
+	if *beat != "" {
+		if *sent != "" || *harness != "" {
+			return refuse(stderr, name, "--beat is one completed observer pass; no --sent or --harness with it")
+		}
+		var err error
+		if *generation != 0 {
+			err = st.BeatSeatPushObserved(ctx, c.actor, *beat, *failed, sprint.SeatWatchProof{Epoch: uint64(c.epoch), Generation: *generation, Target: *observedTarget, Session: *observedSession})
+		} else {
+			err = st.BeatSeatPush(ctx, c.actor, *beat, *failed)
+		}
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		sayOK(stdout, c.json, name, fmt.Sprintf("SEAT PUSH BEAT source=%s name=%s", oneline.Field(*beat), oneline.Field(c.actor)), map[string]any{"source": *beat, "name": c.actor})
+		return 0
+	}
 	rec, ok, err := readPush(ctx, st, c.actor)
 	if err != nil {
 		return a.readFailed(name, err, stderr)

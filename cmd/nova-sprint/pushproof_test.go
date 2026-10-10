@@ -23,12 +23,16 @@ type fakeSession struct {
 	mu    sync.Mutex
 	texts []string
 	exit  int
+	beat  func()
 }
 
 func (f *fakeSession) Deliver(_ context.Context, text string) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.texts = append(f.texts, text)
+	if f.exit == 0 && f.beat != nil {
+		f.beat()
+	}
 	return f.exit, nil
 }
 
@@ -63,7 +67,30 @@ func pushProofSprint(t *testing.T, name string) (*testApp, *fakeSession) {
 	ta.a.executable = func() (string, error) { return "/opt/nova/bin/nova-sprint", nil }
 	ta.a.seatLoad = func(string, string, string) error { return nil }
 	s := &fakeSession{}
+	// These judgment-specific tests also have three separate fake native observers.
+	// New set tests disable this fixture and judge each observer independently.
+	s.beat = func() {
+		st, err := ta.a.store(common{redis: "mem:0", actor: name})
+		require.NoError(t, err)
+		rec, ok, err := st.SeatPushes(context.Background(), name)
+		require.NoError(t, err)
+		seat, err := st.SeatState(context.Background())
+		require.NoError(t, err)
+		if !ok || rec.Harness == "" || seat.Holder != name {
+			return
+		}
+		for _, source := range []string{"bus", "friends", "transitions"} {
+			require.NoError(t, st.BeatSeatPush(context.Background(), name, source, ""))
+		}
+	}
 	pushTests.Store(name, s)
+	oldSleep := ta.a.sleep
+	ta.a.sleep = func(d time.Duration) {
+		oldSleep(d)
+		if s.beat != nil {
+			s.beat()
+		}
+	}
 	t.Cleanup(func() { pushTests.Delete(name) })
 	return ta, s
 }
@@ -72,6 +99,11 @@ func (ta *testApp) step(d time.Duration) {
 	ta.mu.Lock()
 	ta.now = ta.now.Add(d)
 	ta.mu.Unlock()
+	if value, ok := pushTests.Load(ta.a.getenv("NOVA_SPRINT_ACTOR")); ok {
+		if session, ok := value.(*fakeSession); ok && session.beat != nil {
+			session.beat()
+		}
+	}
 }
 
 // refusedPushDown runs the line and wants it refused with the one PUSH DOWN line
@@ -136,7 +168,7 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	t.Cleanup(func() { pushTests.Delete(other) })
 	code, _, errs := ta.do("coordinator " + other + " --reason r")
 	require.Equal(t, 2, code, errs)
-	assert.Contains(t, errs, "coordinator REFUSED: PUSH DOWN: "+other+" has no push target recorded", errs)
+	assert.Contains(t, errs, "coordinator REFUSED: PUSH DOWN: "+name+" has no push target recorded", errs)
 	assert.Equal(t, name, ta.holder())
 
 	// a harness with no deliver command gets the folder adapter, and a target
@@ -181,6 +213,7 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	assert.Contains(t, errs, "counted already", errs)
 
 	// proven: the coordinator's verbs run, and seat push says so
+	ta.refusedPushDown("coordinator "+other+" --reason handover", other+" has no push target recorded")
 	ta.ok("add --stream s1 --count 2")
 	assert.Contains(t, ta.ok("seat push"), "PUSH OK name="+name+" harness=opencode")
 	_, out, _ = ta.do("seat check")
@@ -217,6 +250,14 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	// the seat goes to a name the push reaches
 	pushed := sprint.PushRecord{Name: other, Harness: "opencode", Target: target, Nonce: "n1", Sent: ta.a.now(), Proven: ta.a.now(), PongOf: "n1"}
 	require.NoError(t, writePush(ctx, st, pushed))
+	// A live next holder does not excuse the current seat's failed proof set.
+	ta.refusedPushDown("coordinator "+other+" --reason 'its push is proven'", "the last push into "+name+"'s opencode session failed")
+	session.mu.Lock()
+	session.exit = 0
+	session.mu.Unlock()
+	ta.step(sprint.PushRetry)
+	ta.a.prove(ctx, src, name, false, &said)
+	ta.ok("seat pong " + nonceOf(t, session.last()))
 	out = ta.ok("coordinator " + other + " --reason 'its push is proven'")
 	assert.Contains(t, out, "COORDINATOR OK holder="+other, out)
 
@@ -309,6 +350,9 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	proven := ta.a.now().UTC().Format(time.RFC3339)
 
 	// proven: the verbs run, and the status says adapter=folder proven=<time>
+	for _, source := range []string{"bus", "friends", "transitions"} {
+		require.NoError(t, st.BeatSeatPush(ctx, name, source, ""))
+	}
 	ta.ok("add --stream s1 --count 2")
 	assert.Contains(t, ta.ok("seat push"), "PUSH OK name="+name+" harness=claude target="+folder+" adapter=folder proven="+proven)
 	ta.a.outside = mockHealthyOutside()
@@ -349,6 +393,9 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	ta.step(sprint.PushAnswerBound + time.Second)
 	ta.refusedPushDown("add --stream s2 --count 1 --one", "last pong is 15m1s old")
 	ta.ok("seat pong " + again)
+	for _, source := range []string{"bus", "friends", "transitions"} {
+		require.NoError(t, st.BeatSeatPush(ctx, name, source, ""))
+	}
 	ta.ok("add --stream s2 --count 1 --one")
 
 	// the seat goes to a name the folder reaches, and says so
