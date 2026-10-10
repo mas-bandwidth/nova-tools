@@ -303,6 +303,7 @@ type nativePrepared struct {
 	jobDir       string
 	releaseLease func()
 	releaseSlot  func()
+	cleanupErr   *error
 	dataHome     string
 	tmpDir       string
 	cacheDir     string
@@ -641,8 +642,12 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// a refused preparation or cancelled child) releases the lease and removes
 	// the directory before another run can take the slot.
 	releaseLeasedSlot := releaseSlot
+	var tmpCleanupErr error
 	releaseSlot = func() {
-		_ = os.RemoveAll(tmpDir)
+		tmpCleanupErr = safepath.RemoveUnder(cfg.slotDir, tmpDir)
+		if tmpCleanupErr != nil {
+			refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be removed: %s", oneline.Field(tmpDir), oneline.Escape(tmpCleanupErr.Error())))
+		}
 		releaseLeasedSlot()
 	}
 	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
@@ -949,6 +954,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		jobDir:       jobDir,
 		releaseLease: releaseLease,
 		releaseSlot:  releaseSlot,
+		cleanupErr:   &tmpCleanupErr,
 		dataHome:     dataHome,
 		tmpDir:       tmpDir,
 		cacheDir:     cacheDir,
@@ -1540,7 +1546,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		return earlyRes, earlyCode
 	}
 	defer p.releaseLease()
-	defer p.releaseSlot()
+	defer func() {
+		p.releaseSlot()
+		if p.cleanupErr != nil && *p.cleanupErr != nil && code == 0 {
+			code = 2
+		}
+	}()
 	if p.proxy != nil {
 		defer p.proxy.Close()
 	}
