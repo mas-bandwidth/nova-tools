@@ -1,0 +1,7 @@
+# json-envelope: every --json output is exactly one object with result.status and result.exit; shrink-only
+# ceiling: 5
+cmd/nova-table:bare 1 the bare command prints no --json object
+cmd/nova-table:transcript 7 the transcript command prints no --json object
+cmd/nova-table:unknown-flag 1 the unknown flag prints no --json object
+cmd/nova-table:unknown-verb 1 the unknown verb prints no --json object
+cmd/nova-table:verb-no-flags 35 the verb prints no --json object

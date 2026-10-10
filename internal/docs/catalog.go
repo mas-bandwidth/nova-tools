@@ -107,7 +107,7 @@ var DefaultCatalog = []Entry{
 	E("internal/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
 	E("internal/scaffold", "scaffolding engine for class rules and CLI verbs", "go test ./internal/scaffold", "go test ./internal/scaffold"),
 	E("internal/secrets", "zero-leak memory and file vault", "go test ./internal/secrets", "go test ./internal/secrets"),
-	E("internal/seatcred", "a seat", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
+	E("internal/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),
 	E("internal/shippedsmoke", "the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow", "go test -tags shippedsmoke ./internal/shippedsmoke", "NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke"),
 	E("internal/sprint", "the sprint table's pure core (lifecycle, steps, check, inbox) and its binding to the table layer (store) and its driver (play)", "go test ./internal/sprint/...", "go test ./internal/sprint/..."),
@@ -139,7 +139,7 @@ var DefaultCatalog = []Entry{
 
 	// docs/
 	E("docs/acceptance", "release acceptance records: one measured requirement per file, with the raw numbers", "go test ./internal/ci", "go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed"),
-	E("docs/audit", "audit records of the codebase", "go test ./internal/docs", "go test ./internal/docs"),
+	E("docs/audit", "cold audit records of the codebase, one directory per auditor and date: numbered issues with file:line, evidence, a grade and a fix", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/dogfood", "dated dogfood records of the tools, one file per tool and run: every verb used cold, every finding graded", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),

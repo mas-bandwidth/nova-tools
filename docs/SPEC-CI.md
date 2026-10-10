@@ -2179,28 +2179,49 @@ ledger does not see, so the ledger's count is a floor, not the whole of the work
 
 ### `json-envelope` — every --json output is exactly one object with result.status and result.exit
 
-**The rule.** Every verb accepts `--json` and prints one JSON object with
-`result.status` (ok, refused, or failed) and `result.exit` (the exit code);
-stdout is exactly one line of JSON.
+**The rule.** Every verb accepts `--json` and prints exactly one JSON object on
+stdout with `result.status` (one of `ok`, `refused`, `failed`) and `result.exit`
+(the exit code), and `result.exit` equals the process exit: the status word that
+exit requires is 0→ok, 1→failed, 2→refused. (docs/STANDARD.md section 2, "One
+output structure, two renderings.")
 
-**The mistake it prevents.** Tools that print JSON without the standard shape,
-or print multiple JSON objects, make the CI's structured output checks fail and
-leave users unable to parse the output.
+**The mistake it prevents.** A tool that renders its own output instead of the one
+value leaves `--json` unparseable, and an envelope whose `result.exit` disagrees
+with the process exit tells a program the opposite of what happened.
 
-**The test.** `TestJsonEnvelopeClassRuleHoldsOverTheRepository`
-(`internal/ci/json_envelope_functional_test.go`), which builds every command and
-runs each with `--json`, checking that the output is exactly one JSON object with
-`result.status` and `result.exit` matching the exit code. It has a witness test
-for broken output that checks multiple objects, missing exit, and mismatched exit.
+**The test.** The functional walk `TestEveryJSONEnvelopeMatchesItsExit`
+(`internal/ci/json_envelope_functional_test.go`) builds every command and runs it
+bare, with an unknown verb, with an unknown flag on a verb, each verb with no
+flags, and each tool's transcripts in `docs/TESTS.md`, each with `--json` added;
+the walk reads the process exit and passes it to the judge, so a tool that prints
+`result.exit` 0 while exiting 2 is refused. The judge is `jsonEnvelopeAnswers`
+(`internal/ci/json_envelope_class_test.go`), proved by `TestJSONEnvelopeJudges`
+(the breach shapes: empty stdout, plain text, a text line before the object, two
+objects, a JSON array, a missing `result`, a missing `result.exit`, an unknown
+status, and a status or `result.exit` that disagrees with the process exit) and
+`TestJSONEnvelopeReadsFixtures` (a fixture that breaks the rule once, `result.exit`
+0 at process exit 2, is refused naming the breach, and passes when fixed). The
+ledger is checked only when every tool ran.
 
-**Its ledger.** the `json-envelope` package ledger, one
-`<package>:<kind> <count> <reason>` row per tool still short (`internal/ci/testdata/json-envelope/`).
-The count only falls: a tool measuring more sites than its row, a tool with
-a site and no row, and a row above what the tool measures are each a red run,
-and `NOVA_CI_UPDATE=1` lowers the counts and drops the rows at zero, never raises a
-count and never adds a row.
+**Its allowlist.** the `json-envelope` package ledger, one shard per tool at
+`internal/ci/testdata/json-envelope/cmd/<tool>.txt`, a row
+`cmd/<tool>:<kind> <count> <why>`, kind `bare`, `unknown-verb`, `unknown-flag`,
+`verb-no-flags` or `transcript`, the count the invocations of that kind short of
+the rule; counted and shrink-only, so a port onto `internal/tool` lowers its own
+row and `NOVA_CI_UPDATE=1 go test -tags functional -count=1 -timeout 600s -run
+'^TestEveryJSONEnvelopeMatchesItsExit$' ./internal/ci/` lowers a count and drops a
+row at zero, never raising one or adding one. The ledger seeds once, at the rule's
+landing, and is exempt only while the merge base holds no shard of it
+(`ledgerSeedIsNew`, `internal/ci/ledger_ratchet_test.go`, pinned by
+`TestJSONEnvelopeLedgerSeedsOnlyWhenTheBaseHasNoShard`); the seeding run is the one
+time rows are written.
 
-**Its remedy line.** `fix the JSON output: it must be exactly one object with result.status and result.exit matching the exit; the ledger only shrinks`.
+**Its remedy line.** `print exactly one JSON object on stdout whose result.status and result.exit match the exit`
+
+**Its narrowings.** The walk tries `--json` on the bare command, one unknown verb,
+one unknown flag on the first verb of each tool, and every verb with no flags; a
+transcript command inherits the tool's first verb. The judge reads stdout only, so
+an envelope printed to stderr is refused.
 
 ### `slowwaits` — no per-commit test sleeps over a second or waits out a deadline
 
