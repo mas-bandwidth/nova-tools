@@ -76,6 +76,11 @@ func Open(ctx context.Context, o Options, getenv func(string) string) (*Conn, er
 // dialFunc dials one connection; tests hand open a dialer of their own.
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
+// guardDial wraps a dialer so every address it is handed passes the testguard
+// first, before the socket is opened (nova-tools#4193: a test process once
+// resolved the fleet's address from the environment and dialed it). Open hands
+// the process-wide testguard.Default here; a test that hands open its own dial
+// func is untouched, so a fake still dials what it likes.
 func guardDial(g *testguard.Guard, dial dialFunc) dialFunc {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		g.RefuseAddr(network, addr)

@@ -249,18 +249,27 @@ func commandLine(program string, args []string) string {
 	return b.String()
 }
 
-// Default returns the process-wide guard.
+// Default returns the process-wide guard: the one a store dialer hands to
+// guardDial, so a test that resolves an address from the environment is held
+// to RefuseAddr (nova-tools#4193).
 func Default() *Guard {
 	return defaultGuard
 }
 
-// RefuseAddr is what every store dialer in this tree calls with the network and address
-// it is about to dial. Under the guard, and outside an AllowHosts scope, it panics
-// naming that address unless the host is loopback or network is unix under a temp root.
+// RefuseAddr is what every store dialer in this tree calls with the network and
+// address it is about to dial, the same way a child seam calls RefuseHosts
+// (nova-tools#4193): a unit test that spawns a process or opens a store must
+// never reach the fleet. Under the guard, and outside an AllowHosts scope, it
+// panics naming that address unless the host is loopback or the network is unix
+// under a temp root.
 func RefuseAddr(network, addr string) {
 	defaultGuard.RefuseAddr(network, addr)
 }
 
+// RefuseAddr is the guard's own refusal: armed, and outside an AllowHosts
+// scope, an address off the loopback panics naming the network and the address
+// and the remedy (nova-tools#4193); otherwise it is one atomic load and a
+// return, so a production dial pays nothing for it.
 func (g *Guard) RefuseAddr(network, addr string) {
 	if !g.refusing.Load() || g.allowed.Load() > 0 {
 		return

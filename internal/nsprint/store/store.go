@@ -136,6 +136,10 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	// and Redis 8.10.2 refuses it (errorstat_ERR), a second trip for
 	// nothing; the same setting as redisconn.Open. The connect is HELLO alone.
 	opts := &redis.Options{Addr: addr, Username: user, Password: password, DisableIdentity: true,
+		// addr falls back to sel.Addr() above, so a test that names no --redis
+		// in a shell holding the fleet's address would otherwise dial the
+		// fleet. Every dial passes the testguard first (nova-tools#4193), the
+		// same refusal redisconn.Open gets from guardDial.
 		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			testguard.RefuseAddr(network, addr)
 			return (&net.Dialer{}).DialContext(ctx, network, addr)
