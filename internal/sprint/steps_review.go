@@ -2379,7 +2379,7 @@ func TickReviewStarved(s *Snapshot, r TickReq) (Plan, int) {
 		return p, 0
 	}
 	window, off := s.reviewStarvedWindow()
-	if off || !s.ReadCardsOn() {
+	if off {
 		return reviewAlarmFinish(reviewAlarmDisarm(s, p))
 	}
 	wants := reviewWantsRead(s)
