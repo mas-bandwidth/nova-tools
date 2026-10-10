@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strconv"
@@ -275,28 +276,85 @@ func limitKindOf(line string) string {
 
 var limitCredits = regexp.MustCompile(`(?i)credits?|balance|billing|payment`)
 
+var (
+	redactSK   = regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{8,}`)
+	redactKV   = regexp.MustCompile(`(?i)\b(?:api[_-]?key|key|token|secret|password|authorization)\b\s*[:=]\s*\S+`)
+	redactLong = regexp.MustCompile(`\b[A-Za-z0-9+/=_-]{32,}\b`)
+)
+
+// Redact replaces anything in a refusal's matched line that looks like a key
+// or a token with <redacted> before the reason is stored or sent: a long
+// base64 or hex run, an sk- key, or a key=value. The reason rides into the
+// store and the bus, so a harness error line that echoes a key must not carry
+// it.
+func Redact(s string) string {
+	s = redactSK.ReplaceAllString(s, "<redacted>")
+	s = redactKV.ReplaceAllString(s, "<redacted>")
+	return redactLong.ReplaceAllString(s, "<redacted>")
+}
+
 // Watch is run reading every command's output for a limit and, while a wake
-// is open, for its nonce.
+// is open, for its nonce. Credit decisions read only the harness's stderr
+// and runner log evidence, never the model's stdout.
 func (l *Limits) Watch(run Exec) Exec {
 	return func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+		var harnessErr strings.Builder
+		captured := CapturedStderr(ctx)
+		var capture io.Writer = &harnessErr
+		if captured != nil {
+			capture = io.MultiWriter(captured, &harnessErr)
+		}
+		ctx = WithStderrCapture(ctx, capture)
 		out, exit, err := run(ctx, dir, name, args, stdin)
-		l.see(out, exit != 0 || err != nil)
+		l.seeEvidence(out, harnessErr.String(), RunnerLog(dir), exit != 0 || err != nil)
 		return out, exit, err
 	}
 }
 
-func (l *Limits) see(out string, failed bool) {
+func (l *Limits) seeEvidence(out, stderr, runnerLog string, failed bool) {
 	now := l.Now()
 	lim, found := ReadLimit(out, now)
 	uses := ReadRateLimitEvents(out, now)
 	kind, named := "", true
+
+	if found && lim.Limited {
+		kind = limitKindOf(lim.Reason)
+		if kind == KindCredits {
+			// the joined output is the model's stdout (a head of the harness's stderr
+			// rides after it on a failure, RealExec): a credit line in it is the model's
+			// words -- a brief, a report or a page it read may carry one -- and is
+			// discarded, at any exit, never a down. Credits are read only from the
+			// harness's own stderr and the runner log, below (docs/SPEC-FRIEND.md,
+			// every harness's credit and quota refusal).
+			lim, found, kind = Limit{}, false, ""
+		}
+	}
+
 	if !strings.Contains(out, `"rate_limit_event"`) && failed {
-		// the harness's own wording of a failed turn, with its kind and a default reset
-		// when it names none; a successful turn that only talks of limits is no limit
-		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok {
+		// the harness's own wording of a failed turn, its usage limit only: a credit
+		// hit in the joined output is the model's words (above)
+		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok && hit.Kind == KindLimit {
 			lim, found, kind, named = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind, hit.Named
 		}
 	}
+
+	// Credit decisions from evidence only (stderr, runnerLog; never model stdout / out):
+	if failed {
+		for _, src := range []string{stderr, runnerLog} {
+			if src == "" {
+				continue
+			}
+			if hit, ok := ParseLimit(l.Harness, src, now, l.Rest); ok && hit.Kind == KindCredits {
+				lim, found, kind, named = Limit{Limited: true, Until: hit.Until, Reason: Redact(hit.Reason)}, true, KindCredits, hit.Named
+				break
+			}
+			if limSrc, ok := ReadLimit(src, now); ok && limSrc.Limited && limitKindOf(limSrc.Reason) == KindCredits {
+				lim, found, kind, named = Limit{Limited: true, Until: limSrc.Until, Reason: Redact(limSrc.Reason)}, true, KindCredits, true
+				break
+			}
+		}
+	}
+
 	if found && lim.Limited && kind == "" {
 		kind = limitKindOf(lim.Reason)
 	}
@@ -338,6 +396,7 @@ func (l *Limits) see(out string, failed bool) {
 // reads session=limited limit_kind=kind limit_until=until. A refusal equal to
 // the one that already holds her is not a second down.
 func (l *Limits) Refuse(kind, reason string, until time.Time) {
+	reason = Redact(reason)
 	l.mu.Lock()
 	if l.limited && l.kind == kind && l.reason == reason {
 		l.mu.Unlock()
