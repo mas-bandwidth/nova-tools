@@ -690,6 +690,24 @@ func (p *PG) History(ctx context.Context, kind, name string) ([]Change, error) {
 	return out, nil
 }
 
+// FirstHistoryAfter reads one revision across every name of the kind, so a
+// row added and removed before apply still gives the Redis gap its age.
+func (p *PG) FirstHistoryAfter(ctx context.Context, kind string, applied int64) (Change, bool, error) {
+	var c Change
+	var at time.Time
+	err := p.db.QueryRowContext(ctx,
+		`SELECT id, at FROM config.history WHERE kind = $1 AND id > $2 ORDER BY id LIMIT 1`, kind, applied).Scan(&c.ID, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Change{}, false, nil
+	}
+	if err != nil {
+		return Change{}, false, fmt.Errorf("postgres: first history after %s %d: %w", kind, applied, err)
+	}
+	c.Kind = kind
+	c.At = at.UTC().Format(time.RFC3339)
+	return c, true, nil
+}
+
 func (p *PG) Rev(ctx context.Context, kind string) (int64, error) {
 	var v sql.NullInt64
 	if err := p.db.QueryRowContext(ctx, `SELECT max(id) FROM config.history WHERE kind = $1`, kind).Scan(&v); err != nil {

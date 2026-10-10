@@ -206,7 +206,7 @@ func applyPass(ctx context.Context, st pgStore, rs redisSide, d deps, actor stri
 			failed = err
 			break
 		}
-		views, applied, err := rs.Read(ctx, kn)
+		_, applied, err := rs.Read(ctx, kn)
 		if err != nil {
 			failed = err
 			break
@@ -214,7 +214,7 @@ func applyPass(ctx context.Context, st pgStore, rs redisSide, d deps, actor stri
 		if storeRev == applied {
 			continue
 		}
-		if age, ok, err := kindGapAge(ctx, st, kn, applied, d.now(), redisNames(views)); err != nil {
+		if age, ok, err := kindGapAge(ctx, st, kn, applied, d.now()); err != nil {
 			failed = err
 			break
 		} else if ok {
@@ -263,64 +263,27 @@ func say(stdout io.Writer, o *tool.Out, asJSON bool, line string) {
 	fmt.Fprintln(stdout, line)
 }
 
+// kindHistoryAfter reads the first unapplied change across every name,
+// including a name added and removed before Redis saw either revision.
+type kindHistoryAfter interface {
+	FirstHistoryAfter(context.Context, string, int64) (config.Change, bool, error)
+}
+
 // kindGapAge is how long the first history revision of kind after applied has
-// waited. ok is false when that revision has no history time. held are names
-// the Redis copy still has: List omits a removed row, and that row's history
-// is part of the gap until apply drops the name. The store reads history by
-// name, so a row in neither List nor the copy has no age.
-func kindGapAge(ctx context.Context, st pgStore, kind string, applied int64, now time.Time, held []string) (time.Duration, bool, error) {
-	rows, err := st.List(ctx, kind)
+// waited. ok is false when that revision has no history time.
+func kindGapAge(ctx context.Context, st pgStore, kind string, applied int64, now time.Time) (time.Duration, bool, error) {
+	history, ok := st.(kindHistoryAfter)
+	if !ok {
+		return 0, false, fmt.Errorf("config store cannot read the first unapplied %s change", kind)
+	}
+	change, found, err := history.FirstHistoryAfter(ctx, kind, applied)
 	if err != nil {
 		return 0, false, err
-	}
-	seen := map[string]struct{}{}
-	var names []string
-	for _, row := range rows {
-		if row.Name == "" {
-			continue
-		}
-		if _, ok := seen[row.Name]; ok {
-			continue
-		}
-		seen[row.Name] = struct{}{}
-		names = append(names, row.Name)
-	}
-	for _, name := range held {
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
-	}
-	var (
-		firstID int64
-		firstAt string
-		found   bool
-	)
-	for _, name := range names {
-		hist, err := st.History(ctx, kind, name)
-		if err != nil {
-			return 0, false, err
-		}
-		for _, change := range hist {
-			if change.ID <= applied {
-				continue
-			}
-			if found && change.ID >= firstID {
-				continue
-			}
-			firstID = change.ID
-			firstAt = change.At
-			found = true
-		}
 	}
 	if !found {
 		return 0, false, nil
 	}
-	at, err := time.Parse(time.RFC3339, firstAt)
+	at, err := time.Parse(time.RFC3339, change.At)
 	if err != nil {
 		return 0, false, nil
 	}
@@ -329,20 +292,6 @@ func kindGapAge(ctx context.Context, st pgStore, kind string, applied int64, now
 		age = 0
 	}
 	return age, true, nil
-}
-
-// redisNames are the row names a Redis read still holds.
-func redisNames(views map[string]config.View) []string {
-	if len(views) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(views))
-	for name := range views {
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }
 
 func ageText(age time.Duration) string {
