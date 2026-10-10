@@ -9,7 +9,7 @@ above it: decisions, backends, and the record.
 
 | side | verbs | what it does |
 | --- | --- | --- |
-| decide | `ask`, `read`, `score`, `attempt`, `grade`, `gate`, `brief` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
+| decide | `ask`, `read`, `score`, `attempt`, `grade`, `gate`, `brief`, `hold` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
 | train | `outcome`, `calibrate`, `findings` | attaches what turned out true to a recorded decision; reads the bar a decision's answer supports from the decisions whose outcome is known; clusters the classes the score decisions find |
 
 Both sides read and write one file, the record (`--record`). The truth lives
@@ -794,3 +794,28 @@ it does not discriminate (0.509) and is to be reframed or dropped before any bar
 A card written to every question scores 0.72; the reviewed cards 0.33 to 0.48; the
 schema wave's tree cards 0.08 to 0.21. The review label is a diff's quality, not a
 card's convergence: the brief record's own outcomes are the measure that counts.
+
+## 15. The hold decision: classifying HOLD reports
+
+`hold --report <file>` classifies a HOLD report as one of five classes with
+probabilities, and extracts the proposed paths. The state is the report text alone.
+
+Two questions:
+- `class` (choice): paths-too-narrow, missing-dependency, already-done, work-defect, or harness-failure, each with its p
+- `proposed_paths` (noul): p that the report contains a PATHS-PROPOSED line
+
+`ExtractProposedPaths` reads the PATHS-PROPOSED line if present; else returns paths
+the report names as needed (lines containing "path" and "need" or "change").
+
+The five classes and their criteria:
+
+| class | criterion |
+| --- | --- |
+| `paths-too-narrow` | the report says the paths are too narrow |
+| `missing-dependency` | the report says a dependency is missing |
+| `already-done` | the report says the work is already done |
+| `work-defect` | the report says there is a defect in the work |
+| `harness-failure` | the report says the harness failed |
+
+The hold decision is shadow-only: it does not act on the report, only classifies it.
+The record holds the classification for later calibration.

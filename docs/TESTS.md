@@ -796,8 +796,9 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
 diff, a child's RESULT.md, a red gate's go test output, a card to add
 (`greet.md`), the fixed backend's answers for each decision (ask, read, score,
-attempt, grade, gate, brief), and a record of eight labelled read decisions and
-five score decisions of landed diffs. Every line below uses the fixed backend,
+attempt, grade, gate, brief, hold), a HOLD report to classify, and a record of
+eight labelled read decisions and five score decisions of landed diffs. Every
+line below uses the fixed backend,
 so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
 `$` line from a checkout root in one sitting, with `./decisions.jsonl` a file in
 the test's own directory. The ids come from `--op`, so every line reads the same
@@ -855,6 +856,11 @@ $ nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed -
 BRIEF OK decision=brief backend=fixed cards=1 asked=1 existing=0 failed=0
 BRIEF CARD id=greet op=greet@brief-825042ac p_converges=0.72 minutes=under-10 failed=- uncalibrated=true recorded=new
 
+$ nova-decide hold --report ./cmd/nova-decide/testdata/hold-reports/paths-too-narrow.txt --backend fixed --answers ./cmd/nova-decide/testdata/hold-answers.json --record ./decisions.jsonl --op hold-1
+HOLD OK id=hold-1 decision=holdreason backend=fixed class=paths-too-narrow p=0.86 tokens_in=0 tokens_out=0 recorded=new
+HOLD ANSWER question=class type=choice value=paths-too-narrow p=already-done:0.02,harness-failure:0.02,missing-dependency:0.05,paths-too-narrow:0.86,work-defect:0.05
+HOLD ANSWER question=proposed_paths type=noul value=yes p=yes:0.91
+
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true
 
@@ -873,7 +879,7 @@ FINDINGS FINDING class=invented_reason count=1 cards=s1-2
 FINDINGS FINDING class=unnamed count=1 cards=s1-4
 ```
 
-The ask, read, score, attempt, grade, gate, brief and outcome lines write
+The ask, read, score, attempt, grade, gate, brief, hold and outcome lines write
 `./decisions.jsonl`; calibrate and findings read the fixture record, because a
 calibration wants positives and negatives both and findings wants scores to
 cluster. The fixed backend answers every failure of the gate alike, and with no

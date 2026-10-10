@@ -1,0 +1,8 @@
+HOLD report from nova-sprint:
+
+CARD: add-error-handling-to-api
+TASK: add error handling to api endpoints
+
+FOUND: work already done
+The error handling was added in commit abc123 by the infra team
+No changes needed
