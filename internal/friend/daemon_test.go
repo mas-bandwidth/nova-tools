@@ -1014,3 +1014,31 @@ func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
 		})
 	}
 }
+
+// TestALongTurnWithNoSessionWriteIsDeaf: a fake turn that writes nothing for longer than the cap makes the friend deaf before the turn ends.
+func TestALongTurnWithNoSessionWriteIsDeaf(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		r.d.Now = func() time.Time { return t0.Add(3 * time.Hour) }
+		r.d.Activity = func() time.Time { return time.Time{} }
+		l := &loop{d: r.d, ctx: context.Background(), mode: ModeBatch}
+		t1 := &turn{started: t0, running: true, subjects: "long turn"}
+		l.busy = t1
+		l.turnWatchdog(t0.Add(3 * time.Hour))
+		assert.True(t, t1.stopped, "a long turn with no session write past the cap is stopped by the watchdog")
+	})
+}
+
+// TestNoWakeTurnIntoABusySession: a wake due while the session has queued input is skipped, and taken once it is free.
+func TestNoWakeTurnIntoABusySession(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		r.d.Queued = func() (int, bool) { return 1, true }
+		l := &loop{d: r.d, ctx: context.Background(), mode: ModeBatch}
+		assert.False(t, l.sessionFree(), "session with queued input is not free")
+		r.d.Queued = func() (int, bool) { return 0, true }
+		assert.True(t, l.sessionFree(), "session once free is free")
+	})
+}

@@ -696,6 +696,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.watch(t, now)
 		}
 		l.capWatch(now)
+		l.turnWatchdog(now)
 		l.stampProgress(now)
 		select {
 		case r := <-l.results:
@@ -742,7 +743,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startBatch(now)
 		case l.busy == nil && len(l.dealt) > 0 && !d.machineStopped(): // NoNudgeWhileStopped
 			l.startDealt(now)
-		case l.busy == nil && l.wake && drained && !d.machineStopped():
+		case l.busy == nil && l.wake && drained && !d.machineStopped() && l.sessionFree():
 			l.startWake(now)
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
@@ -770,7 +771,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if d.HarnessStatus != nil {
 			d.status.HarnessSeen, d.status.HarnessAlive = d.HarnessStatus()
 		}
-		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven && !d.machineStopped() { // no idle wake while STOPPED
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven && !d.machineStopped() && l.sessionFree() { // no idle wake while STOPPED
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
 				if d.StepBeatForTests {
 					d.active = d.Activity()
@@ -860,6 +861,9 @@ func (l *loop) idle(now time.Time) {
 	case wake && l.passive:
 		d.Record(fmt.Sprintf("%s not delivered: %s has no deliver command: idle wake (%d cards, nothing written for %s)", now.UTC().Format(time.RFC3339), d.Harness, len(d.cards), after))
 	case wake:
+		if !l.sessionFree() {
+			return
+		}
 		// the pong line heads it while a challenge is open; the word about the coordinator rides with messages, never in a wake
 		t := &turn{subjects: fmt.Sprintf("%q", "idle wake")}
 		if d.m.Challenge != Quiet && d.PongCommand != nil {
@@ -1620,4 +1624,91 @@ func (d *Daemon) flush(now time.Time) {
 			d.Record(now.UTC().Format(time.RFC3339) + " status: " + err.Error() + " (said once per " + StatusErrorEvery.String() + "; the beat goes on)")
 		}
 	}
+}
+
+func (l *loop) turnWatchdog(now time.Time) {
+	if l == nil || l.d == nil {
+		return
+	}
+	d := l.d
+	if l.busy == nil || !l.busy.running || l.busy.stopped || l.busy.capped {
+		return
+	}
+	t := l.busy
+	started := t.started
+	if started.IsZero() {
+		return
+	}
+	cap := LaneCap("frontier", nil)
+	if d.LaneCaps != nil {
+		cap = LaneCap("frontier", d.LaneCaps())
+	}
+	hasWrite := false
+	if d.Activity != nil {
+		lastWrite := d.Activity()
+		if !lastWrite.IsZero() && lastWrite.After(started) {
+			hasWrite = true
+		}
+	}
+	if !hasWrite && now.Sub(started) >= cap {
+		t.stopped = true
+		if t.cancel != nil {
+			t.cancel()
+		}
+		if d.Record != nil {
+			d.Record(fmt.Sprintf("%s subject=%s stopping: no session write for %s (since %s); turn-progress watchdog triggered",
+				now.UTC().Format(time.RFC3339), t.subjects, cap, started.UTC().Format(time.RFC3339)))
+		}
+	}
+}
+
+func (l *loop) sessionFree() bool {
+	d := l.d
+	if l.busy != nil && l.busy.running {
+		return false
+	}
+	if l.lanes != nil && l.lanes.running() {
+		return false
+	}
+	var busyTr TurnRecord
+	under(d.Deliver, func(a Deliverer) bool {
+		if b, ok := a.(interface {
+			Busy(context.Context) (bool, error)
+		}); ok {
+			if run, _ := b.Busy(l.ctx); run {
+				return true
+			}
+		}
+		if tr, _ := a.(TurnRecord); tr != nil {
+			busyTr = tr
+		}
+		return false
+	})
+	if busyTr != nil {
+		if run, _ := busyTr.TurnUnderWay(); run {
+			return false
+		}
+	}
+	var compacting bool
+	under(d.Deliver, func(a Deliverer) bool {
+		if c, ok := a.(interface{ Compacting() bool }); ok && c.Compacting() {
+			compacting = true
+			return true
+		}
+		return false
+	})
+	if compacting {
+		return false
+	}
+	if d.Limited != nil {
+		if _, _, limited := d.Limited(); limited {
+			return false
+		}
+	}
+	if d.Queued != nil {
+		if n, ok := d.Queued(); ok && n > 0 {
+			return false
+		}
+	}
+	return true
 }

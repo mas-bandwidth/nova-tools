@@ -2992,3 +2992,8 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+
+## Turn-progress watchdog and busy guard
+
+A session check waits behind the turn under way, but a turn-progress watchdog watches a running turn: if no write to the session for the tier's wall cap occurs, the check no longer waits and makes the friend deaf by VerdictDeaf. Idle wake and ping turns never open a turn into a session that is busy, compacting, rate-limited, or has queued input.
