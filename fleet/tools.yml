@@ -451,6 +451,14 @@
       ansible.builtin.file: { path: "{{ item }}", state: absent }
       loop: "{{ tools_retire }}"
 
+    - name: the system's sqlite3, where the machine has one (a stale copy in the bin directory shadows it and the wall denies its exec)
+      ansible.builtin.stat: { path: /usr/bin/sqlite3 }
+      register: system_sqlite3
+
+    - name: a sqlite3 in the bin directory is no nova tool; the system's is the one resolved
+      ansible.builtin.file: { path: "{{ nova_bin_dir }}/sqlite3", state: absent }
+      when: system_sqlite3.stat.exists
+
     - name: the build fact's directory
       ansible.builtin.file: { path: "{{ nova_build_file | dirname }}", state: directory, mode: "0700" }
 
