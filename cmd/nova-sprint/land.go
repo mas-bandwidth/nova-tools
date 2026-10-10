@@ -373,6 +373,13 @@ type lander struct {
 	// landpass.go), and shared the locks and records the pass's streams share.
 	parallel int
 	shared   *landShared
+	// stream, repo and cards are the batch the phase lines name (landstatus.go): the
+	// stream being landed, the repository its cards name and how many cards it holds,
+	// set by cut as the batch is built and by landed as it is reported. progress is
+	// where the phase lines are printed: the land command's stdout.
+	stream, repo string
+	cards        int
+	progress     io.Writer
 }
 
 // keep appends a batch, carrying the tree gate's bench and wall when one ran.
@@ -397,7 +404,9 @@ func (l *lander) ranOnBench(host string, wall time.Duration) {
 	l.gateWall += wall
 }
 
-// stage names where the landing is, for the land loop's beat (landloop.go).
+// stage names where the landing is, for the land loop's beat (landloop.go). A
+// phase name (landstatus.go) is also printed as a LANDING line and recorded in
+// the pass's status file, so a coordinator can follow a long pass.
 func (l *lander) stage(name, proc string) {
 	if l == nil || l.a == nil || name == "" {
 		return
@@ -406,6 +415,9 @@ func (l *lander) stage(name, proc string) {
 		proc = "nothing named"
 	}
 	l.a.landStage(name, proc)
+	if p, ok := landPhaseOf(name); ok {
+		l.printPhase(p, l.stream, l.cards)
+	}
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -416,10 +428,14 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("base", "", "the base branch of a card whose brief names no BASE: line")
 	check := fs.String("check", "", "a command run once per batch, by sh -c in the clone on the batch branch, before the push (bounded to 30m); non-zero reports the batch red and pushes nothing")
 	dry := fs.Bool("dry-run", false, "print the batches it would land and change nothing: reads the store only (no git, no push, no report)")
+	status := fs.Bool("status", false, "print the land pass running now, its phase and how long the phase has run, or no land pass running; reads the land root's status files and changes nothing")
 	parallel := fs.Int("land-parallel", landParallelDefault, "how many streams merge at once, each in its own worktree of the clone, before the landings go one at a time (landpass.go); 1 merges the streams one after another")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
+	}
+	if *status {
+		return a.cmdLandStatus(stdout)
 	}
 	var bad []string
 	if len(pos) > 0 {
@@ -461,10 +477,18 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if a.baseGateFails == nil {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
+	// progress is where the LANDING lines go (landstatus.go): stdout, unless the
+	// caller asked for one JSON object, which the lines would corrupt
+	progress := io.Writer(stdout)
+	if c.json {
+		progress = io.Discard
+	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{},
-		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel}
+		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel, progress: progress}
 	l.locks()
 	defer l.release()
+	// the pass's status file is removed as the pass ends (landstatus.go)
+	defer l.clearStatus()
 	ctx := a.landCtx
 	if ctx == nil {
 		ctx = context.Background() // a direct land command has no loop caller
@@ -1037,6 +1061,9 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		ids[i] = c.id
 	}
 	b.Cards, b.IDs = len(ids), ids
+	// the batch the phase line names: cut set these as the batch was built; the
+	// report names the cards that landed
+	l.stream, l.repo, l.cards = stream, b.Repo, len(ids)
 	l.stage("report", "merge report")
 	start := time.Now()
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
@@ -1473,6 +1500,8 @@ type landCut struct {
 // before.
 func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, t *landTimes) (landCut, string) {
 	base := cards[0].base
+	// the batch the phase lines name (landstatus.go): its stream, repository and size
+	l.stream, l.repo, l.cards = stream, cards[0].repo, len(cards)
 	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
 	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
 	// negotiation over all of them, once a stream a round: on a repository with two

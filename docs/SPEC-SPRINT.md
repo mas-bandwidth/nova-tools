@@ -4693,6 +4693,10 @@ dropped card is refused and stays dropped, because the lifecycle has no move fro
 table. Recording those two waits on moves section 3 does not have (tests
 TestLandedRecordsAPushFoundOnTheBranch).
 
+### land-live-progress-bb.w1~15.g5
+
+A land pass prints `LANDING stream=<s> phase=<fetch|merge|check|queue|push|report> cards=<n> at=<time>` as each stream starts a phase, and records the phase it is in — its stream, phase, cards, the instant the phase began and the pass's pid — in a status file beside the repository's cache clone under the land root, removed as the pass ends. `nova-sprint land --status` prints `LANDING PASS stream=<s> phase=<p> cards=<n> since=<time> duration=<d>` for each pass whose recorded pid is still running, or `no land pass running`; with the server running `--land` it reads the server's status file, in the same land root. A status file left by a crash names a dead pid and is read as no pass.
+
 ## 8. Notifications
 
 ### The proven seat push set
