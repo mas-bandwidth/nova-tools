@@ -2,7 +2,6 @@ package sprint
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -12,6 +11,14 @@ import (
 // fsck-verb-landed-on-base-b.w2): every landed record's merge head (else head) is an
 // ancestor of origin/<its base>.
 const FsckCheckName = "landed-on-base"
+
+// FsckGit is the git fact the command fills for one landed card, read in the clone the
+// command keeps under the sprint root: repo is the card's repository as its brief names it,
+// base its base branch, head its recorded head. tip is origin/base's tip commit id, on says
+// git found head an ancestor of it, and why, when set, is why git could not say. A head the
+// clone does not hold after the base's fetch is not on the base: on is false and why is
+// empty, a violation, never an unreadable check.
+type FsckGit func(repo, base, head string) (tip string, on bool, why string)
 
 // LandOnBaseFinding is the result of the landed-on-base check.
 type LandOnBaseFinding struct {
@@ -44,16 +51,17 @@ func (f LandOnBaseFinding) Line() string {
 		oneline.Field(f.Head), oneline.Field(f.Fix))
 }
 
-// LandOnBase is the landed-on-base check over a snapshot with git facts filled by runGit.
-// checks is the list of check names to filter (empty means all checks).
-// runGit runs git commands and returns exit code, stdout, stderr.
-func LandOnBase(snap *Snapshot, checks []string, runGit func(cmd string, args ...string) (int, string, string)) []LandOnBaseFinding {
+// LandOnBase is the landed-on-base check over a snapshot with git facts filled by git.
+// checks is the list of check names to filter (empty means all checks). git is asked once
+// per landed card, in the clone the command keeps under the sprint root, so ancestry is
+// decided against the repository and never against the process's own directory.
+func LandOnBase(snap *Snapshot, checks []string, git FsckGit) []LandOnBaseFinding {
 	var findings []LandOnBaseFinding
 	for _, pr := range snap.Work.Column(Landed) {
 		if IsSentinel(pr) {
 			continue
 		}
-		f := checkLandOnBase(pr, checks, runGit)
+		f := checkLandOnBase(pr, checks, git)
 		if f.ID != "" {
 			findings = append(findings, f)
 		}
@@ -61,46 +69,28 @@ func LandOnBase(snap *Snapshot, checks []string, runGit func(cmd string, args ..
 	return findings
 }
 
-// checkLandOnBase checks one landed card: its head is an ancestor of origin/<base>.
-func checkLandOnBase(pr *Card, checks []string, runGit func(cmd string, args ...string) (int, string, string)) LandOnBaseFinding {
+// checkLandOnBase checks one landed card: its head is an ancestor of origin/<base>, a git
+// fact the command reads in the card's repository clone. The repository is the brief's
+// resolved REPO: URL (cb.Repo), the one git can clone and read, never its raw display name.
+func checkLandOnBase(pr *Card, checks []string, git FsckGit) LandOnBaseFinding {
 	// check if FsckCheckName is in the checks filter (empty checks means all checks)
 	if len(checks) > 0 && !hasCheck(checks, FsckCheckName) {
 		return LandOnBaseFinding{}
 	}
 	cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 	f := LandOnBaseFinding{Check: FsckCheckName, ID: pr.ID, Stream: pr.Row,
-		Head: pr.F("head"), Repo: cb.Named, Base: "", Fix: "nova-sprint reopen " + pr.ID + " --reason <text>"}
-	if cb.Ref != "" {
-		f.Base = cb.Ref
-	}
-	if f.Head == "" {
+		Head: pr.F("head"), Repo: cb.Repo, Base: cb.Ref,
+		Fix: "nova-sprint reopen " + pr.ID + " --reason <text>"}
+	switch {
+	case f.Head == "":
 		f.Why = "no head recorded"
-		return f
-	}
-	if f.Base == "" {
+	case f.Base == "":
 		f.Why = "its brief names no BASE: line; run: nova-sprint verify-landed --base <branch>"
-		return f
-	}
-	if f.Repo == "" {
+	case f.Repo == "":
 		f.Why = "its brief names no REPO: line; run: nova-sprint verify-landed --repo-dir <clone>"
-		return f
+	default:
+		f.Tip, f.Ancestor, f.Why = git(f.Repo, f.Base, f.Head)
 	}
-	// check if head is on base tip
-	_, out, _ := runGit("git", "ls-remote", f.Repo, f.Base)
-	out = strings.TrimSpace(out)
-	if out == "" {
-		f.Why = "origin/" + f.Base + " could not be read"
-		return f
-	}
-	// ls-remote returns "<sha> <ref>"
-	sha, _, ok := strings.Cut(out, "\t")
-	if !ok {
-		sha = strings.Fields(out)[0]
-	}
-	f.Tip = sha
-	// check if head is ancestor of tip
-	exit, _, _ := runGit("git", "merge-base", "--is-ancestor", f.Head, f.Tip)
-	f.Ancestor = (exit == 0)
 	return f
 }
 
