@@ -242,3 +242,65 @@ func TestAdmissionRefusesABriefWhosePathsDoNotHoldWhatItNames(t *testing.T) {
 		assert.Empty(t, w2.notesOf(NBriefDefect))
 	})
 }
+
+// ApplyBriefFix applies every corrected header line swarm.LintBrief computed: the line for
+// its key replaces the brief's own, and a key the brief has none of is inserted after the
+// header block, so add stores the brief its own lint asked for instead of the seat editing
+// it by hand (docs/SPEC-SPRINT.md section 11, the brief checks).
+func TestApplyBriefFixAppliesEveryCorrectedHeaderLine(t *testing.T) {
+	t.Parallel()
+	brief := strings.Join([]string{
+		"RESULT: c sha=0123456789ab tier: pro",
+		"REPO: mas-bandwidth/nova-tools",
+		"BASE: sprint/s",
+		"PATHS: internal/x/*.go",
+		"TEST: ./internal/x TestNew",
+		"",
+		"THE TASK. Fix internal/x/x.go.",
+	}, "\n")
+	got := ApplyBriefFix(brief, []string{
+		"PATHS: internal/x/*.go,internal/x/testdata/**",
+		"NEW: internal/x/fresh.go",
+		"SHARED: internal/ci/testdata/errcheck/internal/x.txt",
+		"RESULT: c sha=0123456789ab tier: frontier",
+	})
+	want := strings.Join([]string{
+		"RESULT: c sha=0123456789ab tier: frontier",
+		"REPO: mas-bandwidth/nova-tools",
+		"BASE: sprint/s",
+		"PATHS: internal/x/*.go,internal/x/testdata/**",
+		"TEST: ./internal/x TestNew",
+		"NEW: internal/x/fresh.go",
+		"SHARED: internal/ci/testdata/errcheck/internal/x.txt",
+		"",
+		"THE TASK. Fix internal/x/x.go.",
+	}, "\n")
+	assert.Equal(t, want, got)
+}
+
+// The deal-time brief lint: a ready card whose brief no longer passes at its base tip is
+// parked in the fix column with the exact BRIEF DRIFT line, dealt to no worker, and the
+// tick raises one judgment whose decisions include brief --fix; once the brief is fixed
+// (brief --fix wrote the lint's own corrected lines) the next tick deals it
+// (docs/SPEC-SPRINT.md section 11, the brief checks).
+func TestABriefThatDriftedAtTheDealIsParkedAndFixed(t *testing.T) {
+	t.Parallel()
+	w := fleetWorld(t, 1, 2, "m1")
+	drift := "BRIEF DRIFT check=paths-at-base line=4: MISSING: origin mas-bandwidth/nova-tools holds no branch sprint/gone"
+	r := TickReq{BriefDrift: func(_ *Snapshot, c *Card) string {
+		if c.ID == "s1-1" {
+			return drift
+		}
+		return ""
+	}}
+	w.part(TickDeal, r)
+	assert.Equal(t, Ready, w.s.Work.Card("s1-1").Col, "a card whose brief drifted is not dealt")
+	ns := w.notesOf(NBriefDrift)
+	require.Len(t, ns, 1, "the park raises one judgment")
+	assert.Equal(t, drift, ns[0].What, "the judgment names the exact line")
+	assert.Contains(t, TickDecisions[NBriefDrift], "brief")
+
+	// the brief passes again: the next tick deals it
+	w.part(TickDeal, TickReq{})
+	assert.Equal(t, Working, w.s.Work.Card("s1-1").Col, "a brief that passes is dealt")
+}

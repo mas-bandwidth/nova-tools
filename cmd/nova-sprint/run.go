@@ -200,6 +200,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
 	st.WakeFriend = a.stallWaker(st, stderr)
+	st.BriefDrift = a.briefDriftFunc() // the deal-time brief lint (addlint.go): nil under NOVA_TEST_NO_HOST, where no host is cloned
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
 	err = noSprintYet(err)
@@ -311,6 +312,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
 	st.WakeFriend = a.stallWaker(st, stderr)
+	st.BriefDrift = a.briefDriftFunc() // the deal-time brief lint (addlint.go): nil under NOVA_TEST_NO_HOST, where no host is cloned
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}

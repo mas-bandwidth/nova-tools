@@ -6357,7 +6357,11 @@ common failure modes can be more efficiently picked up with lint?" On the sprint
 PATHS, 24 docs or a SPEC left out of PATHS, 13 a dead or wrong base, 11 a named TEST that did
 not fit, 9 a class-test ledger outside PATHS. So `add` (the one-brief and the many-brief form)
 holds every card brief, one with a `PATHS:` line, to the brief checks before it writes, after
-the card checks (`card.Checks`) and `holdBase`.
+the card checks (`card.Checks`) and `holdBase`. `add` applies every corrected header line the
+checks computed to the brief it stores, says `LINT APPLIED card=<id> <line>` for each, and
+admits the card; `--no-fix` keeps the refusal below. A finding with no corrected line (a wrong
+`REPO:`, a path that names nothing and is not `NEW:`, a named `TEST:` that already exists at
+the base) still refuses the whole call.
 
 The evidence is the card's base. For a brief that names `REPO:` and `BASE:`, add takes the
 lander's clone of the repository (the clone land keeps under its root, section 7; made as land
@@ -6396,14 +6400,35 @@ it):
 Each finding prints as `LINT DRIFT card=<id> check=<token> line=<n>: <excerpt> remedy=<remedy>`
 on stderr (`card=-` for a `--count` add, whose ids are made at the write). The corrections are
 cumulative, every addition the findings ask for applied at once, one `LINT FIX card=<id>
-<line>` per header line changed, in the order `PATHS:`, `NEW:`, `SHARED:`, line 1, so the
-coordinator applies them in one step and the brief passes. Then one refusal, `<n> brief
-finding(s) at the base, the first <token>: <excerpt>`, exit 2, nothing written; one red brief
-refuses the whole call. The code is `swarm.LintBrief` (internal/swarm/lintpaths.go) and
-`holdBriefBase` (cmd/nova-sprint/addlint.go); the tests are
+<line>` per header line changed, in the order `PATHS:`, `NEW:`, `SHARED:`, line 1. `add`
+applies them itself (`sprint.ApplyBriefFix`): it re-runs the checks on the corrected brief
+and, when the brief now passes, stores the corrected text, prints one `LINT APPLIED card=<id>
+<line>` per line, and admits the card; `--no-fix` refuses instead. A brief the corrected lines
+do not clear, or one with `--no-fix`, refuses with every finding and corrected line above,
+`<n> brief finding(s) at the base, the first <token>: <excerpt>`, exit 2, nothing written; one
+red brief refuses the whole call.
+
+The checks run again at every deal, against the tip of the card's base of that moment
+(`sprint.TickReq.BriefDrift` from the running store, `Store.BriefDrift`): a ready card whose
+brief no longer passes (a PATHS entry gone, a `NEW:` file that now exists, a `TEST:` that
+moved) is dealt to no worker, and the tick raises one judgment parked in the fix column whose
+text is the exact line `BRIEF DRIFT check=<token> line=<n>: <excerpt>`; the judgment's
+decisions are `brief`, `drop` and `wait`. `nova-sprint lint <id>...` (read) runs the same
+checks on demand and prints the `LINT DRIFT` and `LINT FIX` lines, exit 0 when every named
+brief passes and 1 when one fails. `nova-sprint brief <id> --fix` reads the card's stored
+brief, applies the lint's own corrected lines in place, prints `LINT APPLIED`, and releases
+the card; a brief that passes already is refused (`nothing to fix`), and a finding with no
+corrected line is refused. The code is `swarm.LintBrief` (internal/swarm/lintpaths.go),
+`holdBriefBase`, `fixBriefBase`, `briefDriftFunc` and `cmdLint` (cmd/nova-sprint/addlint.go),
+`ApplyBriefFix` (internal/sprint/add_paths.go), `TickDeal` (internal/sprint/steps_tick.go) and
+`cmdBrief --fix` (cmd/nova-sprint/verbs.go); the tests are
 `TestAddLintRefusesABriefWhosePathsMissTheFilesItNames` (internal/swarm, a twin of a base, one
-brief per token that fails it and one that passes, and the corrections applied passing) and
-`TestAddRunsTheBriefChecksAtTheBase` (cmd/nova-sprint, add against a twin repository).
+brief per token that fails it and one that passes, and the corrections applied passing),
+`TestAddRunsTheBriefChecksAtTheBase` and `TestLintAndBriefFixApplyTheLintLines` (cmd/nova-sprint,
+add and the lint verb against a twin repository), and
+`TestApplyBriefFixAppliesEveryCorrectedHeaderLine` and
+`TestABriefThatDriftedAtTheDealIsParkedAndFixed` (internal/sprint, the pure correction and the
+deal-time park).
 
 add (both forms), brief (one brief, `--dir`, and `--widen`) and recut `--brief-file` also hold
 the brief to `sprint.PathsAdmission` after those checks on add and after the card lint on brief

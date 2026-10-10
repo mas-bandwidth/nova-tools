@@ -92,13 +92,68 @@ func TestAddRunsTheBriefChecksAtTheBase(t *testing.T) {
 	many := t.TempDir()
 	write(many, "m1", brief("sprint/s1", "internal/x/*.go,internal/x/testdata/**", "TestNew"))
 	write(many, "m2", brief("sprint/s1", "internal/x/*.go", "TestNew"))
-	code, out, errs = ta.do("add --stream s2 --allow-shared-paths --brief-dir " + many)
+	// --no-fix keeps today's refusal: one red brief refuses the whole call
+	code, out, errs = ta.do("add --stream s2 --allow-shared-paths --no-fix --brief-dir " + many)
 	assert.Equal(t, 2, code, "%s%s", out, errs)
 	assert.Contains(t, errs, "LINT FIX card=m2 PATHS: internal/x/*.go,internal/x/testdata/**\n")
 	assert.NotContains(t, errs, "card=m1 ", "m1 passes")
 	assert.False(t, ta.placed("m1") || ta.placed("m2"), "one red brief refuses the whole call")
 
-	// the corrected line applied, the card is admitted
-	write(many, "m2", brief("sprint/s1", "internal/x/*.go,internal/x/testdata/**", "TestNew"))
-	assert.Contains(t, ta.ok("add --stream s2 --allow-shared-paths --brief-dir "+many), "MOVED m2 -> ready")
+	// without --no-fix add applies the lint's own fix line to the brief it stores, says
+	// LINT APPLIED, and admits the card
+	code, out, errs = ta.do("add --stream s2 --allow-shared-paths --brief-dir " + many)
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Contains(t, errs, "LINT APPLIED card=m2 PATHS: internal/x/*.go,internal/x/testdata/**\n")
+	assert.Contains(t, out, "MOVED m1 -> ready")
+	assert.Contains(t, out, "MOVED m2 -> ready")
+	assert.True(t, ta.placed("m1") && ta.placed("m2"), "both cards are admitted")
+
+	// the corrected PATHS line is what the card stores
+	assert.Contains(t, ta.ok("card m2 --brief"), "PATHS: internal/x/*.go,internal/x/testdata/**")
+}
+
+// brief --fix applies the brief checks' own corrected header lines to the card's stored
+// brief in place, and lint prints the same lines on demand: a brief that drifted from its
+// base is corrected by the lint, not by the seat (docs/SPEC-SPRINT.md section 11, the brief
+// checks).
+func TestLintAndBriefFixApplyTheLintLines(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	remote, _ := twinRemote(t, ta, map[string]string{
+		"internal/x/x.go":            "package x\n",
+		"internal/x/x_test.go":       "package x\n\nimport \"testing\"\n\nfunc TestOld(t *testing.T) {}\n",
+		"internal/x/testdata/in.txt": "in\n",
+	}, "sprint/s1")
+	brief := func(paths string) string {
+		return passingBrief("RESULT: c sha=0123456789ab tier: pro\nREPO: " + remote + "\nBASE: sprint/s1\nPATHS: " + paths + "\nTEST: ./internal/x TestNew\n\nTHE TASK. Fix internal/x/x.go.")
+	}
+	write := func(name, text string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), name+".md")
+		require.NoError(t, os.WriteFile(p, []byte(text), 0o600))
+		return p
+	}
+	good := write("c1", brief("internal/x/*.go,internal/x/testdata/**"))
+	require.Contains(t, ta.ok("add --stream s1 c1 --one --brief-file "+good), "MOVED c1 -> ready")
+
+	// brief replaces the stored brief and runs the admission check, not the base lint: the
+	// drifted brief is admitted and the deal-time lint is what catches it
+	drifted := write("c1-drift", brief("internal/x/*.go"))
+	ta.ok("brief c1 --brief-file " + drifted)
+
+	code, out, errs := ta.do("lint c1")
+	require.Equal(t, 1, code, "%s%s", out, errs)
+	assert.Contains(t, out, "LINT DRIFT card=c1 check=paths-cover-testdata line=4: ")
+	assert.Contains(t, out, "LINT FIX card=c1 PATHS: internal/x/*.go,internal/x/testdata/**")
+
+	// brief --fix applies the lint's own corrected line to the stored brief
+	code, out, errs = ta.do("brief c1 --fix")
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Contains(t, errs, "LINT APPLIED card=c1 PATHS: internal/x/*.go,internal/x/testdata/**")
+	assert.Contains(t, ta.ok("card c1 --brief"), "PATHS: internal/x/*.go,internal/x/testdata/**")
+
+	code, out, errs = ta.do("lint c1")
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Contains(t, out, "LINT OK")
 }

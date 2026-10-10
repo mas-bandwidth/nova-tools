@@ -163,6 +163,10 @@ var TickDecisions = map[string][]string{
 	NDriftCardBase: {"act", "wait"},
 	NDriftServer:   {"act", "wait"},
 	NDriftBaseRed:  {"act", "wait"},
+	// a ready card whose brief no longer passes at its base tip (steps_tick.go TickDeal,
+	// docs/SPEC-SPRINT.md section 11): the lint's own fix lines applied in place with
+	// `brief <id> --fix` release it, and the parked line names that command
+	NBriefDrift: {"brief", "drop", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -201,6 +205,13 @@ type TickReq struct {
 	// the deadlines part keeps a judgment for each drift. nil is none read, and no drift
 	// judgment is raised or closed.
 	Drift *DriftFacts
+	// BriefDrift, when set (run and tick), is asked each ready card's brief before the deal
+	// against the base tip of that moment (docs/SPEC-SPRINT.md section 11, the brief checks):
+	// the line the card is parked with, "BRIEF DRIFT check=<check> line=<n>: <finding>", or
+	// "" when the brief still passes. A parked card is dealt to no worker and raises the
+	// tick's one brief-drift judgment; the seat answers it with brief --fix. nil is none
+	// read, and every ready brief is dealt as before.
+	BriefDrift func(s *Snapshot, c *Card) string
 }
 
 func (r TickReq) who() string {
@@ -628,9 +639,19 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// (dealt nowhere) and a bench card (bench_deal.go keeps it for its bench).
 	// A hard pin that no friend takes stays out of the fleet below.
 	var offer []*Card
+	drifted := map[string]string{}
 	for _, c := range s.Work.Column(Ready) {
 		if StreamHeld(s, c.Row) || IsSentinel(c) {
 			continue
+		}
+		if r.BriefDrift != nil {
+			// the brief is held to its base tip again, here at the deal (docs/SPEC-SPRINT.md
+			// section 11): a card that no longer passes is parked, a judgment to the seat,
+			// never dealt on the stale brief; brief --fix releases it
+			if line := r.BriefDrift(s, c); line != "" {
+				drifted[c.ID] = line
+				continue
+			}
 		}
 		if b := Bench(c); len(b) > 0 {
 			continue
@@ -647,6 +668,12 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range s.Work.Column(Ready) {
 		if StreamHeld(s, c.Row) {
 			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
+		}
+		if line, ok := drifted[c.ID]; ok {
+			// parked in the fix column: not dealt on a brief that no longer passes at its
+			// base tip, and the seat reads the finding and runs brief --fix (TickDecisions)
+			conds = append(conds, cond{typ: NBriefDrift, stream: c.Row, card: c.ID, primaries: []string{c.ID}, what: line})
+			continue
 		}
 		if friendPlaced[c.ID] || OnlyFriend(c) {
 			continue
@@ -845,7 +872,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NFriendSyncFailing}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NFriendSyncFailing, NBriefDrift}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -1403,7 +1430,7 @@ func condKey(typ, subject, card, what string) string {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NBrokenReadsOutrun, NReaderBreaks,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NFriendSyncFailing:
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NFriendSyncFailing, NBriefDrift:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
