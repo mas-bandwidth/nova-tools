@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Violation is one broken rule of docs/SPEC-SPRINT.md section 9, or a step
@@ -260,4 +261,16 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 
 func sortedCards(t *Table) []*Card {
 	return t.Cards()
+}
+
+// readsFieldCut is when the accept began to record FieldReadsNeeded (f8731a2db,
+// 2026-10-06 22:00 ET). A card accepted earlier under a lowered count (the owner,
+// 2026-10-06: "waive the second read") carries no count, and check must not hold
+// it to the tier's rule.
+var readsFieldCut = time.Date(2026, 10, 7, 2, 0, 40, 0, time.UTC)
+
+// acceptedBeforeReadsField says the card's accepted stamp predates readsFieldCut.
+func acceptedBeforeReadsField(c *Card) bool {
+	t, err := time.Parse(time.RFC3339, c.F("accepted"))
+	return err == nil && t.Before(readsFieldCut)
 }

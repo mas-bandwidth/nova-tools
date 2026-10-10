@@ -1645,12 +1645,14 @@ func readerTiersSummary(t ntable.Table) string {
 	var words []string
 	seen := map[string]bool{}
 	for _, r := range t.Rows {
-		w := sprint.ReaderTiersShown(r.Texts[sprint.ReaderTiers])
-		if seen[w] {
-			continue
+		// a row's word is itself a comma list: each tier is named once across rows
+		for w := range strings.SplitSeq(sprint.ReaderTiersShown(r.Texts[sprint.ReaderTiers]), ",") {
+			if seen[w] {
+				continue
+			}
+			seen[w] = true
+			words = append(words, w)
 		}
-		seen[w] = true
-		words = append(words, w)
 	}
 	return strings.Join(words, ",")
 }
@@ -2631,12 +2633,17 @@ func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 // down), and for a friend held or down with a reason, the reason and when she
 // is expected back: `down (opus rate limited, until 6:00 PM)`.
 func (a *app) statusCell(f store.FriendRow, now time.Time) string {
-	if f.Reason == "" && f.Until.IsZero() {
+	// a hold's until that has passed is history, not an expectation: it is not shown
+	until := f.Until
+	if !until.IsZero() && !until.After(now) {
+		until = time.Time{}
+	}
+	if f.Reason == "" && until.IsZero() {
 		return f.Status
 	}
 	why := f.Reason
-	if !f.Until.IsZero() {
-		why = strings.TrimPrefix(why+", until "+a.clock12(f.Until, now), ", ")
+	if !until.IsZero() {
+		why = strings.TrimPrefix(why+", until "+a.clock12(until, now), ", ")
 	}
 	return f.Status + " (" + why + ")"
 }
