@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -489,4 +490,37 @@ func TestTheOutboxFinishNamesTheLane(t *testing.T) {
 	c := Card{ID: "c1", Outbox: "/w/outbox/c1", Lane: 4, ServerEpoch: "16", ServerGen: 2}
 	argv := OutboxFinishArgv("ann", c, "FAIL", "", "", "Verdict: FAIL\n\nno\n")
 	assert.Equal(t, []string{"finish", "--as", "friend.ann", "c1@2", "--epoch", "16", "--failed", "--lane", "4"}, argv[:9])
+}
+
+// A report with a Verdict is the outbox step's alone, however long it waits: the lane never
+// finishes it failed (both readers' finding: a good LAND must never be thrown away as a
+// failure), whatever its wait; only the outbox step's own LAND, at its head, is sent.
+func TestALaneNeverFinishesAReportWithAVerdict(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		out := filepath.Join(dir, "outbox", "c1~15")
+		require.NoError(t, os.MkdirAll(out, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(out, "REPORT.md"), []byte("Verdict: LAND\nHead: "+strings.Repeat("a", 40)+"\n\nDone.\n"), 0o644))
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		srv := newLaneServer(true, map[string]string{"c1~15": "working"})
+		srv.lane["c1~15"] = 1
+		srv.wire(r)
+		r.d.Tip = func(context.Context, string, string) (string, error) {
+			return "", errors.New("ls-remote: the network is down")
+		}
+		r.run(t, int(ReportWait.Seconds())*3)
+		records := strings.Join(r.records, "\n")
+		turns, _, _ := h.got()
+		assert.Empty(t, turns, records)
+		_, reports, _ := srv.got()
+		for _, rep := range reports {
+			if strings.HasPrefix(rep, "finish") {
+				assert.NotContains(t, rep, "--failed", "a LAND is never finished failed: %s", rep)
+				assert.Contains(t, rep, "--head "+strings.Repeat("a", 40), "only the outbox step's own LAND, at its head")
+			}
+		}
+		assert.NotContains(t, records, "finished failed by lane", records)
+	})
 }

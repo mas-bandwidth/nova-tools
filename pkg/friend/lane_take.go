@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -162,12 +163,15 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 		if ln.reportJob != h.Job {
 			ln.reportJob, ln.reportSince = h.Job, now
 		}
-		if now.Sub(ln.reportSince) >= ReportWait {
+		if terminalReport(c) && now.Sub(ln.reportSince) >= ReportWait {
 			l.finishStale(ln, c, now)
 			ln.askAt, ln.reportJob = now.Add(TakeRetry), ""
 			return Card{}, false
 		}
-		wait = "its outbox holds the report of a run before: the outbox step finishes it on the server, else the lane does in " + ReportWait.String()
+		wait = "its outbox holds the report of a run before: the outbox step finishes it on the server"
+		if terminalReport(c) {
+			wait = "its outbox holds a run's RESULT.md or a REPORT.md with no Verdict, which no outbox step finishes: the lane finishes it failed after " + ReportWait.String()
+		}
 	case !exists(c.Brief):
 		wait = "its brief is not in her inbox yet (written from the server's friend cards)"
 	case ok && d.stageOwed(held):
@@ -191,42 +195,59 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 }
 
 // ReportWait is how long a lane the server says holds a card whose outbox has the report of a
-// run before waits for the outbox step to finish it before it finishes it itself.
+// run before that no outbox step can ever finish (a RESULT.md alone, a REPORT.md with no
+// Verdict: a run cut between its writes) waits before it finishes it failed itself. A report
+// with a Verdict is the outbox step's alone, whatever it waits on (a LAND's head not yet
+// origin's tip, a tip that cannot be read, a finish not taken): the lane never finishes it.
 const ReportWait = 2 * time.Minute
 
-// finishStale is a lane's finish of a card it holds whose outbox has the report of a run before
-// that no step finished: failed, by the lane and the server's ids, the report its REPORT.md when
-// that says a verdict, else one the lane writes (EndReport) naming why. A refusal is said; the
-// lane asks the server again either way.
+// terminalReport says card c's outbox holds a report of a run before that no outbox step will
+// finish: no REPORT.md with a Verdict line.
+func terminalReport(c Card) bool {
+	raw, err := os.ReadFile(c.Report())
+	if err != nil {
+		return true
+	}
+	v, _ := reportLine(string(raw), "Verdict")
+	return v == ""
+}
+
+// finishStale is a lane's finish of a card it holds whose outbox has a run's RESULT.md or a
+// REPORT.md with no Verdict, which no outbox step finishes: failed, by the lane and the
+// server's ids, with a report the lane writes (EndReport) naming why, written as REPORT.md when
+// there is none. A refusal is said; the lane asks the server again either way.
 func (l *loop) finishStale(ln *lane, c Card, now time.Time) {
 	d := l.d
-	at := now.UTC().Format(time.RFC3339)
 	head, branch := PushedHead(d.Dir, c)
-	report := ""
-	if raw, err := os.ReadFile(c.Report()); err == nil {
-		if v, _ := reportLine(string(raw), "Verdict"); v != "" {
-			report = string(raw)
+	report := EndReport(d.Friend, ln.n, c, LaneEnd{Err: "the outbox held a run's RESULT.md or a REPORT.md with no Verdict, which no outbox step finishes"}, head, branch)
+	if !exists(c.Report()) {
+		if err := os.MkdirAll(c.Outbox, 0o755); err == nil {
+			_ = atomicfile.WriteFile(c.Report(), []byte(report), 0o644) // ignored: the finish below carries the same words
 		}
 	}
-	if report == "" {
-		report = EndReport(d.Friend, ln.n, c, LaneEnd{Err: "the outbox held the report of a run before that the outbox step did not finish"}, head, branch)
-		if !exists(c.Report()) {
-			if err := os.MkdirAll(c.Outbox, 0o755); err == nil {
-				_ = atomicfile.WriteFile(c.Report(), []byte(report), 0o644) // ignored: the finish below carries the same words
-			}
-		}
-	}
+	l.sendStale(ln, c, FinishArgv(d.Friend, c, report, head, branch), now)
+}
+
+// sendStale sends a lane's finish of a card whose outbox's report of a run before no step
+// finished, and says it.
+func (l *loop) sendStale(ln *lane, c Card, argv []string, now time.Time) {
+	d := l.d
+	at := now.UTC().Format(time.RFC3339)
 	if d.Finish == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
-	err := d.Finish(ctx, FinishArgv(d.Friend, c, report, head, branch))
+	err := d.Finish(ctx, argv)
 	cancel()
+	how := "finished"
+	if slices.Contains(argv, "--failed") {
+		how = "finished failed"
+	}
 	if err != nil {
-		d.Record(fmt.Sprintf("%s lane %d: card %s: its outbox's report of a run before was not finished in %s, and the lane's failed finish was refused: %s", at, ln.n, c.ID, ReportWait, oneLine(err.Error(), 300)))
+		d.Record(fmt.Sprintf("%s lane %d: card %s: its outbox's report of a run before was not finished in %s, and the lane's finish was refused: %s", at, ln.n, c.ID, ReportWait, oneLine(err.Error(), 300)))
 		return
 	}
-	d.Record(fmt.Sprintf("%s lane %d: card %s: its outbox's report of a run before was not finished in %s: finished failed by lane %d sent=server", at, ln.n, c.ID, ReportWait, ln.n))
+	d.Record(fmt.Sprintf("%s lane %d: card %s: its outbox's report of a run before was not finished in %s: %s by lane %d sent=server", at, ln.n, c.ID, ReportWait, how, ln.n))
 }
 
 // laneSay says a lane's line once while it stands ("" clears it).
