@@ -33,6 +33,7 @@ package testguard
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +136,71 @@ func (g *Guard) RefuseHosts(program string, args ...string) {
 			"inject the fake the seam takes, or install a fake on PATH and declare it with testguard.AllowHosts()",
 		EnvNoHost, commandLine(program, args)))
 }
+
+// RefuseAddr is what every store seam in this tree calls with the network and
+// address it is about to dial (nova-tools#4193). Under the guard, and outside
+// an AllowHosts scope, it panics naming that address; otherwise it returns
+// immediately.
+//
+// RefuseHosts catches a seam about to run a host program; RefuseAddr catches the
+// path no test text carries -- a store address the environment named in
+// production code. A store on the loopback (127.0.0.0/8, ::1, localhost) or a
+// unix socket under a temp root is a fake a test may reach; anything else can be
+// the fleet. It panics rather than returning an error for the reason RefuseHosts
+// gives: a store that did not answer is an infrastructure story, and this is a
+// code defect a test must fix.
+func RefuseAddr(network, addr string) {
+	defaultGuard.RefuseAddr(network, addr)
+}
+
+// RefuseAddr is RefuseHosts's other half on g.
+func (g *Guard) RefuseAddr(network, addr string) {
+	if !g.refusing.Load() || g.allowed.Load() > 0 {
+		return
+	}
+	if g.loopbackAddr(network, addr) {
+		return
+	}
+	panic(fmt.Sprintf(
+		"%s=1: a test reached a store off the loopback: network=%q addr=%q; "+
+			"inject a fake dialer, run the store on 127.0.0.1 with an OS-assigned port, "+
+			"or put a unix socket in t.TempDir()",
+		EnvNoHost, network, addr))
+}
+
+// loopbackAddr reports whether a store at network/addr is one a test may reach:
+// a loopback host (127.0.0.0/8, ::1, localhost) over a stream network, or a
+// unix socket whose path lies under a temp root. It reuses under and tempRoots,
+// so a unix path is judged by the roots a fake program on PATH is.
+func (g *Guard) loopbackAddr(network, addr string) bool {
+	if strings.HasPrefix(network, "unix") {
+		rootsFn := g.tempRoots
+		if rootsFn == nil {
+			rootsFn = tempRoots
+		}
+		for _, root := range rootsFn() {
+			if under(addr, root) {
+				return true
+			}
+		}
+		return false
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// Default returns the process-wide guard, armed from the environment at start
+// and re-read by Reload. A store seam that dials an address the environment
+// named takes this guard, so the one NOVA_TEST_NO_HOST that arms RefuseHosts
+// arms RefuseAddr too.
+func Default() *Guard { return defaultGuard }
 
 // isFakeProgram reports whether the program this seam is about to start lives
 // in a temp directory. That is what a fake ssh looks like in this repository:

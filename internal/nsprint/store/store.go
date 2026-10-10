@@ -4,11 +4,13 @@ package store
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
 )
@@ -134,6 +136,17 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	// and Redis 8.10.2 refuses it (errorstat_ERR), a second trip for
 	// nothing; the same setting as redisconn.Open. The connect is HELLO alone.
 	opts := &redis.Options{Addr: addr, Username: user, Password: password, DisableIdentity: true,
+		// The dial passes the process guard before it touches a socket
+		// (nova-tools#4193): this address comes from the seat's profile or the
+		// environment, never test text, so a test that runs a verb while
+		// NOVA_TEST_NO_HOST is set refuses a fleet address here rather than
+		// reading the real fleet store. go-redis bounds each attempt through
+		// the dial context, so net.Dialer needs no timeout of its own. A caller
+		// that hands openWith its own Dialer (tests) replaces this one.
+		Dialer: func(ctx context.Context, network, networkAddr string) (net.Conn, error) {
+			testguard.RefuseAddr(network, networkAddr)
+			return (&net.Dialer{}).DialContext(ctx, network, networkAddr)
+		},
 		MaintNotificationsConfig: &maintnotifications.Config{
 			Mode:         maintnotifications.ModeDisabled,
 			EndpointType: maintnotifications.EndpointTypeNone,

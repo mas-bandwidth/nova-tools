@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
 )
@@ -65,15 +66,31 @@ type Conn struct {
 // of this package. The password is read from getenv when Open runs and at
 // no other time.
 //
+// Every dial it makes passes testguard's RefuseAddr first (guardDial), so a
+// test that runs a verb while NOVA_TEST_NO_HOST is set refuses an address the
+// environment named, before a socket is opened (nova-tools#4193).
+//
 // An error is one of this package's (Classify): Unreachable, AuthRefused
 // or Other, with one line that names what was tried and the next thing to
 // do, and it never holds the password. On an error nothing is left open.
 func Open(ctx context.Context, o Options, getenv func(string) string) (*Conn, error) {
-	return open(ctx, o, getenv, netDial)
+	return open(ctx, o, getenv, guardDial(testguard.Default(), netDial))
 }
 
 // dialFunc dials one connection; tests hand open a dialer of their own.
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// guardDial wraps a dialer so the process guard sees every address Open is
+// about to dial (nova-tools#4193): an address the environment named reaches
+// production code, never test text, so the net and unit-sockets classes cannot
+// see it. A test that hands open its own dialer is untouched; only Open's own
+// dialer passes here.
+func guardDial(g *testguard.Guard, dial dialFunc) dialFunc {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		g.RefuseAddr(network, addr)
+		return dial(ctx, network, addr)
+	}
+}
 
 func netDial(ctx context.Context, network, addr string) (net.Conn, error) {
 	return (&net.Dialer{Timeout: DialTimeout}).DialContext(ctx, network, addr)
