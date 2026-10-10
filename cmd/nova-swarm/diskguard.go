@@ -23,6 +23,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 )
 
 // THE DISK GUARD (docs/SPEC-SWARM.md, `disk-guard`; docs/FLEET.md, loops.yml).
@@ -227,6 +229,7 @@ func (g *guard) run() int {
 	g.buildCaches()
 	g.modules()
 	g.pools()
+	g.bench()
 	g.landClones()
 	g.mirrors()
 	// The floors read every volume this pass reads, the home volume and each --root, never
@@ -458,6 +461,58 @@ func (g *guard) pools() {
 			continue // a process works in it: what it holds is not the guard's
 		}
 		g.sweep(slots, entries)
+	}
+}
+
+// bench sweeps bench run directories under each root: any run older than
+// bench.RunAgeLimit with no live process is removed.
+func (g *guard) bench() {
+	for _, root := range g.roots {
+		runs := filepath.Join(root, "runs")
+		entries, err := os.ReadDir(runs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			g.fail(fmt.Sprintf("the runs directory %s could not be listed (%s)", oneline.Field(runs), oneline.Err(err)))
+			continue
+		}
+		list, ok := g.processes()
+		if !ok {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(runs, e.Name())
+			fi, err := e.Info()
+			if err != nil {
+				continue
+			}
+			if g.now.Sub(fi.ModTime()) < bench.RunAgeLimit {
+				continue
+			}
+			if naming(list, dir) != "" {
+				g.say(fmt.Sprintf("KEPT run %s: a live process names it", oneline.Field(dir)))
+				continue
+			}
+			held, ok := g.holds(dir)
+			if !ok {
+				return
+			}
+			if held != "" {
+				g.say(fmt.Sprintf("KEPT run %s: a live process holds %s", oneline.Field(dir), oneline.Field(held)))
+				continue
+			}
+			size := treeSize(dir)
+			if err := g.unless(func() error { return safepath.RemoveUnderRoots(dir, runs) }); err != nil {
+				g.fail(fmt.Sprintf("the run %s was not removed (%s)", oneline.Field(dir), oneline.Err(err)))
+				continue
+			}
+			g.freed += size
+			g.say(fmt.Sprintf("REMOVED run %s freed=%d", oneline.Field(dir), size))
+		}
 	}
 }
 
