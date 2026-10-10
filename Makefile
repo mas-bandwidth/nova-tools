@@ -114,6 +114,12 @@ help:
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 
+# docs-check: the docs CI gates, one command per line (tdocs-docs-ci-b.w8).
+docs-check:
+	$(GO) test -count=1 ./internal/docs/...
+	$(GO) run ./cmd/nova-check links --dir .
+	$(MAKE) clidoc
+
 map:
 	$(GO) run ./tools/agentsmap
 

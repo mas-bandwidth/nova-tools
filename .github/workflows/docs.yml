@@ -1,0 +1,54 @@
+# Docs CI for nova-tools (tdocs-docs-ci-b.w8).
+#
+# Why this exists: documentation breaks quietly unless something runs on every
+# change that touches the docs tier. A stale generated reference, a dead link or
+# a broken docs guard would otherwise land with nothing red.
+#
+# When it runs: on pull requests and on pushes that touch docs/**, a README,
+# cmd/*/verbhelp.go or tools/clidoc/**.
+#
+# What it runs: make docs-check, which runs the internal/docs tests, the link
+# check and the generated CLI check, one command per recipe line.
+#
+# The job keeps the permanent two-minute cap and names a generic self-hosted
+# Linux runner, never a machine. Every step is one command or one pinned action.
+
+name: docs
+
+on:
+  push:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+
+jobs:
+  docs-check:
+    # The generic self-hosted Linux labels; a machine or pool name is never here.
+    runs-on: [self-hosted, linux, x64]
+    # The cap is permanent and platform-wide; never raise it.
+    timeout-minutes: 2
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The docs gates compare nothing against a base, so a depth-1 fetch is
+          # enough; ci.yml keeps fetch-depth: 2 for its own history rules.
+          fetch-depth: 1
+
+      - name: use the pinned Go toolchain on the persistent runner
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # A persistent runner already has its cache on disk.
+          cache: false
+
+      - name: docs-check
+        run: make docs-check
