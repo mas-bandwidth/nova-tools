@@ -40,6 +40,7 @@ import (
 //   - holds every Go build cache it knows under --cache-max-gb by the member's own trim
 //     (internal/gocache): entries used longest ago first, never one used in the last
 //     two hours, so a build running against the cache never loses what it is reading;
+//     under the watermark (twice --disk-floor free) under a quarter of that cap;
 //   - empties a module cache over --modcache-max-gb, as go clean -modcache does, only
 //     while no go command runs on the machine and no process holds a file in it;
 //   - rotates every loop log over --log-max-mb: copied to <log>.1 and emptied in place (the
@@ -74,6 +75,9 @@ const (
 	guardCloneAge   = 24 * time.Hour
 	guardFloorGiB   = 10
 	guardTmpPackAge = time.Hour
+	// guardPressureDiv divides every build cache's cap while the tightest volume is under
+	// the watermark, twice the floor (buildCaches).
+	guardPressureDiv = 4
 	// guardKeepNewest is how many ended launches a stopped pool keeps: the member's own
 	// sweep's figure (keepFailed), held here apart so the two can part when the member's
 	// rule changes.
@@ -354,27 +358,58 @@ func rotate(path string, keep int, dry bool) (freed int64, err error) {
 // buildCaches holds every Go build cache under the cap: one walk measures it, and one more,
 // only when it is over, removes its entries used longest ago until it is under the cap less
 // a fifth (internal/gocache, the member's trim, with the whole cache in one round).
+//
+// The cap alone never freed a full disk (2026-10-10: two fleet machines at 0 bytes free,
+// six build caches on each, every one under its 20 GiB cap, holding about 76 GB between them,
+// and every pass said freed=0 and only warned). So under the watermark, twice --disk-floor
+// on the tightest volume the guard reads, every cache is held under a quarter of its cap.
 func (g *guard) buildCaches() {
+	limit, pressure := g.cacheMax, ""
+	if free, low := g.underWatermark(); low {
+		limit = g.cacheMax / guardPressureDiv
+		pressure = fmt.Sprintf("PRESSURE free=%d watermark=%d: every go build cache is held under cap=%d this run", free, 2*g.floor, limit)
+	}
 	for _, dir := range g.caches {
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			continue
 		}
+		if pressure != "" { // said once, before the first cache it holds
+			g.say(pressure)
+			pressure = ""
+		}
 		t := &gocache.Trim{}
-		b := gocache.Bounds{Limit: g.cacheMax, Slack: g.cacheMax / 5, Dirs: gocache.Subdirs, Remove: math.MaxInt}
-		if c := t.Round(dir, g.now, b); c.Size <= g.cacheMax { // measures, removes nothing
+		b := gocache.Bounds{Limit: limit, Slack: limit / 5, Dirs: gocache.Subdirs, Remove: math.MaxInt}
+		if c := t.Round(dir, g.now, b); c.Size <= limit { // measures, removes nothing
 			continue
 		}
 		if g.dry {
-			g.say(fmt.Sprintf("TRIMMED go-build %s size=%d cap=%d", oneline.Field(dir), t.Total(), g.cacheMax))
+			g.say(fmt.Sprintf("TRIMMED go-build %s size=%d cap=%d", oneline.Field(dir), t.Total(), limit))
 			continue
 		}
 		c := t.Round(dir, g.now, b)
 		g.freed += c.Freed
-		g.say(fmt.Sprintf("TRIMMED go-build %s freed=%d size=%d cap=%d", oneline.Field(dir), c.Freed, c.Size, g.cacheMax))
+		g.say(fmt.Sprintf("TRIMMED go-build %s freed=%d size=%d cap=%d", oneline.Field(dir), c.Freed, c.Size, limit))
 		if c.Failed > 0 {
 			g.fail(fmt.Sprintf("the go build cache %s: %d entries were not removed (%s)", oneline.Field(dir), c.Failed, oneline.Escape(c.Why)))
 		}
 	}
+}
+
+// underWatermark is the tightest free of the volumes the guard reads (the home volume and
+// each --root) and whether it is under twice the floor. A volume whose free cannot be read
+// is skipped here; the floors after the rules say it. No floor, no watermark.
+func (g *guard) underWatermark() (uint64, bool) {
+	if g.floor <= 0 {
+		return 0, false
+	}
+	var free uint64
+	read := false
+	for _, p := range append([]string{g.home}, g.roots...) {
+		if n, err := g.free(p); err == nil && (!read || n < free) {
+			free, read = n, true
+		}
+	}
+	return free, read && free < uint64(2*g.floor)
 }
 
 // modules empties a module cache over its cap, only while no go command runs and no
