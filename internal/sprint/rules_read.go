@@ -223,6 +223,15 @@ func TickRuleWidenRead(s *Snapshot, r TickReq) (Plan, int) {
 					keep = append(keep, FieldWho)
 				}
 				e.Unset = slices.DeleteFunc(e.Unset, func(f string) bool { return slices.Contains(keep, f) })
+				// the finder of the widened attempt, as a rework names it (steps_review.go): the next
+				// attempt's first read is asked of them (finderFirst needs the reader and the attempt)
+				if finder := finderOf(s, pr); finder != "" {
+					e.Set[FieldFindingReader] = finder
+				} else {
+					e.Unset = append(e.Unset, FieldFindingReader)
+				}
+				// FieldFindingKeys is not appended: a widen resets the brief's bound, which the
+				// identical-finding check counts from, so no key is owed for this attempt
 			}
 			u.Moved += "; answered by rule " + a.Rule
 			for _, o := range u.Closes {

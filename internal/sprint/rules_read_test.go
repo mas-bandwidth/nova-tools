@@ -29,7 +29,11 @@ const readBrief = "c: the change (r) tier: flash\nREPO: mas-bandwidth/nova-tools
 
 // brokenRead drives the primary's dealt (or ready) attempt through its work, pushed at
 // readHead, and one read the reader finds broken with the finding.
-func (r *conflictRig) brokenRead(id, finding string) {
+func (r *conflictRig) brokenRead(id, finding string) { r.brokenReadBy(id, finding, false) }
+
+// brokenReadBy is brokenRead; instead takes the asked read back and asks another reader (ask
+// --instead), so the reader who breaks the attempt is not the one finder-first asked.
+func (r *conflictRig) brokenReadBy(id, finding string, instead bool) {
 	r.t.Helper()
 	if r.snap().Work.Card(id).Col == sprint.Ready {
 		r.must(dealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{id}}}))
@@ -56,6 +60,11 @@ func (r *conflictRig) brokenRead(id, finding string) {
 		rc = asked()
 	}
 	require.NotNil(r.t, rc, "a read of %s is asked", id)
+	if instead {
+		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}, Instead: rc.Row}))
+		rc = asked()
+		require.NotNil(r.t, rc, "a read of %s is asked of another reader", id)
+	}
 	r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "broken", Finding: finding, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 }
 
@@ -80,7 +89,6 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 		pr := s.Work.Card("r-1")
 		require.Equal(t, 2, pr.Int("attempt"), "reworked by the next tick")
 		assert.Equal(t, finding, pr.F("fix"), "the finding is the fix")
-		assert.Equal(t, "1", pr.F(sprint.FieldFindingAttempt), "the finding stays the broken attempt's: finder-first survives a widen")
 		assert.Empty(t, pr.F(sprint.FieldTier), "on the same tier")
 		assert.Empty(t, r.openOnCard(sprint.NReadBroken, "r-1"), "the judgment is answered")
 		answered := r.answeredBy(sprint.RuleReadBroken)
@@ -114,6 +122,7 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 		assert.Contains(t, brief, "\nPATHS: internal/x/a.go,internal/y/b.go\n", "PATHS widened by exactly the file")
 		assert.Contains(t, brief, "CARRY: r-1 attempt 1 head="+readHead, "its next attempt starts from the broken attempt's head")
 		assert.Equal(t, finding, pr.F("fix"), "the finding is the fix")
+		assert.Equal(t, "1", pr.F(sprint.FieldFindingAttempt), "the finding stays the broken attempt's: finder-first survives a widen")
 		assert.True(t, strings.HasPrefix(pr.F("note"), "answered by rule "+sprint.RuleReadBroken+": "+sprint.ActWidenRead), "a note on the card names the rule: %q", pr.F("note"))
 		assert.Empty(t, r.openOnCard(sprint.NReadBroken, "r-1"), "the judgment is answered")
 		require.Len(t, r.answeredBy(sprint.RuleReadBroken), 1)
@@ -257,4 +266,35 @@ func TestRequiredValidationFilesNeverWidenAReadersScope(t *testing.T) {
 	t.Parallel()
 	finding := "internal/y/y_test.go, internal/y/testdata/case.json, testdata/deep/witness.tla, tla/RUNS.tsv, tla/CASES.tsv, internal/docs/catalog.go and internal/y/AGENTS.md are required; internal/y/y.go remains source."
 	assert.Equal(t, []string{"internal/y/y.go"}, sprint.FilesOutsidePaths("PATHS: internal/x/x.go\n", finding))
+}
+
+// A widen keeps finder-first: the next attempt's first read is asked of the reader who broke
+// the widened attempt, not of the one who broke an attempt before it.
+func TestAWidenKeepsTheFinderOfTheWidenedAttempt(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.readCard()
+	r.brokenRead("r-1", "internal/x/a.go:12 drops the error from Close; return it")
+	r.tick()
+	pr := r.snap().Work.Card("r-1")
+	require.Equal(t, 2, pr.Int("attempt"), "reworked")
+	first := pr.F(sprint.FieldFindingReader)
+	require.NotEmpty(t, first, "the rework names its finder")
+
+	// attempt 2 is broken by a different reader, outside PATHS
+	r.brokenReadBy("r-1", "internal/y/b.go:40 still calls the old name, outside PATHS; rename the call too", true)
+	var second string
+	for _, rc := range r.snap().Readers.Of("r-1") {
+		if rc.Col == sprint.Broken && rc.Int("attempt") == 2 {
+			second = rc.Row
+		}
+	}
+	require.NotEmpty(t, second)
+	require.NotEqual(t, first, second, "two readers")
+	r.tick()
+
+	pr = r.snap().Work.Card("r-1")
+	assert.Contains(t, pr.F("brief"), "internal/y/b.go", "widened in place")
+	assert.Equal(t, "2", pr.F(sprint.FieldFindingAttempt), "the finding is attempt 2's")
+	assert.Equal(t, second, pr.F(sprint.FieldFindingReader), "its finder is the reader who broke attempt 2")
 }
