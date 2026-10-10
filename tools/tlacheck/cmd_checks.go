@@ -48,7 +48,7 @@ func suiteVerb(e env, token, verb string, plan func() ([]tablemodel.Step, error)
 			if !r.OK {
 				status, w = "FAIL", e.stderr
 			}
-			event(w, token, status, "case", r.Step.Name, "verdict", r.Verdict, "seconds", seconds(r.Seconds),
+			event(w, token, status, "case", r.Step.Name, "verdict", r.Verdict, "seconds", seconds(r.Elapsed),
 				"generated", r.Outcome.Generated, "distinct", r.Outcome.Distinct, "log", r.Log)
 		},
 	})

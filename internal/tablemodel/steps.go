@@ -132,7 +132,7 @@ type StepResult struct {
 	Verdict string
 	OK      bool
 	Code    int
-	Seconds time.Duration
+	Elapsed time.Duration
 	Outcome tlc.Outcome
 	Log     string
 }
@@ -193,7 +193,7 @@ func RunSteps(steps []Step, o StepOptions) ([]StepResult, error) {
 		if err != nil {
 			return results, fmt.Errorf("cannot read %s: %v", log, err)
 		}
-		r := StepResult{Step: s, Code: code, Seconds: time.Since(start), Outcome: tlc.Parse(string(raw)), Log: log}
+		r := StepResult{Step: s, Code: code, Elapsed: time.Since(start), Outcome: tlc.Parse(string(raw)), Log: log}
 		switch {
 		case ctx.Err() != nil && code == tlc.ExitTimeout:
 			r.Verdict = VerdictTimeout
