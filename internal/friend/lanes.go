@@ -366,6 +366,58 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 	return b.String()
 }
 
+// refuseSecondEngine claims the engine lock when her state directory is
+// already there. A second live engine is recorded and starts no lane. A
+// missing state directory leaves the step as it was.
+func (l *loop) refuseSecondEngine(now time.Time) bool {
+	d := l.d
+	if d == nil || d.Dir == "" {
+		return false
+	}
+	dir := StateDirIn(d.Dir)
+	st, err := os.Stat(dir)
+	if err != nil || !st.IsDir() {
+		return false
+	}
+	n := 0
+	if l.lanes != nil {
+		n = len(l.lanes.lanes)
+	}
+	_, err = TouchEngine(dir, os.Getpid(), now, nil, n)
+	if err == nil {
+		return false
+	}
+	var held *EngineHeld
+	if !errors.As(err, &held) {
+		return false
+	}
+	if d.Record != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " " + held.Error())
+	}
+	return true
+}
+
+// noteZeroLanes asks the zero-lane judgment. laneStep runs for one-shot
+// delivery; a batch friend's ready count is not in this step, so a batch
+// call here carries ready 0 and does not push.
+func (l *loop) noteZeroLanes(now time.Time, lanes int) {
+	if l == nil || l.d == nil || l.mode != ModeBatch {
+		return
+	}
+	holder, since, last := 0, time.Time{}, time.Time{}
+	view, err := ReadEngine(StateDirIn(l.d.Dir))
+	if err == nil {
+		holder, since, last = view.PID, view.Since, view.LastLane
+	}
+	_, body, push := ConsiderLanes(LaneEpisode{}, LaneSample{
+		Friend: l.d.Friend, Mode: l.mode, Lanes: lanes, Ready: 0, Now: now,
+		HolderPID: holder, Since: since, LastLane: last,
+	})
+	if push && body != "" && l.d.Record != nil {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " " + strings.ReplaceAll(body, "\n", " "))
+	}
+}
+
 // laneStep starts what the lanes owe: a session for a lane that has none,
 // and a card's turn for a lane that is free, the waiting messages riding
 // along. A lane beyond width, or beyond the live cap a rate limit lowered,
@@ -373,8 +425,12 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 // lanes back off from a rate limit, or are held out of funds, no lane starts
 // a turn or an open (ratelimit.go).
 func (l *loop) laneStep(now time.Time, width int) {
+	if l.refuseSecondEngine(now) {
+		return
+	}
 	s := l.lanes
 	d := l.d
+	l.noteZeroLanes(now, len(s.lanes))
 	s.width, s.now = width, now
 	for _, line := range s.gov.Step(now, width) {
 		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
