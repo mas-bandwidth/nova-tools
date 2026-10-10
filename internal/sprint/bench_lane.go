@@ -13,9 +13,11 @@ import (
 	"time"
 )
 
-// Bench lanes (docs/SPEC-SPRINT.md section 18, bench lanes). A lane the machinery
-// starts on a bench (a worker, a reader, a lander, a bench gate) is run by
-// RunBenchLane, in order:
+// Bench lanes (docs/SPEC-SPRINT.md section 18, bench lanes). The machinery's go run
+// on a bench is a lane: the lander's tree gate, the go run the machinery launches on a
+// remote bench, is run by RunBenchLane, in order (a worker's or a reader's card runs on
+// the bench itself through the native runner, whose TMPDIR is the run's own slot temp,
+// not through this):
 //
 //  1. make: mkdir -p <root>/<kind>/<job>/tmp, the lane's own directory.
 //  2. cap: the bench's one shared GOCACHE is measured, and cleaned with

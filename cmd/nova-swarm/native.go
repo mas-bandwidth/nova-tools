@@ -637,6 +637,15 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
+	// releaseTmp ends a run refused after its slot tmp was made: the leases are given
+	// back and the run's own slot temp is removed, so a refusal after the make does not
+	// leave a temp directory behind (docs/SPEC-SWARM.md, native).
+	releaseTmp := func() {
+		releaseSlot()
+		releaseLease()
+		// ignored: best-effort cleanup of the run's own slot temp on an early refusal
+		_ = removeNativeSlotTemp(cfg.slotDir, tmpDir)
+	}
 	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
 	// same for every card under one root, but each card left to itself downloads them
 	// into its own data home -- up to 5 GB per slot, and 120 cards fill two benches to
@@ -644,8 +653,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// job directory) and the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
 	if !cfg.noSharedCaches && cfg.root != "" {
 		if err := swarm.EnsureCacheDirs(cfg.root); err != nil {
-			releaseSlot()
-			releaseLease()
+			releaseTmp()
 			refuseNative(errOut, fmt.Sprintf("the shared cache directories under %s could not be made: %s", oneline.Field(swarm.CacheRoot(cfg.root)), oneline.Escape(err.Error())))
 			return nil, nativeRunResult{}, 2
 		}
@@ -672,8 +680,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// the seat's key is the defect this closes, not a mode to fall back to.
 	shimDir, shimShell, shimErr := writeNativeShellShims(cfg.slotDir)
 	if shimErr != nil {
-		releaseSlot()
-		releaseLease()
+		releaseTmp()
 		refuseNative(errOut, fmt.Sprintf("%s the card's shell cannot be scrubbed of the provider key: %s",
 			oneline.Field(cfg.label), oneline.Err(shimErr)))
 		return nil, nativeRunResult{}, 2
@@ -685,8 +692,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	toolPath := swarm.BenchPath(benchOS(cfg), benchHome(cfg), os.Getenv("PATH"))
 	if cacheDir != "" {
 		if err := writeNativeGoShim(shimDir, goBin); err != nil {
-			releaseSlot()
-			releaseLease()
+			releaseTmp()
 			refuseNative(errOut, fmt.Sprintf("%s %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nil, nativeRunResult{}, 2
 		}
@@ -708,8 +714,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// writes nothing at all.
 	if cfg.authFile != "" {
 		if reason := copyAuth(cfg.authFile, provider, dataHome); reason != "" {
-			releaseSlot()
-			releaseLease()
+			releaseTmp()
 			refuseNative(errOut, reason)
 			return nil, nativeRunResult{}, 2
 		}

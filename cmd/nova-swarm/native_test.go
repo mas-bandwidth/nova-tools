@@ -122,6 +122,24 @@ func TestNativeRemovesItsSlotTemp(t *testing.T) {
 	assert.DirExists(t, outside, "a path outside the slot's tmp is never removed")
 }
 
+// A run refused after its slot temp was made removes that temp: the shell shim directory is
+// made after <slot>/tmp/<label>, and a run whose shim cannot be written refuses with the slot
+// temp gone, so a refusal does not leave a temp directory behind (docs/SPEC-SWARM.md, native).
+func TestANativeRefusalAfterItsSlotTempIsMadeRemovesIt(t *testing.T) {
+	t.Parallel()
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	require.NoError(t, os.WriteFile(filepath.Join(slot, "shim"), []byte("not a directory\n"), 0o644), "the shim path could not be made a file")
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "card",
+		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+	}, &errOut)
+	require.Equal(t, 2, code, "a run whose shim cannot be written exits 2, got %d:\n%s", code, errOut.String())
+	require.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errOut.String())
+	assert.NoDirExists(t, filepath.Join(slot, "tmp", "card"), "the refused run left its slot temp behind:\n%s", errOut.String())
+}
+
 // TestNativeRunRefusesMissingBinary: a binary that does not exist, and one that exists but
 // is not executable, are both the refusal that runs before any child can start.
 func TestNativeRunRefusesMissingBinary(t *testing.T) {

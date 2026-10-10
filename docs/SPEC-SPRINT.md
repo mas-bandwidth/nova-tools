@@ -7464,17 +7464,19 @@ gives one at a time beside the store, so no two steps of the record interleave.
 
 ### Bench lanes
 
-A lane the machinery starts on a bench (a worker, a reader, a lander, a bench gate)
-is `RunBenchLane` (`internal/sprint/bench_lane.go`). Its directory is
-`nova-bench/lanes/<kind>/<job>` and its `tmp` is inside that directory. The command
-runs with `TMPDIR` and `GOTMPDIR` set to that `tmp`, and with `GOCACHE` the bench's
-one shared cache (`nova-bench/cache/go-build` when the lane names none); each is named
-under the login's home, so it resolves against the home even though the command has
-`cd`'d into the checkout. The directory
-is removed when the lane ends, whatever the verdict, and the caller's cancellation
-does not end that remove. A directory whose lane is gone is removed on the next tick
-(`SweepBenchLanes`): each directory under the root whose lane is not live, and a name
-that is not one plain job is left.
+The machinery's go run on a bench is a lane. The lander's tree gate, the go run the
+machinery launches on a remote bench, is `RunBenchLane` (`internal/sprint/bench_lane.go`);
+its directory is `nova-bench/lanes/<kind>/<job>` and its `tmp` is inside that directory.
+The command runs with `TMPDIR` and `GOTMPDIR` set to that `tmp`, and with `GOCACHE` the
+bench's one shared cache (`nova-bench/cache/go-build` when the lane names none); each is
+named under the login's home, so it resolves against the home even though the command has
+`cd`'d into the checkout. The directory is removed when the lane ends, whatever the
+verdict, and the caller's cancellation does not end that remove. A directory whose lane
+is gone is removed on the next tick (`SweepBenchLanes`): each directory under the root
+whose lane is not live, and a name that is not one plain job is left. A worker's or a
+reader's card runs on the bench itself through the native runner, whose `TMPDIR` is the
+run's own slot temp (`<slot>/tmp/<label>`), removed by a deferred remove whatever the
+verdict and swept by the machine's disk guard when its run is killed.
 
 The shared cache has one cap per bench. The cap is the sprint's `bench_cache_gib`, a
 whole number from 1 (`Snapshot.BenchCacheCapGiB`), and `BenchCacheCapGiBDefault` when
