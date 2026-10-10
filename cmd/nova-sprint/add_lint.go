@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // briefCheck is one brief of an add held to the card checks, under the id it is admitted as.
@@ -53,6 +54,14 @@ func (a *app) holdCardChecks(verbName string, st *store.Store, stderr io.Writer,
 	var red []cardgen.LintFinding
 	for _, b := range briefs {
 		red = append(red, card.Checks(b.id, b.brief, opts)...)
+		// A FORM: block the finish cannot read is refused here, as a PATHS: line is
+		// (docs/SPEC-SPRINT.md, the report's form): the card lint holds the grammar the
+		// finish checks, so a card with an unparseable form never leaves `add`.
+		if swarm.HasFormLine(b.brief) {
+			if _, err := swarm.ReadForm(b.brief); err != nil {
+				red = append(red, cardgen.LintFinding{ID: b.id, Check: "form-parse", Line: 1, Excerpt: err.Error()})
+			}
+		}
 	}
 	if len(red) == 0 {
 		return 0
