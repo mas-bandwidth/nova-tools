@@ -179,9 +179,14 @@ var childScans = []childScan{
 		RE:     childCmd(gitCmd + `rebase\b`),
 		Remedy: "no line rebases: merge the base forward with `git merge --no-edit`; a rebase rewrites the history another worktree shares"},
 	{Check: "step-push-proof",
-		// A brief never asks a worker to prove its push in prose: the machine reads the branch itself
-		// (goal of the-finish-form-is-one-line-bbb).
-		RE:     childCmd(`(?i)\b(?:git[ \t]+ls-remote\b|proof[ \t]+of[ \t]+push\b|parent\b|(?:remote[ \t]+tip|tip)\b.*?(?:equals|matches)|(?:equals|matches).*?\bhead\b)`),
+		// THE GOAL OF the-finish-form-is-one-line-bbc: a brief never asks a worker to prove its
+		// push in prose, because the machine reads the branch itself -- the friend finish
+		// compares the report's Head with origin's tip by its own ls-remote
+		// (cmd/nova-sprint/friendcards.go, friendFinish and branchTip). A line that asks to run
+		// or report an `ls-remote`, to show the remote tip `equals`/`matches` HEAD, to report a
+		// `Parent:` sha, or for `proof of push` is refused; a friend report's `Head: <40-hex>`
+		// line, prose naming friendcards.go's own ls-remote, and the bare word `push` are not.
+		RE:     childCmd(`(?i)\b(?:ls-remote\b|proof[ \t]+of[ \t]+push\b|parent[ \t]*:|remote[ \t]+tip\b.*?\b(?:equals|matches)\b|(?:equals|matches)\b.*?\bhead\b)`),
 		Remedy: "the machine reads your branch; never prove the push in prose",
 		Allow: func(line string, at int) bool {
 			low := strings.ToLower(line)
