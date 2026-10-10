@@ -43,9 +43,10 @@ func TestGheventEventCoverFieldsPing(t *testing.T) {
 func TestGheventEventCoverFieldsIssues(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		entry    Entry
-		wantKeys []string
+		name       string
+		entry      Entry
+		wantKeys   []string
+		wantLabels string
 	}{
 		{
 			name: "nil labels writes []",
@@ -57,7 +58,8 @@ func TestGheventEventCoverFieldsIssues(t *testing.T) {
 				State:       "open",
 				StateReason: "not_planned",
 			},
-			wantKeys: []string{"repo", "kind", "number", "head", "action", "at", "sender", "comment_id", "labels", "body", "state", "state_reason"},
+			wantKeys:   []string{"repo", "kind", "number", "head", "action", "at", "sender", "comment_id", "labels", "body", "state", "state_reason"},
+			wantLabels: "[]",
 		},
 		{
 			name: "two labels writes JSON array in order",
@@ -84,6 +86,9 @@ func TestGheventEventCoverFieldsIssues(t *testing.T) {
 			for _, k := range tt.wantKeys {
 				_, ok := v[k]
 				assert.True(t, ok, "missing key: %s", k)
+			}
+			if tt.wantLabels != "" {
+				assert.Equal(t, tt.wantLabels, v["labels"])
 			}
 
 			if tt.name == "two labels writes JSON array in order" {
