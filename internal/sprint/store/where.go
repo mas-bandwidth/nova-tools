@@ -69,6 +69,13 @@ type WhereRecord struct {
 	// last tidy of the streams and the reset's mark); a record whose stamp is not the stats
 	// record's is counted again and never taken, though no table moved.
 	Stats string `json:"stats,omitempty"`
+	// Series is the landings of the last day (sprint.SeriesLandings, sprint.SeriesWindow),
+	// which where --json's landedSeries buckets at its own time, and SeriesCounted says the
+	// tick counted them: a record from before the count has none, and where reads the log
+	// for the series as before (2026-10-10: that read was 82% of where's 12.7 s on the live
+	// store, 695,000 log lines decoded a call).
+	Series        []sprint.Landing `json:"series,omitempty"`
+	SeriesCounted bool             `json:"series_counted,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -89,6 +96,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 	}
 	r.RowCards, r.ReadCards = sprint.RowCardCounts(s)
 	r.FixStates = sprint.FixStateCounts(s)
+	r.Series, r.SeriesCounted = sprint.SeriesLandings(s, now.Add(-sprint.SeriesWindow)), true
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -133,7 +141,8 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	}
 	stats := st.statsRecordOf(vals[1], oks[1]) // permissive: an unreadable one is no tidy
 	stamp := stats.statsStamp(st.epoch)
-	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision && r.FleetRev == shapes[1].Revision && r.Stats == stamp {
+	// a record from before the series was counted is counted again once, tables still or not
+	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision && r.FleetRev == shapes[1].Revision && r.Stats == stamp && r.SeriesCounted {
 		return nil
 	}
 	tw := st.twin()
@@ -329,6 +338,11 @@ type WhereFacts struct {
 	// automatic stop that holds and what waits on the seat, as of its At.
 	Stops    StopsRecord
 	HasStops bool
+	// Series is the record's landings for the landed series (WhereRecord.Series) when
+	// SeriesCounted: a record of the pinned epoch counted them. Without it where --json's
+	// writer reads the log for the series (sprint.LandedSeriesFrom).
+	Series        []sprint.Landing
+	SeriesCounted bool
 }
 
 // StoreLine is where's store line, "store: rtt p50=<ms>ms p99=<ms>ms", or
@@ -381,8 +395,15 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		if r, ok := readStops(vals[5], oks[5]); ok && r.Epoch == st.epoch {
 			f.Stops, f.HasStops = r, true
 		}
+		r, ok := readWhere(vals[2], oks[2])
+		// the landed series' landings are taken from any record of the pinned epoch that
+		// counted them, as of the tick's last count (WhereRecord.Series): the series is a
+		// day of landings in 10-minute buckets, never the cards' counts
+		if ok && r.Epoch == st.epoch && r.SeriesCounted {
+			f.Series, f.SeriesCounted = r.Series, true
+		}
 		// a record counted from another stats record (a reset or a tidy since) is not taken
-		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && r.Stats == stats.statsStamp(st.epoch) && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
+		if ok && r.Epoch == st.epoch && r.Stats == stats.statsStamp(st.epoch) && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
 			f.ReadsWindow = r.ReadsWindow

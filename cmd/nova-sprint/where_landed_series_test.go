@@ -33,6 +33,44 @@ func TestWhereCarriesLandedSeries(t *testing.T) {
 	assert.Equal(t, 2, doc.LandedSeries.Totals.Fleet+doc.LandedSeries.Totals.Friends+doc.LandedSeries.Totals.Unknown)
 }
 
+// The landed series where --json carries once the tick has counted the where record is
+// the record's landings (sprint.SeriesLandings, from the tables), bucketed at where's time,
+// and it is the series the log gives (sprint.LandedSeriesFrom): the same landings, at the
+// same times, to the same rows. where reads no log line for it.
+func TestTheRecordsLandedSeriesIsTheLogs(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1:8")
+	ta.ok("add --stream s1 --count 2 --brief-file " + proBriefFile(t))
+	ta.ok("start")
+	ta.landStream("s1", []string{"input=10 actual_usd=1 actual_by=harness", "input=10 actual_usd=2 actual_by=harness"}, []string{"", ""}, []string{"", ""})
+	ta.ok("tick")
+
+	ctx := context.Background()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	now := ta.a.now()
+	fromLog, err := sprint.LandedSeriesFrom(ctx, st, now)
+	require.NoError(t, err)
+	require.Equal(t, 2, fromLog.Totals.Fleet, "both cards landed, worked on m1: %+v", fromLog.Totals)
+	pinned, err := st.Pinned(ctx)
+	require.NoError(t, err)
+	facts, err := pinned.WhereFacts(ctx, 0)
+	require.NoError(t, err)
+	require.True(t, facts.SeriesCounted, "the tick counted the series into the where record")
+	assert.Equal(t, fromLog, sprint.LandedSeriesOfLandings(facts.Series, now), "the record's series is the log's")
+
+	lines := ta.m.LogLines
+	out := ta.ok("where --json")
+	assert.Equal(t, lines, ta.m.LogLines, "where --json read the log for its series")
+	var doc struct {
+		LandedSeries *sprint.LandedSeries `json:"landedSeries"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	require.NotNil(t, doc.LandedSeries)
+	assert.Equal(t, fromLog, *doc.LandedSeries, "where --json's series is the log's")
+}
+
 func TestWhereHelpNamesLandedSeries(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

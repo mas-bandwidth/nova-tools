@@ -24,6 +24,13 @@ import (
 // code's own read of the cards when it cannot take the record, 9 with it.
 const whereTripsMax = 9
 
+// whereLogLinesMax is the most log lines one where --json reads once the tick has counted
+// the where record: none. Its landedSeries buckets the record's landings
+// (store.WhereRecord.Series); before 2026-10-10 it read the epoch's log whole every call,
+// 695,000 lines on the live store, which no round-trip count shows (an in-memory page is
+// one exchange).
+const whereLogLinesMax = 0
+
 // bigSprint is the live sprint's shape at 3,000 cards (2026-10-02 10:13 PM ET,
 // 2,843 cards, where 5.2 to 7.0 s on the live store): five streams of a held sentinel
 // and 499 cards behind it (2,500 held), 350 landed over the last two hours of
@@ -115,12 +122,20 @@ func TestWhereReadsTheTableNotEveryCardAtThreeThousandCards(t *testing.T) {
 	require.NotContains(t, byCards.Summary, "ETA -")
 
 	ta.ok("tick")
+	lines := ta.m.LogLines
 	counted, calls := ta.whereJSON()
+	logRead := ta.m.LogLines - lines
 	n := trips(calls)
-	t.Logf("where --json at 3,000 cards: %d round trips %v; before the record %d %v", n, calls, trips(cardCalls), cardCalls)
+	t.Logf("where --json at 3,000 cards: %d round trips %v, %d log lines; before the record %d %v", n, calls, logRead, trips(cardCalls), cardCalls)
 	require.Equal(t, 1, calls["readset"], "one read of records, the streams' control cards (stream clocks): %v", calls)
 	require.Zero(t, calls["cells"], "no cell's member ids: %v", calls)
 	require.LessOrEqual(t, n, whereTripsMax, "where --json made %d round trips, at most %d: %v", n, whereTripsMax, calls)
+	// the landed series is the record's landings, never the log read whole: on the live
+	// store (2026-10-10) that read was 695,000 lines and 82% of where's 12.7 s
+	require.LessOrEqual(t, logRead, whereLogLinesMax, "where --json read %d log lines for its landed series, at most %d", logRead, whereLogLinesMax)
+	require.NotNil(t, counted.LandedSeries, "where --json carries landedSeries from the record")
+	require.Equal(t, 350, counted.LandedSeries.Totals.Fleet+counted.LandedSeries.Totals.Friends+counted.LandedSeries.Totals.Unknown,
+		"the 350 landed in the last two hours are in the series")
 	require.Equal(t, byCards.All, counted.All)
 	require.Equal(t, byCards.Landed, counted.Landed)
 	require.Equal(t, byCards.Held, counted.Held, "the record's held cards are the cards'")

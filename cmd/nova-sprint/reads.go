@@ -729,6 +729,11 @@ type whereView struct {
 	// last minute, as the server measured it (store.StoreRTTRecord, store-latency-row-r.w2).
 	StoreRTTP50MS *float64 `json:"store_rtt_p50_ms,omitempty"`
 	StoreRTTP99MS *float64 `json:"store_rtt_p99_ms,omitempty"`
+	// LandedSeries is the cards landed per 10-minute bucket over the last 24 hours, friends
+	// and fleet, bucketed at At from the landings the tick counted into the where record
+	// (store.WhereFacts.Series); absent when no record of the epoch counted them, and then
+	// where --json's writer reads the log for it (where_landed_series.go).
+	LandedSeries *sprint.LandedSeries `json:"landedSeries,omitempty"`
 }
 
 // archivedView is where --json's archived streams (stream archive).
@@ -1223,6 +1228,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		v.SeatWaits, v.Stops = seatWaitsOf(facts.Stops, now), facts.Stops.Stops
 	}
 	v.Held = int64(facts.Held)
+	if facts.SeriesCounted {
+		// from the record's landings, no log line read (sprint.LandedSeriesOfLandings)
+		series := sprint.LandedSeriesOfLandings(facts.Series, now)
+		v.LandedSeries = &series
+	}
 	v.Ready = readyPrimaries(shapes[0])
 	working, review, merging := pipelineCounts(shapes[0])
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))

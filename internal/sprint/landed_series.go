@@ -1,8 +1,11 @@
 package sprint
 
 import (
+	"cmp"
 	"context"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -74,11 +77,7 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 		}
 	}
 
-	type landing struct {
-		card string
-		at   time.Time
-	}
-	var landings []landing
+	var landings []Landing
 	seenLanded := make(map[string]bool)
 
 	for _, l := range lines {
@@ -100,13 +99,77 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 				continue
 			}
 			seenLanded[card] = true
-			landings = append(landings, landing{card: card, at: l.At})
+			landings = append(landings, Landing{At: l.At.Unix(), Worker: latestWorker[card]})
 		}
 	}
+	return LandedSeriesOfLandings(landings, now)
+}
 
+// Landing is one card's landing as the landed series counts it: when it landed (Unix
+// seconds), and the fleet row that finished its latest work card ok ("" when none did).
+type Landing struct {
+	At     int64  `json:"at"`
+	Worker string `json:"worker,omitempty"`
+}
+
+// SeriesWindow is how far back the landings the tick keeps for the series reach: the
+// series' 24 hours and one bucket more, so a where a bucket after the count still fills
+// its first bucket.
+const SeriesWindow = 24*time.Hour + seriesBucketSeconds*time.Second
+
+const (
+	seriesBucketSeconds = 600
+	seriesBuckets       = 144
+)
+
+// SeriesLandings is the landings the series counts, from the tables instead of the log
+// (the tick's where record, store.WhereRecord): every work card in landed whose landed
+// stamp is at or after since, with the row of its latest work card (<card>.w<n>) in a
+// fleet row's ok cell, the latest by its finished_at stamp, then by n. It is what
+// LandedSeriesOf finds in the log: a landing's time and the row its latest ok move went to.
+func SeriesLandings(s *Snapshot, since time.Time) []Landing {
+	if s == nil || s.Work == nil {
+		return []Landing{}
+	}
+	type ok struct {
+		row      string
+		finished time.Time
+		n        int
+	}
+	latest := map[string]ok{}
+	if s.Fleet != nil {
+		for _, c := range s.Fleet.Column(DoneOK) {
+			if !reWorkCard.MatchString(c.ID) {
+				continue
+			}
+			base := reWorkCard.ReplaceAllString(c.ID, "")
+			n, _ := strconv.Atoi(c.ID[strings.LastIndex(c.ID, ".w")+2:]) // ignored: the pattern matched digits
+			at, _ := time.Parse(time.RFC3339, c.F(FieldFinishedAt))      // unreadable or absent: zero, n decides
+			cur, seen := latest[base]
+			if !seen || at.After(cur.finished) || at.Equal(cur.finished) && n >= cur.n {
+				latest[base] = ok{row: c.Row, finished: at, n: n}
+			}
+		}
+	}
+	out := []Landing{}
+	for _, c := range s.Work.Column(Landed) {
+		at, err := time.Parse(time.RFC3339, c.F("landed"))
+		if err != nil || at.Before(since) {
+			continue
+		}
+		out = append(out, Landing{At: at.Unix(), Worker: latest[c.ID].row})
+	}
+	slices.SortFunc(out, func(a, b Landing) int { return cmp.Or(cmp.Compare(a.At, b.At), cmp.Compare(a.Worker, b.Worker)) })
+	return out
+}
+
+// LandedSeriesOfLandings buckets landings at reference time now: 144 buckets of 10
+// minutes ending with now's, each landing counted to friends (a friend's row), fleet
+// (any other row) or unknown (no row).
+func LandedSeriesOfLandings(landings []Landing, now time.Time) LandedSeries {
 	const (
-		bucketSeconds = 600
-		numBuckets    = 144
+		bucketSeconds = seriesBucketSeconds
+		numBuckets    = seriesBuckets
 	)
 	nowUnix := now.Unix()
 	end := (nowUnix / bucketSeconds) * bucketSeconds
@@ -119,7 +182,7 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 	workers := make(map[string]int)
 
 	for _, ld := range landings {
-		t := ld.at.Unix()
+		t := ld.At
 		if t < start || t >= end+bucketSeconds {
 			continue
 		}
@@ -128,8 +191,8 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 			continue
 		}
 
-		worker, hasWorker := latestWorker[ld.card]
-		if !hasWorker || worker == "" {
+		worker := ld.Worker
+		if worker == "" {
 			worker = "-"
 		}
 

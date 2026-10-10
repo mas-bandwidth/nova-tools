@@ -55,6 +55,9 @@ type memState struct {
 	MaxWrite int
 	// Calls counts store exchanges by kind.
 	Calls map[string]int
+	// LogLines counts the log lines LogSince has returned: a read that walks the log whole
+	// shows here, where an in-memory page is one exchange however long the log is.
+	LogLines int
 	// LogWait, when set, is how WaitLog waits when the log holds no line
 	// after its cursor: it is handed the time the wait may take and returns
 	// when it has passed (a test's clock steps by it, or appends a line). Nil
@@ -1296,6 +1299,7 @@ func (m *Mem) LogSince(_ context.Context, after string, max int) ([]sprint.Line,
 		lines = append(lines, x.line)
 		ids = append(ids, x.id)
 	}
+	m.LogLines += len(lines)
 	return lines, ids, nil
 }
 
