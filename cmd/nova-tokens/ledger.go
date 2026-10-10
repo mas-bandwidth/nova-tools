@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -12,17 +10,10 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
-
-// The token ledger (docs/SPEC-STATE.md test 17): `ledger` writes each folded day to
-// tokens:ledger:<day> as the day files' index, and `report --redis` reads those day hashes
-// as one monthly GROUP BY.
-// The fold is untouched and the day TSVs stay the record; the ledger is what a month query
-// reads instead of every file. The key layout is internal/record's package comment.
 
 const wantsRedis = "the fleet Redis host:port whose tokens:ledger:<day> hashes this reads or writes"
 
@@ -73,47 +64,60 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 	return out
 }
 
-// cmdLedger indexes the day files of one day or one month into tokens:ledger:<day>. Each day is
+func ledgerVerb() tool.Verb {
+	return tool.Verb{
+		Name:   "ledger",
+		Token:  "LEDGER",
+		Usage:  "ledger --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>\n                      [--user <name>] [--password-env <NAME>] [--dry-run]",
+		Effect: "delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store",
+		DryRun: true,
+		Flags: func(f *tool.Flags) {
+			f.Required("out", wantsOut)
+			f.String("day", "", "one UTC day to index as YYYY-MM-DD")
+			f.String("month", "", "month of day files to index as YYYY-MM")
+			f.Required("redis", wantsRedis)
+			f.String("user", "", "Redis username for the ledger store")
+			f.String("password-env", "", "environment variable holding the Redis password")
+			f.Check(func(c *tool.Call) {
+				day, month := c.Str("day"), c.Str("month")
+				switch {
+				case day == "" && month == "":
+					c.Problem("--day or --month is required; it wants " + wantsDay + " or " + wantsMonth + "; refusing to guess")
+				case day != "" && month != "":
+					c.Problem("--day and --month are one or the other")
+				case day != "" && !tokens.ValidDay(day):
+					c.Problem("--day is not a day: " + day + "; it wants " + wantsDay)
+				case month != "" && !validMonth(month):
+					c.Problem("--month is not a month: " + month + "; it wants " + wantsMonth)
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			return runLedger(c)
+		},
+	}
+}
+
+// runLedger indexes the day files of one day or one month into tokens:ledger:<day>. Each day is
 // replaced whole, so indexing twice is the table indexing once. It reads the day files and
 // writes nothing beside them. Under --dry-run it reads and checks the same day files, prints
 // the rows it would write, and dials no store.
-func cmdLedger(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("ledger")
-	out := fs.String("out", "", "directory containing daily token files")
-	day := fs.String("day", "", "one UTC day to index as YYYY-MM-DD")
-	month := fs.String("month", "", "month of day files to index as YYYY-MM")
-	addr := fs.String("redis", "", "Redis address for the ledger store")
-	user := fs.String("user", "", "Redis username for the ledger store")
-	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
-	dryRun := fs.Bool("dry-run", false, "read the day files and print the rows that would be written, and dial no store")
-	s, code, ok := start(fs, args, "LEDGER", stdout, stderr)
-	if !ok {
-		return code
-	}
-	r := &refusals{token: "LEDGER", s: s}
-	r.required("out", *out, wantsOut)
-	r.required("redis", *addr, wantsRedis)
-	switch {
-	case *day == "" && *month == "":
-		r.add("--day or --month is required; it wants " + wantsDay + " or " + wantsMonth + "; refusing to guess")
-	case *day != "" && *month != "":
-		r.add("--day and --month are one or the other")
-	case *day != "" && !tokens.ValidDay(*day):
-		r.add("--day is not a day: " + *day + "; it wants " + wantsDay)
-	case *month != "" && !validMonth(*month):
-		r.add("--month is not a month: " + *month + "; it wants " + wantsMonth)
-	}
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
+func runLedger(c *tool.Call) *tool.Out {
+	outDir := c.Str("out")
+	day := c.Str("day")
+	month := c.Str("month")
+	addr := c.Str("redis")
+	user := c.Str("user")
+	passwordEnv := c.Str("password-env")
+	dryRun := c.DryRun()
+
 	var paths []string
-	if *day != "" {
-		paths = []string{tokens.Path(*out, *day)}
+	if day != "" {
+		paths = []string{tokens.Path(outDir, day)}
 	} else {
-		matches, err := filepath.Glob(filepath.Join(*out, *month+"-*"+tokens.FileSuffix))
+		matches, err := filepath.Glob(filepath.Join(outDir, month+"-*"+tokens.FileSuffix))
 		if err != nil {
-			r.add("--out " + *out + ": " + err.Error())
-			return r.print(stderr)
+			return tool.Refuse("--out " + outDir + ": " + err.Error())
 		}
 		for _, m := range matches {
 			if tokens.ValidDay(strings.TrimSuffix(filepath.Base(m), tokens.FileSuffix)) {
@@ -122,15 +126,17 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 		}
 		sort.Strings(paths)
 	}
-	// The seat is resolved under --dry-run too, so a dry run refuses a login the real run
-	// would refuse; only the dial and the write are skipped.
-	seatUser, password, err := redisauth.Auth(*user, *passwordEnv)
+
+	o := tool.Done()
+	seatUser, password, err := redisauth.Auth(user, passwordEnv)
 	if err != nil {
-		return ledgerFailed(s, "store", "redis", err)
+		f := tool.Fail(err.Error())
+		f.Fact("store", "redis")
+		return f
 	}
 	var ls record.LedgerStore
-	if !*dryRun {
-		ls = record.DialLedger(*addr, seatUser, password)
+	if !dryRun {
+		ls = record.DialLedger(addr, seatUser, password)
 		// ignored: a deferred close of a store whose batch was applied in one answered round trip: the close holds nothing the answer has not already reported
 		defer func() { _ = ls.Close() }()
 	}
@@ -166,40 +172,39 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 		days++
 		rows += len(entries)
 	}
-	if len(batch) > 0 && !*dryRun {
+	if len(batch) > 0 && !dryRun {
 		if err := ls.ReplaceLedgerDays(context.Background(), batch); err != nil {
-			if *day != "" {
-				return ledgerFailed(s, "day", *day, err)
+			f := tool.Fail(err.Error())
+			if day != "" {
+				f.Fact("day", day)
+			} else {
+				f.Fact("store", "redis")
 			}
-			return ledgerFailed(s, "store", "redis", err)
+			return f
 		}
+	}
+
+	if bad > 0 || days == 0 {
+		o.Status = tool.Failed
+		o.Exit = 1
 	}
 	for _, res := range results {
 		if res.bad {
-			fmt.Fprintf(s.out(), "LEDGER FAILED day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
-			s.item("bad", "day", res.day, "why", tool.Text(res.why))
+			o.ItemText("failed", res.why, "day", res.day)
 		} else {
-			fmt.Fprintf(s.out(), "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
-			s.item("day", "day", res.day, "rows", res.rows)
+			o.Item("day", "day", res.day, "rows", res.rows)
 		}
 	}
-	verdict, code := "OK", 0
-	if bad > 0 || days == 0 {
-		verdict, code = "FAILED", 1
+	scope, value := "day", day
+	if day == "" {
+		scope, value = "month", month
 	}
-	scope, value := "day", *day
-	if *day == "" {
-		scope, value = "month", *month
+	o.Fact(scope, value).
+		Fact("days", days).
+		Fact("rows", rows).
+		Fact("bad", bad)
+	if dryRun {
+		o.Fact("dry_run", true)
 	}
-	fmt.Fprintf(s.out(), "LEDGER %s%s%s\n", oneline.Field(verdict),
-		s.factFields(scope, value, "days", days, "rows", rows, "bad", bad), s.dryRunFields(*dryRun))
-	return s.done(code, 0)
-}
-
-// ledgerFailed is the store that did not answer: one LEDGER FAILED line, exit 1.
-func ledgerFailed(s *sink, key, value string, err error) int {
-	fmt.Fprintf(s.err(), "LEDGER FAILED %s=%s err=%s\n", oneline.Field(key), oneline.Field(value), oneline.Err(err))
-	s.fact(key, value)
-	s.o.Why = append(s.o.Why, err.Error())
-	return s.done(1, 0)
+	return o
 }

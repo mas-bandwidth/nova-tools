@@ -38,7 +38,7 @@ func TestAvgLinesPerModelAndAll(t *testing.T) {
 	wantContains(t, zero, "tokens=0")
 	wantContains(t, zero, "usd_per_mtok=-")
 
-	all := lineWith(r.stderr, "TOKENS AVG-ALL")
+	all := lineWith(r.stderr, "REPORT AVG-ALL")
 	wantContains(t, all, "tokens=1400")
 	wantContains(t, all, "usd=0.032345")
 	wantContains(t, all, "usd_per_mtok=23.1036")

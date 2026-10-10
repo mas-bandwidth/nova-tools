@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The contract tests: the exit codes, the ceilings, the source-level tripwires the spec
@@ -297,7 +298,7 @@ func TestMaxZeroPrintsAllAndMaxNegativeIsRefused(t *testing.T) {
 		r := invoke(t, verb...)
 		wantExit(t, r, 2)
 		wantContains(t, r.stderr, "--max")
-		wantContains(t, r.stderr, "0 for all")
+		wantContains(t, r.stderr, "0 lists all")
 	}
 }
 
@@ -389,7 +390,7 @@ func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos,
 		"--claude", "g="+good, "--claude", "b="+bad)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS UNREADABLE")
+	wantContains(t, r.stderr, "REPORT UNREADABLE")
 	// Exit 1 still writes: the body printed, so the friend can see what it could compute.
 	wantContains(t, r.stdout, "2026-09-11\temma\tf\tschema\tinput\t3")
 }
@@ -413,8 +414,8 @@ func TestReportSaysFailedWhenASourceIsUnreadable(t *testing.T) {
 		"--claude", "g="+good, "--claude", "b="+bad)
 	wantExit(t, r, 1)
 	wantContains(t, r.stdout, "2026-09-11\tada\tf\tschema\tinput\t3")
-	wantContains(t, r.stderr, "TOKENS UNREADABLE label=claude:b")
-	wantContains(t, r.stderr, "REPORT FAILED who=ada day=2026-09-11 rows=1")
+	wantContains(t, r.stderr, "REPORT UNREADABLE label=claude:b")
+	wantContains(t, r.stdout, "REPORT FAILED who=ada day=2026-09-11 rows=1")
 	wantNotContains(t, r.stderr, "REPORT OK")
 }
 
@@ -433,8 +434,8 @@ func TestReportSubjectIsOneQuotedValue(t *testing.T) {
 
 	r := invoke(t, "report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
 	wantExit(t, r, 0)
-	line := lineWith(r.stderr, "REPORT OK")
-	require.NotEmpty(t, line, "no REPORT OK line:\n%s", r.stderr)
+	line := lineWith(r.stdout, "REPORT OK")
+	require.NotEmpty(t, line, "no REPORT OK line:\n%s", r.stdout)
 	assert.Equal(t,
 		`REPORT OK who=ada day=2026-09-11 rows=1 at=2026-09-11T23:55:02Z build=devel subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel"`,
 		line)
@@ -543,7 +544,7 @@ func TestMessagesWithNoIDReachTheRemedyLine(t *testing.T) {
 	wantNotContains(t, note, "nothing was wrong")
 }
 
-// TestSumPrintsADashWhereNoRowReportedTheType: help says a dash is "NEVER 0 ... a zero
+// TestSumPrintsADashWhereNoRowReportedTheType: `help rules` says a dash is "NEVER 0 ... a zero
 // meaning 'not measured' would sum into a month claiming to be complete", and SUM PAIR
 // printed reasoning=0 for a month whose every row had a dash there.
 func TestSumPrintsADashWhereNoRowReportedTheType(t *testing.T) {
@@ -724,4 +725,9 @@ func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, checked, 5, "%d type-column writes examined; this tripwire was looking at the wrong shape and would have passed by checking nothing", checked)
+}
+
+func TestTokensToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, tokensTool(time.Time{}).Problems())
 }

@@ -18,9 +18,9 @@ func TestCheckOnAnEmptyOutFailsUnlessAllowEmpty(t *testing.T) {
 
 	r := invoke(t, "check", "--out", out)
 	wantExit(t, r, 1)
-	assert.Empty(t, r.stdout)
-	assert.Contains(t, r.stderr, "looked at nothing")
-	assert.Contains(t, r.stderr, "nova-tokens check --out "+out+" --allow-empty")
+	assert.Contains(t, r.stdout, "CHECK FAILED")
+	assert.Contains(t, r.stdout, "looked at nothing")
+	assert.Contains(t, r.stdout, "nova-tokens check --out "+out+" --allow-empty")
 
 	allowed := invoke(t, "check", "--out", out, "--allow-empty")
 	wantExit(t, allowed, 0)

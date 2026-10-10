@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // ---------------------------------------------------------------- rule 1: every path is a flag
@@ -218,8 +219,8 @@ func TestAnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	wantContains(t, r.stderr, "TOKENS UNREADABLE label=claude:glenn")
 	wantContains(t, r.stderr, "bad.jsonl")
 	wantContains(t, r.stdout, "files=2 unreadable=1")
-	wantContains(t, r.stderr, "TOKENS FAILED")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unreadable=1")
+	wantContains(t, r.stdout, "TOKENS FAILED")
+	wantContains(t, lineWith(r.stdout, "TOKENS FAILED"), "unreadable=1")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.NoError(t, err, "the day file from the readable file was not written: %v", err)
@@ -403,7 +404,7 @@ func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
 	wantContains(t, r.stderr, "tokens 2026-09-11 (rough)")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "files=2")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=1")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unparsed=1")
+	wantContains(t, lineWith(r.stdout, "TOKENS FAILED"), "unparsed=1")
 	note := lineWith(r.stdout, "TOKENS NOTE")
 	wantContains(t, note, "emma-00000000000a")
 	wantNotContains(t, note, "nothing was wrong")
@@ -502,7 +503,7 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		wantExit(t, r, 1)
 		wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
 		wantContains(t, r.stderr, "supersedes=")
-		wantContains(t, r.stderr, "conflict=1")
+		wantContains(t, r.stdout, "conflict=1")
 		{
 			got := read(t, filepath.Join(out, "2026-09-11.tsv"))
 			assert.Equal(t, before, got, "the day file changed under a conflict:\nbefore:\n%s\nafter:\n%s", before, got)
@@ -846,7 +847,7 @@ func TestBlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS PARTIAL date=2026-09-14 model=claude-x repo=serialize sources=swarm:freddy,swarm:glenn folded=swarm:freddy written=false")
-	wantContains(t, r.stderr, "partial=1")
+	wantContains(t, r.stdout, "partial=1")
 	assert.Equal(t, before, read(t, day), "a refused partial fold rewrote the file")
 	// --allow-shrink is about a shrink, not about a row this fold cannot compute.
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB, "--allow-shrink")
@@ -904,7 +905,7 @@ func TestMalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS UNREADABLE label=out")
 	wantContains(t, r.stderr, "the sources cell is empty")
-	wantContains(t, r.stderr, "unreadable=1")
+	wantContains(t, r.stdout, "unreadable=1")
 	assert.Equal(t, malformed, read(t, day), "a malformed existing day file was modified or overwritten")
 }
 
@@ -962,7 +963,7 @@ func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
-	wantContains(t, r.stderr, "shrank=4")
+	wantContains(t, r.stdout, "shrank=4")
 	assert.Equal(t, before, read(t, day), "a refused quiet source on explicit day modified the day file")
 
 	// With --allow-shrink on a day that shrank to 0 rows: fold does not write an empty day file.
@@ -1110,7 +1111,7 @@ func TestCheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "2026-09-11.tsv")
 	wantContains(t, r.stderr, "2026-09-12.tsv")
-	line := lineWith(r.stderr, "CHECK FAILED files=")
+	line := lineWith(r.stdout, "CHECK FAILED files=")
 	wantContains(t, line, "bad=10")
 	// The gap at 09-09 is COUNTED by default and named only when something says there
 	// was spend on it. Nobody folded that day, and the day file nobody wrote is not
@@ -1122,7 +1123,7 @@ func TestCheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	strict := invoke(t, "check", "--out", out, "--max", "0", "--strict")
 	wantExit(t, strict, 1)
 	wantContains(t, strict.stderr, "CHECK MISSING date=2026-09-09")
-	wantContains(t, lineWith(strict.stderr, "CHECK FAILED files="), "missing=1")
+	wantContains(t, lineWith(strict.stdout, "CHECK FAILED files="), "missing=1")
 
 	// A --no-spend list is the other door, and it is the one a person keeps: the days it
 	// does not name are the days nobody folded.
@@ -1133,7 +1134,7 @@ func TestCheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	named := write(t, filepath.Join(dir, "no-spend.txt"), "# the day nobody worked\n2026-09-09\tnobody was at the bench\n")
 	accounted := invoke(t, "check", "--out", out, "--max", "0", "--no-spend", named)
 	wantExit(t, accounted, 1) // the ten bad files are still findings
-	wantContains(t, lineWith(accounted.stderr, "CHECK FAILED files="), "missing=0")
+	wantContains(t, lineWith(accounted.stdout, "CHECK FAILED files="), "missing=0")
 	wantNotContains(t, accounted.stderr, "CHECK MISSING")
 
 	// Two answers to one question is a refusal, not a silent precedence.
@@ -1401,7 +1402,7 @@ func TestAZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) 
 	}
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "the eleventh")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unparsed=2")
+	wantContains(t, lineWith(r.stdout, "TOKENS FAILED"), "unparsed=2")
 
 	// The same, for the OpenCode reader.
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
@@ -1417,7 +1418,7 @@ func TestAZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) 
 	wantExit(t, r, 1)
 	wantContains(t, read(t, filepath.Join(out2, "2026-09-12.tsv")), "m\tschema\t3\t")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unparsed=1")
+	wantContains(t, lineWith(r.stdout, "TOKENS FAILED"), "unparsed=1")
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=opencode:b")
 }
 
@@ -1481,6 +1482,9 @@ func TestReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--note", note)
 	wantExit(t, r, 0)
 	for _, line := range strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n") {
+		if strings.HasPrefix(line, "REPORT ") {
+			continue // the skeleton's result line, not a body line
+		}
 		f := strings.Split(line, "\t")
 		assert.Equal(t, 6, len(f), "a report line has %d fields, want six: %q", len(f), line)
 		assert.False(t, strings.ContainsAny(line, "~#"), "a report line carries ~ or #: %q", line)
@@ -1488,15 +1492,15 @@ func TestReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	wantNotContains(t, r.stdout, "reasoning")
 	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tinput\t100")
 	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tcache_write\t0")
-	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11")
-	wantContains(t, r.stderr, `subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=`)
-	assert.Equal(t, r.stdout, read(t, note), "--note is not exactly the stdout bytes")
+	wantContains(t, r.stdout, "REPORT OK who=emma day=2026-09-11")
+	wantContains(t, r.stdout, `subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=`)
+	assert.Equal(t, reportBody(r), read(t, note), "--note is not exactly the body bytes")
 
 	// The note folds back as the same rows, through the bus, with one hand-added comment.
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
 	subject := subjectOf(t, r)
-	busNote(t, bus, "emma", "n.md", "emma-000000000001", subject, busDate, r.stdout+"# repos: schema\n")
+	busNote(t, bus, "emma", "n.md", "emma-000000000001", subject, busDate, reportBody(r)+"# repos: schema\n")
 	f := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
 	wantContains(t, f.stdout, "unparsed=0")
@@ -1533,9 +1537,8 @@ func TestReportRefusesAndSupersedes(t *testing.T) {
 		release := makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
 		r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+bad, "--note", note)
 		wantExit(t, r, 1)
-		assert.Equal(t, "", r.stdout, "a failed report wrote to stdout: %q", r.stdout)
-		wantContains(t, r.stderr, "REPORT FAILED")
-		wantContains(t, r.stderr, "TOKENS UNREADABLE")
+		wantContains(t, r.stdout, "REPORT FAILED")
+		wantContains(t, r.stderr, "REPORT UNREADABLE")
 		assert.Equal(t, "what was there before\n", read(t, note), "a failed report replaced the --note file")
 		{
 			_, err := os.Stat(note + ".tmp")
@@ -1547,7 +1550,7 @@ func TestReportRefusesAndSupersedes(t *testing.T) {
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr,
 		"--supersedes", "emma-000000000002", "--supersedes", "emma-000000000001")
 	wantExit(t, r, 0)
-	wantContains(t, r.stderr, "supersedes=emma-000000000001,emma-000000000002")
+	wantContains(t, r.stdout, "supersedes=emma-000000000001,emma-000000000002")
 	r = invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr,
 		"--supersedes", "emma-000000000001", "--supersedes", "emma-000000000001")
 	wantExit(t, r, 2)
@@ -1561,14 +1564,14 @@ func TestReportRefusesAndSupersedes(t *testing.T) {
 	wantExit(t, first, 0)
 	firstID := "emma-000000000001"
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "n1.md", firstID, subjectOf(t, first), busDate, first.stdout)
+	busNote(t, bus, "emma", "n1.md", firstID, subjectOf(t, first), busDate, reportBody(first))
 
 	// The friend folds again -- the transcript grew -- and corrects the day by name.
 	write(t, filepath.Join(tr, "b.jsonl"), msg("m2", "2026-09-11T11:00:00Z", "gemini", map[string]int{"input_tokens": 40}, "/x/schema/a.go")+"\n")
 	second := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--supersedes", firstID)
 	wantExit(t, second, 0)
 	secondID := "emma-000000000002"
-	busNote(t, bus, "emma", "n2.md", secondID, subjectOf(t, second), busDate, second.stdout)
+	busNote(t, bus, "emma", "n2.md", secondID, subjectOf(t, second), busDate, reportBody(second))
 
 	out := mkdir(t, filepath.Join(dir, "out-seq"))
 	f := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
@@ -1587,7 +1590,7 @@ func TestReportRefusesAndSupersedes(t *testing.T) {
 // value, returned unquoted so a test can put it on a note's Subject header.
 func subjectOf(t *testing.T, r result) string {
 	t.Helper()
-	line := lineWith(r.stderr, "REPORT OK")
+	line := lineWith(r.stdout, "REPORT OK")
 	i := strings.Index(line, "subject=")
 	require.GreaterOrEqual(t, i, 0, "no subject= on %q", line)
 	subject, err := strconv.Unquote(line[i+len("subject="):])
@@ -1694,7 +1697,7 @@ func TestAMixedRowIsRefused(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED date=2026-09-11 model=m repo=unattributed")
-	wantContains(t, r.stderr, "mixed=1")
+	wantContains(t, r.stdout, "mixed=1")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.Error(t, err, "a mixed row was written")
@@ -1725,7 +1728,7 @@ func TestTheTimeoutDefaultIsTwoMinutes(t *testing.T) {
 
 	var s sourceFlags
 	fs := flag.NewFlagSet("fold", flag.ContinueOnError)
-	s.declare(fs, true)
+	s.declare(&tool.Flags{FlagSet: fs}, true, false)
 	{
 		err := fs.Parse(nil)
 		require.NoError(t, err)
@@ -1758,7 +1761,7 @@ func TestABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED")
 	wantContains(t, r.stderr, "2026-09-11")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "mixed=1")
+	wantContains(t, lineWith(r.stdout, "TOKENS FAILED"), "mixed=1")
 	// A row fed by two bases is not written, and the one remedy line is about the bases.
 	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
 		{
@@ -1787,17 +1790,17 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
+	wantContains(t, r.stderr, "REPORT UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "yesterday")
 	// The status word follows the exit, so what says the day is short is the line above
 	// it, the note, and the FAILED word -- and the body still printed.
-	wantContains(t, r.stderr, "REPORT FAILED who=emma day=2026-09-11 rows=1")
+	wantContains(t, r.stdout, "REPORT FAILED who=emma day=2026-09-11 rows=1")
 	{
-		n := strings.Count(r.stderr, "TOKENS UNPARSED")
+		n := strings.Count(r.stderr, "REPORT UNPARSED")
 		assert.Equal(t, 1, n, "%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)
 	}
 	// The no-id message is spend that was read and dropped, and it is named.
-	note := lineWith(r.stderr, "TOKENS NOTE")
+	note := lineWith(r.stdout, "REPORT NOTE")
 	wantContains(t, note, "no id")
 	wantContains(t, note, "claude:g")
 	// Exit 1 still writes: the body is what it could compute, and it is only the 3.
@@ -1990,7 +1993,7 @@ func TestAFailedDayWriteIsInsideTheUnreadableCap(t *testing.T) {
 		assert.Equal(t, 1, n, "%d TOKENS UNREADABLE lines under --max 1, want 1:\n%s", n, r.stderr)
 	}
 	wantContains(t, r.stdout+r.stderr, "TOKENS MORE kind=unreadable shown=1 total=2")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unreadable=2")
+	wantContains(t, lineWith(r.stdout, "TOKENS FAILED"), "unreadable=2")
 }
 
 // TestReportKeepsTheLinesForEveryKeyThatIsNotMixed pins rule 20's own words: a report
@@ -2014,8 +2017,8 @@ func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--note", note,
 		"--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS MIXED")
-	wantContains(t, r.stderr, "REPORT FAILED")
+	wantContains(t, r.stderr, "REPORT MIXED")
+	wantContains(t, r.stdout, "REPORT FAILED")
 	// The key that is not mixed keeps its line; the mixed key has none.
 	wantContains(t, r.stdout, "clean-model")
 	wantNotContains(t, r.stdout, "mixed-model")

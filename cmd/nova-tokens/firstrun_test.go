@@ -56,6 +56,9 @@ func fixtureIn(t *testing.T) string {
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
 		require.NoError(t, err, err)
 	}
+	if raw, err := os.ReadFile(filepath.Join(dst, "transcripts", "window.jsonl")); err == nil {
+		_ = os.WriteFile(filepath.Join(dst, "session.jsonl"), raw, 0o644)
+	}
 	return dst
 }
 
@@ -111,10 +114,10 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	// An unknown verb, and a bare invocation, name the verbs there are and the door.
 	r = invoke(t, "collate")
 	wantExit(t, r, 2)
-	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help`+"\n", r.stderr)
+	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version, and the help topics are rules; run: nova-tokens help`+"\n", r.stderr)
 	r = invoke(t)
 	wantExit(t, r, 2)
-	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version, and sources is the one that only looks; run: nova-tokens help\n", r.stderr)
+	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help\n", r.stderr)
 	assert.Equal(t, "", r.stdout, "a bare invocation wrote to stdout: %q", r.stdout)
 	// And the door opens on stdout at exit 0.
 	r = invoke(t, "help")

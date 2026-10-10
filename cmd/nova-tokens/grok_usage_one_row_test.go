@@ -47,7 +47,7 @@ func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
 
 	rep := invoke(t, "report", "--who", "johnny", "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
 	wantExit(t, rep, 0)
-	avg := lineWith(rep.stderr, "TOKENS AVG ")
+	avg := lineWith(rep.stderr, "REPORT AVG ")
 	wantContains(t, avg, "model=grok-model-example")
 	wantContains(t, avg, "usd=0.000077")
 	wantContains(t, avg, "usd_per_mtok=0.0700")

@@ -22,10 +22,10 @@ func TestFoldThatDroppedEveryMessageFails(t *testing.T) {
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr)
 	wantExit(t, r, 1)
-	fail := lineWith(r.stderr, "FOLD FAILED dropped=")
-	wantContains(t, fail, "FOLD FAILED dropped=2 of 2: no message had an id")
+	fail := lineWith(r.stdout, "TOKENS FAILED")
+	wantContains(t, fail, "dropped=2 of 2: no message had an id")
 	wantContains(t, fail, "run: nova-tokens sources")
-	wantContains(t, r.stderr, "TOKENS FAILED days=0 rows=0")
+	wantContains(t, r.stdout, "TOKENS FAILED days=0 rows=0")
 	wantNotContains(t, r.stdout, "TOKENS OK")
 	// the note still names the source and does not claim that nothing else says so.
 	note := lineWith(r.stdout, "TOKENS NOTE")

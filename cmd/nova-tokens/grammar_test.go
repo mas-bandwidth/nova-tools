@@ -259,7 +259,7 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 			}
 		}
 	}
-	require.True(t, sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
+	require.True(t, sawPartial, "no PARTIAL line was checked against the grammar")
 	require.GreaterOrEqual(t, n, 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
 }
 
@@ -269,7 +269,7 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 // store, so no case opens a socket. sources, sum and profiles have no exit-1 path:
 // cmdSources ends in SOURCES OK (main.go), cmdSum exits 0 whenever it ran (its comment
 // above it), and profileSwarmRoot ends in PROFILES OK (profiles.go), so their rows stop
-// at REFUSED. session's exit 1 carries TOKENS REFUSED, never FAILED (session.go), and
+// at REFUSED. session's exit 1 carries SESSION REFUSED, never FAILED (session.go), and
 // version prints no status word on success and never exits 1 (version.go); those rows pin
 // the exit code alone.
 func TestStatusGrammar(t *testing.T) {
@@ -296,7 +296,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			"fold failed",
 			func(t *testing.T) []string { return statusFoldArgs(t, true) },
-			"TOKENS", "FAILED", 1, "stderr",
+			"TOKENS", "FAILED", 1, "stdout",
 		},
 		{
 			"check ok",
@@ -313,7 +313,7 @@ func TestStatusGrammar(t *testing.T) {
 			func(t *testing.T) []string {
 				return []string{"check", "--out", mkdir(t, filepath.Join(t.TempDir(), "out"))}
 			},
-			"CHECK", "FAILED", 1, "stderr",
+			"CHECK", "FAILED", 1, "stdout",
 		},
 		{
 			"sources ok",
@@ -346,7 +346,7 @@ func TestStatusGrammar(t *testing.T) {
 				empty := mkdir(t, filepath.Join(t.TempDir(), "out"))
 				return []string{"ledger", "--out", empty, "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run"}
 			},
-			"LEDGER", "FAILED", 1, "stdout",
+			"LEDGER", "FAILED", 1, "stderr",
 		},
 		{
 			"report ok",
@@ -354,7 +354,7 @@ func TestStatusGrammar(t *testing.T) {
 				dir, tr := statusTranscriptDir(t, false)
 				return []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench=" + tr}
 			},
-			"REPORT", "OK", 0, "stderr",
+			"REPORT", "OK", 0, "stdout",
 		},
 		{
 			"report refused",
@@ -372,7 +372,7 @@ func TestStatusGrammar(t *testing.T) {
 				dir, tr := statusTranscriptDir(t, true)
 				return []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench=" + tr}
 			},
-			"REPORT", "FAILED", 1, "stderr",
+			"REPORT", "FAILED", 1, "stdout",
 		},
 		{
 			"sum ok",
@@ -409,7 +409,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			"session refused",
 			func(t *testing.T) []string { return []string{"session"} },
-			"TOKENS", "REFUSED", 2, "stderr",
+			"SESSION", "REFUSED", 2, "stderr",
 		},
 		{
 			"session refused at exit 1",
@@ -418,7 +418,7 @@ func TestStatusGrammar(t *testing.T) {
 				write(t, filepath.Join(out, "2026-09-11.tsv"), "not a day file\n")
 				return []string{"session", "--claude-session", writeSession(t), "--out", out}
 			},
-			"TOKENS", "REFUSED", 1, "stderr",
+			"SESSION", "REFUSED", 1, "stderr",
 		},
 		{
 			"version ok",

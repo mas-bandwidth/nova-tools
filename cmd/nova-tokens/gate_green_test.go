@@ -86,7 +86,7 @@ func TestCheckStrictRestoresEveryFindingTheGateUsedToMake(t *testing.T) {
 	out := reportsTokensFixture(t)
 	r := invoke(t, "check", "--out", out, "--strict", "--max", "0")
 	wantExit(t, r, 1)
-	line := lineWith(r.stderr, "CHECK FAILED files=")
+	line := lineWith(r.stdout, "CHECK FAILED files=")
 	wantContains(t, line, "missing=36")
 	wantContains(t, line, "stray=4")
 	wantContains(t, line, "bad=0")
@@ -115,7 +115,7 @@ func TestTheAllowlistDoesNotSwallowARealStray(t *testing.T) {
 	mkdir(t, filepath.Join(out, "working"))
 	r := invoke(t, "check", "--out", out)
 	wantExit(t, r, 1)
-	line := lineWith(r.stderr, "CHECK FAILED files=")
+	line := lineWith(r.stdout, "CHECK FAILED files=")
 	wantContains(t, line, "stray=3")
 	wantContains(t, line, "notes=4")
 	for _, want := range []string{"daily-2026-09.tsv", "scratch", "working"} {

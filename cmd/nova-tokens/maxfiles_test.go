@@ -30,7 +30,7 @@ func TestFoldRefusesATreeOverMaxFilesBeforeReadingIt(t *testing.T) {
 	wantContains(t, r.stderr, "2 transcript files")
 	wantContains(t, r.stderr, "over the --max-files ceiling of 1")
 	wantContains(t, r.stderr, "--exclude")
-	wantContains(t, r.stderr, "TOKENS FAILED")
+	wantContains(t, r.stdout, "TOKENS FAILED")
 
 	// The temporary tree is what put the source over the ceiling, and --exclude is the
 	// remedy the refusal names: the same call admits the real transcript.

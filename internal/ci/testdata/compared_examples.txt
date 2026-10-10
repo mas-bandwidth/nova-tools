@@ -89,6 +89,7 @@ cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint
 cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
 cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
 cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sum --out ./out --month 2026-09
+cmd/nova-tokens/session_example_test.go:TestTheHelpSessionExampleIsWhatItPrints example: nova-tokens session --claude-session ./session.jsonl --out ./out
 cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory search --root ./corpus --channels bm25 --k 3 glazing minutes pressure
 cmd/nova-cairn/firstrun_test.go:TestUsageBannerExamplesRun example: nova-cairn open --store ./cairns --session s1 --publish manual
 cmd/nova-cairn/firstrun_test.go:TestUsageBannerExamplesRun example: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"

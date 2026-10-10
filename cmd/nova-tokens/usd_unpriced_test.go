@@ -25,7 +25,7 @@ func TestReportJSONNamesAnUnpricedCostAsNull(t *testing.T) {
 
 	text := invoke(t, "report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool)
 	wantExit(t, text, 0)
-	wantContains(t, lineWith(text.stderr, "TOKENS AVG day=2026-09-11 model=openai/gpt-4o"), "usd=- usd_per_mtok=-")
+	wantContains(t, lineWith(text.stderr, "REPORT AVG day=2026-09-11 model=openai/gpt-4o"), "usd=- usd_per_mtok=-")
 
 	_, got := asJSON(t, "report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool, "--json")
 	unpriced := avgItem(t, got, "openai/gpt-4o")

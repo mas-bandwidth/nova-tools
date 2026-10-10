@@ -1251,3 +1251,40 @@ func TestToolExistsSeam(t *testing.T) {
 		assert.Contains(t, rMissing.Stderr, "is no verb and no file")
 	})
 }
+
+// TestSetupTokenAndVerbHelpPlacement pins the skeleton's three additions:
+// Tool.Setup is printed in the banner after the exit codes, Verb.Token is the
+// leading word of a verb's lines, and helpArgs places --help after a multi-word
+// verb name so the verb still answers help before it reads a trailing operand.
+func TestSetupTokenAndVerbHelpPlacement(t *testing.T) {
+	t.Parallel()
+	tl := &Tool{
+		Name:      "nova-demo",
+		What:      "pins the skeleton's Setup, Token and help placement",
+		ExitTable: "0 done, 1 said no, 2 could not run.",
+		Setup:     "setup:\n  mkdir -p ./out",
+		Verbs: []Verb{
+			{Name: "fold", Token: "TOKENS", Usage: "fold", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+			{Name: "lib check", Usage: "lib check <ref>", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+		},
+	}
+	rig := NewRig(t, tl)
+
+	// Tool.Setup: the block stands between the exit codes and the example block.
+	help := rig.Run(0, "help")
+	assert.Contains(t, help.Stdout, "exit codes: 0 done, 1 said no, 2 could not run.\n\nsetup:\n  mkdir -p ./out\n\nexample:\n",
+		"the setup block prints after the exit codes and before the examples:\n%s", help.Stdout)
+
+	// Verb.Token: the verb's line leads with its token, not its name.
+	fold := rig.Run(0, "fold")
+	assert.Equal(t, "TOKENS OK\n", fold.Stdout, "Verb.Token is the first word of the verb's lines")
+
+	// helpArgs: --help lands after the multi-word verb name, before the operand.
+	assert.Equal(t, []string{"lib", "check", "--help", "operand"}, tl.helpArgs([]string{"help", "lib", "check", "operand"}),
+		"helpArgs places --help after the longest verb name, before the arguments")
+	lib := rig.Run(0, "help", "lib", "check", "operand")
+	assert.True(t, strings.HasPrefix(lib.Stdout, "usage: nova-demo lib check [flags]\n"),
+		"a trailing operand does not stop help answering:\nstdout %q\nstderr %q", lib.Stdout, lib.Stderr)
+}

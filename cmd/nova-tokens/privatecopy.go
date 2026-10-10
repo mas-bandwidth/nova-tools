@@ -6,19 +6,16 @@ package main
 // and no other).
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// copyNote prints each private copy a read could not remove, as a NOTE on stderr: the run
-// meant to leave --scratch as it was, and says where it did not.
-func copyNote(s *sink, token string, notes []string) {
+// copyNotes adds each private copy note a read could not remove to o.
+func copyNotes(o *tool.Out, notes []string) {
 	for _, n := range notes {
-		fmt.Fprintf(s.err(), "%s NOTE %s\n", oneline.Field(token), oneline.Escape(n))
-		s.note(n)
+		o.Note(n)
 	}
 }
 

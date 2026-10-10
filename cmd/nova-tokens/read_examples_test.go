@@ -40,20 +40,20 @@ func TestTheHelpReadingExamplesAreWhatTheyPrint(t *testing.T) {
 			"CHECK OK at=2026-09-11T23:55:02Z build=devel files=1 rows=2 first=2026-09-11 last=2026-09-11 missing=0 stray=0 gap=0 notes=0",
 		}},
 		{Line: "$ nova-tokens sum --out ./out --month 2026-09", Want: []string{
+			"SUM OK month=2026-09 days=1 missing=0 pairs=2 models=1 nonutc=0",
 			"SUM MONTH month=2026-09 at=2026-09-11T23:55:02Z build=devel days=1 first=2026-09-11 last=2026-09-11 missing=0 rows=2 turns=3",
 			"SUM PAIR model=claude-fable-5-1 repo=schema input=908 output=1535 cache_write=1200 cache_read=242000 reasoning=- rough=0 dashes=0,0,0,0,1 nonutc=0 days=1",
 			"SUM PAIR model=claude-fable-5-1 repo=serialize input=430 output=58 cache_write=- cache_read=4000 reasoning=- rough=0 dashes=0,0,1,0,1 nonutc=0 days=1",
 			"SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,1,0,2 nonutc=0 repos=2",
 			"SUM TOTAL input=1338 output=1593 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,1,0,2 nonutc=0 turns=3 pairs=2 models=1",
-			"SUM OK month=2026-09 days=1 missing=0 pairs=2 models=1 nonutc=0",
 		}},
 		{Line: "$ nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts", Want: []string{
-			source,
 			"SOURCES OK sources=1 files=1 messages=3 unreadable=0 unparsed=0 rows=2 unattributed=-",
+			source,
 		}},
 		{Line: "$ nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20", Want: []string{
-			source,
 			"SOURCES OK sources=1 files=1 messages=3 unreadable=0 unparsed=0 rows=2 unattributed=0",
+			source,
 		}},
 	} {
 		line := strings.TrimPrefix(step.Line, "$ ")

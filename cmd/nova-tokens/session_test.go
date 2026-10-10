@@ -35,7 +35,7 @@ func TestSessionPrintsOneLineAndFoldsNothingWithoutOut(t *testing.T) {
 	wantExit(t, r, 0)
 	// By hand: 16 + 1.25 x 2500 + 0.1 x 20000 + 5 x 420 = 16 + 3125 + 2000 + 2100 = 7241,
 	// and the context a turn carried is (16 + 2500 + 20000) / 2 = 11258.
-	want := "SESSION turns=2 input=16 cache_write=2500 cache_read=20000 output=420 weighted=7241 avg_context=11258\n"
+	want := "SESSION OK turns=2 input=16 cache_write=2500 cache_read=20000 output=420 weighted=7241 avg_context=11258\n"
 	assert.Equal(t, want, r.stdout, "stdout is\n  %q\nwant\n  %q", r.stdout, want)
 }
 
@@ -56,7 +56,7 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 
 	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-11 written=true rows=2 retained=1")
+	wantContains(t, r.stdout, "SESSION DAY day=2026-09-11 written=true rows=2 retained=1")
 	wantContains(t, r.stdout, "model=claude-opus-5 weighted=7241")
 
 	raw, err := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
@@ -158,7 +158,7 @@ func TestSessionRefusesATranscriptThatNamesNoModel(t *testing.T) {
 
 	r = invoke(t, "session", "--claude-session", path)
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "SESSION turns=1")
+	wantContains(t, r.stdout, "SESSION OK turns=1")
 }
 
 // TestSessionRefusesUnreadableDayFile: an unreadable existing day file in a writable output
@@ -178,7 +178,7 @@ func TestSessionRefusesUnreadableDayFile(t *testing.T) {
 	release := makeUnreadable(t, dayPath)
 	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS REFUSED: cannot read")
+	wantContains(t, r.stderr, "SESSION REFUSED day=2026-09-11")
 	wantContains(t, r.stderr, "2026-09-11.tsv")
 
 	release()
@@ -206,7 +206,7 @@ func TestSessionRoleAndWeightsAreFlags(t *testing.T) {
 			// 16 + 1.25 x 2500 + 0.1 x 20000 + 5 x 420 = 7241, the number the
 			// constants carried, from the flag's default and not from a constant.
 			name:    "no role books the bare model at the default weights",
-			wantOut: "SESSION turns=2 input=16 cache_write=2500 cache_read=20000 output=420 weighted=7241 avg_context=11258",
+			wantOut: "SESSION OK turns=2 input=16 cache_write=2500 cache_read=20000 output=420 weighted=7241 avg_context=11258",
 			wantRow: "2026-09-11\tclaude-opus-5\tunattributed\t16\t420\t2500\t20000\t-\t0\tutc\tclaude-session",
 		},
 		{
