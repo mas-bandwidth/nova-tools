@@ -12,6 +12,45 @@ import (
 	"time"
 )
 
+// ReconcileBase is a provider's reconciliation baseline at a tidy: the day and the provider
+// figure of its last read before the tidy, and the time of that read. A cost reconcile after
+// the tidy counts the provider's figure since the read beside the sprint's records since it
+// (CostReconcileSince), so the provider's count and the records are the same window; the
+// whole day's provider figure is never set beside only the window's records (the reader's
+// finding, 2026-10-06: stats_reconcile.go compared a full day's provider figure with only the
+// window's records).
+type ReconcileBase struct {
+	Day      string    `json:"day,omitempty"`
+	At       time.Time `json:"at,omitzero"`
+	Provider float64   `json:"provider"`
+}
+
+// ReconcileBases is each provider's baseline at a tidy, from its reconciliation record on the
+// fleet table (CostReconcileRecord): the day, the read and the provider's figure it counted.
+// No provider is named with no read or an unknown one.
+func ReconcileBases(s *Snapshot) map[string]ReconcileBase {
+	out := map[string]ReconcileBase{}
+	if s.Fleet == nil {
+		return out
+	}
+	for name := range s.Fleet.Props() {
+		provider, ok := strings.CutPrefix(name, PropCostReconcilePrefix)
+		if !ok {
+			continue
+		}
+		rec, ok := CostReconcileOf(s.Fleet, provider)
+		if !ok || !rec.Known || rec.Day == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, rec.At)
+		if err != nil {
+			continue
+		}
+		out[provider] = ReconcileBase{Day: rec.Day, At: at, Provider: rec.Used}
+	}
+	return out
+}
+
 // InternalSpendSplitSince is internalSpendSplit recounting only consumer records whose
 // timestamp con.At falls on day and, when since is non-zero, at or after since.
 func InternalSpendSplitSince(s *Snapshot, provider, day string, since time.Time) (all, reads float64) {
@@ -48,12 +87,13 @@ func InternalSpendSplitSince(s *Snapshot, provider, day string, since time.Time)
 	return all, reads
 }
 
-// CostReconcileSince is CostReconcile recounting the window since the tidy when since is
-// non-zero, or the whole day when zero.
-func CostReconcileSince(s *Snapshot, r CostReconcileReq, since time.Time) Plan {
-	if since.IsZero() {
-		return CostReconcile(s, r)
-	}
+// CostReconcileSince is CostReconcile with the window a tidy opened: for a provider whose
+// baseline is here and whose day is the read's, the provider's figure since that read (its
+// own count less the baseline's) is set beside the sprint's records since it
+// (InternalSpendSplitSince), so both are the same window. A provider with no baseline, or one
+// whose baseline is another day's, is the whole day's, as CostReconcile is. The day kept in
+// the record's Days is the whole day's either way: the unreconciled line is the epoch's.
+func CostReconcileSince(s *Snapshot, r CostReconcileReq, bases map[string]ReconcileBase) Plan {
 	var p Plan
 	reads := slices.Clone(r.Reads)
 	slices.SortFunc(reads, func(a, b UsageRead) int { return strings.Compare(a.Provider, b.Provider) })
@@ -64,8 +104,12 @@ func CostReconcileSince(s *Snapshot, r CostReconcileReq, since time.Time) Plan {
 		if !rd.Known {
 			rec.Day, rec.Used, rec.Internal, rec.InternalReads, rec.Gap, rec.Share = was.Day, was.Used, was.Internal, was.InternalReads, was.Gap, was.Share
 		} else {
-			rec.Day, rec.Used = rd.Day, rd.Used
-			rec.Internal, rec.InternalReads = InternalSpendSplitSince(s, rd.Provider, rd.Day, since)
+			full, fullReads := internalSpendSplit(s, rd.Provider, rd.Day)
+			rec.Day, rec.Used, rec.Internal, rec.InternalReads = rd.Day, rd.Used, full, fullReads
+			if b, ok := bases[rd.Provider]; ok && b.Day == rd.Day {
+				rec.Used = rd.Used - b.Provider
+				rec.Internal, rec.InternalReads = InternalSpendSplitSince(s, rd.Provider, rd.Day, b.At)
+			}
 			rec.Gap = rec.Used - rec.Internal
 			switch {
 			case rec.Used > 0:
@@ -76,7 +120,7 @@ func CostReconcileSince(s *Snapshot, r CostReconcileReq, since time.Time) Plan {
 			if rec.Days == nil {
 				rec.Days = map[string]DayGap{}
 			}
-			rec.Days[rd.Day] = DayGap{Provider: rec.Used, Internal: rec.Internal}
+			rec.Days[rd.Day] = DayGap{Provider: rd.Used, Internal: full}
 			for _, d := range slices.Sorted(maps.Keys(rec.Days)) {
 				if len(rec.Days) <= MaxReconcileDays {
 					break

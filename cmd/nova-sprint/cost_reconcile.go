@@ -20,7 +20,10 @@ import (
 // through the seat's key in this environment (internal/provbalance.ReadUsage), the reads are
 // set beside the sprint's records of the same day in one step (sprint.CostReconcile: each
 // provider's record on the fleet table, and its one gap judgment opened past the bound or
-// closed within it), and each provider's gap is printed. The release's spend check calls it.
+// closed within it), and each provider's gap is printed. After a stats tidy the provider's
+// figure and the records are both counted from its last read before the tidy
+// (sprint.ReconcileBase, sprint.CostReconcileSince), so the windows match. The release's
+// spend check calls it.
 func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 	const verb = "cost reconcile"
 	fs, c := a.verbSetup(verb)
@@ -57,7 +60,7 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "COST RECONCILE OK providers=0 notes=0: the routes name no provider (nova-sprint routes)")
 		return 0
 	}
-	from, err := st.StatsSince(ctx, "")
+	bases, err := st.StatsReconciles(ctx)
 	if err != nil {
 		return a.readFailed(verb, err, stderr)
 	}
@@ -71,7 +74,7 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 			return a.readFailed(verb, err, stderr)
 		}
 		s.Routes = routes
-		plan := sprint.CostReconcileSince(s, req, from)
+		plan := sprint.CostReconcileSince(s, req, bases)
 		for _, pw := range plan.Props {
 			fleet.SetProp(pw.Name, pw.Value)
 		}
@@ -83,7 +86,7 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 			Load:   []string{sprint.Work, sprint.Fleet},
 			Routes: true,
 			Plan: func(s *sprint.Snapshot) sprint.Plan {
-				return sprint.CostReconcileSince(s, req, from)
+				return sprint.CostReconcileSince(s, req, bases)
 			},
 		}
 		res, err := st.Run(ctx, step)

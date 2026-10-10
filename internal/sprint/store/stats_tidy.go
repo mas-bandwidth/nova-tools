@@ -41,6 +41,10 @@ type StatsRecord struct {
 	// Streams is each stream's landed cost and count at the last tidy of the streams: the
 	// work table's cost cell and per landed count from them (sprint.StreamCostSince).
 	Streams map[string]sprint.StreamBase `json:"streams,omitempty"`
+	// Reconciles is each provider's reconciliation baseline at the last tidy
+	// (sprint.ReconcileBase): the day and read a cost reconcile after the tidy counts the
+	// provider's figure and the sprint's records from, so both are the same window.
+	Reconciles map[string]sprint.ReconcileBase `json:"reconciles,omitempty"`
 	// Archives is every archive record's key, oldest first: teardown deletes each by name.
 	Archives []string `json:"archives,omitempty"`
 }
@@ -66,6 +70,9 @@ type StatsArchive struct {
 	Rows    []sprint.TidyRow             `json:"rows,omitempty"`
 	Routes  []sprint.RouteStat           `json:"routes,omitempty"`
 	Streams map[string]sprint.StreamBase `json:"streams,omitempty"`
+	// Reconciles is each provider's reconciliation baseline at the tidy (sprint.ReconcileBase),
+	// so a cost reconcile after it counts the provider and the records over one window.
+	Reconciles map[string]sprint.ReconcileBase `json:"reconciles,omitempty"`
 }
 
 // TidyReq is a tidy: the kinds it names, why, and whether it only says what would move.
@@ -130,6 +137,17 @@ func (st *Store) StatsSince(ctx context.Context, kind string) (time.Time, error)
 	return rec.Kinds[kind], nil
 }
 
+// StatsReconciles is each provider's reconciliation baseline at the last tidy in the store's
+// epoch: the window a cost reconcile after the tidy counts from (sprint.CostReconcileSince).
+// nil when no tidy was recorded or the record is another epoch's.
+func (st *Store) StatsReconciles(ctx context.Context) (map[string]sprint.ReconcileBase, error) {
+	rec, err := st.StatsTidied(ctx)
+	if err != nil || rec.Epoch != st.epoch {
+		return nil, err
+	}
+	return rec.Reconciles, nil
+}
+
 // streamBases is the streams' bases the work table's cost column counts from: the
 // record's in the store's epoch, none otherwise.
 func (st *Store) streamBases(ctx context.Context) (map[string]sprint.StreamBase, error) {
@@ -192,6 +210,7 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 	if err != nil {
 		return res, err
 	}
+	res.Record.Reconciles = sprint.ReconcileBases(s)
 	if has(sprint.TidyRoutes) || has(sprint.TidyFleet) || has(sprint.TidyFriends) {
 		routes, _, err := st.Routes(ctx)
 		if err != nil {
@@ -252,6 +271,7 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 	if has(sprint.TidyStreams) {
 		rec.Streams = res.Record.Streams
 	}
+	rec.Reconciles = res.Record.Reconciles
 	if err := st.putJSON(ctx, keyStats, rec); err != nil {
 		return res, err
 	}

@@ -2154,7 +2154,11 @@ step takes each provider's own count of the dollars its key used on a UTC day (o
 `GET /api/v1/key`, `data.usage_daily`) and sets it beside the sprint's records of that
 provider for the same UTC day: every consumer record on every primary whose route (else
 reported provider/model) is that provider's and whose end stamp falls on that day, at its
-charged figure. A day is compared with the same day, never with all time. The read is written
+charged figure. A day is compared with the same day, never with all time. After a stats tidy
+the window starts at each provider's last read before the tidy: its provider figure and the
+sprint's records are both counted from that read
+(`sprint.ReconcileBase`, `sprint.CostReconcileSince`; the baseline is kept in the stats
+record, so a full day's provider figure is never set beside only the window's records). The read is written
 to the fleet table's property `cost_reconcile_<provider>`, the last read of each day kept for
 62 days. A gap over 5% of the provider's figure, and of at least $1.00, opens ONE judgment on
 the provider (`a provider's usage and the sprint's cost records disagree`, filed under
@@ -6443,7 +6447,9 @@ After a tidy (`nova-sprint stats tidy`), headline counts start from it:
 (an archived stream's cards are not in the total). Cost total and per card over work and
 reads since it; throughput over landings since it. `where`, `where --json (stats_since=<RFC3339>)`
 and the dashboard header say `since <time>` beside the numbers. The coordinator view carries
-`stats_since=` on the sum line. `cost reconcile` recounts only the window since the tidy.
+`stats_since=` on the sum line. `cost reconcile` counts each provider's figure since its last
+read before the tidy beside the records since that read (`sprint.ReconcileBase`), so the
+provider's count and the records are the same window.
 With no tidy recorded, every number is the epoch's as today. A stream's `total_cost`,
 `cost_by_tier`, `work_cost` and `read_cost` in `where --json` stay the epoch's.
 `TestTheHeadlineCountsFromTheTidy`.
