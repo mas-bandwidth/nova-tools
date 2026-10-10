@@ -100,8 +100,11 @@ func TestGhreleaseRunnerCoverFinish(t *testing.T) {
 				if gotMsg != "" {
 					t.Errorf("finish() msg = %q, want empty", gotMsg)
 				}
-			} else if tt.wantMsg != "" {
-				if !strings.Contains(gotMsg, tt.wantMsg) {
+			} else {
+				if gotMsg == "" {
+					t.Error("finish() msg is empty, want non-empty")
+				}
+				if tt.wantMsg != "" && !strings.Contains(gotMsg, tt.wantMsg) {
 					t.Errorf("finish() msg = %q, want to contain %q", gotMsg, tt.wantMsg)
 				}
 			}
@@ -129,19 +132,17 @@ func TestGhreleaseRunnerCoverCmd(t *testing.T) {
 			if tt.wantDir && b.Cmd.Dir != tt.dir {
 				t.Errorf("cmd() Dir = %q, want %q", b.Cmd.Dir, tt.dir)
 			}
-			if tt.wantEnv {
+			if !tt.wantEnv {
+				if b.Cmd.Env != nil {
+					t.Error("cmd() Env is non-nil when env is empty")
+				}
+			} else {
 				if b.Cmd.Env == nil {
 					t.Fatal("cmd() Env = nil, want non-nil")
 				}
-				found := false
-				for _, e := range b.Cmd.Env {
-					if e == "KEY=VALUE" {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Error("cmd() Env missing KEY=VALUE")
+				lastIdx := len(b.Cmd.Env) - 1
+				if b.Cmd.Env[lastIdx] != "KEY=VALUE" {
+					t.Errorf("cmd() Env last element = %q, want %q", b.Cmd.Env[lastIdx], "KEY=VALUE")
 				}
 			}
 			cancelCalled := false
