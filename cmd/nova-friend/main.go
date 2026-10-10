@@ -1221,6 +1221,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
 	}
+	var ocPriced *friend.OpenCodePriced
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the installed opencode, read once: a run verb lacking a flag the adapter passes is a
 		// refusal naming the version, never an exit 1 on every delivery (the finding of 2026-10-06)
@@ -1236,7 +1237,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
 			oc.Allow = append(oc.Allow, alias)
 		}
-		deliver = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }} // every lane run priced from her own session record, and capped by her row's token_cap
+		// every lane run priced from her own exported session record, and capped by her row's token_cap
+		ocPriced = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }}
+		deliver = ocPriced
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
@@ -1625,6 +1628,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 			d.Tokens = func(ctx context.Context, session string) (friend.LaneTokens, error) {
 				return friend.TokensFromOpenCode(ctx, w.sqlite, db, session)
 			}
+		}
+		if ocPriced != nil {
+			// the finish's tokens come from the session record, never the model's report
+			// or the database; the cap's still read the database (capStep)
+			d.SessionUsage = ocPriced.SessionUsage
 		}
 		d.Route = w.route(server, c.Str("model"))
 	}
