@@ -35,7 +35,7 @@
     that: seat_reinstalled.rc == 0
     fail_msg: >-
       ADOPT REFUSED step=friends host={{ inventory_hostname }}: nova-friend install failed for {{ seat_friend.friend }}
-      ({{ (seat_reinstalled.stderr or seat_reinstalled.stdout) | default('') | truncate(300) }})
+      ({{ ((seat_reinstalled.stderr | default('')) or (seat_reinstalled.stdout | default('')) or (seat_reinstalled.msg | default(''))) | default('') | truncate(300) }})
     quiet: true
 
 - name: "friends: the host's clock after {{ seat_friend.friend }}'s reinstall (its cutoff)"

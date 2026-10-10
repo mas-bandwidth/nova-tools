@@ -227,7 +227,7 @@
             that: seat_before.rc == 0 and seat_before.stdout is match('[{]')
             fail_msg: >-
               ADOPT REFUSED step=live host={{ inventory_hostname }}: the candidate's nova-sprint live printed no manifest
-              ({{ (seat_before.stderr or seat_before.stdout) | default('') | truncate(200) }}); nothing was installed or loaded
+              ({{ ((seat_before.stderr | default('')) or (seat_before.stdout | default('')) or (seat_before.msg | default(''))) | default('') | truncate(200) }}); nothing was installed or loaded
             quiet: true
           when: seat_cand != ''
 
@@ -254,7 +254,7 @@
             that: seat_canary.rc == 0
             fail_msg: >-
               ADOPT REFUSED step=server host={{ inventory_hostname }}: the candidate's shadow tick failed; nothing was installed or loaded:
-              {{ ((seat_canary.stderr | default('')) or (seat_canary.stdout | default(''))) | truncate(300) }}
+              {{ ((seat_canary.stderr | default('')) or (seat_canary.stdout | default('')) or (seat_canary.msg | default(''))) | truncate(300) }}
             quiet: true
           when: seat_cand != ''
 
@@ -295,7 +295,7 @@
               - seat_dry.facts.ready | default('') == 'yes'
             fail_msg: >-
               ADOPT REFUSED step=server host={{ inventory_hostname }}:
-              {{ ("the candidate's nova-config migrate --dry-run as " ~ nova_pg_owner ~ " did not answer (" ~ ((seat_migrate_dry.stderr | default('')) or (seat_migrate_dry.stdout | default(''))) | truncate(300) ~ ')')
+              {{ ("the candidate's nova-config migrate --dry-run as " ~ nova_pg_owner ~ " did not answer (" ~ ((seat_migrate_dry.stderr | default('')) or (seat_migrate_dry.stdout | default('')) or (seat_migrate_dry.msg | default(''))) | truncate(300) ~ ')')
                  if not seat_dry_json
                  else ('the store answered as role ' ~ (seat_dry.facts.role | default('?')) ~ ', not the owner ' ~ nova_pg_owner ~ ' (nova_pg_owner_dsn=' ~ nova_pg_owner_dsn ~ ')')
                  if seat_dry.facts.role | default('') != nova_pg_owner
@@ -345,7 +345,7 @@
             fail_msg: >-
               ADOPT REFUSED step=friends host={{ inventory_hostname }}: the candidate's nova-friend install --dry-run refuses the flags of
               {{ seat_planned.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.friend') | join(', ') }}
-              ({{ (seat_planned.results | rejectattr('rc', 'equalto', 0) | first).stderr | default('') | truncate(300) }}); nothing was installed or loaded
+              ({{ (((seat_planned.results | rejectattr('rc', 'equalto', 0) | first).stderr | default('')) or ((seat_planned.results | rejectattr('rc', 'equalto', 0) | first).msg | default(''))) | truncate(300) }}); nothing was installed or loaded
             quiet: true
 
         # Every check passed. What the window changes is measured (a stage
@@ -771,7 +771,7 @@
             that: ansible_check_mode or (seat_read.rc == 0 and seat_read.stdout is match('[{]'))
             fail_msg: >-
               ADOPT REFUSED step=live host={{ inventory_hostname }}: the installed nova-sprint live printed no manifest
-              ({{ (seat_read.stderr or seat_read.stdout) | default('') | truncate(200) }})
+              ({{ ((seat_read.stderr | default('')) or (seat_read.stdout | default('')) or (seat_read.msg | default(''))) | default('') | truncate(200) }})
             quiet: true
 
         - name: "seat: what runs now, and what is stale (--check: the candidate's reading)"
@@ -867,7 +867,7 @@
                   ADOPT REFUSED step=server host={{ inventory_hostname }}: {{ ansible_failed_task.name | default('a restart') }} failed for
                   {{ ansible_failed_result.results | default([]) | selectattr('failed', 'defined') | selectattr('failed')
                      | map(attribute='item.label') | join(', ') or seat_restart_labels | join(', ') }};
-                  each was bootstrapped again from its plist (rc {{ seat_again.results | map(attribute='rc') | join(',') }})
+                  each was bootstrapped again from its plist (rc {{ seat_again.results | map(attribute='rc', default='?') | join(',') }})
 
         - name: "server: the manifest after, until each one started is there once, loaded, and runs the installed binary with its plist's arguments"
           ansible.builtin.command: { argv: "{{ seat_live }}" }
@@ -1138,10 +1138,10 @@
       register: tla_java_version
       changed_when: false
       check_mode: false
-      failed_when: tla_java == '' or tla_java_version.rc != 0 or not ((tla_java_version.stderr ~ tla_java_version.stdout) is search('version "'))
+      failed_when: tla_java == '' or (tla_java_version.rc | default(1)) != 0 or not (((tla_java_version.stderr | default('')) ~ (tla_java_version.stdout | default(''))) is search('version "'))
 
     - name: the receipt
       ansible.builtin.debug:
         msg: >-
           TLA OK host={{ inventory_hostname }} jar={{ nova_tla_jar }} sha256={{ tla_jar.stat.checksum }} java={{ tla_java }}
-          version={{ (tla_java_version.stderr ~ '\n' ~ tla_java_version.stdout) | regex_search('version "[^"]*"') | replace('version ', '') | replace('"', '') }}
+          version={{ ((tla_java_version.stderr | default('')) ~ '\n' ~ (tla_java_version.stdout | default(''))) | regex_search('version "[^"]*"') | replace('version ', '') | replace('"', '') }}
