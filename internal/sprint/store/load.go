@@ -147,6 +147,18 @@ func (st *Store) placedRecords(ctx context.Context, tables []string, shapes []nt
 		return tbls, nil
 	}
 	st.stats().reads.Add(1)
+	// each table's mark is read before its records (markOf)
+	marks := make([]string, len(whole))
+	keep := make([]bool, len(whole))
+	for k, shape := range whole {
+		if lc == nil {
+			break
+		}
+		var err error
+		if marks[k], keep[k], err = st.markOf(ctx, shape); err != nil {
+			return nil, err
+		}
+	}
 	ids, err := st.B.CellIDs(ctx, whole)
 	if err != nil {
 		return nil, err
@@ -156,8 +168,8 @@ func (st *Store) placedRecords(ctx context.Context, tables []string, shapes []nt
 		if err := st.readInto(ctx, t, ids[shape.Name], true); err != nil {
 			return nil, err
 		}
-		if lc != nil {
-			lc.keepLoaded(t, shape)
+		if keep[k] {
+			lc.keepLoaded(t, shape, marks[k])
 		}
 	}
 	return tbls, nil

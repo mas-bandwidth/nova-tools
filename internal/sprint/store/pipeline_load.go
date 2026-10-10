@@ -99,6 +99,20 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 	if len(whole) > 0 {
 		st.stats().reads.Add(1)
 	}
+	// each table read whole: its mark first (markOf), kept with its records below
+	marks := map[string]string{}
+	for _, shape := range whole {
+		if lc == nil {
+			break
+		}
+		mark, ok, err := st.markOf(ctx, shape)
+		if err != nil {
+			return nil, Fence{}, err
+		}
+		if ok {
+			marks[shape.Name] = mark
+		}
+	}
 	var ids map[string][]string
 	if len(whole) > 0 {
 		if ids, err = st.B.CellIDs(ctx, whole); err != nil {
@@ -248,8 +262,8 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 
 	if lc != nil {
 		for i, shape := range shapes {
-			if fromCache[i] == nil {
-				lc.keepLoaded(tbls[i], shape)
+			if mark, ok := marks[shape.Name]; ok && fromCache[i] == nil {
+				lc.keepLoaded(tbls[i], shape, mark)
 			}
 		}
 	}

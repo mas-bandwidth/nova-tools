@@ -1020,29 +1020,48 @@ var rowFlagVerbs = map[string]bool{"rows_hide": true}
 // from to to at the pinned epoch, or one is a write that does not name its
 // records.
 func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64) ([]string, bool, error) {
-	gap := func(why string) ([]string, bool, error) {
-		return nil, false, &GapError{Table: table, From: from, To: to, Why: why}
+	ids, _, _, ok, err := r.tableChanges(ctx, table, from, to, false)
+	return ids, ok, err
+}
+
+// TableChangesMarked is TableChanges with the stream ids of the events that left
+// revisions from and to (the load cache's marks, loadcache.go): a store that lost its
+// last writes and wrote others since gives the same revision a new event, and a new
+// id. Revision 0 is the epoch's empty table, left by no event: its mark is "".
+func (r *Redis) TableChangesMarked(ctx context.Context, table string, from, to uint64) ([]string, string, string, bool, error) {
+	return r.tableChanges(ctx, table, from, to, true)
+}
+
+// tableChanges is TableChanges, and with marks the ids of the events that left from
+// and to.
+func (r *Redis) tableChanges(ctx context.Context, table string, from, to uint64, marks bool) ([]string, string, string, bool, error) {
+	gap := func(why string) ([]string, string, string, bool, error) {
+		return nil, "", "", false, &GapError{Table: table, From: from, To: to, Why: why}
 	}
 	if to < from {
 		return gap("the twin is ahead of the table")
 	}
-	if to == from {
-		return nil, true, nil
+	if to == from && (!marks || to == 0) {
+		return nil, "", "", true, nil
 	}
 	key := ntable.DefKey(table) + ":changes"
 	epoch := strconv.FormatUint(r.Pinned, 10)
 	need := to
 	var ids []string
+	toMark := ""
+	// chained: the events from to back to from are read; with marks the one that
+	// left from is looked for next
+	chained := to == from
 	end := "+"
 	for page := 0; page < 64; page++ {
 		evs, err := r.C.XRevRangeN(ctx, key, end, "-", changePage).Result()
 		if err != nil && strings.Contains(err.Error(), "NOPERM") {
 			// a user not granted the stream's read: said, and the twin reads
 			// the table whole
-			return nil, false, &GrantError{Command: "XREVRANGE", Key: key, Cause: err}
+			return nil, "", "", false, &GrantError{Command: "XREVRANGE", Key: key, Cause: err}
 		}
 		if err != nil {
-			return nil, false, err
+			return nil, "", "", false, err
 		}
 		if len(evs) == 0 {
 			return gap(fmt.Sprintf("the stream ends before revision %d", need))
@@ -1057,31 +1076,35 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 			if ev.after != need {
 				return gap(fmt.Sprintf("the event before revision %d leaves revision %d", need, ev.after))
 			}
+			if ev.after == to {
+				toMark = x.ID
+			}
+			if chained {
+				// the event that left from: its id is from's mark
+				return ids, x.ID, toMark, true, nil
+			}
 			if (ev.verb == "set" && orderOnly(ev.args)) || rowFlagVerbs[ev.verb] {
 				// the rows' order or their hidden flags alone: no record changed, and the
 				// shape read beside the catch-up carries the rows
-				if need = ev.before; need == from {
-					return ids, true, nil
+			} else {
+				if !twinVerbs[ev.verb] {
+					return gap(fmt.Sprintf("a write %q at revision %d names no records", ev.verb, ev.after))
 				}
-				if need < from {
-					return gap(fmt.Sprintf("the events skip revision %d", from))
+				named, err := changeIDs(ev)
+				if err != nil {
+					return gap(fmt.Sprintf("the event at revision %d is unreadable: %v", ev.after, err))
 				}
-				continue
+				ids = append(ids, named...)
 			}
-			if !twinVerbs[ev.verb] {
-				return gap(fmt.Sprintf("a write %q at revision %d names no records", ev.verb, ev.after))
-			}
-			named, err := changeIDs(ev)
-			if err != nil {
-				return gap(fmt.Sprintf("the event at revision %d is unreadable: %v", ev.after, err))
-			}
-			ids = append(ids, named...)
 			need = ev.before
-			if need == from {
-				return ids, true, nil
-			}
 			if need < from {
 				return gap(fmt.Sprintf("the events skip revision %d", from))
+			}
+			if need == from {
+				if !marks || from == 0 {
+					return ids, "", toMark, true, nil
+				}
+				chained = true
 			}
 		}
 		end = "(" + evs[len(evs)-1].ID
