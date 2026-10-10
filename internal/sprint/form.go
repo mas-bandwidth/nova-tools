@@ -60,21 +60,38 @@ func FormFinding(brief, finding string) string {
 	return "the finding is about the report's form (" + path + "), which the lint checked at the finish: judge the substance, or name the work's own file:line"
 }
 
-// FormRefusalReq names the work cards one form miss refused.
+// FormRefusalReq names the work cards one form miss refused, the finish's holder and the
+// generations it holds: a refusal is stamped only on a card the finish itself would finish
+// (finishPlan holds the same actor and generation), so an unauthorized or stale finish
+// cannot spend another's attempt.
 type FormRefusalReq struct {
-	IDs []string
+	IDs  []string
+	As   string
+	Gens map[string]int
 }
 
-// FormRefusal stamps one form refusal on each named working card and changes nothing else:
-// the finish was refused, so the attempt is not spent and no read is asked, and the next
-// finish reads the count to know when a third miss finishes the attempt FAIL
-// (swarm.DecideForm). A card that is not working is refused and changes nothing.
+// FormRefusal stamps one form refusal on each named working card the finish's holder and
+// generation name, and changes nothing else: the finish was refused, so the attempt is not
+// spent and no read is asked, and the next finish reads the count to know when a third miss
+// finishes the attempt FAIL (swarm.DecideForm). A card that is not working, is not held by
+// As, or whose generation is not the live one is refused and changes nothing, the same
+// checks the finish itself holds (finishPlan), so a stale or another member's finish cannot
+// spend an attempt (docs/SPEC-SPRINT.md, the report's form).
 func FormRefusal(s *Snapshot, r FormRefusalReq) Plan {
 	var p Plan
+	members := Split(r.As)
 	for _, id := range r.IDs {
 		c := s.Fleet.Card(id)
 		if c == nil || !c.Placed() || c.Col != Working {
 			p.refuse(id, "no working card to hold the form refusal")
+			continue
+		}
+		if why := liveGen("finish", c, r.Gens); why != "" {
+			p.refuse(id, why)
+			continue
+		}
+		if len(members) > 0 && !contains(members, c.Row) {
+			p.refuse(id, "dealt to "+c.Row+", not "+r.As)
 			continue
 		}
 		n := c.Int(FormRefusalsField) + 1

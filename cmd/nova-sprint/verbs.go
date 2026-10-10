@@ -2393,7 +2393,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 		// block holds its report to every rule, and a miss refuses the finish.
 		// --head is the commit the report blob is read from. A file in this
 		// process's working directory is not the report.
-		if code, done := a.formFinish(context.Background(), st, ids, *head, *branch, failed, report, stderr); done {
+		if code, done := a.formFinish(context.Background(), st, ids, *as, gens, *head, *branch, failed, report, stderr); done {
 			return code
 		}
 	}
@@ -2407,9 +2407,11 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 // and either lets the finish go on (no FORM: block, or every rule held), refuses it with one
 // FORM: line per miss (the work card's form_refusals stamped, no attempt spent and no read
 // asked), or, on the third miss of one attempt, turns this finish into the FAIL with the
-// misses. done is false when the finish goes on. head and branch are the finish's --head
-// and --branch.
-func (a *app) formFinish(ctx context.Context, st *store.Store, ids []string, head, branch string, failed *bool, report *string, stderr io.Writer) (int, bool) {
+// misses. done is false when the finish goes on. as and gens are the finish's --as and the
+// generations it holds, so a stamp is only put on a card the finish itself would finish
+// (sprint.FormRefusal holds the same checks). head and branch are the finish's --head and
+// --branch.
+func (a *app) formFinish(ctx context.Context, st *store.Store, ids []string, as string, gens map[string]int, head, branch string, failed *bool, report *string, stderr io.Writer) (int, bool) {
 	wcs, err := st.Records(ctx, sprint.Fleet, ids)
 	if err != nil {
 		return a.readFailed("finish", err, stderr), true
@@ -2470,12 +2472,19 @@ func (a *app) formFinish(ctx context.Context, st *store.Store, ids []string, hea
 	}
 	// the refusal spends no attempt and asks no read: the count is stamped and the finish
 	// is refused, so the lane fixes the report and finishes again in the same attempt
-	req := sprint.FormRefusalReq{IDs: refuseIDs}
+	req := sprint.FormRefusalReq{IDs: refuseIDs, As: as, Gens: gens}
 	step := store.Step{Verb: "finish", Named: true, Load: []string{sprint.Fleet},
 		Extras: sprint.NamedExtras(sprint.Fleet, refuseIDs),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.FormRefusal(s, req) }}
-	if _, err := st.Run(ctx, step); err != nil {
+	res, err := st.Run(ctx, step)
+	if err != nil {
 		return a.readFailed("finish", err, stderr), true
+	}
+	if len(res.Moved) == 0 {
+		// every named card failed the holder's and generation's checks the finish itself
+		// holds: nothing was stamped, so the finish goes on and FinishStep refuses them with
+		// the same words (a stale finish, or one for another member's card).
+		return 0, false
 	}
 	for _, text := range lines {
 		for _, line := range strings.Split(text, "\n") {
