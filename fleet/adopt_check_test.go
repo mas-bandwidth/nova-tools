@@ -46,8 +46,14 @@ if name=='nova-secrets':
  command=args[args.index('--')+1:];os.execv(command[0],command)
 elif name=='nova-sprint' and args[0]=='live':
  print(json.dumps({'agents':[],'processes':[],'dashboard':[],'server':{'revision':'fixture'},'library':{'loaded':'fixture','match':True}}))
+elif name=='nova-sprint' and args[:2]==['server','switch'] and '--dry-run' in args:
+ print('SWITCH DRY-RUN OK')
+elif name=='nova-config' and args[:2]==['migrate','--dry-run'] and '--json' in args:
+ print(json.dumps({'result':{'status':'ok'},'facts':{'role':'nova_config','owner':'nova_config','ready':'yes'}}))
+elif name=='nova-redis' and args[:2]==['fn','check']:
+ print('MATCH fixture')
 elif args and args[0]=='version': print('fixture-old')
-else: print('FIXTURE OK')
+else: sys.exit('unexpected fixture command: '+name+' '+repr(args))
 `
 			for _, name := range []string{"nova-secrets", "nova-sprint", "nova-config", "nova-redis", "nova-update", "sops"} {
 				require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte(fake), 0755))
