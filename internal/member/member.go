@@ -743,6 +743,12 @@ func (m *Member) Beat() error {
 				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
 			}
 		}
+		// the volume this member's working directory lives on, measured here: the
+		// sprint server cannot read this machine's files (docs/SPEC-SPRINT.md
+		// section 8, "Disk watermarks")
+		if disk := diskArg(); disk != "" {
+			args = append(args, "--disk", disk)
+		}
 	}
 	run := m.sprint.Run
 	if m.cfg.Reader {

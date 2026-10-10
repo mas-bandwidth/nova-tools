@@ -482,7 +482,12 @@ While a turn runs: one peek, so a ping that lands during a long turn is still
 answered at once by the daemon; never a second turn. Then the worker's result;
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
-challenge is open; the status file.
+challenge is open; the status file. The beat also carries the free bytes and the
+inode headroom of the volume her working directory lives on (`friend beat
+--disk <json>`, a `sprint.DiskReading`), measured by the daemon because the sprint
+server cannot read another machine's files: the sprint keeps it on her beat record
+and the tick raises the volume's disk watermark (docs/SPEC-SPRINT.md section 8,
+"Disk watermarks").
 
 **Last session activity** (2026-10-04: the table said up with 8 working while a friend's
 session sat idle from 2:40 to 4:34 PM, and another read working=0 while she was busy; a pong

@@ -145,12 +145,25 @@ func (st *Store) rootKV() (KV, error) {
 // else measured from src; the record's measuring state carries from beat to
 // beat. It works while the machine is RUNNING or STOPPED and touches no table.
 func (st *Store) Beat(ctx context.Context, member string, given *float64, src hostload.Source) (sprint.Beat, error) {
-	return st.BeatOwing(ctx, member, given, src, nil)
+	return st.BeatWithDiskOwing(ctx, member, given, src, nil, nil)
 }
 
 // BeatOwing is Beat with the stop-returns the member's lanes still owe after the machine's
 // stop (fleet beat --stop-returns; section 14): kept on the record, which start reads.
 func (st *Store) BeatOwing(ctx context.Context, member string, given *float64, src hostload.Source, stopReturns *int) (sprint.Beat, error) {
+	return st.BeatWithDiskOwing(ctx, member, given, src, nil, stopReturns)
+}
+
+// BeatWithDisk is Beat with the volume's disk reading the member's counter
+// carries (sprint.Beat.Disk, disk.go): the beat's own measurement of the
+// volume its working directory lives on. A nil reading is a beat that measured
+// none, as before.
+func (st *Store) BeatWithDisk(ctx context.Context, member string, given *float64, src hostload.Source, disk *sprint.DiskReading) (sprint.Beat, error) {
+	return st.BeatWithDiskOwing(ctx, member, given, src, disk, nil)
+}
+
+// BeatWithDiskOwing records the disk reading and the member's outstanding stop-returns together.
+func (st *Store) BeatWithDiskOwing(ctx context.Context, member string, given *float64, src hostload.Source, disk *sprint.DiskReading, stopReturns *int) (sprint.Beat, error) {
 	if !sprint.ValidID(member) {
 		return sprint.Beat{}, fmt.Errorf("a member name wants letters, digits, _ and -: %s", member)
 	}
@@ -183,6 +196,7 @@ func (st *Store) BeatOwing(ctx context.Context, member string, given *float64, s
 		}
 	}
 	b := sprint.NextBeat(prev, now, pct, how, meter)
+	b.Disk = disk
 	// the machine's logical cores: the source's when it names them (a meter's,
 	// or fleet beat --cores), else this process's machine
 	if b.Cores = src.NCPU; b.Cores <= 0 {
@@ -275,10 +289,42 @@ func getKeys(ctx context.Context, kv KV, names []string) ([]string, []bool, erro
 	return vals, oks, nil
 }
 
+// rowLoad is the fleet table's load cell. A machine's is its load, its open
+// files over the warn bound, and its disk figure (sprint.LoadText). A friend's
+// row has no load number; it carries only the disk figure while her beat's
+// reading is fresh (sprint.DiskText), and her beat is kept under her name.
+func rowLoad(beats map[string]sprint.Beat, row string, now time.Time) string {
+	if f, ok := sprint.FriendOfRow(row); ok {
+		return sprint.DiskText(beats[f], now, sprint.DiskWarnDefault, sprint.DiskStopDefault)
+	}
+	return sprint.LoadText(beats[row], now)
+}
+
+// withFriendBeats adds each friend row's beat under her name, beside the
+// machines' beats, so her row's disk figure is read from the beat she sent.
+func (st *Store) withFriendBeats(ctx context.Context, rows []string, beats map[string]sprint.Beat) (map[string]sprint.Beat, error) {
+	for _, row := range rows {
+		f, ok := sprint.FriendOfRow(row)
+		if !ok {
+			continue
+		}
+		b, err := st.FriendBeatOf(ctx, f)
+		if err != nil {
+			return beats, err
+		}
+		if beats == nil {
+			beats = map[string]sprint.Beat{}
+		}
+		beats[f] = b
+	}
+	return beats, nil
+}
+
 // SyncFleet brings every display cell of the fleet up to date, reading the
 // control cards: each member's status (adopting while the tick holds it to adopt, else held, up or down; sprint.FleetRowStatus), width, load (the
 // highest measured load of the last LoadWindow while its beat is fresh, with its open
-// file descriptors beside it over the warn bound, sprint.LoadText); done
+// file descriptors beside it over the warn bound, and its disk figure, sprint.LoadText);
+// a friend's row carries the disk figure alone (rowLoad). Done
 // and ok% are the table's own formulas. A store that keeps no beats shows the
 // control card's status and no load. It is what a step's mirrors run. It says whether it wrote.
 func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
@@ -308,6 +354,9 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		if beats, err = st.Beats(ctx, members); err != nil {
 			return false, err
 		}
+		if beats, err = st.withFriendBeats(ctx, members, beats); err != nil {
+			return false, err
+		}
 	}
 	now := st.now()
 	status := map[string]string{}
@@ -318,7 +367,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: "", sprint.FieldWidth: sprint.WidthText(ctl)}
 		if beats != nil {
 			b := beats[row.Key]
-			want[sprint.Status], want[sprint.Load] = sprint.FleetRowStatus(ctl, b, now), sprint.LoadText(b, now)
+			want[sprint.Status], want[sprint.Load] = sprint.FleetRowStatus(ctl, b, now), rowLoad(beats, row.Key, now)
 		}
 		status[row.Key] = want[sprint.Status]
 		if d := rowDiff(row, want); len(d) > 0 {
@@ -402,7 +451,7 @@ func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[st
 	diffs, status := map[string]map[string]string{}, map[string]string{}
 	for _, row := range shape.Rows {
 		b := beats[row.Key]
-		want := map[string]string{sprint.Load: sprint.LoadText(b, now)}
+		want := map[string]string{sprint.Load: rowLoad(beats, row.Key, now)}
 		if row.Texts[sprint.Status] != sprint.Held {
 			want[sprint.Status] = sprint.Down
 			if b.Alive(now) {

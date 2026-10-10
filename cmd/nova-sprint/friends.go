@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -373,6 +374,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	run := fs.String("run", "", "her daemon's run, its generation: a check proves only when its answer names the run that asked it")
 	until := fs.String("until", "", "her daemon's word that she is down until then, RFC3339: her harness at its usage limit or out of credits")
 	reason := fs.String("reason", "", "why she is down until --until, as her daemon read it")
+	diskFlag := fs.String("disk", "", "the volume her working directory lives on, as one JSON sprint.DiskReading, measured by her daemon: the server cannot read her machine's files")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -447,6 +449,13 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 			return refuse(stderr, name, "--load wants a percent, found "+oneline.Escape(*load))
 		}
 		given = &v
+	}
+	if *diskFlag != "" {
+		var d sprint.DiskReading
+		if err := json.Unmarshal([]byte(*diskFlag), &d); err != nil {
+			return refuse(stderr, name, "--disk wants one JSON reading of the volume (sprint.DiskReading), found "+oneline.Escape(*diskFlag))
+		}
+		rep.Disk = &d
 	}
 	c.orActor(friend)
 	st, err := open(*c)

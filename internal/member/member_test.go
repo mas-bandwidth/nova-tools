@@ -594,10 +594,31 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
 }
 
-// TestBeatCarriesNoLoadOfItsOwn pins the beat as `fleet beat <member>` alone, however
-// many cards are running: the load is the machine's CPU use, which nova-sprint fleet beat
-// measures and keeps the ten-second peak of (docs/SPEC-SPRINT.md, the fleet), never the
-// member's running over its width.
+// beatArgs is the beat's lines without the machine-dependent --disk reading,
+// which the beat carries from the volume the process's working directory lives
+// on (disk.go): the tests that pin the load name these words.
+func beatArgs(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		f := strings.Fields(line)
+		var kept []string
+		for i := 0; i < len(f); i++ {
+			if f[i] == "--disk" {
+				i++ // its value is one JSON word
+				continue
+			}
+			kept = append(kept, f[i])
+		}
+		out = append(out, strings.Join(kept, " "))
+	}
+	return out
+}
+
+// TestBeatCarriesNoLoadOfItsOwn pins the beat as `fleet beat <member>` alone in its load,
+// however many cards are running: the load is the machine's CPU use, which nova-sprint
+// fleet beat measures and keeps the ten-second peak of (docs/SPEC-SPRINT.md, the fleet),
+// never the member's running over its width. The beat carries the volume's reading beside
+// it (--disk), measured here, which the assertions leave to the volume tests.
 func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ running, width int }{{0, 4}, {1, 3}, {2, 2}} {
@@ -615,7 +636,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
-			require.Equal(t, []string{"fleet beat m --stop-returns 0"}, g.s.lines("beat"))
+			require.Equal(t, []string{"fleet beat m --stop-returns 0"}, beatArgs(g.s.lines("beat")))
 		})
 	}
 }
@@ -1376,7 +1397,7 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 		t.Helper()
 		g.s.reset()
 		require.NoError(t, g.m.Beat())
-		return strings.Join(g.s.lines("beat"), "|")
+		return strings.Join(beatArgs(g.s.lines("beat")), "|")
 	}
 	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample yet: the beat measures")
 	feed(10, 70, 20)
