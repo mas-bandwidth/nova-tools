@@ -258,6 +258,27 @@ func readStoreRTT(v string, ok bool) StoreRTTRecord {
 	return r
 }
 
+// StoreRTT is the store round trip record as the tick reads it: the p50 in
+// milliseconds and whether a sample is within StoreRTTWindow (fresh). A store
+// that keeps no records, no record, an unreadable one, or one whose last sample
+// is older than the window reports not fresh. The tick's store slow alarm reads
+// it (sprint.TickStoreSlow, idle.go).
+func (st *Store) StoreRTT(ctx context.Context) (p50 float64, fresh bool, err error) {
+	kv, err := st.kv()
+	if err != nil {
+		return 0, false, nil
+	}
+	v, ok, err := kv.GetKey(ctx, keyStoreRTT)
+	if err != nil {
+		return 0, false, err
+	}
+	r := readStoreRTT(v, ok)
+	if len(r.Samples) == 0 || st.now().Sub(time.UnixMilli(r.At)) > StoreRTTWindow {
+		return 0, false, nil
+	}
+	return r.P50MS, true, nil
+}
+
 // rttQuantile is the nearest-rank q quantile of the samples' round trips, in
 // milliseconds to the microsecond: the sorted sample at index floor(q*n), the
 // last at most.

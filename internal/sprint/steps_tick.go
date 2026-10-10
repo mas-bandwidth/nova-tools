@@ -188,8 +188,16 @@ type TickReq struct {
 	// --answer-rules); false leaves every judgment to the coordinator.
 	AnswerRules bool
 	// IdleAlarm says the tick watches for an idle fleet and tells the coordinator why
-	// (idle.go; run --idle-alarm).
+	// (idle.go; run --idle-alarm), and watches the store's measured round trip and
+	// tells the coordinator when it is slow (TickStoreSlow).
 	IdleAlarm bool
+	// StoreRTTP50MS is the store round trip record's p50 in milliseconds and
+	// StoreRTTFresh whether a fresh record exists (a sample within
+	// store.StoreRTTWindow); the store binding reads them with every tick, and
+	// the store slow alarm says when the p50 is over StoreSlowBar (idle.go,
+	// TickStoreSlow). Not fresh is no record.
+	StoreRTTP50MS float64
+	StoreRTTFresh bool
 	// WakeFriend wakes a friend by bus message during the stall ladder (cmd/nova-sprint/friendcards.go).
 	WakeFriend func(friend string, rung int, d time.Duration) error
 	// Sessions is each friend's session as her last beat carries it, and whether the
@@ -308,9 +316,10 @@ var TickEnd = []TickPartDef{
 // deadlines, so a judgment the end raises is answered in its own tick, and before the
 // overdue part, each a step that may write any table, as a coordinator's verb does, its
 // work-table changes queued for the next pump; with idle (TickReq.IdleAlarm, run
-// --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part.
-// With neither the end is TickEnd's alone, as before them. The widen rule's part (widen.go)
-// runs before the rule rework, which reworks nothing the widen rule leaves to a mind.
+// --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part,
+// and the store slow alarm (TickStoreSlow) with it. With neither the end is TickEnd's
+// alone, as before them. The widen rule's part (widen.go) runs before the rule rework,
+// which reworks nothing the widen rule leaves to a mind.
 func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {
@@ -328,6 +337,7 @@ func TickEndWith(rules, idle bool) []TickPartDef {
 	out = append(out, TickEnd[2])
 	if idle {
 		out = append(out, TickPartDef{PartIdle, TickIdle})
+		out = append(out, TickPartDef{PartStoreSlow, TickStoreSlow})
 	}
 	return append(out, TickEnd[3:]...)
 }

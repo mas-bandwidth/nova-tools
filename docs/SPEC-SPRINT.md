@@ -7256,6 +7256,20 @@ With no record, or one whose last sample is older than the window (a server that
 measuring), both fields and the line are left out. Tested on the twin store with the harness's
 clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
 
+#### store-latency-alarm-bb: the tick says when the store is slow
+
+The server's measured store round trip is an alarm too. The tick's store slow part
+(`store.TickStoreSlow`) reads the record with every tick: with a fresh one
+(`TickReq.StoreRTTFresh`) whose p50 is over 5 ms (`sprint.StoreSlowBar`) it tells the
+coordinator once per episode, `the store is slow: <p50> ms`, and marks the episode said;
+the episode ends when the p50 falls under half the bar, 2.5 ms, with one note saying so
+when one was pushed. The episode is kept as two properties of the fleet table
+(`sprint.PropStoreSlowSince`, `sprint.PropStoreSlowSaid`), as the idle alarm's is
+(`TickIdle`), so it lives across ticks and run loops, and the part runs beside the idle
+alarm under `run --idle-alarm` (`sprint.TickEndWith`), after it. With no fresh record it
+does nothing. Tested on the in-memory world with an injected p50, never the wall clock
+(`TestStoreRoundTripOverFiveMillisecondsRaisesOneAlarm`).
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,

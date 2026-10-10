@@ -42,6 +42,27 @@ const (
 	PartIdle = "idle"
 )
 
+// The store slow alarm (docs/SPEC-SPRINT.md section 14, "store-latency-alarm-bb") is
+// the server's measured p50 store round trip (store.StoreRTTRecord) told the
+// coordinator once per episode: over StoreSlowBar it says so, and the episode ends
+// under half the bar, one note more. The episode is kept on the fleet table's
+// properties (PropStoreSlowSince, PropStoreSlowSaid), as the idle alarm's is.
+const (
+	// StoreSlowBar is the p50 store round trip above which the tick says the store is
+	// slow; the episode ends under half of it.
+	StoreSlowBar = 5 * time.Millisecond
+	// NStoreSlow and NStoreSlowCleared are the notes the tick addresses to the
+	// coordinator (the tick end wakes them, and inbox --push carries them to the bus).
+	NStoreSlow        = "the store is slow"
+	NStoreSlowCleared = "the store is working again"
+	// PropStoreSlowSince and PropStoreSlowSaid are the fleet table's properties of an
+	// episode: when it began and when its note was pushed ("" or absent: none).
+	PropStoreSlowSince = "store_slow_since"
+	PropStoreSlowSaid  = "store_slow_said"
+	// PartStoreSlow is the tick part's name.
+	PartStoreSlow = "store slow"
+)
+
 // FleetWorking is the work cards working on the machines up, and their widths' sum.
 func FleetWorking(s *Snapshot) (working, width int) {
 	for _, m := range s.UpMembers() {
@@ -286,6 +307,56 @@ func TickIdle(s *Snapshot, r TickReq) (Plan, int) {
 				took = " after " + d.Round(time.Second).String()
 			}
 			n.What = fmt.Sprintf("fleet %d/%d, %d waiting: working again%s", working, width, waiting, took)
+			u.Notes = append(u.Notes, n)
+		}
+		p.Units = append(p.Units, u)
+	}
+	return p, 0
+}
+
+// TickStoreSlow is the store slow alarm, the tick's part beside the idle alarm
+// (TickReq.IdleAlarm, run --idle-alarm): the server's measured p50 store round trip
+// (TickReq.StoreRTTP50MS, TickReq.StoreRTTFresh) over StoreSlowBar begins an episode
+// and, once, says so; the episode is written on the fleet table (PropStoreSlowSince)
+// and marked said (PropStoreSlowSaid); under half the bar the episode ends, and a
+// note says so when one was pushed. With no fresh record it does nothing
+// (docs/SPEC-SPRINT.md section 14, "store-latency-alarm-bb").
+func TickStoreSlow(s *Snapshot, r TickReq) (Plan, int) {
+	var p Plan
+	if !r.IdleAlarm || !r.StoreRTTFresh || s.Fleet == nil {
+		return p, 0
+	}
+	bar := StoreSlowBar.Seconds() * 1000
+	slow, cleared := r.StoreRTTP50MS > bar, r.StoreRTTP50MS < bar/2
+	since, _ := s.Fleet.Prop(PropStoreSlowSince)
+	said, _ := s.Fleet.Prop(PropStoreSlowSaid)
+	write := func(name, value string) {
+		was, had := s.Fleet.Prop(name)
+		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: name, Value: value, Was: was, WasAbsent: !had})
+	}
+	to := s.Coordinator
+	slowUnit := func() Unit {
+		n := happened(NStoreSlow, "", s.Now)
+		n.Who, n.To = r.who(), to
+		n.What = fmt.Sprintf("the store is slow: %g ms", r.StoreRTTP50MS)
+		return Unit{Key: PartStoreSlow, Notes: []Note{n}, Moved: "the store is slow: told " + orDash(to)}
+	}
+	switch {
+	case slow && since == "":
+		write(PropStoreSlowSince, stamp(s.Now))
+		write(PropStoreSlowSaid, stamp(s.Now))
+		p.Units = append(p.Units, slowUnit())
+	case slow && said == "":
+		write(PropStoreSlowSaid, stamp(s.Now))
+		p.Units = append(p.Units, slowUnit())
+	case cleared && since != "":
+		write(PropStoreSlowSince, "")
+		write(PropStoreSlowSaid, "")
+		u := Unit{Key: PartStoreSlow, Moved: fmt.Sprintf("the store round trip p50 %g ms is under the bar: the slow episode since %s ended", r.StoreRTTP50MS, since)}
+		if said != "" {
+			n := happened(NStoreSlowCleared, "", s.Now)
+			n.Who, n.To = r.who(), to
+			n.What = fmt.Sprintf("the store is working again: p50 %g ms", r.StoreRTTP50MS)
 			u.Notes = append(u.Notes, n)
 		}
 		p.Units = append(p.Units, u)
