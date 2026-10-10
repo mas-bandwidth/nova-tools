@@ -70,7 +70,9 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 		if err := bench.CheckHost(m); err != nil {
 			return refuse(stderr, name, "--machine: "+err.Error())
 		}
-		return gcOn(context.Background(), gcRemote, m, *dry, *maxAge, *aiRoot, stdout, stderr)
+		code := gcOn(context.Background(), gcRemote, m, *dry, *maxAge, *aiRoot, stdout, stderr)
+		a.sweepBenchLanes(c, m, stdout, stderr)
+		return code
 	}
 	res := a.gcLocal(*dry, age, *aiRoot)
 	if c.json {
@@ -148,6 +150,44 @@ func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge, a
 		return 1
 	}
 	return 0
+}
+
+// sweepBenchLanes sweeps machine's bench lane directories whose lane is gone, and says the
+// bench's /tmp when it is nearly full: a machine with a live Go lane holder is running
+// something and is left alone; one with no holder has no live lane, so every directory under
+// nova-bench/lanes there is a killed lane's (docs/SPEC-SPRINT.md section 18, bench lanes).
+// The sweep and the /tmp line are the check beside the mechanism: a lane removes its own
+// directory whatever the verdict; the sweep is for the lane killed before its remove, and
+// the /tmp line names a bench whose /tmp is over BenchTmpOverPct and its largest directories.
+func (a *app) sweepBenchLanes(c *common, machine string, stdout, stderr io.Writer) {
+	var tmpOut bytes.Buffer
+	if code, err := gcRemote(context.Background(), machine, sprint.BenchTmpLine, &tmpOut, &tmpOut); err == nil && code == 0 {
+		if tmp, err := sprint.BenchTmpFrom(machine, tmpOut.String()); err == nil {
+			if n, ok := sprint.BenchTmpJudgment(&sprint.Snapshot{Now: a.now()}, "gc", tmp); ok {
+				fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(n.What))
+			}
+		}
+	}
+	st, err := a.store(*c)
+	if err != nil { // ignored: no store, no live lanes to read, nothing swept
+		return
+	}
+	rows, err := st.LaneRows(context.Background())
+	if err != nil { // ignored: lanes that cannot be read are not swept away
+		return
+	}
+	for _, r := range rows {
+		if r.Machine == machine && r.Kind == sprint.LaneGo && len(r.Held) > 0 {
+			return // a live lane: nothing swept while it runs
+		}
+	}
+	swept, err := sprint.SweepBenchLanes(context.Background(), bench.Exec{}, machine, nil)
+	for _, d := range swept {
+		fmt.Fprintf(stdout, "GC REMOVED class=bench-lanes path=%s why=%s\n", oneline.Escape(d), "its lane is gone")
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "%s gc: GC FAILED machine=%s: %s\n", prog, oneline.Escape(machine), oneline.Err(err))
+	}
 }
 
 // gcLocal is one pass on this machine: the home, the AI root (aiRoot, else NOVA_AI_ROOT,
