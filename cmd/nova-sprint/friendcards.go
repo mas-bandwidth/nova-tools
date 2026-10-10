@@ -785,18 +785,27 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 }
 
 // friendBriefModel is the model the delivered BRIEF.md at path names on its tier line
-// (sprint.FriendTierLine, its second line), "" when it has none, and ok once the brief was
-// read.
+// (sprint.FriendTierLine), wherever the line stands in the brief's prelude: a reworked brief
+// puts THE ONE THING LEFT first (friend.ReworkedBrief), so the tier line is no longer the
+// second line. "" when the prelude names none, and ok once the brief was read; the daemon reads
+// it the same way (internal/friend briefModel).
 func friendBriefModel(path string) (model string, ok bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
 	}
-	// the tier line is the brief's second, after its STATUS line (friendBrief)
-	if lines := strings.SplitN(string(b), "\n", 3); len(lines) > 1 && strings.HasPrefix(lines[1], "tier: ") {
-		if _, m, found := strings.Cut(lines[1], " model: "); found {
+	for _, l := range strings.Split(string(b), "\n") {
+		if l == "" {
+			break // the prelude ends at the first blank line; the card's own body is after it
+		}
+		rest, found := strings.CutPrefix(l, "tier: ")
+		if !found {
+			continue
+		}
+		if _, m, has := strings.Cut(rest, " model: "); has {
 			return strings.TrimSpace(m), true
 		}
+		return "", true
 	}
 	return "", true
 }

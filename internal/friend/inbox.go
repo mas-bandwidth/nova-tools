@@ -410,7 +410,16 @@ func briefModel(path string) (model string, ok bool) {
 // server's order; before it has, the queue file's (NextCard).
 func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 	if _, ok := d.heldFrom(); !ok {
-		return NextCard(d.Dir, skip)
+		c, found, err := NextCard(d.Dir, skip)
+		if err != nil || !found {
+			return c, found, err
+		}
+		// the delivered brief is the one source of truth, never the queue file's model: her
+		// row may have changed it between the deal and the delivery (briefModel, outboxStep)
+		if m, ok := briefModel(c.Brief); ok {
+			c.Model = m
+		}
+		return c, true, nil
 	}
 	var q Queue
 	path := filepath.Join(d.Dir, filepath.FromSlash(QueueFile))

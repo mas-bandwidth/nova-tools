@@ -1709,8 +1709,10 @@ answers it. The machine makes sure she knows:
    no model on the row of friend <f>`; a card that carries none moves as before. Friend sync
    then sets every work packet's model from her row at delivery (`sprint.FriendRowModels`), so
    a tier her row names none for clears a model the card carried: no tier line, no model
-   flag, no model check. Her brief's second line is the tier line,
-   `tier: heavy model: claude-opus-5-5`, with the sentence to run it on that model; the bus
+   flag, no model check. Her brief's tier line is
+   `tier: heavy model: claude-opus-5-5`, in the prelude before the first blank line, with the
+   sentence to run it on that model (a reworked brief puts `THE ONE THING LEFT` first, so the
+   tier line follows it and the finish reads it wherever it stands); the bus
    message that wakes her daemon starts with `Run this card in a child on <model>`, so a
    session friend's turn begins with it; a lane's turn says `This card runs on <model>` and is
    launched on it (`opencode run --model <m>`; a claude lane, which runs the brief alone, is

@@ -407,3 +407,24 @@ func TestTheHeldPacketsModelReachesTheLane(t *testing.T) {
 	require.Len(t, ran, 1)
 	assert.Equal(t, []string{"opencode", "run", "--model", "prov/m", "--session", "ses_1", "the card"}, ran[0])
 }
+
+// Before the server has answered her row, the fallback hands a lane the queue file's card
+// (NextCard); its model must still be the one her delivered BRIEF.md names, never the queue
+// file's own: her row may change a model between the deal and the delivery, and the delivered
+// brief is the one source of truth a lane runs and a finish checks (briefModel).
+func TestAPreHeldCardRunsTheDeliveredBriefsModel(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := r.d.Dir
+	c := workCard("stale.w1", "working")
+	inboxJob(t, dir, c.Job, withTierLine(c.Brief, "pro", "new/m"))
+	queue := `{"tasks":[{"id":"stale.w1","state":"queued","gen":1,"job":"stale.w1~15","tier":"pro","model":"old/m"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(QueueFile)), []byte(queue), 0o644))
+
+	// heldFrom is not known yet (the server has not answered), so nextCard falls back to the queue
+	card, ok, err := r.d.nextCard(func(Card) bool { return false })
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "pro", card.Tier)
+	assert.Equal(t, "new/m", card.Model, "the delivered brief's model, not the queue file's stale one")
+}
