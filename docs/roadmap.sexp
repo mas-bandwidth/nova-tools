@@ -37,6 +37,13 @@
   (done "repository-split" :title "nova-sprint split out of nova-tools"
    :text "nova-sprint, nova-card and nova-work, with their models and docs, live in mas-bandwidth/nova-sprint
     from v1.2.3; CI here refuses their paths."
+   :date "2026-10-10")
+  (done "bus-wait-recover-stale-lock"
+   :title "nova-bus wait has no stale git lock or lane file to recover"
+   :text "Closed as obsolete, not fixed: issue #2627 was measured on the git message bus, whose checkout
+    held an index.lock and a dirty from-<name> lane file. That bus was removed on 2026-10-04 and nova-bus
+    is Redis only (docs/SPEC-BUS.md), so wait never runs git and has no checkout to leave locked. A
+    recovery for a friend's old message-bus checkout belongs to the consumer that ticks it, not here."
    :date "2026-10-10"))
 
  :groups
@@ -1145,13 +1152,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #2568; issue #2574; issue #2573; issue #2308")
-  (item "bus-wait-recover-stale-lock" :group "ops"
-   :title "nova-bus wait recovers a stale index lock and a dirty lane file"
-   :text "When a checkout holds a stale git lock or a dirty lane file, nova-bus wait recovers or names the
-    exact remedy once instead of failing every tick."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #2627")
   (item "check-hygiene-stray-coverage" :group "ops"
    :title "Hygiene checks share one source with the harvest lists"
    :text "The hygiene stray-name list and secret key shapes come from the same source the harvest uses, so
