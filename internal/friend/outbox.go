@@ -32,8 +32,9 @@ import (
 // words of its brief's fix (THE ONE THING LEFT, rework.go) is a HOLD by the daemon,
 // finished --failed with its head kept and the words that say why. A report is final
 // only in the shape Final reads (its first line Verdict: LAND, HOLD or FAIL, its second
-// Head: a full sha or Head: -); every other report is left and noted once, and past the
-// card's deadline it is collected as FAIL. A report with no Verdict line stays until its
+// Head: a full sha or Head: -, read as friend sync reads them, and a blank second line
+// for HOLD or FAIL); every other report is left and noted once, and past the card's
+// deadline it is collected as FAIL. A report with no Verdict line stays until its
 // deadline too; a job whose card is not working on her row is noted once and left. The
 // model is
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
@@ -71,8 +72,7 @@ type outboxState struct {
 func reportVerdict(report string) (verdict, head string) {
 	var vok, hok bool
 	for _, l := range strings.Split(report, "\n") {
-		key, val := reportKey(l)
-		word, _, _ := strings.Cut(strings.TrimSpace(strings.TrimLeft(val, "*_ \t")), " ")
+		key, word := reportWord(l)
 		switch key {
 		case "verdict":
 			if !vok {
@@ -89,42 +89,52 @@ func reportVerdict(report string) (verdict, head string) {
 
 // Final reports whether a report's first and second lines are a final verdict
 // (docs/SPEC-FRIEND.md, the daemon reads every outbox job). ok is true only when
-// first is "Verdict: LAND", "Verdict: HOLD" or "Verdict: FAIL", in any case, and
-// second is "Head: <40-hex>" or "Head: -". why is the line that is not, so a
-// report that is not final can be named. The collector (outboxStep) calls it.
+// first is a verdict of LAND, HOLD or FAIL, in any case, and second is
+// "Head: <40-hex>" or "Head: -", read as friend sync reads them (markdown
+// trimmed); a blank second line is final for HOLD and FAIL, whose brief says
+// line 2 is blank (docs/FRIENDS.md). why is the line that is not, so a report
+// that is not final can be named. The collector (outboxStep) calls it.
 func Final(first, second string) (ok bool, why string) {
 	first, second = strings.TrimSpace(first), strings.TrimSpace(second)
-	if !finalVerdict(first) {
+	verdict, vok := finalVerdict(first)
+	if !vok {
 		return false, first
 	}
-	if !finalHead(second) {
-		return false, second
+	if finalHead(second) {
+		return true, ""
 	}
-	return true, ""
+	if (verdict == "HOLD" || verdict == "FAIL") && second == "" {
+		return true, ""
+	}
+	return false, second
 }
 
-// finalVerdict is a first line that is exactly a LAND, HOLD or FAIL verdict.
-func finalVerdict(line string) bool {
-	key, val, ok := strings.Cut(line, ":")
-	if !ok || !strings.EqualFold(strings.TrimSpace(key), "verdict") {
-		return false
+// finalVerdict is a first line whose verdict is LAND, HOLD or FAIL, read as
+// friend sync reads it (reportWord: markdown trimmed, any case); it returns
+// the verdict, upper case.
+func finalVerdict(line string) (verdict string, ok bool) {
+	key, word := reportWord(line)
+	if key != "verdict" {
+		return "", false
 	}
-	switch strings.ToUpper(strings.TrimSpace(val)) {
+	verdict = strings.ToUpper(strings.Trim(word, "*_.,;:!()"))
+	switch verdict {
 	case "LAND", "HOLD", "FAIL":
-		return true
+		return verdict, true
 	default:
-		return false
+		return "", false
 	}
 }
 
-// finalHead is a second line that is a full sha head or a dash.
+// finalHead is a second line that is a full sha head or a dash, read as friend
+// sync reads it (reportWord: markdown trimmed, any case).
 func finalHead(line string) bool {
-	key, val, ok := strings.Cut(line, ":")
-	if !ok || !strings.EqualFold(strings.TrimSpace(key), "head") {
+	key, word := reportWord(line)
+	if key != "head" {
 		return false
 	}
-	val = strings.ToLower(strings.TrimSpace(val))
-	return val == "-" || fullSha.MatchString(val)
+	word = strings.ToLower(strings.Trim(word, "*_`.,;:"))
+	return word == "-" || fullSha.MatchString(word)
 }
 
 // reportKey is a report line's key, lower case, with its markdown trimmed ("" for a line
@@ -135,6 +145,14 @@ func reportKey(line string) (key, val string) {
 		return "", ""
 	}
 	return strings.ToLower(strings.Trim(key, "*_ \t")), val
+}
+
+// reportWord is a report line's key (reportKey) and the first word of what
+// follows the colon ("" for none), read as friend sync reads them.
+func reportWord(line string) (key, word string) {
+	key, val := reportKey(line)
+	word, _, _ = strings.Cut(strings.TrimSpace(strings.TrimLeft(val, "*_ \t")), " ")
+	return key, word
 }
 
 // reportPara is a report's first line that is no Verdict or Head line and no heading, on

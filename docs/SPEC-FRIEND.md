@@ -2149,10 +2149,12 @@ whoever wrote the brief:
   head=<sha> sent=server sha256=<hex>`). The sha256 is the bytes collected.
   A report that changes after that line is ignored: the collection is one event.
 - Collection is gated on `Final` for every report: it is final when its first
-  line is `Verdict: LAND`, `Verdict: HOLD` or `Verdict: FAIL` (any case) and its
-  second line is `Head: <40-hex>` or `Head: -`. A session writes the whole report
-  once, at the end, under a temporary name, then renames it onto `REPORT.md`; a
-  report the daemon writes (a dead lane, `DeadLaneReport`) carries `Head: -`.
+  line is a verdict of `LAND`, `HOLD` or `FAIL` (any case) and its second line
+  is `Head: <40-hex>` or `Head: -`, both read as friend sync reads them
+  (markdown trimmed); a blank second line is final for `HOLD` and `FAIL`, whose
+  brief says line 2 is blank. A session writes the whole report once, at the
+  end, under a temporary name, then renames it onto `REPORT.md`; a report the
+  daemon writes (a dead lane, `DeadLaneReport`) carries `Head: -`.
   Every other report is not final: `pending`, and any other word; a `LAND` whose
   second line is not a `Head`; and a report whose first line is not the verdict
   (a later `Verdict:` line does not count). The file is left, noted once
@@ -2165,6 +2167,7 @@ whoever wrote the brief:
   the card's start, the lane's own start when the daemon began it else the first
   pass that saw the card working on her row; and two hours from that start when
   the brief names none. `TestFinal`,
+  `TestAHoldOrFailWithABlankSecondLineIsFinishedNotLeft`,
   `TestFinalGatesEveryReportAndTheDeadlineCollectsTheRest`,
   `TestAReportThatIsNotFinalIsLeftUntilTheCardsDeadline` and
   `TestACardDeadlineRunsFromTheCardsStart`.

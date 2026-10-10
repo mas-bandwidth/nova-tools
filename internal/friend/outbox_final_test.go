@@ -28,8 +28,18 @@ func TestFinal(t *testing.T) {
 		{name: "hold", first: "Verdict: HOLD", second: "Head: -", ok: true},
 		{name: "fail", first: "verdict: fail", second: "Head: -", ok: true},
 		{name: "empty", first: "", second: "Head: -"},
+		// the brief tells her line 2 is blank for HOLD and FAIL (docs/FRIENDS.md),
+		// so a blank second line is final for those, and Head: - stays final.
+		{name: "hold blank", first: "Verdict: HOLD", second: "", ok: true},
+		{name: "fail blank", first: "Verdict: FAIL", second: "", ok: true},
+		// the reading stays lenient (docs/FRIENDS.md): markdown marks around the
+		// verdict and the head are trimmed, as friend sync reads them.
+		{name: "markdown verdict", first: "**Verdict:** LAND", second: "Head: " + sha, ok: true},
+		{name: "markdown head", first: "Verdict: LAND", second: "**Head:** " + sha, ok: true},
 		// a parsed verdict does not bypass Final: a LAND whose second line is not
-		// a Head, and a verdict that is not on the first line, are not final.
+		// a Head (blank included), and a verdict that is not on the first line,
+		// are not final.
+		{name: "land blank", first: "Verdict: LAND", second: ""},
 		{name: "bad head", first: "Verdict: LAND", second: "Head: pending", why: "Head: pending"},
 		{name: "later line", first: "the notes first", second: "Head: " + sha, why: "the notes first"},
 	}
@@ -45,6 +55,44 @@ func TestFinal(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A HOLD or FAIL whose second line is blank, as the brief tells her to write it
+// (docs/FRIENDS.md), is final and finished --failed on the first pass with its
+// verdict kept, never left to the deadline and rewritten as FAIL "report never
+// became final" (docs/SPEC-FRIEND.md, the daemon reads every outbox job).
+func TestAHoldOrFailWithABlankSecondLineIsFinishedNotLeft(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &finishes{}
+	r.d.Finish = f.finish
+	hold := workCard("holdblank.w1", "working")
+	hold.Branch = "sprint/holdblank.w1.g1.e15"
+	fail := workCard("failblank.w1", "working")
+	fail.Branch = "sprint/failblank.w1.g1.e15"
+	r.d.heldCards = []HeldCard{hold, fail}
+	outboxReport(t, r.d.Dir, hold.Job, "Verdict: HOLD\n\nneeds the coordinator\n")
+	outboxReport(t, r.d.Dir, fail.Job, "Verdict: FAIL\n\nno bench\n")
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+
+	l.outboxStep(t0)
+
+	got := map[string][]string{}
+	for _, argv := range f.got() {
+		got[argv[3]] = argv
+	}
+	require.Len(t, got, 2, "a HOLD and a FAIL with a blank second line are final on the first pass: %v", f.got())
+	assert.Equal(t, []string{
+		"finish", "--as", "friend.bob", "holdblank.w1@1", "--epoch", "15", "--failed",
+		"--branch", "sprint/holdblank.w1.g1.e15", "--report",
+		"friend bob HOLD: Verdict: HOLD needs the coordinator",
+	}, got["holdblank.w1@1"])
+	assert.Equal(t, []string{
+		"finish", "--as", "friend.bob", "failblank.w1@1", "--epoch", "15", "--failed",
+		"--branch", "sprint/failblank.w1.g1.e15", "--report",
+		"friend bob FAIL: Verdict: FAIL no bench",
+	}, got["failblank.w1@1"])
+	assert.NotContains(t, r.recordText(), "report never became final")
 }
 
 // A report whose verdict is not LAND, HOLD or FAIL is left, and past the card's
