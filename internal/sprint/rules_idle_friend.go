@@ -5,9 +5,6 @@ import (
 	"time"
 )
 
-// friendIdleBoundDefault is the default duration for detecting an idle-loaded friend.
-const friendIdleBoundDefault = 15 * time.Minute
-
 // evidenceField is the field that holds the latest evidence of work for a friend's row.
 const evidenceField = "evidence"
 
@@ -53,18 +50,6 @@ func evidenceString(t time.Time) string {
 // isFriendRow says the row is a friend's row.
 func isFriendRow(row string) bool {
 	return IsFriendRow(row)
-}
-
-// friendIdleBound returns the friend-idle setting bound, or the default.
-func (s *Snapshot) friendIdleBound() time.Duration {
-	if s != nil && s.Work != nil {
-		if v, ok := s.Work.Prop(PropFriendIdle); ok {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				return d
-			}
-		}
-	}
-	return friendIdleBoundDefault
 }
 
 // findFriendSeat finds the friend seat by name.
@@ -278,7 +263,7 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	var p Plan
-	bound := s.friendIdleBound()
+	bound := s.FriendIdleAfter()
 
 	for _, row := range s.Fleet.Rows() {
 		if !isFriendRow(row) {
@@ -365,7 +350,7 @@ func TickRuleIdleReturn(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	var p Plan
-	bound := s.friendIdleBound()
+	bound := s.FriendIdleAfter()
 
 	for _, row := range s.Fleet.Rows() {
 		if !isFriendRow(row) {
