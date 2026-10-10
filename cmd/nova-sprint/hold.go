@@ -22,7 +22,7 @@ a name held takes no new cards; what is dealt and not begun is handed back now
 begun asked of another, a stream's ready work cards withdrawn); what is begun
 finishes, or with --return is handed back now too (a member's working cards
 dealt round the fleet, a reader's reads begun asked of another, a stream's
-working cards withdrawn to ready). A held friend keeps no begun card, with
+working cards withdrawn to ready). A held friend keeps no card, with
 --return or without: every card on her row goes back to ready, begun or not, and
 a started one with a push carries its pushed head to the next taker. Its status reads held, the reason
 beside it (where --json --cards: holds; handover), and the hold is a line
@@ -43,7 +43,7 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	reason := fs.String("reason", "", "why, in words: shown beside the held status and kept in the log; a hold wants one")
 	ret := false
 	if !release {
-		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a stream's working cards withdrawn to ready (default: what is begun finishes, but a held friend keeps no begun card either way)")
+		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a stream's working cards withdrawn to ready (default: what is begun finishes, but a held friend keeps no card either way)")
 	}
 	dry := fs.Bool("dry-run", false, "check the names and the reason, print what would be held or released, and write nothing")
 	var repo listFlag
