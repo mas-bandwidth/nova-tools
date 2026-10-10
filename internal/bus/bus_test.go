@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -463,4 +464,58 @@ func TestULIDIsCrockfordAndTimeOrdered(t *testing.T) {
 	assert.Less(t, a, z)
 	assert.Equal(t, "01M40T5AG0", a[:10], "the first ten characters are the millisecond time (computed apart from this code)")
 	assert.NotEqual(t, a[10:], z[10:], "the random half differs")
+}
+
+// A recipient's stream keeps only the newest KeepaliveWindow keepalive
+// entries, trimmed as they are acknowledged, and every audited message stays
+// on the stream and on the log; keepalives never reach the audited log
+// (SPEC-BUS.md, the data: retention).
+func TestTheBusTrimsAckedKeepalives(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, f := rig(t, "ada", "bob")
+	const sent, audited = 1000, 10
+
+	for i := range sent {
+		_, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "PING " + strconv.Itoa(i), Body: "x\n"})
+		require.NoError(t, err)
+	}
+	for range sent {
+		e, ok, err := b.Recv(ctx, "bob", 0)
+		require.NoError(t, err)
+		require.True(t, ok, "every keepalive is delivered before it is trimmed")
+		assert.True(t, IsKeepalive(e.Message().Subject), "the delivered entry is a keepalive")
+		acked, err := b.AckEntry(ctx, "bob", e.Entry)
+		require.NoError(t, err)
+		require.True(t, acked)
+	}
+
+	want := map[string]bool{}
+	for i := range audited {
+		m, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "work " + strconv.Itoa(i), Body: "x\n"})
+		require.NoError(t, err)
+		want[m.ID] = true
+	}
+
+	stream := f.streams[StreamOf("bob")]
+	got, keepalives := map[string]bool{}, 0
+	for _, e := range stream {
+		if IsKeepalive(e.Message().Subject) {
+			keepalives++
+			continue
+		}
+		got[e.Message().ID] = true
+	}
+	assert.LessOrEqual(t, keepalives, KeepaliveWindow, "at most one keepalive window is kept")
+	assert.Len(t, got, audited, "every audited message is on the stream")
+	for id := range want {
+		assert.True(t, got[id], "the audited message %s is kept", id)
+	}
+
+	log, err := b.Log(ctx, "-")
+	require.NoError(t, err)
+	require.Len(t, log, audited, "the log holds every audited message and no keepalive")
+	for _, e := range log {
+		assert.False(t, IsKeepalive(e.Message().Subject), "no keepalive is on the audited log")
+	}
 }

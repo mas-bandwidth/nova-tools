@@ -304,6 +304,77 @@ func (r Redis) Forward(ctx context.Context, key, state string, ids ...string) ([
 	return res, nil
 }
 
+// trimKeepalivesLua is the retention of a recipient's keepalives: the newest
+// window of them stays, the acknowledged ones past it are deleted, and an
+// audited entry is never touched (SPEC-BUS.md, the data: retention). KEYS[1]
+// is the stream, ARGV[1] the group, ARGV[2] the window. An entry is
+// acknowledged when its id is at or below the group's last delivered id and
+// it is not in the group's pending list.
+var trimKeepalives = redis.NewScript(`
+local window = tonumber(ARGV[2])
+local pending = {}
+local pel = redis.pcall('XPENDING', KEYS[1], ARGV[1], '-', '+', 1000000)
+if type(pel) == 'table' and not pel['err'] then
+  for i = 1, #pel do pending[pel[i][1]] = true end
+end
+local last = '0-0'
+local groups = redis.pcall('XINFO', 'GROUPS', KEYS[1])
+if type(groups) == 'table' and not groups['err'] then
+  for _, g in ipairs(groups) do
+    local name, ldid = nil, nil
+    for i = 1, #g, 2 do
+      if g[i] == 'name' then name = g[i + 1] end
+      if g[i] == 'last-delivered-id' then ldid = g[i + 1] end
+    end
+    if name == ARGV[1] and ldid then last = ldid end
+  end
+end
+local function le(a, b)
+  local am, as = string.match(a, '^(%d+)-(%d+)$')
+  local bm, bs = string.match(b, '^(%d+)-(%d+)$')
+  if not am or not bm then return false end
+  am, as, bm, bs = tonumber(am), tonumber(as), tonumber(bm), tonumber(bs)
+  if am ~= bm then return am < bm end
+  return as <= bs
+end
+local keep, del = 0, {}
+for _, e in ipairs(redis.call('XREVRANGE', KEYS[1], '+', '-')) do
+  local subject = ''
+  local fields = e[2]
+  for i = 1, #fields, 2 do
+    if fields[i] == 'subject' then subject = fields[i + 1] end
+  end
+  local s = string.lower(subject)
+  local live = string.find(s, '^ping') or string.find(s, '^pong') or string.find(s, '^daemon%-pong') or string.find(s, '^keepalive')
+  if live then
+    keep = keep + 1
+    if keep > window and le(e[1], last) and not pending[e[1]] then del[#del + 1] = e[1] end
+  end
+end
+local n = 0
+for i = 1, #del, 500 do
+  local chunk = {}
+  for j = i, math.min(i + 499, #del) do chunk[#chunk + 1] = del[j] end
+  n = n + redis.call('XDEL', KEYS[1], unpack(chunk))
+end
+return n
+`)
+
+// TrimKeepalives keeps the newest window of a stream's keepalive entries and
+// deletes the acknowledged ones past it, leaving every audited entry
+// (SPEC-BUS.md, the data: retention). It is one round trip.
+func (r Redis) TrimKeepalives(ctx context.Context, stream, group string, window int) (int64, error) {
+	var n int64
+	err := r.call(ctx, false, 0, func(ctx context.Context) (err error) {
+		n, err = trimKeepalives.Run(ctx, r.C, []string{stream}, group, window).Int64()
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (r Redis) EnsureGroup(ctx context.Context, stream, group string) error {
 	return r.call(ctx, false, 0, func(ctx context.Context) error {
 		err := r.C.XGroupCreateMkStream(ctx, stream, group, "0").Err()
