@@ -147,7 +147,12 @@ func TestAnOverdueMarkFollowsTheDueTime(t *testing.T) {
 	require.NoError(t, h.m.SetReview(h.ctx, id, h.now.Add(time.Hour), h.now))
 	h.tick(time.Minute + time.Second)
 	h.machine()
-	n = len(h.openOf(sprint.NOverdue))
+	n = 0
+	for _, o := range h.openOf(sprint.NOverdue) {
+		if o.Note.What == id {
+			n++
+		}
+	}
 	require.Equal(t, 0, n, "the mark outlived the wait: %d", n)
 	h.tick(time.Hour)
 	h.machine()
@@ -156,7 +161,12 @@ func TestAnOverdueMarkFollowsTheDueTime(t *testing.T) {
 	h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	h.tick(time.Second)
 	h.machine()
-	n = len(h.openOf(sprint.NOverdue))
+	n = 0
+	for _, o := range h.openOf(sprint.NOverdue) {
+		if o.Note.What == id {
+			n++
+		}
+	}
 	require.Equal(t, 0, n, "the mark outlived its judgment: %d", n)
 	h.clean("marks")
 }

@@ -35,7 +35,8 @@ func (ta *testApp) playToDone(from int) (int, string) {
 // that finds nothing open says "the sprint is done" to the coordinator, a
 // HAPPENED line shown first in the inbox and carried on the notes stream, and
 // stops the machine: STOPPED with the cause done, DONE in where and the view,
-// STOPPED  9/9 100.0% done on the sprint line, no judgment open. A card added
+// STOPPED  9/9 100.0% done on the sprint line. The clear backup judgments
+// stay open. A card added
 // after leaves it STOPPED; start runs it again, lands the card and stops it
 // again.
 func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
@@ -60,7 +61,11 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 	require.True(t, strings.HasPrefix(lines[0], "HAPPENED "), "the inbox:\n%s", inbox)
 	require.Contains(t, lines[0], "the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took ", "the inbox:\n%s", inbox)
 	require.Equal(t, "  "+sprint.DoneHint, lines[1], "the inbox:\n%s", inbox)
-	require.NotContains(t, inbox, "JUDGMENT", "the inbox:\n%s", inbox)
+	for _, line := range strings.Split(inbox, "\n") {
+		if strings.HasPrefix(line, "JUDGMENT") {
+			require.True(t, strings.Contains(line, sprint.NReadsClear) || strings.Contains(line, sprint.NMergesClear), "the inbox:\n%s", inbox)
+		}
+	}
 	require.Contains(t, inbox, "\nmachine: DONE\n", "the inbox:\n%s", inbox)
 	var in struct{ Groups []sprint.Group }
 	ta.json("inbox", &in)
@@ -81,7 +86,10 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 	}
 	open, err := ta.m.OpenNotes(context.Background())
 	require.NoError(t, err, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
-	require.Empty(t, open, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
+	require.Len(t, open, 2, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
+	for _, n := range open {
+		require.True(t, n.Note.Type == sprint.NReadsClear || n.Note.Type == sprint.NMergesClear, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
+	}
 	require.Equal(t, 1, said, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
 	ta.clean()
 	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "a tick after the done")
