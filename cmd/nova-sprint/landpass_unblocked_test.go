@@ -39,14 +39,6 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	}
 	r.queued(heads, "s1-1", "s2-1")
 	blocked, green, release, pushed := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
-	deadline := make(chan time.Time, 1)
-	parentAfter := r.a.after
-	r.a.after = func(d time.Duration) <-chan time.Time {
-		if d == LandDeadline {
-			return deadline
-		}
-		return parentAfter(d)
-	}
 	var once sync.Once
 	r.a.gateRan = func(dir string, tests bool) {
 		if strings.HasSuffix(dir, "@s1") {
@@ -84,14 +76,12 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	}
 	select {
 	case <-green:
-		deadline <- time.Now() // the higher-priority gate reached its bound
 	case <-t.Context().Done():
 		t.Error("second base could not gate while first base gate waited")
 	}
 	select {
 	case <-pushed:
-		// This hook runs immediately before the push. The first base gate
-		// was abandoned, so only the second stream can reach it.
+		// The green stream reaches its push while the first gate still waits.
 	case <-t.Context().Done():
 		t.Error("green second base did not push while first base gate waited")
 	}
@@ -101,8 +91,8 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	case <-t.Context().Done():
 		t.Fatal("land did not finish after releasing first gate")
 	}
-	assert.Equal(t, 1, code, "the abandoned batch is refused for this pass: %s%s", out, errs)
-	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s2-1": "landed/merged"}, r.places("s1-1", "s2-1"))
+	assert.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s2-1": "landed/merged"}, r.places("s1-1", "s2-1"))
 	assert.Nil(t, r.a.baseGateFails[mainBase], "canceled base gate is not counted as red")
 	r.clean()
 }

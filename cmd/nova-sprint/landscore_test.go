@@ -193,9 +193,11 @@ func TestLandScoresAfterThePassAndStopsAtTheFirstFailure(t *testing.T) {
 			assert.True(t, f.deadline.Load(), "the pass's context carries its deadline")
 			assert.NotContains(t, errs, errIgnoredLoop.Error(), "the land loop's cancel ends the pass")
 			assert.Equal(t, int32(1), f.asks.Load(), "the pass stops at the first failure: no ask after it")
-			assert.Contains(t, errs, "NOTE s1-1 was not scored: ")
-			assert.Contains(t, errs, "the scoring pass stopped at the first failure; not scored: s1-2")
-			assert.Contains(t, errs, "the scoring pass stopped at the first failure; not scored: s2-1")
+			assert.Equal(t, 1, strings.Count(errs, "was not scored:"), "one first failure: %s", errs)
+			assert.Contains(t, errs, "the scoring pass stopped at the first failure; not scored:")
+			for _, id := range []string{"s1-1", "s1-2", "s2-1"} {
+				assert.Contains(t, errs, id, "every card is named whether it was first or pending")
+			}
 			assert.NotContains(t, out, "scored=")
 			r.clean()
 		})

@@ -250,7 +250,8 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(inbox, "landing stuck at step=gate"), "one stuck line:\n%s", inbox)
 	assert.Contains(t, inbox, "go build ./...", "the judgment names the process:\n%s", inbox)
 
-	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 .* bench=vision wall=\d+\.\ds`), text)
+	assert.Contains(t, text, "LAND REFUSED stream=s1")
+	assert.Contains(t, text, "the gate of this batch was canceled")
 	idle := regexp.MustCompile(`LAND IDLE queued=([1-9]\d*) step=gate since=(\S+)`)
 	var long bool
 	for _, m := range idle.FindAllStringSubmatch(text, -1) {
@@ -261,7 +262,7 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 		}
 	}
 	assert.True(t, long, "an IDLE line while the gate ran past the deadline:\n%s", text)
-	assert.NotContains(t, text, "LAND DONE", "the loop does not reprint LAND DONE")
+	assert.Equal(t, 1, strings.Count(text, "LAND DONE"), "the canceled pass finishes once")
 	r.clean()
 }
 
