@@ -3,41 +3,33 @@
 Read as a stranger: only `nova-up -h`, `nova-up help`, `nova-up help <verb>`, `nova-up <verb> -h`
 for every verb, and the tool's page under `docs/` (`docs/SPEC-UP.md`), nothing else. The binary was
 built in the staged checkout on a Linux bench with
-`go build -o $JOB/bin/nova-up ./cmd/nova-up`, never the installed binary, from the tip of
-`sprint/mechanical-2026-10-02` at `78e40bbe949fed8bf1f7512fb1e31413884438fe`, and the version line
-it printed is `nova-up v1.0.1-0.20261008025246-78e40bbe949f linux/amd64 go1.26.6`. Every verb ran
-with its real flags against scratch roots under `$S`: `up` (real and `--dry-run`, lines and
-`--json`), `version`, and the `help` door, with the refusals. The card's rules forbid starting a
-server, so every real apply stopped at the redis step or earlier; no unit was written and no
-process started (checked after each run). This pass carries attempt 2
-`7cbb087a1e660b234461d44edf94a3d2a816635e` (which carries attempt 1
-`41ad1b2cee65f65ee300606f9bd563947d350711`) onto that tip and re-verifies its findings there, where
-all nine reproduce; the plan has since grown an `ssh` step, so the counts read `steps=9`. The reader
-found that attempt 2's finding 10 began with a `grep` command rather than a `nova-up` command,
-against the required form, so that item is removed and every numbered finding now opens with a
-`nova-up` command. In the quoted output `$S` is the bench scratch directory, `$JOB` the job
-directory, `<bin>` the directory the tools are installed in, and `<cwd>` the directory a command ran
-from.
+`go build -o $JOB/bin/nova-up ./cmd/nova-up`, never the installed binary, from the staged commit
+`ba68746a3f763a4f22b777bde4edbb15e95a2628`, and the version line it printed is
+`nova-up v1.0.1-0.20261010034258-ba68746a3f76 linux/amd64 go1.26.6`. Every verb ran with its real
+flags against scratch roots under `$S`: `up` (real and `--dry-run`, lines and `--json`), `version`,
+and the `help` door, with the refusals. The card's rules forbid starting a server, so every real
+apply stopped at the redis step or earlier; no unit was written and no process started (checked
+after each run). This pass carries attempt 6 `b8f4ae944a4560858ed12d34183f9ced5fede263` onto the
+current tip and re-verifies its findings; the help door, `version` and every refusal reproduced
+verbatim here, and each `--root` and plan defect below was re-checked against the step lines a
+`--dry-run` prints on this bench. In the quoted output `$S` is the bench scratch directory, `$JOB`
+the job directory, `<bin>` the directory the tools are installed in, and `<cwd>` the directory a
+command ran from.
 
 ## Findings
 
-1. `nova-up up --local --dry-run --root $S/misc/afile` (where `afile` is an existing regular file)
+1. `nova-up up --local --dry-run --root $S/misc/afile`
    Printed:
    ```
    UP OK root=$S/misc/afile steps=9 changes=4 applied=0 dry_run=true
    UP NOTE dry run: nothing written; run it without --dry-run to apply
    UP platform ok linux: loops are systemd user units
    ```
-   I expected `dirs change` or a refusal: the root exists but is not a directory, so `stores/`,
-   `keys/`, `logs/` and `smoke/` do not stand and the sprint's twin cannot be `ok`; the plan reads
-   only that the path exists. The real run, `nova-up up --local --root $S/misc/afile`, then fails at
-   secrets with `UP FAILED root=$S/misc/afile steps=5 changes=1 applied=0: step secrets:
-   <bin>/nova-secrets keygen --as coordinator --key $S/misc/afile/keys/coordinator.key
-   --age-keygen <bin>/age-keygen: exit status 2: SECRETS KEYGEN REFUSED: key directory
-   $S/misc/afile/keys is absent; run: mkdir -m 700 -p $S/misc/afile/keys; the steps before it are
-   applied, and a run again starts from what they left`, and that remedy cannot run while the root
-   is a file, so the refusal names no action a reader can take.
-   Grade: URGENT (a dry run that says ok for a run that cannot work, and a refusal with no remedy)
+   I expected `dirs change` or a refusal: `$S/misc/afile` is an existing regular file, not a
+   directory, so `stores/`, `keys/`, `logs/` and `smoke/` do not stand and the sprint's twin cannot
+   be `ok`; the plan reads only that the path exists and says `UP OK` with `changes=4` for a run
+   that cannot work.
+   Grade: URGENT (a dry run that says ok for a run that cannot work)
 
 2. `HOME=$S/home nova-up up --local --dry-run --root ""`
    Printed:
@@ -54,10 +46,10 @@ from.
    Grade: URGENT (a default that stands in for a missing input, so the one root the write verb
    touches can silently be an unintended one)
 
-3. `nova-up up --local --dry-run --root "~/zhi-nova-try"`, run from `<cwd>`
+3. `nova-up up --local --dry-run --root "~/nova-alt"`
    Printed:
    ```
-   UP OK root=<cwd>/~/zhi-nova-try steps=9 changes=6 applied=0 dry_run=true
+   UP OK root=<cwd>/~/nova-alt steps=9 changes=6 applied=0 dry_run=true
    UP NOTE dry run: nothing written; run it without --dry-run to apply
    UP platform ok linux: loops are systemd user units
    ```
@@ -83,22 +75,23 @@ from.
    {"result":{"verb":"up","status":"refused","exit":2,"remedy":"nova-up help","why":["--local is required; it wants nothing after it: the mode that sets up this one machine with no config"]},"facts":{}}
    (one line printed)
    ```
-   I expected the same empty invocation reported the same way; the bare `nova-up` prints
-   `UP REFUSED: no verb and no file given; the verbs are up, version; run: nova-up help`, so adding
-   only `--json` changes the diagnosis from "no verb" to "verb `up`, `--local` required", and the
-   two renderings disagree about what the reader did wrong.
+   I expected the flag-only invocation to be diagnosed like the bare one, as "no verb given": the
+   result claims `verb: up` and that `--local` is required, so adding only `--json` turns a "no
+   verb" into a "`up` without `--local`" and points a reader at a mode they did not ask for.
    Grade: NEXT (the two renderings of one result drift)
 
-6. `nova-up up --local --root $S/misc/afile` (the real run of finding 1)
+6. `nova-up up --local --root $S/misc/afile`
    Printed:
    ```
    UP FAILED root=$S/misc/afile steps=5 changes=1 applied=0: step secrets: <bin>/nova-secrets keygen --as coordinator --key $S/misc/afile/keys/coordinator.key --age-keygen <bin>/age-keygen: exit status 2: SECRETS KEYGEN REFUSED: key directory $S/misc/afile/keys is absent; run: mkdir -m 700 -p $S/misc/afile/keys; the steps before it are applied, and a run again starts from what they left
    UP platform ok linux: loops are systemd user units
    UP dirs ok $S/misc/afile
    ```
-   I expected the closing sentence to match the summary: `applied=0` beside "the steps before it
-   are applied" tells a reader something was left behind when nothing was.
-   Grade: NEXT (a failure line that disagrees with its own count)
+   I expected the run to refuse the file root at the dirs step it already planned `ok`, not to
+   blame a missing `keys` directory: the remedy `mkdir -m 700 -p $S/misc/afile/keys` cannot run
+   while the root is a file, so the refusal names no action a reader can take, and the closing
+   sentence disagrees with its own count (`applied=0` beside "the steps before it are applied").
+   Grade: URGENT (a refusal whose remedy cannot run, and a failure line that disagrees with its own count)
 
 7. `nova-up help`
    Printed:
@@ -131,9 +124,9 @@ from.
    UP NOTE dry run: nothing written; run it without --dry-run to apply
    UP platform ok linux: loops are systemd user units
    ```
-   I expected the plan to see that the parent is not writable (the real run exits 1 with `step
-   dirs: mkdir /proc/nova-nope: no such file or directory`); a dry run that says `UP OK` and
-   `changes=6` for a root it cannot create sends the reader past the one thing the plan is for.
+   I expected the plan to see that the parent is not writable, so the root cannot be created; a
+   dry run that says `UP OK` and `changes=6` for a root it cannot create sends the reader past the
+   one thing the plan is for.
    Grade: NEXT (the plan is not the plan the real run takes)
 
 ## What held
@@ -146,15 +139,8 @@ from.
   smoke card landed) was not run: the card forbids starting a server, so every real apply stopped
   at the redis step or earlier, and the runs left no unit file and no process (checked after each).
 
-READ 6/10 — the banner answers what it does, how it works and where its state lives, every door
-exits 0 with a page complete enough to run the tool, and the `example:` lines run; the score is
-held down by a `--root` contract that is not true in three ways (an empty value defaults, a `~` is
-literal, a file root is planned `ok`), a usage block that hides the `up` verb the refusals name,
-and a `--json` body that hides the steps.
+READ 6/10 — the banner answers what it does, how it works and where its state lives, every door exits 0 with a page complete enough to run the tool, and the `example:` lines run; the score is held down by a `--root` contract that is not true in three ways (an empty value defaults, a `~` is literal, a file root is planned `ok`), a usage block that hides the `up` verb the refusals name, and a `--json` body that hides the steps.
 
-USE 6/10 — the plan-then-apply shape is trustworthy on a fresh root and the missing-program stop
-writes nothing, but the write verb's one root can silently point somewhere else, a failed apply's
-last sentence disagrees with its own count, and the JSON a caller would depend on is one opaque
-string.
+USE 6/10 — the plan-then-apply shape is trustworthy on a fresh root and the missing-program stop writes nothing, but the write verb's one root can silently point somewhere else, a failed apply's remedy cannot run and its last sentence disagrees with its own count, and the JSON a caller would depend on is one opaque string.
 
-urgent=2 next=7
+urgent=3 next=6
