@@ -161,7 +161,8 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 }
 
 // TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge: the functional job runs on
-// pull_request, merge_group, schedule and workflow_dispatch.
+// pull_request (guarded by the head-repo check, so a fork's PR skips it),
+// merge_group, schedule and workflow_dispatch.
 func TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge(t *testing.T) {
 	t.Parallel()
 	jobs := ciJobs(t)
@@ -170,6 +171,8 @@ func TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge(t *testing.T) {
 	for _, ev := range []string{"pull_request", "merge_group", "schedule", "workflow_dispatch"} {
 		assert.Containsf(t, job.If, "github.event_name == '"+ev+"'", "functional's if does not run on %s: %s", ev, job.If)
 	}
+	assert.Containsf(t, job.If, "github.event.pull_request.head.repo.full_name == github.repository",
+		"functional's pull_request arm is not guarded by the head-repo check; a fork PR would run real binaries and processes on the self-hosted pool: %s", job.If)
 	assert.Equalf(t, 2, job.TimeoutMinutes, "functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
 	runsOn, _ := yaml.Marshal(job.RunsOn)
 	assert.Containsf(t, string(runsOn), "space", "functional runs-on %s, want the space pool", runsOn)

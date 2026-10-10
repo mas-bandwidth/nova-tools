@@ -720,8 +720,9 @@ runner pool.
 
 ### 2. Cut requires certification and offers dispatch
 `nova-update release cut` refuses any commit that `certification.yml` has not vouched for
-(the same check `release.yml` makes), names the certification dispatch command
-(`gh workflow run certification.yml --ref <ref>`), and offers `--dispatch-certification`
+(the same check `release.yml` makes: every certification run completed and the newest
+updated run green), names the certification dispatch command
+(`gh workflow run certification.yml --ref <sha>`), and offers `--dispatch-certification`
 to dispatch and wait for certification. Waivers (`--no-dogfood-gate`, `--no-journey-gate`,
 `--no-spend-gate`) never cover certification.
 
@@ -816,7 +817,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 65. `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` — over the window since the previous tag's UTC day, a store figure of $836 against a provider's own $2,250 refuses naming the provider, both figures and the gap; a 3% gap passes (`spend=ok`); a provider whose readout errs, or has none, refuses; subscription friends' recorded tokens are set beside their receipts the same way, and no receipts refuses; no store refuses; `--no-spend-gate --reason` writes every unpassed row into the section.
 66. `TestOpenRouterSpendIsTheActivityDaysAndToday` — openrouter's own count is its activity's completed days in the window plus the key's count of today; no key, or a window past 30 days, is unread; opencode and Inception are unread.
 67. `TestReceiptsAreReadOnlyForTheirWindow` — a receipts file is read only for the window it covers.
-68. `TestCutRefusesUncertifiedCommit` — `cut` refuses an uncertified commit (exit 2) naming the dispatch command `gh workflow run certification.yml --ref <ref>` and offering `--dispatch-certification`.
+68. `TestCutRefusesUncertifiedCommit` — `cut` refuses an uncertified commit (exit 2) naming the dispatch command `gh workflow run certification.yml --ref <sha>` and offering `--dispatch-certification`.
 69. `TestCutAcceptsCertifiedCommit` — `cut` accepts a commit whose latest certification run completed with success.
 70. `TestCutDispatchCertification` — `--dispatch-certification` dispatches `certification.yml` once on the fake and waits for completion.
 71. `TestCertificationNotCoveredByWaivers` — dogfood, journey, and spend waivers never cover certification; an uncertified or failing commit is refused even with all waivers granted.

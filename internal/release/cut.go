@@ -60,60 +60,91 @@ func PullRequests(commits []Commit) []PR {
 	return prs
 }
 
-// certified is the release gate. A commit must have a green certification run
-// from certification.yml before a release can be cut. This is the same check
-// release.yml makes: the first job asks certification.yml to vouch for the commit.
-// Waivers (dogfood, journey, spend) never cover certification.
-func certified(runs []CheckRun, ref string) error {
-	var found bool
-	var inFlight bool
-	var failed bool
-	var success bool
-	var failConclusion string
-
+// certificationRuns returns the check runs certification.yml records on a
+// commit, in the order the forge gave them.
+func certificationRuns(runs []CheckRun) []CheckRun {
+	var out []CheckRun
 	for _, r := range runs {
 		if r.Name == "certification" || r.Name == "certification-ok" {
-			found = true
-			if r.Status != "completed" {
-				inFlight = true
-			} else if r.Conclusion == "success" {
-				success = true
-			} else {
-				failed = true
-				failConclusion = r.Conclusion
-			}
+			out = append(out, r)
 		}
 	}
-	if !found {
-		cmd := fmt.Sprintf("gh workflow run certification.yml --ref %s", ref)
+	return out
+}
+
+// newestCertification returns every certification run sharing the latest
+// UpdatedAt: the group that decides. The stamp, not a run id or an array
+// position, orders certification evidence, because a rerun of an older run id
+// carries a newer stamp than a later run that was never rerun. Two runs can
+// share the maximal stamp to the second, and the stamp supplies no order
+// between them, so the whole group is returned and must be uniformly green.
+func newestCertification(certs []CheckRun) []CheckRun {
+	max := ""
+	for _, r := range certs {
+		if r.UpdatedAt > max {
+			max = r.UpdatedAt
+		}
+	}
+	var group []CheckRun
+	for _, r := range certs {
+		if r.UpdatedAt == max {
+			group = append(group, r)
+		}
+	}
+	return group
+}
+
+// certified is the release gate. A commit must be vouched for by certification.yml
+// before a release can be cut, and it is the same check release.yml makes
+// through `go run ./tools/ghrelease certified`: every certification run on the
+// commit must have completed, and the run carrying the latest update must be
+// green. An older green does not vouch for a newer red or a still-running run,
+// because a tag release.yml then refuses is exactly the release cut by hand this
+// gate exists to prevent. The waivers (dogfood, journey, spend) never cover
+// certification.
+func certified(runs []CheckRun, sha string) error {
+	certs := certificationRuns(runs)
+	if len(certs) == 0 {
+		cmd := fmt.Sprintf("gh workflow run certification.yml --ref %s", sha)
 		return refuse(fmt.Sprintf("certify it first: %s (or pass --dispatch-certification to dispatch and wait)", cmd),
 			"no certification run has vouched for this commit: run %s", cmd)
 	}
-	if failed && !success {
-		return refuse("fix the certification failure and cut again; a tag cannot be amended",
-			"certification.yml failed on this commit: %s", failConclusion)
+	for _, r := range certs {
+		if r.Status != "completed" {
+			return refuse("wait for certification to finish and cut again (or pass --dispatch-certification to wait)",
+				"certification.yml is still running on this commit")
+		}
 	}
-	if inFlight && !success {
-		return refuse("wait for certification to finish and cut again (or pass --dispatch-certification to wait)",
-			"certification.yml is still running on this commit")
+	latest := newestCertification(certs)
+	for _, r := range latest {
+		if r.Conclusion != "success" {
+			return refuse("fix the certification failure and cut again; a tag cannot be amended",
+				"certification.yml failed on this commit: %s", r.Conclusion)
+		}
 	}
 	return nil
 }
 
+// isCertificationFailure reports whether certification has finished on this
+// commit and its newest evidence is red -- the one outcome the dispatch loop
+// must not keep polling for. A run still in flight, or no run at all, is not a
+// failure.
 func isCertificationFailure(runs []CheckRun) bool {
-	var hasFailure, hasSuccess, hasInFlight bool
-	for _, r := range runs {
-		if r.Name == "certification" || r.Name == "certification-ok" {
-			if r.Status != "completed" {
-				hasInFlight = true
-			} else if r.Conclusion == "success" {
-				hasSuccess = true
-			} else {
-				hasFailure = true
-			}
+	certs := certificationRuns(runs)
+	if len(certs) == 0 {
+		return false
+	}
+	for _, r := range certs {
+		if r.Status != "completed" {
+			return false
 		}
 	}
-	return hasFailure && !hasSuccess && !hasInFlight
+	for _, r := range newestCertification(certs) {
+		if r.Conclusion != "success" {
+			return true
+		}
+	}
+	return false
 }
 
 func restStep(seam func(time.Duration), d time.Duration) {
@@ -569,13 +600,13 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 
 	// Certification must be green before a release can be cut.
 	// This is the same check release.yml makes, and waivers never cover certification.
-	certErr := certified(runs, o.from)
+	certErr := certified(runs, sha)
 	if certErr != nil {
 		if !o.dispatchCertification {
 			return refusal(errs, "CUT", certErr)
 		}
-		progress(errs, "dispatching certification.yml on %s", o.from)
-		if err := forge.DispatchWorkflow(ctx, o.repo, "certification.yml", o.from); err != nil {
+		progress(errs, "dispatching certification.yml on %s", sha)
+		if err := forge.DispatchWorkflow(ctx, o.repo, "certification.yml", sha); err != nil {
 			return refusal(errs, "CUT", fmt.Errorf("cannot dispatch certification.yml: %w", err))
 		}
 		progress(errs, "waiting for certification to complete")
@@ -599,7 +630,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			if err := green(nonCertRuns); err != nil {
 				return refusal(errs, "CUT", err)
 			}
-			certErr = certified(runs, o.from)
+			certErr = certified(runs, sha)
 			if certErr == nil {
 				break
 			}

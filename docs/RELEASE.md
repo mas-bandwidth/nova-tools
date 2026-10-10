@@ -55,13 +55,13 @@ All functional shards execute under the two-minute timeout cap on the self-hoste
 
 ### 2. Certification Requirement
 
-Before a release can be cut, `certification.yml` must vouch for the exact target commit. `nova-update release cut` queries the forge for completed check runs. If no completed green certification check (`certification` or `certification-ok`) exists on the commit:
+Before a release can be cut, `certification.yml` must vouch for the exact target commit. `nova-update release cut` queries the forge for the `certification`/`certification-ok` check runs on that commit and applies the same check `release.yml` does through `go run ./tools/ghrelease certified`: every certification run must be completed, and the run carrying the latest update must be green (an older green never covers a newer red or a still-running run). If the commit is not vouched for:
 - The command refuses with exit code 2.
-- The refusal names the exact dispatch command:
+- The refusal names the exact dispatch command on the certified sha:
   ```bash
-  gh workflow run certification.yml --ref <ref>
+  gh workflow run certification.yml --ref <sha>
   ```
-- The command offers `--dispatch-certification`, which dispatches the workflow and waits for completion.
+- The command offers `--dispatch-certification`, which dispatches the workflow on the certified sha and waits for completion.
 - Waivers (`--no-dogfood-gate`, `--no-journey-gate`, `--no-spend-gate`) never waive certification.
 
 ### 3. Automated Publication by `release.yml`

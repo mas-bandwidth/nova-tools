@@ -1735,7 +1735,8 @@ has) on its first line, or move its redis-backed tests to
 through a package-local helper is held by the compiler instead: the helper's
 file is tagged, so an untagged caller does not build, and the lint job's
 `go vet ./...` is red on it. The functional tier runs where a whole stream
-lands (`make check`, ci.yml's `functional` job on merge_group and schedule) and nightly
+lands (`make check`, ci.yml's `functional` job on pull_request, merge_group,
+schedule and a manual run) and nightly
 (nightly-slow.yml's `functional` leg); the lint job's `make vet-functional`
 compiles it on every change.
 
