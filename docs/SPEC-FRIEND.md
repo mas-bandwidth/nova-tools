@@ -245,14 +245,11 @@ Presence is therefore the session's, never the daemon's:
   a process per card) has no session for its daemon to check: its beat says no
   check and no answer, ever, and her evidence is a card of hers finished. The
   status file's `proof_sent` is when the server last took an answer as proof,
-  and `check` prints it (`proof=sent proof_age=`). While down, her beat says so:
-  `friend beat --until <t> --reason <why>` (`SessionCheck.BeatOr`), the until
-  the open check's bound or the next check's, the reason `push unproven:
-  session check <nonce> ...` before the first answer and `no session answer to
-  session check <nonce> within 5m0s` after one, so the server reads her down
-  with the daemon's reason at once; a beat can say down, never up. The friend
-  row's mode and width arrive with an up beat's answer, so while down the
-  daemon delivers by the row it last read (batch at `--width` before any).
+  and `check` prints it (`proof=sent proof_age=`). While the session is down,
+  the native heartbeat still runs; the common server rule names its missing
+  session evidence. `--until`/`--reason` are reserved for a harness limit or
+  an explicit pause. The friend row's mode and width arrive with any accepted
+  beat, so the daemon learns its row even before the session answers.
 - On a headless harness (dsh, gemini: each turn a one-shot process into the
   session) the check goes in as a turn of its own as soon as no turn runs. A
   turn runs from the moment it comes to the gate (`SessionCheck.Gate`), before
@@ -481,7 +478,8 @@ message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
 answered at once by the daemon; never a second turn. Then the worker's result;
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
-working and width flags are owed on the server's side); the pong file, while a
+working and width flags are owed on the server's side), every step whatever the
+bus store and the session say ("The beat", below); the pong file, while a
 challenge is open; the status file.
 
 **Last session activity** (2026-10-04: the table said up with 8 working while a friend's
@@ -1320,9 +1318,11 @@ the good bits that do work". On 2026-10-04 friends' rows read up for hours on
 beats sent for them while their sessions took no turn: one for four hours under
 a refusing harness, another working 8 for an hour while running nothing.
 
-A friend's row in the sprint (`sprint.FriendStatus`, `sprint.FriendEvidence`)
-is `held` while the coordinator holds her; else `up` only on evidence from her
-own session, within its window:
+A friend's row in the sprint (`sprint.FriendStatus`, `sprint.FriendEvidence`;
+the rule is written once, docs/SPEC-SPRINT.md, "Friend presence: the up rule")
+is `held` while the coordinator holds her; else `up` only on two facts at once:
+her daemon beats (her last beat at most `FriendBeatLive`, ten seconds, old: "The
+beat" below), and her own session has given evidence within its window:
 
 - a wake ping her session answered under `FriendPongWindow` (ten minutes) old:
   the coordinator's ping loop sends `nova-friend ping --wake`, her daemon
@@ -1331,8 +1331,8 @@ own session, within its window:
   saw as `friend health <friend> --state up --seen <t>`, fenced by the seat's
   generation; or
 - her session's answer to a check her daemon asked, under `FriendProofLive`
-  (fifteen minutes) old while her beat is fresh
-  (`BeatDeadline`): her daemon's beat says `--check <nonce> --run <run>` when it
+  (fifteen minutes) old on its own (`FriendSessionHeard` counts `Beat.Proof`
+  with no beat-age gate): her daemon's beat says `--check <nonce> --run <run>` when it
   asks and `--pong <nonce> --run <run>` when her session answers, and the
   server (`sprint.ProveBeat`) keeps the checks asked on her beat record and
   takes an answer as proof only when it names a check that run asked, once,
@@ -1340,8 +1340,10 @@ own session, within its window:
   server's time of that answer (`Beat.Proof`). A bare time, a nonce never
   asked, another run's, one answered already or one asked too long ago is a
   beat with no proof, said on the beat's line (`no_proof=`) and never
-  evidence; when her beats stop, her proof stops with them
-  (`TestABareTimeOrAnUnaskedNonceNeverProves`). The beat verb trusts its
+  evidence (`TestABareTimeOrAnUnaskedNonceNeverProves`). The proof stays
+  inside `FriendProofLive` on its own. `FriendEvidence` ANDs it with a beat
+  no older than ten seconds, and a stopped daemon still shows the session
+  half beside "daemon not beating". The beat verb trusts its
   caller's actor (a worker verb runs as the friend it names,
   cmd/nova-sprint/coordinator.go `orActor`), so a caller that beats as her can
   ask a check and answer it in one beat, and that proves her
@@ -1359,28 +1361,55 @@ Else she is `down`. Nothing else is evidence: not her beat itself, whoever
 sends it (her daemon, or any loop that beats for her; only the session's answer
 it carries counts), not `daemon-pong` (her daemon's own answer, shown as down), not a hold released (`friend up`), not a
 coordinator's down. Her row names the evidence and its age (`where --json`,
-`friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
+`friends[].evidence`: `daemon up, session pong 3m0s ago`, `daemon up, finish 12m0s ago`) or, down,
 what is missing and the age of the last of each, with her beat's age said to be
 no evidence; a beat that says down (her daemon's `--until`/`--reason`: her
-harness at its limit, her push unproven, no session answer) is down with its
+harness at its limit or explicitly paused) is down with its
 reason whatever else stands. A friend down keeps the cards dealt to her row (the deadline judges
 them, docs/SPEC-SPRINT.md section 1): going down takes nothing back. Her
 unstarted cards return to ready only when the coordinator takes them
 (`friend take --all-unstarted`, or `friend down`); nothing returns them on her
 going down by itself.
 
-What stays: the daemon as the mailman (bus messages and dealt cards pushed
-into her session as turns), the session-answered wake ping, `HarnessWatch`
-(`WatchHarness`, below), and finishes as evidence. Tested on the twin store
-with an injected clock: `TestFriendIsUpOnlyOnEvidenceFromHerSession` (a friend
-beaten every second with no pong and no card reads down past the window,
-naming the missing evidence; one answered pong makes her up, then down again
-after the window without another; a finish the same for its window),
-`TestFriendEvidenceRule`, and through the command
-`TestAFinishFromHerReportIsHerSessionsEvidence`. The roster and her cards are moved by the
-friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
-row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
-loop"; cmd/nova-sprint/friend_loop.go).
+### The beat (every-friend-daemon-beats-every-second, 2026-10-06)
+
+The owner, 2026-10-04: "both sides ping each second"; 2026-10-06: "All friends
+should have beats!!!". The finding of 2026-10-06: a friend with her daemon at
+width 8 and her session answering on the bus every minute read `down (stalled),
+active 2d ago`, and was dealt nothing, because her daemon held its beat back
+under "no beat until a session check answers" while the sprint read beats; the
+coordinator beat for her, and for another friend, from shell loops.
+
+The native heartbeat (`Heartbeat`, run by the daemon's beatLoop) sends
+immediately once the daemon's loop starts, and every second until it stops,
+independently of the loop's inbox and lane work. Each send has a 900ms context
+deadline, with one send at a time, so a slow bus read or filesystem walk (the
+send steps the session check and walks activity) is bounded and never stops the
+next tick. A failed transport attempt is an error on status and is tried again
+on the next tick; it creates no session evidence. The Presence model assumes a
+reachable beat recipient and a scheduler that runs the heartbeat each tick; an
+unavailable server cannot record a successful beat.
+
+The heartbeat reads bounded snapshots of what the worker knows: width, start,
+running jobs and working/queue counts once known, latest activity, and the
+check/answer words whose nonce and run the server validates. Session bus
+activity is advisory `--active`; it never stands in for nonce proof. The loop's
+flush writes the status with the actual successful beat count, last
+success and current transport error. Unknown report fields preserve the server's
+last known facts. An omitted running list is unknown and keeps the last ids;
+an explicit empty list (the daemon sends `--running -` when the last lane
+ends, with `--working 0`) clears the stored list, so friend take, friend down
+and the stall rule do not keep a finished card. Job sizes and free disk space
+are not reported.
+
+The up rule is `FriendEvidence`, shared by every server view: held wins; an
+explicit harness limit or pause is down; otherwise up requires a daemon beat
+no older than ten seconds AND live session evidence (a seat-observed pong, a
+verified check answer, or a finish in its own window). The row names both
+facts: `daemon up, session deaf 14m0s` or `daemon not beating ..., session pong
+1m0s ago`. `tla/Presence.tla` separates Heartbeat from SessionStep and checks
+BeatFresh, UpHasSessionEvidence and UpHasDaemon. The reversed held-beat and
+beat-alone-up witnesses fail their named invariant.
 
 ## The push proof (internal/friend/pushproof_start.go)
 
@@ -1466,7 +1495,7 @@ state (SPEC-BUS.md, bus-requires-inbox-push-proof).
   (`--check`, `--pong`, `--run`, Presence above); the server keeps the proof
   (the friend beat record's `pong`, the server's time of the last answer to a
   check asked, `Beat.Proof`), her session's evidence for `FriendProofLive`
-  while her beats go on ("Presence is her session's evidence" below). The
+  on its own, with no beat-age gate ("Presence is her session's evidence" below). The
   coordinator's pass raises one `friend deaf` judgment when the proof is older
   than that (internal/sprint/coordinator_pass.go).
 - The deploy order: the sprint server first, then every daemon within

@@ -185,11 +185,12 @@ func ReadPresence(stateDir string) (s PresenceStatus, found bool, err error) {
 }
 
 // SessionCheck is the daemon's side of presence: it reads the bus log for the
-// session's messages, steps the Presence, puts the check into the session
+// session's messages, steps the Presence, and puts the check into the session
 // through the adapter (Gate) or, for a harness with no deliver command, on
-// the friend's own stream, and holds the beat back while the session is down
-// (Beat). The daemon's own sends go through DaemonStore, so a message the
-// daemon wrote never passes for the session's.
+// the friend's own stream. The beat never waits on it (Beat): the session's
+// evidence rides on the beat as a fact of its own (Evidence). The daemon's own
+// sends go through DaemonStore, so a message the daemon wrote never passes for
+// the session's.
 type SessionCheck struct {
 	Friend string
 	Store  bus.Store // the store itself; the daemon is handed DaemonStore
@@ -210,6 +211,7 @@ type SessionCheck struct {
 	// in it proves the push, whatever restarts came between. "" starts fresh.
 	Keep string
 
+	stepMu     sync.Mutex // serializes log cursors; transport never holds mu
 	mu         sync.Mutex
 	m          *Presence
 	cursor     string          // the last log entry read
@@ -378,28 +380,48 @@ func (s *SessionCheck) Present() (bool, string) {
 	return s.m.Up, s.m.Reason
 }
 
-// Beat is beat held back while the session is down: the sprint server's
-// friend is up only while her session answers. Each call steps the check
-// first.
+// Evidence is the session's last evidence: its last bus message or its last
+// answer to a check, zero while it has given none. It is advisory activity, separate from nonce-based server proof
+// (docs/SPEC-FRIEND.md, The beat).
+func (s *SessionCheck) Evidence() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m == nil {
+		return time.Time{}
+	}
+	return s.m.LastHeard
+}
+
+// Beat is beat with the check stepped first, and sent whatever the session
+// says (every-friend-daemon-beats-every-second, 2026-10-06): the beat is the
+// daemon's liveness and nothing else, so a session that has not answered, or
+// is past its bound, still has a daemon beating for it, and her row says the
+// session is deaf rather than that nothing is there. Whether she is up is the
+// sprint's rule over both facts (docs/SPEC-SPRINT.md, friend presence). The
+// model is tla/Presence.tla (BeatFresh; its witness MCPresenceBrokenHeldBeat is
+// the hold this replaced).
 func (s *SessionCheck) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
-	return s.BeatOr(beat, nil)
+	return func(ctx context.Context) error {
+		s.Step(ctx)
+		return beat(ctx)
+	}
 }
 
 // BeatOr is beat while the session is up, and while it is down the beat that
 // says so (down: until when the daemon next expects an answer, and why: the
 // push unproven with the check's nonce, or no session answer to it), so the
 // sprint server reads her down with the daemon's reason the second it knows
-// (docs/SPEC-FRIEND.md, presence). A nil down holds the beat back instead.
+// (docs/SPEC-FRIEND.md, presence). A nil down sends the liveness beat without a session gate.
 // Each call steps the check first.
 func (s *SessionCheck) BeatOr(beat func(ctx context.Context) error, down func(ctx context.Context, until time.Time, reason string) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		s.Step(ctx)
-		up, reason := s.Present()
+		up, _ := s.Present()
 		if up {
 			return beat(ctx)
 		}
 		if down == nil {
-			return fmt.Errorf("not beating: the session is down (%s); the daemon answering is not the session", reason)
+			return beat(ctx)
 		}
 		until, why := s.downBeat(s.Now())
 		if err := down(ctx, until, why); err != nil {
@@ -521,6 +543,8 @@ func (s *SessionCheck) nextNonce() string {
 // Step is one look: the session's messages since the last, the clock, and
 // the check when it is owed.
 func (s *SessionCheck) Step(ctx context.Context) {
+	s.stepMu.Lock()
+	defer s.stepMu.Unlock()
 	now := s.Now()
 	s.mu.Lock()
 	if s.m == nil {
@@ -573,17 +597,22 @@ func (s *SessionCheck) Step(ctx context.Context) {
 // answer, whose nonce it answers; any other is heard (rose: it brought the
 // friend up). Called with mu held.
 func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string, rose bool, err error) {
-	if s.cursor == "" {
+	cursor := s.cursor
+	s.mu.Unlock() // store I/O never blocks heartbeat Words/Said
+	if cursor == "" {
 		_, storeNow, err := s.Store.Roster(ctx)
 		if err != nil {
+			s.mu.Lock()
 			return "", false, err
 		}
-		s.cursor = bus.IDAt(storeNow)
+		cursor = bus.IDAt(storeNow)
 	}
-	es, err := s.Store.Range(ctx, bus.LogKey, "("+s.cursor, "+", LogBatch)
+	es, err := s.Store.Range(ctx, bus.LogKey, "("+cursor, "+", LogBatch)
+	s.mu.Lock()
 	if err != nil {
 		return "", false, err
 	}
+	s.cursor = cursor
 	for _, e := range es {
 		s.cursor = e.Entry
 		m := e.Message()

@@ -82,16 +82,28 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	assert.Equal(t, 8, f.Width, "her width is the roster's, not her word")
 	assert.Equal(t, sprint.Up, f.Status, "on her session's pong, never on the beat")
 
-	// a bare beat leaves the running list and the counts it did not name
+	// A liveness beat omits --running and preserves the last known work report.
 	ta.beatUp("amy")
 	f = whereFriends(ta)["amy"]
 	require.NotNil(t, f.Report)
-	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1"}, f.Report.Running)
-	require.NotNil(t, f.Report.Working)
-	require.NotNil(t, f.Report.Queue)
 	assert.Equal(t, 2, *f.Report.Working)
 	assert.Equal(t, 3, *f.Report.Queue)
+	assert.Equal(t, 4, *f.Report.Width)
+	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1"}, f.Report.Running)
 	assert.Zero(t, f.Load)
+
+	// The daemon's transition to zero running is an explicit empty list. It
+	// clears the stored cards; a later omitted beat does not bring them back.
+	ta.ok("friend beat amy --working 0 --running -")
+	f = whereFriends(ta)["amy"]
+	require.NotNil(t, f.Report)
+	assert.Empty(t, f.Report.Running)
+	assert.Equal(t, 0, *f.Report.Working)
+	assert.Equal(t, 4, *f.Report.Width)
+	ta.beatUp("amy")
+	f = whereFriends(ta)["amy"]
+	require.NotNil(t, f.Report)
+	assert.Empty(t, f.Report.Running, "an omitted list does not restore the finished cards")
 
 	for _, bad := range []string{"--working -1", "--queue x", "--width 0", "--load lots"} {
 		code, _, errs := ta.do("friend beat amy " + bad)
@@ -269,7 +281,7 @@ func TestABareTimeOrAnUnaskedNonceNeverProves(t *testing.T) {
 	ta.step(sprint.BeatDeadline + time.Second)
 	f := whereFriends(ta)["amy"]
 	assert.Equal(t, sprint.Down, f.Status, "her beats stopped, so her proof stopped with them")
-	assert.Contains(t, f.Evidence, "her beat stopped")
+	assert.Contains(t, f.Evidence, "daemon not beating")
 	ta.ok("friend beat amy")
 	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "beating again, within fifteen minutes of the answer")
 	ta.step(sprint.FriendProofLive)

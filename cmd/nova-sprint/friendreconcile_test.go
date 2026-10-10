@@ -170,10 +170,11 @@ func TestAFinishFromHerReportIsHerSessionsEvidence(t *testing.T) {
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok")
 	f = whereFriends(ta)["amy"]
 	assert.Equal(t, sprint.Up, f.Status)
-	assert.Equal(t, "finish 0s ago", f.Evidence)
+	assert.Equal(t, "daemon up, finish 0s ago", f.Evidence)
 	assert.Equal(t, ta.now.UTC(), f.Finished.UTC())
 	ta.a.sleep(sprint.FriendFinishWindow)
 	f = whereFriends(ta)["amy"]
 	assert.Equal(t, sprint.Down, f.Status, "the finish out of its window")
-	assert.Contains(t, f.Evidence, "no card finished within 30m0s (last 30m0s ago)")
+	assert.Contains(t, f.Evidence, "session deaf 30m0s:")
+	assert.Contains(t, f.Evidence, "no card finished within 30m0s")
 }

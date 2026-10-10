@@ -137,7 +137,7 @@ type FriendHealthWrite struct {
 }
 
 // FriendPresence is everything the friends' rule reads of one friend: the
-// coordinator's hold, her own beat (shown, never evidence), the coordinator's
+// coordinator's hold, her daemon's beat (its age, and the session word it carries), the coordinator's
 // observation of her, the seat's generation now, and when a card of hers last
 // finished (working to done), zero for never.
 type FriendPresence struct {

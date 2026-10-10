@@ -629,7 +629,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, slept[:3], "longer each time; the rest are the loop's own pauses")
 	assert.Equal(t, 4, opens)
 	assert.Equal(t, 2, beats, "the loop ran once the store answered")
-	assert.Contains(t, out.String(), "RUN 2026-10-04T03:00:01Z store: unexpected EOF; opening again in 1s")
+	assert.Contains(t, out.String(), "store: unexpected EOF; opening again in 1s")
 	assert.Contains(t, out.String(), "opening again in 4s")
 
 	// down for good: the signal ends it, exit 0, no crash loop
@@ -904,9 +904,7 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
 	mu.Lock()
 	assert.Equal(t, []string{"pr00f1"}, proofs, "her up beat names the check her session answered, once; the unanswered one never")
-	require.NotEmpty(t, downs)
-	assert.Contains(t, downs[0], "push unproven: session check pr00f1", "down until the first answer")
-	assert.Contains(t, downs[len(downs)-1], "no session answer to session check r4nd0m within 5m0s", "down with the check's nonce once it stops answering")
+	assert.Empty(t, downs, "session deafness is separate from daemon liveness")
 	require.Len(t, checks, 2, "the first check, the push proof, then the next after the quiet")
 	assert.Contains(t, checks[1], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
 	assert.Contains(t, checks[1], "--to ada")

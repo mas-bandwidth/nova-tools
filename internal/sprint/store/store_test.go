@@ -37,6 +37,10 @@ type harness struct {
 	// clock: the fleet machines alive (a test that has one fall silent takes
 	// it out).
 	live []string
+	// daemons is the friends whose daemons beat at every step of the clock, as
+	// nova-friend run's does each second (daemon): half of a friend up
+	// (sprint.FriendStatus).
+	daemons []string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -72,6 +76,22 @@ func (h *harness) beat() {
 		_, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{})
 		require.NoError(h.t, err)
 	}
+	h.mu.Lock()
+	daemons := append([]string(nil), h.daemons...)
+	h.mu.Unlock()
+	for _, f := range daemons {
+		_, err := h.st.FriendBeat(h.ctx, f)
+		require.NoError(h.t, err)
+	}
+}
+
+// daemon starts each friend's daemon: it beats now and at every step of the clock after.
+func (h *harness) daemon(friends ...string) {
+	h.t.Helper()
+	h.mu.Lock()
+	h.daemons = append(h.daemons, friends...)
+	h.mu.Unlock()
+	h.beat()
 }
 
 func (h *harness) run(step Step) Result {

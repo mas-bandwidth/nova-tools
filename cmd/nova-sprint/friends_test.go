@@ -302,10 +302,10 @@ func (ta *testApp) beatUp(friend string) {
 	ta.pong(friend)
 }
 
-// A friend is up only on her session's evidence: a wake ping her session answered under
-// sprint.FriendPongWindow old (or a card of hers finished); a beat is never evidence; held
-// while friend down holds her whatever she does, and friend up releases the hold without
-// counting as evidence. The rows go up, then held, then down, each by name
+// A friend is up on her daemon's beat (at most sprint.FriendBeatLive old) and her session's
+// evidence: a wake ping her session answered under sprint.FriendPongWindow old (or a card
+// of hers finished); a beat alone is never up; held while friend down holds her whatever
+// she does, and friend up releases the hold without counting as evidence. The rows go up, then held, then down, each by name
 // (store.FleetOrder).
 func TestAFriendsStatusIsTheFriendsRuleOverHerSessionsEvidenceAndHerHold(t *testing.T) {
 	t.Parallel()
@@ -325,6 +325,9 @@ func TestAFriendsStatusIsTheFriendsRuleOverHerSessionsEvidenceAndHerHold(t *test
 
 	// every pong was at t: up at the window less a second, down at the window and a second
 	ta.a.sleep(sprint.FriendPongWindow - time.Second)
+	for _, f := range []string{"zed", "amy", "cat"} {
+		ta.ok("friend beat " + f) // their daemons beat every second throughout
+	}
 	ta.pong("zed")
 	assert.Equal(t, map[string]string{"amy": "up", "bob": "down", "cat": "held", "zed": "up"}, ta.friendStatus(), "within the window: still up")
 	ta.a.sleep(2 * time.Second)
@@ -340,6 +343,11 @@ func TestAFriendsStatusIsTheFriendsRuleOverHerSessionsEvidenceAndHerHold(t *test
 	// friend up is no evidence: cat's pong is past the window, so released she is down
 	ta.ok("friend up cat")
 	assert.Equal(t, "down", ta.friendStatus()["cat"], "released with no recent evidence: down, never up")
+	ta.a.sleep(sprint.FriendBeatLive + time.Second)
+	ta.pong("cat")
+	assert.Equal(t, "down", ta.friendStatus()["cat"], "her session answered while her daemon was not beating: down")
+	assert.Equal(t, "daemon not beating (last beat 13s ago), session pong 0s ago", whereFriends(ta)["cat"].Evidence, "the row names the half missing: her last beat was before the 2s and the 11s sleeps")
+	ta.ok("friend beat cat")
 	ta.pong("cat")
 	assert.Equal(t, "up", ta.friendStatus()["cat"], "released, and her session answered")
 }

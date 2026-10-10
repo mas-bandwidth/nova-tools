@@ -14,9 +14,10 @@ import (
 )
 
 // BeatEvery is how often the daemon beats to the sprint server while its
-// loop runs: the sprint's own number (internal/sprint FriendBeatEvery, one
-// second; a friend is down after fifteen without one). It is also the
-// loop's read block: one read of the stream per beat.
+// loop runs, every step whatever the session says: the sprint's own number
+// (internal/sprint FriendBeatEvery, one second; her daemon reads not beating
+// after FriendBeatLive, ten, without one). It is also the loop's read block:
+// one read of the stream per beat.
 const BeatEvery = time.Second
 
 // MaxDeliveries is how many times a message is handed into the session
@@ -585,18 +586,18 @@ func (b *beatState) snapshot() (active, last time.Time, beats int, err string) {
 	return b.active, b.last, b.beats, b.err
 }
 
-// beatLoop is this daemon's sole production beat caller. A tick waits for the
-// previous beat, never sending overlapping proof words or duplicate beat verbs.
+// beatLoop is this daemon's sole production beat caller. It is the native
+// heartbeat (Heartbeat): sends immediately and on every one-second tick,
+// whatever the bus store and the session say, each send bounded and serialized
+// (docs/SPEC-FRIEND.md, The beat; tla/Presence.tla, Heartbeat).
 func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
-	ticker := time.NewTicker(BeatEvery)
-	defer ticker.Stop()
 	var active, walked time.Time
-	for {
+	_ = Heartbeat(ctx, func(call context.Context) error {
 		now := d.Now()
 		if d.Activity != nil && (walked.IsZero() || now.Sub(walked) >= ActivityEvery) {
 			active, walked = d.Activity(), now
 		}
-		err := d.Beat(ctx, active)
+		err := d.Beat(call, active)
 		b.mu.Lock()
 		b.active = active
 		if err != nil {
@@ -605,12 +606,8 @@ func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 			b.err, b.beats, b.last = "", b.beats+1, now
 		}
 		b.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+		return err
+	}) // ignored: the heartbeat ends only with its context; each result is on the beat state
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -624,7 +621,8 @@ func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 // in as its own turn holding only the pong line (startWake), and in one-shot
 // mode, each free lane handed its next card with the waiting messages riding
 // along (lanes.go);
-// an independent beat carrying the session's proof; the session's pong; the status. The
+// an independent beat every step, whatever the store and the session say: the
+// daemon's liveness, carrying the session's proof; the session's pong; the status. The
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
@@ -754,15 +752,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
 		if d.StepBeatForTests {
-			if storeOK {
-				if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
-					d.active, d.cards, d.walked = d.Activity(), d.held(), now
-				}
-				if err := d.Beat(ctx, d.active); err != nil {
-					d.status.BeatError = err.Error()
-				} else {
-					d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
-				}
+			// the beat goes every step, whatever the store or the session says: it is the
+			// daemon's liveness and nothing else (docs/SPEC-FRIEND.md, the beat)
+			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
+				d.active, d.cards, d.walked = d.Activity(), d.held(), now
+			}
+			if err := d.Beat(ctx, d.active); err != nil {
+				d.status.BeatError = err.Error()
+			} else {
+				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		} else {
 			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError = beats.snapshot()

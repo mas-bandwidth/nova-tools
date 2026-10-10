@@ -14,7 +14,7 @@ func beatActive(ta *testApp, friend string, ago time.Duration) string {
 }
 
 // A friend's beat carries the newest write her daemon found, her friends row keeps it, and
-// the table shows how long ago it was; a beat that carries none shows "-".
+// the table shows how long ago it was; a beat that carries none preserves the last known activity.
 func TestFriendBeatCarriesTheLastSessionActivityOntoHerRowAndTheTable(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "amy")
@@ -27,8 +27,8 @@ func TestFriendBeatCarriesTheLastSessionActivityOntoHerRowAndTheTable(t *testing
 	assert.Contains(t, ta.ok("where --all"), "30m ago")
 
 	ta.ok("friend beat amy")
-	assert.True(t, whereFriends(ta)["amy"].Active.IsZero(), "a beat with none keeps none")
-	assert.NotContains(t, ta.ok("where --all"), "m ago")
+	assert.Equal(t, f.Active, whereFriends(ta)["amy"].Active, "a liveness beat preserves known activity")
+	assert.Contains(t, ta.ok("where --all"), "30m ago")
 
 	code, _, errs := ta.do("friend beat amy --active yesterday")
 	assert.Equal(t, 2, code)
@@ -77,10 +77,10 @@ func TestAFriendHoldingCardsWhoseSessionWritesNothingIsAnAlarm(t *testing.T) {
 	_, ok = item(ta.coordView(""), "f:amy")
 	assert.True(t, ok)
 
-	// a beat that reports no activity is no evidence of idleness: the stale-report rule stands
+	// A liveness beat preserves the stale report; it cannot clear an existing idle alarm.
 	ta.ok("friend beat amy")
 	_, ok = item(ta.coordView(""), "f:amy")
-	assert.False(t, ok)
+	assert.True(t, ok)
 
 	code, _, errs := ta.do("set --friend-idle soon")
 	assert.Equal(t, 1, code)

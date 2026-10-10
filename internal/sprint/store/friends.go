@@ -333,6 +333,23 @@ func friendBeatReport(prev *sprint.FriendReport, rep sprint.FriendReport) (sprin
 		q := *prev.Queue
 		out.Queue = &q
 	}
+	if prev != nil {
+		if out.Width == nil {
+			out.Width = prev.Width
+		}
+		if out.Active.IsZero() {
+			out.Active = prev.Active
+		}
+		if out.Build == "" {
+			out.Build = prev.Build
+		}
+		if out.Started.IsZero() {
+			out.Started = prev.Started
+		}
+		if out.Present.IsZero() {
+			out.Present = prev.Present
+		}
+	}
 	if len(named) == 0 {
 		return out, "-"
 	}
