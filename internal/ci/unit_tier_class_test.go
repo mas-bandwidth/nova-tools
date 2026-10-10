@@ -159,6 +159,7 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 	recipe = strings.Join(mk.recipeFor("test-functional"), "\n")
 	assert.Containsf(t, recipe, " --p 2 ", "make test-functional does not pass --p 2 (GOTEST_P) to tools/ci functional-run:\n%s", recipe)
 }
+
 // TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge: the functional job runs on
 // pull_request, merge_group, schedule and workflow_dispatch.
 func TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge(t *testing.T) {
