@@ -546,9 +546,9 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 				var mu sync.Mutex
-				var walls []string // the config dir of each wall a lane's child ran in
+				var walls []string    // the config dir of each wall a lane's child ran in
 				var denies [][]string // and what each wall denied
-				var plain int      // children run outside any lane's wall
+				var plain int         // children run outside any lane's wall
 				w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
 					return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
 						mu.Lock()
