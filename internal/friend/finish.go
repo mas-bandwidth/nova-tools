@@ -169,7 +169,7 @@ func DecideFinish(in FinishInput) FinishDecision {
 	}
 	dec := FinishDecision{
 		Act: ActFinish, Head: head, Judgment: strings.Join(notes, "; "),
-		AttemptSpent: true, SendsFinish: hasCommit,
+		AttemptSpent: true, SendsFinish: true,
 	}
 	switch {
 	case verdict == "":
@@ -187,16 +187,16 @@ func DecideFinish(in FinishInput) FinishDecision {
 
 // applyInLane is whether the daemon takes the decision instead of the lane's end.
 // A measured zero (or a failed token read) and a cost-only report are taken. A finish
-// is taken when the lane committed, so the head is the branch tip. An unmeasured
-// exit with no report is not: that remains the lane's harness fault.
+// is taken when the lane committed, and also when a report is present and the lane
+// committed nothing: the head is empty, and friend sync must not send the sha the
+// report named. An unmeasured exit with no report is not: that remains the lane's
+// harness fault.
 func (d FinishDecision) applyInLane(in FinishInput) bool {
 	switch d.Act {
-	case ActRecover, ActFail:
+	case ActRecover, ActFail, ActFinish:
 		return true
 	case ActFault:
 		return in.Usage.Measured || strings.Contains(in.Report, "Cost:")
-	case ActFinish:
-		return in.hasCommit()
 	default:
 		return false
 	}
@@ -371,6 +371,21 @@ func withBranchHead(report, tip string) string {
 		out = append([]string{"Head: " + tip}, out...)
 	}
 	return strings.Join(out, "\n") + "\n"
+}
+
+// withoutReportHead drops every Head line. A lane that committed nothing finishes
+// with no head, and the report friend sync and the outbox pass read must not still
+// name one.
+func withoutReportHead(report string) string {
+	lines := strings.Split(report, "\n")
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if key, _ := reportKey(l); key == "head" {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
 }
 
 // withInferredOK puts the inferred verdict on a report that had none, and keeps the
@@ -755,6 +770,17 @@ func (l *loop) finishFromBranch(ln *lane, card Card, in FinishInput, dec FinishD
 		report = withBranchHead(report, dec.Head)
 		if dec.Judgment != "" && !strings.Contains(report, dec.Judgment) {
 			report = strings.TrimRight(report, "\n") + "\n\n" + dec.Judgment + "\n"
+		}
+	default:
+		// No branch tip: the report friend sync reads must not still carry a Head.
+		// When the decision's verdict is not the report's (an unaddressed LAND is a
+		// HOLD), the file starts with that verdict so sync does not finish the other.
+		report = withoutReportHead(report)
+		if v, _ := reportVerdict(report); dec.Verdict != "" && !strings.EqualFold(dec.Verdict, v) {
+			report = failReport(dec.Verdict, "", dec.Judgment) + report
+			if !strings.HasSuffix(report, "\n") {
+				report += "\n"
+			}
 		}
 	}
 	if err := os.MkdirAll(card.Outbox, 0o755); err == nil && report != in.Report {

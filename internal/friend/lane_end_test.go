@@ -192,8 +192,9 @@ func TestALaneThatEndsWithNoReportFinishesItsCardFailed(t *testing.T) {
 		})
 	})
 
-	// a run that writes the friend's report finishes with it: the lane writes nothing and
-	// sends nothing, friend sync reads hers
+	// a run that writes the friend's report with no commit on the branch is that branch
+	// finish too: the lane takes it and drops the Head line, so the finish has no --head
+	// and friend sync cannot read the sha the report named
 	t.Run("report", func(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
@@ -204,11 +205,16 @@ func TestALaneThatEndsWithNoReportFinishesItsCardFailed(t *testing.T) {
 
 			report, err := os.ReadFile(filepath.Join(out, "REPORT.md"))
 			require.NoError(t, err, strings.Join(r.records, "\n"))
-			assert.Equal(t, "Verdict: LAND\nHead: 0123456789abcdef0123456789abcdef01234567\n\nthe friend did it\n", string(report))
-			assert.Empty(t, f.got(), "no finish from the lane")
+			assert.Equal(t, "Verdict: LAND\n\nthe friend did it\n", string(report), "the Head line is dropped")
+			assert.NotContains(t, string(report), "0123456789abcdef0123456789abcdef01234567")
+			sent := f.got()
+			require.Len(t, sent, 1, "the lane takes the report finish")
+			assert.NotContains(t, sent[0], "--head")
+			assert.Contains(t, sent[0], "--failed")
+			assert.NotContains(t, strings.Join(sent[0], " "), "0123456789abcdef0123456789abcdef01234567")
 			assert.Empty(t, state.Started)
 			assert.Empty(t, state.GivenUp)
-			assert.Contains(t, strings.Join(r.records, "\n"), "card=done finish=report")
+			assert.Contains(t, strings.Join(r.records, "\n"), "card=done finish=failed")
 		})
 	})
 }

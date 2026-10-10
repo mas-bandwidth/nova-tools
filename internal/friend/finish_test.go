@@ -1,12 +1,15 @@
 package friend
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The finish contract (DecideFinish): the head is the branch's, a lane that committed
@@ -42,7 +45,15 @@ func TestHeadFromTheBranchBeatsHeadInTheReport(t *testing.T) {
 	named := in
 	named.Tip, named.Commits = "", nil
 	none := DecideFinish(named)
+	assert.Equal(t, ActFinish, none.Act)
 	assert.Empty(t, none.Head, "a lane with no commits finishes with no head")
+	assert.True(t, none.Failed, "a LAND with no branch tip is not ok")
+	assert.True(t, none.applyInLane(named), "a report with no commits is the branch finish")
+	assert.True(t, none.SendsFinish)
+	noneArgv := branchFinishArgv("zhi", card, named.Branch, none, "the friend did it")
+	assert.NotContains(t, noneArgv, "--head")
+	assert.NotContains(t, strings.Join(noneArgv, " "), reportSHA)
+	assert.Contains(t, noneArgv, "--failed")
 }
 
 func TestNoReportWithCommitsGetsOneRecoveryTurnThenFailsNamingIt(t *testing.T) {
@@ -188,4 +199,80 @@ func TestUnmeasuredNoReportStaysOutOfTheLane(t *testing.T) {
 	assert.Equal(t, ActFinish, done.Act)
 	assert.True(t, done.UsageUnknown)
 	assert.True(t, done.OK)
+}
+
+// noCommitLane is a lane whose turn wrote a LAND report naming reportSHA, and
+// whose checkout committed nothing. The card is working on her row, so the
+// outbox pass would finish the report if the lane left it.
+func noCommitLane(t *testing.T, reportSHA string) (*rig, Card, *loop, *lane) {
+	t.Helper()
+	r := newRig(t)
+	h := workCard("nocommit.w1", "working")
+	inboxJob(t, r.d.Dir, h.Job, h.Brief)
+	outboxReport(t, r.d.Dir, h.Job, "Verdict: LAND\nHead: "+reportSHA+"\n\nthe friend did it\n")
+	r.d.heldCards = []HeldCard{h}
+	card := Card{
+		ID:     h.Card,
+		Brief:  filepath.Join(r.d.Dir, "inbox", h.Job, "BRIEF.md"),
+		Outbox: filepath.Join(r.d.Dir, "outbox", h.Job),
+	}
+	ln := &lane{n: 1, card: &card}
+	l := &loop{
+		d:   r.d,
+		ctx: context.Background(),
+		lanes: &laneSet{lanes: []*lane{ln}, state: LaneState{Started: map[string]Started{
+			h.Job: {Lane: 1, Card: card},
+		}}},
+	}
+	return r, card, l, ln
+}
+
+// TestNoCommitReportIsFinishedFromTheBranchWithAnEmptyHead is the lane and the
+// outbox. A report that names a sha, with no commit on the branch, is finished
+// from the branch with an empty head. Friend sync is not handed that sha.
+func TestNoCommitReportIsFinishedFromTheBranchWithAnEmptyHead(t *testing.T) {
+	t.Parallel()
+	const reportSHA = "0123456789abcdef0123456789abcdef01234567"
+
+	t.Run("lane", func(t *testing.T) {
+		t.Parallel()
+		r, card, l, ln := noCommitLane(t, reportSHA)
+		f := &finishes{}
+		r.d.Finish = f.finish
+		took := l.branchFinish(laneResult{ln: ln, t: &turn{}, turn: LaneTurn{Exit: 0}}, card, LaneEnd{Exit: 0}, "lane end", t0)
+		assert.True(t, took)
+		sent := f.got()
+		require.Len(t, sent, 1)
+		assert.NotContains(t, sent[0], "--head")
+		assert.NotContains(t, strings.Join(sent[0], " "), reportSHA)
+		assert.Contains(t, sent[0], "--failed")
+		raw, err := os.ReadFile(card.Report())
+		require.NoError(t, err)
+		_, head := reportVerdict(string(raw))
+		assert.Empty(t, head)
+		assert.NotContains(t, string(raw), reportSHA)
+
+		l.outboxStep(t0)
+		assert.Len(t, f.got(), 1, "the outbox pass does not send the report's sha")
+	})
+
+	t.Run("outbox", func(t *testing.T) {
+		t.Parallel()
+		r, card, l, ln := noCommitLane(t, reportSHA)
+		took := l.branchFinish(laneResult{ln: ln, t: &turn{}, turn: LaneTurn{Exit: 0}}, card, LaneEnd{Exit: 0}, "lane end", t0)
+		assert.True(t, took, "the lane takes the report even when it cannot send")
+		raw, err := os.ReadFile(card.Report())
+		require.NoError(t, err)
+		_, head := reportVerdict(string(raw))
+		assert.Empty(t, head)
+		assert.NotContains(t, string(raw), reportSHA)
+
+		f := &finishes{}
+		r.d.Finish = f.finish
+		l.outboxStep(t0)
+		sent := f.got()
+		require.Len(t, sent, 1, "friend sync's outbox pass still finishes the report")
+		assert.NotContains(t, sent[0], "--head")
+		assert.NotContains(t, strings.Join(sent[0], " "), reportSHA)
+	})
 }
