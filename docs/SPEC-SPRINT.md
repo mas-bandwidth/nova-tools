@@ -7133,6 +7133,58 @@ With no record, or one whose last sample is older than the window (a server that
 measuring), both fields and the line are left out. Tested on the twin store with the harness's
 clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
 
+#### store-trips-pipelinedb-bb: the server reads only what it needs
+
+On 2026-10-10 the server called the table layer's read set on the fleet table about 56 times
+a second, 25 to 30 ms each, 62% of the store's one thread, and the rows it read were mostly
+the finished cards of the members' ok and failed cells, which grow with every landing; ticks
+began every 30 to 95 s and `where --json` took 6 to 15 s. Three changes:
+
+- A row's cells (`Store.ReadCells`; `queue --as <member>`, every worker's and reader's poll,
+  names ready, working and ctl) read the named cells' records alone: every other set column of
+  the row is read as text, which has no cell ids. On a copy of the live store this was most of
+  the fleet table's read sets.
+- A process keeps, for each table it loads, the placed records its last whole read found, at
+  the revision read, with the mark of the change event that left that revision (its stream id;
+  `store.LoadCache`, one per store address, shared by the verbs' stores). A later load
+  (`Store.Load`, and the fenced read of a step without the tick's twin,
+  `PipelinedLoadWithFence`) reads the shape and the change stream back from the shape's
+  revision to the cache's in one exchange; the cache is used only while the event at its
+  revision is still the one it was read at (the same mark), and then the records the writes
+  since changed are read again, as the tick's twin catches up. Read whole, and kept with the
+  mark read before it: a table the cache does not hold at its epoch, one whose stream does not
+  chain between the two revisions, one whose kept records do not add up to the shape's counts,
+  and one whose store is behind the cache or has another event at the cache's revision (the
+  entry is dropped). A store that loses its last writes (a restart from an AOF synced every
+  second, an RDB or a backup restore: the same epoch, a lower revision) and writes another
+  history from there gives those revisions new events with new ids, so the cache never serves
+  the lost history, whether the store is below, at or past the cached revision when it is next
+  read. Each load gets its own copy of every card. The model is `tla/LoadCache.tla`: two loads
+  at once over a shared cache, with record and display writes and a store that loses its last
+  writes; `LoadIsSnapshot` (every table a load took was, when it took it, the store's records
+  at the revision its shape read) and `CacheIsHistory`, each reversed by a witness (a catch-up
+  that misses the last write; a cache later than the shape used as it is; the mark not
+  checked).
+- The run loop's friend reconcile (section 1, friend-reconcile-every-tick-r.w1) runs in the
+  tick's own turn of the line, before the tick lets the line go, instead of taking a batch's
+  place in the line once per friend: each pass queued behind every waiting batch, and the
+  passes cost 12 s a tick at the median (the gap between ticks less the tick's own time, over
+  the 5,991 ticks of 2026-10-09 17:40 to 23:40 ET). The line still has one holder at a time
+  (`tla/ServerLanes.tla`: the tick is one holder from TickBegin to TickEnd), and the batches'
+  turn after a tick is as long as the tick held the line (`sprint.ControlLine`), the reconcile
+  included. Every read of a friend's directory in that pass (its stat, her QUEUE.json, each
+  card's outbox report) answers within `FriendReadDeadline` (2 s) or the friend is passed over
+  for the tick: one record line, and one note to the coordinator an episode ("a friend's
+  directory did not answer the reconcile"); what the pass settled before the stall stands, and
+  the read is left to finish on its own (it only reads).
+
+Tested on the twin store: `TestReadCellsReadsOnlyTheNamedCells`,
+`TestLoadCacheReadsOnlyWhatChanged`, `TestLoadCacheSnapshotsShareNothing`,
+`TestLoadCacheFencedReadAgrees`, `TestLoadCacheAfterTheStoreLostWrites`,
+`TestLoadCacheConcurrentLoads` (with -race) and
+`TestRunReconcilePassesOverAStalledFriendDirectory`; on a real Redis,
+`TestRedisLoadCacheAgreesWithAWholeRead` (functional).
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,
