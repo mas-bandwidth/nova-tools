@@ -196,22 +196,23 @@ type waitCard struct {
 
 // workerView is view worker's document, schema 1.
 type workerView struct {
-	View   string       `json:"view"`
-	Schema int          `json:"schema"`
-	Sum    string       `json:"sum"`
-	At     time.Time    `json:"at"`
-	Epoch  uint64       `json:"epoch"`
-	As     string       `json:"as"`
-	Kind   string       `json:"kind"` // member or friend
-	Dir    string       `json:"-"`    // a friend's working directory, her row's (store.FriendDirs); "" is ~/<name>-working
-	Cursor string       `json:"cursor"`
-	Next   string       `json:"next,omitempty"`
-	Quiet  []string     `json:"quiet,omitempty"` // a QUIET line per machine quiet now (fleet quiet)
-	Cards  []workerCard `json:"cards"`
-	Wait   []waitCard   `json:"wait,omitempty"`
-	NWait  int          `json:"nwait,omitempty"` // every result not landed, when more than are listed
-	Same   int          `json:"same,omitempty"`
-	Gone   int          `json:"gone,omitempty"`
+	View     string       `json:"view"`
+	Schema   int          `json:"schema"`
+	Sum      string       `json:"sum"`
+	At       time.Time    `json:"at"`
+	Epoch    uint64       `json:"epoch"`
+	As       string       `json:"as"`
+	Kind     string       `json:"kind"` // member or friend
+	Dir      string       `json:"-"`    // a friend's working directory, her row's (store.FriendDirs); "" is ~/<name>-working
+	NovaRoot string       `json:"-"`    // the machine row's nova_root, so a friend's fallback working directory and brief path sit under it
+	Cursor   string       `json:"cursor"`
+	Next     string       `json:"next,omitempty"`
+	Quiet    []string     `json:"quiet,omitempty"` // a QUIET line per machine quiet now (fleet quiet)
+	Cards    []workerCard `json:"cards"`
+	Wait     []waitCard   `json:"wait,omitempty"`
+	NWait    int          `json:"nwait,omitempty"` // every result not landed, when more than are listed
+	Same     int          `json:"same,omitempty"`
+	Gone     int          `json:"gone,omitempty"`
 }
 
 func (a *app) cmdViewCoordinator(args []string, stdout, stderr io.Writer) int {
@@ -787,6 +788,7 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 			return v, false, err
 		}
 		v.Dir = dirs[as]
+		v.NovaRoot = a.machineNovaRoot()
 	}
 	d, err := st.Dealt(ctx)
 	if err != nil {
@@ -834,7 +836,7 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 		wc := workerCard{ID: c.ID, P: p.Primary, St: c.Col, Att: p.Attempt, Gen: p.Gen, DL: deadline[c.ID], Br: p.Branch, J: open[p.Primary],
 			Base: cmp.Or(p.Base, swarm.ReadCardBase([]byte(p.Brief)).Ref), Paths: swarm.CardPaths([]byte(p.Brief))}
 		if v.Kind == "friend" {
-			wc.Brief = friendWorkDir("", as, v.Dir) + "/inbox/" + friendJobOf(p) + "/BRIEF.md"
+			wc.Brief = friendWorkDir(v.NovaRoot, as, v.Dir) + "/inbox/" + friendJobOf(p) + "/BRIEF.md"
 		} else {
 			wc.Brief = "nova-sprint card " + p.Primary + " --brief"
 		}
@@ -911,9 +913,9 @@ func workerNext(v workerView, c *sprint.Card, p sprint.Packet) string {
 	switch {
 	case v.Kind == "friend" && p.Kind == "read":
 		// a read on her row is returned, never finished (sprint.FriendReadOutboxLine)
-		return "read " + c.ID + ": write " + friendWorkDir("", v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND, or Verdict: HOLD and a line naming the file:line or rule and what to change"
+		return "read " + c.ID + ": write " + friendWorkDir(v.NovaRoot, v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND, or Verdict: HOLD and a line naming the file:line or rule and what to change"
 	case v.Kind == "friend" && c.Col == sprint.Working:
-		return "finish " + c.ID + ": push to " + p.Branch + ", then write " + friendWorkDir("", v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
+		return "finish " + c.ID + ": push to " + p.Branch + ", then write " + friendWorkDir(v.NovaRoot, v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
 	case v.Kind == "friend":
 		return "start " + c.ID + ": its brief is " + v.Cards[0].Brief
 	case c.Col == sprint.Working:

@@ -35,7 +35,7 @@ const friendCardsWords = "friend cards lists every card held on the friend's row
 
 // friendCardsOf is every card held on the friend's row with its packet and brief, in the
 // server's order: her working cards, then the ready ones dealt behind them.
-func friendCardsOf(ctx context.Context, st *store.Store, name string) ([]friend.HeldCard, error) {
+func friendCardsOf(ctx context.Context, st *store.Store, novaRoot, name string) ([]friend.HeldCard, error) {
 	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready)
 	if err != nil || len(cards) == 0 {
 		return []friend.HeldCard{}, err
@@ -55,9 +55,9 @@ func friendCardsOf(ctx context.Context, st *store.Store, name string) ([]friend.
 		h.Tier = cmp.Or(p.Tier, m.Tier, cardhdr.RouteFlash)
 		if p.Kind == "read" {
 			// a read card's job is a card's (friendJobOf), the path friend sync writes (friendReadOf)
-			h.Job, h.Branch, h.Brief = friendJobOf(p), cmp.Or(p.WorkBranch, cards[i].F("branch")), friendReadTextAtDir(st, name, dirs[name], p, cards[i])
+			h.Job, h.Branch, h.Brief = friendJobOf(p), cmp.Or(p.WorkBranch, cards[i].F("branch")), friendReadTextAtDir(st, novaRoot, name, dirs[name], p, cards[i])
 		} else {
-			h.Job, h.Brief = friendJobOf(p), friendBriefAtDir(name, dirs[name], p)
+			h.Job, h.Brief = friendJobOf(p), friendBriefAtDir(novaRoot, name, dirs[name], p)
 		}
 		out = append(out, h)
 	}
@@ -90,7 +90,7 @@ func (a *app) cmdFriendCards(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: no friend %s on the friends table (friends: %s); run: nova-sprint friend sync\n", prog, name, who, orDashStr(strings.Join(names, ","), "none"))
 		return 1
 	}
-	held, err := friendCardsOf(ctx, st, who)
+	held, err := friendCardsOf(ctx, st, a.machineNovaRoot(), who)
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}

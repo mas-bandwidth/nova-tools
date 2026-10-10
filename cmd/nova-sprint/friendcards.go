@@ -77,20 +77,20 @@ func friendJobOf(p sprint.Packet) string {
 // A reworked card has the daemon's form (friend.ReworkedBrief), with its fix
 // immediately after STATUS and its STOP updated, whichever writer delivers it.
 func friendBrief(name string, p sprint.Packet) string {
-	return friendBriefAtDir(name, "", p)
+	return friendBriefAtDir("", name, "", p)
 }
 
 // friendBriefAtDir names the row directory in the delivered brief (docs/FRIENDS.md).
-func friendBriefAtDir(name, dir string, p sprint.Packet) string {
-	return friend.ReworkedBrief(friendServerBriefAtDir(name, dir, p))
+func friendBriefAtDir(novaRoot, name, dir string, p sprint.Packet) string {
+	return friend.ReworkedBrief(friendServerBriefAtDir(novaRoot, name, dir, p))
 }
 
 // friendServerBriefAtDir is the brief before a rework transforms its fix and STOP.
-func friendServerBriefAtDir(name, dir string, p sprint.Packet) string {
+func friendServerBriefAtDir(novaRoot, name, dir string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
-	fmt.Fprintf(&b, "Work in %[1]s/jobs/%[2]s/: every clone, worktree and build output goes inside it, "+strings.ReplaceAll(swarm.FriendGoCacheLine(name), "~/"+name+"-working", friendWorkDir("", name, dir))+", and the report goes to %[1]s/outbox/%[2]s/REPORT.md.\n", friendWorkDir("", name, dir), job)
+	fmt.Fprintf(&b, "Work in %[1]s/jobs/%[2]s/: every clone, worktree and build output goes inside it, "+strings.ReplaceAll(swarm.FriendGoCacheLine(name), "~/"+name+"-working", friendWorkDir(novaRoot, name, dir))+", and the report goes to %[1]s/outbox/%[2]s/REPORT.md.\n", friendWorkDir(novaRoot, name, dir), job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a card brief --widen widened starts from the held attempt's head (member.Carried)
 		p.BaseHead, p.BaseAttempt = c.Head, c.Attempt
@@ -714,7 +714,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir, row
 			if err := os.MkdirAll(in, 0o755); err != nil {
 				return delivered, finished, err
 			}
-			switch err := atomicfile.WriteFile(brief, []byte(friendBriefAtDir(name, rowDir, p)), 0o644, atomicfile.NoReplace()); {
+			switch err := atomicfile.WriteFile(brief, []byte(friendBriefAtDir(a.machineNovaRoot(), name, rowDir, p)), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
 				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)
@@ -998,13 +998,13 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 
 // friendReadTextAtDir names the row directory in a review brief header
 // (docs/FRIENDS.md), keeping the pure sprint generators independent of config.
-func friendReadTextAtDir(st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card) string {
+func friendReadTextAtDir(st *store.Store, novaRoot, name, dir string, p sprint.Packet, c *sprint.Card) string {
 	text := friendReadText(st, name, p, c)
 	header, body, found := strings.Cut(text, "\n\n")
 	if !found {
 		return text
 	}
-	return strings.ReplaceAll(header, "~/"+name+"-working", friendWorkDir("", name, dir)) + "\n\n" + body
+	return strings.ReplaceAll(header, "~/"+name+"-working", friendWorkDir(novaRoot, name, dir)) + "\n\n" + body
 }
 
 // friendReadOf delivers one friend's read and closes it from the friend's
@@ -1029,7 +1029,7 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir, rowD
 		if err := os.MkdirAll(in, 0o755); err != nil {
 			return 0, 0, err
 		}
-		text := friendReadTextAtDir(st, name, rowDir, p, c)
+		text := friendReadTextAtDir(st, a.machineNovaRoot(), name, rowDir, p, c)
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			delivered++

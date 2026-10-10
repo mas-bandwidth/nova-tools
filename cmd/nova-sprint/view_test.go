@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -325,6 +327,24 @@ func TestTheWorkerViewOfAFriend(t *testing.T) {
 	assert.Equal(t, "sprint/s1-1.w1.g1.e0", v.Cards[0].Br)
 	reportPath := "~/amy-working/outbox/s1-1.w1/REPORT.md"
 	assert.Equal(t, "finish s1-1.w1: push to sprint/s1-1.w1.g1.e0, then write "+reportPath+" with Verdict: LAND|HOLD|FAIL and Head: <sha>", v.Next)
+}
+
+// A machine row with a nova_root moves the friend's brief and report paths under
+// that root: the view honours the row, not today's ~/<name>-working.
+func TestTheWorkerViewOfAFriendHonoursTheMachineRowsNovaRoot(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy")
+	ta.a.inventory = func(context.Context, string) ([]config.MachineWidth, error) {
+		return []config.MachineWidth{{Machine: "studio", NovaRoot: "/Volumes/nova"}}, nil
+	}
+	ta.ok("tick")
+	ta.startFriend("amy", 1)
+	var v workerView
+	ta.json("view worker --as amy", &v)
+	require.Len(t, v.Cards, 1)
+	want := "/Volumes/nova/ai/amy/working"
+	assert.Equal(t, want+"/inbox/s1-1.w1/BRIEF.md", v.Cards[0].Brief)
+	assert.Equal(t, "finish s1-1.w1: push to sprint/s1-1.w1.g1.e0, then write "+want+"/outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", v.Next)
 }
 
 // The server serves both views read-only on GET, through the handler with no socket: JSON,

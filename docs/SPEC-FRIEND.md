@@ -1593,7 +1593,8 @@ While the server refuses `friend cards` (a refusal it answered, `friend.Refused`
 server that did not answer), the daemon reads her row from the server's worker view, `GET
 /api/view/worker?as=<friend>` (nova-sprint `view worker`, served today): her work cards
 ready and working, each with the inbox path friend sync delivers its brief to
-(`~/<friend>-working/inbox/<job>/BRIEF.md`, the job `friendJobOf`), and no brief. On that
+(`<nova_root>/ai/<friend>/working/inbox/<job>/BRIEF.md` for a machine row with a
+`nova_root`, else `~/<friend>-working/inbox/<job>/BRIEF.md`, the job `friendJobOf`), and no brief. On that
 answer the daemon counts and retires as above, retiring only work jobs (`STATUS:` briefs:
 the view lists none of her reads, so a `WHO: friend` job is never retired on it), and writes
 nothing: a held card with no brief is said missing, once, with why, and `status` says the

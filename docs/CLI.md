@@ -1899,7 +1899,7 @@ nova-friend status --as <me> --dir <my working directory>
 
 A harness that needs a secret in its environment gets it through `--secrets
 NAME[,NAME]` with the machine's nova-secrets `--seat`: the agent runs
-`nova-secrets exec --store ~/nova-bench/secrets --as <seat> --key
+`nova-secrets exec --store ~/nova/bench/secrets --as <seat> --key
 ~/.config/nova-secrets/<seat>.key --sops <sops> --only <names> --require <name>...
 -- nova-friend run ...`, nova-secrets and sops by absolute path from PATH at
 install, so the daemon starts with exactly those names and never without one.
