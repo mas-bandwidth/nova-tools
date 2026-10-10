@@ -267,12 +267,13 @@ type OpenCode struct {
 	// the project config before a turn (AllowDirs), so a headless run never
 	// auto-rejects a tool call there. Nil: the config is left alone.
 	Allow []string
-	// Standalone passes --standalone to every run: opencode 2.0.25 and later run
-	// through a shared background server that never receives the environment the
-	// daemon was started with, so a sealed provider key (nova-secrets exec) reaches
-	// no provider ("Incorrect API key provided"); --standalone keeps the run in
-	// this process, with this environment. CheckRun sets it when the installed
-	// run lists the flag, so an older opencode is never handed it.
+	// Standalone passes --standalone to every run: opencode 2.0.25 (the
+	// background service, 2026-10-09) makes `opencode run` attach to a shared
+	// background service (`opencode serve --service`, started once, detached)
+	// instead of a private server, so a sealed provider key (nova-secrets exec)
+	// reaches no provider ("Incorrect API key provided"); --standalone keeps the
+	// run in this process, with this environment. CheckRun sets it when the
+	// installed run lists the flag, so an older opencode is never handed it.
 	Standalone bool
 
 	turns SessionTurns // the session's last turns, its liveness (alive.go)
