@@ -5132,6 +5132,48 @@ alarm:" and says the count now. Over the warn bound only, no judgment is written
 fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
 `alarm` above the alarm bound), while the beat and its reading are fresh.
 
+### fleet-test-process-alarm-b.w8
+
+Runaway test processes are a fleet beat, not a hand count. `fleet beat <member>
+--tests <n> --oldest <pid>` records on the member's beat how many live processes
+whose name ends in `.test` the beat agent read on the machine, and the parent pid
+of the oldest of them; a positive `--tests` wants `--oldest`, and a beat that
+counts none needs neither. `friend beat` carries the same two flags the same way.
+The verb records the reading it is given and never lists processes itself: a beat
+that carries no `--tests` carries no reading, so the loop that counts those
+processes on the machine stays the beat agent's. A beat sent through the server is
+still `fleet beat <member> --load <percent>` and nothing more: the server cannot
+count the worker's machine, and the server's allowed friend-beat flags are its own
+list, so a count reaches the store from a beat run on the machine.
+
+The tick, in its deadlines part with the other alarms, raises one judgment per
+episode when a fresh beat's count is over the threshold. The threshold is the
+sprint row's `tests_alarm`, nova-config's permanent setting (`nova-config sprint
+set --tests_alarm <n>`, a whole number from 1; `0` is the default), over the work
+table's `tests_alarm` (`nova-sprint set --tests-alarm <n>`), and when neither is
+set it is 4 times the width of the member or friend the beat is of: a fleet
+member's row's width, a friend's seat's width, else the width her beat reported,
+else the default width. The judgment is `runaway test processes`, filed under
+`member:<m>`, and its line is `runaway test processes on <m>: <n>, oldest parent
+pid <pid>, over <threshold>` (the pid is always named: a positive count wants it).
+A second beat while the count stays over updates that line and writes no second
+judgment. The episode stays open while the count is at least half the threshold,
+and ends when a fresh reading falls under half, or the beat goes stale, or the
+beat carries no reading: one happened note to the coordinator, `an alarm cleared`,
+whose text opens with `runaway test processes:`. Its decisions are `fleet up <m>
+--width <half>`, `fleet down <m>`, `ack` and `wait 15m`. The found case was one
+member's machine on 2026-10-04, 289 `nova-sprint.test` processes, killed by hand.
+
+### fleet-test-process-alarm-bc.w5
+
+The `--tests` reading is kept in the record the beat's own write stores, never a
+second write of the beat key: `fleet beat` folds the count and the oldest parent
+pid into its one beat write (`Store.BeatTests`, with `Store.BeatOwing` for a beat
+that carries no reading), and `friend beat` folds them into her report, which the
+beat's one write persists (`Store.FriendBeatProof`). A beat that lands while
+another is in flight can then never have its count erased by the older one, and
+the verb writes the beat once.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you

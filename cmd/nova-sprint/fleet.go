@@ -48,7 +48,14 @@ holders, read at most once every `+hostload.HoldersEvery.String()+`; over --fd-a
 NOVA_FD_ALARM, else `+fmt.Sprint(hostload.FilesAlarmDefault)+`) it says alarm, and the tick writes
 one judgment of the member ("`+sprint.NFilesAlarm+`") naming the count, the top
 holders and its cards that ended on a timeout, closed with one cleared note when
-the count falls under the alarm.
+the count falls under the alarm. A beat carries the count of live processes
+whose name ends in .test that the beat agent read on the machine (fleet beat
+--tests, with --oldest the parent pid of the oldest of them): the tick writes
+one judgment ("`+sprint.NRunawayTests+`") when the
+count is over the sprint's tests_alarm (nova-sprint set --tests-alarm, else
+4 times the member's width), naming the oldest parent pid, and closes it when
+the count falls under half that threshold. A beat with no --tests carries no
+reading and raises and closes nothing.
 
 fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
 else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
@@ -130,6 +137,11 @@ type beatReport struct {
 	Files  *hostload.Files `json:"files,omitempty"`
 	// StopReturns is how many stop-returns the member's lanes still owe (section 14).
 	StopReturns int `json:"stop_returns,omitempty"`
+	// Tests is the beat's count of live processes named *.test, and TestParent
+	// the oldest parent pid among them (0 when none): a beat with no --tests
+	// carries no reading (omitempty on a nil pointer).
+	Tests      *int `json:"tests,omitempty"`
+	TestParent int  `json:"test_parent,omitempty"`
 }
 
 // fdBound is one of fleet beat's open-files bounds: the flag's count when given, else the
@@ -159,6 +171,8 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	stopReturns := fs.Int("stop-returns", 0, "how many stop-returns the member's lanes still owe after the machine's stop (section 14): start waits for zero")
 	fdWarn := fs.Int("fd-warn", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else %d)", hostload.FilesWarnDefault))
 	fdAlarm := fs.Int("fd-alarm", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else %d)", hostload.FilesAlarmDefault))
+	tests := fs.String("tests", "", "how many live processes whose name ends in .test the beat agent read on this machine (none: the beat carries no reading)")
+	oldest := fs.String("oldest", "", "the parent pid of the oldest of the test processes --tests counts (wants --tests)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
@@ -197,6 +211,10 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if warn, alarm := hostload.FilesBounds(src); alarm < warn {
 		return refuse(stderr, "fleet beat", fmt.Sprintf("--fd-alarm wants a count at or above the warn bound %d, found %d", warn, alarm))
 	}
+	testsN, testsParent, testsOK, whyTests := beatTestCount(*tests, *oldest)
+	if whyTests != "" {
+		return refuse(stderr, "fleet beat", whyTests)
+	}
 	if given != nil {
 		// a load given is the beat's; the machine's open files are measured beside it
 		// (hostload.Source.Given), so a member that gives its one-second samples still
@@ -221,7 +239,13 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		v := *stopReturns
 		owing = &v
 	}
-	b, err := st.BeatOwing(context.Background(), pos[0], nil, src, owing)
+	var b sprint.Beat
+	if testsOK {
+		// the reading is folded into the beat's one write, so it can never race a newer beat
+		b, err = st.BeatTests(context.Background(), pos[0], nil, src, owing, testsN, testsParent)
+	} else {
+		b, err = st.BeatOwing(context.Background(), pos[0], nil, src, owing)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -232,7 +256,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	}
 	files := b.Meter.Files
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, StopReturns: b.StopReturns})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, StopReturns: b.StopReturns, Tests: b.Tests, TestParent: b.TestParent})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
@@ -242,6 +266,12 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	}
 	if b.StopReturns > 0 {
 		fmt.Fprintf(stdout, " stop_returns=%d", b.StopReturns)
+	}
+	if b.Tests != nil {
+		fmt.Fprintf(stdout, " tests=%d", *b.Tests)
+		if b.TestParent > 0 {
+			fmt.Fprintf(stdout, " test_parent=%d", b.TestParent)
+		}
 	}
 	fmt.Fprintln(stdout)
 	if files != nil && files.Level() != hostload.LevelOK {
@@ -253,4 +283,35 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// beatTestCount is fleet beat and friend beat's --tests and --oldest: the
+// count of live processes whose name ends in ".test" the beat agent read on
+// the machine, and the parent pid of the oldest of them. The verb records the
+// reading it is given; the loop that counts those processes is the beat
+// agent's, so a beat that carries no --tests carries no reading at all and
+// never looks at the process table itself. why refuses a count or pid that is
+// not a whole number. docs/SPEC-SPRINT.md, runaway test processes.
+func beatTestCount(text, oldestText string) (n, parent int, ok bool, why string) {
+	if text == "" {
+		if oldestText != "" {
+			return 0, 0, false, "--oldest names the oldest test process's parent pid, and wants --tests"
+		}
+		return 0, 0, false, ""
+	}
+	v, err := strconv.Atoi(text)
+	if err != nil || v < 0 {
+		return 0, 0, false, "--tests wants a whole number of at least 0, found " + oneline.Escape(text)
+	}
+	if v > 0 && oldestText == "" {
+		return 0, 0, false, "--tests wants --oldest, the parent pid of the oldest of the processes it counts"
+	}
+	if oldestText != "" {
+		p, err := strconv.Atoi(oldestText)
+		if err != nil || p < 1 {
+			return 0, 0, false, "--oldest wants a pid of at least 1, found " + oneline.Escape(oldestText)
+		}
+		parent = p
+	}
+	return v, parent, true, ""
 }

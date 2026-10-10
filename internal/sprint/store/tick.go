@@ -1157,7 +1157,7 @@ func routesPart(name string) bool {
 	// the rebalance draws a route for a card it moves off a friend onto a machine
 	// the readers' level too: a fleet reader whose row names no tier reads flash only while
 	// the store holds routes (sprint fleetReadsFlashOnly), so the level plans with them
-	return name == "deal" || name == sprint.PartRebalance || name == "ask" || name == "check" || name == sprint.PartLevelReads || sprint.IsRulePart(name)
+	return name == "deal" || name == sprint.PartRebalance || name == "ask" || name == "check" || name == sprint.PartLevelReads || name == "deadlines" || sprint.IsRulePart(name)
 }
 
 // MaxSettle bounds the updates a tick makes past its first pass while the
