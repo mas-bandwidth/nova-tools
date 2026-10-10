@@ -37,7 +37,10 @@ own, and runs the play twice for one add. The setup run
 loops, and skips the probe; the verb then reads the store for the member's own
 recent beat and its reader row up — the setup's own steps are never taken for the
 machine's, so a member that has never beaten, or whose only beat is stale, is left
-drained and refused. Only then does the verb deal the member one
+drained and refused. The loops are loaded asynchronously and never wait for a
+beat, so the verb polls the store for up to a minute while they start: a fresh
+host whose loop is slower than the play's tail is proved in one run, not two.
+Only then does the verb deal the member one
 probe card outside its width and run the probe pass (`nova_member_probe=1`),
 which takes and finishes it. The member is widened only once it is proved: its
 beat is genuine and recent, its reader row is up, and it has taken and finished

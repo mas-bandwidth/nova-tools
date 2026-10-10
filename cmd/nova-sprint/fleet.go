@@ -314,6 +314,12 @@ const fleetAddProbeStep = "probe"
 // its loop has a minute to start and beat.
 const fleetAddBeatBound = time.Minute
 
+// fleetAddBeatPoll is how long the verb waits between reads of the member's own
+// beat and its reader row while a just-added member's loops start: the setup
+// play's loops load asynchronously and never wait for a beat, so the verb polls
+// the store on its own clock up to fleetAddBeatBound before refusing.
+const fleetAddBeatPoll = 2 * time.Second
+
 var (
 	fleetAddLine    = regexp.MustCompile(`"FLEET-ADD (?:[^"\\]|\\.)*"`)
 	fleetAddStepRe  = regexp.MustCompile(`\bstep=(\S+)`)
@@ -555,9 +561,9 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s fleet add REFUSED step=inputs host=%s: %s; nothing was run; %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
 		return 1
 	}
-	// the probe card this run deals the member: the member is widened to one for
-	// it, so every refusal after the deal drains it again (proven is set once the
-	// member is widened for real)
+	// the probe card this run deals the member: the member is widened to place
+	// it, so every refusal after the deal is attempted drains it again via
+	// fleetAddUndo (proven is set once the member is widened for real)
 	probePrimary, proven := "", false
 	defer func() {
 		if probePrimary != "" && !proven {
@@ -672,7 +678,7 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 	// proved: widen the member so the deal reaches it
 	widened, err := a.fleetAddWiden(ctx, st, host, w)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s fleet add REFUSED step=rows host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
+		fmt.Fprintf(stderr, "%s fleet add REFUSED step=width host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
 		return 1
 	}
 	proven = true
@@ -725,26 +731,36 @@ func (a *app) fleetAddRows(ctx context.Context, st *store.Store, host, reader st
 // verb deals the probe: the member's own beat is recent (within
 // fleetAddBeatBound) and its reader row is up, both read from the store, never
 // from the setup's own words. The member is added with no beat of its own and
-// the setup pass writes none, so a beat read here is the member loop's; a member
-// that has never beaten, or whose only beat is stale, names its step ("beat" or
-// "reader") and is refused, left drained.
+// the setup pass writes none, so a beat read here is the member loop's. The
+// setup play starts the member and reader units in fleet/loops.yml, which loads
+// them asynchronously and never waits for a beat, so the verb polls the store on
+// its own clock up to fleetAddBeatBound before refusing: a member that has never
+// beaten, or whose only beat is stale, names its step ("beat" or "reader") and
+// is refused, left drained.
 func (a *app) fleetAddBeatReady(ctx context.Context, st *store.Store, host, reader string) (string, error) {
-	beats, err := st.Beats(ctx, []string{host})
-	if err != nil {
-		return "beat", err
+	began := a.now()
+	for {
+		beats, err := st.Beats(ctx, []string{host})
+		if err != nil {
+			return "beat", err
+		}
+		b := beats[host]
+		fresh := b.Beaten() && a.now().Sub(b.At) <= fleetAddBeatBound
+		states, err := st.ReaderStates(ctx, []string{reader}, a.now())
+		if err != nil {
+			return "reader", err
+		}
+		if fresh && states[reader] == sprint.ReaderUp {
+			return "", nil
+		}
+		if a.now().Sub(began) >= fleetAddBeatBound {
+			if !fresh {
+				return "beat", fmt.Errorf("the member has not beat within %s; its member loop is not running on %s", fleetAddBeatBound, host)
+			}
+			return "reader", fmt.Errorf("the reader row %s is %s, not up; its reader loop is not running on %s", reader, states[reader], host)
+		}
+		a.sleep(fleetAddBeatPoll)
 	}
-	b := beats[host]
-	if !b.Beaten() || a.now().Sub(b.At) > fleetAddBeatBound {
-		return "beat", fmt.Errorf("the member has not beat within %s; its member loop is not running on %s", fleetAddBeatBound, host)
-	}
-	states, err := st.ReaderStates(ctx, []string{reader}, a.now())
-	if err != nil {
-		return "reader", err
-	}
-	if states[reader] != sprint.ReaderUp {
-		return "reader", fmt.Errorf("the reader row %s is %s, not up; its reader loop is not running on %s", reader, states[reader], host)
-	}
-	return "", nil
 }
 
 // fleetAddPlayRefusal is one play run's refusal: a FLEET-ADD REFUSED line the
@@ -787,7 +803,9 @@ func (a *app) fleetAddPlayRefusal(host, again, output string, playErr error, ste
 // returns the probe card's primary id, which fleetAddProve requires finished
 // before the member is widened for real, and dealt: whether the probe run of
 // the play must run to take it. A primary already taken (in Review) is left as
-// it is, so a second run changes nothing and dealt is false.
+// it is, so a second run changes nothing and dealt is false. Once the member is
+// widened, an error returns the primary id with it, so cmdFleetAdd's defer
+// drains the member and drops the probe cards.
 func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (string, bool, error) {
 	stream := "probe-" + host
 	primary, holder, reserve := stream+"-1", stream+"-2", stream+"-3"
@@ -819,23 +837,30 @@ func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (
 		return primary, false, nil // taken and finished already: a second run changes nothing
 	}
 	// Widen to two to place the primary and both holders, then return to one:
-	// the member takes only its primary, while the two holders fill its room. The
-	// widen comes after fleetAddWaitBeat, so the member is genuinely up and the
-	// deal reaches it.
-	if _, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 2, false, 0, false)); err != nil {
-		return "", false, err
+	// the member takes only its primary, while the two holders fill its room.
+	// The widen comes after fleetAddBeatReady, so the member is genuinely up and
+	// the deal reaches it. From here the member may be widened, so every error
+	// returns the primary id: cmdFleetAdd's defer drains the member (width 0) and
+	// drops the probe cards, so a member that is not proved is dealt no work even
+	// when the deal or the return to one is refused.
+	if res, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 2, false, 0, false)); err != nil {
+		return primary, dealt, err
+	} else if len(res.Refused) > 0 {
+		return primary, dealt, fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
 	}
 	if needDeal {
 		res, err := st.Run(ctx, fleetAddDealStep(sprint.DealReq{Sel: sprint.Sel{Only: []string{primary, holder, reserve}}}))
 		if err != nil {
-			return "", false, err
+			return primary, dealt, err
 		}
 		if len(res.Refused) > 0 {
-			return "", false, fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
+			return primary, dealt, fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
 		}
 	}
-	if _, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 1, false, 0, false)); err != nil {
-		return "", false, err
+	if res, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 1, false, 0, false)); err != nil {
+		return primary, dealt, err
+	} else if len(res.Refused) > 0 {
+		return primary, dealt, fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
 	}
 	return primary, dealt, nil
 }
@@ -853,7 +878,8 @@ func fleetAddDealStep(r sprint.DealReq) store.Step {
 // the holder that reserved the member) are taken off the table and the member is
 // drained again (width 0), so a member that did not prove leaves no probe card
 // behind and is dealt no work. It runs from cmdFleetAdd's defer on every refusal
-// after the probe was dealt.
+// after the member was widened for the probe: the widen-to-place step, the deal,
+// the return to one, the probe run, and the proof.
 func (a *app) fleetAddUndo(ctx context.Context, st *store.Store, host, probe string) {
 	holder, reserve := "probe-"+host+"-2", "probe-"+host+"-3"
 	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{probe, holder, reserve}}, Reason: "the probe cards of a member add that did not finish"})

@@ -361,6 +361,81 @@ func TestFleetAddReservesTheMemberWhileTheProbeRuns(t *testing.T) {
 	assert.Greater(t, cardsOf(after, "bench-c"), 0, "the proved member is dealt ordinary work")
 }
 
+// TestFleetAddDrainsTheMemberWhenTheProbeDealIsRefused pins the drain finding:
+// the member is widened to place the probe, and if the deal is then refused
+// (here the fleet's work is switched off) the member is left drained (width 0),
+// not at the widen width. A member left at the widen width could be dealt
+// ordinary work while its probe never ran, breaking "until then the member is
+// not dealt work".
+func TestFleetAddDrainsTheMemberWhenTheProbeDealIsRefused(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "fleet"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "fleet", "member.yml"), []byte("[]\n"), 0o644))
+	base := []string{"--source", src, "--inventory", "/inv/nova-inventory"}
+
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b")
+	ta.live = nil
+	play := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	play.onRun = func() {
+		if fakeProbePhase(play.argv) {
+			return
+		}
+		ta.live = []string{"bench-c"} // the machine's member loop is up
+		ta.beat()
+	}
+	fleetAddPlayOf.Store(ta.a, play)
+	defer fleetAddPlayOf.Delete(ta.a)
+
+	// the fleet's work is off: the probe deal is refused after the member is
+	// widened to place it, and the member must be drained again
+	ta.ok("set --fleet off")
+
+	code, _, errs := ta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "fleet add REFUSED step=probe host=bench-c")
+	assert.Contains(t, errs, "the member is left drained (width 0)")
+	assert.Equal(t, 0, fleetAddWidth(t, ta, "bench-c"), "a refused probe deal leaves the member drained, not at the widen width")
+}
+
+// TestFleetAddWaitsOutTheBeatBoundForASlowLoop pins the beat-bound finding: the
+// member and reader loops fleet/loops.yml starts are loaded asynchronously, so
+// the member's own loop may beat a moment after the setup play returns. The verb
+// polls the store on its own clock for up to the one-minute bound before
+// refusing, so a fresh host whose loop is slower than the play's tail is proved
+// in one run, not two.
+func TestFleetAddWaitsOutTheBeatBoundForASlowLoop(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "fleet"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "fleet", "member.yml"), []byte("[]\n"), 0o644))
+	base := []string{"--source", src, "--inventory", "/inv/nova-inventory"}
+
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b")
+	ta.live = nil
+	play := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	play.onRun = func() {
+		if !fakeProbePhase(play.argv) {
+			// the loop is loaded but has not beaten at the play's tail: the
+			// verb must wait for it, not refuse on the first read
+			ta.live = []string{"bench-c"}
+			return
+		}
+		ta.ok("take --as bench-c --limit 1")
+		ta.ok("finish --as bench-c probe-bench-c-1.w1@1")
+		ta.ok("tick")
+	}
+	fleetAddPlayOf.Store(ta.a, play)
+	defer fleetAddPlayOf.Delete(ta.a)
+	ta.ok("reader add reader-bench-c")
+
+	code, out, errs := ta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Equal(t, 2, fleetAddWidth(t, ta, "bench-c"), "a member whose loop beats within the bound is proved in one run")
+}
+
 // TestFleetAddRefusesAMemberThatHasNotReallyBeaten pins the fresh-host finding:
 // the setup's own steps are never current availability. A member with no beat at
 // all is dealt no probe and is not widened; so is one whose only beat is
