@@ -123,6 +123,9 @@ type options struct {
 	// and nova-work, in their own repository since v1.2.3) ship in the same
 	// release, verified and never compiled here.
 	sprintRelease string
+	// withoutSprintRelease is build's --without-sprint-release: an explicit
+	// opt-out that allows a build without --sprint-release.
+	withoutSprintRelease bool
 	// cycle's own: the inventory, the benches, the ansible-playbook binary.
 	inventory, benches, ansible string
 	platforms                   platformList
@@ -276,6 +279,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.out, "out", "", "the artifact root the release is written under, as <out>/<version>/<goos-goarch>/")
 		f.StringVar(&o.source, "source", "", "the checkout to build")
 		f.StringVar(&o.sprintRelease, "sprint-release", "", SprintReleaseFlag)
+		f.BoolVar(&o.withoutSprintRelease, "without-sprint-release", false, "explicit opt-out: build without --sprint-release, shipping no nova-sprint tools")
 		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
 		addDogfoodFlags(f, &o, "<--source>/docs/CLI.md")
 		f.StringVar(&o.gate, "gate", "refuse", "refuse: an open dogfood edge refuses the build; report: the edges are printed and the build goes on, --reason <why> required (a machinery install during a sprint; cut always refuses)")

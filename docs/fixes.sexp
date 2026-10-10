@@ -54,7 +54,7 @@
     the provider refused it. The stored key is replaced by the owner, then the friend AI restarts
     through the play."
    :origin "v1.2.5 candidate list")
-  (fix "release-build-refuses-without-sprint-release" :release "v1.2.6" :status "planned"
+  (fix "release-build-refuses-without-sprint-release" :release "v1.2.6" :status "in-progress"
    :title "release build refuses to ship without the sprint release"
    :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
     refuses unless an explicit opt-out flag is given."

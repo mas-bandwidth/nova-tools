@@ -227,7 +227,7 @@ func TestBuildPrunesItsOutButKeepsTheRunningVersion(t *testing.T) {
 	source, out := sourceTree(t), t.TempDir()
 	versionDirs(t, out, "v0.15.0-dev.self", "v0.15.0-dev.a1", "v0.15.0-dev.a2", "v0.15.0-dev.a3", "v0.15.0-dev.a4", "v0.15.0-dev.a5")
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source}, &o, &e,
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source, "--without-sprint-release"}, &o, &e,
 		Deps{Toolchain: &fakeToolchain{}, Self: func() string { return "v0.15.0-dev.self" }})
 	require.Equal(t, 0, code, e.String())
 	assert.Contains(t, o.String(), "RELEASE BUILD OK version=v0.16.0 ")

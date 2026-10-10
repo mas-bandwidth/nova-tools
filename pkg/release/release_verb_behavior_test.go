@@ -308,7 +308,7 @@ func TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt(t *testing.T) {
 	root := t.TempDir()
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0",
-		"--out", root, "--source", buildSource(t),
+		"--out", root, "--source", buildSource(t), "--without-sprint-release",
 		"--platform", "darwin-arm64,darwin-amd64", "--platform", "linux-amd64"},
 		&out, &errs, Deps{Toolchain: tc})
 	if code != 0 {
@@ -340,7 +340,7 @@ func TestBuildWritesTheSumsDigestBesideTheArtifacts(t *testing.T) {
 	root := t.TempDir()
 	var out, errs bytes.Buffer
 	if code := Run("nova-update", []string{"build", "--version", "v0.16.0",
-		"--out", root, "--source", buildSource(t), "--platform", "linux-amd64"},
+		"--out", root, "--source", buildSource(t), "--without-sprint-release", "--platform", "linux-amd64"},
 		&out, &errs, Deps{Toolchain: tc}); code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
@@ -532,7 +532,7 @@ func stagedRelease(t *testing.T) (string, string) {
 	root, version := t.TempDir(), "v0.16.0"
 	var out, errs bytes.Buffer
 	if code := Run("nova-update", []string{"build", "--version", version,
-		"--out", root, "--source", buildSource(t), "--platform", "linux-amd64"},
+		"--out", root, "--source", buildSource(t), "--without-sprint-release", "--platform", "linux-amd64"},
 		&out, &errs, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
 		require.Equal(t, 0, code, "staging a release refused: %s", errs.String())
 	}
