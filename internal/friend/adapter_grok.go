@@ -103,6 +103,7 @@ func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 		undo()
 		return 0, err
 	}
+	TurnAccepted(ctx) // the wake line is in the file the session tails
 	if g.Out != nil {
 		fmt.Fprintln(g.Out, "one monitor event appended to "+wake+"; the turn runs after this")
 	}
@@ -296,7 +297,7 @@ func (g *Grok) classify(ctx context.Context) (string, error, error) {
 	if g.Run == nil {
 		return "", nil, errors.New("ps: no process listing")
 	}
-	listing, exit, err := g.Run(ctx, g.Dir, "ps", []string{"-axww", "-o", "pid=,ppid=,args="}, "")
+	listing, exit, err := g.Run(withoutTurnAcceptance(ctx), g.Dir, "ps", []string{"-axww", "-o", "pid=,ppid=,args="}, "")
 	if err != nil {
 		return "", nil, fmt.Errorf("ps: %w", err)
 	}

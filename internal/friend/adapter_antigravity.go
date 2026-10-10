@@ -206,7 +206,7 @@ func (a *Antigravity) dirs() []string {
 // summaries is the root conversations, newest first, as sqlite3 -json prints them.
 func (a *Antigravity) summaries(ctx context.Context) (string, error) {
 	db := "file:" + filepath.Join(a.home(), AntigravityData, "conversation_summaries.db") + "?mode=ro&immutable=1"
-	rows, _, err := a.Run(ctx, a.Dir, "sqlite3", []string{"-json", db, antigravitySummaries}, "")
+	rows, _, err := a.Run(withoutTurnAcceptance(ctx), a.Dir, "sqlite3", []string{"-json", db, antigravitySummaries}, "")
 	if err != nil {
 		return "", fmt.Errorf("sqlite3: %w", err)
 	}
@@ -254,7 +254,7 @@ func (a *Antigravity) server(ctx context.Context) (antigravityServer, int, error
 		}
 		username = current.Username
 	}
-	ps, _, err := a.Run(ctx, a.Dir, "ps", []string{"-axo", "user=,pid=,args="}, "")
+	ps, _, err := a.Run(withoutTurnAcceptance(ctx), a.Dir, "ps", []string{"-axo", "user=,pid=,args="}, "")
 	if err != nil {
 		return antigravityServer{}, 1, fmt.Errorf("ps: %w", err)
 	}
@@ -263,7 +263,7 @@ func (a *Antigravity) server(ctx context.Context) (antigravityServer, int, error
 		exit, err := a.refuse(a.Live(), err.Error())
 		return antigravityServer{}, exit, err
 	}
-	listing, _, err := a.Run(ctx, a.Dir, "lsof", []string{"-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"}, "")
+	listing, _, err := a.Run(withoutTurnAcceptance(ctx), a.Dir, "lsof", []string{"-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"}, "")
 	if err != nil {
 		return antigravityServer{}, 1, fmt.Errorf("lsof: %w", err)
 	}
@@ -284,7 +284,7 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 	port := ""
 	var err error
 	for _, p := range srv.ports {
-		if _, err = a.agentapi(ctx, p, srv.token, "get-conversation-metadata", session); err == nil {
+		if _, err = a.agentapi(withoutTurnAcceptance(ctx), p, srv.token, "get-conversation-metadata", session); err == nil {
 			port = p
 			break
 		}

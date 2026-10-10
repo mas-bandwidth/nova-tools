@@ -126,7 +126,8 @@ func (f *Folder) Deliver(ctx context.Context, text string) (exit int, retErr err
 			return 0, fmt.Errorf("the folder adapter refused to reuse %s without matching session metadata", name)
 		}
 		publishedPath = path
-		return 0, nil // one unacknowledged request of this kind, nonce and session
+		TurnAccepted(ctx) // published: the session has the turn
+		return 0, nil     // one unacknowledged request of this kind, nonce and session
 	} else if !os.IsNotExist(err) {
 		return 0, err
 	}
@@ -140,6 +141,7 @@ func (f *Folder) Deliver(ctx context.Context, text string) (exit int, retErr err
 		return 0, err
 	}
 	publishedPath = path
+	TurnAccepted(ctx) // published: the session has the turn
 	return 0, nil
 }
 
