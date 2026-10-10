@@ -5,6 +5,7 @@ package ci
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -47,28 +48,40 @@ func TestEveryExitWordMatchesStatusContract(t *testing.T) {
 			_, banner, helpErr := runBare(t, root, tool, bin, []string{"help"})
 			require.Empty(t, helpErr, "`%s help` wrote to stderr: %s", tool, helpErr)
 			verbs := usageVerbs(tool, banner)
+			toolTable := exitWordExitCodes(banner)
+			// One verb's help is read at most once per tool; a transcript that
+			// repeats a verb reuses its table.
+			verbTables := map[string][]int{}
+			verbTable := func(verb string) []int {
+				if codes, ok := verbTables[verb]; ok {
+					return codes
+				}
+				codes := exitWordVerbTable(t, bin, verb, toolTable)
+				verbTables[verb] = codes
+				return codes
+			}
 
 			code, out, errs := runIn(t, bin)
-			exitWord.short(tool, exitWordBare, tool, exitWordAnswers(code, out, errs, nil))
+			exitWord.short(tool, exitWordBare, tool, exitWordAnswers(code, out, errs, toolTable))
 
 			code, out, errs = runIn(t, bin, noSuchVerb)
-			exitWord.short(tool, exitWordVerb, tool+" "+noSuchVerb, exitWordAnswers(code, out, errs, nil))
+			exitWord.short(tool, exitWordVerb, tool+" "+noSuchVerb, exitWordAnswers(code, out, errs, toolTable))
 
 			if len(verbs) > 0 {
 				args := append(strings.Fields(verbs[0]), noSuchFlag)
 				code, out, errs = runIn(t, bin, args...)
-				exitWord.short(tool, exitWordFlag, tool+" "+verbs[0]+" "+noSuchFlag, exitWordAnswers(code, out, errs, nil))
+				exitWord.short(tool, exitWordFlag, tool+" "+verbs[0]+" "+noSuchFlag, exitWordAnswers(code, out, errs, verbTable(verbs[0])))
 			}
 			for _, v := range verbs {
 				code, out, errs := runIn(t, bin, strings.Fields(v)...)
-				exitWord.short(tool, exitWordNoArg, tool+" "+v, exitWordAnswers(code, out, errs, nil))
+				exitWord.short(tool, exitWordNoArg, tool+" "+v, exitWordAnswers(code, out, errs, verbTable(v)))
 			}
 
 			if lines, err := onboarding.FirstRun(transcripts, tool); err == nil && len(lines) > 0 {
 				if steps, err := onboarding.Steps(tool, lines); err == nil {
 					for _, s := range steps {
 						code, out, errs := runIn(t, bin, s.Args...)
-						exitWord.short(tool, exitWordTranscript, s.Line, exitWordAnswers(code, out, errs, nil))
+						exitWord.short(tool, exitWordTranscript, s.Line, exitWordAnswers(code, out, errs, verbTable(exitWordVerbIn(verbs, s.Args))))
 					}
 				}
 			}
@@ -133,4 +146,38 @@ func (w *exitWord) check(t *testing.T, tools int) {
 	for _, v := range w.ledger.violations(t, "a tool's last status word and exit code agree (a row's count only falls)") {
 		assert.Fail(t, v)
 	}
+}
+
+// exitWordVerbTable reads the exit table a verb publishes for itself: the codes
+// its own `<verb> -h` states, else the tool's table where the verb's help states
+// none (a verb that refuses -h, or one whose help carries no exit paragraph).
+// The walk passes it to the judge so a code above 2 is accepted only where the
+// verb publishes it (docs/STANDARD.md section 2).
+func exitWordVerbTable(t *testing.T, bin, verb string, toolTable []int) []int {
+	t.Helper()
+	if verb == "" {
+		return toolTable
+	}
+	_, out, _ := runIn(t, bin, append(strings.Fields(verb), "-h")...)
+	if codes := exitWordExitCodes(out); len(codes) > 0 {
+		return codes
+	}
+	return toolTable
+}
+
+// exitWordVerbIn returns the verb of a documented command: the longest of the
+// tool's verb names whose words are a prefix of its arguments, or "" when none
+// is, so a transcript's command is judged against the table it publishes.
+func exitWordVerbIn(verbs []string, args []string) string {
+	best := ""
+	for _, v := range verbs {
+		f := strings.Fields(v)
+		if len(f) <= len(strings.Fields(best)) || len(f) > len(args) {
+			continue
+		}
+		if slices.Equal(f, args[:len(f)]) {
+			best = v
+		}
+	}
+	return best
 }

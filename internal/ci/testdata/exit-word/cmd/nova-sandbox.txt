@@ -1,3 +1,2 @@
 # exit-word: status word and exit code agreement; shrink-only
-# ceiling: 1
-cmd/nova-sandbox:verb-no-flags 2 reap and run exit 125 on REFUSED (seed)
+# ceiling: 0

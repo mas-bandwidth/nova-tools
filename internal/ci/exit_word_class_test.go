@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -39,6 +40,46 @@ func exitWordLastStatus(stdout, stderr string) (word string, line string) {
 		}
 	}
 	return "", ""
+}
+
+// exitWordLabelRe finds the exit-codes label of a help text, in either the long
+// `exit codes:` form or the short `exit:` that opens a line (the two verbflag
+// itself reads).
+var exitWordLabelRe = regexp.MustCompile(`(?i)\bexit codes?:|^\s*exit\s*:`)
+
+// exitWordCodeRe finds one code, or a `lo-hi` range, in an exit-table line.
+var exitWordCodeRe = regexp.MustCompile(`\b(\d+)(?:\s*-\s*(\d+))?`)
+
+// exitWordExitCodes reads the codes a help text publishes: every code on its
+// `exit codes:` line and the lines under it, up to the first blank line, so a
+// hand-rolled tool's multi-line paragraph is read whole. A range `a-b` names
+// every code it spans. The walk passes the result to exitWordAnswers as the
+// table a code above 2 must appear in (docs/STANDARD.md section 2, "Exit codes
+// tell the truth and the banner states them"). It reads text, not a tool.
+func exitWordExitCodes(help string) []int {
+	var codes []int
+	lines := strings.Split(help, "\n")
+	for i := 0; i < len(lines); i++ {
+		if !exitWordLabelRe.MatchString(lines[i]) {
+			continue
+		}
+		for ; i < len(lines) && strings.TrimSpace(lines[i]) != ""; i++ {
+			for _, m := range exitWordCodeRe.FindAllStringSubmatch(lines[i], -1) {
+				lo, _ := strconv.Atoi(m[1])
+				hi := lo
+				if m[2] != "" {
+					hi, _ = strconv.Atoi(m[2])
+				}
+				if hi < lo || hi-lo > 4096 {
+					hi = lo
+				}
+				for c := lo; c <= hi; c++ {
+					codes = append(codes, c)
+				}
+			}
+		}
+	}
+	return codes
 }
 
 // exitWordAnswers is "" when the observed exit code agrees with the last
@@ -128,6 +169,38 @@ func TestExitWordJudges(t *testing.T) {
 			assert.Contains(t, got, tc.want)
 		})
 	}
+}
+
+// exitWordHelpFixture is a tool's help whose exit paragraph lists code 125 and
+// a 0-124 range across several lines, the hand-rolled shape, so the walk can be
+// shown reading the published table rather than a table passed in.
+const exitWordHelpFixture = `nova-demo: runs work in a disposable place
+usage:
+  nova-demo run -- <cmd>
+
+exit codes: 0 done, 1 it ran and said no (findings, a threshold), 2 could not run;
+  the wrapped command's own status, 0-124, passed through, and a
+  DONE line says which came back;
+  125 nova-demo refused before the command ran, a usage error included
+
+example:
+  nova-demo run -- true
+`
+
+// TestExitWordReadsExitTable is the witness for the table the walk reads from
+// help: a multi-line paragraph and a `lo-hi` range are read whole, a code above
+// 2 passes only where the help publishes it, and an unlisted code is refused
+// naming the site.
+func TestExitWordReadsExitTable(t *testing.T) {
+	t.Parallel()
+
+	codes := exitWordExitCodes(exitWordHelpFixture)
+	assert.Contains(t, codes, 125, "an explicit code above 2 is read")
+	assert.Contains(t, codes, 42, "a range names every code it spans")
+
+	assert.Empty(t, exitWordAnswers(125, "RUN FAILED\n", "", codes), "a listed code above 2 passes")
+	assert.Contains(t, exitWordAnswers(130, "RUN FAILED\n", "", codes), "is above 2 and not in the verb's exit table", "an unlisted code above 2 is refused")
+	assert.Contains(t, exitWordAnswers(3, "RUN FAILED\n", "", exitWordExitCodes("usage: nova-demo run\n")), "is above 2 and not in the verb's exit table", "help that publishes no table refuses every code above 2")
 }
 
 // TestExitWordReadsFixtures is the witness test: a fixture that breaks the rule once is refused naming the site,
