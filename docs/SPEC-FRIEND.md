@@ -1783,8 +1783,7 @@ grows and the session takes the turn. A missing state directory is a
 refusal naming it, and nothing is made; with no session named, the file is
 named for the friend of the directory's status file. `nova-friend check
 --harness claude` delivers its check there. Owed: the daemon's own append
-per message it peeks (it stays passive and appends nothing yet), and
-`nova-bus wait` is a separate verb.
+per message it peeks (it stays passive and appends nothing yet).
 
 A claude session that holds the sprint's coordinator seat is reached the
 same way without a friend's daemon: nova-sprint's folder adapter writes each
