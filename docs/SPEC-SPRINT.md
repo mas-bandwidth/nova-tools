@@ -2453,7 +2453,17 @@ and it is the coordinator's decision, receipted.
   redeal or a later attempt takes the next entry whose route was not taken for
   the card while another remains, the index moved past the entries it skipped
   (ExcludedNeverDrawn), and an entry that names no enabled route of the tier is
-  skipped the same way. The work card keeps `route`, `model`, `tokens`, `usd` (the route's dollar budget, empty for none) and `deadline` (its
+  skipped the same way. A route may carry an `rpm` budget, its requests per
+  minute across the whole fleet, 0 (the default) unmetered (nova-config's route
+  kind, docs/SPEC-CONFIG.md): a metered route admits a new lane only while its
+  lanes in flight leave room (`sprint.RouteLaneRoom`: under
+  `max(1, rpm/sprint.LaneRPM)`, one lane's typical requests per minute, so a
+  10 rpm route runs one lane and a 40 rpm route five), the lanes being the work
+  cards dealt or working on it across every member and friend in the snapshot.
+  A route at its budget is skipped for the deal and the next route of the tier
+  is tried, and when every route of the tier is skipped this way the card waits
+  with the reason `every route of <tier> is at its requests-per-minute budget`.
+  The work card keeps `route`, `model`, `tokens`, `usd` (the route's dollar budget, empty for none) and `deadline` (its
   packet hands them to the member) and the primary `routes`, every route taken
   for it. **Every dealt packet names its tier** (dealt-packet-carries-the-tier.w1;
   on 2026-10-05 the audit cards were dealt with no tier in the packet, a flash

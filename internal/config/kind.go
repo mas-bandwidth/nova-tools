@@ -523,6 +523,7 @@ var Kinds = []*Kind{
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
 			{Name: "first", Type: TypeBool, Default: "false", Help: "true deals this route before the others of its tier (the walk from the tier's index prefers it); false (the default) leaves the walk as it is"},
+			{Name: "rpm", Type: TypeInt, Help: "the route's requests per minute across the whole fleet; 0 (the default) is unmetered"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens using the pricing configuration saved per route tuple.
 			// Prices are USD per million tokens.

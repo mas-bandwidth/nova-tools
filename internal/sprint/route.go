@@ -55,6 +55,10 @@ type Route struct {
 	// First is the route's first field. A route with it set is drawn before the
 	// others of its tier (preferFirst; docs/SPEC-SPRINT.md, the deal).
 	First bool `json:"first"`
+	// RPM is the route's requests per minute across the whole fleet, 0 is
+	// unmetered: the deal admits a metered route one lane at a time
+	// (route_budget.go; docs/SPEC-SPRINT.md, the deal).
+	RPM int `json:"rpm"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
 	// is priced by (cost.go); every price "" when the route has none.
 	Prices cardcost.Prices `json:"prices"`
@@ -266,6 +270,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
 	var rested []string
+	metered := false
 	for _, r := range s.Routes {
 		if r.Tier != tier || !r.Enabled {
 			continue
@@ -275,6 +280,22 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			continue
 		}
 		served[r.Name] = r
+		if r.RPM > 0 {
+			metered = true
+		}
+	}
+	// a metered route at its requests-per-minute budget serves no work card this deal
+	// (route_budget.go): the deal admits one lane at a time, so a promise made to a provider
+	// is kept by the machine and not by the seat; the next route of the tier is tried.
+	var full bool
+	if metered {
+		lanes := routeLanes(s.Fleet)
+		for name, r := range served {
+			if r.RPM > 0 && !RouteLaneRoom(r.RPM, lanes[name]) {
+				delete(served, name)
+				full = true
+			}
+		}
 	}
 	arr := s.tierArray(tier)
 	drawn := Split(c.F(FieldRoutes))
@@ -306,6 +327,9 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
 		}
 		return set, tier, "", false
+	}
+	if full && len(served) == 0 {
+		return nil, tier, "every route of " + tier + " is at its requests-per-minute budget", false
 	}
 	up, why := s.tierServed(tier, rested)
 	return nil, tier, why, len(up) > 0

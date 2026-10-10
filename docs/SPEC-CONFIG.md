@@ -332,6 +332,7 @@ class, never a model name". Every value is data in the row: the code names no pr
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal, and needs a `note` | `route:<r>` |
 | `first` | bool | (false) | the deal: true draws this route before the others of its tier; false leaves the walk as it is | `route:<r>` |
+| `rpm` | int | (0) | the deal: the route's requests per minute across the whole fleet, the budget the deal keeps by admitting one lane at a time; 0 (the default) is unmetered | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
 | `price_cache_read` | decimal | (empty) | a card's cost: USD per million cached input tokens read | `route:<r>` |
 | `price_cache_write` | decimal | (empty) | a card's cost: USD per million tokens written to the cache | `route:<r>` |
@@ -346,6 +347,10 @@ class, never a model name". Every value is data in the row: the code names no pr
 | `price_source` | text | (empty) | a reader: where the prices were read (a URL) | `route:<r>` |
 | `price_as_of` | text, `YYYY-MM-DD` | (empty) | a reader: the date the prices were read | `route:<r>` |
 | `note` | text | (empty) | a reader: why the route is as it is; a disabled route carries its reason (see "The note") | `route:<r>` |
+
+The `rpm` field is the route's requests-per-minute budget across the whole fleet, 0 (the
+default) unmetered: the deal reads it and admits the route one lane at a time, so a promise
+made to a provider is kept by the machine and not by the seat (docs/SPEC-SPRINT.md, the deal).
 
 The price sheet is optional: the owner, 2026-10-01, "the pricing
 configuration saved per-tuple, so it is known and easily look upable". A
