@@ -7,7 +7,7 @@ import (
 )
 
 // The card tells the child the wall the member ends it at, in minutes, and to have its
-// RESULT.md written by 80% of it, whatever the brief names (fault 9, 2026-10-10: superman's
+// RESULT.md written by 80% of it, whatever the brief names (fault 9, 2026-10-10: a slow member's
 // DeepSeek children planned on a brief's 120 minutes and were ended at the route's 40 with
 // no RESULT.md). A packet with no deadline says nothing of one.
 func TestTheCardTellsTheChildItsWall(t *testing.T) {

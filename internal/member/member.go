@@ -2211,7 +2211,7 @@ const WallFinishShare = 0.8
 // WallText is the paragraph that tells a child the wall it runs under, the deadline the
 // member ends it at (the route's, or the member's override), in whole minutes, and when to
 // have its result written; "" when the packet carries none. It overrides any time the brief
-// names: a child on superman planned against a brief's "finish within 120 minutes" and was
+// names: a child on a slow member planned against a brief's "finish within 120 minutes" and was
 // ended at the route's 40 with no RESULT.md, its commit unpushed (fault 9, 2026-10-10).
 func WallText(deadlineSeconds int) string {
 	if deadlineSeconds <= 0 {
