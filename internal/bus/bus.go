@@ -179,9 +179,10 @@ type Entry struct {
 // Message is the entry's message.
 func (e Entry) Message() Message { return Parse(e.Fields) }
 
-// Store is the few Redis commands the bus uses, each one round trip. The
-// bus never deletes: no command here removes an entry, a group or a key
-// (a token's record expires: AddOnce).
+// Store is the few Redis commands the bus uses, each one round trip. The bus
+// deletes no message of its own: no command here removes an entry, a group or
+// a key, save the keepalive retention a store that is a Trimmer runs
+// (TrimKeepalives, below) and a token's record, which expires (AddOnce).
 type Store interface {
 	// Roster is the known names (nova-config's friend and machine rows, the
 	// sets `friends` and `machines`) and the server's time (TIME), in one trip.
@@ -241,6 +242,35 @@ type Store interface {
 	// delivered starts one; it answers each id's state before, "" for none, in
 	// one atomic step (a script). It is the one writer of a receipt.
 	Forward(ctx context.Context, key, state string, ids ...string) ([]string, error)
+}
+
+// KeepaliveWindow is how many keepalive entries a recipient's stream keeps:
+// the newest window of them, past which acknowledged keepalives are trimmed
+// (SPEC-BUS.md, the data: retention).
+const KeepaliveWindow = 16
+
+// IsKeepalive is whether subject is one of the bus's keepalive subjects: a
+// ping ("PING <nonce>", so the match is a prefix), a pong, a daemon-pong or
+// the bare keepalive word, matched as a prefix without case. Every other
+// message is audited (SPEC-BUS.md, the data: retention).
+func IsKeepalive(subject string) bool {
+	s := strings.ToLower(strings.TrimSpace(subject))
+	return strings.HasPrefix(s, "ping") || strings.HasPrefix(s, "pong") ||
+		strings.HasPrefix(s, "daemon-pong") || strings.HasPrefix(s, "keepalive")
+}
+
+// Trimmer is a Store that trims a stream's keepalives to the newest window of
+// them, leaving every audited entry and every entry that is not acknowledged
+// (SPEC-BUS.md, the data: retention). A Store without it keeps every entry,
+// as before; the Redis store has it.
+type Trimmer interface {
+	// TrimKeepalives deletes the acknowledged keepalive entries of the stream
+	// beyond the newest window of them and answers how many it deleted. An
+	// entry is acknowledged when it has been delivered (its id is at or below
+	// the group's last delivered id) and is not pending. A keepalive is a
+	// message whose subject IsKeepalive. When entry is provided, it trims only
+	// if that entry is a keepalive. It is one round trip.
+	TrimKeepalives(ctx context.Context, stream, group string, window int, entry ...string) (int64, error)
 }
 
 // Waiter is the two reads a wait makes over a Store that also holds them: the
@@ -314,6 +344,10 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // arguments and gets the original. The same token with other arguments, or
 // past its life, is refused. Without a token a lost response retried is a
 // second message.
+//
+// A message whose subject IsKeepalive is a keepalive: a recipient's stream
+// keeps only the newest KeepaliveWindow of them, trimmed as they are
+// acknowledged (SPEC-BUS.md, the data: retention).
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -322,11 +356,11 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	if m.ID, err = b.ulid(now); err != nil {
 		return Message{}, err
 	}
-	var streams []string
+	var recipients []string
 	for _, n := range slices.Compact(slices.Sorted(slices.Values(slices.Concat(m.To, m.CC)))) {
-		streams = append(streams, StreamOf(n))
+		recipients = append(recipients, StreamOf(n))
 	}
-	streams = append(streams, LogKey)
+	streams := append(recipients, LogKey)
 	if m.Token != "" {
 		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
 	}
@@ -480,10 +514,18 @@ func (b *Bus) delivered(ctx context.Context, as string, e Entry) Entry {
 }
 
 // AckEntry acks one entry the recipient was handed (XACK); acking it again
-// is a no-op that says so. (tla/Bus2.tla: Ack, AckIdempotent)
+// is a no-op that says so. It also trims the recipient's acknowledged
+// keepalives past the newest window, the retention of the data
+// (SPEC-BUS.md, the data: retention). (tla/Bus2.tla: Ack, AckIdempotent)
 func (b *Bus) AckEntry(ctx context.Context, as, entry string) (acked bool, err error) {
 	n, err := b.Store.Ack(ctx, StreamOf(as), as, entry)
-	return n > 0, err
+	if err != nil {
+		return false, err
+	}
+	if err := b.trimKeepalives(ctx, as, entry); err != nil {
+		return n > 0, err
+	}
+	return n > 0, nil
 }
 
 // Ack acks messages by their ids: each is looked up among the recipient's
@@ -491,19 +533,35 @@ func (b *Bus) AckEntry(ctx context.Context, as, entry string) (acked bool, err e
 // delivered, or not this recipient's) is answered acked=false, never a
 // failure: ack is idempotent. Ack by id is the session's verb (nova-bus ack),
 // so it is also the session's receipt of every id it names, pending or not
-// (Receipt): a daemon that acked the stream first takes nothing from it.
+// (Receipt): a daemon that acked the stream first takes nothing from it. When
+// a keepalive was among the ids it acks, it also trims the recipient's
+// acknowledged keepalives past the newest window (SPEC-BUS.md, the data:
+// retention).
 func (b *Bus) Ack(ctx context.Context, as string, ids []string) (map[string]bool, error) {
 	acked, entries, err := b.pendingOf(ctx, as, ids)
 	if err != nil {
 		return nil, err
 	}
+	keepalive := false
 	if len(entries) > 0 {
-		if _, err := b.Store.Ack(ctx, StreamOf(as), as, entries...); err != nil {
+		raw := make([]string, len(entries))
+		for i, e := range entries {
+			raw[i] = e.Entry
+			if IsKeepalive(e.Fields["subject"]) {
+				keepalive = true
+			}
+		}
+		if _, err := b.Store.Ack(ctx, StreamOf(as), as, raw...); err != nil {
 			return nil, err
 		}
 	}
 	if _, err := b.Receipt(ctx, as, ids); err != nil {
 		return nil, err
+	}
+	if keepalive {
+		if err := b.trimKeepalives(ctx, as); err != nil {
+			return nil, err
+		}
 	}
 	return acked, nil
 }
@@ -517,7 +575,7 @@ func (b *Bus) WouldAck(ctx context.Context, as string, ids []string) (map[string
 
 // pendingOf is each id true when it is among the recipient's pending entries, and those
 // entries.
-func (b *Bus) pendingOf(ctx context.Context, as string, ids []string) (map[string]bool, []string, error) {
+func (b *Bus) pendingOf(ctx context.Context, as string, ids []string) (map[string]bool, []Entry, error) {
 	if p := CheckName(as); p != "" {
 		return nil, nil, &Refusal{[]string{p}}
 	}
@@ -526,17 +584,29 @@ func (b *Bus) pendingOf(ctx context.Context, as string, ids []string) (map[strin
 		return nil, nil, err
 	}
 	acked := map[string]bool{}
-	var entries []string
+	var entries []Entry
 	for _, id := range ids {
 		acked[id] = false
 		for _, e := range pending {
 			if e.Fields["id"] == id {
-				entries = append(entries, e.Entry)
+				entries = append(entries, e)
 				acked[id] = true
 			}
 		}
 	}
 	return acked, entries, nil
+}
+
+// trimKeepalives deletes the recipient's acknowledged keepalives beyond the
+// newest window of them, one store call, when the store is a Trimmer
+// (SPEC-BUS.md, the data: retention). A store without one keeps every entry.
+func (b *Bus) trimKeepalives(ctx context.Context, as string, entry ...string) error {
+	tr, ok := b.Store.(Trimmer)
+	if !ok {
+		return nil
+	}
+	_, err := tr.TrimKeepalives(ctx, StreamOf(as), as, KeepaliveWindow, entry...)
+	return err
 }
 
 // pendingLimit bounds one look at a recipient's pending entries.

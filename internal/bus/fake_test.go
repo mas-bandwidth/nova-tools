@@ -363,6 +363,57 @@ func (f *Fake) Ack(_ context.Context, stream, group string, entries ...string) (
 	return n, nil
 }
 
+// TrimKeepalives keeps the newest window of the stream's keepalives and
+// deletes the acknowledged ones past it, leaving every audited entry
+// (SPEC-BUS.md, the data: retention). An entry is acknowledged when it is at
+// or below the group's last delivered id and is not pending. When entry is
+// provided, it trims only if that entry is a keepalive.
+func (f *Fake) TrimKeepalives(_ context.Context, stream, group string, window int, entry ...string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return 0, err
+	}
+	es, ok := f.streams[stream]
+	if !ok {
+		return 0, nil
+	}
+	if len(entry) > 0 && entry[0] != "" {
+		foundLive := false
+		for _, e := range es {
+			if e.Entry == entry[0] {
+				if IsKeepalive(e.Fields["subject"]) {
+					foundLive = true
+				}
+				break
+			}
+		}
+		if !foundLive {
+			return 0, nil
+		}
+	}
+	g := f.groups[stream+"/"+group]
+	keep := 0
+	var removed int64
+	kept := make([]Entry, 0, len(es))
+	for i := len(es) - 1; i >= 0; i-- { // newest first
+		e := es[i]
+		if IsKeepalive(e.Fields["subject"]) {
+			keep++
+			if keep > window && g != nil && !after(e.Entry, g.last) {
+				if _, pending := g.pending[e.Entry]; !pending {
+					removed++
+					continue
+				}
+			}
+		}
+		kept = append(kept, e)
+	}
+	slices.Reverse(kept)
+	f.streams[stream] = kept
+	return removed, nil
+}
+
 func (f *Fake) Pending(_ context.Context, stream, group string, count int) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

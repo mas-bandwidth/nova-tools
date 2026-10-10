@@ -34,8 +34,18 @@ nova-bus on 2026-10-04, when the git bus was removed.
   the token's record as JSON (`fingerprint`, `id`, `at`), written in the
   send's own atomic step and expiring at the token's cleanup (below,
   a-lost-send-response-is-safe-to-retry.w1).
-- Nothing is ever deleted by the tool. Trimming is a later decision. The one
-  key the store removes is a token's record, by its own expiry.
+- The bus deletes no audited message: every audited message stays on each
+  recipient's stream and on `bus2:log`, as it is today. A **keepalive** is a
+  message whose subject is one of the keepalive words (a ping `PING <nonce>`,
+  a pong, a daemon-pong or the bare keepalive word; `IsKeepalive`, a prefix
+  match without case): the liveness chatter of the friend daemon, not audited
+  traffic. A recipient's stream keeps only the newest `KeepaliveWindow` (16)
+  keepalive entries. The bus trims a recipient's acknowledged keepalives past
+  that window when it acks (one store call, `Store.TrimKeepalives`; a store
+  without it keeps every entry): an acknowledged keepalive is one at or below
+  the group's last delivered id and not pending, so a keepalive a reader was
+  handed and did not ack is never trimmed. The one key the store removes is a
+  token's record, by its own expiry.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
@@ -426,7 +436,7 @@ INFO` on Redis 8 answers):
 | send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` (the NOTE); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
 | recv | `SMEMBERS`, `TIME`, `HGETALL` (the NOTE, once per run), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
-| ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
+| ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL`; a keepalive acked also runs the trim script (`EVALSHA`/`EVAL`, `XPENDING`, `XINFO GROUPS`, `XREVRANGE`, `XDEL`) | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
 | names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
@@ -447,7 +457,7 @@ The least set per friend, one line:
 ```
 ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hget +hgetall
+  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +xrevrange +xdel +hset +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)
 ```
 
@@ -491,7 +501,10 @@ has not the script, and a `GET` when the push gate refuses a retry). recv:
 five (the roster, the group, the claim, the read, the delivered stamp). wait: two to arm (the
 roster, the stream's tail), then one `XREAD` per block (one parked read when
 nothing else is watched). ack: five (group, pending,
-the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+the entries, `XACK`, the receipt's `HDEL`), six when a keepalive was among the
+entries acked (the trim's one call). `recv`'s per-message `AckEntry` shares
+the trim: one `XACK` and, past the window, the one trim call. peek: up to
+four. log: one. names: one.
 
 ## The deadlines
 
