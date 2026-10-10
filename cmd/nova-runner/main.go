@@ -75,9 +75,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func runnerTool() *tool.Tool {
 	return &tool.Tool{
-		Name:      "nova-runner",
-		What:      "keep a friend at her configured width with one-shot harness lanes",
-		How:       "Reads the friend's nova-config row and fills ready cards up to its width every second.\n" +
+		Name: "nova-runner",
+		What: "keep a friend at her configured width with one-shot harness lanes",
+		How: "Reads the friend's nova-config row and fills ready cards up to its width every second.\n" +
 			"Stages and runs one harness per card, then closes its result and sends a true beat.\n" +
 			"Drains lanes before a version change; never kills a lane to enforce width.",
 		Stamp:     version,
