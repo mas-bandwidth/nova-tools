@@ -736,6 +736,48 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 
 *Tests: `TestACutWithAWaiverRecordsItInTheTag`.*
 
+## 20. The seat's links are recorded and repointed, and version warns on skew
+
+The coordinator's seat wrapper kept running a nova-sprint three days older than the adopted release — a
+pinned copy beside the installed one — so a verb added since was refused as unknown and nobody was told.
+The seat found it only when a verb failed. `adopt` replaced the installed binary and did not know the
+seat's link pointed elsewhere.
+
+**`nova-sprint seat install` records every path the seat reaches its tools through.** Beside the seat's
+own record (`seat.json`, `$XDG_CONFIG_HOME/nova-sprint/` else `~/.config/nova-sprint/`) it writes
+`seat-links.json` (`release.SeatLinks`, `internal/release/install.go`): the directories to look in for a
+nova binary no link names (`paths`), the wrapper's binary path and every symlink beside it that names a
+nova binary (`links`, each a `tool` and a `path`), and the build the sprint's server runs
+(`server_version`). The record holds no secret.
+
+**The release install on the seat repoints every recorded link.** `release install` reads the record,
+points each link at the binary it just placed for that tool, names in its receipt
+`RELEASE SEAT LINKS bin=<dir> repointed=<n> refused=<n> stale=<n>`, prints one
+`RELEASE SEAT REFUSED link=<path>` for a link it cannot repoint (the release carries no such tool, the
+path is a directory, or the relink failed) and one `RELEASE SEAT STALE path=<path>` for a nova binary
+under a recorded path that no link names — the pinned copy the wrapper kept running. A recorded path
+that is the installed directory itself is skipped, because install owns every name there. The relink is
+whole: a link is made beside the path and renamed onto it, so a failure leaves the old link or file as
+it was.
+
+**`adopt` refuses the machine on a link it could not repoint and reports the stale ones.** It reads the
+install's lines back — what the install said is the report, never a second reading of the record — and a
+machine with a `RELEASE SEAT REFUSED` is counted refused and named
+(`RELEASE REFUSED machine=<m> seat-link=<path>`) while the tools it did place stay; each
+`RELEASE SEAT STALE` is printed as `RELEASE SEAT STALE machine=<m> path=<path>`.
+
+**`nova-sprint version` warns when the seat's build is behind the server's.** It prints its one version
+line on stdout as always, then one warning line on stderr when the seat is older than the
+`server_version` its record holds, naming both builds and the remedy (`nova-sprint adopt`, or
+`nova-sprint seat install`). `release install` writes `server_version` from the release it installs, so
+a seat running the installed binary is at the server's build and is silent; a seat whose wrapper still
+runs a pinned copy is behind it and warns. The comparison is one direction and only over two readable
+versions: a seat ahead of its server, an unstamped dev build, or a record that names no build is
+silence, and the warning never changes the exit code of `version`.
+
+*Tests: `TestAdoptRepointsARecordedSeatLink`, `TestAdoptNamesAnUnrecordedSeatBinaryStale`,
+`TestVersionFromAnOlderSeatBinaryWarnsOnSkew`, `TestSeatLinksRecordRoundTrips`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -816,6 +858,10 @@ One numbered line per test; where one test holds several behaviours, they share 
 66. `TestOpenRouterSpendIsTheActivityDaysAndToday` — openrouter's own count is its activity's completed days in the window plus the key's count of today; no key, or a window past 30 days, is unread; opencode and Inception are unread.
 67. `TestReceiptsAreReadOnlyForTheirWindow` — a receipts file is read only for the window it covers.
 68. `TestACutWithAWaiverRecordsItInTheTag` — a cut over a red or missing CI is refused without `--waive-ci`; with `--waive-ci "<who, when>"` the tag annotation and the CHANGELOG section carry `CI waived: <who, when>` and the red check names; an empty waiver is refused.
+69. `TestAdoptRepointsARecordedSeatLink` — a recorded link to a pinned old binary is repointed at the release's installed binary, and a link whose tool the release does not carry is refused by name and left where it is.
+70. `TestAdoptNamesAnUnrecordedSeatBinaryStale` — a nova binary under the seat's recorded path that no link names is named stale, while the recorded link and the installed directory are not.
+71. `TestVersionFromAnOlderSeatBinaryWarnsOnSkew` — a seat behind the build its record says the server runs prints one warning naming both and the remedy; a seat at or ahead of it, an unstamped seat, and a server build that is no version are silent.
+72. `TestSeatLinksRecordRoundTrips` — the links record reads back field for field, and a seat with no record has no links and no error.
 
 Demanded, and proven by no test yet (8):
 

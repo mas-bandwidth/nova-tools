@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -351,7 +354,212 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	}, errs)
 	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s pruned=%d prune-failed=%d\n",
 		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch), pruned, pruneFailed)
+	// THE SEAT'S LINKS, AFTER THE TOOLS ARE WHOLE. install is the release's own
+	// step on the seat, so it is where the paths that reach its tools are
+	// repointed: the record seat install wrote is read here and every link it
+	// names is pointed at the release just placed (docs/SPEC-RELEASE.md, "The
+	// seat's links"). A link that cannot be repointed is named and left, and
+	// adopt refuses the machine on it; the tools are already installed.
+	repointSeatLinks(o.bin, goos, o.version, out, errs)
 	return 0
+}
+
+// The seat's links (docs/SPEC-RELEASE.md, "The seat's links"): the paths a seat
+// reaches its nova binaries through, recorded by seat install and repointed by
+// the install adopt runs on it. The coordinator's seat wrapper once kept running
+// a nova-sprint three days older than the adopted release -- a pinned copy
+// beside the installed one -- so a verb added since was refused as unknown and
+// nobody was told; the record is what makes adopt own every path the seat runs.
+
+// SeatLink is one path that reaches a nova binary: the tool's file name and the
+// path that must name the installed binary for that tool.
+type SeatLink struct {
+	Tool string `json:"tool"`
+	Path string `json:"path"`
+}
+
+// SeatLinks is the seat's record of its links: the directories to look in for a
+// nova binary no link names (Paths), the links adopt repoints (Links), and the
+// build the sprint's server runs (Server), which version warns on.
+type SeatLinks struct {
+	Paths  []string   `json:"paths,omitempty"`
+	Links  []SeatLink `json:"links,omitempty"`
+	Server string     `json:"server_version,omitempty"`
+}
+
+// SeatLinksFile is the record's name, beside the seat's login and seat records.
+const SeatLinksFile = "seat-links.json"
+
+// SeatLinksPath is the record's file: $XDG_CONFIG_HOME/nova-sprint/seat-links.json,
+// else ~/.config/nova-sprint/seat-links.json, beside the store login and the
+// seat's own record on every system (cmd/nova-sprint, defaultLoginFile). It is
+// a function of the environment, so the seat install that writes it and the
+// install that repoints what it records read one file.
+func SeatLinksPath() (string, error) {
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return filepath.Join(x, "nova-sprint", SeatLinksFile), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "nova-sprint", SeatLinksFile), nil
+}
+
+// ReadSeatLinks reads the record at path. A file that is not there is a seat
+// with no recorded links, not an error; a file that is not a record is one.
+func ReadSeatLinks(path string) (SeatLinks, error) {
+	var r SeatLinks
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return r, nil
+	}
+	if err != nil {
+		return r, err
+	}
+	if err := json.Unmarshal(b, &r); err != nil {
+		return SeatLinks{}, refuse("run: nova-sprint seat install", "the seat links %s are not a seat links record: %v", path, err)
+	}
+	return r, nil
+}
+
+// WriteSeatLinks writes the record at path whole, for its user alone.
+func WriteSeatLinks(path string, r SeatLinks) error {
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o600)
+}
+
+// repointSeatLinks is the step install takes after the tools are installed:
+// repoint every link the seat's record names at this release, name every nova
+// binary in the seat's paths that no link names, and record the build the
+// server now runs. A seat with no record, or one that cannot be read, is a seat
+// with nothing recorded and nothing repointed, said on the progress stream.
+func repointSeatLinks(bin, goos, version string, out, errs io.Writer) {
+	path, err := SeatLinksPath()
+	if err != nil {
+		progress(errs, "the seat links record has no place: %v (no link was repointed)", err)
+		return
+	}
+	r, err := ReadSeatLinks(path)
+	if err != nil {
+		progress(errs, "the seat links record %s cannot be read: %v (no link was repointed)", path, err)
+		return
+	}
+	if len(r.Links) == 0 && len(r.Paths) == 0 {
+		return
+	}
+	repointed, refused := RepointSeatLinks(r, bin, goos)
+	stale := StaleSeatBinaries(r, bin, goos)
+	r.Server = version
+	if err := WriteSeatLinks(path, r); err != nil {
+		progress(errs, "the seat links record %s was not written: %v (the links were repointed, the record is as it was)", path, err)
+	}
+	fmt.Fprintf(out, "RELEASE SEAT LINKS bin=%s repointed=%d refused=%d stale=%d\n",
+		field(bin), len(repointed), len(refused), len(stale))
+	for _, why := range refused {
+		fmt.Fprintf(out, "RELEASE SEAT REFUSED link=%s\n", oneLine("", errors.New(why)))
+	}
+	for _, p := range stale {
+		fmt.Fprintf(out, "RELEASE SEAT STALE path=%s\n", field(p))
+	}
+}
+
+// RepointSeatLinks repoints every recorded link at bin's binary for its tool and
+// returns the paths it repointed and one line for each it cannot, naming the
+// link and why. A link whose tool the release does not carry is refused rather
+// than guessed at; a path already naming the installed binary is left alone.
+func RepointSeatLinks(r SeatLinks, bin, goos string) (repointed, refused []string) {
+	for _, l := range r.Links {
+		target := filepath.Join(bin, ToolFile(l.Tool, goos))
+		if _, err := os.Lstat(target); err != nil {
+			refused = append(refused, l.Path+": the release carries no "+l.Tool)
+			continue
+		}
+		if filepath.Clean(l.Path) == filepath.Clean(target) {
+			continue
+		}
+		info, err := os.Lstat(l.Path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// nothing is there yet: the link is written below
+		case err != nil:
+			refused = append(refused, l.Path+": "+err.Error())
+			continue
+		case info.IsDir():
+			refused = append(refused, l.Path+": it is a directory, not a link")
+			continue
+		}
+		if err := relinkSeatPath(l.Path, target); err != nil {
+			refused = append(refused, l.Path+": "+err.Error())
+			continue
+		}
+		repointed = append(repointed, l.Path)
+	}
+	return repointed, refused
+}
+
+// relinkSeatPath points path at target whole: the link is made beside the path
+// under a name the filesystem chose and renamed onto it, so a failure leaves
+// the old link or file exactly as it was.
+func relinkSeatPath(path, target string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".link.*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	// ignored: the temp is closed only to free its name for the link; a close on an empty temp acts on nothing
+	_ = tmp.Close()
+	// ignored: the temp is removed only to free its name; the symlink below reports a remove that failed
+	_ = os.Remove(name)
+	if err := os.Symlink(target, name); err != nil {
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		// ignored: the temp link is cleanup on the error path; the rename's error is the one returned
+		_ = os.Remove(name)
+		return err
+	}
+	return nil
+}
+
+// StaleSeatBinaries names every nova-* file under the record's paths that no
+// recorded link names: the pinned copy beside the installed binary, the one the
+// wrapper kept running. The installed directory bin is skipped, because install
+// owns every name there and replaces each one it carries.
+func StaleSeatBinaries(r SeatLinks, bin, goos string) []string {
+	known := map[string]bool{}
+	for _, l := range r.Links {
+		known[filepath.Clean(l.Path)] = true
+	}
+	var stale []string
+	for _, dir := range r.Paths {
+		if filepath.Clean(dir) == filepath.Clean(bin) {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !strings.HasPrefix(e.Name(), "nova-") {
+				continue
+			}
+			p := filepath.Join(dir, e.Name())
+			if known[filepath.Clean(p)] {
+				continue
+			}
+			stale = append(stale, p)
+		}
+	}
+	sort.Strings(stale)
+	return stale
 }
 
 // pruneInstalled also protects the installed binaries' directory, including a

@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -582,6 +584,14 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 	}
 	if args[0] == "--version" || args[0] == "version" {
 		fmt.Fprintln(stdout, versionLine())
+		// One warning line on stderr when this seat's build is behind the build
+		// its record says the server runs; stdout stays the one version line and
+		// the exit code is 0 either way (docs/SPEC-RELEASE.md, "The seat's
+		// links"). A machine that is no seat has no record and nothing to warn
+		// about.
+		if warn := a.seatSkewWarning(); warn != "" {
+			fmt.Fprintln(stderr, warn)
+		}
 		return 0
 	}
 	if code, sent := a.forwarded(args, stdout, stderr); sent {
@@ -612,6 +622,24 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 		return refuse(stderr, args[0], why+"; its verbs are "+strings.Join(members, ", ")+"; run: nova-sprint help "+args[0])
 	}
 	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
+}
+
+// seatSkewWarning is what version prints on stderr when this seat's build is
+// older than the build its links record says the sprint's server runs: one line
+// naming both and the remedy, never a change of the exit code. It reads the
+// record beside the seat's own (seat.json), the place seat install wrote and
+// adopt updated; a record that is not there, or that names no server build, is
+// silence.
+func (a *app) seatSkewWarning() string {
+	rec, err := a.seatRecordPath()
+	if err != nil {
+		return ""
+	}
+	links, err := release.ReadSeatLinks(filepath.Join(filepath.Dir(rec), release.SeatLinksFile))
+	if err != nil {
+		return ""
+	}
+	return release.SeatVersionWarning(version, links.Server)
 }
 
 // refuse is a usage refusal: exit 2.

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -130,6 +131,11 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		if err := a.installSeat(cs, u.Server, true, stdout); err != nil {
 			return refuse(stderr, name, err.Error())
 		}
+		lp, ln, err := a.seatLinksPathCount(u.Exe)
+		if err != nil {
+			return refuse(stderr, name, err.Error()+"; nothing was written")
+		}
+		fmt.Fprintf(stdout, "SEAT LINKS DRY-RUN file=%s links=%d; nothing was written\n", oneline.Field(lp), ln)
 		return 0
 	}
 	if code := a.recordPushTarget(u.Server, *c, push, stdout, stderr); code != 0 {
@@ -145,12 +151,23 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s FAILED: the unit is installed, and %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
+	// The paths this seat reaches its tools through are recorded beside the seat
+	// record: adopt repoints each one at the release it installs, and version
+	// warns when one of them runs an older build (docs/SPEC-RELEASE.md, "The
+	// seat's links"). The unit is already installed and loaded; a record that
+	// cannot be read is not read back by a seat that never wrote one.
+	lp, ln, err := a.writeSeatLinks(u.Exe)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s %s FAILED: the unit is installed, and the seat links were not recorded: %s\n", prog, name, oneline.Escape(err.Error()))
+		return 1
+	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args(), "adapter": push.AdapterName(), "seat": strings.Split(strings.TrimSpace(seat.String()), "\n")}) // ignored: strings and bools always encode
+		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args(), "adapter": push.AdapterName(), "links": lp, "link_count": ln, "seat": strings.Split(strings.TrimSpace(seat.String()), "\n")}) // ignored: strings and bools always encode
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
 	fmt.Fprintf(stdout, "SEAT INSTALL OK unit=%s written=%t loaded=true\n", oneline.Field(r.Path), r.Changed)
+	fmt.Fprintf(stdout, "SEAT LINKS OK file=%s links=%d\n", oneline.Field(lp), ln)
 	fmt.Fprintf(stdout, "  runs: %s\n", strings.Join(u.Args(), " "))
 	if push.Adapter == sprint.AdapterFolder {
 		fmt.Fprintf(stdout, "  push: %s into %s adapter=folder: each check is written there as %s<nonce> and each judgment as a file; the seat is live once the session answers the check (seat push shows it)\n", oneline.Field(push.Harness), oneline.Field(push.Target), sprint.PushProofFilePrefix)
@@ -273,3 +290,82 @@ func (a *app) cmdSeatUninstall(args []string, stdout, stderr io.Writer) int {
 // service the file's name. Under NOVA_TEST_NO_HOST it refuses: a test gives its own
 // loader.
 func loadSeatUnit(goos, op, path string) error { return sprint.LoadUnit(goos, op, path) }
+
+// The paths a seat reaches its nova binaries through, recorded beside the seat's
+// record (seat.json) so adopt repoints each one at the release it installs and
+// version warns when one of them runs an older build (docs/SPEC-RELEASE.md, "The
+// seat's links"). A seat whose wrapper ran a pinned copy was the bug this
+// record exists for.
+
+// seatLinksBeside is the links seat install records: the wrapper's binary path,
+// and every link beside it that names a nova binary.
+func seatLinksBeside(exe string) release.SeatLinks {
+	dir := filepath.Dir(exe)
+	r := release.SeatLinks{Paths: []string{dir}, Links: []release.SeatLink{{Tool: "nova-sprint", Path: exe}}}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return r
+	}
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		if p == exe {
+			continue
+		}
+		target, err := os.Readlink(p)
+		if err != nil {
+			continue
+		}
+		tool := strings.TrimSuffix(filepath.Base(target), ".exe")
+		if strings.HasPrefix(tool, "nova-") {
+			r.Links = append(r.Links, release.SeatLink{Tool: tool, Path: p})
+		}
+	}
+	return r
+}
+
+// seatLinksPath is the links record's file beside the seat's record, so the
+// seat install that writes it and the version and adopt that read it agree.
+func (a *app) seatLinksPath() (string, error) {
+	rec, err := a.seatRecordPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(rec), release.SeatLinksFile), nil
+}
+
+// seatLinksPathCount is what seat install would record: the record's file and
+// how many links it names, the version the record already holds kept. It writes
+// nothing.
+func (a *app) seatLinksPathCount(exe string) (string, int, error) {
+	path, err := a.seatLinksPath()
+	if err != nil {
+		return "", 0, err
+	}
+	old, err := release.ReadSeatLinks(path)
+	if err != nil {
+		return path, 0, err
+	}
+	r := seatLinksBeside(exe)
+	r.Server = old.Server
+	return path, len(r.Links), nil
+}
+
+// writeSeatLinks records the links this seat reaches its tools through, keeping
+// the version the record already holds: adopt writes that when it installs the
+// release the server runs.
+func (a *app) writeSeatLinks(exe string) (string, int, error) {
+	path, err := a.seatLinksPath()
+	if err != nil {
+		return "", 0, err
+	}
+	old, err := release.ReadSeatLinks(path)
+	if err != nil {
+		return path, 0, err
+	}
+	r := seatLinksBeside(exe)
+	r.Server = old.Server
+	if err := release.WriteSeatLinks(path, r); err != nil {
+		return path, 0, err
+	}
+	return path, len(r.Links), nil
+}
