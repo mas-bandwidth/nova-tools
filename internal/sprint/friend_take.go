@@ -238,6 +238,8 @@ type FriendGiveReq struct {
 // taken from (FieldTakenFrom), so the deal may deal it to her again; a pinned card taken
 // from its friend waits for no one else and is dealt to her. A card not ready or waiting,
 // or never taken back from her, is refused, one refusal each, and the rest are given.
+// friend give also accepts ready, undealt cards (those never dealt), so the deal may deal
+// them to the named friend.
 func FriendGive(s *Snapshot, r FriendGiveReq) Plan {
 	var p Plan
 	row := FriendRow(r.Friend)
@@ -268,9 +270,22 @@ func FriendGive(s *Snapshot, r FriendGiveReq) Plan {
 		switch {
 		case pr.Col != Ready && pr.Col != Waiting:
 			p.refuse(id, fmt.Sprintf("%s is %s, not ready or waiting", pr.ID, pr.Col))
-		case wc == nil || wc.F(FieldTakenFrom) != row:
+		case pr.Int("attempt") == 0 && wc == nil:
+			// undealt card: accept for friend give (will be dealt to friend on next tick)
+			n := happened(NGivenBack, pr.Row, s.Now, pr.ID)
+			n.Who, n.What = r.Who, fmt.Sprintf("%s may be dealt to %s again (%s)", pr.ID, r.Friend, reason)
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Notes: []Note{n}, Moved: n.What})
+		case pr.Int("attempt") == 0:
+			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from no friend)", card, r.Friend))
+		case wc == nil:
+			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from no friend)", card, r.Friend))
+		case wc.F(FieldTakenFrom) != row:
 			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from %s)", card, r.Friend, from))
+		case wc.F(FieldTakenFrom) == "":
+			// was given back already: refuse
+			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from no friend)", card, r.Friend))
 		default:
+			// taken_from matches row: accept
 			n := happened(NGivenBack, pr.Row, s.Now, pr.ID)
 			n.Who, n.What = r.Who, fmt.Sprintf("%s may be dealt to %s again (%s)", pr.ID, r.Friend, reason)
 			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row,

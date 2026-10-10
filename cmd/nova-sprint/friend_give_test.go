@@ -91,3 +91,15 @@ func TestFriendGiveRefusesACardNeverTakenFromHer(t *testing.T) {
 	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 was never taken back from friend amy (taken from no friend)", "given once, its mark is gone")
 	ta.clean()
 }
+
+// TestFriendGiveDealsAReadyUndealtCard gives a ready, undealt card to a friend up with room.
+func TestFriendGiveDealsAReadyUndealtCard(t *testing.T) {
+	t.Parallel()
+	ta, _ := takeApp(t, 1, nil, "amy")
+	ta.ok("fleet down m1")
+	ta.ok("fleet down m2")
+	out := ta.ok("friend give amy s1-1 --reason 'the coordinator gives it'")
+	assert.Contains(t, out, "MOVED s1-1 may be dealt to amy again (the coordinator gives it)")
+	assert.Contains(t, out, "FRIEND-GIVE OK moved=1 refused=0")
+	ta.clean()
+}
