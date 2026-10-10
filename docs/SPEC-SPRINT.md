@@ -7462,6 +7462,29 @@ gives one at a time beside the store, so no two steps of the record interleave.
   copy of the sprint holds (it reads the sprint that way); the page does not draw
   them.
 
+### Bench lanes
+
+A lane the machinery starts on a bench (a worker, a reader, a lander, a bench gate)
+is `RunBenchLane` (`internal/sprint/bench_lane.go`). Its directory is
+`nova-bench/lanes/<kind>/<job>` and its `tmp` is inside that directory. The command
+runs with `TMPDIR` and `GOTMPDIR` set to that `tmp`, and with `GOCACHE` the bench's
+one shared cache (`nova-bench/cache/go-build` when the lane names none). The directory
+is removed when the lane ends, whatever the verdict, and the caller's cancellation
+does not end that remove. A directory whose lane is gone is removed on the next tick
+(`SweepBenchLanes`): each directory under the root whose lane is not live, and a name
+that is not one plain job is left.
+
+The shared cache has one cap per bench. The cap is the sprint's `bench_cache_gib`, a
+whole number from 1 (`Snapshot.BenchCacheCapGiB`), and `BenchCacheCapGiBDefault` when
+the sprint sets none. Before the command the cache is measured; over the cap it is
+cleaned with `go clean -cache`. A clean that fails does not fail the lane.
+
+A bench whose `/tmp` is over `BenchTmpOverPct` raises one judgment (`BenchTmpFrom`,
+`NBenchTmp`, `BenchTmpJudgment`) naming the bench and its largest directories, while one such
+judgment for that bench is open, and none at the threshold or under. The judgment is
+the check beside the mechanism: a lane runs in `nova-bench/lanes` and removes its own
+directory, so what remains was left by something else.
+
 
 ## friend-stall-ladder-r.w1
 

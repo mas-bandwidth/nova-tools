@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -765,7 +766,9 @@ func (l *lander) gateWhose() string {
 
 // runOnBench runs the gate's runs on host (gateScript) in the tree st stages from the
 // bench's mirror (never a copy of dir): the output, the exit status, and err when the runs
-// could not be reached (bench.Run's error; a *bench.StageError when the stage was refused).
+// could not be reached (sprint.RunBenchLane's error; a *bench.StageError when the stage was
+// refused). The lane runs in its own directory with TMPDIR and GOTMPDIR inside it, and
+// removes that directory whatever the verdict (docs/SPEC-SPRINT.md section 18, bench lanes).
 // The stage is said as it ends (copySaid). A test's gateBench seam stands in for the bench
 // and its stage: a *bench.StageError it returns is a refused stage.
 func (l *lander) runOnBench(ctx context.Context, host, dir string, runs [][]string, withGit bool, st *bench.MirrorStage) (string, int, error) {
@@ -783,16 +786,31 @@ func (l *lander) runOnBench(ctx context.Context, host, dir string, runs [][]stri
 		return "", 0, fmt.Errorf("no mirror stage for %s: the gate runs here", dir)
 	}
 	var buf bytes.Buffer
-	res, err := bench.Run(ctx, bench.Exec{}, bench.Options{
-		Hosts:  []string{host},
-		Stage:  st,
-		Argv:   []string{"sh", "-c", gateScript(runs)},
+	lane := sprint.BenchLane{Kind: sprint.BenchLaneGate, Job: st.Sha[:12]}
+	res, err := sprint.RunBenchLane(ctx, bench.Exec{}, host, lane, sprint.BenchLaneOptions{
 		Stdout: &buf,
 		Stderr: &buf,
-		Now:    l.clock,
-		Staged: func(s bench.Stage) { l.copySaid(s.Line()) },
-	})
+		Copy: func(ctx context.Context, host, dst string) error {
+			return l.stageMirror(ctx, host, st, dst)
+		},
+	}, []string{"sh", "-c", gateScript(runs)})
 	return buf.String(), res.Code, err
+}
+
+// stageMirror stages the tree at st into dst on the bench, from the bench's mirror, and
+// says it as the stage's line (copySaid); its error is a *bench.StageError when the stage
+// was refused.
+func (l *lander) stageMirror(ctx context.Context, host string, st *bench.MirrorStage, dst string) error {
+	start := l.clock()
+	line := bench.StageLine(*st, dst)
+	var errb bytes.Buffer
+	code, err := bench.Exec{}.Shell(ctx, host, line, io.Discard, &errb)
+	s := bench.Stage{Host: host, Via: "mirror", Bytes: int64(len(line)), Wall: l.clock().Sub(start)}
+	if err != nil || code != 0 {
+		s.Err = &bench.StageError{Host: host, Step: "staging " + st.Sha[:12] + " from " + st.Mirror + " at " + dst, Code: code, Tail: bench.TailLines(errb.String()), Wall: s.Wall, Err: err}
+	}
+	l.copySaid(s.Line())
+	return s.Err
 }
 
 // gateCard is the tree gate on one card merged onto the batch branch at before: red, the
