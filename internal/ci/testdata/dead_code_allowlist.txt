@@ -9,5 +9,5 @@ internal/filelock 1
 internal/ntable 11
 internal/secrets 1
 internal/swarm 39
-internal/testguard 1
+internal/testguard 2
 internal/tool 1
