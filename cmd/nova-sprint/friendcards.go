@@ -760,7 +760,10 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 // minutes on the sprint clock), and the close retires the fleet card
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
-// wake is the pass's: one-shot sends now, batch records the card for the one message.
+// wake records this delivered card and its brief for the pass's notice: the
+// deferred step sends a one-shot friend's per-card wake for her single delivered
+// card, and one pass notice otherwise (docs/SPEC-SPRINT.md section 1,
+// a-deal-that-adds-no-card-sends-no-notice.w1).
 func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string), wake func(sprint.Packet, string, string) error) (delivered, finished int, err error) {
 	job := friendJobOf(p)
 	in, why, err := friendInbox(dir, p)
