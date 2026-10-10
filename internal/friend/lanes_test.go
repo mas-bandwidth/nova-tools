@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,9 +49,9 @@ func cardDirFixture(t *testing.T, tasks [][2]string, delivered, done []string) s
 	return dir
 }
 
-// lanesHarness is a harness that opens sessions ses_1, ses_2, ... and, for a
-// card turn, writes the card's RESULT.md when finish says so; a turn of a
-// card in reject says that permission line.
+// lanesHarness is a harness that opens sessions ses_1, ses_2, ... in the order
+// they open and, for a card turn, writes the card's RESULT.md when finish says
+// so; a turn of a card in reject says that permission line.
 type lanesHarness struct {
 	mu      sync.Mutex
 	dir     string
@@ -62,10 +63,11 @@ type lanesHarness struct {
 	active  map[string]int
 	maxBusy int
 	block   chan struct{} // when set, a card turn waits for it
+	next    int           // the next session's number
 }
 
 var cardOfText = regexp.MustCompile(`one card this turn, ([^ ]+)\. Do exactly`)
-var laneOfSeed = regexp.MustCompile(`this is lane (\d+),`)
+var laneOfText = regexp.MustCompile(`nova-friend: lane (\d+) of `)
 
 func (h *lanesHarness) Deliver(context.Context, string) (int, error) { return 0, nil }
 
@@ -73,7 +75,8 @@ func (h *lanesHarness) OpenSession(_ context.Context, seed string) (string, erro
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.seeds = append(h.seeds, seed)
-	return "ses_" + laneOfSeed.FindStringSubmatch(seed)[1], nil // named for its lane: the opens race, the names do not
+	h.next++
+	return fmt.Sprintf("ses_%d", h.next), nil // named in the order the lanes open: each card's turn names its lane (laneOfText)
 }
 
 func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (LaneTurn, error) {
@@ -149,7 +152,7 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 
 		turns, texts, seeds := h.got()
 		require.Len(t, seeds, 2, "one session per lane")
-		assert.ElementsMatch(t, []string{"1", "2"}, []string{laneOfSeed.FindStringSubmatch(seeds[0])[1], laneOfSeed.FindStringSubmatch(seeds[1])[1]})
+		assert.Equal(t, seeds[0], seeds[1], "the seed is byte-identical for every lane")
 		for _, seed := range seeds {
 			assert.Contains(t, seed, "Read "+filepath.Join(dir, "bob", "AGENTS.md")+" and every file under "+filepath.Join(dir, "bob", "memory")+"/ first")
 		}
@@ -160,9 +163,18 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 			ses, card, _ := strings.Cut(tn, ": ")
 			byLane[ses] = append(byLane[ses], card)
 		}
-		assert.ElementsMatch(t, [][]string{{"c1", "c3"}, {"c2", "c2"}}, [][]string{byLane["ses_1"], byLane["ses_2"]}, "%v", turns)
+		require.Len(t, byLane, 2)
+		// each card's turn names its lane: recover each lane's session from it
+		laneSession := map[string]string{} // lane -> session
+		for i, text := range texts {
+			lane := laneOfText.FindStringSubmatch(text)[1]
+			ses, _, _ := strings.Cut(turns[i], ": ")
+			laneSession[lane] = ses
+		}
+		require.Len(t, laneSession, 2)
+		assert.ElementsMatch(t, [][]string{{"c1", "c3"}, {"c2", "c2"}}, [][]string{byLane[laneSession["1"]], byLane[laneSession["2"]]}, "%v", turns)
 		c1Lane := "1"
-		if byLane["ses_2"][0] == "c1" {
+		if byLane[laneSession["2"]][0] == "c1" {
 			c1Lane = "2"
 		}
 		c2Lane := map[string]string{"1": "2", "2": "1"}[c1Lane]
@@ -186,16 +198,16 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		require.Len(t, got, 2)
 		assert.Equal(t, "daemon-pong: daemon-pong n1", got[0])
 		assert.True(t, strings.HasPrefix(got[1], "friend bob: card c2 not finished after 2 turns (lane "+c2Lane+"): the harness refused a permission: Permission to read /elsewhere was auto-rejected"), got[1])
-		assert.Equal(t, map[int]string{1: "ses_1", 2: "ses_2"}, state.Sessions, "each lane keeps its session")
+		assert.Equal(t, map[int]string{1: laneSession["1"], 2: laneSession["2"]}, state.Sessions, "each lane keeps its session")
 		assert.Equal(t, []string{"c2~15"}, state.GivenUp)
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 2, strings.Count(records, " card=done"), records)
-		assert.Contains(t, records, "lane="+c2Lane+" session=ses_"+c2Lane+` subject="card c2" messages=0`)
+		assert.Contains(t, records, "lane="+c2Lane+" session="+laneSession[c2Lane]+` subject="card c2" messages=0`)
 		assert.Contains(t, records, `card=again turn=1/2 reason="the harness refused a permission: Permission to read /elsewhere was auto-rejected"`)
 		assert.Contains(t, records, "card=set_aside turn=2/2")
 		s := r.last()
 		assert.Equal(t, ModeOneShot, s.Mode)
-		assert.Equal(t, "1:ses_1:- 2:ses_2:-", s.Lanes)
+		assert.Equal(t, "1:"+laneSession["1"]+":- 2:"+laneSession["2"]+":-", s.Lanes)
 		assert.Equal(t, 2, s.Width)
 	})
 }

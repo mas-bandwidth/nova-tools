@@ -319,10 +319,12 @@ func (d *Daemon) identity() (agents, memory string) {
 }
 
 // LaneSeed is the first turn of a lane's new session: who the friend is,
-// from her own files, and what each later turn will be.
-func LaneSeed(friend string, n, width int, agents, memory string) string {
+// from her own files, and what each later turn will be. It carries no lane
+// number and no width, so every lane of one friend opens the same seed and a
+// provider's prompt cache shares it; each card's turn names its lane (CardText).
+func LaneSeed(friend string, agents, memory string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are %s: one of %d one-shot lanes of %s, this is lane %d, a session of your own.\n", friend, width, friend, n)
+	fmt.Fprintf(&b, "You are %s: one of several one-shot lanes, a session of your own.\n", friend)
 	switch {
 	case agents != "" && memory != "":
 		fmt.Fprintf(&b, "Read %s and every file under %s/ first: they are who you are.\n", agents, memory)
@@ -477,7 +479,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			}
 			ln.opening, ln.openFrom = true, now
 			agents, memory := d.identity()
-			seed := LaneSeed(d.Friend, ln.n, width, agents, memory)
+			seed := LaneSeed(d.Friend, agents, memory)
 			go func(ln *lane) {
 				id, err := lh.OpenSession(LaneContext(l.ctx), seed)
 				s.results <- laneResult{ln: ln, open: true, session: id, err: err}
@@ -673,6 +675,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		end.NoReport = true
 		line += " card=done " + l.endCard(ln.n, card, end, now)
 		l.finishNote(ln, card, now.Sub(t.started), now)
+		l.dropSession(ln, now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
 		return
@@ -688,6 +691,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		s.given[job] = true
 		s.state.GivenUp = append(s.state.GivenUp, job)
 		l.saveLanes(now)
+		l.dropSession(ln, now)
 		ln.card, ln.attempts = nil, 0
 		return
 	}
@@ -719,9 +723,23 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	s.given[job] = true
 	s.state.GivenUp = append(s.state.GivenUp, job)
 	l.saveLanes(now)
+	l.dropSession(ln, now)
 	ln.card, ln.attempts = nil, 0
 	l.tell(fmt.Sprintf("friend %s: card %s not finished after %d turns (lane %d): %s", d.Friend, card.ID, CardTurns, ln.n, oneLine(why, 200)),
 		fmt.Sprintf("Lane %d of %s handed card %s (%s) %d times and no RESULT.md appeared in %s. The last turn: %s. The lane has set the card aside, finished it failed in the sprint (its REPORT.md says how the run ended) and takes the next.\n", ln.n, d.Friend, card.ID, card.Brief, CardTurns, card.Outbox, why), now)
+}
+
+// dropSession is a lane that finished its card under FreshSessionPerCard: it
+// drops its session, so the next card opens a new one from the same seed
+// (LaneSeed is byte-identical for every lane) instead of paying for every card
+// before it. Off (the default) the lane keeps one session for its life.
+func (l *loop) dropSession(ln *lane, now time.Time) {
+	if !l.d.FreshSessionPerCard {
+		return
+	}
+	ln.session = ""
+	delete(l.lanes.state.Sessions, ln.n)
+	l.saveLanes(now)
 }
 
 // harnessFault says a lane turn that ended on its own is a harness fault: it exited 0 with no
