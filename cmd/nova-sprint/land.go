@@ -467,6 +467,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel}
 	l.locks()
 	defer l.release()
+	// a gate an earlier run left under this land root runs in its own group (runCheck);
+	// end it before this run starts another, one line saying so (killStaleGate)
+	a.killStaleGate(stdout)
 	ctx := a.landCtx
 	if ctx == nil {
 		ctx = context.Background() // a direct land command has no loop caller
@@ -2002,6 +2005,31 @@ func (l *lander) checkCard(ctx context.Context, dir, stream string, c landCard, 
 // containsAny says s holds one of words.
 func containsAny(s string, words []string) bool {
 	return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(s, w) })
+}
+
+// killStaleGate ends a gate an earlier land run left under the land root, one line saying
+// so. runCheck puts the check in its own process group and writes the group leader's pid
+// to <land root>/.gate_pid, so the whole group goes here: a gate whose server died never
+// loads the machine the next tick runs on.
+func (a *app) killStaleGate(stdout io.Writer) {
+	root, err := a.landRoot()
+	if err != nil { // ignored: no land root means no gate this lander could have left
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".gate_pid"))
+	if err != nil { // ignored: no .gate_pid under the land root means no stale gate to end
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 { // ignored: a pid file that names no process is no stale gate to end
+		return
+	}
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL) // ignored: a best-effort kill of the group runCheck put its leader in; a group already gone needs nothing
+	} else if p, err := os.FindProcess(pid); err == nil {
+		_ = p.Kill() // ignored: a best-effort kill of a gate whose leader no longer leads its group; a process already gone needs nothing
+	}
+	fmt.Fprintf(stdout, "LAND KILLED gate pid=%d from an earlier run\n", pid)
 }
 
 // runCheck runs --check in the clone: why "" when it passed or there is none, and its
