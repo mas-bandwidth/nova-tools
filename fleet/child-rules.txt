@@ -15,6 +15,7 @@
 [no-rm-rf] No `rm -rf` outside the job directory.
 [no-force-push] Never force-push.
 [no-rebase] Never rebase.
+[no-rewrite-history] Never amend, rebase or reset onto origin: the commit your checkout starts at stays in your history, and your work goes on top of it as new commits.
 [no-stash] Do not use git stash (the stash list is shared by every worktree).
 [functional-in-container] Functional tests (any test that needs Redis) run ONLY inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.
 [parallel] Every new test opens with `t.Parallel()`.
