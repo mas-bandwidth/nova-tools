@@ -106,6 +106,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	line += " redis=" + config.Value(addr)
 	o.Fact("redis", addr)
 	behind := 0
+	var judgments []string
 	for _, k := range config.Kinds {
 		_, applied, err := rs.Read(ctx, k.Name)
 		if err != nil {
@@ -115,7 +116,31 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		o.Fact(k.Name+"_applied", applied)
 		if applied != revs[k.Name] {
 			behind++
+			age, known, err := kindGapAge(ctx, st, k.Name, applied, d.now())
+			if err != nil {
+				return refuse(stderr, verb, err.Error())
+			}
+			if known {
+				line += fmt.Sprintf(" %s_gap_age=%s", k.Name, ageText(age))
+				o.Fact(k.Name+"_gap_age", ageText(age))
+				if age > applyGapJudgment {
+					judgment := judgmentLine(k.Name, revs[k.Name], applied, age)
+					judgments = append(judgments, judgment)
+					if *asJSON {
+						// The line rendering below carries the judgment once
+						// for a text status; only JSON, which prints no line,
+						// needs it as a note too.
+						o.Note(judgment)
+					}
+				}
+			} else {
+				line += " " + k.Name + "_gap_age=unknown"
+				o.Fact(k.Name+"_gap_age", "unknown")
+			}
 		}
+	}
+	for _, judgment := range judgments {
+		line += "\n" + judgment
 	}
 	if behind > 0 {
 		return finish(1, fmt.Sprintf("Redis is not at the store's revision for %d kind(s)", behind), toolName+" apply"+c.again())

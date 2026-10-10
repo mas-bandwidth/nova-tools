@@ -245,6 +245,15 @@ func (f *FileStore) History(ctx context.Context, kind, name string) ([]Change, e
 	return f.Mem.History(ctx, kind, name)
 }
 
+// FirstHistoryAfter keeps the file store's absent-file refusal for a kind's
+// first unapplied history row as well as for named history reads.
+func (f *FileStore) FirstHistoryAfter(ctx context.Context, kind string, applied int64) (Change, bool, error) {
+	if err := f.absent(); err != nil {
+		return Change{}, false, err
+	}
+	return f.Mem.FirstHistoryAfter(ctx, kind, applied)
+}
+
 func (f *FileStore) Rev(ctx context.Context, kind string) (int64, error) {
 	if err := f.absent(); err != nil {
 		return 0, err

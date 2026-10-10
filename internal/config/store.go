@@ -398,6 +398,19 @@ func (m *Mem) History(_ context.Context, kind, name string) ([]Change, error) {
 	return out, nil
 }
 
+// FirstHistoryAfter reads the first change of a kind after the applied
+// revision, including changes to rows that no longer exist.
+func (m *Mem) FirstHistoryAfter(_ context.Context, kind string, applied int64) (Change, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.history {
+		if c.Kind == kind && c.ID > applied {
+			return c, true, nil
+		}
+	}
+	return Change{}, false, nil
+}
+
 func (m *Mem) Rev(_ context.Context, kind string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

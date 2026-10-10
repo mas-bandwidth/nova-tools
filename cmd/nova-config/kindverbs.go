@@ -125,6 +125,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	} else {
 		c = seatStoreFlags(fs)
 	}
+	redisFlag := fs.String("redis", "", "the Redis `host:port` to apply this write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
 	reason := fs.String("reason", "", "why this change is made: one `line`, recorded in the history row beside the actor and the time; empty (the default) records none")
 	dry := fs.Bool("dry-run", false, "print the change the write would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
@@ -251,12 +252,18 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 		changed = slices.Sorted(maps.Keys(changes))
 	}
+	_, movesSeat := changes["coordinator"]
+	applied, attempted, disposition := applyWrite(ctx, st, d, *redisFlag, k.Name, actor, id, k.Name == config.KindSprint && movesSeat)
 	if *asJSON {
 		o := tool.Done().Fact("op", op).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
+		o.Fact("applied", applied).Fact("disposition", disposition)
 		if !add {
 			o.Fact("changed", changed)
 		}
 		o.Verb, o.Notes = verb, notes
+		if attempted && !applied {
+			o.Status, o.Exit, o.Why = tool.Failed, 1, []string{disposition}
+		}
 		return emit(stdout, o)
 	}
 	if add {
@@ -265,7 +272,36 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(changed, ",")))
 	}
 	printNotes(stdout, notes)
+	fmt.Fprintln(stdout, disposition)
+	if attempted && !applied {
+		return 1
+	}
 	return 0
+}
+
+// applyWrite reports every committed write, including a missing Redis address.
+// The store revision remains the truth when apply fails; a later loop pass can
+// retry it without writing the row again.
+func applyWrite(ctx context.Context, st pgStore, d deps, redisFlag, kind, actor string, rev int64, moveSeat bool) (bool, bool, string) {
+	addr, err := redisAddress(redisFlag, d.getenv)
+	if err != nil {
+		return false, false, (&applyErr{rev: rev, err: err}).Error()
+	}
+	var rs redisSide
+	rs, err = d.openRedis(ctx, addr)
+	if err == nil {
+		apply := config.Apply
+		if moveSeat {
+			apply = config.ApplyMovingSeat
+		}
+		_, err = apply(ctx, st, rs, kind, actor, false, func(config.Op) {})
+		// ignored: apply's result is settled before close; a close error cannot change the revision stamp.
+		_ = rs.Close()
+	}
+	if err != nil {
+		return false, true, (&applyErr{rev: rev, err: err}).Error()
+	}
+	return true, true, fmt.Sprintf("APPLIED rev=%d", rev)
 }
 
 // checkLoopVerb refuses a loop whose verb is gone (config.CheckLoopVerb), the
@@ -360,6 +396,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	verb := k.Name + " remove"
 	fs := verbflag.New(verb)
 	c := seatStoreFlags(fs)
+	redisFlag := fs.String("redis", "", "the Redis `host:port` to apply this write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
 	reason := fs.String("reason", "", "why this change is made: one `line`, recorded in the history row beside the actor and the time; empty (the default) records none")
 	dry := fs.Bool("dry-run", false, "print the change the remove would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
@@ -432,17 +469,26 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 		}
 		return storeErr(stderr, verb, err, next)
 	}
+	applied, attempted, disposition := applyWrite(ctx, st, d, *redisFlag, k.Name, actor, id, false)
 	if *asJSON {
 		o := tool.Done().Fact("op", config.OpRemove).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
+		o.Fact("applied", applied).Fact("disposition", disposition)
 		if note := actorAliasNote(fs); note != "" {
 			o.Note(note)
 		}
 		o.Verb = verb
+		if attempted && !applied {
+			o.Status, o.Exit, o.Why = tool.Failed, 1, []string{disposition}
+		}
 		return emit(stdout, o)
 	}
 	fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
 	if note := actorAliasNote(fs); note != "" {
 		printNotes(stdout, []string{note})
+	}
+	fmt.Fprintln(stdout, disposition)
+	if attempted && !applied {
+		return 1
 	}
 	return 0
 }
