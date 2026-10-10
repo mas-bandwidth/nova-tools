@@ -497,3 +497,7 @@ MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfter
 MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal	stopcancels	required	-
+MCStatsTidy.cfg	MCStatsTidy.tla	invariant	EveryArchiveNamed	ignore-terminal	statstidy	required	-
+MCStatsTidyBrokenMoveFirst.cfg	MCStatsTidy.tla	invariant	ArchiveBeforeMove	ignore-terminal	statstidy	required	-
+MCStatsTidyBrokenNoRefuse.cfg	MCStatsTidy.tla	invariant	RefusedWritesNothing	ignore-terminal	statstidy	required	-
+MCStatsTidyBrokenDryWrites.cfg	MCStatsTidy.tla	invariant	DryRunWritesNothing	ignore-terminal	statstidy	required	-

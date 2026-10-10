@@ -604,3 +604,5 @@ the gap test removed from PR #5127's levelTo. Naive: a holds c2 and c3, c3
 refused by c, the emptiest two below; only c3 is tried, and the call returns
 with c2 still able to go to c. NoSkip: c3 goes onto c, its refuser (the code
 before #5000).
+
+| `StatsTidy.tla` | `MCStatsTidy*` | Store.TidyStats and TidyDone: two concurrent tidies, two rows, two history-only done cards, a recent finish, one crash and one epoch clear. ArchiveBeforeMove, ArchiveDoneOnlyAfterMove, WorkKept, RefusedWritesNothing and DryRunWritesNothing; reversed MoveFirst, NoRefuse and DryWrites witnesses. EveryArchiveNamed is an expected failure of the current separate archive and record writes: crashes can leave an unnamed archive and concurrent record snapshots can drop a completed tidy's key. Clear keeps old epoch records; the deployment-wide stats KV writes remain separate from the fenced table move. |

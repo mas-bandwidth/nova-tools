@@ -158,6 +158,7 @@ func archiveNonce() string {
 // merge and readers tables, holds and judgments are untouched. A tidy within
 // sprint.TidyAgainAfter of the last, to the nanosecond, is refused, nothing written;
 // DryRun writes nothing and says what would move.
+// model: tla/StatsTidy.tla
 func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error) {
 	var res TidyResult
 	st, err := st.pin(ctx)

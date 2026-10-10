@@ -133,6 +133,7 @@ func TidyKept(s *Snapshot, stopped func(from, to time.Time) time.Duration) map[s
 // friends' rows, FriendRow; fleet: the machines'): each row with a finished card, in row
 // order, and the plan that takes the history-only cards off (TidyKept), one unit each,
 // their records kept, with each tidied row's median run wall carried (CarriedMedians).
+// model: tla/StatsTidy.tla
 func TidyDone(s *Snapshot, kinds []string, stopped func(from, to time.Time) time.Duration) ([]TidyRow, Plan) {
 	var rows []TidyRow
 	var p Plan
