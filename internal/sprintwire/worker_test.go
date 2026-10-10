@@ -168,6 +168,18 @@ func TestTheClientSendsABatchInOneRequest(t *testing.T) {
 	require.ErrorContains(t, err, "did not answer")
 }
 
+func TestTheClientSendsProtocolAndVerbHash(t *testing.T) {
+	t.Parallel()
+	h := &handler{}
+	c := Client{Addr: "sprint.test:6390", HTTP: &http.Client{Transport: h}, Build: "build-1", VerbHash: "hash-1"}
+	res, err := c.Do(context.Background(), []string{"take", "--as", "m1"})
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Equal(t, Protocol, h.got.Protocol)
+	assert.Equal(t, "build-1", h.got.Build)
+	assert.Equal(t, "hash-1", h.got.VerbHash)
+}
+
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

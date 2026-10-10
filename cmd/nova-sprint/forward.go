@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -79,23 +80,8 @@ func readVerb(argv []string) (v verbArgs) {
 
 // verbFlags is the verb's flag set, got as its -h is (helpCommand): the verb run with
 // --help stops at its flags, before it reads or writes anything. nil when it did not.
-func verbFlags(name string) (fs *flag.FlagSet) {
-	for _, v := range verbs {
-		if v.name != name {
-			continue
-		}
-		defer func() {
-			r := recover()
-			if h, ok := r.(verbflag.Help); ok {
-				fs = h.FS
-			} else if r != nil {
-				panic(r)
-			}
-		}()
-		v.run(newApp(func(string) string { return "" }), []string{"--help"}, io.Discard, io.Discard)
-		return nil
-	}
-	return nil
+func verbFlags(name string) *flag.FlagSet {
+	return (*app)(nil).verbFlags(name)
 }
 
 // on says the list sets the verb's boolean flag true.
@@ -176,7 +162,11 @@ func (a *app) ask(ctx context.Context, addr string, verb, rest []string) (sprint
 	send := a.forward
 	if send == nil {
 		send = func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
-			return sprintwire.Client{Addr: addr}.Do(ctx, verbs...)
+			return sprintwire.Client{
+				Addr:     addr,
+				Build:    buildinfo.Version(version),
+				VerbHash: a.verbTableHash(),
+			}.Do(ctx, verbs...)
 		}
 	}
 	argv := absolutePaths(slices.Concat(verb, []string{"--actor", a.getenv("NOVA_SPRINT_ACTOR")}, rest))

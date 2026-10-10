@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -192,6 +193,66 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // typed on.
 var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend reconcile", "friend clean", "dashboard", "answer", "seat install", "seat uninstall", "selftest land", "server switch"}
 
+func (a *app) skewResponse(req sprintwire.Request) sprintwire.Response {
+	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
+	serverVer := buildinfo.Version(version)
+	clientVer := req.Build
+	if clientVer == "" {
+		clientVer = "-"
+	}
+	for i, argv := range req.Verbs {
+		verbName, words := a.verbNameAndWords(argv)
+		flag := a.firstUnknownFlag(verbName, argv, words)
+		out.Results[i] = sprintwire.Result{
+			Code:   2,
+			Stderr: fmt.Sprintf("SKEW client=%s server=%s verb=%s flag=%s\n", clientVer, serverVer, verbName, flag),
+		}
+	}
+	return out
+}
+
+func (a *app) firstUnknownFlag(verbName string, argv []string, verbWords int) string {
+	fs := a.verbFlags(verbName)
+	if fs == nil {
+		for _, w := range argv[verbWords:] {
+			if w == "--" {
+				break
+			}
+			if len(w) >= 2 && w[0] == '-' {
+				flagName, _, _ := strings.Cut(w, "=")
+				return flagName
+			}
+		}
+		return "-"
+	}
+
+	args := argv[verbWords:]
+	for i := 0; i < len(args); {
+		w := args[i]
+		switch {
+		case w == "--":
+			return "-"
+		case len(w) < 2 || w[0] != '-':
+			i++
+			continue
+		}
+		name, _, inline := strings.Cut(strings.TrimPrefix(w[1:], "-"), "=")
+		f := fs.Lookup(name)
+		if f == nil {
+			flagWord, _, _ := strings.Cut(w, "=")
+			return flagWord
+		}
+		n := 1
+		if !inline && i+1 < len(args) {
+			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+				n = 2
+			}
+		}
+		i += n
+	}
+	return "-"
+}
+
 // serveCtx is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
 // server's own words (the store, the actor) go between the verb and what the
@@ -207,6 +268,9 @@ var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sy
 // its caller waits for the answer: a caller gone (ctx done) before the line is taken has
 // its verbs from there on not run, each answered exit 2 saying so, and nothing changed.
 func (a *app) serveCtx(ctx context.Context, req sprintwire.Request, local bool) sprintwire.Response {
+	if req.VerbHash != "" && (req.Protocol != sprintwire.Protocol || req.VerbHash != a.verbTableHash()) {
+		return a.skewResponse(req)
+	}
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
 	lanes := a.lanesFor(ctx)
 	begun := a.now()
