@@ -112,4 +112,12 @@
     retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
     empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
     stale session never carries across a clear."
-   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")))
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")
+  (fix "a-friend-session-full-or-missing-starts-fresh" :release "v1.2.6" :status "in-progress"
+   :title "A friend's lane session full or missing starts a fresh one itself"
+   :text "A provider's context-limit refusal on a lane's session, or a session the harness no longer
+    has, no longer counts the card's turns against it and waits for a hand session plus a restart: the
+    lane starts a fresh session itself, seeded from the friend's own files, its card continues in it
+    (once per card; after that the refusal is the card's business again), and the seat is told once
+    per renewal."
+   :origin "the owner 2026-10-10: what else is manual that should be automatic from the machine")))

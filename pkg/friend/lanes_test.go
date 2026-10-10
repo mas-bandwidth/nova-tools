@@ -59,6 +59,8 @@ type lanesHarness struct {
 	texts   []string
 	finish  map[string]bool
 	reject  map[string]string
+	refuse  map[string]error // session: card — the turn's provider refusal, once
+	missing map[string]bool  // session: card — the turn answers the session is gone, once
 	active  map[string]int
 	maxBusy int
 	block   chan struct{} // when set, a card turn waits for it
@@ -84,7 +86,21 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 	h.active[session]++
 	h.maxBusy = max(h.maxBusy, h.active[session])
 	block := h.block
+	err, refused := h.refuse[session+": "+id]
+	if refused {
+		delete(h.refuse, session+": "+id) // once: the fresh session after a renewal takes the card
+	}
+	_, gone := h.missing[session+": "+id]
+	if gone {
+		delete(h.missing, session+": "+id)
+	}
 	h.mu.Unlock()
+	if gone {
+		return LaneTurn{Exit: 1, FirstError: "Error: no such session"}, nil
+	}
+	if refused {
+		return LaneTurn{Exit: 1, FirstError: oneLine(err.Error(), 200)}, err
+	}
 	if block != nil {
 		select {
 		case <-block:
