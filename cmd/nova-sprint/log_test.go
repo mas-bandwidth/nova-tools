@@ -183,17 +183,60 @@ func TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry(t *testing.T) 
 	t0 := ta.now
 	ta.mu.Unlock()
 	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "early card"))
+	ta.deal(1)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red'")
+	ta.ok("ask")
 	ta.mu.Lock()
 	ta.now = ta.now.Add(25 * time.Hour) // s1-1 is now 25 h old: wider than 22 h
 	ta.mu.Unlock()
 	ta.ok("add --stream s1 --count 1 --one --after s1-1 --brief-file " + writeBrief(t, "later card"))
 
-	// cards is the card ids the verb returned for a --since window.
+	// capture unfiltered baseline to compare against for wide windows
+	var j struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log", &j)
+	baseline := append([]sprint.Line(nil), j.Lines...)
+
+	// assert repeated/no-card entries are present (pinned by the full baseline==wide compare below)
+	hasNoCard, hasRepeat := false, false
+	counts := map[string]int{}
+	for _, l := range baseline {
+		if l.Card != "" {
+			counts[l.Card]++
+			if counts[l.Card] > 1 {
+				hasRepeat = true
+			}
+		} else if l.Note != nil {
+			hasNoCard = true
+		}
+	}
+	assert.True(t, hasRepeat, "log has repeated card entries")
+	assert.True(t, hasNoCard, "log has no-card (note) entries")
+
+	// 26 h back is wider than 22 h: returns every entry (incl repeated for a card, no-card lines), in exact order.
+	ta.json("log --since 26h", &j)
+	assert.Equal(t, baseline, j.Lines, "26h wide window returns every entry since, in order")
+	// re-run identical query to pin read idempotency
+	var j2 struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log --since 26h", &j2)
+	assert.Equal(t, j.Lines, j2.Lines, "identical --since query returns identical result")
+
+	// inclusive cutoff: a --since at an entry's At keeps that entry
+	if len(baseline) > 0 {
+		cut := baseline[0].At
+		ta.json("log --since "+cut.Format(time.RFC3339), &j)
+		require.NotEmpty(t, j.Lines, "cutoff at first entry's time keeps it")
+		assert.Equal(t, baseline[0].At, j.Lines[0].At, "inclusive cutoff entry is present first")
+		assert.Equal(t, baseline, j.Lines, "from first entry time returns all")
+	}
+
+	// cards is the card ids the verb returned for a --since window (for the narrower windows below).
 	cards := func(line string) map[string]bool {
 		t.Helper()
-		var j struct {
-			Lines []sprint.Line `json:"lines"`
-		}
 		ta.json(line, &j)
 		got := map[string]bool{}
 		for _, l := range j.Lines {
@@ -203,10 +246,6 @@ func TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry(t *testing.T) 
 		}
 		return got
 	}
-	// 26 h back is wider than 22 h: both entries are in the window.
-	wide := cards("log --since 26h")
-	assert.True(t, wide["s1-1"], "26h: s1-1, 25 h old, is in a 26 h window")
-	assert.True(t, wide["s1-2"], "26h: s1-2 is in a 26 h window")
 	// A whole number of days: the unit time.ParseDuration has none for.
 	day := cards("log --since 1d")
 	assert.False(t, day["s1-1"], "1d: s1-1, 25 h old, is before a 24 h window")
