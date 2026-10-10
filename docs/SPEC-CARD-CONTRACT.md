@@ -172,10 +172,13 @@ names the `Stage:` path and the reason.
 **The WHO line** (the owner, 2026-10-03: "Could we try expressing the work left for
 nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends where we
 would normally do friend work."; 2026-10-04: pins only by choice). `WHO: friend` prefers any
-friend whose class covers the tier. `WHO: friend <name>` prefers that friend while she is up
-with room, then another covering friend, then the fleet. `WHO: only friend <name>` waits for
-that friend alone. A card with no WHO line, or `WHO: -`, is offered to covering friends and
-then framed for the fleet as this page says. A card placed on a friend is never framed or
+friend whose class covers the tier. `WHO: friend <name>` is a true-ownership pin (the card
+the-dealer-honors-who.w1, 2026-10-06): the card is dealt to that friend's row alone, at the
+next tick once she is up with room; while she is not, it waits ready, held as `waits for
+friend <name>`, and is never dealt to another friend or a machine (docs/SPEC-SPRINT.md
+section 1, a friend's card; `tla/Deal.tla`, `WhoIsHonored`). `WHO: only friend <name>` is
+the older spelling of the same pin. A card with no WHO line, or `WHO: -`, is offered to
+covering friends and then framed for the fleet as this page says. A card placed on a friend is never framed or
 staged: the sprint delivers it to her inbox as `inbox/<card>/BRIEF.md` and finishes it from
 her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md section 1, a friend's card; docs/FRIENDS.md,
 a sprint card). `cardhdr.ReadWho` is the one parser: the key in any case, under line 1 and

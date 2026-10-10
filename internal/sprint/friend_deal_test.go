@@ -12,8 +12,8 @@ import (
 
 // A friend's card (docs/SPEC-SPRINT.md section 1; the owner, 2026-10-03: "doing parts on
 // friends where we would normally do friend work"): a brief whose header says WHO: friend
-// is offered by the tick to a friend with room, on her own fleet row. Only
-// an explicit "only friend" pin prevents fallback to another eligible worker.
+// is offered by the tick to a friend with room, on her own fleet row. A WHO
+// line that names a friend deals it to her alone.
 
 // friendBrief is a card brief whose header carries the WHO line who.
 func friendBrief(who string) string {
@@ -378,7 +378,7 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 // a friend whose status is not up (her beat alone is no evidence) or whom the stall ladder
 // marked down is dealt nothing; and a card whose WHO line names a friend up with room goes
 // to her, even when another friend has more room. A WHO: friend <name> card whose friend is
-// not up is offered on, as the preference it is, with the pin-ignored judgment naming why
+// not up waits ready for her, dealt to no one else
 // (2026-10-06: a friend whose row read down, her daemon beating, was dealt 18 cards twice).
 func TestTheDealSkipsADownRowAndHonoursTheWhoPin(t *testing.T) {
 	t.Parallel()
@@ -398,21 +398,14 @@ func TestTheDealSkipsADownRowAndHonoursTheWhoPin(t *testing.T) {
 	wc := w.s.Fleet.Card("s1-1.w1")
 	require.NotNil(t, wc)
 	assert.Equal(t, FriendRow("amy"), wc.Row, "WHO: friend amy goes to amy, up with room, though dan has more")
-	wc = w.s.Fleet.Card("s1-2.w1")
-	require.NotNil(t, wc)
-	assert.NotEqual(t, FriendRow("bob"), wc.Row)
-	assert.NotEqual(t, FriendRow("cat"), wc.Row)
-	var ignored []Note
+	assert.Nil(t, w.s.Fleet.Card("s1-2.w1"), "WHO: friend bob, bob down: it waits, dealt to no one else")
+	assert.Equal(t, Ready, w.s.StateOf("s1-2"))
+	assert.Contains(t, Holder(running(w), w.s.Now, "s1-2").Why, "waits for friend bob")
 	for _, u := range p.Units {
 		for _, n := range u.Notes {
-			if n.Type == NPinIgnored {
-				ignored = append(ignored, n)
-			}
+			assert.NotEqual(t, NPinIgnored, n.Type, "the deal writes no pin-ignored note")
 		}
 	}
-	require.Len(t, ignored, 1, "one judgment, on the card whose friend is not up")
-	assert.Contains(t, ignored[0].What, "s1-2")
-	assert.Contains(t, ignored[0].What, "bob did not take it because she is not up")
 	for _, id := range []string{"s1-3.w1", "s1-4.w1"} {
 		c := w.s.Fleet.Card(id)
 		require.NotNil(t, c, id)

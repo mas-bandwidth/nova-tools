@@ -5,12 +5,13 @@ import (
 	"strings"
 )
 
-// Who is a preference or a hard pin from the brief header (docs/SPEC-SPRINT.md,
-// WHO preference). `WHO: friend` is any friend, `WHO: friend <name>` prefers that
-// friend, and `WHO: only friend <name>` waits for her alone. A card with no WHO
-// line, or `WHO: -`, is unpinned: friends whose class covers its tier, then the fleet.
+// Who is the friend the brief header names (docs/SPEC-SPRINT.md section 1, a friend's
+// card). `WHO: friend` is any friend; `WHO: friend <name>` is a true-ownership pin, dealt
+// to her alone and waiting ready for her, and `WHO: only friend <name>` is the older
+// spelling of the same pin. A card with no WHO line, or `WHO: -`, is unpinned: friends
+// whose class covers its tier, then the fleet.
 type Who struct {
-	Only   bool   // only friend is a hard pin
+	Only   bool   // the older spelling, only friend <name>, kept for unpin's record
 	Friend bool   // a friend's card: WHO: friend [<name>] or WHO: only friend <name>
 	Name   string // the friend it names, "" for any friend
 }

@@ -29,14 +29,16 @@ func TestEveryFriendDecisionReadsTheOneTierOfTheCard(t *testing.T) {
 		assert.Equal(t, "flash", w.s.DealTier(nil), "no primary is the dealer's default")
 	})
 
-	t.Run("a WHO friend who does not serve the tier is skipped, never a pin past it", func(t *testing.T) {
+	t.Run("a WHO friend who does not serve the tier waits for her", func(t *testing.T) {
 		t.Parallel()
 		w := friendWorld(t, proBrief("friend alex"))
 		dealWith(w,
 			FriendSeat{Name: "alex", Width: 2, Status: Up, Tiers: []string{"flash"}},
 			FriendSeat{Name: "jo", Width: 2, Status: Up, Tiers: []string{"flash", "pro"}})
-		assert.Equal(t, FriendRow("jo"), w.s.Fleet.Card("s1-1.w1").Row)
-		assert.Equal(t, 0, w.s.Fleet.Count(FriendRow("alex"), Working)+w.s.Fleet.Count(FriendRow("alex"), Ready))
+		assert.Nil(t, w.s.Fleet.Card("s1-1.w1"), "named alex, who does not do pro: it waits for her")
+		assert.Equal(t, Ready, w.s.StateOf("s1-1"))
+		assert.Equal(t, 0, w.s.Fleet.Count(FriendRow("jo"), Working)+w.s.Fleet.Count(FriendRow("jo"), Ready))
+		assert.Contains(t, Holder(running(w), w.s.Now, "s1-1").Why, "waits for friend alex")
 	})
 
 	t.Run("a flash card levels between friends whose tier lists differ", func(t *testing.T) {

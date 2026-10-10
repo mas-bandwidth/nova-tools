@@ -565,18 +565,23 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		}
 		return strings.Join(held, "; "), "", true
 	case Ready:
-		if OnlyFriend(pr) {
-			// the one hard pin (WHO: only friend <name>) waits for her up below her room,
+		if name := PinnedFriend(pr); name != "" {
+			// a card whose WHO line names a friend waits for her up below her room,
 			// DealAhead times her width (friendDealPass), whose beats and widths are the friends'
-			// records, not the tables'; every other card a friend may take is the fleet's
-			// when no friend takes it (WHO is a preference)
-			name, _ := FriendCard(pr)
+			// records, not the tables'; it is dealt to no one else (tla/Deal.tla, WhoIsHonored)
+			who := "friend " + name
+			if OnlyFriend(pr) {
+				who = "only friend " + name
+			}
 			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 				if from, _ := FriendOfRow(wc.F(FieldTakenFrom)); from != "" && from == name {
-					return "waits for only friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
+					if OnlyFriend(pr) {
+						return "waits for only friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
+					}
+					return "waits for friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), or nova-sprint friend take " + name + " " + pr.ID + " places it on her row", "", true
 				}
 			}
-			return "waits for only friend " + name, "", true
+			return "waits for " + who + " (its WHO line names her: dealt to no one else until she is up with room; nova-sprint friend take " + name + " " + pr.ID + " places it on her row now)", "", true
 		}
 		// a quiet member has no free place for it until its quiet ends (fleet_quiet.go)
 		all := s.UpMembers()

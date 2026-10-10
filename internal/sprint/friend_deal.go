@@ -81,7 +81,9 @@ func FriendCard(c *Card) (name string, ok bool) {
 
 // OnlyFriend is the hard pin (docs/SPEC-SPRINT.md, WHO preference): the explicit one,
 // WHO: only friend <name>, and a WHO: friend <name> card come back by a rework, a return
-// or a redo (ReworkPinned), whose next attempt is hers as its first was.
+// or a redo (ReworkPinned), whose next attempt is hers as its first was. The deal treats
+// every named friend as a pin (PinnedFriend); OnlyFriend stays this spelling so unpin
+// and the take-back rule keep the line they already read.
 func OnlyFriend(c *Card) bool {
 	return strings.HasPrefix(c.F(FieldWho), "only.friend.") || ReworkPinned(c)
 }
@@ -90,8 +92,7 @@ func OnlyFriend(c *Card) bool {
 // rework, a return or a redo (its reworks or returns counted): its next attempt waits for
 // her alone, never another friend or a machine (the owner, 2026-10-05: a rework of a
 // friend's own rating was dealt to another worker, who could not do it as her). A
-// take-back alone (friend take) counts neither, so a preference taken back from her is
-// offered on.
+// take-back alone (friend take) counts neither.
 func ReworkPinned(c *Card) bool {
 	if c.Int("reworks") == 0 && c.Int("returns") == 0 {
 		return false
@@ -100,9 +101,19 @@ func ReworkPinned(c *Card) bool {
 	return named
 }
 
-// friendCardWhy is why the machines' deal leaves a hard-pinned card: the tick deals it
-// to that friend, never to a machine or to another friend.
-const friendCardWhy = "a friend's card (its brief says WHO: only friend, or a WHO: friend <name> card come back by a rework): the tick deals it to that friend up with room, never to a machine"
+// PinnedFriend is the friend the card's WHO line names, WHO: friend <name> or WHO: only
+// friend <name>, "" for none or any friend. A named friend is a true-ownership pin (the
+// card the-dealer-honors-whob.w1, 2026-10-07: a card naming one friend was dealt to another
+// friend twice while she was up with room): the tick deals the card to her row alone,
+// and while she is not up with room it waits ready for her (tla/Deal.tla, WhoIsHonored).
+func PinnedFriend(c *Card) string {
+	name, _ := FriendCard(c)
+	return name
+}
+
+// friendCardWhy is why the machines' deal leaves a card whose WHO line names a friend:
+// the tick deals it to her, never to a machine or to another friend.
+const friendCardWhy = "a friend's card (its brief names one friend, WHO: friend <name> or WHO: only friend <name>): the tick deals it to that friend up with room, never to a machine or to another friend"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
 // works at once, her friends row's), her status (FriendStatus: up, held or down), her
@@ -392,21 +403,19 @@ func friendLoad(s *Snapshot, name string) int {
 }
 
 // friendDealPass is the tick's friend deal (TickDeal), run before the machines' deal: friends
-// first (docs/SPEC-SPRINT.md, WHO preference; tla/WhoPreference.tla checks the selection,
-// not the room). It offers every ready card given (in the order given, the deal's stream
+// first (docs/SPEC-SPRINT.md, a friend's card; tla/Deal.tla checks WhoIsHonored). It offers every ready card given (in the order given, the deal's stream
 // turns) to the friends up, each within her room, DealAhead times her width, as the
 // machines' deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
 // people busy by having 2X width queued up in ready per-friend"). A card whose WHO line
-// names a friend goes to her first while she is up, below her room, not one it has left,
-// and her tiers hold its tier; else (or with no WHO line, or WHO: friend) it goes to a
-// friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card with
-// no tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
-// left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
+// names a friend (PinnedFriend) goes to her alone: while she is up, below her room, not one
+// it has left, and her tiers hold its tier; else it waits ready for her, never dealt to
+// another friend or a machine (WhoIsHonored). A card with no WHO line, or WHO: friend, goes
+// to a friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card
+// with no tier is the dealer's default, flash: cardTierOf), below her room, and never one it
+// has left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
 // then the most room, then by name (docs/SPEC-SPRINT.md section 1,
-// friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
-// unless it says WHO: only friend <name> (OnlyFriend), the one hard pin: it waits ready for
-// her, and so does one whose friend's tiers do not hold its tier. A card a friend's beat
-// names running (laneRunsIt) is placed on no row while it does. A withdrawn attempt at its
+// friend-deal-idle-lanes-first.w1); one no friend takes stays for the fleet's deal. A card
+// a friend's beat names running (laneRunsIt) is placed on no row while it does. A withdrawn attempt at its
 // redeal bound at its ceiling or its attempt cap (AtRedealBound), or refused at staging by
 // every member up, stays with the machines' deal and its judgment; one at its redeal bound
 // below its ceiling is offered at the tier it escalates to (escalating), as the machines
@@ -424,11 +433,9 @@ func friendLoad(s *Snapshot, name string) int {
 // pass moves each card on a friend's row that she has started into working, its deadline
 // from then (friendStartUnits). The friend's row is declared by the plan the first time she
 // is dealt to. It answers the cards it places on each friend's row and how many cards on it
-// go into working on her start: the tick levels the friends after it. A named pin (WHO: friend <name>,
-// not a hard pin) placed on a different friend's row carries a judgment on that
-// unit (pinIgnoredNote): why she did not take it, and whose row holds the card.
-// The pass keeps that judgment (pinConds) until the card is back on her row or
-// leaves ready and working.
+// go into working on her start: the tick levels the friends after it. A card already
+// sitting off the row its WHO line names is the pass's judgment (pinConds), not a note
+// this deal writes: this deal does not place it elsewhere.
 // With reclaim set it also reclaims the fleet's dealt-ahead cards (friendReclaim): a deal in
 // passes (a pass of the cards above reads, then the reads, then the rest) reclaims once, in
 // its last pass, after the reads.
@@ -482,16 +489,11 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		escalated := wc != nil && redealBound(wc)
 		tier := s.DealTier(escalating(s, c))
 		left := friendsLeft(wc)
-		pinned, pinnedCard := FriendCard(c)
-		leftAtPin := slices.Clone(left)
-		name := pinned
-		if !pinnedCard {
-			name = ""
-		}
+		name := PinnedFriend(c)
 		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(s, seat[name], tier) || !friendRestrictionAllows(seat[name], c)) {
-			name = "" // the friend it names is not up with room, it has left her, not her tier, or outside her restriction
+			continue // the friend it names is not up with room, it has left her, not her tier, or outside her restriction: it waits for her
 		}
-		if name == "" && !OnlyFriend(c) {
+		if name == "" {
 			var may []string
 			for _, f := range up {
 				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) && friendRestrictionAllows(seat[f], c) {
@@ -515,7 +517,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 			name = preferredFriend(may, lanes, free)
 		}
 		if name == "" || slices.Contains(left, name) || free[name] <= 0 || !friendRestrictionAllows(seat[name], c) {
-			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
+			continue // no friend it may go to is up with room: the fleet's
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
 		if (wc == nil || escalated) && s.Fleet.Card(card) != nil {
@@ -538,13 +540,6 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 			u = friendRedealUnit(s, c, wc, row, tierNowSet(c, tier))
 		default:
 			u = friendDealUnit(s, c, card, row, Ready, tierNowSet(c, tier))
-		}
-		if pinnedCard && pinned != "" && !OnlyFriend(c) && name != pinned {
-			placedID := card
-			if wc != nil && !escalated {
-				placedID = wc.ID
-			}
-			u.Notes = append(u.Notes, pinIgnoredNote(s, c, placedID, pinned, pinSkipWhy(s, seats, pinned, leftAtPin, tier, free), row, Ready))
 		}
 		p.Units = append(p.Units, u)
 	}
@@ -633,7 +628,7 @@ func friendReclaim(s *Snapshot, seats []FriendSeat, up []string, seat map[string
 			}
 			ahead++
 			pr := s.Work.Placed(wc.F("primary"))
-			if pr == nil || pr.Col != Working || pr.F("work") != wc.ID || IsSentinel(pr) || OnlyFriend(pr) ||
+			if pr == nil || pr.Col != Working || pr.F("work") != wc.ID || IsSentinel(pr) || PinnedFriend(pr) != "" ||
 				StreamHeld(s, pr.Row) || len(Bench(pr)) > 0 || laneRunsIt(s, seats, pr, wc) != "" {
 				continue
 			}
@@ -684,9 +679,13 @@ func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat,
 			may = append(may, f)
 		}
 	}
-	name := preferredFriend(may, lanes, free)
-	if pinned, ok := FriendCard(pr); ok && pinned != "" && slices.Contains(may, pinned) {
-		name = pinned
+	name := PinnedFriend(pr)
+	if name != "" {
+		if !slices.Contains(may, name) {
+			return Unit{}, false // a named pin waits for her; reclaim does not place it elsewhere
+		}
+	} else {
+		name = preferredFriend(may, lanes, free)
 	}
 	if name == "" {
 		return Unit{}, false
