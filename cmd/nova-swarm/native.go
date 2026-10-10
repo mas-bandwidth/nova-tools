@@ -167,6 +167,33 @@ type nativeRunConfig struct {
 	// gateRun, when set, is the gate decision's test runner (nativegate.go): a test's; nil
 	// runs go test in the child's wall with the child's environment.
 	gateRun gateRunner
+	// getenv, when set, is how this run reads ONE name from its own environment; nil is
+	// os.Getenv in production. A test hands the run its own, so a read that would otherwise
+	// touch the whole process is a value on the run instead -- the per-test seam the
+	// serial-tests ledger names, in place of a t.Setenv that panics under t.Parallel.
+	getenv func(string) string
+	// environ, when set, is the whole environment this run copies and hand to its child
+	// (nativeChildEnv); nil is os.Environ in production. A test hands the run its own
+	// environment, so the child's environment is built from the run and not the process.
+	environ []string
+}
+
+// env is one name read from the environment THIS RUN holds: the run's own getenv when it
+// was handed one, and os.Getenv in production.
+func (cfg nativeRunConfig) env(name string) string {
+	if cfg.getenv != nil {
+		return cfg.getenv(name)
+	}
+	return os.Getenv(name)
+}
+
+// envCopy is the whole environment THIS RUN holds: the run's own environ when it was
+// handed one, and os.Environ in production.
+func (cfg nativeRunConfig) envCopy() []string {
+	if cfg.environ != nil {
+		return cfg.environ
+	}
+	return os.Environ()
 }
 
 // headless is the headless harness this run's binary is (internal/harness: claude, codex
@@ -681,8 +708,8 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// (3d) THE GO SHIM (nova-tools#5174, cost rule 5): with the shared caches on, the go the
 	// child runs by name adds -trimpath, so the machine's warm GOCACHE serves this checkout
 	// and the card's gate does not compile the repository again (shellshim.go).
-	goBin := swarm.BenchGoBin(benchOS(cfg), benchHome(cfg), os.Getenv("PATH"))
-	toolPath := swarm.BenchPath(benchOS(cfg), benchHome(cfg), os.Getenv("PATH"))
+	goBin := nativeGoBin(cfg)
+	toolPath := nativeToolPath(cfg)
 	if cacheDir != "" {
 		if err := writeNativeGoShim(shimDir, goBin); err != nil {
 			releaseSlot()
@@ -1033,7 +1060,7 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 			}
 		}
 	}
-	childEnv := nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath)
+	childEnv := nativeChildEnvFrom(p.cfg.envCopy(), p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath)
 	// A headless harness runs from a private home under the data home, seeded with its credential
 	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one. claude
 	// copies no file: its login is the token --pass hands it by name, and a run without one says so.
@@ -1364,7 +1391,8 @@ func collect(s *nativeRunState, st *nativeStarted, wat *nativeWatched, attempt i
 			fmt.Fprintf(errOut, "NATIVE RETRY start=%d wait=%ds cause=%s\n", attempt+1, int(wait/time.Second), oneline.Field(cause))
 			sleep := s.prep.cfg.startSleep
 			if sleep == nil {
-				sleep = startSleep
+				getenv := s.prep.cfg.env
+				sleep = func(d time.Duration) { startSleepFrom(getenv, d) }
 			}
 			sleep(wait)
 			return &nativeCollected{retry: true}
@@ -1377,7 +1405,7 @@ func collect(s *nativeRunState, st *nativeStarted, wat *nativeWatched, attempt i
 			s.res.stopped = word
 			return &nativeCollected{retry: false}
 		}
-		time.Sleep(swarm.ProviderRetryDelay(attempt))
+		time.Sleep(providerRetryWait(s.prep.cfg.env, attempt))
 		return &nativeCollected{retry: true}
 	}
 	return &nativeCollected{retry: false}
@@ -1906,6 +1934,22 @@ func benchOS(cfg nativeRunConfig) string {
 		return cfg.benchOS
 	}
 	return swarm.ThisOS()
+}
+
+// nativeGoBin is the bench's go resolved from the PATH THIS RUN holds: the run's own
+// environment through cfg.env, and the process's PATH in production. The go shim
+// (writeNativeGoShim) is wrapped around it, so this is the one go the child's bare `go`
+// hits; a test hands the run its own PATH and the resolution follows the run.
+func nativeGoBin(cfg nativeRunConfig) string {
+	return swarm.BenchGoBin(benchOS(cfg), benchHome(cfg), cfg.env("PATH"))
+}
+
+// nativeToolPath is the bench's toolchain directories resolved from the PATH THIS RUN
+// holds, the same seam nativeGoBin uses: the run's own PATH through cfg.env, and the
+// process's in production, so the child's toolchain directories are the run's and not the
+// process's when a test hands the run one.
+func nativeToolPath(cfg nativeRunConfig) []string {
+	return swarm.BenchPath(benchOS(cfg), benchHome(cfg), cfg.env("PATH"))
 }
 
 // nativeChildEnv is the child's whole environment, built rather than inherited: a short

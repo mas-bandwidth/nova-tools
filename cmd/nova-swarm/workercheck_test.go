@@ -95,19 +95,30 @@ func TestWorkerHelpMatchesOtherVerbs(t *testing.T) {
 	assert.True(t, strings.HasPrefix(otherOut.String(), "usage: nova-swarm template [flags]\n"), "template --help: got %q", otherOut.String())
 }
 
-// A secret the environment does not hold is named by its variable, and no value leaks.
+// A secret the check's own environment does not hold is named by its variable, and no
+// value leaks: the check reads the environment it holds (the run's getenv), never the
+// process's, so this opens with t.Parallel.
 func TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue(t *testing.T) {
+	t.Parallel()
+
 	const name = "NOVA_CARD8385_ABSENT_SECRET"
 	const sentinel = "sk-must-never-print-8385"
-	t.Setenv(name, "")
-	t.Setenv("NOVA_CARD8385_SENTINEL", sentinel)
 	path := workerCheckFixture(t, func(d map[string]any) {
 		delete(d, "key_file")
 		d["secret"] = name
 	})
-	code, out, errb := runWorkerCheck(path, "--env")
-	combined := out + errb
-	require.Equal(t, 1, code, "exit %d, want 1\nstdout: %s\nstderr: %s", code, out, errb)
+	env := func(k string) string {
+		if k == "NOVA_CARD8385_SENTINEL" {
+			return sentinel
+		}
+		return ""
+	}
+	_, drifts := checkWorkerDescription(path, true, env)
+	require.NotEmpty(t, drifts, "an absent secret is a drift")
+	combined := ""
+	for _, d := range drifts {
+		combined += d.String() + "\n"
+	}
 	assert.Contains(t, combined, "WORKER DRIFT secret", "the drift does not name the secret field:\n%s", combined)
 	assert.Contains(t, combined, name, "the drift does not name the absent variable %s:\n%s", name, combined)
 	assert.NotContains(t, combined, sentinel, "a value reached the output:\n%s", combined)

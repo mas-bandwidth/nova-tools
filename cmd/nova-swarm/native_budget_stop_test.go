@@ -177,11 +177,13 @@ func TestNativeBudgetFiresAtExactlyTheNumberAndNotOnCacheAlone(t *testing.T) {
 // and downstream readers ADD them; the line holds 110/100, which is the job's cumulative sum
 // and the thing the stop was tested against.
 func TestNativeTwoLaunchAccounting(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	needsSQLite(t)
-	// The retry's own jitter is 5-20s; pinned here so this case is a test of the accounting
-	// and not of a wait.
-	t.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "1s")
+	// The retry's own jitter is 5-20s; the test binary's TestMain pins
+	// NOVA_SWARM_PROVIDER_BACKOFF to 0s for the whole process, so this case is a test of
+	// the accounting and not of a wait, with no t.Setenv under t.Parallel.
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := filepath.Join(root, "card.md")
@@ -230,9 +232,10 @@ func TestNativeTwoLaunchAccounting(t *testing.T) {
 // "at every sample and once more before any relaunch". A first launch that spent the whole
 // budget and then died on a provider 5xx buys no second launch.
 func TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	needsSQLite(t)
-	t.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "1s")
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := filepath.Join(root, "card.md")
@@ -264,9 +267,10 @@ func TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain(t *testing.T
 // reports 200 against --tokens 100 and dies on a provider 5xx at once is gone before any
 // sample fires; its final read alone reaches the budget, so there is exactly one launch.
 func TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	needsSQLite(t)
-	t.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "1s")
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := filepath.Join(root, "card.md")
@@ -297,9 +301,10 @@ func TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample(t *testing.T
 // enforced by the same samples. The `PROMPT-DEFECT` line goes on native's own stdout AFTER
 // `NATIVE OK` and is written into NO file, so a published report is kept byte for byte.
 func TestNativeCardBudgetStopsAndPrintsThePromptDefect(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	needsSQLite(t)
-	t.Setenv("CAP_BUDGET_ENV", "a fake key")
 	bin := nativeHarness(t)
 	for _, tc := range []struct {
 		name       string

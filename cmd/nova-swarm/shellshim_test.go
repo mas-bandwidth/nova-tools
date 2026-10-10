@@ -117,10 +117,12 @@ func TestTheChildEnvPutsTheShimFirstAndPinsShell(t *testing.T) {
 }
 
 // TestTheChildEnvIsUnchangedWithoutAShim keeps the windows path and the argv-builder unit
-// tests exactly as they were: no shim, no PATH edit, no SHELL.
+// tests exactly as they were: no shim, no PATH edit, no SHELL. The environment is the one
+// the run hands nativeChildEnv, never the process's, so the test opens with t.Parallel.
 func TestTheChildEnvIsUnchangedWithoutAShim(t *testing.T) {
-	t.Setenv("PATH", "/usr/bin")
-	env := nativeChildEnv("data", "job", "tmp", "", "", "", "", nil)
+	t.Parallel()
+
+	env := nativeChildEnvFrom([]string{"PATH=/usr/bin"}, "data", "job", "tmp", "", "", "", "", nil)
 	path, _ := lookup(env, "PATH")
 	require.Equal(t, "/usr/bin", path, "PATH = %q, want the caller's own", path)
 	_, ok := lookup(env, "SHELL")

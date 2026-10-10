@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // THE LIVE SAMPLER AND WHAT THE LINE REPORTS (SPEC-SWARM rule 13d, demanded test 13d,
@@ -34,10 +33,12 @@ import (
 //	"a usage reader that never returns does not move the deadline, and the run still ends
 //	 inside the bound the deadline's own test holds (issue #779)"
 //
-// EVERY ONE OF THEM READS A REAL SQLITE DATABASE in the harness's own shape, written by the
-// fake harness's `FAKE-USAGE-DB` directive: the reader under test runs `sqlite3 -readonly`
-// and folds JSON out of a `data` column, and a fixture that short-circuited either would
-// prove nothing about either.
+// EVERY LAUNCH CASE HERE READS A REAL SQLITE DATABASE in the harness's own shape, written
+// by the fake harness's `FAKE-USAGE-DB` directive: the reader under test runs `sqlite3
+// -readonly` and folds JSON out of a `data` column, and a fixture that short-circuited
+// either would prove nothing about either. The one unit case
+// (TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt) is the fold alone and hands the
+// sampler its reader seam.
 
 // budgetOf is the `budget=` field of a NATIVE OK line.
 func budgetOf(t *testing.T, out string) string {
@@ -182,32 +183,35 @@ INSERT INTO message (data, time_created) VALUES (json_object('role','assistant',
 // TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt: the two halves of rule 13d's
 // unverifiable end, at the unit. A read that FAILS is not a source that reported nothing,
 // and "two failures and then an answer end nothing" is the reset this asserts.
+//
+// THE READER IS THE SAMPLER'S OWN SEAM (liveSampler.read): this is the FOLD, not the
+// sqlite3 invocation, so the test hands the sampler a scripted reader and never sets the
+// process's PATH (the serial-tests ledger's seam), and it opens with t.Parallel.
 func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dataHome := t.TempDir()
-	db := filepath.Join(dataHome, "opencode", "opencode.db")
-	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
-	// A file that is not a database, so every read of it FAILS -- as distinct from a
-	// database that is not there, which is an absence.
-	require.NoError(t, os.WriteFile(db, []byte("not a database\x00"), 0o644))
-	// A reader that refuses, the way sqlite3 refuses bytes that are not a database.
-	bad := t.TempDir()
-	require.NoError(t, testbin.WriteExecutable(filepath.Join(bad, swarm.SQLiteBinary),
-		[]byte("#!/bin/sh\necho 'Error: file is not a database' >&2\nexit 1\n"), 0o755))
-	t.Setenv("PATH", bad+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	s := startLiveSampler(dataHome, 20*time.Millisecond, nativeRunConfig{tokens: 1 << 30}, filepath.Join(dataHome, "harness-output.log"))
+	s := startLiveSampler(dataHome, 0, nativeRunConfig{tokens: 1 << 30}, filepath.Join(dataHome, "harness-output.log"))
 	defer s.Stop()
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		if _, _, _, failures, err := s.Observed(); failures >= 3 {
-			require.Error(t, err, "a failed read carries the reason it gave")
-			return
-		}
-		if time.Now().After(deadline) {
-			_, _, _, failures, _ := s.Observed()
-			require.Fail(t, fmt.Sprintf("three consecutive failed reads were counted; got %d in 30s", failures))
-		}
-		time.Sleep(5 * time.Millisecond)
+	failing := func(string, time.Duration) (swarm.ProviderUsage, error) {
+		return swarm.ProviderUsage{}, fmt.Errorf("Error: file is not a database")
 	}
+	answering := func(string, time.Duration) (swarm.ProviderUsage, error) {
+		return swarm.ProviderUsage{Values: map[string]string{"input": "1"}, Observed: true}, nil
+	}
+	// TWO FAILED READS ARE COUNTED, with the reason the last one gave.
+	s.read = failing
+	s.readOnce()
+	s.readOnce()
+	_, _, _, failures, lastErr := s.Observed()
+	require.Equal(t, 2, failures, "two failed reads are counted as two")
+	require.Error(t, lastErr, "a failed read carries the reason it gave")
+	// AND AN ANSWERED READ RESETS THE RUN: the source answered, so it is not one that
+	// stopped, and no budget ends on the failures that came before.
+	s.read = answering
+	s.readOnce()
+	_, _, _, failures, lastErr = s.Observed()
+	require.Equal(t, 0, failures, "an answered read resets the run of failures")
+	require.NoError(t, lastErr, "an answered read leaves no reason for the line to carry")
 }

@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // harnessStartWaits is the wait before each relaunch of a harness whose START failed
@@ -60,10 +62,51 @@ func harnessStartFailed(tail []byte, elapsed time.Duration, tokens int, publishe
 // every launch wait (the test binary's TestMain pins it to zero, as for the provider
 // retry).
 func startSleep(d time.Duration) {
-	if v := strings.TrimSpace(os.Getenv("NOVA_SWARM_PROVIDER_BACKOFF")); v != "" {
-		if pinned, err := time.ParseDuration(v); err == nil && pinned >= 0 {
-			d = pinned
-		}
+	startSleepFrom(os.Getenv, d)
+}
+
+// startSleepFrom is startSleep with the environment read through getenv: the run's own
+// getenv in production and in a test that hands the run one, so a pin is a value on the
+// run and never a t.Setenv that changes the whole process (the serial-tests ledger's
+// seam). It sleeps startWait.
+func startSleepFrom(getenv func(string) string, d time.Duration) {
+	time.Sleep(startWait(getenv, d))
+}
+
+// startWait is the wait startSleep sleeps, with the pin read through getenv and not
+// restated: the schedule entry d, unless NOVA_SWARM_PROVIDER_BACKOFF pins every launch
+// wait to a non-negative duration. It is separate from the sleeping so a test can read the
+// wait the run would sleep without sleeping it.
+func startWait(getenv func(string) string, d time.Duration) time.Duration {
+	if pinned, ok := backoffPin(getenv); ok {
+		return pinned
 	}
-	time.Sleep(d)
+	return d
+}
+
+// backoffPin parses NOVA_SWARM_PROVIDER_BACKOFF as read through getenv: the non-negative
+// duration it pins every launch wait to, and false when it is unset, empty or not a
+// duration. The parse is shared by the start wait and the provider retry, so the one
+// variable means the one thing on both paths.
+func backoffPin(getenv func(string) string) (time.Duration, bool) {
+	v := strings.TrimSpace(getenv("NOVA_SWARM_PROVIDER_BACKOFF"))
+	if v == "" {
+		return 0, false
+	}
+	pinned, err := time.ParseDuration(v)
+	if err != nil || pinned < 0 {
+		return 0, false
+	}
+	return pinned, true
+}
+
+// providerRetryWait is the wait before a provider 5xx launch is retried, with the pin read
+// through getenv first: the run's own NOVA_SWARM_PROVIDER_BACKOFF when it names one, and
+// swarm.ProviderRetryDelay's jittered bands otherwise. launchfail.go already takes the pin
+// as a parameter (providerRetryDelay), and this is the caller that hands it the run's.
+func providerRetryWait(getenv func(string) string, failed int) time.Duration {
+	if pinned, ok := backoffPin(getenv); ok {
+		return pinned
+	}
+	return swarm.ProviderRetryDelay(failed)
 }
