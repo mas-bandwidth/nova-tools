@@ -34,6 +34,9 @@ func (s *takeServer) take(_ context.Context, argv []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.takes = append(s.takes, strings.Join(argv, " "))
+	if !slices.Contains(argv, "--epoch") { // the server refuses a worker's take that names no epoch
+		return errors.New("take refused: nova-sprint take REFUSED: a worker's verb sent to the server names the epoch its worker holds, --epoch <n> (queue prints it), and this one runs at none; nothing was changed")
+	}
 	if !s.running {
 		return errors.New("take refused: REFUSED take: the machine is STOPPED: no new work or read may start")
 	}
@@ -238,7 +241,7 @@ func TestABatchDaemonTakesHerReadyCardsAndAsksAgainAfterARefusal(t *testing.T) {
 		r.run(t, 40)
 		takes, cols := srv.got()
 		require.NotEmpty(t, takes)
-		assert.Equal(t, "take --as friend.bob --max 2", takes[0])
+		assert.Equal(t, "take --as friend.bob --max 2 --epoch 15", takes[0])
 		assert.LessOrEqual(t, len(takes), 40/int(BatchTakeEvery.Seconds())+1, "paced at BatchTakeEvery: %v", takes)
 		assert.Equal(t, map[string]string{"c1~15": "working", "c2~15": "working"}, cols, "taken once the machine runs")
 		assert.Equal(t, 1, strings.Count(strings.Join(r.records, "\n"), "ready card(s) not taken"), "the refusal said once")
@@ -249,5 +252,23 @@ func TestTakeArgvs(t *testing.T) {
 	t.Parallel()
 	c := Card{ID: "c1", Brief: "/w/inbox/c1~16.g2/BRIEF.md", Outbox: "/w/outbox/c1~16.g2"}
 	assert.Equal(t, []string{"take", "--as", "friend.ann", "c1@2", "--epoch", "16"}, LaneTakeArgv("ann", c))
-	assert.Equal(t, []string{"take", "--as", "friend.ann", "--max", "3"}, BatchTakeArgv("ann", 3))
+	assert.Equal(t, []string{"take", "--as", "friend.ann", "--max", "3", "--epoch", "16"}, BatchTakeArgv("ann", 3, 16))
+}
+
+// A take names an epoch or is not sent: a ready card whose row says no epoch is never taken with a guessed 0.
+func TestABatchTakeIsNotSentWhenNoReadyCardCarriesAnEpoch(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		r.passive = true
+		srv := &takeServer{running: true, col: map[string]string{"c1~15": "ready"}}
+		r.d.Take = srv.take
+		r.d.Held = func(context.Context) (Row, error) {
+			return Row{Cards: []HeldCard{{Card: "c1", Job: "c1~15", Col: "ready", Kind: "work"}}}, nil
+		}
+		r.run(t, 40)
+		takes, _ := srv.got()
+		assert.Empty(t, takes, "no take without an epoch")
+		assert.Contains(t, strings.Join(r.records, "\n"), "carries an epoch")
+	})
 }

@@ -1463,7 +1463,7 @@ usage:
   nova-friend hook --harness claude
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
@@ -1522,7 +1522,7 @@ flags:
   --coordinator <string>  who is told of a broken session when no ping has named the seat
   --db <string>  opencode's own database, where a card's tokens are read
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
-  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)
+  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
@@ -1573,7 +1573,7 @@ effect: delivery: sends beyond this machine: one beat to the sprint server, the 
 ```
 usage: nova-friend install [flags]
 from `nova-friend help`:
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
@@ -1582,6 +1582,7 @@ flags:
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
+  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)

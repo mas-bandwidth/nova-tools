@@ -397,6 +397,7 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
+		f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)")
 		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
 		f.Duration("notify-window", friend.NotificationWindow, "global card-delivery burst window and minimum wake interval; urgent messages bypass it")
@@ -558,7 +559,6 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
 					f.String("config-dir", "", "the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)")
-					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
 					f.Check(func(c *tool.Call) {
@@ -593,7 +593,7 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -1116,11 +1116,42 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if bin, err := w.binary(); err == nil {
 		wall.Self = []string{bin}
 	} // else no Self: a lane's child is refused, never run outside the wall
+	var denySeatMu sync.Mutex
+	var denySeatName string
+	var denySeatAt time.Time
+	// denySeat is the seat whose working root a lane wall denies when no --deny-self was given:
+	// --coordinator, else the seat holder the sprint server names (asked at most once a minute).
+	denySeat := func(ctx context.Context) string {
+		if s := c.Str("coordinator"); s != "" {
+			return s
+		}
+		seatOf := w.seat(server)
+		if seatOf == nil {
+			return ""
+		}
+		denySeatMu.Lock()
+		name, at := denySeatName, denySeatAt
+		denySeatMu.Unlock()
+		if !at.IsZero() && w.now().Sub(at) <= time.Minute { // a failed read is cached a minute too: never one per lane command
+			return name
+		}
+		s, err := seatOf(ctx) // outside the lock: a slow server never holds the other lanes
+		if err != nil {
+			s = name // keep the last holder it named
+		}
+		denySeatMu.Lock()
+		denySeatName, denySeatAt = s, w.now()
+		denySeatMu.Unlock()
+		return s
+	}
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
 			return w.exec(ctx, d, prog, args, stdin)
 		}
 		wl := wall
+		if len(wl.Deny) == 0 { // none given: the seat's working root, never a wall that denies nothing
+			wl.Deny = friend.DefaultDenySelf(w.home, denySeat(ctx))
+		}
 		// the wall's config directory: --config-dir, else her row's config_dir, else CLAUDE_CONFIG_DIR
 		if wl.ConfigDir = c.Str("config-dir"); wl.ConfigDir == "" {
 			if d := rowConfigDir.Load(); d != nil && *d != "" {
@@ -1817,7 +1848,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), Adapter: c.Str("adapter"), DeliveryDir: c.Str("delivery-dir"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
-		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), DenySelf: c.Str("deny-self"),
 		NotificationsOnly: c.Bool("notifications-only"), NotifyKinds: c.Str("notify-kinds"), NotifyWindow: c.Dur("notify-window"),
 	}
 	if a.Harness == "claude" {

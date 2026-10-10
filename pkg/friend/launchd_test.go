@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -376,4 +377,25 @@ func TestNotificationBinaryPlanIsContentAddressedAndNativeBinaryIsSeparate(t *te
 	require.NoError(t, err)
 	assert.NotEqual(t, first, second)
 	assert.Contains(t, first, filepath.Join(a.Home, ".nova-friend", "notifications", "bin"))
+}
+
+// The lane wall denies the coordinator's self, and a wall that denies nothing is refused, so the
+// agent can carry --deny-self (v1.2.6: install had no way to set it, and every lane of a friend
+// installed without it exited 125 with bad_profile); with none the daemon denies the seat's
+// working root (DefaultDenySelf).
+func TestTheAgentCarriesDenySelfOnlyWhenSetAndTheDefaultIsTheSeatsWorkingRoot(t *testing.T) {
+	t.Parallel()
+	a := Agent{Friend: "bob", Harness: "claude", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2", Width: 4}
+	assert.NotContains(t, a.Args(), "--deny-self")
+	a.DenySelf = "/seat/self,/vol/self"
+	args := a.Args()
+	i := slices.Index(args, "--deny-self")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal(t, "/seat/self,/vol/self", args[i+1])
+	assert.Contains(t, a.Plist(), "<string>--deny-self</string>")
+
+	assert.Equal(t, []string{"/home/u/ada-working"}, DefaultDenySelf("/home/u", "ada"))
+	assert.Nil(t, DefaultDenySelf("/home/u", ""), "no seat known: the wall refuses as it did")
+	assert.Nil(t, DefaultDenySelf("/home/u", "../x"), "a seat that is no plain name names no path")
+	assert.Nil(t, DefaultDenySelf("", "ada"))
 }
