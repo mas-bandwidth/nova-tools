@@ -935,8 +935,7 @@ test SAYS, this reads what production DOES.
 the table that pins the name heuristic against three false positives
 (`IsSHA`, `HarnessSHA256`, `hasShebang`). The guard itself is
 `internal/testguard`, held by `TestUnsetGuardLetsTheSeamRun`,
-`TestArmedGuardNamesTheCommandAndTheRemedy`, `TestAFakeOnPATHIsNotAHost` and
-`TestAllowHostsIsScopedAndNests`.
+`TestArmedGuardNamesTheCommandAndTheRemedy` and `TestAFakeOnPATHIsNotAHost`.
 **Its allowlist.** `internal/ci/testdata/hostseam_allowlist.txt`, one
 `file:function  # reason` per row — three, each a function that starts no
 child of its own (`ExecSSH.sshArgs`, whose callers each guard the child they
@@ -948,16 +947,15 @@ shrinks.
 the child runs, or list it in testdata/hostseam_allowlist.txt with a reason``;
 for a guard below the exec, `a guard that runs once the host has been reached
 guards nothing`; for a stale row, `delete the stale entry (the list only
-shrinks)`; and from the guard itself, `inject the fake the seam takes, or
-install a fake on PATH and declare it with testguard.AllowHosts()`.
+shrinks)`; and from the guard itself, `a fake on PATH must live under a temp
+directory; inject the fake the seam takes`.
 **Its narrowings.** A seam that reaches a host without spawning an ssh-family
 program — a Go SSH library, a raw socket — is not seen; nothing in this tree
 does that. The guard treats a program that resolves INSIDE a temp
 directory as a fake, which is what this repository's fake `ssh` scripts are, so
-a test that installs its fake somewhere else must say `defer
-testguard.AllowHosts()()`, and a test that builds the real seam while another
-fake sits on PATH is not caught. `AllowHosts` is process-wide for its scope, so
-a test that opens one must not run in parallel with one relying on the guard.
+a test that installs its fake somewhere else must inject the fake the seam
+takes, and a test that builds the real seam while another fake sits on PATH is
+not caught.
 And the class test reads names and literals, not types: a program held in a
 variable, in another package's constant, or behind an interface is invisible to
 it — which is why the rule is written where the CHILD is started.
