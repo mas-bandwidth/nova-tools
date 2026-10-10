@@ -2070,6 +2070,85 @@ internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
 
+### the-finish-is-read-from-the-branch-bbb.w4 — a finish is what the lane did (internal/friend/finish.go)
+
+On 2026-10-07 one flash friend ended 144 of 286 attempts failed, 88 of them the
+machine's: lanes that committed and wrote no report, HOLDs whose only note was a
+cost line of tokens input=0 and output=0, finishes refused at land because the
+report named no head or no verdict. The owner, the same evening: "I want
+everything that is not the model's fault fixed." A friend's finish is read from
+what the lane did, never from the essay the model wrote. `DecideFinish` is that
+contract. The daemon applies it when a lane turn ends (`branchFinish`), before
+the lane's own end. A cap, a silent stop, and a restart stay on the lane's end.
+A report with no commits of the lane's own stays there too, so friend sync still
+reads the report the lane left.
+
+- **The head is the branch tip.** At finish time the daemon reads the job
+  checkout with git (`internal/gitrun`): `rev-parse` of `HEAD`, then
+  `git log --oneline` of the lane's own commits, `base..HEAD`. The base is the
+  sha in `JOB.md`, else the brief's `BASE:`. No HEAD file, no git. No base, or
+  an empty log, is no commits and no head. The head on the finish is that tip.
+  A report that names a different sha is finished at the tip with the judgment
+  `report named <sha>, branch is <tip>`. A lane with no commits finishes with
+  no head.
+- **One recovery turn.** A lane that exits with no `REPORT.md` and commits on
+  its branch is not failed yet. The same attempt runs the harness once more, in
+  the same job, with the prompt `Your branch <name> at <tip> has these commits:
+  <git log --oneline>. Write REPORT.md in the form below and stop.` The form is
+  the brief's verdict and head lines, or `Verdict: LAND|HOLD|FAIL` / `Head:
+  <sha>`. On a per-card harness the prompt is `RECOVER.md` in the job directory
+  and that path is the brief the runner reads; the card's own brief is not
+  rewritten. Only after that turn also writes nothing is the attempt failed,
+  and the failure says `no report after one recovery turn`, never `wrote no
+  report`. A lane with no commits and no report fails at once, as it did.
+- **A harness fault is not a verdict.** It is a fault only when all three hold:
+  usage is zero or absent, the lane made no commit, and `REPORT.md` is absent
+  or carries no sentence from the model. A `Cost:` line is not a sentence. A
+  line with `input=0` and `output=0` is zero usage even when no token source
+  was read. The daemon does not call finish. It says one judgment to the seat,
+  `fault: <friend> lane for <card> ran no model: exit <n>: <last stderr line>`,
+  deletes the report and the result, lifts the lane mark, and hands the card
+  back to its queue. The attempt is not spent. Three faults on one card in a
+  row finish it `FAIL` with that fault reason, and that attempt is spent. The
+  count is the daemon's (`cardFaults`); it is not written to `lanes.json`.
+- **A HOLD or FAIL whose note is only the cost line** (no sentence from the
+  model) is that fault when the other two conditions hold. The carried shape is
+  a friend HOLD that was only `Cost: … (list price, route flash-deepseek41-direct)`.
+  Commits, or a sentence the model wrote, are not a fault: the finish stands.
+- **A missing verdict** with a `REPORT.md` present and commits on the branch is
+  finished ok, not refused at land. The judgment is `verdict line missing,
+  inferred ok from the report`. The report file gains `Verdict: LAND` and the
+  branch tip so a later read is not refused. A LAND that does not address the
+  brief's fix is still held, as the outbox pass holds one.
+- **Usage unknown is unpriced, never free.** A finish with commits or a real
+  report and zero or absent usage is finished normally and marked
+  `usage unknown` on the attempt. The `Cost:` line is `Cost: unpriced (usage
+  unknown) …` and `RESULT.md` gains `cost: unpriced (usage unknown)`. The sprint
+  cost ledger is outside this card's paths; the daemon does not call it, and it
+  does not publish a zero price for that finish. Mercury under OpenCode on
+  2026-10-07 reported 0 tokens on every finish while the work was real.
+- **What stays the old harness fault.** A lane whose token source was not read
+  (no `Tokens`, or the session not open) and which left no report, and no
+  zero-token `Cost:` line, is still the harness fault in the lane's end: the
+  card stays in hand, the attempt is not counted, and the third alike marks the
+  row down. The new fault is taken when usage was measured zero or absent, or
+  the report contains a `Cost:` line. `applyInLane` is that gate.
+
+No library decides a finish. git is read through `internal/gitrun`, the tree's
+one runner.
+
+The tests are `TestHeadFromTheBranchBeatsHeadInTheReport`,
+`TestNoReportWithCommitsGetsOneRecoveryTurnThenFailsNamingIt`,
+`TestZeroUsageIsAFaultNotAFinish`, `TestCostOnlyHoldIsTheSameFault`,
+`TestThreeFaultsFailWithTheFaultReason`,
+`TestMissingVerdictWithReportAndCommitsFinishesOk`, and
+`TestUnmeasuredNoReportStaysOutOfTheLane`, in `internal/friend/finish_test.go`.
+They decide the finish in memory: no sockets, no git, no clock.
+
+A TLA+ module for this decision is outside this card's paths
+(`internal/friend/tla`). `DecideFinish` is the model, and `finish_test.go` pins
+it. TLC is not run on a working machine.
+
 ### a-lane-is-capped-by-its-tier.w1 — a lane's wall time is capped by its card's tier (internal/friend/lane_cap.go)
 
 On 2026-10-05 night seven one-shot Mercury lanes ran 24 to 73 minutes each and

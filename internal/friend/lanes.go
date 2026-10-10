@@ -232,6 +232,10 @@ type lane struct {
 	polled   time.Time // when the card's tokens were last read for the cap
 	capped   bool      // stopped at the row's token cap
 	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
+	// recoverText is the one recovery turn's prompt for the card in hand. recoveryDone
+	// says that turn was started. Neither is written to lanes.json.
+	recoverText  string
+	recoveryDone bool
 }
 
 type laneResult struct {
@@ -261,6 +265,9 @@ type laneSet struct {
 	loaded1 bool              // lanes are held to the load width
 	took    map[string]bool
 	faults  FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
+	// cardFaults counts this finish contract's faults per job, in a row. It is the
+	// daemon's, not lanes.json: a restart starts the count again.
+	cardFaults map[string]int
 }
 
 func (s *laneSet) running() bool {
@@ -465,6 +472,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			if ln.card != nil { // between turns: the card goes back to the queue for a lane within the cap
 				d.Record(fmt.Sprintf("%s lane %d: beyond the cap (%d of %d); card %s handed back for another lane", now.UTC().Format(time.RFC3339), ln.n, limit, width, ln.card.ID))
 				ln.card, ln.attempts = nil, 0
+				ln.recoverText, ln.recoveryDone = "", false
 			}
 			continue
 		}
@@ -527,6 +535,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue
 			}
 			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
+			ln.recoverText, ln.recoveryDone = "", false
 			ln.tier = d.cardTier(c)
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
@@ -542,6 +551,19 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
+			if ln.recoverText != "" {
+				path := filepath.Join(dir, "RECOVER.md")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					d.Record(fmt.Sprintf("%s lane %d: card %s recovery brief not written: %s", now.UTC().Format(time.RFC3339), ln.n, ln.card.ID, oneLine(err.Error(), 200)))
+					continue
+				}
+				if err := atomicfile.WriteFile(path, []byte(ln.recoverText), 0o644); err != nil {
+					d.Record(fmt.Sprintf("%s lane %d: card %s recovery brief not written: %s", now.UTC().Format(time.RFC3339), ln.n, ln.card.ID, oneLine(err.Error(), 200)))
+					continue
+				}
+				ln.takeRecovery()
+				c.Brief = path // the copy the runner reads; the card's own brief stays
+			}
 			ln.t = t
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
 				lt, err := runner.RunCard(WithLaneDir(LaneContext(ctx), dir), c)
@@ -562,7 +584,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if d.CardDone != nil {
 			send = d.CardDone(ln.card.ID, l.coordinator())
 		}
-		t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
+		if text, ok := ln.takeRecovery(); ok {
+			t.text = text
+		} else {
+			t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
+		}
 		ln.t = t
 		dir := ln.job.Dir
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
@@ -668,6 +694,11 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		if moved := RescueStray(ln.job); len(moved) > 0 {
 			line += fmt.Sprintf(" stray=%q", strings.Join(moved, ","))
 		}
+	}
+	// the finish is what the lane did (finish.go). A turn this contract does not take
+	// ends below, as it did. A turn it takes does not also spend the attempt here.
+	if l.branchFinish(r, card, end, line, now) {
+		return
 	}
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
@@ -1291,16 +1322,32 @@ func (l *loop) finishNote(ln *lane, card Card, wall time.Duration, now time.Time
 	if d.Route != nil {
 		rp = d.Route()
 	}
-	if d.Tokens != nil {
-		if err := PublishCost(card.Outbox, spent, rp, d.Model); err != nil {
-			d.Record(fmt.Sprintf("%s cost: %s: %s", now.UTC().Format(time.RFC3339), card.ID, oneLine(err.Error(), 300)))
-		}
-	}
+	rawReport := ""
 	verdict := ""
 	if raw, err := os.ReadFile(card.Report()); err == nil {
-		verdict, _ = reportLine(string(raw), "Verdict")
+		rawReport = string(raw)
+		verdict, _ = reportLine(rawReport, "Verdict")
 	}
-	cost := CostOf(spent.Tokens, rp, d.Model)
+	// Zero usage on a real report or on commits is unpriced, never free. A cost line
+	// already marked usage unknown stays that. Unreported usage is not zero.
+	unknown := strings.Contains(rawReport, "usage unknown")
+	if !unknown && measuredZero(spent.Tokens) && (modelSaid(rawReport) || l.laneCommitted(card)) {
+		unknown = true
+	}
+	var cost string
+	if unknown {
+		if err := writeUsageUnknown(card.Outbox, d.Model, rp.Name); err != nil {
+			d.Record(fmt.Sprintf("%s cost: %s: %s", now.UTC().Format(time.RFC3339), card.ID, oneLine(err.Error(), 300)))
+		}
+		cost = "unpriced (usage unknown)"
+	} else {
+		if d.Tokens != nil {
+			if err := PublishCost(card.Outbox, spent, rp, d.Model); err != nil {
+				d.Record(fmt.Sprintf("%s cost: %s: %s", now.UTC().Format(time.RFC3339), card.ID, oneLine(err.Error(), 300)))
+			}
+		}
+		cost = CostOf(spent.Tokens, rp, d.Model)
+	}
 	subject, body := FinishNote(d.Friend, filepath.Base(card.Outbox), verdict, cost, wall)
 	l.tell(subject, body, now)
 }
