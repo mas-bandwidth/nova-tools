@@ -779,33 +779,34 @@ op its record does not hold (a record on another machine, a record removed) is a
 brief --question converges --positive landed --negative reworked,dropped` reads
 the bar from the sprint's own record.
 
- **The calibration of 2026-10-03.** Jev over 847 cards: the 234 cards of the two
- review rounds of 2026-10-02, scored against their review labels (ok as positive;
- wrong, ugly and outside as negative), and the 613 tree cards held for the next
- waves. The shipped schema and state, asked in 45 seconds: `converges` AUC 0.600,
- `one_thing` 0.680, `gate_stated` 0.610, `report_stated` 0.561, `commit_stated`
- 0.551, `files_named` 0.547, `repo_branch` 0.447, `ambiguous_step=none` 0.509. Two
- earlier asks measured the questions before they were settled: over the card alone,
- `files_named` asking for "the exact files" was inverted (0.252) and failed 511 tree
- cards whose PATHS are globs; with the frame added it was still inverted (0.289);
- reworded to accept a glob it fails none and scores 0.547. `ambiguous_step` named
- `step-1` on 612 of 613 tree cards over the card alone, and on 611 with the frame:
- it does not discriminate (0.509) and is to be reframed or dropped before any bar.
- A card written to every question scores 0.72; the reviewed cards 0.33 to 0.48; the
- schema wave's tree cards 0.08 to 0.21. The review label is a diff's quality, not a
- card's convergence: the brief record's own outcomes are the measure that counts.
+**The calibration of 2026-10-03.** Jev over 847 cards: the 234 cards of the two
+review rounds of 2026-10-02, scored against their review labels (ok as positive;
+wrong, ugly and outside as negative), and the 613 tree cards held for the next
+waves. The shipped schema and state, asked in 45 seconds: `converges` AUC 0.600,
+`one_thing` 0.680, `gate_stated` 0.610, `report_stated` 0.561, `commit_stated`
+0.551, `files_named` 0.547, `repo_branch` 0.447, `ambiguous_step=none` 0.509. Two
+earlier asks measured the questions before they were settled: over the card alone,
+`files_named` asking for "the exact files" was inverted (0.252) and failed 511 tree
+cards whose PATHS are globs; with the frame added it was still inverted (0.289);
+reworded to accept a glob it fails none and scores 0.547. `ambiguous_step` named
+`step-1` on 612 of 613 tree cards over the card alone, and on 611 with the frame:
+it does not discriminate (0.509) and is to be reframed or dropped before any bar.
+A card written to every question scores 0.72; the reviewed cards 0.33 to 0.48; the
+schema wave's tree cards 0.08 to 0.21. The review label is a diff's quality, not a
+card's convergence: the brief record's own outcomes are the measure that counts.
 
-## 15. The hold decision: classifying HOLD reports
+## 15. hold-reason-classifier-bb.w4: the hold decision
 
 `hold --report <file>` classifies a HOLD report as one of five classes with
 probabilities, and extracts the proposed paths. The state is the report text alone.
+Each PROPOSED line names one path the report proposes.
 
 Two questions:
 - `class` (choice): paths-too-narrow, missing-dependency, already-done, work-defect, or harness-failure, each with its p
 - `proposed_paths` (noul): p that the report contains a PATHS-PROPOSED line
 
-`ExtractProposedPaths` reads the PATHS-PROPOSED line if present; else returns paths
-the report names as needed (lines containing "path" and "need" or "change").
+`ExtractProposedPaths` reads the PATHS-PROPOSED line if present; else returns the
+path-like tokens on a line saying what the work needs or changes.
 
 The five classes and their criteria:
 
@@ -818,4 +819,6 @@ The five classes and their criteria:
 | `harness-failure` | the report says the harness failed |
 
 The hold decision is shadow-only: it does not act on the report, only classifies it.
-The record holds the classification for later calibration.
+The record holds the classification for later calibration. The reports of the
+labelled set are the fixtures under `internal/decide/testdata/holdreason/`, and
+`labels.json` beside them is a person's class and proposed paths for each.

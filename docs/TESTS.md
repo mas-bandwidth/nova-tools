@@ -859,6 +859,8 @@ $ nova-decide hold --report ./cmd/nova-decide/testdata/hold-reports/paths-too-na
 HOLD OK id=holdreport decision=holdreason backend=fixed class=paths-too-narrow p=0.85 tokens_in=0 tokens_out=0 recorded=new
 HOLD ANSWER question=class type=choice value=paths-too-narrow p=already-done:0.02,harness-failure:0.03,missing-dependency:0.05,paths-too-narrow:0.85,work-defect:0.05
 HOLD ANSWER question=proposed_paths type=noul value=yes p=yes:0.9
+HOLD PROPOSED path=internal/decide/holdreason.go
+HOLD PROPOSED path=cmd/nova-decide/main.go
 
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true

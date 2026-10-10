@@ -8,9 +8,7 @@
 //    - work-defect: the report says there is a defect in the work
 //    - harness-failure: the report says the harness failed
 //
-// 2. p (noul): the probability that the report is correctly classified
-//
-// 3. proposed_paths (noul): the report contains PATHS-PROPOSED line
+// 2. proposed_paths (noul): the report contains PATHS-PROPOSED line
 //
 // The answer for class gives a probability per option.
 // The answer for proposed_paths gives p=yes if PATHS-PROPOSED line is found, else p=no.
@@ -18,10 +16,7 @@
 
 package decide
 
-import (
-	"slices"
-	"strings"
-)
+import "strings"
 
 const HoldName = "holdreason"
 
@@ -33,21 +28,34 @@ const (
 	HarnessFailure    = "harness-failure"
 )
 
+// HoldClassifications returns the list of possible hold classifications in order.
+func HoldClassifications() []string {
+	return []string{PathsTooNarrow, MissingDependency, AlreadyDone, WorkDefect, HarnessFailure}
+}
+
+// holdCriteria is what each class means: the criterion the class question states
+// for it (SPEC-NOVA-DECIDE section 15).
+var holdCriteria = map[string]string{
+	PathsTooNarrow:    "the report says the paths are too narrow",
+	MissingDependency: "the report says a dependency is missing",
+	AlreadyDone:       "the report says the work is already done",
+	WorkDefect:        "the report says there is a defect in the work",
+	HarnessFailure:    "the report says the harness failed",
+}
+
 // HoldSchema returns the schema for the hold decision.
 func HoldSchema() Schema {
+	criteria := make(map[string]string, len(holdCriteria))
+	for _, class := range HoldClassifications() {
+		criteria[class] = holdCriteria[class]
+	}
 	return Schema{
 		Name: HoldName,
 		Questions: map[string]Question{
 			"class": {
 				Type:         Choice,
 				Instructions: "what kind of hold this is",
-				Criteria: map[string]string{
-					PathsTooNarrow:    "the report says the paths are too narrow",
-					MissingDependency: "the report says a dependency is missing",
-					AlreadyDone:       "the report says the work is already done",
-					WorkDefect:        "the report says there is a defect in the work",
-					HarnessFailure:    "the report says the harness failed",
-				},
+				Criteria:     criteria,
 			},
 			"proposed_paths": {
 				Type:         Noul,
@@ -62,35 +70,48 @@ func HoldState(report string) string {
 	return "HOLD (the report as provided):\n" + report
 }
 
-// ExtractProposedPaths extracts the PATHS-PROPOSED line if present,
-// else returns the paths the report names as needed.
+// holdPathCues are the words on a line that say what the work needs or changes:
+// the paths the report names as needed stand on such a line.
+var holdPathCues = []string{"need", "change", "update"}
+
+// ExtractProposedPaths extracts the PATHS-PROPOSED line if present, else
+// returns the paths the report names as needed: the path-like tokens on a line
+// that says what the work needs or changes. The result is one space-separated
+// list, and "" when the report proposes none.
 func ExtractProposedPaths(report string) string {
 	lines := strings.Split(report, "\n")
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "PATHS-PROPOSED:") {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, "PATHS-PROPOSED:"))
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "PATHS-PROPOSED:"); ok {
+			return strings.Join(strings.Fields(strings.ReplaceAll(rest, ",", " ")), " ")
 		}
 	}
-	// If no PATHS-PROPOSED line, return paths that look like they are named as needed.
 	var paths []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "path") && (strings.Contains(trimmed, "need") || strings.Contains(trimmed, "change")) {
-			paths = append(paths, trimmed)
+		if !namesNeededWork(trimmed) {
+			continue
+		}
+		for _, token := range strings.Fields(trimmed) {
+			if token = strings.Trim(token, ",.;:\"'()[]"); looksLikePath(token) {
+				paths = append(paths, token)
+			}
 		}
 	}
-	return strings.Join(paths, "\n")
+	return strings.Join(paths, " ")
 }
 
-// HoldClassifications returns the list of possible hold classifications in order.
-func HoldClassifications() []string {
-	return []string{PathsTooNarrow, MissingDependency, AlreadyDone, WorkDefect, HarnessFailure}
+// namesNeededWork says a line says what the work needs or changes.
+func namesNeededWork(line string) bool {
+	lower := strings.ToLower(line)
+	for _, cue := range holdPathCues {
+		if strings.Contains(lower, cue) {
+			return true
+		}
+	}
+	return false
 }
 
-// HoldClassificationsSorted returns the sorted list of possible hold classifications.
-func HoldClassificationsSorted() []string {
-	classes := HoldClassifications()
-	slices.Sort(classes)
-	return classes
+// looksLikePath says a token names a file: it holds a separator or an extension.
+func looksLikePath(token string) bool {
+	return strings.Contains(token, "/") || strings.Contains(token, ".")
 }

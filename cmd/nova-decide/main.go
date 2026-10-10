@@ -704,15 +704,22 @@ func gateBars(s string) (decide.GateBars, error) {
 	return b, nil
 }
 
-// hold makes the hold decision of a single report.
+// hold makes the hold decision of a single report: its class and proposed_paths
+// answers, and the paths the report proposes (one PROPOSED line per path).
 func (w world) hold(c *tool.Call) *tool.Out {
 	raw, err := os.ReadFile(c.Str("report"))
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	return w.decision(c, decide.HoldSchema(), decide.HoldState(string(raw)), map[string]string{
+	o := w.decision(c, decide.HoldSchema(), decide.HoldState(string(raw)), map[string]string{
 		"report": c.Str("report"), "report_sha256": decide.Sum(raw),
 	})
+	if o.Status == tool.OK && !c.DryRun() {
+		for _, p := range strings.Fields(decide.ExtractProposedPaths(string(raw))) {
+			o.Item("proposed", "path", p)
+		}
+	}
+	return o
 }
 
 // brief makes the brief decision of every card --card names, as one batch.

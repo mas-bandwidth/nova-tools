@@ -1,0 +1,8 @@
+[
+  {"file": "already-done.txt", "class": "already-done", "proposed": false, "paths": ""},
+  {"file": "harness-failure.txt", "class": "harness-failure", "proposed": false, "paths": ""},
+  {"file": "missing-dependency.txt", "class": "missing-dependency", "proposed": true, "paths": "go.mod vendor.json"},
+  {"file": "no-pathsoffered.txt", "class": "paths-too-narrow", "proposed": false, "paths": "internal/auth/main.go internal/auth/token.go internal/auth/session.go"},
+  {"file": "paths-too-narrow.txt", "class": "paths-too-narrow", "proposed": true, "paths": "internal/auth/handler.go internal/auth/middleware.go internal/auth/verify.go"},
+  {"file": "work-defect.txt", "class": "work-defect", "proposed": true, "paths": "internal/api/lookup.go"}
+]
