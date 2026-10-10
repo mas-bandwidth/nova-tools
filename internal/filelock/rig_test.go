@@ -2,49 +2,30 @@ package filelock
 
 import (
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-// The test's clock: production takes its time through options.clock (realClock
-// by default), so a test passes this one and a bounded wait costs no wall time.
-
-// lockStepClock is an in-memory virtual clock for testing bounded waits without sleeping.
+// lockStepClock is testkit.Clock behind filelock's clock interface. The
+// interface needs Sleep; Sleep advances the clock and does not block.
 type lockStepClock struct {
-	mu    sync.Mutex
+	c     *testkit.Clock
 	start time.Time
-	now   time.Time
 }
 
-// newLockStepClock returns a lockStepClock initialized to start (or a default fixed time if zero).
+// newLockStepClock returns a clock for tests, set to start, or testkit's fixed
+// test time when start is zero.
 func newLockStepClock(start time.Time) *lockStepClock {
-	if start.IsZero() {
-		start = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
-	}
-	return &lockStepClock{start: start, now: start}
+	c := testkit.NewClock(start)
+	return &lockStepClock{c: c, start: c.Now()}
 }
 
-func (c *lockStepClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *lockStepClock) Sleep(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
-}
-
-// Waited returns the elapsed virtual duration since clock creation.
-func (c *lockStepClock) Waited() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now.Sub(c.start)
-}
+func (c *lockStepClock) Now() time.Time        { return c.c.Now() }
+func (c *lockStepClock) Sleep(d time.Duration) { c.c.Advance(d) }
+func (c *lockStepClock) Waited() time.Duration { return c.c.Now().Sub(c.start) }
 
 // rig is one filelock test's fixture: a temp dir whose lock paths are named
 // from it, and a virtual clock a bounded wait advances without sleeping.

@@ -3,9 +3,11 @@
 // checked (verb.go), writing and reading the files a test sets up (here and
 // tree.go), a recording wait for code a synctest bubble cannot hold
 // (waits.go) and a skip by platform (skip.go). Each helper fails the test
-// through testify's require, so a caller's setup is one line. Time in a test
-// is testing/synctest's first, a clockwork.FakeClock where code does real
-// I/O, and never a clock of the kit's own.
+// through testify's require, so a caller's setup is one line.
+//
+// Time: pass time as an argument (now func() time.Time) wherever possible.
+// Where a clock is needed, use Clock below. For code that sleeps, prefer
+// testing/synctest. A real clock is only used in functional tests.
 //
 // A tool's tests keep one adapter of their own, the entry point as a Main, and
 // call its methods. A tool whose entry point takes a clock, an environment or
@@ -25,10 +27,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+// Clock is a virtual clock for tests. Now returns the virtual time and Advance
+// moves it. It is safe for concurrent use (docs/STANDARD.md section 8). Pass
+// time as an argument (now func() time.Time) wherever possible; where code
+// takes a clock, use Clock.
+type Clock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+// NewClock returns a clock set to start, or a fixed test time when start is
+// zero (docs/STANDARD.md section 8).
+func NewClock(start time.Time) *Clock {
+	if start.IsZero() {
+		start = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	}
+	return &Clock{now: start}
+}
+
+// Now returns the current virtual time (docs/STANDARD.md section 8).
+func (c *Clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+// Advance moves the clock forward by d (docs/STANDARD.md section 8).
+func (c *Clock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
 
 // Main is a tool's entry point in process: the arguments after the tool's
 // name, stdin, the two output streams, and the exit code it returns.
