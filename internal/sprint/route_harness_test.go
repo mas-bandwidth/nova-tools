@@ -86,3 +86,24 @@ func TestTheDealSendsAClaudeCardToAMemberWithClaude(t *testing.T) {
 		assert.Equal(t, "flash-claude", wc.F(FieldRoute), id)
 	}
 }
+
+// A dealt card keeps its route, so a member going down moves it only to a member that can
+// launch that route (notLaunching in downPlan): m1 has no claude, so the cards of the
+// downed m2 all go to m3, none to m1.
+func TestADownedMembersClaudeCardsGoOnlyToMembersWithClaude(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1", Width: 4}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2", Width: 4, Harnesses: "claude"}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m3", Width: 4, Harnesses: "claude"}))
+	w.s.Routes = []Route{{Name: "flash-claude", Tier: cardhdr.RouteFlash, Provider: "subscription-claude", Model: "opus", Harness: "claude", Enabled: true, Deadline: 600}}
+	w.must(Add(w.s, AddReq{Stream: "s1", Count: 4}))
+	ids := []string{"s1-1", "s1-2", "s1-3", "s1-4"}
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: ids}}))
+	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
+	for _, id := range ids {
+		wc := w.s.Fleet.Card(WorkCardID(id, 1))
+		require.NotNil(t, wc, id)
+		assert.NotEqual(t, "m1", wc.Row, "%s never moves to a member with no claude", id)
+	}
+}
