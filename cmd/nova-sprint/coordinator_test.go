@@ -121,6 +121,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"set":               "set --read-tier pro",
 		"promoted":          "promoted --sha 0123abc",
 		"funded":            "funded openrouter --reason paid",
+		"routes rest":       "routes rest openrouter --reason r",
+		"routes wake":       "routes wake openrouter --reason r",
 		"cost reconcile":    "cost reconcile",
 		"cost reprice":      "cost reprice",
 		"stats tidy":        "stats tidy --all --reason r",

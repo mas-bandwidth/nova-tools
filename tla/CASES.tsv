@@ -508,3 +508,7 @@ MCLoadCache.cfg	MCLoadCache.tla	pass	-	ignore-terminal	loadcache	required	-
 MCLoadCacheBrokenCatchup.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
 MCLoadCacheBrokenAhead.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
 MCLoadCacheBrokenNoMark.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
+MCRouteRest.cfg	MCRouteRest.tla	pass	-	ignore-terminal	routerest	required	-
+MCRouteRestBrokenNoResult.cfg	MCRouteRest.tla	action	RestOnlyByProviderOrCoordinator	ignore-terminal	routerest	required	-
+MCRouteRestBrokenBalance.cfg	MCRouteRest.tla	action	RestOnlyByProviderOrCoordinator	ignore-terminal	routerest	required	-
+MCRouteRestBrokenSilent.cfg	MCRouteRest.tla	temporal	LowIsRaised	ignore-terminal	routerest	required	-

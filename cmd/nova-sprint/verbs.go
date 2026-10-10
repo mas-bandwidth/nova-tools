@@ -179,6 +179,8 @@ func init() {
 		{"seat pong", "<nonce> [--dry-run]", "seat pong received-nonce", (*app).cmdSeatPong},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
+		{"routes rest", "<provider|route> --reason <text> [--for <duration> | --until <RFC3339>]", "routes rest openrouter --reason 'balance $40, about 1.6 hours left' --for 2h", (*app).cmdRoutesRest},
+		{"routes wake", "<provider|route> --reason <text>", "routes wake openrouter --reason 'the rest was a balance rule the machine no longer keeps'", (*app).cmdRoutesWake},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
 		{"stats tidy", "(--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]", "stats tidy --all --reason 'a fresh start' --dry-run", (*app).cmdStatsTidy},

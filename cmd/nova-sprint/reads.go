@@ -2474,8 +2474,8 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 // cmdRoutes is each route of the store with what its attempts did: the work
 // cards dealt on it, finished ok, failed, failed by the provider, and the mean
 // wall from take to finish, so a bad route shows (docs/SPEC-SPRINT.md, the
-// deal's route), and when its rest ends while the machine rests it for children
-// that ended with no result (rule 3, sprint.RouteRests).
+// deal's route), and when its rest ends while it rests: its provider's failures,
+// a refusal, or the coordinator's routes rest (sprint.RouteRests).
 func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("routes")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
