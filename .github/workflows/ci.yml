@@ -17,7 +17,7 @@
 #
 # WHERE THINGS RUN. Pull requests run on the self-hosted runners ONLY: a
 # per-package matrix — ./cmd/<tool> and ./internal/... dealt into twelve
-# shards on the four Linux space runners and four on the macOS runners —
+# shards on the four Linux runners and four on the macOS runners —
 # fanned out in parallel, fail-fast off, so a change's feedback path is a
 # fan-out over the 4+4 machines and never a serial queue, and never
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest)
@@ -1737,7 +1737,7 @@ jobs:
         shell: bash
         run: |
           command -v ansible-playbook
-          go test -p 2 -count=1 -timeout 90s ./fleet -run '^TestAdoptCheckReachesItsReceipt/unstaged$' -v
+          make test-short PKGS=./fleet
 
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
