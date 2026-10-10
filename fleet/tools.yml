@@ -227,7 +227,8 @@
             that: seat_before.rc == 0 and seat_before.stdout is match('[{]')
             fail_msg: >-
               ADOPT REFUSED step=live host={{ inventory_hostname }}: the candidate's nova-sprint live printed no manifest
-              ({{ (seat_before.stderr or seat_before.stdout) | default('') | truncate(200) }}); nothing was installed or loaded
+              ({{ (((seat_before | default({})).stderr | default('')) or ((seat_before | default({})).stdout | default('')))
+                  | truncate(200) }}); nothing was installed or loaded
             quiet: true
           when: seat_cand != ''
 
@@ -254,7 +255,7 @@
             that: seat_canary.rc == 0
             fail_msg: >-
               ADOPT REFUSED step=server host={{ inventory_hostname }}: the candidate's shadow tick failed; nothing was installed or loaded:
-              {{ ((seat_canary.stderr | default('')) or (seat_canary.stdout | default(''))) | truncate(300) }}
+              {{ (((seat_canary | default({})).stderr | default('')) or ((seat_canary | default({})).stdout | default(''))) | truncate(300) }}
             quiet: true
           when: seat_cand != ''
 
@@ -295,7 +296,7 @@
               - seat_dry.facts.ready | default('') == 'yes'
             fail_msg: >-
               ADOPT REFUSED step=server host={{ inventory_hostname }}:
-              {{ ("the candidate's nova-config migrate --dry-run as " ~ nova_pg_owner ~ " did not answer (" ~ ((seat_migrate_dry.stderr | default('')) or (seat_migrate_dry.stdout | default(''))) | truncate(300) ~ ')')
+              {{ ("the candidate's nova-config migrate --dry-run as " ~ nova_pg_owner ~ " did not answer (" ~ ((((seat_migrate_dry | default({})).stderr | default('')) or ((seat_migrate_dry | default({})).stdout | default(''))) | truncate(300)) ~ ')')
                  if not seat_dry_json
                  else ('the store answered as role ' ~ (seat_dry.facts.role | default('?')) ~ ', not the owner ' ~ nova_pg_owner ~ ' (nova_pg_owner_dsn=' ~ nova_pg_owner_dsn ~ ')')
                  if seat_dry.facts.role | default('') != nova_pg_owner
@@ -344,8 +345,8 @@
             that: seat_planned.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
             fail_msg: >-
               ADOPT REFUSED step=friends host={{ inventory_hostname }}: the candidate's nova-friend install --dry-run refuses the flags of
-              {{ seat_planned.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.friend') | join(', ') }}
-              ({{ (seat_planned.results | rejectattr('rc', 'equalto', 0) | first).stderr | default('') | truncate(300) }}); nothing was installed or loaded
+              {{ ((seat_planned | default({})).results | default([]) | rejectattr('rc', 'equalto', 0) | map(attribute='item.friend') | join(', ')) }}
+              ({{ ((seat_planned | default({})).results | default([]) | rejectattr('rc', 'equalto', 0) | first | default({})).stderr | default('') | truncate(300) }}); nothing was installed or loaded
             quiet: true
 
         # Every check passed. What the window changes is measured (a stage
@@ -627,9 +628,18 @@
          | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
          | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else []) | list }}
     seat_restart_labels: "{{ seat_restart | map(attribute='label') | list }}"
+    # In --check the manifest still sees the installed nova-friend. Predict
+    # the daemon reload when the staged install changes that binary; in real
+    # mode the post-install manifest's stale flags remain authoritative.
     seat_friends: >-
-      {{ (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
-         | rejectattr('label', 'in', nova_seat_hold) | list }}
+      {{ (
+           (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
+           | rejectattr('label', 'in', nova_seat_hold) | list
+           + ((seat_was | default(dict(agents=[]))).agents | selectattr('loaded') | rejectattr('disabled')
+              | selectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
+              | map('combine', {'why': 'the candidate replaces nova-friend'}) | list
+              if ansible_check_mode and (seat_window | default(false)) and 'nova-friend' in (seat_replaces | default([])) else [])
+         ) | unique(attribute='label') | list }}
   tasks:
     - name: "seat: what --check says with no candidate on this machine"
       ansible.builtin.debug:
@@ -771,7 +781,7 @@
             that: ansible_check_mode or (seat_read.rc == 0 and seat_read.stdout is match('[{]'))
             fail_msg: >-
               ADOPT REFUSED step=live host={{ inventory_hostname }}: the installed nova-sprint live printed no manifest
-              ({{ (seat_read.stderr or seat_read.stdout) | default('') | truncate(200) }})
+              ({{ (((seat_read | default({})).stderr | default('')) or ((seat_read | default({})).stdout | default(''))) | truncate(200) }})
             quiet: true
 
         - name: "seat: what runs now, and what is stale (--check: the candidate's reading)"
@@ -941,7 +951,7 @@
             that: seat_dash is skipped or (seat_dash.status | default(0) == 200 and (seat_dash.json | default({})) | length > 0)
             fail_msg: >-
               ADOPT REFUSED step=dashboard host={{ inventory_hostname }}: {{ nova_seat_dashboard_url }} answered
-              {{ seat_dash.status | default('nothing') }} with no summary
+              {{ (seat_dash | default({})).status | default('nothing') }} with no summary
             quiet: true
 
         - name: "dashboard: the receipt"
@@ -1115,7 +1125,7 @@
         that: tla_jar.stat.exists and tla_jar.stat.checksum == tla_want
         fail_msg: >-
           TLA REFUSED host={{ inventory_hostname }} jar={{ nova_tla_jar }} want={{ tla_want }}
-          got={{ tla_jar.stat.checksum | default('none') if tla_jar.stat.exists else 'none' }}: the play downloads nothing;
+          got={{ ((tla_jar | default({})).stat | default({})).checksum | default('none') if ((tla_jar | default({})).stat | default({})).exists | default(false) else 'none' }}: the play downloads nothing;
           scp a tla2tools.jar whose sha256sum is {{ tla_want }} to {{ inventory_hostname }}:{{ nova_tla_jar }}
           (another record machine holds one), then run the play again
         quiet: true
