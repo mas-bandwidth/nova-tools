@@ -8,7 +8,7 @@ This is the work planned after v1.4. The release ladder is fixed (the owner, 202
 
 These were roadmap items and now have a release. They are listed here so nobody looks for them below.
 
-- **Rename nova-swarm to nova-worker** (v1.3). The tool runs one-task AI workers, and its help already says so. The rename covers the binary and its cmd directory, help text, docs, the fleet's ansible plays and launchd units (in their own repository), seat names such as swarm-hetzner2, and open cards. A nova-swarm shim keeps working for one release. No tool is named swarm after it.
+- **Rename nova-swarm to nova-worker** (v1.3). The tool runs one-task AI workers, and its help already says so. The rename covers the binary and its cmd directory, help text, docs, the fleet's ansible plays and launchd units (in their own repository), seat names, and open cards. A nova-swarm shim keeps working for one release. No tool is named swarm after it.
 - **Documentation pass with the rename** (v1.3). Plain English throughout, every doc matching the renamed tool. They are called workers everywhere; the one exception is README.md, where the bees are pictured.
 
 ## Done
@@ -20,12 +20,14 @@ Decided and in place. Recorded so the items that measure them have their startin
 ## Contents
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
-- [Measure and rate](#measure-and-rate) (2)
-- [The sprint machine](#the-sprint-machine) (2)
-- [Friends](#friends) (2)
-- [Setup, release and operations](#setup-release-and-operations) (3)
-- [Docs, models and the repository](#docs-models-and-the-repository) (2)
-- [Far](#far) (1)
+- [Measure and rate](#measure-and-rate) (10)
+- [The sprint machine](#the-sprint-machine) (3)
+- [Friends](#friends) (31)
+- [Setup, release and operations](#setup-release-and-operations) (113)
+- [Docs, models and the repository](#docs-models-and-the-repository) (16)
+- [Far](#far) (11)
+- [Tests and test tiers](#tests-and-test-tiers) (38)
+- [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (39)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -83,6 +85,70 @@ Why it waits: A rating is evaluation, not a fix; rating v1.2.0 now measures a tr
 
 Replaces 29 open sprint cards, each mapped to `rerate-every-tool-at-v1-4`.
 
+### Captured spend matches the provider's account
+
+Price every run, read and retry so recorded spend matches the provider's own account. Route prices are refreshed from the provider list instead of set once by hand.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04); issue #2171
+
+### Classifiers for false bounces and hold reports
+
+Two decision kinds classify reader findings as harness failure, trailer-only or real, and classify hold reports by cause, with a probability and the proposed paths. Both are seeded from labelled past cases.
+
+Target: after v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Pin the upstream provider per route and log it in usage rows
+
+Routes through an aggregator pin the provider order and forbid fallbacks, so the same model does not cost many times more through another door. The chosen provider is logged per usage row so cost can be traced.
+
+Target: after v1.4
+
+From: issue #3151
+
+### nova-decide review uses the provider confidence in its verdict
+
+The review verdict passes any rounded score of eight or more whatever the confidence. Low confidence lowers or flags the verdict.
+
+Target: v1.3
+
+From: issue #3393
+
+### nova-tokens publishes day rows and reports cost per unit
+
+A verb publishes per-day, per-model, per-repository token rows to the ledger repository. Turns are joined to queue leases to report cost per unit by kind.
+
+Target: after v1.4
+
+From: issue #3465; issue #3486
+
+### One swarm card template per model family, measured by ok rate
+
+The card text, not the model, drives many failures. Each model family gets a tuned template, compared by ok rate on the same issues.
+
+Target: after v1.4
+
+From: issue #3956
+
+### Worker efficiency: avoid a full repository clone for every job
+
+Every job clones the repository for itself, which repeats the same work. Share a cached clone or a reference clone across jobs.
+
+Target: after v1.4
+
+From: issue #80
+
+### Cut turns per card: stateless model calls and capped reasoning on reads
+
+Card cost is context times harness turns, because every tool call resends the context. A card whose steps are named runs as a pipeline of stateless calls with the harness running the tools, and reads cap their reasoning.
+
+Target: after v1.4
+
+From: issue #855; issue #856
+
 ## The sprint machine
 
 New verbs, stages and policies for nova-sprint. Each is new capability, so none of it fits the fixes-only ladder.
@@ -103,6 +169,14 @@ Why it waits: New capability.
 
 Replaces 4 open sprint cards, each mapped to `jev-decision-evaluation`.
 
+### The swarm finish derives head and step shas from git and refuses an unformatted file
+
+The result finish is mechanical: shas come from git, not from the model, and an unformatted Go file is refused before landing.
+
+Target: v1.3
+
+From: PR #5276
+
 ## Friends
 
 New ways for friends to connect and work.
@@ -122,6 +196,238 @@ DSH as a friend harness (union slice C).
 Already in the code: Pull request 5507 makes dsh a card runner and a spender for one-shot cards.
 
 Why it waits: Union slice C, parked by the owner, 2026-10-09.
+
+### Wake a coordinator with verbs, not scripts
+
+nova-bus wait blocks until the first real message, and a nova-friend verb wraps it for a coordinator of friends. This replaces the hand watch script.
+
+Target: after v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Presence reflects the session, not the app or the sprint server
+
+A friend reads up only when the session can take a turn, and presence does not depend on the sprint server answering. Loops that beat on behalf of an open app are removed.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### A broken session or a limit means down
+
+A provider refusal, a usage limit or an empty balance is noticed once, said once, and not fed more turns. The friend reads down until it recovers.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Friend messages are batched, receipted and never silently lost
+
+Pending messages go as one turn, each carries a receipt from delivery to returned work, the failed-delivery count survives a restart, and a deaf friend is detected.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04); issue #5192; card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)
+
+### One-shot friend lanes replace the hand-written runner scripts
+
+nova-friend runs cards through each harness in one-shot lanes with a limit-aware pause, and the stopgap shell runners are deleted.
+
+Target: after v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
+
+### A broken friend session renews itself
+
+The friend daemon renews a session it marked broken, in the same harness, and exposes the renewal as a verb. No person has to renew it by hand.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Friends and machines noticed back up and made current
+
+A hold or down state carries its cause and end time, and the tick notices when it ends. Returning friends and fleet machines adopt the latest tools before taking work.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Each friend's model per tier is decided and recorded
+
+Friend rows record which model serves each tier, so the deal and the friend agree on it. Friends set up with missing tiers are found and corrected.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04); PR #5387
+
+### Mark bus messages by sender authority in a friend's session
+
+A friend delivers a bus message as an instruction only when it comes from the coordinator seat holder. Every other message, and every message while the seat is unknown, is delivered as data.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Per-card token cap and cheaper deliveries for per-token friends
+
+Every one-shot friend lane counts tokens and stops at a per-card cap. Briefs cite rules by reference and each prompt starts with one stable prefix to cut tokens per landed card.
+
+Target: after v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Show and alarm friend daemon state, and ping every friend each second
+
+A test pins the installed service definition, and a view shows which binary each friend daemon runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping loop and marks a friend down after ten seconds without a pong.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Run every friend lane inside a wall profile taken from its friend row
+
+A lane child runs inside the wall, with writes allowed only to the friend's own working directories. This replaces stopgap runners that run without a wall.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### The harness prints its error lines so an unknown error records its cause
+
+Every launch runs the harness with error lines printed so a failure reported only as an unknown error is recorded with its real cause.
+
+Target: v1.3
+
+From: PR #5028
+
+### nova-friend scopes presence to a foreground harness wait
+
+A watch-only command runs a harness wait and beats the sprint server while the child is owned. It cancels on context cancellation, parent exit, pipe closure or beat failure.
+
+Target: after v1.4
+
+From: PR #5273
+
+### Scope friend status and pong counts to current assignments
+
+Queue sync writes a versioned snapshot of the friend's current Ready and Working row so counts do not include old records.
+
+Target: v1.3
+
+From: PR #5486
+
+### nova-bus gives each session of one participant its own cursor
+
+Two sessions of one participant share a single cursor, so the second has no usable inbox advance or wait. A per session cursor fixes this.
+
+Target: after v1.4
+
+From: issue #1401
+
+### The pool dispatcher asks the model ladder
+
+The dispatcher picks a model from the worker and profile files and never asks the ladder. A card the ladder marks for a child or the bus must not run on a mechanical model.
+
+Target: after v1.4
+
+From: issue #1486
+
+### Token, call, cost and in-flight limits per card and per route
+
+The native path enforces token, call and cost caps and an idle watch, budgets follow each route's cost and caching, and requests in flight are capped per route.
+
+Target: after v1.4
+
+From: issue #1545; issue #1811; issue #2580; issue #5094; issue #917
+
+### Classify provider errors and re-queue on another route
+
+A provider server error ends a card with no result after in-place retries. The verdict names PROVIDER and the card is re-queued on another route.
+
+Target: v1.3
+
+From: issue #2001; issue #2011
+
+### Idle-reaped cards report their real cause and are not wrongly reaped
+
+A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced working cards. The verdict states idle reaping and the idle watch accounts for the shell cap.
+
+Target: v1.3
+
+From: issue #2157; issue #2158; issue #2577; issue #2579; issue #2585
+
+### Fix darwin cards that go silent under the wall and are idle-killed
+
+On macOS benches cards and their subagents go quiet after minutes and are killed as idle, while Linux benches succeed. The cause is found and fixed.
+
+Target: v1.3
+
+From: issue #2533; issue #2535; issue #2058; issue #2328
+
+### End a card as asked when its last turn is a question
+
+A headless card whose last turn asks the user a question ends at once as asked instead of holding its slot to the deadline.
+
+Target: v1.3
+
+From: issue #2548
+
+### Record request timings so a wall names the provider, sandbox or model
+
+The swarm result records per-request send, first-byte and done times so a wall ending says who stalled.
+
+Target: after v1.4
+
+From: issue #3785
+
+### Cut the memory each card's harness process holds
+
+Each card runs a full harness process of several hundred megabytes, which sets every machine's width. Options to measure are a shared server per machine, heap limits and compressed swap.
+
+Target: after v1.4
+
+From: issue #2020
+
+### Worker benches: remote deadline and idle kill, one bench line per bench
+
+Deadline and idle stay local, and a timeout sends a terminate to the ssh process group and then a remote kill by process group. An unreachable bench abstains with a reason and each bench gets one line in the batch packet.
+
+Target: v1.3
+
+From: issue #607
+
+### Messages reach each harness's open session reliably
+
+Delivery into the open session of each harness is measured and reliable, and a message never waits behind every older one.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
+
+### The friend daemon serves its reader row through one-shot lanes
+
+A friend daemon with one-shot lanes also beats a reader queue and runs asked reads as one-shots within the row's tiers and read width.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### One lane engine keeps a one-shot friend at width
+
+A one-shot friend has exactly one lane engine, installed, upgraded and retired by the adopt, and nova-runner keeps it at its width.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### Pin the friend harness version, including under the lane wall
+
+A friend's harness runs at the pinned version in the daemon as well as in the lanes, so an unpinned upgrade cannot break the lane wall. The wall is tried against a new harness before it is adopted.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
 
 ## Setup, release and operations
 
@@ -153,6 +459,886 @@ Why it waits: New capability.
 
 Replaces 6 open sprint cards, each mapped to `container-functional-tier`.
 
+### nova-bus2 output lines state the reason, counts and digests a caller needs
+
+The ack, send and recv lines of nova-bus2 carry the facts a caller needs: why an ack was false, the byte count and digest of a send, that an empty wait is a result and not a failure, and how many messages wait behind the oldest one. Text, JSON and help all say the same thing.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### nova-bus2 finds its Redis address and caller identity without per-call flags
+
+The bus Redis address becomes a field of the fleet row in nova-config, and the sender identity gets an environment default, so no caller types them on every call. Every help text states the same address precedence, in the order the code applies it.
+
+Target: after v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### nova-bus2 refuses a Redis address outside loopback and the tailnet range
+
+Before any dial, nova-bus2 refuses a Redis host that is neither loopback nor in the tailnet range, with one line and exit code 2. The tailnet is the boundary and there are no ACLs.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### nova-bus and nova-friend do not need the sprint store
+
+The bus and friend tools stop importing the sprint's login and fleet row. A user with no sprint can run them from the bus address alone.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### A verb that runs a card or read on a remote bench machine
+
+Every card, read and coordinator run on a Linux bench uses a recipe of ssh, rsync and environment setup typed into each brief. A real verb does the sync, the run and the collection of results.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### A promote verb that takes the sprint base to dev end to end
+
+Promoting the sprint base to dev is done by hand: cut a branch, bring dev in, resolve conflicts, open the pull request. A verb does the whole path and records each step.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Make a symlink spelling of a granted path readable in the darwin sandbox
+
+On darwin the sandbox policy keeps only the resolved path, so reading a granted path by its symlink spelling fails inside the wall. Grant read on the link itself as well as on its target.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Harden nova-fuse box writes, box parsing and refusal lines
+
+Quarantine and lockdown are unlocked read-modify-write cycles, so a losing run can report success and be overwritten. The box reader accepts misspelled, duplicated or null keys as clear, and one refusal line echoes unescaped shell characters.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Bound the work done on very large or hostile input files
+
+The memory index reads whole files with no size limit, and nova-check links takes quadratic time on a line of unclosed brackets. Add size limits and deadlines so one planted file cannot exhaust memory or time.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Reserve the view key family in table member and epoch keys
+
+The reservations for epoch keys and member prefixes cover table keys but not the view family that the view verbs own. Extend the reserved set so a user key cannot collide with view state.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Make the secrets gate tell hand-sealed files from verb-made ones
+
+A file sealed by hand looks the same to the gate as a file a verb wrote, and the refusal line prints the rule position instead of naming the rule. Mark verb-made files and name the failed rule in the refusal.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Bound every network wait in the bus client
+
+List every deadline the bus client sets (dial, read, write, blocking wait margin) and add the missing ones, so a loaded machine cannot stall a bus call without limit.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Check CI tool classes
+
+Make the CI checks that classify tools run and report per class.
+
+Target: v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Allow directory lookup in the darwin sandbox profile
+
+The darwin wall denies a directory membership lookup that stalls sqlite3 and git for about 0.8 s per launch; allow it with the measurement in the commit.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Push notifications are required before inbox tools work
+
+nova-bus and the sprint refuse to work until the coordinator has wired push notifications to its inbox, and audit that the push arrives.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Adopting a new build is an automated pipeline
+
+Building, rollback copies, cold read, switch and fleet push for an adoption run as a machine pipeline that surfaces judgments to the coordinator.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04); issue #4306
+
+### nova-tokens reads the Redis bus log
+
+nova-tokens --bus reads the Redis bus log instead of the old note directories, and the spec, test transcript and dead fixtures are updated.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### A route says where it is applied: friends, fleet or local
+
+A route gets a mask for which executor classes use it, rather than being switched on or off for everyone. Pro routes then serve friends and flash routes serve the fleet.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### nova-tokens gains the daily collate verb
+
+The daily token collation moves into nova-tokens as a verb.
+
+Target: after v1.4
+
+From: PR #4594
+
+### A cancelled workflow run counts as red for revert-on-red
+
+Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a bad main.
+
+Target: v1.3
+
+From: PR #4600
+
+### nova-ci prints merge-queue status and detects flaky tests
+
+A queue verb prints each entry with failure receipts. A flake verb reruns tests in isolated processes to separate stable from flaky.
+
+Target: after v1.4
+
+From: PR #4605; PR #4612
+
+### install-redis-server puts the pinned Redis first and testredis refuses others
+
+The installer keeps a PATH redis-server only if it reports the pinned version, and the test helper refuses any other version.
+
+Target: v1.3
+
+From: PR #5155; issue #5151
+
+### Serve the public sprint dashboard as files from one puller
+
+A fleet role serves the page and data as static files refreshed by one puller, with no reverse proxy to the coordinator machine.
+
+Target: after v1.4
+
+From: PR #5329
+
+### Loop logs rotate by size and age
+
+Member and reader logs grow without bound today. A rule in the logs spec and the loop definitions bounds them.
+
+Target: v1.3
+
+From: nova-sprint issue #41
+
+### The bench hygiene script refuses an unsafe HOME
+
+The script runs with an empty, root, relative or one component HOME. It refuses those, since every path it may remove is built from HOME.
+
+Target: v1.3
+
+From: issue #1282
+
+### Darwin benches exclude work trees and temp dirs from indexing
+
+The system indexer loads the machine while tests run, which skews measurements. Setup excludes the work tree and the temp dir from indexing.
+
+Target: v1.3
+
+From: issue #1432
+
+### The dispatcher releases a slot lease by its own id
+
+Release removes every lease with the same owner and label. It releases only the one lease it took.
+
+Target: v1.3
+
+From: issue #1582
+
+### A card cannot spoof the native result or the idle watch
+
+A card can rewrite the harness capture file to turn a denial into an OK, and write files the monitor reads as liveness. The supervisor reads these from places a card cannot write.
+
+Target: v1.3
+
+From: issue #1892; issue #1893
+
+### The smoke job drops its hosted windows leg
+
+Native windows is no longer supported, only WSL. The remaining hosted windows leg of the smoke job is removed.
+
+Target: v1.4
+
+From: issue #1487
+
+### Release adopt does not trust a partial release directory
+
+A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt verifies completeness or uses a temporary dir renamed at the end.
+
+Target: v1.3
+
+From: issue #1981
+
+### Release upload must respect the draft then publish sequence
+
+The release workflow created a separate published release instead of uploading to the reviewed draft. Upload goes to the draft, then it is published.
+
+Target: v1.3
+
+From: issue #199
+
+### Card lint refuses valid cards: make gates and text inside fenced blocks
+
+Card lint rejects make-driven gates and flags parent paths or absolute paths quoted inside fenced blocks. It should accept both.
+
+Target: v1.3
+
+From: issue #1994; issue #2302; issue #3470
+
+### Fleet scripts run under bash 3.2 and are linted for it
+
+Launchers run under the old macOS bash and must not use newer builtins or rely on zsh word splitting. A lint rejects them.
+
+Target: v1.3
+
+From: issue #2012
+
+### Secrets seal leaves the store on a branch; add a bulk-add verb
+
+Seal without a pull request leaves the store on a local branch and exec then refuses every card. Seal restores the store, and one verb adds a name to many seats.
+
+Target: v1.3
+
+From: issue #2016; card from the sprint store (2026-10-10)
+
+### A missed or wedged fleet sample never reads as zero
+
+A partial or missed sample read as a full machine and a wedge froze the width table. The view reads slot stores directly and shows NA for unreachable hosts.
+
+Target: v1.3
+
+From: issue #2017
+
+### Bench standard covers real differences and checks reliably
+
+The bench check gave different verdicts on one machine and missed ssh limits, toolchain versions, layout and users. The manifest covers them and the check builds its own environment.
+
+Target: v1.3
+
+From: issue #2018; issue #2052; issue #2053; issue #2054; issue #2055; issue #3201
+
+### Adopt levels the fleet at a frozen sha from the nearest bench
+
+Adopt takes an explicit sha instead of chasing a moving dev, and large payloads come from the nearest datacenter machine.
+
+Target: after v1.4
+
+From: issue #2023
+
+### Harvest refuses a returned branch based on a stale head
+
+A returned branch based on an old head would have reverted merged work. Harvest checks the diff against the current target and rebases, re-gates or refuses.
+
+Target: v1.3
+
+From: issue #2032
+
+### Enforce the per-machine card ceiling before launch
+
+A machine reached extreme load and fell off the network before the guard acted. The slot store enforces a ceiling from measured memory and a process limit before launch.
+
+Target: v1.3
+
+From: issue #2033
+
+### Approval at head is read from the disposition line
+
+The review API commit id can differ from the head the reviewer read. Merge checks parse the head named in the disposition and treat commit id as untrusted.
+
+Target: v1.3
+
+From: issue #2037
+
+### Bus draft never overwrites a file and send refuses the template
+
+Draft overwrote an existing note and send accepted the untouched template, so an empty note went out. Draft refuses to overwrite and send refuses the template.
+
+Target: v1.3
+
+From: issue #2043
+
+### Run a branch's gate on a bench as one verb
+
+A verb bundles, copies and runs a branch's gate on a bench, keyed by sha and package set, so nothing is built on the coordinator.
+
+Target: after v1.4
+
+From: issue #2048
+
+### Pinned base staging works on darwin launchers
+
+The pre-model base clone exists only in Linux launchers, so a pinned base is silently absent on darwin. Both paths stage it.
+
+Target: v1.3
+
+From: issue #2163
+
+### Fleet capacity lives in one config, applied without restarts
+
+Per-machine capacity is scattered in launcher constants and loop arguments, so raising it needs a restart under load. One config holds it and is read live.
+
+Target: v1.3
+
+From: issue #2164
+
+### nova-check nocode reads the staged index by destination
+
+Wire the staged verb: required directory, root test, base detection, exit codes, and content read by destination object through one framed batch.
+
+Target: after v1.4
+
+From: issue #2295; issue #2296
+
+### Stage card repositories from the bench mirror at the named base, never from the network
+
+A card gets its repo from the local mirror at the base it names, the staged tree is checked against that base, and lint refuses a URL clone. Adopt refreshes the mirrors.
+
+Target: v1.3
+
+From: issue #2378; issue #2383
+
+### Preflight the worker start and mark a bench that cannot run cards as down
+
+A short startup check refuses with a named cause before any model call. A bench whose harness cannot start inside the wall is down for cards.
+
+Target: v1.3
+
+From: issue #2384; issue #2388
+
+### Pin toolchains and declare a card environment on every bench
+
+The playbook pins one toolchain set on every bench and writes an allowlisted card environment. Benches then gate the same legs alike.
+
+Target: v1.3
+
+From: issue #2415; issue #2553; issue #2554; issue #1500; issue #1948; issue #1993
+
+### Set sshd limits and supervise coordinator loops on every host
+
+Setup raises the sshd session and startup limits on macOS benches, and every long-running loop runs under systemd or launchd with a durable wake instead of nohup.
+
+Target: v1.3
+
+From: issue #2426; issue #2551; issue #2459
+
+### Replicate the sprint record to a second machine with a restore verb
+
+The playbook replicates the SQLite record continuously, and a restore from the replica matches the row count.
+
+Target: after v1.4
+
+From: issue #2555
+
+### One monitoring dashboard for the sprint, load, network and store
+
+Redis metrics are scraped and one ready-made dashboard shows per-bench cards, load, memory, network and store latency.
+
+Target: after v1.4
+
+From: issue #2556
+
+### Ship bench and loop logs to one queryable place
+
+Install a log shipper on every bench that sends harness, bench and loop logs to one log store, so faults are found by query and not by grep over ssh.
+
+Target: after v1.4
+
+From: issue #2557
+
+### Bus and swarm listings say what they read and cap their output
+
+nova-bus inbox must report a bounded walk and open items, nova-bus check --full prints a capped list with a count, and empty swarm listings print a count line, never zero bytes.
+
+Target: v1.3
+
+From: issue #2568; issue #2574; issue #2573; issue #2308
+
+### nova-bus wait recovers a stale index lock and a dirty lane file
+
+When a checkout holds a stale git lock or a dirty lane file, nova-bus wait recovers or names the exact remedy once instead of failing every tick.
+
+Target: v1.3
+
+From: issue #2627
+
+### Hygiene checks share one source with the harvest lists
+
+The hygiene stray-name list and secret key shapes come from the same source the harvest uses, so they cannot drift.
+
+Target: v1.3
+
+From: issue #2570; issue #1899
+
+### The sandbox wrap verb prints denial lines and platform notes
+
+SANDBOX DENIED lines and the macOS sandbox note are wired into the wrap verb as well as run, so a contained command that fails names the path it was refused.
+
+Target: v1.3
+
+From: issue #2581
+
+### Card environment is an allowlist and harvest refuses files from outside the job tree
+
+A card runs with an allowlisted environment, the sandbox prints refusals before work starts, and harvest refuses a PR that adds files from outside the job tree or matching a secret shape.
+
+Target: after v1.4
+
+From: issue #2609
+
+### nova-tokens fold ingests a whole session store for one provider
+
+The fold accepts a directory of provider session exports in one flag instead of one flag per file.
+
+Target: after v1.4
+
+From: issue #2671
+
+### Tools use REST with conditional requests and a shared fact cache for GitHub
+
+Every tool verb that reads GitHub uses REST calls with conditional requests and one shared per-tick cache of PR facts, so the GraphQL secondary limit stops nothing.
+
+Target: v1.3
+
+From: issue #2732
+
+### CI runs on card PRs are not cancelled under load
+
+CI runs at the head of card PRs are cancelled mid-job when many PRs open together; the concurrency rule is fixed so each head gets one full run.
+
+Target: v1.3
+
+From: issue #2795
+
+### Push one notice when a human-path step or decision passes its deadline
+
+A step that waits on a person, or a decision past its deadline, sends one push notice over the private network. It fires once and stays quiet after.
+
+Target: after v1.4
+
+From: issue #3161
+
+### nova-merge stores the gate receipt and fetches it from another machine
+
+The gate's receipt is stored as evidence bound to the gate run, and any machine can fetch it. The pull request body line is only a quote.
+
+Target: after v1.4
+
+From: issue #3183
+
+### Release adopt picks each machine's platform from the registry
+
+With no platform flag, adopt sends the wrong binary to machines of another platform. It reads each machine's OS and architecture from the registry so a mixed list adopts in one call.
+
+Target: v1.3
+
+From: issue #3225
+
+### Every card, lane and pool removes what it made when it ends
+
+Job directories, finished slots and small launch files are removed at card end by default, with results kept elsewhere, so disk is never cleaned by hand.
+
+Target: v1.3
+
+From: issue #3317; card from the sprint store (2026-10-10); PR #5125; nova-sprint issue #37; nova-sprint issue #39; nova-sprint issue #40
+
+### nova-wake serve reports blindness instead of healthy when far behind
+
+Serve cannot see a reader whose cursor is over the commit limit behind, yet ends with zero failures and exit zero. It raises the limit or exits with a failure.
+
+Target: v1.3
+
+From: issue #3445
+
+### nova-tokens ledger and report accept a Redis user
+
+The documented Redis call authenticates as the default user and is refused. A user flag makes it work against the fleet store.
+
+Target: v1.3
+
+From: issue #3461
+
+### nova-swarm doctor checks the running executable, not only PATH
+
+The launch preflight refuses a new binary found on PATH but passes the same binary by absolute path. It checks the executable that is actually running.
+
+Target: v1.3
+
+From: issue #3469
+
+### nova-swarm slots list prints a summary line and the live leases
+
+The verb prints nothing even with live leases. It prints a summary line like the other read verbs, even at zero.
+
+Target: v1.3
+
+From: issue #3523
+
+### Manage the tailnet policy file through GitOps
+
+The tailnet access policy lives in the repository and an action applies it, once the verb's home is decided.
+
+Target: after v1.4
+
+From: issue #3535
+
+### Bus over Redis streams: post, read, pending, tail, list, reply
+
+People and friends talk to the coordinator over Redis streams with a consumer group per recipient, replacing the old note-directory bus.
+
+Target: after v1.4
+
+From: issue #3865
+
+### CI hygiene and one CI of record
+
+Runners are cleaned before and after jobs, test processes are bounded, a slow CI is an event, and one CI system is chosen as the record.
+
+Target: after v1.4
+
+From: issue #4183; issue #4184
+
+### Every CI job fits the two-minute cap
+
+Whole-tree, nightly, certification and release jobs are split into parallel matrix legs or functional programs, each under two minutes.
+
+Target: v1.3
+
+From: issue #4216; issue #4218; issue #4219; issue #4220
+
+### Redis ACL rows have one source rendered by the play
+
+The seat rules live once and the play renders them, so running the play never drops a seat.
+
+Target: after v1.4
+
+From: issue #4199
+
+### CI package selection covers tests that read docs
+
+A docs-only change must run the Go tests that read those docs. Selection needs to know which tests depend on which doc files.
+
+Target: v1.3
+
+From: issue #4728
+
+### The old-age remedy names the platform's own install path
+
+nova-secrets tells Linux users to use Homebrew. It should name the install path for each platform, pinned by a test.
+
+Target: v1.3
+
+From: issue #5016
+
+### Config rows carry a note and history carries a reason
+
+A route or machine row holds a note saying why it is set as it is, shown by list. The config history records the actor's reason.
+
+Target: after v1.4
+
+From: issue #5101
+
+### Every machine has a disk guard that cleans and caps caches
+
+Cap failed-launch retention and every Go build cache by bytes. Clean leftover clones in the temp directory. Give each machine a guard whose loop finds its tools.
+
+Target: v1.3
+
+From: issue #5116; issue #5119; issue #5120; issue #5123; issue #5198; issue #1139; PR #5244
+
+### Verbs list secrets stores and map a role to its secret
+
+No command prints where the stores are, and none maps a config role to its secret name. Add both so a cold holder need not guess.
+
+Target: after v1.4
+
+From: issue #5152
+
+### An absent promotion branch must not excuse deletions
+
+When the remote promotion branch is absent, a retained local ref still excuses deletions. Invalidate it.
+
+Target: v1.3
+
+From: issue #5161
+
+### nova-bus inbox fetches before it reads
+
+A stale clone reads as silence. The inbox must fetch first or say how old its view is.
+
+Target: v1.3
+
+From: issue #5270
+
+### Link checks skip quotes and code and handle root-relative URLs
+
+nova-check links and nova-memory verify read link syntax inside quoted text, code spans and fences, and treat a root-relative URL as a missing file. Fix all six cases.
+
+Target: v1.3
+
+From: issue #5493
+
+### nova-check gains timestamps and commitments verbs
+
+One verb refuses typed or masked clocks in a staged diff or commit message. Another checks that no commitment moved between releases, so the script can leave the seed.
+
+Target: after v1.4
+
+From: issue #5495; issue #5515
+
+### Nightly and certification jobs fail on an untidy go.mod
+
+Every job exits at the go.mod update check. Tidy the module file and add a check that keeps it tidy.
+
+Target: v1.3
+
+From: issue #5497
+
+### nova-version snapshot appears in help and honours a manifest
+
+Help omits the snapshot verb, and the snapshot reports every copy on the path. Scope it to the adopted manifest and test help against dispatch.
+
+Target: v1.3
+
+From: issue #622
+
+### nova-sandbox toolchain flag on darwin for cc, make and sqlite3
+
+A flag adds the narrowest measured roots for each toolchain leg inside the wall, so the C compiler and make work on darwin. The native default uses the go leg with the same roots given to the harness fence.
+
+Target: after v1.4
+
+From: issue #1662
+
+### Certify a fleet machine leg by leg inside the wall
+
+A table names each toolchain leg with a probe. A certify verb runs every probe inside the sandbox, and the router refuses cards that need an uncertified leg.
+
+Target: after v1.4
+
+From: issue #1663
+
+### Close the open nova-sandbox gaps on Linux before certifying walled legs
+
+A private writable tmp under the Landlock policy and the related open defects must close first. Until then a Linux machine certifies only legs that need no wall.
+
+Target: v1.3
+
+From: issue #1664; issue #1495; issue #1737; issue #2162
+
+### Job clones get their git identity from the pool and cannot link outside the job root
+
+The launcher writes local git identity and disables signing and hooks from the pool's identity table, and a pool without one is refused. No symlink may leave the job root.
+
+Target: v1.3
+
+From: issue #1665
+
+### Fleet machines sleep when idle and stay awake and reachable while leased
+
+Idle machines sleep by default and wake on demand. While leased they hold power settings and a network keepalive, and status marks an unreachable machine down.
+
+Target: after v1.4
+
+From: issue #1936; issue #2038
+
+### A generated adoption ledger of tools and verbs with a stage and evidence per row
+
+The table of what is being adopted, with its stage and evidence, is generated from the pull requests instead of rebuilt by hand.
+
+Target: after v1.4
+
+From: issue #2068
+
+### nova-bus wait --on-note wake, addressing and refusals
+
+Implement the wake on notes addressed by To:, with Cc: as opt-in, plus its empty-tick, rearm and flag refusal behaviour.
+
+Target: after v1.4
+
+From: issue #2177; issue #2178
+
+### nova-bus receipt --verdict and a distinct send process name
+
+Add the receipt verdict verb that writes one receipt note and record in a single commit. Give send its own process name so killing a wait never kills a send.
+
+Target: after v1.4
+
+From: issue #2179; issue #2180
+
+### Declare the fleet as infrastructure code, one module per role
+
+Describe each machine role as a module, use read-each-plan data sources as the drift witness, and make a new machine one apply with the standard script narrowed to a witness.
+
+Target: after v1.4
+
+From: issue #2225; issue #2229; issue #2230
+
+### Forbid any secret in fleet infrastructure state or output
+
+Test that no secret value appears in state, outputs or written local files, and that a secret output is refused as a defect.
+
+Target: after v1.4
+
+From: issue #2231
+
+### CI and cards share a machine without starving CI
+
+Cards run in the idle CPU class and yield to CI shards, runner capacity is reserved, and dealing goes by load per core.
+
+Target: v1.3
+
+From: issue #2274; issue #4293; PR #5029
+
+### Redis Layer 1 client contract with file fallback and four named uses
+
+Deliver the internal client contract where every ephemeral use names a key, an owner and a file fallback, never makes Redis the authority, and is tested with kill-and-read round trips for wake, slots, budgets and plan state.
+
+Target: after v1.4
+
+From: issue #2276; issue #2277
+
+### nova-redis spill and recall with owner prefix and required TTL
+
+Add spill and recall for scratch values under an owner prefix and required TTL, refuse writes without them, and refuse recall of a missing or expired key.
+
+Target: after v1.4
+
+From: issue #2278; issue #2279
+
+### nova-redis: status, check, presence, local-only bind, auth from secrets
+
+nova-redis gains status, check, presence, version and help verbs with the exit-code contract its spec states. It binds only to localhost and the tailnet, takes auth from nova-secrets at run time and keeps persistence off.
+
+Target: after v1.4
+
+From: issue #2280; issue #2281; issue #2282
+
+### Make adopt obey the stated precedence among digest sources
+
+The release spec says a typed --expect-sums wins over --expect-sums-from, which wins over --repo. Adopt follows that order and a test proves it.
+
+Target: v1.3
+
+From: issue #2284
+
+### Add nova-version moved, reading each build and refusing with one remedy
+
+A moved verb reads each commit's built binaries to report added and removed flags, never a hand-written list. It refuses with exit 2 and one remedy for a missing flag, an unresolved commit or a binary with no help.
+
+Target: after v1.4
+
+From: issue #2288; issue #2289
+
+### Add nova-update apply --sha: build the whole set under one stamp
+
+Apply gains a build mode that builds every command from one commit under a single stamp and publishes the set atomically. It refuses a mixed or lost stamp.
+
+Target: after v1.4
+
+From: issue #2290; issue #2291
+
+### Adopt waits only for agents it stopped and dry-runs honestly
+
+The adopt window waits only for the agents the adopt itself stopped, and its dry run reports what each step would do instead of saying would for every step.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### A bench run lives and dies inside its own directory
+
+Every run on a bench (gate, reader lane, friend lane copy) is confined to its own directory and leaves nothing behind.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### Friend daemons run on nova-tools alone, proven by a cold setup
+
+Retire hand-installed friend daemons and prove a cold setup end to end with a report.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
+
+### A nova-config write reaches the fleet copy by itself within seconds
+
+Every config write is applied to the Redis copy automatically, without a manual apply step.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### nova-delete moves one literal path to quarantine and refuses anything else
+
+The delete verb accepts a single literal path, moves it to quarantine, and refuses globs and trees.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### Every default path derives from one nova root
+
+Defaults for friend, bud and coordinator working directories derive from one root set per machine in nova-config.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)
+
+### Fix the text scanners: large input speed and host names with digits
+
+The self-talk scanner must scan a megabyte of installation text within its time bound. The generality tokenizer must catch a host name that ends in digits.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### The bus trims acknowledged keepalive messages
+
+Keepalive messages that every reader has acknowledged are trimmed from the bus log, so the log stops growing without bound.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### The release checks where its sums came from and its tag
+
+The sprint release sums come from the same directory as the binaries, which proves integrity but not origin, and the tag is not compared with --version or a pin.
+
+Target: v1.3
+
+From: nova-tools PR #5571 cold read
+
 ## Docs, models and the repository
 
 Documentation suites, the TLA+ ledger, and where nova-sprint's code lives.
@@ -171,6 +1357,118 @@ Why it waits: An architecture change.
 
 Replaces 2 open sprint cards, each mapped to `repository-split`.
 
+### Generate the CLI reference from the tools and check it in CI
+
+The CLI reference is built from each tool's own usage text, and a test fails when the docs and the binaries drift apart.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10); issue #3836
+
+### Architecture, glossary, onboarding and per-tool readmes
+
+Write an architecture page, glossaries, a friend onboarding guide and a standalone readme for every tool, so a stranger can start from the docs alone.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### nova-decide help: small schema and one result line
+
+The help page shows a small schema, state and answers, and one result line saying exit 0 means recorded, not approved.
+
+Target: v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### A TLA+ model of atomic table batches and a replay check against real Redis
+
+The model covers guards, moves, scores, creation and removal, and tlacheck replays captured execution traces against it.
+
+Target: after v1.4
+
+From: PR #4618
+
+### Align child instructions with the staged job profile and name report destinations
+
+Worker instructions follow the staged job profile: ownership of cache and gates, truthful attribution, and plain versus command finish. Plain profiles name the result file and PR body as report destinations.
+
+Target: v1.4
+
+From: PR #5266; PR #5271
+
+### SPEC-WORK records which harnesses a process can wake
+
+The per harness table states the non interactive run verb and whether a process can start a bounded run. Some harnesses cannot be woken and one is now refused.
+
+Target: v1.4
+
+From: issue #1519
+
+### A nova-swarm verb prints the providers table and the launcher argv
+
+No verb shows the embedded providers table or the one launcher's command line in a dry run. A providers verb prints both.
+
+Target: after v1.4
+
+From: issue #3471
+
+### Every verb answers --help with accurate usage and runnable examples
+
+Each verb prints its own help for --help, usage matches what the parser accepts, example lines run when pasted, and a refusal points to the help.
+
+Target: v1.3
+
+From: issue #3508; issue #3509; issue #3517; issue #3549; issue #2575; issue #1451; issue #1656
+
+### The standard-library rule matches go.mod and is enforced
+
+The contributing guide says standard library only, while go.mod has direct third-party requires. Reword the rule to match, or add a check.
+
+Target: v1.4
+
+From: issue #5492
+
+### Move each toolwork spec section into the spec of the tool that holds it
+
+As each section is implemented its rules move into that tool's own spec, and the index file stays as a pointer.
+
+Target: v1.4
+
+From: issue #1668
+
+### TLA+ model of bench slot leases
+
+Model the bench slot lease store in TLA+ so a grant never exceeds capacity, and check it with TLC.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### TLA+ model: one live run holds a swarm job lease
+
+A model checks that only one live run holds the job lease, with the launcher pid and per-run nonce.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10)
+
+### TLA+ models for the core state packages
+
+Each package that owns state (bus, cairn, card tree, config, decision record, secrets, update, disk guard) gets a TLA+ model beside it, checked with TLC.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)
+
+### TLA+ models for friend lanes, delivery, presence and session checks
+
+Model the friend daemon's one-shot lanes, message delivery and acks, presence across batch turns, the session check file and the lane governor, and check them with TLC.
+
+Target: v1.3
+
+From: card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)
+
 ## Far
 
 Directions, not plans. Nothing in v1.x builds toward these yet.
@@ -180,3 +1478,707 @@ Directions, not plans. Nothing in v1.x builds toward these yet.
 A system in which thousands of workers organize themselves: they find work, split it, and check each other, with no central dealer. The v1.3 rename retires the nova-swarm name, so no tool holds the word swarm when this is designed.
 
 Why it waits: A direction, not a plan.
+
+### Shared resources are leased by the coordinator
+
+Benches, branches, ports and accounts are claimed and released only through coordinator verbs with leases, so a down holder cannot keep one.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Atomic batches across several tables and gap-refusing receipt pages
+
+One batch applies across 2 to 16 tables, and receipt pages refuse missing history. Creates over 256 cells are refused before scoring.
+
+Target: after v1.4
+
+From: PR #4714; PR #4715; PR #4721
+
+### nova-local: run local models, and local as a provider per fleet machine
+
+Restore nova-local built to its spec, with local as a provider per fleet machine that the sprint deals to like any route.
+
+Target: after v1.4
+
+From: PR #5307; cards moved out of the sprint (work record, 2026-10-04)
+
+### Evaluate a model gateway for timeouts, retries and cost rows
+
+Evaluate a gateway in front of every harness that gives body and read deadlines, one retry, per-provider rate limits and a cost row per request, with numbers on the added hop.
+
+Target: after v1.4
+
+From: issue #2558
+
+### Evaluate plan-then-execute cards and worktree-isolated subagents
+
+Evaluate a plan turn that a reader approves before execution, bounded multiple-choice questions instead of free-text asks, and worktree-isolated subagents, lifting the no-subagents rule only on a measured success rate.
+
+Target: after v1.4
+
+From: issue #2590; issue #2591
+
+### One unix user per seat so a friend's key is not readable by every process
+
+All friend processes share one user and key files are readable by all. Separate users per seat make the claim that a friend cannot forge another's line hold.
+
+Target: after v1.4
+
+From: issue #3500
+
+### A bench credential store with find and put on any platform
+
+A store with find and put works on every platform, using the system keychain where one exists. It is compared against the internal secrets package.
+
+Target: after v1.4
+
+From: issue #3537
+
+### nova-guard screens outbound text
+
+A tool reads a file and answers unproven-clean, flagged or could-not-verify, using patterns from the line's own config. It refuses without config.
+
+Target: after v1.4
+
+From: issue #5496
+
+### A decider interface with an untrusted frame and a generic classify verb
+
+One Decider interface with rules, local, remote and none deciders, a fixed untrusted frame, a tamper screen and a privacy class per provider. A generic classify verb stands on it.
+
+Target: after v1.4
+
+From: issue #1616
+
+### Browse shared moments and recall original words with context
+
+Design a calm local view of existing journals and records, and a memory search that returns original words with who said them and later corrections, without rewriting the record.
+
+Target: after v1.4
+
+From: issue #223; issue #224
+
+## Tests and test tiers
+
+Test tiers, test speed and flaky tests.
+
+### Class tests for the CI spec and for unit socket handling
+
+A set of small work steps adds the class tests that hold the CI spec rules and the socket behavior of the unit tier. Each step has its own paths, commit and verdict.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Contract tests between the tools: bus, check, config, release, secrets, tokens, version
+
+Each tool pair gets a contract test that pins what one tool promises the other, covering the bus, nova-check in CI, config, dev release, memory and Redis, secrets, tokens with update, and version handling.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Make serial tests parallel-safe and empty the serial-tests ledger
+
+Listed tests do not open with t.Parallel because they share an environment, clock or path. Each gets a per-test seam so it runs in parallel and leaves the ledger.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); PR #4698; PR #4729
+
+### Bring slow test packages under their time budget
+
+Unit-tier, class-test and functional CI packages that run over their budget are measured and sped up or split until their allowlist rows clear.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10); PR #4621; PR #4627; PR #4632
+
+### Per-package test harness steps
+
+Stepwise work cards add or repair tests and checks per package across the tools. Each step has its own paths, commit and verdict.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Model-based tests for the bus and config packages
+
+Add model tests for the bus and config packages, one work step each, with the test checked against the package model.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Adopt the testify assertion library in tests
+
+Hand-written test assertions are replaced with the testify assertion library by a scripted, mechanical rewrite. The change is checked by running the tests.
+
+Target: v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Package tests run in a hermetic environment
+
+Tests for the secrets, update, tokens, version and test-binary packages build their own temporary environment instead of reading the real one. This makes them repeatable on any machine.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10); PR #5519
+
+### Tests use an injected clock and never wait on the wall clock
+
+A shared test clock replaces real sleeps, fixed waits and tight elapsed-time assertions, so timing tests are fast and do not redden on loaded runners.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10); issue #4221; issue #2452; issue #2460
+
+### Goroutine leak checks in tests
+
+Add goleak checks to library tests so leaked goroutines fail the test.
+
+Target: v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Fix the red DSN keyword flag test in config
+
+The config test for a DSN keyword flag with a password fails; either the test or the resolver is wrong and the fix says which.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Fix the flaky deferred delivery test in the friend package
+
+The deferred delivery test fails in some runs; the race is found and fixed with an injected clock and no real time.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Class test that nothing rewrites a shared ref
+
+A CI class test greps Go sources, scripts, workflows and card templates for force-push and history-rewrite patterns against shared refs, with a reasoned allowlist.
+
+Target: v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Class test that secret-shaped inputs never appear in errors
+
+Drive secret-shaped strings through every exported Open, Parse, Dial and New function and fail if a marker appears in an error. A DSN parse error once printed a password.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### An install verification matrix runs across darwin, linux and wsl2
+
+Functional tests verify nova-update install on each bench platform.
+
+Target: v1.4
+
+From: PR #4615
+
+### Tests pin the surviving mutation gaps in swarm and ci
+
+Added tests kill the mutants that survived in the swarm and ci packages.
+
+Target: v1.4
+
+From: PR #5073
+
+### Run Darwin-only functional packages on the Mac pool and repair functional fixtures
+
+Darwin-only packages selected for functional tests are routed to the configured Mac pool instead of dropping out of the Linux matrix. Functional fixtures are repaired.
+
+Target: v1.4
+
+From: PR #5272; PR #5503
+
+### Shorten test waits, compact table tests and run tests in parallel
+
+Raise short wait bounds, merge similar tests into table-driven tests, and pass environment through parameters so tests run in parallel.
+
+Target: v1.4
+
+From: PR #5310; PR #5328; PR #5345
+
+### The wall clock bound law sees string flags and sub second units
+
+The test that bans short wall clock bounds only matches the literal seconds unit. Millisecond literals and string flag values slip past it.
+
+Target: v1.4
+
+From: issue #1604
+
+### TestARouteAtItsCapHoldsTheRestBack no longer depends on test order
+
+The test passes only in a full package run and fails alone or when any test is added. It is made independent.
+
+Target: v1.4
+
+From: issue #1927
+
+### A swarm test hangs the whole package under the gate's capped flags
+
+One idle-watch test hangs for the full timeout under capped gate flags. It must finish fast and not stall the package.
+
+Target: v1.3
+
+From: issue #1983
+
+### Add tests that guard code reverted without any test failing
+
+Three landed commits can be reverted with no test going red. Each gets a test that fails when the change is reverted.
+
+Target: v1.4
+
+From: issue #2024; issue #2025; issue #2026
+
+### A mechanical guard check as a review verb
+
+The unguarded verdict came from a model and was wrong about a third of the time. A verb reverts non-test files, runs the named tests and reports mechanically.
+
+Target: after v1.4
+
+From: issue #2042
+
+### Fake harness hangs inside the wall; document no-wall
+
+A local fake harness hangs silently until the deadline inside the wall, and the no-wall flag is missing from help. It fails fast and help lists the flag.
+
+Target: v1.3
+
+From: issue #2168
+
+### Tests pin every rule each tool's spec states
+
+Each tool's spec rules (refusals, ordering, bounds, edge cases) get a test that fails when the behaviour drifts.
+
+Target: v1.4
+
+From: issue #2304; issue #2298; issue #2299; issue #2300; issue #2301; issue #2303; issue #2305; issue #2306; issue #2307; issue #2293; issue #2309; issue #2310; issue #2311; issue #2313; issue #2297; issue #2376; issue #2377; issue #2172; issue #2173; issue #2174; issue #2257; issue #2285; issue #2286; issue #2193; issue #2194
+
+### Confirm the demanded secrets tests assert their rules
+
+All demanded tests exist by name, but readings disagree whether some bodies assert the rule. Audit and strengthen those bodies.
+
+Target: v1.4
+
+From: issue #2314
+
+### Test swarm profile catalog validation, paths, digest and read bounds
+
+Tests pin the catalog's strict JSON refusals, absolute path rules, whole-catalog digest and read size and time bounds.
+
+Target: v1.4
+
+From: issue #2365; issue #2367
+
+### Implement and test attempt evidence publication and the protected launch record
+
+The worker publishes task, prompt, profile and manifest evidence in order and recovers from it. The launch record and its reservation refusals are pinned by tests.
+
+Target: after v1.4
+
+From: issue #2370; issue #2371
+
+### Fix the sandbox unix-socket wall test racing its listener
+
+The test treats the socket file existing as ready, but the file appears before the socket accepts. It waits for a real accepted connection.
+
+Target: v1.3
+
+From: issue #3391
+
+### Class guards: tests never write into the tree or reach the real store
+
+Class tests and a testutil guard stop tests from writing into the repository, reaching the real fleet store, or leaving serial-only environment edits.
+
+Target: v1.4
+
+From: issue #4137; issue #4193; issue #4194
+
+### Two suites: mocked parallel unit tests and isolated functional programs
+
+Unit tests mock all services and run in parallel under a minute. Functional tests are a few isolated long-lived programs safe to run in parallel.
+
+Target: v1.4
+
+From: issue #4182
+
+### The generality text scan covers html, js and css
+
+The scan reads a fixed suffix list that misses shipped web files. Add them so a name in a stylesheet is found.
+
+Target: v1.3
+
+From: issue #5165
+
+### The help-time budget is not a wall-clock unit test
+
+A 50 ms wall-clock limit on help answers fails under load. Move the timing out of the unit tier or count work instead.
+
+Target: v1.3
+
+From: issue #5185
+
+### Monthly token report equals the folded day files
+
+Test that the report over the database ledger equals the folded day files to the token for every type, day, model and repo.
+
+Target: v1.4
+
+From: issue #2201
+
+### Every documented transcript is executed line for line
+
+One shared comparator runs each tool's documented transcript line for line, platform-specific sections name their CI leg, and the list of unexecuted examples only shrinks.
+
+Target: v1.4
+
+From: issue #2217; issue #2218; issue #2007; issue #1455; issue #1549; issue #1722; issue #1875; issue #1890; cards moved out of the sprint (work record, 2026-10-04); issue #1652; issue #1653; issue #1654; issue #1657; card from the sprint store (2026-10-10); issue #1667; issue #3536
+
+### Swarm puller: atomic card take, capacity line, and lease required
+
+Prove that two pullers cannot take one card, that job requests carry the capacity line and load gate, and that a pull without a bench slot lease is refused.
+
+Target: v1.4
+
+From: issue #2233; issue #2238
+
+### Unit tests for the friend state directory choice and watch cursor
+
+Uncovered functions in the friend state file get unit tests to raise package coverage.
+
+Target: v1.4
+
+From: card from the sprint store (2026-10-10)
+
+### Unit tests for the TLA check bench, transport lines and fetch
+
+Raise the unit coverage of the TLA check tool by testing its bench runner, transport lines and fetch paths.
+
+Target: v1.4
+
+From: card from the sprint store (2026-10-10)
+
+## Cleanup, dead code and debt
+
+Shrinking, dead code removal, lint and debt work that waits for the code under it to settle.
+
+### Delete unreachable code and shrink the dead code ledger
+
+Packages with functions unreachable from the command roots lose them, and the shrink-only dead code ledger drops the matching rows. Removals must keep the functional tests green, so call sites are checked first.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10); issue #4312
+
+### Remove host, machine and person names from code, docs and fixtures
+
+Every row the generality ledger lists is replaced with a generic word, file by file, and the ledger shrinks to match.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)
+
+### Shrink the named-paths ledger to empty
+
+The named-paths ledger lists names in the tree that look like repository paths but are not. Each row is fixed by rewording or by making the path real, then removed from the ledger.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Remove the last forge auto-merge spelling from the secrets seal
+
+One row in the forge-merge-spelling ledger remains for the secrets store's own pull request. It is replaced by the batch path so the ledger can empty.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### One status grammar for the release verbs
+
+nova-update release uses the standard's three status words, one cap flag and one refusal shape. The remaining FAIL sites are converted.
+
+Target: v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Prose pass over each tool package
+
+Reword the help, comments and messages of each tool package for plain English and short sentences. Each package is a small tree of work steps with its own paths and commit.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Read-through of each tool package for defects and debt
+
+Walk each tool package in order, read it against its rules, and record or fix what is found. Each package is a small tree of work steps with its own paths and commit.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Fix the defects found by cold reads of the tools
+
+Cold readers of config, fuse, memory, redis, self-talk, tokens and update found defects. Each is fixed as a small ordered step with its own check and commit.
+
+Target: v1.3
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Shrink every tool package in small ordered steps
+
+Each tool package loses dead code, duplicated helpers and lint findings in small checked steps, with behaviour and tests unchanged.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### No shell scripts in anything that ships
+
+The tree still tracks a few shell scripts (a notes script and test fixtures). Each becomes a Go verb or a Go test helper.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04)
+
+### Make ntable tests vet-clean
+
+go vet fails on the ntable test files; fix them with the cause named and keep vet in the gate.
+
+Target: v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Brief lint refuses hiding the model or harness
+
+nova-swarm lint gains a default rule that refuses a brief telling a worker to deny, hide or misstate its model or harness.
+
+Target: after v1.4
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Class tests for duplicate function bodies and unused verbs and flags
+
+One CI class test hashes normalised function bodies to find duplicate paths. Another finds verbs and flags no test, doc or caller uses.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Operator and stopgap scripts become tested verbs
+
+Every hand script that runs the fleet or the coordinator becomes a documented, tested verb, so a stranger can adopt the tools without private scripts.
+
+Target: v1.4
+
+From: cards moved out of the sprint (work record, 2026-10-04); issue #1142; issue #2051; card moved out of the sprint (work record, 2026-10-04)
+
+### Re-land and wire script-card self-verification
+
+A script card whose head equals its program's output needs no model read. The verifier was implemented but never wired into the worker, so it was removed as dead code. Re-land it and wire it.
+
+Target: v1.3
+
+From: card moved out of the sprint (work record, 2026-10-04)
+
+### Tools open Redis through the redisconn package
+
+nova-config and other tools open Redis through the shared connection package, which explains its own failures, and delete their wrappers.
+
+Target: v1.4
+
+From: PR #4506; PR #4518
+
+### A reconcile verb compares self-check answer files to the baseline
+
+The verb checks answer files against the baseline question set and reports the accounting.
+
+Target: after v1.4
+
+From: PR #4597
+
+### nova-check flags exec.CommandContext calls without a deadline
+
+An AST rule flags command contexts that carry no timeout or deadline.
+
+Target: after v1.4
+
+From: PR #4614
+
+### Listing verbs take a max flag and stdin input is bounded
+
+Config, table, swarm and secrets list verbs get a max flag (default 20, 0 for unlimited). Cairn reuses its computed index and bounds stdin at 10 MiB.
+
+Target: after v1.4
+
+From: PR #4628; PR #4630; PR #4631; PR #4633; PR #4638
+
+### A HOLD report with zero findings is malformed
+
+A verdict of HOLD cannot have no findings, so the result check classes it as malformed.
+
+Target: v1.3
+
+From: PR #4635
+
+### Cairn open works on a bench store and an append is one critical section
+
+Open creates the session file in the store's own shape. An append is one critical section per store and empty words are refused.
+
+Target: v1.3
+
+From: PR #4700; PR #4702
+
+### CI ledger failures name their shard and zero-debt shards stay clean
+
+Package-ledger failures name the owning shard file and a shard at zero debt needs no hand edit.
+
+Target: v1.4
+
+From: PR #4956
+
+### Docs and code comments describe current behavior only
+
+History, names, dates and past-tense rationale are removed from docs and comments, broken comment fragments are repaired, and generality ledgers shrink.
+
+Target: v1.4
+
+From: PR #5103; PR #5109; PR #5110; PR #5128; PR #5130; PR #5143; PR #5144; PR #5226
+
+### Contain the default temp directory; refuse symlinks on swarm auth, config, usage writes
+
+The default temp directory is checked against the write directories. Auth, job config and usage writes refuse a symlink at or below the data home.
+
+Target: v1.3
+
+From: PR #5248; PR #5251
+
+### Read kind classification from the one name file
+
+The kind list's third field is the only gated or ungated classification, and the second name set is deleted. Acceptance stays unchanged.
+
+Target: v1.4
+
+From: PR #5253
+
+### Run go fix and the modernize analyzers over the tree
+
+Apply the standard library analyzers across the tree, one commit per analyzer, on all platforms and build tags.
+
+Target: v1.4
+
+From: PR #5313
+
+### nova-sandbox reports the right cause and the right backend
+
+An ssh host alias origin is reported as an unreachable forge, and a dot repo is refused. The policy verb prints the darwin profile under the landlock backend.
+
+Target: v1.3
+
+From: issue #1452; issue #1469
+
+### nova-self-talk detects plain first person absolutes
+
+The three plainest absolute claims about what the writer permanently is or cannot do return no claims. The detector counts them.
+
+Target: v1.3
+
+From: issue #1468
+
+### nova-swarm native reports an honest result and one reason
+
+A run that produced nothing is not reported as delivered, one line never carries two reason keys, and the input limit class comes from a structured signal instead of a transcript heuristic.
+
+Target: v1.3
+
+From: issue #1844; issue #1611; issue #163
+
+### nova-swarm lint card validation closes its escapes
+
+Drive letter paths, more than eight globs, comma only paths, unknown kinds, and no test on gated kinds pass lint. The card header shape and the worker card practice agree so a spec shaped card is admitted.
+
+Target: v1.3
+
+From: issue #1853; issue #1728; issue #2584; issue #2605; issue #2728
+
+### decide events carry confidence and floor only when present
+
+Confidence and floor in a decision event use presence-aware types so a missing value is not emitted as a false zero.
+
+Target: v1.3
+
+From: issue #2633
+
+### Move the remaining ssh exec sites onto the shared bench runner
+
+Seventeen call sites still run ssh their own way. They move onto the one bench runner with its host guard.
+
+Target: v1.4
+
+From: issue #3350
+
+### A batch create of unplaced table members scans every cell
+
+Creating or moving an unplaced member checks every cell, so hold time grows with table size. Index the placements so the check is constant time.
+
+Target: v1.3
+
+From: issue #4713
+
+### Fix four defects the tokens prose pass left
+
+Fix the shrink rule in the day fold, a real-time wait in a test, names used as fixtures and a t.Setenv misuse.
+
+Target: v1.3
+
+From: issue #5088
+
+### One hygiene check package for identity, diff bounds, stray files and key shapes
+
+A single entry point checks commit identity, out-of-path changes, stray files and secret shapes. It never prints matched secret text, and nova-check exposes it.
+
+Target: after v1.4
+
+From: issue #1647
+
+### Parameterise the nova-check nocode classifier into one shared function
+
+The audit and a future staged mode call the same classifier function instead of two copies.
+
+Target: v1.4
+
+From: issue #2294
+
+### Split the large bus and fuse tool files into verb files
+
+The bus and fuse tools move each verb handler into its own file, checked step by step. Behaviour and tests stay the same.
+
+Target: v1.4
+
+From: card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)
+
+### Move each tool onto the shared toolkit packages
+
+Each tool (bus, check, dev, fuse, release, secrets, update, version) replaces its private helpers with the shared toolkit packages, one step at a time, with a check per step.
+
+Target: v1.4
+
+From: card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
+
+### The dead-code check reaches library packages again
+
+TestDeadCode excludes pkg/ since the split; a reachability walk with library roots catches dead unexported code there, documented in SPEC-CI with a reversed witness.
+
+Target: v1.3
+
+From: seat decision after the repository split
