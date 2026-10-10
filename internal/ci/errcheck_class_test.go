@@ -74,7 +74,9 @@ func TestUncheckedErrors(t *testing.T) {
 
 	root := repoRoot(t)
 	ledger := newPackageSiteLedger(t, errcheckLedgerPath)
-	ledger.sites = uncheckedErrorSites(t, ctx, buildModuleTool(t, ctx, root, errcheckPkg), root)
+	serializeLint(func() {
+		ledger.sites = uncheckedErrorSites(t, ctx, buildModuleTool(t, ctx, root, errcheckPkg), root)
+	})
 	reportLedger(t, ledger, errcheckRemedy)
 }
 

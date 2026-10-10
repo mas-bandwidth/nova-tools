@@ -178,7 +178,14 @@ func TestDeadCode(t *testing.T) {
 	root := repoRoot(t)
 	l := loadAllowlist(t, deadCodeLedgerPath, allowlist.Options{Ceiling: true, Counted: true})
 
-	measured, byPkg, err := findDeadCodeUnion(t, ctx, root)
+	var (
+		measured map[string]int
+		byPkg    map[string][]string
+	)
+	var err error
+	serializeLint(func() {
+		measured, byPkg, err = findDeadCodeUnion(t, ctx, root)
+	})
 	require.NoError(t, err, "detecting dead code across linux, darwin, windows")
 
 	update := allowlist.Updating()
