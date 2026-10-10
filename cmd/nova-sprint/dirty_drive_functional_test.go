@@ -84,7 +84,6 @@ type driveTick struct {
 	wall   time.Duration
 	took   time.Duration    // the tick's own wall time (TickResult.Took): the gate's
 	times  []store.PartTime // what the tick spent its time on, part by part
-	cost   store.PartTime   // the tick's cost summed: its trips, whole-table reads, records, mismatches
 	load   string           // the machine's load averages as the tick ended
 	said   []string         // what the tick said once (a NOTE): why a table was read whole
 	tries  map[string]int   // the attempts of each part that moved something: over one, a writer between its read and its write
@@ -297,7 +296,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			began := time.Now()
 			res, err := st.Tick(lctx)
 			q, _ := st.B.QueueRead(lctx)
-			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad(), said: res.Said, routes: res.RouteTrips, tries: partAttempts(res.Parts)}
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, load: machineLoad(), said: res.Said, routes: res.RouteTrips, tries: partAttempts(res.Parts)}
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
 			}
@@ -566,24 +565,22 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 
 	// THE GATE: every tick under MaxTickWall; after the first tick the loop
 	// reads no table whole (its twin catches up from the change streams), and
-	// its twin never disagrees with the store's counts
+	// its twin never disagrees with the store's counts. A write between the
+	// twin's read and its catch-up is caught up from the change stream and
+	// counted stale, not read whole; driveWholeReads
+	// (dirty_drive_whole_test.go) returns every whole read after the first tick
+	// whatever its part's stale count, and each one is asserted.
 	var over []string
 	var sumTook, maxTook time.Duration
-	whole, routeTrips, routeMax := int64(0), int64(0), int64(0)
+	routeTrips, routeMax := int64(0), int64(0)
 	var loads, why []string
+	var times [][]store.PartTime
 	for i, tk := range ticks {
 		routeTrips += tk.routes
 		routeMax = max(routeMax, tk.routes)
 		sumTook += tk.took
 		maxTook = max(maxTook, tk.took)
-		if i > 0 {
-			whole += tk.cost.Reads
-			for _, pt := range tk.times {
-				if pt.Reads > 0 {
-					why = append(why, fmt.Sprintf("tick %d part %s/%s read %d whole (%d trips, %d stale)", tk.n, pt.Table, pt.Name, pt.Reads, pt.Trips, pt.Stale))
-				}
-			}
-		}
+		times = append(times, tk.times)
 		for _, n := range tk.said {
 			why = append(why, fmt.Sprintf("tick %d: %s", tk.n, n))
 		}
@@ -603,6 +600,11 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		if i%10 == 0 {
 			loads = append(loads, tk.load)
 		}
+	}
+	var whole int64
+	for _, wr := range driveWholeReads(times) {
+		whole += wr.Part.Reads
+		why = append(why, fmt.Sprintf("tick %d part %s/%s read %d whole (%d trips, %d stale)", wr.Tick, wr.Part.Table, wr.Part.Name, wr.Part.Reads, wr.Part.Trips, wr.Part.Stale))
 	}
 	gate := fmt.Sprintf("THE GATE: %d ticks, mean %s, max %s, %d over %s; whole-table reads after the first tick %d; the routes read (3 routes): %d round trips, at most %d a tick; machine load %s",
 		len(ticks), (sumTook / time.Duration(max(len(ticks), 1))).Round(time.Millisecond), maxTook.Round(time.Millisecond), len(over), MaxTickWall, whole, routeTrips, routeMax, strings.Join(loads, " | "))
