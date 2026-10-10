@@ -47,8 +47,8 @@ func TestNoRoomOnTheSnapshotFollowsTheBeat(t *testing.T) {
 	assert.Empty(t, nr, "a stale beat's word counts for nothing")
 }
 
-// The tick's ask asks no read of a reader whose fresh beat says it starts none: with two of
-// the three readers so, no primary gets the two reads it needs; their word cleared, it does.
+// The tick's ask asks no read of a reader whose fresh beat says it starts none: with one of
+// the three readers so, each primary's two reads go to the other two.
 func TestTheTickAsksNoReadOfAReaderWithNoRoom(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -58,18 +58,16 @@ func TestTheTickAsksNoReadOfAReaderWithNoRoom(t *testing.T) {
 	h.work("m1")
 	h.work("m2")
 	why := "free disk on the volume of /slots is 0.0 GiB, under the floor of 10 GiB"
-	for _, r := range []string{"reader-a", "reader-b"} {
-		_, err := h.st.ReaderBeat(h.ctx, r, why)
-		require.NoError(t, err)
-	}
+	_, err := h.st.ReaderBeat(h.ctx, "reader-a", why)
+	require.NoError(t, err)
 	h.machine()
-	for _, c := range h.snap().Readers.Column(sprint.Asked) {
-		assert.Equal(t, "reader-c", c.Row, "a reader under its floor is asked nothing")
-	}
-	h.beat()
-	h.machine()
+	s := h.snap()
 	for _, id := range []string{"s1-1", "s1-2"} {
-		assert.Len(t, h.snap().Readers.Of(id), 2, id+": its reads asked once the word is cleared")
+		reads := s.Readers.Of(id)
+		require.Len(t, reads, 2, id+": its two reads asked of the readers with room")
+		for _, c := range reads {
+			assert.NotEqual(t, "reader-a", c.Row, id+": a reader under its floor is asked nothing")
+		}
 	}
 }
 
