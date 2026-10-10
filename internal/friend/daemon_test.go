@@ -1014,3 +1014,57 @@ func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
 		})
 	}
 }
+
+// TestALongTurnWithNoSessionWriteIsDeaf: a fake turn that writes nothing for longer than the cap makes the friend deaf before the turn ends, while a turn whose session wrote within the cap keeps running.
+func TestALongTurnWithNoSessionWriteIsDeaf(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		r.d.TurnCap = func() time.Duration { return 10 * time.Minute }
+		r.d.m = Start(t0)
+		l := &loop{d: r.d, ctx: context.Background(), mode: ModeBatch}
+
+		r.d.Activity = func() time.Time { return t0.Add(9 * time.Minute) } // the session wrote during the turn
+		working := &turn{started: t0, running: true, subjects: "working turn"}
+		l.busy = working
+		l.turnWatchdog(t0.Add(11 * time.Minute))
+		assert.False(t, working.stopped, "a turn whose session wrote within the cap keeps running")
+		assert.Equal(t, Quiet, r.d.m.Challenge, "and the friend is not called deaf")
+
+		r.d.Activity = func() time.Time { return time.Time{} } // the session wrote nothing at all
+		hung := &turn{started: t0, running: true, subjects: "long turn"}
+		l.busy = hung
+		l.turnWatchdog(t0.Add(11 * time.Minute))
+		assert.True(t, hung.stopped, "a turn with no session write past the cap is stopped by the watchdog")
+		assert.True(t, hung.running, "the friend is called deaf before the turn's result ends it")
+		assert.Equal(t, Deaf, r.d.m.Challenge, "the same silence makes the friend deaf")
+	})
+}
+
+// busyDeliverer is a Deliverer whose adapter answers the optional Busy probe
+// (adapter_tmux.go, Busy): the tmux pane's word of a turn under way.
+type busyDeliverer struct {
+	Deliverer
+	run bool
+}
+
+func (b *busyDeliverer) Busy(context.Context) (bool, error) { return b.run, nil }
+
+// TestNoWakeTurnIntoABusySession: a wake due while the session is busy (the
+// adapter's own word, or queued input) is skipped, and taken once it is free.
+func TestNoWakeTurnIntoABusySession(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		busy := &busyDeliverer{Deliverer: r, run: true}
+		r.d.Deliver = busy
+		l := &loop{d: r.d, ctx: context.Background(), mode: ModeBatch}
+		assert.False(t, l.sessionFree(), "a session the adapter says is busy is not free: no wake turn goes in")
+		busy.run = false
+		assert.True(t, l.sessionFree(), "the session once free takes the wake turn")
+		r.d.Queued = func() (int, bool) { return 1, true }
+		assert.False(t, l.sessionFree(), "queued input also keeps the wake turn out")
+		r.d.Queued = func() (int, bool) { return 0, true }
+		assert.True(t, l.sessionFree(), "and the wake is taken once it is free")
+	})
+}

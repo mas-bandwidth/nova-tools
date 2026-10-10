@@ -2864,9 +2864,10 @@ still sit on the volume, and that still needs the person's permission.
 
 Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
 code is not yet held to it where the two differ. A session check waits for the
-turn under way, so a session in a turn longer than ten minutes that sends
-nothing on the bus is checked only once that turn ends, and keeps its word
-until then. A one-shot friend with no session in its directory at all has
+turn under way, but the turn-progress watchdog (below) watches a silent turn: a
+running turn that writes nothing to the session for the tier's wall cap is
+ended, and the session's challenge goes deaf, so the check is no longer held
+until the turn ends. A one-shot friend with no session in its directory at all has
 nowhere for the check to go until a lane opens one, and its lanes wait on the
 row, which comes with a beat; it stays down until a session exists.
 
@@ -3000,3 +3001,10 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+
+## Turn-progress watchdog and busy guard
+
+A session check waits behind the turn under way, but a turn-progress watchdog watches a running turn: a turn that writes nothing to the session (`Activity`) for the tier's wall cap is hung, not working, so the watchdog ends it and says the session's challenge deaf (the friend is deaf) before the turn would have ended. The session check is no longer held behind the turn, and a session that answers no check reads deaf by the existing verdict (`internal/friend/check.go`, VerdictDeaf). The cap is the tier's wall cap (`lane_cap.go`): `TurnCap` when the daemon knows the turn's tier, else the one tier her row says she works when it says exactly one, else the longest default.
+
+Idle wake and ping turns never open a turn into a session that is busy, compacting, rate-limited, or has queued input. The guard (`loop.sessionFree`) reads the adapter's own `Busy` word (`Tmux.Busy`) and a headless adapter's `TurnRecord`, the provider's limit (`Limited`), the harness's own queue (`Queued`), and the running turn and lanes; a wake due while any of them says not free is skipped and retried at the next step.
