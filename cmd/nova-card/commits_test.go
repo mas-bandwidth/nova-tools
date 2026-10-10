@@ -39,7 +39,7 @@ func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
 	lines := strings.Split(string(manifest), "\n")
 	require.Contains(t, lines[1], "land-1\t")
 	require.Contains(t, lines[2], "land-2\t")
-	require.Contains(t, lines[2], "\t1\tland-1")
+	require.Contains(t, lines[2], "\t2\tland-1")
 	first, err := os.ReadFile(filepath.Join(out, "land-1.md"))
 	require.NoError(t, err)
 	second, err := os.ReadFile(filepath.Join(out, "land-2.md"))
