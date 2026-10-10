@@ -367,6 +367,8 @@ func (l *loop) inboxStep(now time.Time) {
 		ids = append(ids, h.Card)
 	}
 	d.heldIDs, d.heldCards = ids, row.Cards // in the server's order
+	l.reclaimRefused(now)                   // a card set aside that the server still has ready is taken again (lane_take.go)
+	l.batchTake(now)                        // batch mode: her ready cards taken up to her width (lane_take.go)
 	l.outboxStep(now)                       // every report in her outbox against the row just read
 }
 

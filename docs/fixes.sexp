@@ -74,4 +74,10 @@
    :text "The member asks Room every tick before the drain return, so a member that drained under its
     disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla,
     WordIsThisTicks)."
-   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")))
+   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")
+  (fix "friend-lane-takes-before-it-runs" :release "v1.2.6" :status "in-progress"
+   :title "A friend's lane runs only a card the server has taken for her"
+   :text "A free lane takes its card by id and starts nothing until the take is answered OK; a refused
+    take (the machine STOPPED) is asked again on a later pass, a batch daemon takes her ready cards, and
+    a card set aside on a refused take or finish is taken again (tla/FriendLaneTake.tla)."
+   :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")))
