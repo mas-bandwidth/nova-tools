@@ -340,9 +340,57 @@ func checkCountedShards(root, base string, shards, baseShards []string, atBase b
 		if err != nil {
 			return nil, fmt.Errorf("%s at %s: %w", rel, base, err)
 		}
+		if old, moved := shardBeforePkgMove(rel); !ok && moved {
+			baseText, ok, err = atBase(old)
+			if err != nil {
+				return nil, fmt.Errorf("%s at %s: %w", old, base, err)
+			}
+			baseText = rowsAfterPkgMove(baseText, rel)
+		}
 		problems = append(problems, shardProblems(rel, base, baseText, ok, headBytes)...)
 	}
 	return problems, nil
+}
+
+// shardBeforePkgMove names the path a shard of a pkg/ package had before its package
+// moved from internal/ (split L1): <ledger>/pkg/<x>.txt was <ledger>/internal/<x>.txt.
+// The moved shard is the same ledger, so it is compared with the base's shard at the old
+// path, and a row it gained is still growth. A shard path with no pkg/ part is not moved.
+func shardBeforePkgMove(rel string) (string, bool) {
+	const dir = "internal/ci/testdata/"
+	ledger, rest, ok := strings.Cut(strings.TrimPrefix(rel, dir), "/")
+	if !ok || !strings.HasPrefix(rel, dir) || !strings.HasPrefix(rest, "pkg/") {
+		return "", false
+	}
+	return dir + ledger + "/internal/" + strings.TrimPrefix(rest, "pkg/"), true
+}
+
+// rowsAfterPkgMove reads a moved shard's base rows as the move wrote them: the package's
+// own paths, internal/<x>/<file> and internal/<x> standing alone, name pkg/<x>, where
+// <ledger>/pkg/<x>.txt is the shard. Nothing else in the text changes.
+func rowsAfterPkgMove(baseText, rel string) string {
+	_, rest, _ := strings.Cut(strings.TrimPrefix(rel, "internal/ci/testdata/"), "/")
+	x := strings.TrimSuffix(strings.TrimPrefix(rest, "pkg/"), ".txt")
+	from, to := "internal/"+x, "pkg/"+x
+	var out strings.Builder
+	for i := 0; i < len(baseText); {
+		j := strings.Index(baseText[i:], from)
+		if j < 0 {
+			out.WriteString(baseText[i:])
+			break
+		}
+		at, end := i+j, i+j+len(from)
+		before := at == 0 || strings.ContainsRune(" \t\n`\"(", rune(baseText[at-1]))
+		after := end == len(baseText) || strings.ContainsRune("/: \t\n`\")", rune(baseText[end]))
+		out.WriteString(baseText[i:at])
+		if before && after {
+			out.WriteString(to)
+		} else {
+			out.WriteString(from)
+		}
+		i = end
+	}
+	return out.String()
 }
 
 // ledgerSeedIsNew reports whether this tree introduces the first shard of the
@@ -910,4 +958,40 @@ func TestTheSinglePassReadsWhatTheTwoCallPathRead(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want, got, "the findings")
 	}
+}
+
+// TestAShardThatMovedToPkgIsComparedWithItsOldPath is the moved-shard reading's reversed
+// witness: a shard under <ledger>/pkg/ whose base holds the same rows under
+// <ledger>/internal/ is no growth, a row it adds is growth, and a pkg/ shard with no shard
+// at either path in the base is still all growth.
+func TestAShardThatMovedToPkgIsComparedWithItsOldPath(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	const moved, fresh = "internal/ci/testdata/errcheck/pkg/x.txt", "internal/ci/testdata/errcheck/pkg/y.txt"
+	baseRows := "# ceiling: 1\ninternal/x/a.go:1 reason\n"
+	headRows := "# ceiling: 1\npkg/x/a.go:1 reason\n"
+	writeLedgerGuardFixture(t, root, moved, headRows)
+	writeLedgerGuardFixture(t, root, fresh, headRows)
+	atBase := func(rel string) (string, bool, error) {
+		if rel == "internal/ci/testdata/errcheck/internal/x.txt" {
+			return baseRows, true, nil
+		}
+		return "", false, nil
+	}
+	const base = "0123456789abcdef"
+	problems, err := checkCountedShards(root, base, []string{moved, fresh}, nil, atBase)
+	require.NoError(t, err)
+	require.Len(t, problems, 1, "%q", problems)
+	require.Contains(t, problems[0], fresh+" is not in the merge base")
+
+	writeLedgerGuardFixture(t, root, moved, headRows+"pkg/x/b.go:2 reason\n")
+	problems, err = checkCountedShards(root, base, []string{moved}, nil, atBase)
+	require.NoError(t, err)
+	require.Len(t, problems, 1, "%q", problems)
+	require.Contains(t, problems[0], moved+" adds the row")
+
+	old, ok := shardBeforePkgMove("internal/ci/testdata/errcheck/internal/x.txt")
+	require.False(t, ok, old)
+	require.Equal(t, "internal/xy/a.go:1 r\npkg/x/a.go:1 r\npkg/x 1 r\n", rowsAfterPkgMove("internal/xy/a.go:1 r\ninternal/x/a.go:1 r\ninternal/x 1 r\n", moved))
 }
