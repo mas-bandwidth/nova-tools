@@ -200,8 +200,8 @@ function allocate(counts, total, n) {
 // 2026-10-07: "to the left of read cards, and to the right of critical cards"): blocker,
 // critical, fix (purple), reads (one orange cell a read), then the working blue; a row's counts
 // are where's <level>_working and the view's fix. One cell is one card or read on the row, so the
-// lit cells always number the row's working figure (half-cell reads drew 24 cells for Stella's
-// "31 / 32", the owner 2026-10-09: "Something is wrong with the rendering for Stella").
+// lit cells always number the row's working figure (half-cell reads drew 24 cells for a friend's
+// "31 / 32", the owner 2026-10-09: "Something is wrong with the rendering for a friend").
 var TRACK_LEVELS = [["blocker_working", "p-blocker", "blocker"], ["critical_working", "p-critical", "critical"], ["fix", "p-fix", "fix"]];
 function trackSegs(m) {
   var working = int(m.working), segs = [], words = [], cards = 0;
