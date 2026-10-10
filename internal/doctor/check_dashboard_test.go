@@ -52,7 +52,7 @@ func dashboardRig(t *testing.T, units map[string]string, up ...string) Env {
 		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
 		require.NoError(t, os.WriteFile(full, []byte(text), 0o644))
 	}
-	return dashboardEnv{fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
+	return dashboardEnv{fakeEnv{env: map[string]string{"HOME": "home"}, root: root, rootAbsolute: true,
 		dial: func(addr string) error {
 			for _, a := range up {
 				if a == addr {
