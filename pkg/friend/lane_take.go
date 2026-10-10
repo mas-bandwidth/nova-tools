@@ -50,9 +50,12 @@ func LaneTakeArgv(friend string, c Card) []string {
 }
 
 // BatchTakeArgv is a batch-mode daemon's take of up to n of her ready cards: `take --as
-// friend.<name> --max <n>`, the server choosing which, in its order, cut to her room.
-func BatchTakeArgv(friend string, n int) []string {
-	return []string{"take", "--as", "friend." + friend, "--max", strconv.Itoa(max(n, 1))}
+// friend.<name> --max <n> --epoch <e>`, the server choosing which, in its order, cut to her
+// room. The server refuses every worker's verb sent to it that names no epoch ("a worker's
+// verb sent to the server names the epoch its worker holds"), so the take names the epoch her
+// ready cards were handed at, the newest one her row last said.
+func BatchTakeArgv(friend string, n int, epoch uint64) []string {
+	return []string{"take", "--as", "friend." + friend, "--max", strconv.Itoa(max(n, 1)), "--epoch", strconv.FormatUint(epoch, 10)}
 }
 
 // laneTake is the take before a lane starts card c: true when the card is the lane's to run
@@ -74,7 +77,11 @@ func (l *loop) laneTake(lane int, c Card, now time.Time) bool {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
-	err := d.Take(ctx, LaneTakeArgv(d.Friend, c))
+	argv := LaneTakeArgv(d.Friend, c)
+	if h, ok := d.heldOf(job); ok {
+		argv[len(argv)-1] = strconv.FormatUint(h.Epoch, 10) // the epoch her row says, not the directory name's guess
+	}
+	err := d.Take(ctx, argv)
 	cancel()
 	at := now.UTC().Format(time.RFC3339)
 	if err != nil {
@@ -103,10 +110,11 @@ func (l *loop) batchTake(now time.Time) {
 	if d.Take == nil || l.mode != ModeBatch || d.machineStopped() || now.Before(d.batchTakeAt) {
 		return
 	}
-	ready := 0
+	ready, epoch := 0, uint64(0)
 	for _, h := range d.heldCards {
 		if h.Col == "ready" && h.Kind != "read" {
 			ready++
+			epoch = max(epoch, h.Epoch) // the newest: a card of an older epoch is another sprint's
 		}
 	}
 	if ready == 0 {
@@ -114,7 +122,7 @@ func (l *loop) batchTake(now time.Time) {
 	}
 	d.batchTakeAt = now.Add(BatchTakeEvery)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
-	err := d.Take(ctx, BatchTakeArgv(d.Friend, ready))
+	err := d.Take(ctx, BatchTakeArgv(d.Friend, ready, epoch))
 	cancel()
 	at := now.UTC().Format(time.RFC3339)
 	if err != nil {

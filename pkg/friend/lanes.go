@@ -967,6 +967,19 @@ type Wall struct {
 	Deny      []string // the coordinator's self, never written inside the wall (sandbox.LaneProfile.Deny)
 }
 
+// DefaultDenySelf is the coordinator's self a lane wall denies when the daemon was given no
+// --deny-self (nor NOVA_FRIEND_DENY_SELF): the seat's working root on this machine,
+// <home>/<seat>-working, which holds the seat's self repository and its copies. A wall that
+// denies nothing is refused (sandbox bad_profile, exit 125 for every lane), so a friend
+// installed without the flag must not run lane-less. nil when the seat is unknown or is no
+// plain name; the wall then refuses as it always did.
+func DefaultDenySelf(home, seat string) []string {
+	if home == "" || seat == "" || strings.ContainsAny(seat, "/\\ \t\n.") {
+		return nil
+	}
+	return []string{filepath.Join(home, seat+"-working")}
+}
+
 // Args is the wall verb and its flags, up to and with the "--" the command follows.
 func (w Wall) Args() []string {
 	profile := w.Profile

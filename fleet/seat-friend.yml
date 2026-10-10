@@ -24,7 +24,9 @@
 
 - name: "friends: {{ seat_friend.friend }} is reinstalled with the flags its plist records"
   ansible.builtin.command:
-    argv: "{{ [nova_bin_dir ~ '/nova-friend'] + seat_friend.install }}"
+    argv: >-
+      {{ [nova_bin_dir ~ '/nova-friend'] + seat_friend.install
+         + (['--deny-self', nova_friend_deny_self] if (nova_friend_deny_self | default('')) and ('--deny-self' not in seat_friend.install) else []) }}
   register: seat_reinstalled
   changed_when: true
   # ignored: read by the assert below, which names the step
