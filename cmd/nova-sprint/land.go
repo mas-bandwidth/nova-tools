@@ -1449,12 +1449,15 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // and the caller gates the batch's tree once (landpass.go, merge), except after a base
 // cure, which gates each head as before: gated says which the build did. The fetch's
 // seconds and the merges' are added to t.
-func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes, gateEach bool) (merged []string, failed conflictCard, baseSha string, gated bool, why string) {
+// behind says the stream has more than one batch waiting; when behind, a code conflict
+// parks only this member for redo on the current tip, and the batch goes on with later
+// cards.
+func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes, gateEach bool, behind bool) (merged []string, failed conflictCard, baseSha string, gated bool, why string) {
 	c, why := l.cut(ctx, dir, stream, cards, t)
 	if why != "" {
 		return nil, failed, c.baseSha, gateEach, why
 	}
-	merged, failed, why = l.mergeCards(ctx, dir, stream, cards, c, t, gateEach)
+	merged, failed, why = l.mergeCards(ctx, dir, stream, cards, c, t, gateEach, behind)
 	return merged, failed, c.baseSha, gateEach || c.first > 0, why
 }
 
@@ -1541,7 +1544,9 @@ func (l *lander) cutBranch(ctx context.Context, dir, stream, base string) (strin
 // the cure's: each merged (mergeHead), its maps regenerated where both sides did (remap),
 // held to the lander's checks (checkCard), and with gateEach gated (gateCard); after a cure
 // each head is gated whatever gateEach says. The results are build's.
-func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []landCard, c landCut, t *landTimes, gateEach bool) (merged []string, failed conflictCard, why string) {
+// behind says the stream has more than one batch waiting; when behind, a code conflict
+// parks only this member for redo on the current tip, and the batch goes on with later cards.
+func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []landCard, c landCut, t *landTimes, gateEach bool, behind bool) (merged []string, failed conflictCard, why string) {
 	start := time.Now()
 	defer since(&t.Merge, start)
 	merged = slices.Clone(c.merged)
@@ -1579,7 +1584,11 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case refused != "":
-			return merged, conflictCard{landCard: *card, why: refused, kind: l.conflictKind, paths: l.conflictPaths, emptyCommit: refused == emptyCommitFinding}, ""
+			failed = conflictCard{landCard: *card, why: refused, kind: l.conflictKind, paths: l.conflictPaths, emptyCommit: refused == emptyCommitFinding}
+			if behind {
+				continue
+			}
+			return merged, failed, ""
 		}
 		merged = append(merged, card.id)
 	}
