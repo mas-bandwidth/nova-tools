@@ -328,6 +328,7 @@ func addCutSummary(pr *Card, set map[string]string, c Consumer) {
 		return
 	}
 	at, err := time.Parse(time.RFC3339, c.At)
+	// ignored: c.At is stamped in RFC3339 by stamp(s.Now), so a record it cannot parse has no hour to charge and adds nothing to the cut sums
 	if err != nil {
 		return
 	}
