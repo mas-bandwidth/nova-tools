@@ -132,7 +132,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	for _, w := range []string{
 		`ExecStart="` + home + `/.local/bin/nova-secrets" "exec" "--store" "` + home + `/nova-bench/secrets" "--as" "seat-local"`,
 		`Environment="NOVA_SPRINT_REDIS=localhost:6380"`,
-		`"--only" "API_KEY,NOVA_REDIS_BENCH_PASSWORD" "--require=API_KEY" "--require=NOVA_REDIS_BENCH_PASSWORD" "--" "/usr/bin/env" "NOVA_SPRINT_REDIS_USER=bench" "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD" "nova-swarm" "member"`,
+		`"--only" "API_KEY,NOVA_REDIS_BENCH_PASSWORD" "--require=API_KEY" "--require=NOVA_REDIS_BENCH_PASSWORD" "--" "/usr/bin/env" "NOVA_SPRINT_REDIS_USER=bench" "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD" "nova-worker" "member"`,
 		`ExecStart="` + home + `/bin/tick" "--once" "50%%"`,
 		"Type=oneshot",
 		"OnUnitActiveSec=30",
@@ -141,7 +141,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"NOTE localhost " + filepath.Join(units, "nova-loop-mirror.service") + ": not written by this play",
 		"retired=1 (check: nothing changed)",
 		// the disk guard the play adds to every machine, its --root the member record's
-		`ExecStart="` + home + `/.local/bin/nova-swarm" "disk-guard" "--root" "` + home + `/nova-bench/run/member-local" "--scan" "` + home + `/nova-bench/run" "--cache" "` + home + `/runner-*/_cache/go-build"`,
+		`ExecStart="` + home + `/.local/bin/nova-worker" "disk-guard" "--root" "` + home + `/nova-bench/run/member-local" "--scan" "` + home + `/nova-bench/run" "--cache" "` + home + `/runner-*/_cache/go-build"`,
 		"OnUnitActiveSec=900",
 		"StandardOutput=append:" + home + "/nova-bench/loops/disk-guard.log",
 		"records=3 enabled=2",

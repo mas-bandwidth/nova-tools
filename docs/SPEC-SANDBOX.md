@@ -446,7 +446,7 @@ were written.
   roots in order; `TestTheDeletesFieldNamesEveryWriteRoot` pins the field's
   rendering.
   `TestAChildDeletesItsJournalInItsDataHomeOnLinux` and
-  `TestAChildDeletesItsJournalInItsDataHomeOnMacOS` (`cmd/nova-swarm`): under the
+  `TestAChildDeletesItsJournalInItsDataHomeOnMacOS` (`cmd/nova-worker`): under the
   wall a native run builds (`nativeSandboxArgv`, the real tool, the child's
   environment), the child unlinks `$HOME/opencode/opencode.db-journal` in its data
   home and a file in its temp folder, and a `sqlite3` commit in rollback-journal
@@ -1580,7 +1580,7 @@ read:
   grant stays `file-read-metadata`: `/opt` becomes traversable, never readable.
 
 **What the wall costs, measured (2026-10-02).** A card is walled once:
-`nova-swarm native` wraps the harness in one `nova-sandbox`, `sandbox-exec`
+`nova-worker native` wraps the harness in one `nova-sandbox`, `sandbox-exec`
 applies the profile and execs in place, and every process the harness starts
 inherits the sandbox; nothing re-enters it. A card's filled profile is 50-60
 rules (most of them the ancestor and PATH-directory metadata grants), not

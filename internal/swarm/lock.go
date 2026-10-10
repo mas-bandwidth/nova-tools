@@ -16,7 +16,7 @@ func takeFileLock(path string, wait time.Duration) (func(), error) {
 	turn := lockTurnFor(path)
 	deadline := time.Now().Add(wait)
 	if !turn.acquire(time.Until(deadline)) {
-		return nil, fmt.Errorf("another nova-swarm holds %s and this run waited %s for it", path, wait)
+		return nil, fmt.Errorf("another nova-worker holds %s and this run waited %s for it", path, wait)
 	}
 	unlock, held, err := takeKernelLock(path, deadline)
 	if err != nil || held {
@@ -24,7 +24,7 @@ func takeFileLock(path string, wait time.Duration) (func(), error) {
 		if err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("another nova-swarm holds %s and this run waited %s for it", path, wait)
+		return nil, fmt.Errorf("another nova-worker holds %s and this run waited %s for it", path, wait)
 	}
 	var once sync.Once
 	return func() {

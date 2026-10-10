@@ -340,9 +340,40 @@ func checkCountedShards(root, base string, shards, baseShards []string, atBase b
 		if err != nil {
 			return nil, fmt.Errorf("%s at %s: %w", rel, base, err)
 		}
+		if !ok {
+			if old, renamed := ledgerShardRenames[rel]; renamed {
+				if oldText, oldOK, oldErr := atBase(old); oldErr == nil && oldOK {
+					baseText, ok = renameShardPackage(oldText), true
+				}
+			}
+		}
 		problems = append(problems, shardProblems(rel, base, baseText, ok, headBytes)...)
 	}
 	return problems, nil
+}
+
+// ledgerShardRenames maps a counted shard this change renames to the base shard
+// it was. Renaming a tool (nova-swarm -> nova-worker, v1.3) moves the tool's
+// package directory, and its ledger debt moves with it; without this the new
+// shard path would read as all growth. The base shard's rows, with the package
+// segment renamed, are the new shard's base, so the ratchet still refuses a row
+// or a ceiling the old shard did not carry.
+var ledgerShardRenames = map[string]string{
+	"internal/ci/testdata/discarded/cmd/nova-worker.txt":                      "internal/ci/testdata/discarded/cmd/nova-swarm.txt",
+	"internal/ci/testdata/errcheck/cmd/nova-worker.txt":                       "internal/ci/testdata/errcheck/cmd/nova-swarm.txt",
+	"internal/ci/testdata/flagusage/cmd/nova-worker.txt":                      "internal/ci/testdata/flagusage/cmd/nova-swarm.txt",
+	"internal/ci/testdata/generality-text/cmd/nova-worker/testdata/cards.txt": "internal/ci/testdata/generality-text/cmd/nova-swarm/testdata/cards.txt",
+	"internal/ci/testdata/no-hand-printing/cmd/nova-worker.txt":               "internal/ci/testdata/no-hand-printing/cmd/nova-swarm.txt",
+	"internal/ci/testdata/remedy/cmd/nova-worker.txt":                         "internal/ci/testdata/remedy/cmd/nova-swarm.txt",
+	"internal/ci/testdata/staticcheck/cmd/nova-worker.txt":                    "internal/ci/testdata/staticcheck/cmd/nova-swarm.txt",
+	"internal/ci/testdata/testify/cmd/nova-worker.txt":                        "internal/ci/testdata/testify/cmd/nova-swarm.txt",
+	"internal/ci/testdata/toolanswers/cmd/nova-worker.txt":                    "internal/ci/testdata/toolanswers/cmd/nova-swarm.txt",
+}
+
+// renameShardPackage rewrites a base shard's package segment to the renamed
+// tool, so its rows are the new shard's base.
+func renameShardPackage(text string) string {
+	return strings.ReplaceAll(text, "nova-swarm", "nova-worker")
 }
 
 // ledgerSeedIsNew reports whether this tree introduces the first shard of the

@@ -23,7 +23,7 @@ import (
 func TestShimPushToALocalPathRemoteReachesGit(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
-		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-SWARM.md)")
+		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-WORKER.md)")
 	}
 	for _, family := range []string{"claude", "plain"} {
 		root := t.TempDir()

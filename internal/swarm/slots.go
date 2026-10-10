@@ -1,7 +1,7 @@
 package swarm
 
 // Bench slot leases: a bench-wide lease store with shares, reserve, expiry and
-// live-pid fencing (docs/SPEC-SWARM.md, "Bench slot leases").
+// live-pid fencing (docs/SPEC-WORKER.md, "Bench slot leases").
 //
 // The store is <store>/slots with one directory per lease. A lease directory
 // is published by renaming a fully-written staging directory into place, so a
@@ -321,7 +321,7 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 
 // TakeSlotLeasesWaiting requests k weighted leases for owner, waiting up to wait
 // duration when capacity is occupied. When wait is 0, it makes a single attempt.
-// It checks ctx for cancellation during the wait (docs/SPEC-SWARM.md, "Bench slot leases").
+// It checks ctx for cancellation during the wait (docs/SPEC-WORKER.md, "Bench slot leases").
 func TakeSlotLeasesWaiting(ctx context.Context, store, owner string, k int, kind string, dur, wait time.Duration, label string, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
 	if ctx == nil {
 		ctx = context.Background()

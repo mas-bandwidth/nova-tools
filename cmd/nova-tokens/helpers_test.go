@@ -383,7 +383,7 @@ func numOrNull(v string) string {
 	return v
 }
 
-// swarmHeader is transcribed from SPEC-SWARM.md rule 12, whose sentence reads: "one
+// swarmHeader is transcribed from SPEC-WORKER.md rule 12, whose sentence reads: "one
 // header line and one row, tab-separated, these columns in this order: `job`, `attempt`,
 // `from`, `started`, `ended`, `end`, `rc`, `provider`, `model`, `repo`, `tokens_in`,
 // `tokens_out`, `cache_write`, `cache_read`, `reasoning`, `usd`." It is written from that
@@ -394,7 +394,7 @@ var swarmHeader = []string{
 	"model", "repo", "tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
 }
 
-// swarmRow writes one row in swarmHeader's order, the way SPEC-SWARM's finalize writes it.
+// swarmRow writes one row in swarmHeader's order, the way SPEC-WORKER's finalize writes it.
 func swarmRow(job, attempt, from, model, repo, ended string, in, out, cw, cr, rsn string) string {
 	return strings.Join([]string{
 		job, attempt, from, ended, ended, "done", "0", "deepseek",

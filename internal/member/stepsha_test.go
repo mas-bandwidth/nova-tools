@@ -130,10 +130,10 @@ func TestCloneDirIsTheLaunchCheckout(t *testing.T) {
 	p.Gen, p.Epoch = 1, 7
 	dir := filepath.Join(slots, "c1.g1.e7", "jobs", "c1", "repo")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".git"), 0o755))
-	assert.Equal(t, dir, cloneDir(p, []string{"nova-swarm", "member", "--root", root}))
-	assert.Equal(t, dir, cloneDir(p, []string{"nova-swarm", "member", "--slots", slots}))
+	assert.Equal(t, dir, cloneDir(p, []string{"nova-worker", "member", "--root", root}))
+	assert.Equal(t, dir, cloneDir(p, []string{"nova-worker", "member", "--slots", slots}))
 	assert.Empty(t, cloneDir(p, []string{"go", "test", "--slots", slots}), "a test process is not the member verb")
 	p.Kind = "read"
 	p.Attempt = 2
-	assert.Empty(t, cloneDir(p, []string{"nova-swarm", "member", "--slots", slots}), "a read's launch name is its attempt, not the work generation")
+	assert.Empty(t, cloneDir(p, []string{"nova-worker", "member", "--slots", slots}), "a read's launch name is its attempt, not the work generation")
 }

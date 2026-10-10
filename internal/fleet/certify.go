@@ -18,7 +18,7 @@ package fleet
 // it is the same lie a survey tells about a machine it never watched do the work.
 //
 // THE POINT OF THE WALL. A workload marked `wall: yes` is not run by ssh and a shell; it is
-// wrapped in `nova-sandbox` -- the same wall `nova-swarm native` puts a card behind -- with
+// wrapped in `nova-sandbox` -- the same wall `nova-worker native` puts a card behind -- with
 // a writable job directory, a HOME inside it, and every root the work needs named as a
 // `--read`. A card runs in exactly this shape, so a bench that cannot build and
 // test a two-file Go module inside the wall now says so BEFORE a card is spent finding out.

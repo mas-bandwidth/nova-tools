@@ -9,7 +9,7 @@ package swarm
 // or one long compile is silent and working; that heuristic once deleted <slot>/data and
 // <slot>/tmp, a running card's HOME and TMPDIR, out from under two certify passes.
 //
-// A launcher knows what a heuristic can only guess, so it says so on disk: `nova-swarm
+// A launcher knows what a heuristic can only guess, so it says so on disk: `nova-worker
 // native` writes <job>/.lease before the child starts, carrying the launcher's pid, and
 // heartbeats the file's mtime while the child runs. The reaper reads exactly this: a job
 // whose lease names a live pid, or whose heartbeat is younger than its stale window, is
@@ -20,7 +20,7 @@ package swarm
 // <slot>/jobs/<label>: the bench store gave each its own seat, but the job directory, the
 // data home, the temp directory and the logs under it were one set of paths, and the first
 // run to exit removed the other's lease -- which the other's heartbeat, a bare Chtimes,
-// could not put back. SPEC-SWARM is not ambiguous about whether that is lawful: under
+// could not put back. SPEC-WORKER is not ambiguous about whether that is lawful: under
 // **Slots**, a worker has "its own data home", "its own job directory", and "a slot is held
 // by exactly one worker"; under **the races, taken out**, two workers on one data home is
 // the `database is locked` failure, closed on purpose. So two live runs in one
@@ -44,7 +44,7 @@ package swarm
 //     only advice to a reaper. It is not defensible now that the lease is what keeps two
 //     launchers out of one directory: `.lease` as a directory, an unwritable job directory
 //     or an unreadable record all ended with BOTH runs proceeding. Every one of them
-//     is now an error, and `native` exits 2 on it with a remedy. See SPEC-SWARM, "One live
+//     is now an error, and `native` exits 2 on it with a remedy. See SPEC-WORKER, "One live
 //     run per job directory".
 //  4. THE RELEASE IS FENCED AND JOINED. A release removes the lease only while the file is
 //     still the one this run published -- pid AND a per-run nonce -- and only after the
@@ -580,7 +580,7 @@ func newLeaseNonce() string {
 // runs with the same --slot and DIFFERENT --label each took a seat, each took its own
 // job lease -- whose refusal is about one job directory, and these are two -- and both
 // started against one `<slot>/data`, which is one HOME, one cache and one opencode.db.
-// SPEC-SWARM under **Slots** says a worker has "its own data home" and "a slot is held by
+// SPEC-WORKER under **Slots** says a worker has "its own data home" and "a slot is held by
 // exactly one worker"; under **the races, taken out**, two workers on one data home IS the
 // `database is locked` failure, closed on purpose.
 //

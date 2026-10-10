@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ISSUE #74 (Glenn, 2026-09-12): tonight's read-pr reports through nova-swarm were
+// ISSUE #74 (Glenn, 2026-09-12): tonight's read-pr reports through nova-worker were
 // correct and long -- narration of the clone, restated tasks, a "what worked"
 // section, summary paragraphs -- and the table grammar broke twice on pipes inside
-// backticks (D12). The ask is an ADDITIVE condition on `nova-swarm template --name
+// backticks (D12). The ask is an ADDITIVE condition on `nova-worker template --name
 // read-pr`: findings only, one bounded line per finding, a bounded report, no pipe
 // inside backticks, the verdict line last, `findings: 0` when there is nothing.
 //
@@ -40,11 +40,11 @@ func TestReadPRTemplateAsksForBoundedFindingsOnly(t *testing.T) {
 	// AND THE SPEC SAYS THE SAME. The read-pr section is the read-pr template's own
 	// contract, and a condition that lives in the binary but not in the spec is a
 	// condition the next reader cannot review.
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORKER.md"))
 	require.NoError(t, err, "the template's contract is the spec's: %s", err)
 	section := readPRSpecSection(t, string(raw))
 	for _, rule := range rules {
-		assert.Contains(t, strings.ToLower(section), rule, "SPEC-SWARM.md's read-pr section does not ask for %q", rule)
+		assert.Contains(t, strings.ToLower(section), rule, "SPEC-WORKER.md's read-pr section does not ask for %q", rule)
 	}
 }
 
@@ -66,6 +66,6 @@ func readPRSpecSection(t *testing.T, spec string) string {
 	if start >= 0 {
 		return strings.Join(lines[start:], "\n")
 	}
-	t.Fatal("SPEC-SWARM.md has no read-pr section")
+	t.Fatal("SPEC-WORKER.md has no read-pr section")
 	return ""
 }

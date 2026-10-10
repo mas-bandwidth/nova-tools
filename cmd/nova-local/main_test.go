@@ -219,7 +219,7 @@ func TestTheSharedStore(t *testing.T) {
 	assert.Contains(t, r.Stdout, "shared=unknown: no AI root")
 }
 
-// worker writes nova-swarm's description: it decodes with zero problems, carries
+// worker writes nova-worker's description: it decodes with zero problems, carries
 // workers=1 and no temperature, seed, num_ctx or max_workers, and the key file is
 // stat'ed, never opened (rules 9, 11, 14; tests 10, 14).
 func TestWorkerWritesADescriptionNovaSwarmAccepts(t *testing.T) {

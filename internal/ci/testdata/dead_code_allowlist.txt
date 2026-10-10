@@ -4,7 +4,7 @@
 # Shrink-only: NOVA_CI_UPDATE=1 lowers counts and drops rows at zero; it never raises or adds rows.
 # ceiling: 11
 cmd/nova-sandbox 3
-cmd/nova-swarm 2
+cmd/nova-worker 2
 internal/filelock 1
 internal/ntable 11
 internal/secrets 1

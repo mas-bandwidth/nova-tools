@@ -38,7 +38,7 @@ func PointCardAtMirrors(card, benchHome string) string {
 // MirrorKeeper keeps one bare mirror of Origin at Mirror and a build cache warmed at the
 // mirror's Ref tip. A job's clone borrows the mirror's objects (StageCard, MirrorCloneArgs),
 // so a card's clone reads no network and its first build reads a warm GOCACHE: the two
-// waits the sprint measured in a card's wall (docs/SPEC-SWARM.md, the warm clones and
+// waits the sprint measured in a card's wall (docs/SPEC-WORKER.md, the warm clones and
 // caches card). The mirror carries gc.auto=0 and is only ever fetched into, so no object a
 // live checkout borrows is dropped (mirrorKeepsObjects).
 type MirrorKeeper struct {

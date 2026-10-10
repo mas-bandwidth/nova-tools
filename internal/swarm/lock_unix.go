@@ -26,7 +26,7 @@ func takeKernelLock(path string, deadline time.Time) (func(), bool, error) {
 	} else if !errors.Is(err, fs.ErrExist) {
 		return nil, false, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
 	}
-	l, err := filelock.Lock(path, "nova-swarm", max(time.Until(deadline), 0))
+	l, err := filelock.Lock(path, "nova-worker", max(time.Until(deadline), 0))
 	if errors.Is(err, filelock.ErrHeld) || errors.Is(err, filelock.ErrBusy) {
 		return nil, true, nil
 	}

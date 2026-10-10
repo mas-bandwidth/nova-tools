@@ -54,7 +54,7 @@ func (r *recorder) run(_ context.Context, dir string, env []string, name string,
 // TestJobsCloneFromAWarmMirror: with a temporary origin the mirror is created and then
 // refreshed, a job's stage references it and holds the tip, the cache is warmed once per
 // new tip, and without a mirror the card's clone step falls back to the remote
-// (docs/SPEC-SWARM.md, the warm clones and caches card).
+// (docs/SPEC-WORKER.md, the warm clones and caches card).
 func TestJobsCloneFromAWarmMirror(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

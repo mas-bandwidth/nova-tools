@@ -115,7 +115,7 @@ var PastedDocs = []string{
 	"README.md",
 	filepath.Join("docs", "USAGE.md"),
 	filepath.Join("docs", "CLI.md"),
-	filepath.Join("docs", "nova-swarm-quickstart.md"),
+	filepath.Join("docs", "nova-worker-quickstart.md"),
 }
 
 // DocExample is one pasted example and the doc it is pasted in.

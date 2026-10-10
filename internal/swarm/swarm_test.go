@@ -44,7 +44,7 @@ func TestTheParserClassifiesWithoutAnOpinion(t *testing.T) {
 	assert.Equal(t, ClassMalformed, got.Class, "a head with no findings: line is malformed, got %s", got.Class)
 }
 
-// RULE 8, VERBATIM (SPEC-SWARM.md:117): the evidence of completion is "the report's `##
+// RULE 8, VERBATIM (SPEC-WORKER.md:117): the evidence of completion is "the report's `##
 // Head`, whose first line is `findings: <n>`". FIRST. A head that opened with `notes read:`
 // or `repo:` was read as `ok` here, so the one shape a coordinator classifies on was not
 // the shape the parser required, and a report could bury its completion evidence anywhere
@@ -74,7 +74,7 @@ func TestTheHeadsFirstLineIsTheFindingCount(t *testing.T) {
 	assert.Equal(t, 4, blank.MalformedLine, "the malformed line is the blank one, 4, got %d", blank.MalformedLine)
 }
 
-// RULE 2, VERBATIM (SPEC-SWARM.md:82-84): "Every claim quotes its rule verbatim, beside the
+// RULE 2, VERBATIM (SPEC-WORKER.md:82-84): "Every claim quotes its rule verbatim, beside the
 // line. A finding line carries the rule it rests on, quoted word for word, with
 // `file:line`, on the same line or the next."
 //
@@ -192,7 +192,7 @@ func sprintf(format string, args ...any) string {
 }
 
 // ISSUE #881: a worker description may name its secret instead of a key file on disk
-// (docs/SPEC-SWARM.md, the worker description; nova-secrets delivers the value into the
+// (docs/SPEC-WORKER.md, the worker description; nova-secrets delivers the value into the
 // run's own environment, never a file). The loader accepts `secret`, refuses a
 // description with NEITHER key_file nor secret, and refuses one carrying both -- the two
 // mechanisms contradict. The old key_file shape stays accepted.
@@ -226,7 +226,7 @@ func TestASecretNamedWorkerDescriptionIsAcceptedByTheLoader(t *testing.T) {
 }
 
 // ISSUE #881 (secret implies env_var): a worker description that names `secret` but no
-// `env_var` loads with env_var defaulting to the secret NAME (docs/SPEC-SWARM.md, the
+// `env_var` loads with env_var defaulting to the secret NAME (docs/SPEC-WORKER.md, the
 // worker description: the key is delivered by `nova-secrets exec` under that NAME, and the
 // harness config carries the variable's NAME).
 func TestSecretImpliesEnvVar(t *testing.T) {

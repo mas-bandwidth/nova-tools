@@ -122,7 +122,7 @@ func ParseReport(data []byte) Report {
 		}
 		trimmed := strings.TrimSpace(line)
 		if inHead {
-			// RULE 8'S FIRST LINE (SPEC-SWARM.md:117): the evidence of completion is the
+			// RULE 8'S FIRST LINE (SPEC-WORKER.md:117): the evidence of completion is the
 			// report's `## Head`, "whose first line is `findings: <n>`". FIRST. A head
 			// that opened with `notes read:`, `repo:` or `rev:` was read here as a
 			// complete report, so the one shape a coordinator classifies on was not the
@@ -224,7 +224,7 @@ func ParseReport(data []byte) Report {
 			case strings.HasPrefix(trimmed, "- "):
 				r.FindingLines = append(r.FindingLines, parseFinding(n, strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))))
 			case trimmed != "" && len(r.FindingLines) > 0:
-				// RULE 2'S "OR THE NEXT" (SPEC-SWARM.md:82-84): "A finding line carries
+				// RULE 2'S "OR THE NEXT" (SPEC-WORKER.md:82-84): "A finding line carries
 				// the rule it rests on, quoted word for word, with `file:line`, on the
 				// same line or the next." The parser read ONE line per finding, so a
 				// finding that wrapped its quote onto the following line had no rule and
@@ -268,7 +268,7 @@ func malformed(r Report, line int) Report {
 }
 
 // tableRow reads one row of the template's tables into its cells. A `|` INSIDE A BACKTICK
-// SPAN IS TEXT, not a cell boundary: rule 2 (SPEC-SWARM.md:82-84) requires every claim to
+// SPAN IS TEXT, not a cell boundary: rule 2 (SPEC-WORKER.md:82-84) requires every claim to
 // quote its rule VERBATIM, and this tool's own rules are grammar lines full of `|`, so a
 // reader obeying rule 2 could not write a row about one. The row was split on every pipe,
 // the state column landed on prose, and a complete report with five findings was

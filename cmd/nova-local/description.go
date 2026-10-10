@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// Description is a worker description in nova-swarm's schema (internal/swarm/worker.go,
+// Description is a worker description in nova-worker's schema (internal/swarm/worker.go,
 // Worker, decoded with DisallowUnknownFields): exactly its twelve keys, board omitted
 // when not given, and no temperature, seed or num_ctx, which serve baked into the served
-// tag (rule 6); no prompt conditions either, which nova-swarm owns (rule 11).
+// tag (rule 6); no prompt conditions either, which nova-worker owns (rule 11).
 type Description struct {
 	Name        string   `json:"name"`
 	Provider    string   `json:"provider"`
@@ -29,7 +29,7 @@ type Description struct {
 	Board       string   `json:"board,omitempty"`
 }
 
-// The usage sources nova-swarm reads (internal/swarm, UsageOpenCode and UsageNone).
+// The usage sources nova-worker reads (internal/swarm, UsageOpenCode and UsageNone).
 var usages = []string{"opencode", "none"}
 
 // SplitArgs is --harness-args split on commas, with no escape.
@@ -38,7 +38,7 @@ func SplitArgs(s string) []string { return strings.Split(s, ",") }
 // Problems is every independent reason the description cannot be written, each naming
 // the field and the command that satisfies it (rule 14, test 15): {model} placed in the
 // harness's argv, an absolute existing worker directory, a key file that exists and is
-// not empty (stat'ed, never opened), a usage nova-swarm reads, a Go duration.
+// not empty (stat'ed, never opened), a usage nova-worker reads, a Go duration.
 func (d Description) Problems(stat func(string) (os.FileInfo, error)) []string {
 	var out []string
 	joined := strings.Join(d.HarnessArgs, "\x00")
@@ -53,9 +53,9 @@ func (d Description) Problems(stat func(string) (os.FileInfo, error)) []string {
 	}
 	switch fi, err := stat(d.KeyFile); {
 	case err != nil:
-		out = append(out, fmt.Sprintf("--key-file %s does not exist; the local engine wants no key, and nova-swarm a non-empty file: printf 'local\\n' > %s && chmod 600 %s", d.KeyFile, d.KeyFile, d.KeyFile))
+		out = append(out, fmt.Sprintf("--key-file %s does not exist; the local engine wants no key, and nova-worker a non-empty file: printf 'local\\n' > %s && chmod 600 %s", d.KeyFile, d.KeyFile, d.KeyFile))
 	case fi.Size() == 0:
-		out = append(out, fmt.Sprintf("--key-file %s is empty; nova-swarm refuses an empty key file: printf 'local\\n' > %s && chmod 600 %s", d.KeyFile, d.KeyFile, d.KeyFile))
+		out = append(out, fmt.Sprintf("--key-file %s is empty; nova-worker refuses an empty key file: printf 'local\\n' > %s && chmod 600 %s", d.KeyFile, d.KeyFile, d.KeyFile))
 	}
 	if !slices.Contains(usages, d.Usage) {
 		out = append(out, fmt.Sprintf("--usage wants opencode (OpenCode's own accounting) or none (got %q)", d.Usage))

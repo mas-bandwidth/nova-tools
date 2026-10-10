@@ -100,7 +100,7 @@ Every rule is normative and has a test (**Tests**, below).
 
 11. **Triage and report; never decide-and-act.** What a local model returns is untrusted
     data. No verb merges, sends, deletes or rules on safety, and this tool writes exactly
-    one file: `worker`'s `--out`. The prompt conditions are `nova-swarm`'s.
+    one file: `worker`'s `--out`. The prompt conditions are `nova-worker`'s.
 
 12. **Every model has a caller or it leaves.** Every `MODEL` line carries `weights=` and
     `loaded=`, and `serve --stop` is the act: one request with `keep_alive 0`; the tag
@@ -218,7 +218,7 @@ flags; `stat`s the key file and the worker directory; writes exactly one file.
 WORKER OK engine=<e> model=<tag> out=<path> workers=1 provider=<p> harness=<cmd> deadline=<d> base=<url>
 ```
 
-The description is `nova-swarm`'s worker schema (`internal/swarm.Worker`, decoded with
+The description is `nova-worker`'s worker schema (`internal/swarm.Worker`, decoded with
 unknown fields refused): `name`, `provider`, `model`, `base_url`, `env_var`,
 `key_file`, `usage`, `harness`, `harness_args`, `worker_dir`, `deadline`, and `board`
 when given. It carries no `temperature`, `seed` or `num_ctx` — `serve` baked them into
@@ -239,7 +239,7 @@ lanes are its `width`, and a route says what serves them.
 **Status: designed, not built.** `cmd/nova-local` builds the store and the endpoint's
 serving-host rule (rules 3 and 15). The route, the concurrency, the deal and the launch
 below need nova-config's route fields `endpoint` and `concurrency`, the sprint's cap and
-`nova-swarm native --local-base`, none of which exists yet; until they do, `serve` prints
+`nova-worker native --local-base`, none of which exists yet; until they do, `serve` prints
 no `nova-config route add` line and has no `--concurrency`.
 
 - **The store.** Every machine keeps its weights under the shared directory of its AI
@@ -270,7 +270,7 @@ no `nova-config route add` line and has no `--concurrency`.
   route's endpoint on the work card (`serve`), the packet hands it to the member, and
   `nova-sprint routes` shows `endpoint=<url> concurrency=<busy>/<cap>`.
 - **The launch.** The member passes `--local-base <endpoint>` to
-  `nova-swarm native` for a card whose packet names an endpoint; native declares the
+  `nova-worker native` for a card whose packet names an endpoint; native declares the
   provider `local` at that endpoint in the job's harness config (OpenCode's
   OpenAI-compatible provider, no key), the route's model under it, and stands its
   read-deadline proxy in front of it; on loopback the wall opens that one port.
@@ -280,7 +280,7 @@ no `nova-config route add` line and has no `--concurrency`.
 - **`pull`** — the engine's own tool and the operator's own download.
 - **`trust`, `untrust`, a lockfile, `fit`** — policy and verdicts, cut.
 - **`eval` and `compare`** — the owner: *"if we want to eval, it is another tool."*
-- **inference** — no `ask`, no `read`; `nova-swarm` runs the workers.
+- **inference** — no `ask`, no `read`; `nova-worker` runs the workers.
 - **discovery and ranking** — a model name found on a page or in a model's own output is
   data, never a serve target.
 - **the box's side** — the daemon, its listening address, the store's owner and the

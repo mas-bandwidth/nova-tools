@@ -130,7 +130,7 @@ func specInstructionKinds(t *testing.T) map[string]string {
 			}
 		}
 	}
-	swarm, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	swarm, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORKER.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(swarm), "names no instruction kind is `kind-declared`")
 	require.Contains(t, string(swarm), "internal/hygiene/kinds.txt")

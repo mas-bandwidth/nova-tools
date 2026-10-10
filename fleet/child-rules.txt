@@ -1,6 +1,6 @@
 # The child rules this repository's coordinator holds every card to: one required sentence per line.
 # `nova-sprint init --rules fleet/child-rules.txt` records the path, `nova-sprint add --rules <file>` names it
-# for one add, and `nova-swarm lint --card <file> --child-rules-file fleet/child-rules.txt` checks a card against it.
+# for one add, and `nova-worker lint --card <file> --child-rules-file fleet/child-rules.txt` checks a card against it.
 # A `[name]` opens a line to name the token its finding carries (rule-<name>); the rules named no-go-clean and
 # go-test-timeout also switch on the scans for `go clean` and for a `go test` with no -timeout, and the rule named
 # libraries-considered switches on the check that a card that builds code carries a filled `Libraries considered:` line.

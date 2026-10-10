@@ -101,7 +101,7 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		assert.Falsef(t, granted, "%s: the wall grants the toolchain root ~/go/bin: it is granted under neither kind (Johnny's security read of #1364)", goos)
 		// And the roots are documented where a reader of the wall looks for them, under the
 		// spelling the doc uses: `~/name` for a home root, the path itself for a system one.
-		for _, doc := range []string{"docs/SPEC-SWARM.md", "docs/CLI.md"} {
+		for _, doc := range []string{"docs/SPEC-WORKER.md", "docs/CLI.md"} {
 			body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(doc)))
 			require.NoErrorf(t, err, "reading %s: %v", doc, err)
 			for _, r := range swarm.ToolchainRootList(goos) {

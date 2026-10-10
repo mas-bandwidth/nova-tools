@@ -220,7 +220,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	}
 	// BELOW the table's first row there is no ruleset this tool can describe and nothing
 	// to clamp to, so this stays the ABI refusal (no workaround; the
-	// caller's is nova-swarm run --no-sandbox). No kernel reports it -- landlockABI
+	// caller's is nova-worker run --no-sandbox). No kernel reports it -- landlockABI
 	// already answers "no landlock" below 1 -- and it is here because the table has a
 	// bottom as well as a top, and a number outside it must be said rather than assumed.
 	if abi < minKnownABI {

@@ -80,7 +80,7 @@ func TestEveryCoordinatorStopgapNamesTheVerbThatReplacesIt(t *testing.T) {
 		for _, p := range checkStopgaps(tools, string(raw)) {
 			t.Errorf("%s %s", coordinatorToolsPath, p)
 		}
-		for _, want := range []string{"nova-swarm mirror", "--stop-floor", "nova-sprint dashboard", "nova-config loop run"} {
+		for _, want := range []string{"nova-worker mirror", "--stop-floor", "nova-sprint dashboard", "nova-config loop run"} {
 			assert.Contains(t, string(raw), want, "the register no longer names %s", want)
 		}
 	})
@@ -93,7 +93,7 @@ func TestEveryCoordinatorStopgapNamesTheVerbThatReplacesIt(t *testing.T) {
 			"| `com.nova.loop.a` | x | retired: gone |":  "a script with no verb",
 			"| `x` | x | retired: gone |":                "a retired row keeps the verb line",
 			"| `~/nova-bench/dashboard/server.py` | x | card: dash; needs `nova-sprint dashboard serve`; PATHS: a.go |": "its verb is written",
-			"| `~/.local/bin/mirror-refresh` | x | card: m; needs `nova-swarm mirror`; PATHS: a.go |":                   "its verb is written",
+			"| `~/.local/bin/mirror-refresh` | x | card: m; needs `nova-worker mirror`; PATHS: a.go |":                   "its verb is written",
 			"| `~/.local/bin/nova-loop` | x | card: l; needs `nova-config loop run <name>`; PATHS: a.go |":              "its verb is written",
 			"| `a.sh` | x | card: only a name |": "names the card, the verb it needs",
 		} {

@@ -35,7 +35,7 @@
 #
 #	                 linux   darwin
 #	cmd/nova-wake     24.6    120.3
-#	cmd/nova-swarm    51.0     82.7   (the one Linux already called large)
+#	cmd/nova-worker    51.0     82.7   (the one Linux already called large)
 #	cmd/nova-merge     7.7     68.8
 #	internal/swarm    17.4     64.4
 #	cmd/nova-bus      10.0     54.2
@@ -73,7 +73,7 @@
 #
 # import path	short	full
 github.com/mas-bandwidth/nova-tools/cmd/nova-wake	-	120.3
-github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	-	82.7
+github.com/mas-bandwidth/nova-tools/cmd/nova-worker	-	82.7
 github.com/mas-bandwidth/nova-tools/cmd/nova-merge	-	68.8
 github.com/mas-bandwidth/nova-tools/internal/swarm	-	64.4
 github.com/mas-bandwidth/nova-tools/cmd/nova-bus	-	54.2

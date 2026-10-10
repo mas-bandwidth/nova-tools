@@ -264,7 +264,7 @@ only. The plays render one unit per row from the Redis view apply writes.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `machine` | ref machine | yes | the plays: the machine the unit is installed on | `loop:<l>` |
-| `argv` | argv | yes | the plays: the unit's command, word for word; a `nova-swarm member` argv spells no `--width`, its width is its machine row's (`Check`) | `loop:<l>` |
+| `argv` | argv | yes | the plays: the unit's command, word for word; a `nova-worker member` argv spells no `--width`, its width is its machine row's (`Check`) | `loop:<l>` |
 | `seat` | text | | the plays: the nova-secrets seat on that machine the unit opens its secrets from; empty when it needs none | `loop:<l>` |
 | `keys` | keys | | the plays: the names of the secrets the unit opens from the seat; empty when none, and a non-empty list needs a seat | `loop:<l>` |
 | `every` | int | (0) | the plays: seconds between runs of a periodic unit | `loop:<l>` |
@@ -273,7 +273,7 @@ only. The plays render one unit per row from the Redis view apply writes.
 
 The kind's `Check`: exactly one of `every` above 0 and `keepalive` true (a
 loop runs every n seconds or is kept alive), `keys` only with a `seat`, and a
-`nova-swarm member` argv (a reader's too) that spells no `--width` before any
+`nova-worker member` argv (a reader's too) that spells no `--width` before any
 `--`: a worker's width is its machine row's, moved to the fleet row by `fleet
 sync` and read with its queue every tick, a member's own row and a reader's
 the row of the machine it is named for (`reader-<m>`, docs/SPEC-SPRINT.md
@@ -323,7 +323,7 @@ class, never a model name". Every value is data in the row: the code names no pr
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `tier` | enum `flash`, `pro`, `heavy` | yes | the deal: the cards of this tier are dealt on it; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
+| `tier` | enum `flash`, `pro`, `heavy` | yes | the deal: the cards of this tier are dealt on it; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-WORKER.md, the headless harnesses) | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `harness` | enum `opencode`, `claude`, `codex`, `grok` | (opencode) | the member: the harness a card on the route runs under; `opencode` launches through the providers table with the provider's key, a headless one is the machine's own program and subscription login (the heavy tier) and its route's provider is `subscription-<harness>` (`subscription-claude`, `subscription-codex`, `subscription-grok`; refused otherwise), so a provider's rest never spans two harnesses | `route:<r>` |

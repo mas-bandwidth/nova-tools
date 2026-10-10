@@ -528,7 +528,7 @@ func TestTimelineCoverProfileJobsFoldsAGlob(t *testing.T) {
 			pattern:    func(dir string) string { return "[" },
 			wantExit:   2,
 			wantStdout: "",
-			wantStderr: "nova-swarm profile: --jobs wants a glob",
+			wantStderr: "nova-worker profile: --jobs wants a glob",
 		},
 	}
 	for _, c := range cases {

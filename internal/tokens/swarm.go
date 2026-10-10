@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// --swarm <label>=<pool>: nova-swarm's usage files.
+// --swarm <label>=<pool>: nova-worker's usage files.
 //
 // The swarm writes one usage file per job under <pool>/usage/, OUTSIDE the directory
 // `reclaim` removes and before the job's files move. That is the whole reason this is a
@@ -181,10 +181,10 @@ func ReadSwarm(label, pool string, fsys fs.FS, rules *Rules) *Source {
 func wrongColumn(cells []string) string {
 	for i, want := range SwarmColumns {
 		if i >= len(cells) {
-			return "the header is missing the column " + want + " (SPEC-SWARM rule 12 names sixteen, in order)"
+			return "the header is missing the column " + want + " (SPEC-WORKER rule 12 names sixteen, in order)"
 		}
 		if cells[i] != want {
-			return "column " + strconv.Itoa(i+1) + " is " + cells[i] + ", want " + want + " (SPEC-SWARM rule 12 names sixteen, in order)"
+			return "column " + strconv.Itoa(i+1) + " is " + cells[i] + ", want " + want + " (SPEC-WORKER rule 12 names sixteen, in order)"
 		}
 	}
 	if len(cells) > len(SwarmColumns) {

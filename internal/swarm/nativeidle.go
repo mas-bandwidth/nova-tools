@@ -4,7 +4,7 @@ package swarm
 //
 // A card is idle when NEITHER its log NOR its process tree has moved for --idle,
 // so a `go test` that prints nothing for minutes is not mistaken for a dead one. Without this
-// watch, `nova-swarm native`'s wait has exactly three ends: the child exits, the deadline
+// watch, `nova-worker native`'s wait has exactly three ends: the child exits, the deadline
 // fires, or a TERM arrives from outside, and nothing looks at the card in between.
 //
 // THE COST, measured: `js-under-20-bytes` stopped making progress at 14:53:36Z and was

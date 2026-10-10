@@ -1,6 +1,6 @@
 package swarm
 
-// EVERY CALLER OF `native` PASSES THE WORD, AND NONE INVENTS IT (SPEC-SWARM rule 13d,
+// EVERY CALLER OF `native` PASSES THE WORD, AND NONE INVENTS IT (SPEC-WORKER rule 13d,
 // demanded test 13d, issue #1545).
 //
 // The clauses this file holds:

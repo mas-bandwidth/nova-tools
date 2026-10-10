@@ -12,7 +12,7 @@ import (
 // The sprint server's decision key and a member's route key are read in this
 // process from a fake seat. Neither value enters the process environment, the
 // route names its one key (RouteKey; the child environment that hands it on is
-// nova-swarm's, cmd/nova-swarm/keys.go), and a missing name is a refusal that
+// nova-worker's, cmd/nova-worker/keys.go), and a missing name is a refusal that
 // names it. No value is printed.
 func TestEveryUnitKeyIsReadInProcessNeverFromTheEnvironment(t *testing.T) {
 	t.Parallel()

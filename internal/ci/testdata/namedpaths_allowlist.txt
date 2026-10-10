@@ -40,3 +40,24 @@ internal/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and 
 internal/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
+
+# cmd/nova-swarm was renamed to cmd/nova-worker, and docs/SPEC-SWARM.md and
+# docs/nova-swarm-quickstart.md to their nova-worker names, in v1.3. A dated
+# record (a rating, a dogfood run, an audit) cites the old path as the history of
+# its day; the record is kept and the path is followed to the renamed file.
+cmd/nova-swarm/doctor.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/lint.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/member.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/mirror_test.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/native.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/slots.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/slow_helpers_test.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/step.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/testdata/cards/tools11-c1-links-specpulse.md a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/testdata/cards/tools11-c2-links-toplevel.md a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/testdata/fakeharness a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/verbhelp.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/version.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+cmd/nova-swarm/workercheck.go a dated record cites the pre-rename path; the tool moved to cmd/nova-worker in v1.3
+docs/nova-swarm-quickstart.md a dated record cites the pre-rename path; the guide moved to docs/nova-worker-quickstart.md in v1.3
+docs/SPEC-SWARM.md a dated record cites the pre-rename path; the spec moved to docs/SPEC-WORKER.md in v1.3

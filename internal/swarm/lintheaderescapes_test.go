@@ -10,7 +10,7 @@ import (
 
 // EMMA'S ITEM-4 DOGFOOD, TURNED INTO TESTS (#1853, #1854).
 //
-// Emma dogfooded `nova-pulse cut` and `nova-swarm lint --card` on darwin/arm64 against
+// Emma dogfooded `nova-pulse cut` and `nova-worker lint --card` on darwin/arm64 against
 // dev@0878987f and returned NOT CLEAN with 17 defects. The ones that are this lint's are
 // below, each named for what it lets through. They are all one family: the typed-header
 // checks were written as a restatement of a parser that is not on `dev` yet, and a

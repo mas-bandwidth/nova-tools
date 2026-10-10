@@ -208,7 +208,7 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 // objects are copied in (`--reference` then `--dissociate`), so the clone owes nothing to a
 // repository that may drop one. The copy is the cost a 36-thread bench paid on 2026-10-02: 21 s at
 // load 31 against 3.4 s borrowed, 73-79 s median under the afternoon's load, over a 120 s
-// wall (docs/SPEC-SWARM.md, the clone). The mirror and the target follow `--`: a card names
+// wall (docs/SPEC-WORKER.md, the clone). The mirror and the target follow `--`: a card names
 // the repository, and a name that starts with `-` is an operand, never an option.
 func MirrorCloneArgs(mirror, target string, borrow bool) []string {
 	if borrow {
@@ -273,7 +273,7 @@ func WriteStageTimeoutResult(jobDir, bench string, secs int) (string, error) {
 		return "", nil
 	}
 	dest := filepath.Join(jobDir, "RESULT.md")
-	body := fmt.Sprintf("RESULT: BLOCKED stage-timeout %s %d\nblocked: staging timed out after %ds\nwritten-by: nova-swarm native (the card published no report of its own)\n",
+	body := fmt.Sprintf("RESULT: BLOCKED stage-timeout %s %d\nblocked: staging timed out after %ds\nwritten-by: nova-worker native (the card published no report of its own)\n",
 		bench, secs, secs)
 	if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {
 		return "", err

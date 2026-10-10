@@ -21,7 +21,7 @@ import (
 //
 // The first four are each one class of the 2026-09-22 sprint's failed cards (a friend's
 // reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
-// does not hold, so they run only under `nova-swarm lint --base-check`:
+// does not hold, so they run only under `nova-worker lint --base-check`:
 //
 //	paths-at-base  every PATHS entry resolves at the card's base-sha, or is a new
 //	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named example.com/decide/entry.go,
@@ -61,7 +61,7 @@ type FleetLegs map[string]bool
 type KindP95 map[string]int
 
 // CardBaseRemedies is what each base token wants, in the table shape of
-// CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. The brief
+// CardHeaderRemedies, so `nova-worker lint --rules` prints them beside the rest. The brief
 // tokens nova-sprint add holds a card brief to at its BASE tip (lintpaths.go) are beside
 // them in BriefBaseRemedies; add runs paths-at-base and donewhen-test-name there too.
 var CardBaseRemedies = map[string]string{

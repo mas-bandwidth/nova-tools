@@ -194,8 +194,8 @@ func TestCardHeaderGoodPathsDrawNothing(t *testing.T) {
 
 	for _, good := range []string{
 		"PATHS: internal/swarm/lintheader.go",
-		"PATHS: cmd/nova-swarm/**",
-		"PATHS: internal/swarm/*.go, cmd/nova-swarm/testdata/firstrun/**",
+		"PATHS: cmd/nova-worker/**",
+		"PATHS: internal/swarm/*.go, cmd/nova-worker/testdata/firstrun/**",
 		"PATHS: none",
 	} {
 		h := append([]string{}, fullHeader()...)
@@ -329,7 +329,7 @@ func tierCard(tier string, header ...string) []byte {
 // A tier flash brief whose header carries START: but no STOP: line is refused: the
 // finding names the missing line (docs/SPEC-CARD-CONTRACT.md §2, the brief's header
 // grammar; the check sits beside the TEST: rules in LintCardHeader). A tier pro brief
-// without it draws the same finding, which cmd/nova-swarm/lint.go prints as a note, so
+// without it draws the same finding, which cmd/nova-worker/lint.go prints as a note, so
 // its verdict stands. RED BEFORE: on base the flash brief passes the header lint with
 // no stop-named finding, and the pro brief draws no finding at all.
 func TestAFlashBriefWithoutStopIsRefusedAndAProBriefIsNoted(t *testing.T) {
@@ -356,7 +356,7 @@ func TestAFlashBriefWithoutStopIsRefusedAndAProBriefIsNoted(t *testing.T) {
 	fs = LintCardHeader(tierCard("flash", withStop...), nil, true)
 	require.Empty(t, fs, "a flash brief with both lines is clean, drew %v", fs)
 
-	// the pro brief draws the same finding; cmd/nova-swarm/lint.go prints it as a note,
+	// the pro brief draws the same finding; cmd/nova-worker/lint.go prints it as a note,
 	// so the verdict stands.
 	fs = LintCardHeader(tierCard("pro", h...), nil, true)
 	pf := drew(t, fs, "stop-named")

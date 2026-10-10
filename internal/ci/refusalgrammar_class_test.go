@@ -33,7 +33,7 @@ func refusalLineIsRefusal(line string) bool {
 // `<TOKEN> REFUSED[ k=v ...]: <why>; run: <remedy>` (docs/STANDARD.md,
 // "The status word leads every line"). The token is the tool or verb as it was
 // invoked: internal/tool upper-cases it (`SEND`), a hand printer writes it as
-// the reader typed it (`nova-sprint`, `nova-swarm install`). Its two captures
+// the reader typed it (`nova-sprint`, `nova-worker install`). Its two captures
 // are the why and the remedy, so the judge below reads them back and refuses an
 // empty one: the line needs a non-whitespace why and a non-whitespace remedy.
 var refusalGrammarRe = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9_-]*(?: [A-Za-z0-9][A-Za-z0-9_-]*)* REFUSED(?: [a-z][a-z0-9_-]*=(?:"[^"]*"|\S+))*): (.*); run: (.*)$`)
@@ -77,7 +77,7 @@ func TestRefusalGrammarJudges(t *testing.T) {
 		{"a refusal with reason and facts", "", `SEND REFUSED reason=usage topic="a b": --to is required; run: nova-bus help send` + "\n", ""},
 		{"a bare refusal", "", "BUS REFUSED: no verb given; the verbs are send, recv; run: nova-bus help\n", ""},
 		{"a hand printer's lower-case token", "", "nova-sprint REFUSED: no verb; available: add, land; run: nova-sprint help\n", ""},
-		{"a two-word token", "", "nova-swarm install REFUSED: install wants the unit's kind first; run: nova-swarm install -h\n", ""},
+		{"a two-word token", "", "nova-worker install REFUSED: install wants the unit's kind first; run: nova-worker install -h\n", ""},
 		{"the witness: no colon before the why", "", "SEND REFUSED --to is required; run: nova-bus help send\n", "not `<TOKEN> REFUSED"},
 		{"the witness: no remedy", "", "SEND REFUSED: --to is required\n", "not `<TOKEN> REFUSED"},
 		{"the witness: a whitespace-only why", "", "SEND REFUSED:  ; run: nova-bus help send\n", "not `<TOKEN> REFUSED"},

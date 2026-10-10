@@ -73,7 +73,7 @@ func TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses(t *testing.T) {
 func TestDepthEnvIsPerToolAndShellSafe(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "NOVA_TEST_DEPTH_NOVA_SELF_TALK", DepthEnv("nova-self-talk"))
-	assert.NotEqual(t, DepthEnv("nova-sprint"), DepthEnv("nova-swarm"))
+	assert.NotEqual(t, DepthEnv("nova-sprint"), DepthEnv("nova-worker"))
 }
 
 // TestEnterRefusesARecursionAndAChainTooDeepInAChild runs Enter in a real child

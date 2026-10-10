@@ -559,10 +559,10 @@
 #   the candidate's checks pass (the install play, before anything changes);
 #   the window opens only when the install replaces a tool or the library is
 #   not the installed build's: every loaded nova agent but the friend
-#   daemons (and any agent whose process is a nova-sprint or a nova-swarm
+#   daemons (and any agent whose process is a nova-sprint or a nova-worker
 #   member) is booted out, a member draining on the SIGTERM, and launchd is
 #   waited on to hold none of them (nova_member_stop_timeout and 30 s more);
-#   ps then shows no nova-sprint and no nova-swarm member left, waited on
+#   ps then shows no nova-sprint and no nova-worker member left, waited on
 #   for nova_seat_quiet seconds: nothing migrates while one runs;
 #   the configuration store is migrated as its owner (the candidate's
 #   nova-config migrate --window --pg nova_pg_owner_dsn), the library loaded (its nova-redis fn load), the tools
@@ -690,7 +690,7 @@
               # the non-zero exit is the answer it waits for, never a failure
               failed_when: seat_held.rc == 0
 
-            - name: "window: ps shows no nova-sprint and no nova-swarm member (through live)"
+            - name: "window: ps shows no nova-sprint and no nova-worker member (through live)"
               ansible.builtin.command: { argv: "{{ seat_live }}" }
               environment: "{{ seat_env }}"
               register: seat_quiet

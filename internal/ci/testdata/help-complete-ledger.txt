@@ -2,9 +2,9 @@
 # completeness rule (internal/testverbhelp/complete.go): usage, description, example, exit-codes,
 # flag-undescribed:<flag>, flag-missing:<flag>. A new gap is refused; a part fixed is removed here.
 # Where the help text of the verbs still listed lives (cmd/<tool>/verbhelp.go carries it only for
-# nova-sandbox's inspection verbs and nova-swarm's; every other tool's is in its own main.go or verb file):
+# nova-sandbox's inspection verbs and nova-worker's; every other tool's is in its own main.go or verb file):
 #   nova-sandbox run, reap: cmd/nova-sandbox/run.go, cmd/nova-sandbox/reapverb.go
-#   nova-swarm lint: cmd/nova-swarm/main.go (its flags are parsed by hand, so -h prints none of them)
+#   nova-worker lint: cmd/nova-worker/main.go (its flags are parsed by hand, so -h prints none of them)
 #   nova-sprint: not checked, its test does not call testverbhelp.Check (cmd/nova-sprint/verbhelp.go)
 nova-bus ack example
 nova-bus log example
@@ -96,7 +96,7 @@ nova-self-talk example example
 nova-self-talk scan example
 nova-self-talk shapes example
 nova-self-talk version example
-nova-swarm lint flag-missing:card,flag-missing:child-rules,flag-missing:child-rules-file,flag-missing:decide,flag-missing:decide-answers,flag-missing:decide-record,flag-missing:fleet,flag-missing:legs,flag-missing:lineup,flag-missing:max,flag-missing:member-injects,flag-missing:p95,flag-missing:repo,flag-missing:rules,flag-missing:trust
+nova-worker lint flag-missing:card,flag-missing:child-rules,flag-missing:child-rules-file,flag-missing:decide,flag-missing:decide-answers,flag-missing:decide-record,flag-missing:fleet,flag-missing:legs,flag-missing:lineup,flag-missing:max,flag-missing:member-injects,flag-missing:p95,flag-missing:repo,flag-missing:rules,flag-missing:trust
 nova-tokens check example
 nova-tokens fold example
 nova-tokens ledger example

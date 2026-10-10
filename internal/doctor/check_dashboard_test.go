@@ -39,7 +39,7 @@ const (
 ExecStart=/usr/bin/env NOVA_SPRINT_SERVER=127.0.0.1:6390 nova-sprint dashboard --logo /home/ada/logo.webp
 `
 	memberPlist = `<!-- written by fleet/loops.yml from the loop record m1 -->
-<array><string>nova-swarm</string><string>member</string></array>`
+<array><string>nova-worker</string><string>member</string></array>`
 )
 
 // dashboardRig is a home under t.TempDir() holding the named unit files (path under the

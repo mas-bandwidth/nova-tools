@@ -31,13 +31,13 @@ Each tool is judged by one test: would someone with no nova-sprint use it as it 
 | nova-secrets, nova-sandbox, nova-fuse, nova-memory, nova-cairn, nova-check, nova-self-talk, nova-tokens, nova-version | stay | no sprint import or vocabulary in what they do |
 | nova-update | stays (sprint-flavoured) | `report --store` reads every bench's **nova-sprint** build from its beat; that should become "a tool's build", by name |
 | nova-ci | stays (borderline) | slowtests is general; `github receipt` writes a receipt into the sprint's store through `internal/nsprint/store`; the rest is this repository's own CI |
-| nova-swarm | stays (borderline) | `native`, `step`, `verify`, `lint`, `template`, `slots` and `disk-guard` stand on their own. `member` is the sprint member: it talks to the sprint server over `internal/sprintwire`, with `lint --decide`, `--member-injects` and `--base-check` beside it. The maintainer's line: the execution stays, and the sprint-specific dealing glue (the wire verbs take, beat and report, plus the brief the member injects) moves. A split would give `member` a general work-server client, with nova-sprint as one server |
+| nova-worker | stays (borderline) | `native`, `step`, `verify`, `lint`, `template`, `slots` and `disk-guard` stand on their own. `member` is the sprint member: it talks to the sprint server over `internal/sprintwire`, with `lint --decide`, `--member-injects` and `--base-check` beside it. The maintainer's line: the execution stays, and the sprint-specific dealing glue (the wire verbs take, beat and report, plus the brief the member injects) moves. A split would give `member` a general work-server client, with nova-sprint as one server |
 | nova-decide | stays (borderline; maintainer: stays) | `ask`, `outcome`, `calibrate` and `findings` are general. `read`, `score`, `attempt`, `grade`, `gate` and `brief` are the sprint's card questions. A split would keep them as schemas the sprint supplies, not as verbs built into nova-decide |
-| nova-friend | stays | session wake, a building block; it uses `internal/sprintwire` for a friend's beat and take, which is the same glue as nova-swarm `member` |
+| nova-friend | stays | session wake, a building block; it uses `internal/sprintwire` for a friend's beat and take, which is the same glue as nova-worker `member` |
 
 **Moved in this cut:** nova-sprint, nova-card and nova-work, plus the sprint dashboard. The dashboard is already a verb of
 the binary (`nova-sprint dashboard`, `internal/sprintdash`), not a program of its own. **Borderline cases, left in place
-for the maintainer to correct:** nova-swarm `member`, the card verbs of nova-decide, nova-ci `github receipt`, the sprint Lua in the
+for the maintainer to correct:** nova-worker `member`, the card verbs of nova-decide, nova-ci `github receipt`, the sprint Lua in the
 nova-redis library, nova-config's `sprint`/`tier`/`route` kinds and decide bars, and nova-update `report --store`.
 nova-local does not exist in nova-tools yet (PR 5307). The maintainer confirmed it stays.
 
@@ -68,7 +68,7 @@ From the dependency graph, these are used by nova-sprint, nova-card or nova-work
   uses it, and the dead-code rule counts from cmd roots. It comes back when a nova-tools tool exposes it, for example
   `nova-config route balance`.
 - `internal/ci/shrinkonly` is used only by nova-card. Its home is nova-tools' CI, so it is copied, not moved.
-- The graph agrees with the brief: nova-swarm, nova-bus, nova-friend and nova-decide use no sprint-only package. Their
+- The graph agrees with the brief: nova-worker, nova-bus, nova-friend and nova-decide use no sprint-only package. Their
   only sprint link is the shared `internal/sprintwire`.
 
 ## (b) Shared packages: copied into nova-sprint `internal/`, later imported from a public nova-tools API
@@ -156,7 +156,7 @@ Each card is "make it usable by a stranger building a different workflow". The v
   dashboard page is embedded in `internal/sprintdash/page`.
 - **TLA+**: SprintEvents, DirtyTick, DirtyTickRead, RouteIndex, Level and Land (sprint), and WorkImport (nova-work), with
   their MC modules, cfgs, READMEs, `sprintevents-bench/` and `dirtytick-bench/`, and their 220 `CASES.tsv` and
-  `RUNS.tsv` rows. CardContract (nova-swarm and member) and CardMachine (the Lua in `nsprint/fn`) stay in nova-tools
+  `RUNS.tsv` rows. CardContract (nova-worker and member) and CardMachine (the Lua in `nsprint/fn`) stay in nova-tools
   beside the code they model. The TLC runner is still nova-tools' `tools/tlacheck`, so nova-sprint needs its own runner
   or an imported one.
 - **Tests**: every test of the moved packages moved with them. `internal/ci/sprint_tables_lock_class_test.go` became
@@ -189,7 +189,7 @@ Each card is "make it usable by a stranger building a different workflow". The v
 7. **The generality pass**: one card per package in (b), one layer at a time from the bottom (oneline, atomicfile,
    redisconn and redisfn, then ntable, config, swarm and member, decide). Each one makes the package public in
    nova-tools and replaces nova-sprint's copy with an import.
-8. **Borderline tools**: once the maintainer corrects the list, split them (nova-swarm `member`'s glue, nova-decide's card verbs).
+8. **Borderline tools**: once the maintainer corrects the list, split them (nova-worker `member`'s glue, nova-decide's card verbs).
 
 ## Open nova-tools PRs (step 4); none closed
 
@@ -216,13 +216,13 @@ Classified by diff paths against the moved set. Generic ledgers, CLI.md and TEST
 - #4956 ledger shards (the ci half stays)
 - #5014 sprint VIEW.lock (SPEC-CI, STANDARD and AGENTS rows stay)
 - #5149 friend sync SetKeys (FLEET.md)
-- #5247 admission contract (the nova-swarm lint half stays)
+- #5247 admission contract (the nova-worker lint half stays)
 - #5266 child instructions (child-rules, STANDARD and SPEC-CARD-CONTRACT stay)
 - #5268 friend take fence (FRIENDS.md)
 - #5275 nova-work help (internal/tool stays)
 - #5281 seat check (the seatcheck package and the functional image stay)
 - #5300 spend rules (its nova-config route half stays; the integration skipped it)
-- #5307 nova-local (nova-local, nova-config and nova-swarm stay; the dealer half moves)
+- #5307 nova-local (nova-local, nova-config and nova-worker stay; the dealer half moves)
 - #5258 the dev to main promotion. It carries everything and is resolved by order, not by a split.
 - These were already merged into the integration seed, so their sprint halves are in nova-sprint and they land in
   nova-tools through the integration: #5282, #5283, #5285, #5287, #5288, #5289, #5291, #5293, #5297, #5298, #5299,

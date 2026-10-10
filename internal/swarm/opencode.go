@@ -16,7 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
-// THE USAGE SOURCE IS THE DATABASE THE HARNESS WRITES (SPEC-SWARM rule 12, rule 13).
+// THE USAGE SOURCE IS THE DATABASE THE HARNESS WRITES (SPEC-WORKER rule 12, rule 13).
 //
 // A SOURCE IS NAMED FOR WHAT IT IS, and on 2026-09-11 this one was not: the enum said
 // `opencode` while the reader read a tab-separated file no OpenCode writes, and two jobs
@@ -140,10 +140,10 @@ func (r openCodeReader) read(dataHome string) (ProviderUsage, error) {
 	return foldOpenCodeRows(rows)
 }
 
-// LiveSampleLimit is the least ONE live sample is given, whatever the interval (SPEC-SWARM
+// LiveSampleLimit is the least ONE live sample is given, whatever the interval (SPEC-WORKER
 // rule 13d): "a read is given 5 seconds whatever the interval, no sample starts while one is
 // unanswered, a read still unanswered at its limit is abandoned and counted as a failed
-// read". The sampler raises it against the slowest read that answered (nova-swarm's
+// read". The sampler raises it against the slowest read that answered (nova-worker's
 // liveSampler.readLimit), and never relates it to the interval: at a short interval slow
 // reads would be counted as failures.
 const LiveSampleLimit = 5 * time.Second

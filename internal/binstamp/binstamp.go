@@ -1,5 +1,5 @@
 // Package binstamp names the state of a binary's file: a loop that runs for days
-// (nova-sprint run, nova-swarm member) stamps its own file when it begins and
+// (nova-sprint run, nova-worker member) stamps its own file when it begins and
 // again before each tick, and stops when the stamp changed, so its supervisor
 // starts the build installed under it.
 package binstamp

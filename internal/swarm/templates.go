@@ -118,7 +118,7 @@ const GateNamesWhoseFile = "When a test fails, name its file and say whether tha
 
 // templateCard is the card the coordinator starts from: the contract line, the RULES
 // paragraph with every general rule of DefaultChildRules quoted verbatim (lintchild.go), the task,
-// and the steps. It passes `nova-swarm lint --card --child-rules` as printed; under a rules file
+// and the steps. It passes `nova-worker lint --card --child-rules` as printed; under a rules file
 // carrying [libraries-considered] its Libraries considered placeholder line is the one finding until
 // the writer fills it. It is what `nova-sprint add` holds every brief to under the general rules: a
 // card without the paragraph is refused

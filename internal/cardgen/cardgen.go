@@ -757,7 +757,7 @@ func touchesModels(paths []string) bool {
 // ATTRIBUTION line, the task, the steps, and the AS A READ section a reader is given
 // (AsARead, which carries AlwaysInPathsRule).
 // It is the card template's shape with the <...> filled, so it passes the add's lint
-// and nova-swarm lint --card --child-rules by construction.
+// and nova-worker lint --card --child-rules by construction.
 func Render(h Header, c Card) string {
 	minutes := h.Minutes
 	if minutes == 0 {
@@ -837,7 +837,7 @@ var placeholderRE = regexp.MustCompile(`<[a-z][a-z0-9 -]*>`)
 // Lint holds one rendered brief to what nova-sprint add holds it to (cmd/nova-sprint
 // verbs.go lintBriefReads): the model lines of line 1, the child rules, the typed
 // header and a tree card's steps; and to the template's own placeholders, which the
-// add does not read but nova-swarm lint --card does. Empty means admitted.
+// add does not read but nova-worker lint --card does. Empty means admitted.
 func Lint(id, brief string) []LintFinding {
 	var out []LintFinding
 	add := func(check string, line int, excerpt string) {

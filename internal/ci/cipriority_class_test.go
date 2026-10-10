@@ -20,7 +20,7 @@ import (
 //
 //   - TestCopiesRunNiced: every path that execs a copy's harness, a
 //     coordinator child's local test run, or a sprint card's native launch
-//     (nova-swarm native, which members and readers start), steps its own
+//     (nova-worker native, which members and readers start), steps its own
 //     process down to yield.Nice (15) BEFORE the exec, on darwin and on
 //     Linux, through the one package internal/yield.
 //   - TestSlotsShrinkByCILegs: no bench slot computation ignores the CI
@@ -37,7 +37,7 @@ var niceExecPaths = []struct{ file, fn, yield, exec string }{
 	{"cmd/nova-ci/local.go", "func cmdLocal(", "yield.ToCI()", "localCapture("},
 	// a sprint member's or reader's card: native steps itself (and so the wall, the
 	// harness and every process the card's child runs) before nativeRun starts any of it
-	{"cmd/nova-swarm/main.go", "func cmdNative(", "yieldNative(nativeToCI,", "nativeRun("},
+	{"cmd/nova-worker/main.go", "func cmdNative(", "yieldNative(nativeToCI,", "nativeRun("},
 }
 
 func TestCopiesRunNiced(t *testing.T) {
@@ -60,8 +60,8 @@ func TestCopiesRunNiced(t *testing.T) {
 	assert.NotContains(t, l, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)", "internal/yield/nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only; children forked from the others run at 0")
 	assert.Contains(t, readFile(t, filepath.Join(root, "cmd/nova-ci/local.go")), "yield.Nice-15", "cmd/nova-ci/local.go: localNice must be pinned to yield.Nice")
 	// strings.Contains, so a failure prints the one line wanted and not all of native.go
-	assert.True(t, strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-swarm/native.go")), "\nvar nativeToCI = yield.ToCI\n"),
-		"cmd/nova-swarm/native.go: want `var nativeToCI = yield.ToCI`, the step every card's launch takes")
+	assert.True(t, strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-worker/native.go")), "\nvar nativeToCI = yield.ToCI\n"),
+		"cmd/nova-worker/native.go: want `var nativeToCI = yield.ToCI`, the step every card's launch takes")
 
 	// 2. Every exec path yields first, in the same function, before the exec.
 	for _, p := range niceExecPaths {
@@ -77,7 +77,7 @@ func TestCopiesRunNiced(t *testing.T) {
 		assert.LessOrEqual(t, yi, ei, "%s %s: %s stands after %s: a yield after the exec yields nothing", p.file, p.fn, p.yield, p.exec)
 	}
 
-	// 2b. The reader below sees every shape of a write to nova-swarm's seam.
+	// 2b. The reader below sees every shape of a write to nova-worker's seam.
 	t.Run("the nativeToCI reader sees every write", nativeToCIWritesSeesEveryShape)
 
 	// 3. No production caller gives a copy a Yield of its own (the seam is
@@ -88,18 +88,18 @@ func TestCopiesRunNiced(t *testing.T) {
 			code := strings.TrimSpace(line)
 			assert.False(t, strings.HasPrefix(code, "Yield:") || strings.Contains(code, ".Yield = "), "%s:%d: %q: production never sets a copy's Yield; the real setpriority is the default", f.Rel, i+1, code)
 		}
-		// nova-swarm native's seam is yield.ToCI in production; only its test binary's
+		// nova-worker native's seam is yield.ToCI in production; only its test binary's
 		// TestMain makes it a no-op (that binary is a CI leg running cmdNative in-process).
 		// Read on the parsed file, so no spelling of a write gets past a text match.
 		if f.AST != nil {
 			for _, w := range nativeToCIWrites(tree.FSet, f.AST) {
-				assert.Fail(t, "a production write to nativeToCI", "%s:%s: production never writes nova-swarm's nativeToCI; it is yield.ToCI", f.Rel, w)
+				assert.Fail(t, "a production write to nativeToCI", "%s:%s: production never writes nova-worker's nativeToCI; it is yield.ToCI", f.Rel, w)
 			}
 		}
 	}
 }
 
-// nativeToCIWrites is every place in one parsed file that could change nova-swarm's
+// nativeToCIWrites is every place in one parsed file that could change nova-worker's
 // nativeToCI: an assignment of any shape (=, :=, op=, one name among several) whose left
 // side names it anywhere, and taking its address (a later write through the pointer).
 // The one declaration, `var nativeToCI = yield.ToCI`, is a ValueSpec and none of these.

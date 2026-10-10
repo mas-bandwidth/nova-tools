@@ -11,7 +11,7 @@
 # gh stub, a fake git remote or a card template -- text handed to a fake, not a
 # live unit-test endpoint. The allowed shape is httptest or a local fake.
 cmd/nova-sandbox/worktree_test.go:52 url 2026-09-18 a github.com clone URL in a fake git remote fixture, not a live call; landed on dev after the checker
-cmd/nova-swarm/lint_test.go:21 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
-cmd/nova-swarm/lint_test.go:61 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
-cmd/nova-swarm/lint_test.go:86 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
-cmd/nova-swarm/profile_test.go:93 url 2026-09-17 a github.com clone line in a log fixture, not a live call; predates the checker
+cmd/nova-worker/lint_test.go:21 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-worker/lint_test.go:61 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-worker/lint_test.go:86 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-worker/profile_test.go:93 url 2026-09-17 a github.com clone line in a log fixture, not a live call; predates the checker

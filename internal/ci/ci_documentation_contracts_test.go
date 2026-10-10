@@ -20,7 +20,7 @@ import (
 // out any whose name is in skip.
 func writeDocs(t *testing.T, root string, body map[string]string, skip ...string) {
 	t.Helper()
-	for _, f := range []string{"README.md", "docs/USAGE.md", "docs/CLI.md", "docs/nova-swarm-quickstart.md"} {
+	for _, f := range []string{"README.md", "docs/USAGE.md", "docs/CLI.md", "docs/nova-worker-quickstart.md"} {
 		if slices.Contains(skip, f) {
 			continue
 		}
@@ -36,10 +36,10 @@ func TestMissingDocIsAnError(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	writeDocs(t, root, nil, "docs/nova-swarm-quickstart.md")
+	writeDocs(t, root, nil, "docs/nova-worker-quickstart.md")
 	_, err := PastedDocExamples(root)
-	require.Error(t, err, "PastedDocExamples with docs/nova-swarm-quickstart.md missing returned err=%v; want an error naming the missing doc", err)
-	require.Contains(t, err.Error(), "nova-swarm-quickstart.md", "PastedDocExamples with docs/nova-swarm-quickstart.md missing returned err=%v; want an error naming the missing doc", err)
+	require.Error(t, err, "PastedDocExamples with docs/nova-worker-quickstart.md missing returned err=%v; want an error naming the missing doc", err)
+	require.Contains(t, err.Error(), "nova-worker-quickstart.md", "PastedDocExamples with docs/nova-worker-quickstart.md missing returned err=%v; want an error naming the missing doc", err)
 }
 
 // Item 2: a GOOS is a whole word on the Platform line, never a substring of

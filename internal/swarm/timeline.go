@@ -8,7 +8,7 @@ package swarm
 // The harness REPORTS its own events on the child's output, one line each, and this reader
 // timestamps them as they arrive: the harness says what happened, the run says when. One row
 // is written per model turn and per tool call into `<job>/timeline.tsv`, beside the card's
-// `usage.tsv`, so `nova-swarm profile --jobs <glob>` can fold a fleet of cards into seconds
+// `usage.tsv`, so `nova-worker profile --jobs <glob>` can fold a fleet of cards into seconds
 // per phase without re-reading a transcript.
 //
 // The event grammar is the harness adapter's, and it is deliberately two lines per event so
@@ -308,7 +308,7 @@ type JobProfile struct {
 func ProfileJobs(pattern string, stdout, stderr io.Writer) int {
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm profile: --jobs wants a glob, got %q: %s\n", pattern, err)
+		fmt.Fprintf(stderr, "nova-worker profile: --jobs wants a glob, got %q: %s\n", pattern, err)
 		return 2
 	}
 	sort.Strings(matches)

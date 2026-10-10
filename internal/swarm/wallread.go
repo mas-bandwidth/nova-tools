@@ -3,7 +3,7 @@ package swarm
 // WHAT THE CARD IS SAYING, READ WHILE IT IS STILL SAYING IT.
 //
 // Until this file every wall question was asked of a file AFTER the child was gone:
-// cmd/nova-swarm/native.go re-opened <job>/harness-output.log once the process had exited.
+// cmd/nova-worker/native.go re-opened <job>/harness-output.log once the process had exited.
 // A run that stopped
 // making progress therefore cost its WHOLE deadline before anybody looked, and the
 // coordinator watching it saw nothing at all in the meantime.
@@ -290,7 +290,7 @@ func WriteBlockedResult(jobDir, task, kind, path, step, reason string) (string, 
 		"RESULT: BLOCKED " + oneline.Field(task),
 		statusLine,
 		"blocked: " + oneline.Escape(reason),
-		"written-by: nova-swarm native (the card published no report of its own)",
+		"written-by: nova-worker native (the card published no report of its own)",
 		"",
 	}, "\n")
 	if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {

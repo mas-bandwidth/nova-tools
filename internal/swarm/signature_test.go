@@ -11,7 +11,7 @@ import (
 )
 
 // THE FAILURE-SIGNATURE TABLE IS ONE TABLE IN TWO PLACES, and the two agree: the slice in
-// signature.go and the table in docs/SPEC-SWARM.md. This test reads the spec and compares
+// signature.go and the table in docs/SPEC-WORKER.md. This test reads the spec and compares
 // its rows against the slice, row for row, so a signature added to one and not the other is
 // red.
 func TestSignatureTableMatchesSpec(t *testing.T) {
@@ -62,7 +62,7 @@ func TestVerifyScoresSignature(t *testing.T) {
 // signature, class and remedy, which is the same shape as the slice.
 func readSpecSignatureTable(t *testing.T) []failureSignature {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORKER.md"))
 	require.NoError(t, err, "the table is the spec's: %v", err)
 	lines := strings.Split(string(raw), "\n")
 	start := -1

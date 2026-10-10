@@ -247,7 +247,7 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 	root := repoRoot(t)
 	res, err := CheckCardTemplates(root, CardTemplateDirs, cardTemplateAllowlistPath)
 	require.NoError(t, err)
-	// The cards nova-swarm `template` prints are shipped card templates too; since
+	// The cards nova-worker `template` prints are shipped card templates too; since
 	// the templates directory went with cmd/nova-pulse (#3801) they are the ones
 	// the estate cuts from, so they are read here as text under the same rule.
 	for _, name := range swarm.TemplateNames() {
@@ -259,7 +259,7 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 		res.Templates++
 		res.Findings = append(res.Findings, scanCardTemplate("internal/swarm/templates.go#"+name, text)...)
 	}
-	require.NotZero(t, res.Templates, "no card template was read under %v or from nova-swarm template; the list has gone stale", CardTemplateDirs)
+	require.NotZero(t, res.Templates, "no card template was read under %v or from nova-worker template; the list has gone stale", CardTemplateDirs)
 	for _, f := range res.Findings {
 		t.Errorf("%s", f.Render())
 		res.Measured[f.Key()] = true // the swarm templates' findings too

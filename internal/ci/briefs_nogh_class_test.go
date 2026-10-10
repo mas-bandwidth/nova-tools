@@ -26,11 +26,11 @@ import (
 // directory that moves must move here too.
 
 // briefSources are the files a child reads as its brief: the pulse and task card
-// templates `nova-swarm template` prints, and the card fixtures the swarm's own tests
+// templates `nova-worker template` prints, and the card fixtures the swarm's own tests
 // lint. Each glob must match at least one file.
 var briefSources = []string{
 	"internal/swarm/templates.go",
-	"cmd/nova-swarm/testdata/cards/*.md",
+	"cmd/nova-worker/testdata/cards/*.md",
 }
 
 var (

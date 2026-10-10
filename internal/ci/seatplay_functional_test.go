@@ -246,7 +246,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	write(filepath.Join(bin, "nova-secrets"), "#!/bin/sh\nwhile [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done; shift; exec \"$@\"\n", 0o755)
 	write(filepath.Join(stage, "nova-secrets"), "#!/bin/sh\nwhile [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done; shift; exec \"$@\"\n", 0o755)
 	// the migration logs how many old servers and members still run while it does
-	config := fmt.Sprintf("#!/bin/sh\nn=$(pgrep -f '%s/nova-sprint run|%s/nova-swarm member' | wc -l | tr -d ' ')\necho \"migrate holds=$n\" >> %s\necho \"MIGRATE OK applied=0\"\n", bin, bin, filepath.Join(fdir, "log"))
+	config := fmt.Sprintf("#!/bin/sh\nn=$(pgrep -f '%s/nova-sprint run|%s/nova-worker member' | wc -l | tr -d ' ')\necho \"migrate holds=$n\" >> %s\necho \"MIGRATE OK applied=0\"\n", bin, bin, filepath.Join(fdir, "log"))
 	write(filepath.Join(bin, "nova-config"), config, 0o755)
 	write(filepath.Join(stage, "nova-config"), config, 0o755)
 	write(filepath.Join(stage, "nova-update"), seatUpdate, 0o755)
@@ -269,7 +269,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 		require.NoError(t, err, string(b))
 		b, err = os.ReadFile(out)
 		require.NoError(t, err)
-		write(filepath.Join(dst, "nova-swarm"), string(b), 0o755)
+		write(filepath.Join(dst, "nova-worker"), string(b), 0o755)
 		write(filepath.Join(dst, "nova-sprint"), string(b), 0o755)
 		write(filepath.Join(dst, "nova-friend"), string(b), 0o755)
 		write(filepath.Join(dst, "nova-redis"), fmt.Sprintf(seatRedis, "lib-"+word, redisState), 0o755)
@@ -289,10 +289,10 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	friendArgs := []string{"--as", "fa", "--harness", "opencode", "--dir", filepath.Join(r.dir, "dir-a"), "--width", "1"}
 	start := []string{
 		plist("com.nova.loop.srv", filepath.Join(bin, "nova-sprint"), "run", "--stand-in"),
-		plist("com.nova.loop.mem", filepath.Join(bin, "nova-swarm"), "member", "100000"),
+		plist("com.nova.loop.mem", filepath.Join(bin, "nova-worker"), "member", "100000"),
 		plist("com.nova.friend-fa", append([]string{filepath.Join(bin, "nova-friend"), "run"}, friendArgs...)...),
 	}
-	plist("com.nova.loop.t4", filepath.Join(bin, "nova-swarm"), "1004") // never loaded: see Disabled below
+	plist("com.nova.loop.t4", filepath.Join(bin, "nova-worker"), "1004") // never loaded: see Disabled below
 	write(filepath.Join(agents, "com.nova.loop.t4.plist"), strings.Replace(string(must(os.ReadFile(filepath.Join(agents, "com.nova.loop.t4.plist")))), "</dict>", "<key>Disabled</key><true/></dict>", 1), 0o644)
 	for _, p := range start {
 		out, err := exec.Command(launchctl, "bootstrap", "gui/0", p).CombinedOutput()

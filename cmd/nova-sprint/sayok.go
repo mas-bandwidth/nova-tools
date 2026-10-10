@@ -47,7 +47,7 @@ func unfilledSays(what, brief string) []string {
 		}
 		lines = append(lines, fmt.Sprintf("line %d: %s", f.Line, l))
 	}
-	return []string{fmt.Sprintf("%s holds %d of the card template's lines unfilled (%s); a worker is handed them as they are: fill each <...> in, then run nova-sprint brief <id> --brief-file <path> before it is dealt (nova-swarm lint --card <file> names them all)",
+	return []string{fmt.Sprintf("%s holds %d of the card template's lines unfilled (%s); a worker is handed them as they are: fill each <...> in, then run nova-sprint brief <id> --brief-file <path> before it is dealt (nova-worker lint --card <file> names them all)",
 		what, len(fs), strings.Join(lines, "; "))}
 }
 

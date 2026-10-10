@@ -207,7 +207,7 @@ func sprintUsageLine(name string, fs *flag.FlagSet) (string, bool) {
 }
 
 // briefExampleCard is an example card brief that passes the card lint,
-// matching `nova-swarm template --name card`.
+// matching `nova-worker template --name card`.
 const briefExampleCard = "RESULT: <label> sha=<sha12>\n" +
 	"REPO: <owner>/<name>\n" +
 	"BASE: <branch>\n" +
@@ -234,7 +234,7 @@ const briefExampleCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
 
 // cardHelpWords is the brief example shown in help add and help brief.
-const cardHelpWords = "a brief is held to the card lint (nova-swarm template --name card):\n\n" + briefExampleCard
+const cardHelpWords = "a brief is held to the card lint (nova-worker template --name card):\n\n" + briefExampleCard
 
 // verbProse is the explanation a verb's -h carries past its flags. The banner
 // still carries the inbox walkthrough and the friends section on their own.

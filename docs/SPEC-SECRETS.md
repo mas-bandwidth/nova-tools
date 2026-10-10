@@ -778,11 +778,11 @@ store login through the same helper.
 key, through the same open, in the process that uses them. `UnitKeyLogin` is that setting: the
 seat, and the list of names. It holds no secret. `RouteKey` is the one name of that list a route
 needs (`<PROVIDER>_API_KEY`, or the only listed name that is not the decision key).
-A native child of `nova-swarm member` is handed that one name, and the decision key when the
-pass names it (`cmd/nova-swarm/keys.go`, `childEnv`); every other held secret is left out,
+A native child of `nova-worker member` is handed that one name, and the decision key when the
+pass names it (`cmd/nova-worker/keys.go`, `childEnv`); every other held secret is left out,
 including one the environment already carried. A name the seat does not hold, or holds
 empty, is a refusal naming the name and the next command (`nova-secrets names`, `nova-secrets seal`); the value is never an empty key and is never printed. `nova-sprint run --keys` and the
-`keys.json` beside the seat login name the server's list; `nova-swarm member --pass` names the
+`keys.json` beside the seat login name the server's list; `nova-worker member --pass` names the
 member's, read in process when the environment does not already hold them. The unit's own
 environment carries no key value, and no `exec` wrapper is required for those names.
 

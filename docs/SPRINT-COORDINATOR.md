@@ -2,7 +2,7 @@
 
 The runbook for whoever holds the coordinator seat of a sprint: the one actor that answers the inbox, loads
 work, holds and releases waves, sets the fleet, lands, and installs. It assumes this file, the `help` of each
-tool it names (`nova-sprint`, `nova-config`, `nova-secrets`, `nova-swarm`, `nova-bus`, `nova-friend`,
+tool it names (`nova-sprint`, `nova-config`, `nova-secrets`, `nova-worker`, `nova-bus`, `nova-friend`,
 `nova-update`, `nova-ci`, `tlacheck`) and [SPEC-SPRINT.md](SPEC-SPRINT.md), with `git`, `gh`, `go`, `make`, `jq`, `sops` and
 `ansible-playbook` on the PATH; where this file and a help differ, the help is right and this file is the
 defect. A change not yet in `dev` is marked "after PR N" and listed under "Open items". Notation: `<m>` a
@@ -194,8 +194,8 @@ applies nothing twice; one ask that takes past `--timeout` (60s) is that card's 
   ```
 
   `add` holds each brief to the card lint and refuses, writing nothing, one that fails.
-  `nova-swarm template --name card` prints a card that passes once its `<...>` lines are filled;
-  `nova-swarm lint --card <file> --child-rules` checks a file first; `nova-sprint init --rules <file>` records
+  `nova-worker template --name card` prints a card that passes once its `<...>` lines are filled;
+  `nova-worker lint --card <file> --child-rules` checks a file first; `nova-sprint init --rules <file>` records
   the rule set `add` uses by default. Under `fleet/child-rules.txt`, a file the members hold, a card on
   nova-tools (or on a repository with its own `fleet/child-rules.<repo>.txt`) does not carry the rules: the
   member injects them at stage time (rules by reference, docs/SPEC-SPRINT.md section 2), and the lint refuses
@@ -241,7 +241,7 @@ applies nothing twice; one ask that takes past `--timeout` (60s) is that card's 
   working and ready together. A sprint starts at a low width (real cards build and test) and the owner raises
   it by the `load` column.
 - Readers equal workers: a machine's reader width is its member width, one number. A reader is a loop row
-  (`nova-swarm member --reader`) under a readers row of its name; `nova-sprint reader add <reader>` adds the
+  (`nova-worker member --reader`) under a readers row of its name; `nova-sprint reader add <reader>` adds the
   row. Today its width is the loop row's `--width` (`nova-config loop set <loop> --width <n> --as
   <coordinator>`, `nova-config apply --kind loop`, then the loops play of section 7), set to the machine's
   width; after PR 5124 a reader runs at its machine's width and no loop row carries one.
@@ -707,7 +707,7 @@ model family; a model is dropped only on a measured quality floor with varied fa
 R48. **Every cold read runs at least one temporal probe (land then reopen, claim during resolve), and each
 reproduction is kept as a test.**
     Why: defects in sequences escaped happy-path reads.
-    Done by: `nova-swarm template --name read`.
+    Done by: `nova-worker template --name read`.
 
 R49. **A score under 10 names its reasons and the work that would reach 10.**
     Why: low scores gave no path to a fix.
@@ -721,7 +721,7 @@ the card mix changes, never by pass rates.**
 R51. **A brief states its cost bound as a number the gate prints and asserts, with the model, the tests and the
 size target.**
     Why: requirements were met only after rework.
-    Done by: `nova-swarm lint --card <file>`.
+    Done by: `nova-worker lint --card <file>`.
 
 R52. **Cards are sized by tier: one mechanical change with an existing test for flash, whole things for pro and
 above, refined by measurement.**
@@ -731,11 +731,11 @@ above, refined by measurement.**
 R53. **The card fits the executor's model class: small, fully specified work with the probes written in for
 weaker models.**
     Why: loose tasks produced overclaiming reports.
-    Done by: `nova-swarm lint --card <file>`.
+    Done by: `nova-worker lint --card <file>`.
 
 R54. **Every card extends a class test as its executable spec.**
     Why: fixes were not pinned.
-    Done by: `nova-swarm lint --card <file>`.
+    Done by: `nova-worker lint --card <file>`.
 
 R55. **One card runs through before many are cut.**
     Why: a bad frame multiplied across a wave.
@@ -978,9 +978,9 @@ Each is a place this runbook describes a workaround; the change that removes it 
   needs a card whose PATHS take in `cmd/nova-sprint/seat.go`, where the handover's rules are set
   (`cmd/nova-sprint/handover_rules.go` holds the numbered sentences, kept equal to section 10 by its test).
 - After card every-unit-installed-by-a-verb: `nova-sprint install`, `uninstall` and `units --check` are in
-  nova-sprint's verb table, and `nova-swarm install disk-guard` writes the disk-guard unit in the swarm
-  binary (the shared unit text is `internal/units`, which a worker may import). `nova-swarm install mirror-refresh` and a
-  `nova-swarm mirror` verb stay owed: there is no mirror verb for the unit to run. The coordinator
+  nova-sprint's verb table, and `nova-worker install disk-guard` writes the disk-guard unit in the swarm
+  binary (the shared unit text is `internal/units`, which a worker may import). `nova-worker install mirror-refresh` and a
+  `nova-worker mirror` verb stay owed: there is no mirror verb for the unit to run. The coordinator
   switches the hand-written units over after this lands; this card does not load them.
 - Where the sources disagree, the help is followed here:
   - the handover notes answer `cannot ask` with a drop and `stalled` with `ask --another`; the help offers

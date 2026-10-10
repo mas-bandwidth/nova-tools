@@ -23,7 +23,7 @@ import (
 //
 // THE RULE SET IS THE COORDINATOR'S, AND THE TOOL IS GENERAL. The required sentences are
 // not one repository's: they come from a rules file the coordinator names (`nova-sprint add
-// --rules <file>`, or the path `nova-sprint init --rules <file>` recorded; `nova-swarm lint
+// --rules <file>`, or the path `nova-sprint init --rules <file>` recorded; `nova-worker lint
 // --child-rules-file <file>`), one sentence per line (ParseChildRules). With no file the
 // set is DefaultChildRules, the rules that hold for any project.
 //
@@ -60,7 +60,7 @@ import (
 // kills what it did not start is a run's fact, not a card's. The lint checks the card.
 //
 // ONE ROW PER RULE. Adding a general rule is one row of DefaultChildRules; its remedy, its
-// place in `nova-swarm lint --rules` and the template that quotes it (ChildRulesParagraph)
+// place in `nova-worker lint --rules` and the template that quotes it (ChildRulesParagraph)
 // follow from the row, and the class tests in lintchild_test.go fail until they do.
 
 // ChildRule is one rule of the child brief: Name is the token (`rule-<Name>` is the lint
@@ -99,10 +99,10 @@ const LibrariesConsideredRule = "rule-" + LibrariesConsideredName
 const EmptyCardCheck = "empty"
 
 // EmptyCardRemedy is what that token wants, in the remedies' table shape.
-const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief: `nova-swarm template --name card` prints one that passes; put it in the file and fill in its <...> lines"
+const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief: `nova-worker template --name card` prints one that passes; put it in the file and fill in its <...> lines"
 
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
-const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>`, filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
+const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>`, filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-worker template --name card` prints the line"
 
 var (
 	// childLibrariesLine is a `Libraries considered:` line; group 1 is what follows the colon.
@@ -283,7 +283,7 @@ func childNamesClassTest(raw []byte) bool {
 }
 
 // CardChildRemedies is what each child-rule token of the default set wants, in the table
-// shape of CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. It
+// shape of CardHeaderRemedies, so `nova-worker lint --rules` prints them beside the rest. It
 // is built from DefaultChildRules and childScans: one row each, never a second list. A rule
 // of a rules file is not in it; ChildRemedy answers for those.
 var CardChildRemedies = map[string]string{}
@@ -292,7 +292,7 @@ func init() {
 	seen := map[string]bool{}
 	for _, r := range DefaultChildRules {
 		if seen[r.Name] {
-			panic("nova-swarm lint: two child rules named " + r.Name)
+			panic("nova-worker lint: two child rules named " + r.Name)
 		}
 		seen[r.Name] = true
 		CardChildRemedies["rule-"+r.Name] = ruleRemedy(r)
@@ -309,7 +309,7 @@ func ruleRemedy(r ChildRule) string {
 	if r.Name == LibrariesConsideredName {
 		return "the rule is " + r.Sentence + " (from " + r.Source + "); " + LibrariesConsideredRemedy
 	}
-	return "the card quotes this rule verbatim, in its RULES paragraph: " + r.Sentence + " (from " + r.Source + "); `nova-swarm template --name card` prints the paragraph of the default rules, and a rules file's own sentences are the ones the lint reads"
+	return "the card quotes this rule verbatim, in its RULES paragraph: " + r.Sentence + " (from " + r.Source + "); `nova-worker template --name card` prints the paragraph of the default rules, and a rules file's own sentences are the ones the lint reads"
 }
 
 // ChildRemedy is what one child-rule check wants under the given rule set: the scan's remedy

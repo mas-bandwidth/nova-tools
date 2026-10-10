@@ -58,7 +58,7 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	h.env["NOVA_MACHINE"] = "bench-01"
 	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
 	h.redis.views["loop"] = map[string]config.View{"member-02": {
-		"name": "member-02", "machine": "bench-02", "argv": `["nova-swarm","member"]`, "seat": "seat-a", "keys": "API_KEY",
+		"name": "member-02", "machine": "bench-02", "argv": `["nova-worker","member"]`, "seat": "seat-a", "keys": "API_KEY",
 		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
 	}}
 	h.redis.revs["loop"] = 1
@@ -126,7 +126,7 @@ func TestInventoryRefusesMissingPortBeforeRewritingALegacyMember(t *testing.T) {
 	t.Parallel()
 	h := inventoryHarness(t, 1)
 	delete(h.redis.views[config.KindFleet][config.KindFleet], "redis_port")
-	const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-01:6380","nova-swarm","member"]`
+	const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-01:6380","nova-worker","member"]`
 	h.redis.views[config.KindLoop] = map[string]config.View{"member-01": {"machine": "bench-01", "argv": argv}}
 	h.redis.revs[config.KindLoop] = 1
 	code, out, errs := h.run(t, "inventory")

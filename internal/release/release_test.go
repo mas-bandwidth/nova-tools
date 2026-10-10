@@ -609,7 +609,7 @@ func TestEveryReleaseVerbNamesItsMissingFlagsAtOnce(t *testing.T) {
 func sourceTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, tool := range []string{"nova-update", "nova-bus", "nova-swarm"} {
+	for _, tool := range []string{"nova-update", "nova-bus", "nova-worker"} {
 		if err := os.MkdirAll(filepath.Join(dir, "cmd", tool), 0o755); err != nil {
 			require.NoError(t, err, err)
 		}
@@ -690,12 +690,12 @@ func TestBuildRefusesWhenOneToolDoesNotCompile(t *testing.T) {
 	source, out := sourceTree(t), t.TempDir()
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
-		&o, &e, Deps{Toolchain: &fakeToolchain{fail: "nova-swarm"}})
+		&o, &e, Deps{Toolchain: &fakeToolchain{fail: "nova-worker"}})
 	if code != 1 {
 		require.Equal(t, 1, code, "code=%d", code)
 	}
-	if !strings.Contains(e.String(), "nova-swarm") {
-		require.Contains(t, e.String(), "nova-swarm", "the failure does not name the tool: %s", e.String())
+	if !strings.Contains(e.String(), "nova-worker") {
+		require.Contains(t, e.String(), "nova-worker", "the failure does not name the tool: %s", e.String())
 	}
 	// A half-built directory must not carry a checksum file: SHA256SUMS over
 	// two of three tools is a file that agrees with itself and with nothing.
@@ -851,7 +851,7 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			goos, goarch := platformOf(t, platform)
-			from := built(t, "v0.16.0", platform, "nova-bus", "nova-swarm", "nova-wake")
+			from := built(t, "v0.16.0", platform, "nova-bus", "nova-worker", "nova-wake")
 			bin := t.TempDir()
 			// nova-wake already holds the artifact's bytes; the other two do
 			// not. It is written under the name the TARGET installs it as.
@@ -889,13 +889,13 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			// and a probe that ran `nova-bus` would be asking after a path
 			// that does not exist -- an error, which reads as "not current",
 			// which reinstalls every tool on every pass forever.
-			wantProbed := []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos), current}
+			wantProbed := []string{ToolFile("nova-bus", goos), ToolFile("nova-worker", goos), current}
 			sort.Strings(probed)
 			sort.Strings(wantProbed)
 			if strings.Join(probed, ",") != strings.Join(wantProbed, ",") {
 				require.FailNowf(t, "assertion failed", "probed %v, want %v", probed, wantProbed)
 			}
-			for _, tool := range []string{"nova-bus", "nova-swarm"} {
+			for _, tool := range []string{"nova-bus", "nova-worker"} {
 				assertRunnable(t, filepath.Join(bin, ToolFile(tool, goos)))
 			}
 			// Skipped means untouched, not overwritten with the same bytes.
@@ -951,7 +951,7 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 	t.Parallel()
 
 	goos, goarch := platformOf(t, "")
-	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-worker")
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
 	if err := testbin.WriteExecutable(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("tampered"), 0o755); err != nil {
 		require.NoError(t, err, err)
@@ -1730,11 +1730,11 @@ func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
 func TestInstallRetiresStaleCopiesOfWhatItInstalled(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-worker")
 	goos, _ := platformOf(t, "")
 	bin, goBin := t.TempDir(), t.TempDir()
 	// Two stale tools of ours, one tool of somebody else's, one directory.
-	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos), "gopls"} {
+	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-worker", goos), "gopls"} {
 		if err := testbin.WriteExecutable(filepath.Join(goBin, name), []byte("stale"), 0o755); err != nil {
 			require.NoError(t, err, err)
 		}
@@ -1752,7 +1752,7 @@ func TestInstallRetiresStaleCopiesOfWhatItInstalled(t *testing.T) {
 	if !strings.Contains(o.String(), "tools=2 skipped=0 retired=2") {
 		require.Contains(t, o.String(), "tools=2 skipped=0 retired=2", "the receipt does not count the retirement:\n%s", o.String())
 	}
-	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos)} {
+	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-worker", goos)} {
 		if _, err := os.Stat(filepath.Join(goBin, name)); !os.IsNotExist(err) {
 			require.FailNowf(t, "assertion failed", "%s was not retired: %v", name, err)
 		}
@@ -2122,7 +2122,7 @@ func TestCutRefusesAPathsFileWhoseListWasEditedAfterItWasWritten(t *testing.T) {
 func TestInstallChecksBeforeItTouchesAnything(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-worker")
 	goos, _ := platformOf(t, "")
 	dir := ArtifactDir(from, "v0.16.0", goos, "")
 	dir = filepath.Dir(dir)
@@ -2642,7 +2642,7 @@ func TestVerifyArtifactsReportsWhatItActuallyChecked(t *testing.T) {
 	t.Parallel()
 
 	goos, goarch := platformOf(t, "")
-	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm", "nova-wake")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-worker", "nova-wake")
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
 	arts, err := ReadSums(dir)
 	if err != nil {

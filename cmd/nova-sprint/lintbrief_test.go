@@ -45,7 +45,7 @@ func TestAddRefusesABriefThatFailsTheCardLint(t *testing.T) {
 		want       []string
 	}{
 		{"bare --brief", "add --stream s1 --count 1 --one --brief 'handle the empty case'",
-			[]string{"LINT DRIFT brief rule-worktree: 1: missing: Work only in the job directory this card names.", "rule-no-server", "rule-report-not-done", "remedy=the card quotes this rule verbatim", "nova-swarm template --name card"}},
+			[]string{"LINT DRIFT brief rule-worktree: 1: missing: Work only in the job directory this card names.", "rule-no-server", "rule-report-not-done", "remedy=the card quotes this rule verbatim", "nova-worker template --name card"}},
 		{"bare --brief-file", "add --stream s1 --count 1 --one --brief-file " + bare,
 			[]string{"LINT DRIFT brief rule-worktree: 1: missing: Work only in the job directory this card names.", "fails the card lint"}},
 		{"a forbidden command", "add --stream s1 --count 1 --one --brief-file " + forbidden,

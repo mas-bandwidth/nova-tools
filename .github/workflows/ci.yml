@@ -1093,7 +1093,7 @@ jobs:
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-swarm"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-worker"
 
       - name: fetch dev's ancestry for the hosted ratchet
         # Main already fetched this ancestry above. Other refs need it only

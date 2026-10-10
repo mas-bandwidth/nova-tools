@@ -10,7 +10,7 @@ package cardlimits
 // and well under the table layer's field bound (64 KiB), which holds a brief whole.
 const MaxBriefBytes = 16 << 10
 
-// BriefAdvisoryBytes is the size the card lint (`nova-swarm lint --card`) advises a card
+// BriefAdvisoryBytes is the size the card lint (`nova-worker lint --card`) advises a card
 // stays under: past it a model stops reading the card in one window. It is advice and
 // refuses nothing; MaxBriefBytes is the refusal.
 const BriefAdvisoryBytes = 12000

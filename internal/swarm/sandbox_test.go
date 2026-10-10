@@ -12,7 +12,7 @@ import (
 
 // The LAUNCH SEAM's own unit: the argv the dispatcher builds for a worker, and the one
 // field the worker description gained. The wall itself is asked about the operating system
-// in cmd/nova-swarm's tests, on the platform whose body is built; what is here is the shape
+// in cmd/nova-worker's tests, on the platform whose body is built; what is here is the shape
 // of the two lists, which is the same shape on every platform.
 
 // DEMANDED (SPEC-SANDBOX.md rule 5, "there is no --root flag"). read_roots is the one field
@@ -110,7 +110,7 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	// And one inside a SLOT directory, which is a sibling of worker_dir and not under it:
 	// the slot IS the job's `--read`, so the key is read inside the wall under a probe that
 	// passed, and neither check above sees it (Rowan's Fable read 2 of #88 at fc400ce, L1).
-	// The refusal is at LOAD, so `nova-swarm run` returns before Run prints any RUN line --
+	// The refusal is at LOAD, so `nova-worker run` returns before Run prints any RUN line --
 	// the task stays pending and no worker starts.
 	slotJobs := filepath.Join(dir, "worker-1", "jobs", "t1")
 	require.NoError(t, os.MkdirAll(slotJobs, 0o755))

@@ -24,50 +24,50 @@
 # from the serialTestsCeiling constant into this file at 876, the count that day.
 # nova-check: TestTESTSFirstRunIsWhatTheToolPrints, TestIssue2296, TestNoCodeStagedRefusals removed (ceiling 226 in abb4e02a3, 207 on current base)
 # ceiling: 206
-cmd/nova-swarm/doctor_test.go:TestDoctorVerbIsReachableFromTheDispatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeCardBudgetStopsAndPrintsThePromptDefect serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeTwoLaunchAccounting serial: t.Setenv
-cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild serial: swaps package var main.nativeDeadline, swaps package var main.nativeKillGroup
-cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineKillsTheWholeTree serial: swaps package var main.nativeDeadline
-cmd/nova-swarm/native_idle_test.go:TestNativeIdleIsDecidedByTheWatchsEventNotByAClock serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
-cmd/nova-swarm/native_idle_test.go:TestNativeIdleReapsTheCardInsteadOfShootingIt serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
-cmd/nova-swarm/native_idle_test.go:TestNativeIdleSaysACardThatSimplyWentStillWentStill serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
-cmd/nova-swarm/native_stage_test.go:TestStageFailLinePrintsOnStagingFailure serial: swaps package var os.Stdout
-cmd/nova-swarm/native_stage_test.go:TestStageNamedRepoNotStagedIsRefused serial: swaps package var os.Stdout
-cmd/nova-swarm/native_stage_test.go:TestStageOKLinePrintsOnSuccessfulStage serial: swaps package var os.Stdout
-cmd/nova-swarm/native_stage_test.go:TestStagePushedHeaderStagesRepoBeforeTheModel serial: swaps package var os.Stdout
-cmd/nova-swarm/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestFriendSequenceLocalModelCard serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeAllowsProviderLoopback serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeChildCwdIsJobDirFromForeignCwd serial: os.Chdir, t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeChildCwdIsJobDirUnwalled serial: os.Chdir, t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/slow_test.go:TestNativeEnvIsCleanAndInsideTheWall serial: os.Chdir, t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeFailedReadsEndNothingByThemselves serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeLaunchGoesThroughTheOneLauncher serial: swaps package var main.launchArgvFor
-cmd/nova-swarm/slow_test.go:TestNativeNoSharedCachesRestoresHomeCaches serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeNoWallWritesHarnessLog serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeOKNamesTheWall serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/slow_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/slow_test.go:TestNativeRefusesWhenWallCannotExpressRule serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRefusesWithoutWallUnlessFlagged serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRelativeSlotIsAbsolutized serial: os.Chdir, t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRunDeniesBusInsideWall serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRunPassesRepoAllowRule serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRunsWalledWithoutHostRulesWhenNoRepos serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeRunsWithNoSlotsStore serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeSharedGoCaches serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeSilentHarnessIsNotOK serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeWalledJobPathWithSpace serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
-cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv
+cmd/nova-worker/doctor_test.go:TestDoctorVerbIsReachableFromTheDispatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
+cmd/nova-worker/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
+cmd/nova-worker/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
+cmd/nova-worker/native_budget_stop_test.go:TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample serial: t.Setenv
+cmd/nova-worker/native_budget_stop_test.go:TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain serial: t.Setenv
+cmd/nova-worker/native_budget_stop_test.go:TestNativeCardBudgetStopsAndPrintsThePromptDefect serial: t.Setenv
+cmd/nova-worker/native_budget_stop_test.go:TestNativeTwoLaunchAccounting serial: t.Setenv
+cmd/nova-worker/native_deadline_test.go:TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild serial: swaps package var main.nativeDeadline, swaps package var main.nativeKillGroup
+cmd/nova-worker/native_deadline_test.go:TestNativeDeadlineKillsTheWholeTree serial: swaps package var main.nativeDeadline
+cmd/nova-worker/native_idle_test.go:TestNativeIdleIsDecidedByTheWatchsEventNotByAClock serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-worker/native_idle_test.go:TestNativeIdleReapsTheCardInsteadOfShootingIt serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-worker/native_idle_test.go:TestNativeIdleSaysACardThatSimplyWentStillWentStill serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-worker/native_stage_test.go:TestStageFailLinePrintsOnStagingFailure serial: swaps package var os.Stdout
+cmd/nova-worker/native_stage_test.go:TestStageNamedRepoNotStagedIsRefused serial: swaps package var os.Stdout
+cmd/nova-worker/native_stage_test.go:TestStageOKLinePrintsOnSuccessfulStage serial: swaps package var os.Stdout
+cmd/nova-worker/native_stage_test.go:TestStagePushedHeaderStagesRepoBeforeTheModel serial: swaps package var os.Stdout
+cmd/nova-worker/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestFriendSequenceLocalModelCard serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeAllowsProviderLoopback serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeChildCwdIsJobDirFromForeignCwd serial: os.Chdir, t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeChildCwdIsJobDirUnwalled serial: os.Chdir, t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
+cmd/nova-worker/slow_test.go:TestNativeEnvIsCleanAndInsideTheWall serial: os.Chdir, t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeFailedReadsEndNothingByThemselves serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeLaunchGoesThroughTheOneLauncher serial: swaps package var main.launchArgvFor
+cmd/nova-worker/slow_test.go:TestNativeNoSharedCachesRestoresHomeCaches serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeNoWallWritesHarnessLog serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeOKNamesTheWall serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
+cmd/nova-worker/slow_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
+cmd/nova-worker/slow_test.go:TestNativeRefusesWhenWallCannotExpressRule serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRefusesWithoutWallUnlessFlagged serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRelativeSlotIsAbsolutized serial: os.Chdir, t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRunDeniesBusInsideWall serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRunPassesRepoAllowRule serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRunsWalledWithoutHostRulesWhenNoRepos serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeRunsWithNoSlotsStore serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeSharedGoCaches serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeSilentHarnessIsNotOK serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeWalledJobPathWithSpace serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
+cmd/nova-worker/slow_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
+cmd/nova-worker/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv

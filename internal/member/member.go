@@ -57,14 +57,14 @@ type Runner interface {
 // Ender is a Runner told when the member is done with a launch whose child ended: reported,
 // returned or reaped, so nothing reads its working tree again. failed is whether it ended in
 // a way a person may want to inspect (a failed finish, a read returned with no verdict); the
-// runner removes or keeps what the launch staged (docs/SPEC-SWARM.md, `member`).
+// runner removes or keeps what the launch staged (docs/SPEC-WORKER.md, `member`).
 type Ender interface {
 	Ended(p Packet, failed bool)
 }
 
 // Epocher is a Runner told the sprint's epoch each pass, as the queue answered it: its
 // cleaner, apart from the pass, removes what launches of epochs long cleared left behind
-// (docs/SPEC-SWARM.md, `member`). Epoch only records the number; it never waits.
+// (docs/SPEC-WORKER.md, `member`). Epoch only records the number; it never waits.
 type Epocher interface {
 	Epoch(epoch uint64)
 }
@@ -190,7 +190,7 @@ const (
 	EndNoResult = cardhdr.EndNoResult // the child left no result: the sprint deals the card again
 	EndBudget   = "budget"
 	EndDeadline = "deadline"
-	// EndUnverifiable is native's end=budget-unverifiable (docs/SPEC-SWARM.md, native): the
+	// EndUnverifiable is native's end=budget-unverifiable (docs/SPEC-WORKER.md, native): the
 	// member's usage source, its read of the harness's usage database, stopped answering and
 	// native ended the child for a budget it could no longer see. Judge says it as a budget
 	// end when the child left a result; a child it ended with none is the member's failure
@@ -375,7 +375,7 @@ type Config struct {
 	Reader bool // run the readers-table loop instead of the fleet's
 	// Room is asked once a tick before any child is started (a recovered card or a taken
 	// one): ok false starts none that tick, with why said once when it begins and once when
-	// it ends. nil asks nothing (docs/SPEC-SWARM.md, `member`, the disk floor).
+	// it ends. nil asks nothing (docs/SPEC-WORKER.md, `member`, the disk floor).
 	Room func() (ok bool, why string)
 	// Now is the clock the work pass's progress is read on (BeatLoop); nil is time.Now.
 	Now func() time.Time
@@ -796,7 +796,7 @@ func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Wr
 // report every child that ended, recover working cards, and take up to the width.
 // When the queue read fails or times out, local completed children are still
 // collected, pushed, reported, and cleaned up so an injected failing queue cannot
-// starve an already-finished child, while new takes are suppressed (docs/SPEC-SWARM.md, member;
+// starve an already-finished child, while new takes are suppressed (docs/SPEC-WORKER.md, member;
 // docs/SPEC-SPRINT.md, the fleet).
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.advanced()
@@ -1826,7 +1826,7 @@ func (m *Member) stampProgress(now time.Time) (unanswered []byte) {
 // forge), so they are done apart from the pass (long), which never waits on them; the
 // launch is busy until they post, and the pass after that reports it. Each launch keeps
 // its push, so a finish the store did not answer is reported again and never pushed again.
-// The rule is docs/SPEC-SWARM.md's `member` (the push at a work card's finish) and
+// The rule is docs/SPEC-WORKER.md's `member` (the push at a work card's finish) and
 // docs/SPEC-SPRINT.md's finish row (the head the merge reads).
 func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 	var ends sync.WaitGroup
@@ -1877,7 +1877,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 
 // endEndedLocal begins the end of locally running launches whose child has exited
 // when the queue read failed or timed out, so completed children are not starved
-// (docs/SPEC-SWARM.md, member; docs/SPEC-SPRINT.md, the fleet).
+// (docs/SPEC-WORKER.md, member; docs/SPEC-SPRINT.md, the fleet).
 func (m *Member) endEndedLocal() {
 	var ends sync.WaitGroup
 	for _, id := range slices.Sorted(maps.Keys(m.running)) {
@@ -2153,7 +2153,7 @@ func BriefOf(card string) string {
 }
 
 // CardText is the card file a child is given: the brief VERBATIM first (a
-// card's brief is a whole child brief in the card grammar `nova-swarm lint
+// card's brief is a whole child brief in the card grammar `nova-worker lint
 // --card` checks, whose line 1 is the contract line), then, appended, the
 // mechanics the sprint adds: the attempt, the branch and base when a base
 // names a repository, the fix of this attempt, the notes, and the exact

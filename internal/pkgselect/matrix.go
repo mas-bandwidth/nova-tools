@@ -47,16 +47,16 @@ var DarwinOnly = []string{"./cmd/nova-sandbox", "./internal/sandbox"}
 
 // LinuxOnly are the packages a pull request never deals to the macOS legs: their unit
 // tests cost more than a macOS runner's two cores give in the two-minute cap (cmd/nova-sprint
-// about 335 CPU-seconds, cmd/nova-swarm about 200), so those legs were cancelled at the cap
+// about 335 CPU-seconds, cmd/nova-worker about 200), so those legs were cancelled at the cap
 // in every pull-request run of 2026-10-04. Linux runs them in every pull request and in
 // the merge group, and cmd/nova-sprint is leaving this repository (nova-tools#5309).
 // A push and the nightly run still deal them to macOS.
-var LinuxOnly = []string{"./cmd/nova-sprint", "./cmd/nova-swarm"}
+var LinuxOnly = []string{"./cmd/nova-sprint", "./cmd/nova-worker"}
 
 // HeavyFirst are the measured expensive packages the fan-out deals first, so
 // a four-leg PR gives each a separate leg. Ordinary round-robin put all four
 // on the first leg; that job crossed its wall even when its test step passed.
-var HeavyFirst = []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/ci", "./internal/sprint/store"}
+var HeavyFirst = []string{"./cmd/nova-sprint", "./cmd/nova-worker", "./internal/ci", "./internal/sprint/store"}
 
 // DarwinBranches are the target branches whose changes meet the darwin legs:
 // the integration branches (the concurrency group's integration list in
@@ -142,7 +142,7 @@ func NothingLeg(g Groups) Leg {
 // runner (measured 28 to 68 s each in the merge-group runs of 2026-10-04, two of
 // them landing on one leg ran past the two-minute cap): Functional deals them
 // first, in this order, so no leg gets two while another is empty.
-var FunctionalHeavy = []string{"./cmd/nova-swarm", "./cmd/nova-bus", "./internal/ci", "./internal/atomicfile", "./internal/ntable", "./internal/swarm"}
+var FunctionalHeavy = []string{"./cmd/nova-worker", "./cmd/nova-bus", "./internal/ci", "./internal/atomicfile", "./internal/ntable", "./internal/swarm"}
 
 // Functional deals the packages into FunctionalShards Linux legs like a pull
 // request's unit legs (the darwin-only packages have no Linux leg). The

@@ -287,7 +287,7 @@ line), is found there too.
 ## Retention: `nova-sprint friend clean`
 
 A done job's clones are removed by the machine, nightly, by the rule the bench
-slots keep (a launch that is done leaves no checkout; docs/SPEC-SWARM.md,
+slots keep (a launch that is done leaves no checkout; docs/SPEC-WORKER.md,
 `member`), carried to a friend's jobs (ideas#833; the owner, 2026-10-02:
 "cleanup must be auto!"). `nova-sprint friend clean`, for every friend row
 (docs/SPEC-SPRINT.md, `friend clean`):

@@ -23,9 +23,9 @@ import (
 
 // THE FAKE RUNNER IS AN EXECUTABLE, NOT A SHELL SCRIPT (windows leg, 2026-09-15).
 //
-// These tests used to hand `nova-swarm batch --runner` the path of a POSIX shell script they
-// had just written. The product does not run a shell: SPEC-SWARM's usage line is
-// `nova-swarm batch --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir>`,
+// These tests used to hand `nova-worker batch --runner` the path of a POSIX shell script they
+// had just written. The product does not run a shell: SPEC-WORKER's usage line is
+// `nova-worker batch --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir>`,
 // batch.go refuses with "--runner is required; it wants the command one process per card
 // runs", and it starts that command with
 // `exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)`.
@@ -68,7 +68,7 @@ func builtFakeRunner(t *testing.T) string {
 // buildFakeRunner compiles the one fixture program the whole package shares, once.
 func buildFakeRunner() error {
 	fakeRunnerOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "nova-swarm-fakerunner")
+		dir, err := os.MkdirTemp("", "nova-worker-fakerunner")
 		if err != nil {
 			fakeRunnerErr = err
 			return

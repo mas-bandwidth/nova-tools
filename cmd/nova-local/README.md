@@ -2,7 +2,7 @@
 
 ## What it is
 
-nova-local: run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts
+nova-local: run local models: what an engine has, one model served at a chosen context, and a worker description nova-worker accepts
 
 ## Why use it
 

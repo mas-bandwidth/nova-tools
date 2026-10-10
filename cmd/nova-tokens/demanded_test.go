@@ -1172,10 +1172,10 @@ func TestTheSwarmUsageFilesAreASource(t *testing.T) {
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))
-	// The reader's own sixteen names are SPEC-SWARM's, so a file the swarm writes reads.
+	// The reader's own sixteen names are SPEC-WORKER's, so a file the swarm writes reads.
 	{
 		got := strings.Join(tokens.SwarmColumns, ",")
-		require.Equal(t, strings.Join(swarmHeader, ","), got, "SwarmColumns is not SPEC-SWARM rule 12's sixteen names in order:\n got %s\nwant %s", got, strings.Join(swarmHeader, ","))
+		require.Equal(t, strings.Join(swarmHeader, ","), got, "SwarmColumns is not SPEC-WORKER rule 12's sixteen names in order:\n got %s\nwant %s", got, strings.Join(swarmHeader, ","))
 	}
 	swarmUsage(t, pool, "j1", swarmRow("j1", "1", "-", "deepseek-v3", "serialize", "2026-09-11T10:00:00Z", "1000", "20", "-", "5", "0"))
 	swarmUsage(t, pool, "j2", swarmRow("j2", "2", "j1", "deepseek-v3", "serialize", "2026-09-11T11:00:00Z", "7", "8", "9", "10", "11"))
@@ -1205,9 +1205,9 @@ func TestTheSwarmUsageFilesAreASource(t *testing.T) {
 	wantContains(t, r.stderr, swarmHeader[15])
 	wantContains(t, r.stderr, "TOKENS UNPARSED")
 	// TOKENS NOTE is ONE remedy line, and it is the remedy for the kind that failed: a
-	// swarm usage file's header wants SPEC-SWARM's sixteen columns, not a bus body line.
+	// swarm usage file's header wants SPEC-WORKER's sixteen columns, not a bus body line.
 	note := lineWith(r.stdout, "TOKENS NOTE")
-	wantContains(t, note, "SPEC-SWARM rule 12")
+	wantContains(t, note, "SPEC-WORKER rule 12")
 	assert.False(t, strings.Contains(note, "date<TAB>who<TAB>"), "the remedy for a swarm header refusal is the bus body-line shape: %q", note)
 }
 

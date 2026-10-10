@@ -198,28 +198,28 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 	assert.Contains(t, out, " loop_applied=2 ")
 }
 
-// A loop carries no width: a nova-swarm member's, a reader's too, is its
+// A loop carries no width: a nova-worker member's, a reader's too, is its
 // machine row's (machine set <m> --width <n>), so an argv that spells --width
 // is refused at add and at set, naming the rule, and the row is left as it was.
 func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t, "m1")
-	code, _, errs := h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader","--width","8"]`, "--keepalive", "true")
+	code, _, errs := h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-worker","member","--as","reader-m1","--reader","--width","8"]`, "--keepalive", "true")
 	require.Equal(t, 2, code, errs)
-	assert.Contains(t, errs, "loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's")
+	assert.Contains(t, errs, "loop reader-m1: its argv carries --width, and a nova-worker member's width (a reader's too) is its machine row's")
 	assert.Contains(t, errs, "machine set <m> --width <n>")
 	code, _, _ = h.run(t, "loop", "show", "reader-m1")
 	assert.NotEqual(t, 0, code, "the refused add wrote a row")
 
-	code, _, errs = h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader"]`, "--keepalive", "true")
+	code, _, errs = h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-worker","member","--as","reader-m1","--reader"]`, "--keepalive", "true")
 	require.Equal(t, 0, code, errs)
-	code, _, errs = h.run(t, "loop", "set", "reader-m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader","--width=8"]`)
+	code, _, errs = h.run(t, "loop", "set", "reader-m1", "--argv", `["nova-worker","member","--as","reader-m1","--reader","--width=8"]`)
 	require.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "its argv carries --width")
 	code, out, errs := h.run(t, "loop", "show", "reader-m1")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, ` argv=["nova-swarm","member","--as","reader-m1","--reader"] `, "the row as it was")
+	assert.Contains(t, out, ` argv=["nova-worker","member","--as","reader-m1","--reader"] `, "the row as it was")
 	assert.NotContains(t, out, "width=", "a loop has no width field")
 
 	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn)
@@ -232,7 +232,7 @@ func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	h.redis.views["loop"]["reader-m1"]["log"] = config.LoopLog("~/nova-bench/loops", "reader-m1")
 	code, out, errs = h.run(t, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-swarm","member","--as","reader-m1","--reader"]`, "the plays render the argv the row holds, with no width:\n%s", out)
+	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-worker","member","--as","reader-m1","--reader"]`, "the plays render the argv the row holds, with no width:\n%s", out)
 }
 
 // A loop whose verb is gone (internal/config/loop.go) is refused at add and at

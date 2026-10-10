@@ -14,7 +14,7 @@ import (
 // The binary was fail-closed throughout -- it is the document that was wrong -- and this
 // is the test that keeps them together: the flag is refused like any other flag the tool
 // does not have, and the command does not run. The unsandboxed run a caller may take is
-// nova-swarm's, announced by RUN UNSANDBOXED, and SPEC-SWARM's own tests pin that line.
+// nova-worker's, announced by RUN UNSANDBOXED, and SPEC-WORKER's own tests pin that line.
 func TestThereIsNoWayToRunAnUnwalledCommand(t *testing.T) {
 	t.Parallel()
 
@@ -27,7 +27,7 @@ func TestThereIsNoWayToRunAnUnwalledCommand(t *testing.T) {
 		require.Equal(t, 125, code, "%s: exit %d, want 125; a tool whose reason is containment has no switch that turns it off: %s", flag, code, errOut)
 		assert.Contains(t, errOut, "SANDBOX REFUSED reason=bad_flag: unknown flag "+flag+"; the flags are --read, ", "%s was refused off the grammar the spec fixes, got %q", flag, errOut)
 		assert.Contains(t, errOut, "; run: nova-sandbox help\n", "%s was refused off the grammar the spec fixes, got %q", flag, errOut)
-		assert.NotContains(t, errOut, "UNSANDBOXED", "%s printed an UNSANDBOXED line; that line is nova-swarm's alone: %q", flag, errOut)
+		assert.NotContains(t, errOut, "UNSANDBOXED", "%s printed an UNSANDBOXED line; that line is nova-worker's alone: %q", flag, errOut)
 		_, err := os.Stat(marker)
 		require.Error(t, err, "%s RAN THE COMMAND", flag)
 	}

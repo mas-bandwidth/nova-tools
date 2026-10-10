@@ -20,8 +20,8 @@ func TestTheHelpSaysHowAFleetConnectsToTheServer(t *testing.T) {
 	for _, want := range []string{
 		"nova-sprint run --listen <address>:<port> --land",
 		ServerEnv + "=127.0.0.1:<port>",
-		"nova-swarm member --as <name> --server <address>:<port>",
-		"nova-swarm member --as <reader> --server <address>:<port> --reader --width <n>",
+		"nova-worker member --as <name> --server <address>:<port>",
+		"nova-worker member --as <reader> --server <address>:<port> --reader --width <n>",
 		"init --members",
 		"reader add",
 	} {

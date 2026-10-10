@@ -25,7 +25,7 @@ func TestNoModTimeDecidesAnythingInThisPackage(t *testing.T) {
 		// THE EXCEPTIONS, each about LIVENESS ON DISK and never about a report's identity.
 		// The bytes-are-revision rule this test guards is unbroken by both.
 		//
-		//   reap.go (issue #1048, SPEC-SWARM rule 19) reads a harness log's AGE to decide
+		//   reap.go (issue #1048, SPEC-WORKER rule 19) reads a harness log's AGE to decide
 		//   whether a slot is finished.
 		//
 		//   lease.go (issue #1585) reads the job lease's mtime, which IS the heartbeat --

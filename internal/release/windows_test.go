@@ -339,7 +339,7 @@ func TestPullTakesAWindowsDestAndNamesTheExeFiles(t *testing.T) {
 func TestTheWindowsSumsFileNamesOnlyExeFiles(t *testing.T) {
 	t.Parallel()
 
-	out := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-swarm", "nova-update")
+	out := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-worker", "nova-update")
 	dir := ArtifactDir(out, "v0.16.0", "windows", "amd64")
 	body, err := os.ReadFile(filepath.Join(dir, SumsFile))
 	if err != nil {
@@ -360,8 +360,8 @@ func TestTheWindowsSumsFileNamesOnlyExeFiles(t *testing.T) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	if got := strings.Join(names, " "); got != "nova-bus.exe nova-swarm.exe nova-update.exe" {
-		require.Equal(t, "nova-bus.exe nova-swarm.exe nova-update.exe", got, "%s lists %q", SumsFile, got)
+	if got := strings.Join(names, " "); got != "nova-bus.exe nova-update.exe nova-worker.exe" {
+		require.Equal(t, "nova-bus.exe nova-update.exe nova-worker.exe", got, "%s lists %q", SumsFile, got)
 	}
 	// And the digest file beside it is NOT one of the lines: it is written
 	// after, out of the file it is the digest of.

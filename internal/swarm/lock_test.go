@@ -20,7 +20,7 @@ func TestAZeroWaitLockProbeDoesNotTakeAHeldLock(t *testing.T) {
 	require.NoError(t, err, "the free lock was not taken: %v", err)
 	_, err = takeFileLock(path, 0)
 	require.Error(t, err, "a zero wait acquired a lock this process still holds: %v", err)
-	require.Contains(t, err.Error(), "another nova-swarm holds", "a zero wait acquired a lock this process still holds: %v", err)
+	require.Contains(t, err.Error(), "another nova-worker holds", "a zero wait acquired a lock this process still holds: %v", err)
 	release()
 	release()
 	again, err := takeFileLock(path, 0)

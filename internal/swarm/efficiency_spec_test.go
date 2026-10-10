@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SPEC CARD #80 (docs/SPEC-SWARM.md, Efficiency: lessons absorbed):
+// SPEC CARD #80 (docs/SPEC-WORKER.md, Efficiency: lessons absorbed):
 // the card is one of the seven-tool efficiency cards and records two measured
-// operations of nova-swarm -- the per-job clone and the waits a job holds -- as
+// operations of nova-worker -- the per-job clone and the waits a job holds -- as
 // normative contract (status and triage measurements were excised with the dead
 // pool verbs). This doc test reads the section out of the spec the way
 // TestBenchSlotLeasesSectionNamesItsRules does: the spec is the one place the
@@ -20,7 +20,7 @@ import (
 func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORKER.md"))
 	require.NoError(t, err, "the efficiency contract is the spec's: %s", err)
 	section := efficiencySection(t, string(raw))
 	for _, want := range []string{
@@ -34,7 +34,7 @@ func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 		"--deadline",
 		"--usage-interval",
 	} {
-		assert.Contains(t, section, want, "SPEC-SWARM.md Efficiency: lessons absorbed names %q; the section holds:\n%s", want, section)
+		assert.Contains(t, section, want, "SPEC-WORKER.md Efficiency: lessons absorbed names %q; the section holds:\n%s", want, section)
 	}
 }
 

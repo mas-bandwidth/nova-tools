@@ -209,7 +209,7 @@ func TestLintDoneWhenTestNameAtBase(t *testing.T) {
 	require.Len(t, gone, 1, "a base-sha the repository does not hold is MISSING, got %v", gone)
 	require.Contains(t, gone[0].Excerpt, "MISSING", "a base-sha the repository does not hold is MISSING, got %v", gone)
 
-	// The token has its remedy, so `nova-swarm lint --rules` lists it.
+	// The token has its remedy, so `nova-worker lint --rules` lists it.
 	require.NotEmpty(t, CardBaseRemedies["donewhen-test-name"], "donewhen-test-name has no remedy in CardBaseRemedies")
 }
 

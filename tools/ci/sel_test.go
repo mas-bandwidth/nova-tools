@@ -216,7 +216,7 @@ func TestSelectPackagesVerbHelpIsTheVerbsHelp(t *testing.T) {
 func matrixRepoFake(t *testing.T, extra map[string]selReply) (*selFake, string) {
 	t.Helper()
 	answers := map[string]selReply{
-		selListTree: {out: selImports("cmd/a", "cmd/nova-swarm", "cmd/nova-sandbox", "internal/b", "internal/ci", "internal/docs")},
+		selListTree: {out: selImports("cmd/a", "cmd/nova-worker", "cmd/nova-sandbox", "internal/b", "internal/ci", "internal/docs")},
 	}
 	for k, v := range extra {
 		answers[k] = v
@@ -235,9 +235,9 @@ func TestTestMatrixPushDealsTheWholeTree(t *testing.T) {
 	if code != 0 || errb != "" {
 		t.Fatalf("exit %d, stderr %q\n%s", code, errb, out)
 	}
-	wantFunctional := `[{"name":"1/6 lin","packages":"./cmd/nova-swarm"},{"name":"2/6 lin","packages":"./internal/ci"},{"name":"3/6 lin","packages":"./cmd/a"},{"name":"4/6 lin","packages":"./internal/b"},{"name":"5/6 lin","packages":"./internal/docs"}]`
-	wantPackages := `[{"name":"1/8 lin","packages":"./cmd/nova-swarm","os":"linux","arch":"x64","group":"lin"},{"name":"2/8 lin","packages":"./internal/ci","os":"linux","arch":"x64","group":"lin"},{"name":"3/8 lin","packages":"./cmd/a","os":"linux","arch":"x64","group":"lin"},{"name":"4/8 lin","packages":"./internal/b","os":"linux","arch":"x64","group":"lin"},{"name":"5/8 lin","packages":"./internal/docs","os":"linux","arch":"x64","group":"lin"},` +
-		`{"name":"1/8 darwin-arm64","packages":"./cmd/nova-swarm","os":"macOS","arch":"ARM64","group":"mac"},{"name":"2/8 darwin-arm64","packages":"./internal/ci","os":"macOS","arch":"ARM64","group":"mac"},{"name":"3/8 darwin-arm64","packages":"./cmd/a","os":"macOS","arch":"ARM64","group":"mac"},{"name":"4/8 darwin-arm64","packages":"./cmd/nova-sandbox","os":"macOS","arch":"ARM64","group":"mac"},{"name":"5/8 darwin-arm64","packages":"./internal/b","os":"macOS","arch":"ARM64","group":"mac"},{"name":"6/8 darwin-arm64","packages":"./internal/docs","os":"macOS","arch":"ARM64","group":"mac"}]`
+	wantFunctional := `[{"name":"1/6 lin","packages":"./cmd/nova-worker"},{"name":"2/6 lin","packages":"./internal/ci"},{"name":"3/6 lin","packages":"./cmd/a"},{"name":"4/6 lin","packages":"./internal/b"},{"name":"5/6 lin","packages":"./internal/docs"}]`
+	wantPackages := `[{"name":"1/8 lin","packages":"./cmd/nova-worker","os":"linux","arch":"x64","group":"lin"},{"name":"2/8 lin","packages":"./internal/ci","os":"linux","arch":"x64","group":"lin"},{"name":"3/8 lin","packages":"./cmd/a","os":"linux","arch":"x64","group":"lin"},{"name":"4/8 lin","packages":"./internal/b","os":"linux","arch":"x64","group":"lin"},{"name":"5/8 lin","packages":"./internal/docs","os":"linux","arch":"x64","group":"lin"},` +
+		`{"name":"1/8 darwin-arm64","packages":"./cmd/nova-worker","os":"macOS","arch":"ARM64","group":"mac"},{"name":"2/8 darwin-arm64","packages":"./internal/ci","os":"macOS","arch":"ARM64","group":"mac"},{"name":"3/8 darwin-arm64","packages":"./cmd/a","os":"macOS","arch":"ARM64","group":"mac"},{"name":"4/8 darwin-arm64","packages":"./cmd/nova-sandbox","os":"macOS","arch":"ARM64","group":"mac"},{"name":"5/8 darwin-arm64","packages":"./internal/b","os":"macOS","arch":"ARM64","group":"mac"},{"name":"6/8 darwin-arm64","packages":"./internal/docs","os":"macOS","arch":"ARM64","group":"mac"}]`
 	if got := selRead(t, gh); got != "functional="+wantFunctional+"\npackages="+wantPackages+"\n" {
 		t.Errorf("GITHUB_OUTPUT =\n%s\nwant functional and packages:\n%s\n%s", got, wantFunctional, wantPackages)
 	}
@@ -256,11 +256,11 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 	f, repo := matrixRepoFake(t, map[string]selReply{
 		"git cat-file -e basesha^{commit}":  {},
 		"git diff --name-only basesha HEAD": {out: "cmd/a/a.go\n"},
-		selListDeps:                         {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-swarm fmt\n" + selMod + "/internal/ci fmt\n" + selMod + "/internal/docs fmt\n"},
+		selListDeps:                         {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-worker fmt\n" + selMod + "/internal/ci fmt\n" + selMod + "/internal/docs fmt\n"},
 		"go list -m":                        {out: selMod + "\n"},
-		"GOOS=linux go list -f " + selFiles + " ./cmd/... ./internal/...":                            {out: selMod + "/cmd/a [a.go] [] [] []\n" + selMod + "/cmd/nova-swarm [b.go] [] [] []\n"},
-		"GOOS=darwin go list -f " + selFiles + " ./cmd/... ./internal/...":                           {out: selMod + "/cmd/a [a.go a_darwin.go] [] [] []\n" + selMod + "/cmd/nova-swarm [b.go] [] [] []\n"},
-		"GOOS=darwin go list -test -f {{.ImportPath}} {{join .Deps \" \"}} ./cmd/... ./internal/...": {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-swarm fmt\n"},
+		"GOOS=linux go list -f " + selFiles + " ./cmd/... ./internal/...":                            {out: selMod + "/cmd/a [a.go] [] [] []\n" + selMod + "/cmd/nova-worker [b.go] [] [] []\n"},
+		"GOOS=darwin go list -f " + selFiles + " ./cmd/... ./internal/...":                           {out: selMod + "/cmd/a [a.go a_darwin.go] [] [] []\n" + selMod + "/cmd/nova-worker [b.go] [] [] []\n"},
+		"GOOS=darwin go list -test -f {{.ImportPath}} {{join .Deps \" \"}} ./cmd/... ./internal/...": {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-worker fmt\n"},
 	})
 	gh := filepath.Join(t.TempDir(), "output")
 	code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, f.host()) }, repo,
@@ -294,7 +294,7 @@ func TestTestMatrixWithTheDarwinGateOffIsLinuxOnly(t *testing.T) {
 		map[string]string{"GITHUB_OUTPUT": gh}, "--event", "push", "--target-branch", "sprint/foundation", "--linux-group", "lin", "--macos-group", "mac")
 	require.Equal(t, 0, code, "stderr %q\n%s", errb, out)
 	assert.Contains(t, out, "darwin shards: false (push -> sprint/foundation; on for main dev)\n")
-	assert.Contains(t, out, "darwin shards off: 5 package(s) on the Linux shards: ./cmd/a ./cmd/nova-swarm ./internal/b ./internal/ci ./internal/docs\n")
+	assert.Contains(t, out, "darwin shards off: 5 package(s) on the Linux shards: ./cmd/a ./cmd/nova-worker ./internal/b ./internal/ci ./internal/docs\n")
 	got := selRead(t, gh)
 	assert.NotContains(t, got, "macOS")
 	assert.NotContains(t, got, "nova-sandbox")
@@ -399,19 +399,19 @@ func TestTestMatrixRefusals(t *testing.T) {
 
 func TestDealVerbWritesThisShardsLine(t *testing.T) {
 	t.Parallel()
-	f := newSelFake(map[string]selReply{"go list ./...": {out: selImports("cmd/a", "cmd/nova-swarm", "cmd/gone", "internal/b", "cmd/c", "internal/d")}})
+	f := newSelFake(map[string]selReply{"go list ./...": {out: selImports("cmd/a", "cmd/nova-worker", "cmd/gone", "internal/b", "cmd/c", "internal/d")}})
 	gh := filepath.Join(t.TempDir(), "env")
 	repo := selRepo(t)
 	var all []string
 	for shard := 1; shard <= 2; shard++ {
 		code, out, errb := selRun(func(e env, a []string) int { return dealVerb(e, a, f.host()) }, repo,
-			map[string]string{"GITHUB_ENV": gh}, "--shards", "2", "--shard", fmt.Sprint(shard), "--heavy", "cmd/nova-swarm")
+			map[string]string{"GITHUB_ENV": gh}, "--shards", "2", "--shard", fmt.Sprint(shard), "--heavy", "cmd/nova-worker")
 		if code != 0 || errb != "" || !strings.HasSuffix(out, " \n") {
 			t.Fatalf("shard %d: exit %d, stdout %q, stderr %q", shard, code, out, errb)
 		}
 		all = append(all, strings.Fields(out)...)
 	}
-	if got := selRead(t, gh); got != "HOSTED_PKGS="+selMod+"/cmd/nova-swarm "+selMod+"/internal/b "+selMod+"/internal/d \nHOSTED_PKGS="+selMod+"/cmd/a "+selMod+"/cmd/c \n" {
+	if got := selRead(t, gh); got != "HOSTED_PKGS="+selMod+"/cmd/nova-worker "+selMod+"/internal/b "+selMod+"/internal/d \nHOSTED_PKGS="+selMod+"/cmd/a "+selMod+"/cmd/c \n" {
 		t.Errorf("GITHUB_ENV = %q", got)
 	}
 	if len(all) != 5 {

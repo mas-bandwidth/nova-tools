@@ -40,7 +40,7 @@ func git(t *testing.T, dir string, args ...string) string {
 func newRig(t *testing.T, family, kind string) *rig {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-SWARM.md)")
+		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-WORKER.md)")
 	}
 	root := t.TempDir()
 	r := &rig{t: t, origin: filepath.Join(root, "origin.git"), job: filepath.Join(root, "slot", "jobs", "c1"), shims: filepath.Join(root, "slot", "shim")}

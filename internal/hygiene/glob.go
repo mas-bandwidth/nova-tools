@@ -74,7 +74,7 @@ func boundsNothing(p string) bool {
 // segment, as path.Match has it; `**` spans any number of segments, which path.Match
 // does not do at all and which is why this is written out rather than delegated.
 //
-// The S7 wall (SPEC-SWARM the harness wall) uses this same matcher: a card-scope
+// The S7 wall (SPEC-WORKER the harness wall) uses this same matcher: a card-scope
 // read is admitted when it matches a declared write PATHS glob or a
 // dispatcher-approved contextual-read glob, and a second matcher would be a
 // second definition.

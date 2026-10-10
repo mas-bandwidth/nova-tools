@@ -5,7 +5,7 @@ package swarm
 // The named tests are TestUsagecardCover*, so `go test -run TestUsagecardCover` selects
 // exactly this file. Each covers one listed function's unit-tier paths and the refusals it
 // answers without a subprocess. THE TWO THAT NEED ONE: queryCardMessages runs the one
-// statement through `sqlite3` (SPEC-SWARM rule 13, usagecard.go), so every path below its
+// statement through `sqlite3` (SPEC-WORKER rule 13, usagecard.go), so every path below its
 // LookPath needs a subprocess or a live store, and the unit tier starts neither; the same
 // holds for ReadCardUsageAfter's main path past that LookPath. Its no-store and
 // is-a-directory refusals answer before any program runs, and they are covered here.

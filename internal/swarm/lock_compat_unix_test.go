@@ -12,11 +12,11 @@ import (
 )
 
 // The compatibility witnesses for the unix slot store lock across an upgrade. Before
-// internal/filelock, nova-swarm took a bare flock(LOCK_EX|LOCK_NB) on the lock file it
+// internal/filelock, nova-worker took a bare flock(LOCK_EX|LOCK_NB) on the lock file it
 // opened O_RDWR|O_CREATE 0644, and wrote nothing into it. An old binary is staged here as
 // exactly that, on a second descriptor of the same file.
 
-// An old nova-swarm holding the lock keeps the new take out, and the new take succeeds
+// An old nova-worker holding the lock keeps the new take out, and the new take succeeds
 // once the old one lets go.
 func TestAnOldSwarmsLockKeepsTheNewOneOut(t *testing.T) {
 	t.Parallel()
@@ -27,16 +27,16 @@ func TestAnOldSwarmsLockKeepsTheNewOneOut(t *testing.T) {
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "stage the old binary's flock")
 
 	_, err = takeFileLock(path, 0)
-	require.Error(t, err, "the new lock was taken while an old nova-swarm held the same file")
-	require.Contains(t, err.Error(), "another nova-swarm holds")
+	require.Error(t, err, "the new lock was taken while an old nova-worker held the same file")
+	require.Contains(t, err.Error(), "another nova-worker holds")
 
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_UN))
 	release, err := takeFileLock(path, 0)
-	require.NoError(t, err, "the new lock could not be taken once the old nova-swarm let go: %v", err)
+	require.NoError(t, err, "the new lock could not be taken once the old nova-worker let go: %v", err)
 	release()
 }
 
-// The new take holding the lock keeps an old nova-swarm out, and the old one gets it once
+// The new take holding the lock keeps an old nova-worker out, and the old one gets it once
 // the new one releases.
 func TestTheNewSwarmLockKeepsAnOldOneOut(t *testing.T) {
 	t.Parallel()
@@ -47,10 +47,10 @@ func TestTheNewSwarmLockKeepsAnOldOneOut(t *testing.T) {
 	old, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	require.NoError(t, err)
 	defer old.Close()
-	require.Error(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "an old nova-swarm took the lock while the new one held it")
+	require.Error(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "an old nova-worker took the lock while the new one held it")
 
 	release()
-	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "an old nova-swarm could not take the lock after the new one released it")
+	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "an old nova-worker could not take the lock after the new one released it")
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_UN))
 }
 
