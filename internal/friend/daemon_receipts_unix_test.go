@@ -29,12 +29,17 @@ func TestReadIsStampedWhileTheDeliveryCommandRuns(t *testing.T) {
 	r := newRig(t)
 	r.d.Deliver = runningDeliver{r: r, started: started, fifo: fifo}
 	r.hold = make(chan struct{})
+	// The fake clock moves a second a beat; the delivery command is a real
+	// subprocess that needs real time to start, so the beat budget is wide
+	// and the silence watch is pushed past it: the turn must still be
+	// running, never stopped, when read is stamped.
+	r.d.SilentStop = 24 * time.Hour
 	r.releaseAt = 1 << 20 // Pause returns while the command is still blocked
 	m := r.send(t, "ada", "running", "hold")
 	var sawRead atomic.Bool
 	var early atomic.Bool
 	var released atomic.Bool
-	for beat := 3; beat <= 22; beat++ {
+	for beat := 3; beat <= 20000; beat++ {
 		r.at[beat] = func() {
 			if released.Load() {
 				return
@@ -62,7 +67,7 @@ func TestReadIsStampedWhileTheDeliveryCommandRuns(t *testing.T) {
 			}
 		}
 	}
-	r.run(t, 24)
+	r.run(t, 20002)
 	require.False(t, early.Load(), "read is stamped before Deliver returns")
 	require.True(t, sawRead.Load(), "read stamped while the delivery command still ran")
 	require.Len(t, r.delivered, 1)
