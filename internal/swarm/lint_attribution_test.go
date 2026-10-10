@@ -15,7 +15,7 @@ func TestLintRefusesABriefThatHidesTheModel(t *testing.T) {
 	fullBrief := func(attrLine string) string {
 		return `RESULT: c sha=0123456789ab tier: pro
 
-REPO: https://github.com/test/test.git
+REPO: https://repo.invalid/test/test.git
 BASE: sprint/test
 
 PATHS: .
