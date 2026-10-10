@@ -252,6 +252,24 @@ const (
 // LedgerPath is the shrink-only ledger, found from this source file.
 func LedgerPath() string {
 	_, file, _, _ := runtime.Caller(0)
+	// When running with go test, the file path may be a module path.
+	if strings.HasPrefix(file, "github.com/") {
+		// Find the module root by looking for go.mod
+		wd, _ := os.Getwd()
+		dir := wd
+		for {
+			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+				return filepath.Join(dir, "internal", "ci", "testdata", "help-complete-ledger.txt")
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+		// Fallback to relative path from module path
+		file = strings.TrimPrefix(file, "github.com/")
+	}
 	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
 }
 
