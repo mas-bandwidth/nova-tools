@@ -290,3 +290,27 @@ The doctor check requires the loop record's dashboard to answer on loopback, and
 logo routes detect raster content from its bytes before the file name. Tests:
 `TestDashboardCheck` (internal/doctor) and
 `TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).
+
+### dep-launchd-units-bc.w6: the service units
+
+Every long-running nova loop is a nova-config loop record installed as a unit: a launchd
+plist (`com.nova.loop.<name>.plist`) on darwin or a systemd user unit
+(`nova-loop-<name>.service`, with its timer for a loop that runs every n seconds) on
+linux, rendered from `fleet/templates` by `fleet/loops.yml` from the records the loop
+kind holds. Who needs it: the coordinator's machine and every bench that runs a loop.
+
+`nova-up --local` sets up one machine and needs no loop records, so it installs its one
+loop, `redis-local`, itself in the `redis` step and reads no `nova-config`. A person on a
+fleet machine applies the records and installs their units:
+
+```sh
+nova-config apply --kind loop --actor <name>        # reads the loop records from the store
+ansible-playbook -i ./nova-inventory fleet/loops.yml   # one unit per record
+```
+
+The `units` doctor check (`internal/doctor/check_units.go`) reads this machine's loop
+records (`nova-config inventory`) and the units in the service manager's directory
+(`~/Library/LaunchAgents`, or `~/.config/systemd/user`), and names a record with no unit,
+a unit with no record (a hand plist), and a unit whose command differs from its record,
+each with the apply-and-play fix line above. It is fleet-scoped: `nova-doctor --local`
+skips it, and a machine whose sprint store is its own twin (`mem:`) is `ok` with that said.
