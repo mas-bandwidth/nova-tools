@@ -1047,35 +1047,40 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			}
 			return "", a.readFailed("where", err, stderr), false
 		}
-		if r.c.json && r.cards {
-			d, err := st.Dealt(ctx)
+		if r.c.json && (r.cards || r.rows) {
+			// the work table once: the rows' places and the dealt cards' primaries, whose needs
+			// and hold the cards carry (docs/SPEC-SPRINT.md section 11)
+			work, err := st.Load(ctx, []string{sprint.Work}, nil)
 			if err != nil {
 				return "", a.readFailed("where", err, stderr), false
 			}
-			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
-			v.Merging = mergingView(d.Merging)
-			v.MergeRow.OldestMergingMin = oldestMerging(v.At, d.Merging)
-			// every hold in force, with its reason (hold, docs/SPEC-SPRINT.md section 11): the
-			// status cells read held, and this says why; read for the dashboard's form only, so
-			// where --json keeps its one read of records
-			if v.Holds, err = st.Holds(ctx); err != nil {
-				return "", a.readFailed("where", err, stderr), false
+			if r.cards {
+				d, err := st.Dealt(ctx)
+				if err != nil {
+					return "", a.readFailed("where", err, stderr), false
+				}
+				d.Work = work.Work
+				v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
+				v.Merging = mergingView(d.Merging)
+				v.MergeRow.OldestMergingMin = oldestMerging(v.At, d.Merging)
+				// every hold in force, with its reason (hold, docs/SPEC-SPRINT.md section 11): the
+				// status cells read held, and this says why; read for the dashboard's form only, so
+				// where --json keeps its one read of records
+				if v.Holds, err = st.Holds(ctx); err != nil {
+					return "", a.readFailed("where", err, stderr), false
+				}
+				if v.Lanes, err = st.LaneRows(ctx); err != nil {
+					return "", a.readFailed("where", err, stderr), false
+				}
 			}
-			if v.Lanes, err = st.LaneRows(ctx); err != nil {
-				return "", a.readFailed("where", err, stderr), false
+			if r.rows {
+				var gone *archivedView
+				if !r.archived {
+					gone = v.Archived
+				}
+				v.Rows = rowsView(work, gone)
+				v.MergeRow.OldestMergingMin = oldestMerging(v.At, work.Work.Column(string(sprint.Merging)))
 			}
-		}
-		if r.c.json && r.rows {
-			s, err := st.Load(ctx, []string{sprint.Work}, nil)
-			if err != nil {
-				return "", a.readFailed("where", err, stderr), false
-			}
-			var gone *archivedView
-			if !r.archived {
-				gone = v.Archived
-			}
-			v.Rows = rowsView(s, gone)
-			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)
@@ -2225,37 +2230,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if *why {
-		t := &sprint.Table{Name: sprint.Work}
-		for _, c := range v.Column {
-			t.Put(c)
-		}
-		snap := &sprint.Snapshot{Work: t}
-		view := sprint.ClassifyWaiting(snap, v.Primary.Row)
-		var found *sprint.WaitingCard
-		for _, wc := range view.Cards {
-			if wc.ID == id {
-				found = &wc
-				break
-			}
-		}
-		if c.json {
-			if found != nil {
-				b, _ := json.Marshal(found)
-				fmt.Fprintln(stdout, string(b))
-			} else {
-				fmt.Fprintln(stdout, "{}")
-			}
-			return 0
-		}
-		if found != nil {
-			fmt.Fprintf(stdout, "WAITING %s stream=%s reason=%s head=%s length=%d\n", oneline.Escape(found.ID), oneline.Escape(found.Stream), oneline.Escape(found.Reason), oneline.Escape(found.Head), found.Length)
-		} else {
-			fmt.Fprintf(stdout, "CARD %s is not waiting (column=%s)\n", oneline.Escape(id), v.Primary.Col)
-		}
-		return 0
-	}
-	if *why {
-		t := &sprint.Table{Name: sprint.Work}
+		t := sprint.NewTable(sprint.Work)
 		for _, c := range v.Column {
 			t.Put(c)
 		}
