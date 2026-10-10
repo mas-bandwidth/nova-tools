@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -631,7 +632,24 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 		line += fmt.Sprintf(" record=%s server=%s", oneline.Field(orDashStr(s.Record, s.Holder)), oneline.Field(orDashStr(s.Server, "-")))
 	}
 	facts := map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation, "record": s.Record, "server": s.Server}
+	now := time.Now()
+	if st.Now != nil {
+		now = st.Now()
+	}
+	friends, err := seatFriendLines(ctx, st, now)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	if friends.text != "" {
+		facts["friends"] = friends.rows
+		if len(friends.alarms) > 0 {
+			facts["alarms"] = friends.alarms
+		}
+	}
 	if s.Drift == "" {
+		if friends.text != "" {
+			line += "\n" + friends.text
+		}
 		sayOK(stdout, c.json, "seat", line, facts)
 		return 0
 	}
@@ -641,8 +659,92 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, string(b))
 		return 1
 	}
-	fmt.Fprintln(stdout, line+" DRIFT "+oneline.Escape(s.Drift))
+	line += " DRIFT " + oneline.Escape(s.Drift)
+	if friends.text != "" {
+		line += "\n" + friends.text
+	}
+	fmt.Fprintln(stdout, line)
 	return 1
+}
+
+// seatFriendReport is one friend's daemon as nova-sprint seat prints it
+// (docs/SPEC-SPRINT.md, daemon-supervised-r-b.w7).
+type seatFriendReport struct {
+	text   string
+	rows   []map[string]any
+	alarms []string
+}
+
+// seatFriendLines is one FRIEND line per friend of the roster, and one ALARM
+// line per condition: her daemon stamp differs from the newest stamp any
+// friend beats, or her last beat is older than the beat's down bound
+// (Beat.Alive). The newest stamp is the one on the most recent beat, never the
+// greatest stamp on the roster: a friend who beats last runs the newest binary,
+// whatever its stamp sorts as (a reader's finding, daemon-supervised-r-b.w7).
+// An empty stamp is unknown, not a drift, so a friend whose beat carries none
+// is never alarmed for one, and neither is anyone while the most recent beat
+// carries none. No friends: empty, so the seat line stays the one line it was.
+func seatFriendLines(ctx context.Context, st *store.Store, now time.Time) (seatFriendReport, error) {
+	beats, err := st.FriendBeats(ctx)
+	if err != nil || len(beats) == 0 {
+		return seatFriendReport{}, err
+	}
+	names := slices.Sorted(maps.Keys(beats))
+	newest := ""
+	var newestAt time.Time
+	for _, name := range names {
+		beat := beats[name]
+		if beat.Beaten() && (newestAt.IsZero() || beat.At.After(newestAt)) {
+			newestAt, newest = beat.At, beatDaemonVersion(beat)
+		}
+	}
+	bound := (sprint.MissedBeatsDown * sprint.BeatDeadline).String()
+	var b strings.Builder
+	var rows []map[string]any
+	var alarms []string
+	for _, name := range names {
+		beat := beats[name]
+		version := beatDaemonVersion(beat)
+		age := "-"
+		if beat.Beaten() {
+			age = now.Sub(beat.At).Round(time.Second).String()
+		}
+		shown := "-"
+		if version != "" {
+			shown = oneline.Field(version)
+		}
+		fmt.Fprintf(&b, "FRIEND friend=%s daemon_version=%s last_beat_age=%s\n", oneline.Field(name), shown, age)
+		row := map[string]any{"friend": name, "daemon_version": version, "last_beat_age": age}
+		if version != "" && newest != "" && version != newest {
+			line := fmt.Sprintf("ALARM friend=%s version drift: daemon_version=%s newest=%s", oneline.Field(name), shown, oneline.Field(newest))
+			fmt.Fprintln(&b, line)
+			alarms = append(alarms, line)
+			row["drift"] = true
+		}
+		if !beat.Alive(now) {
+			why := "no beat"
+			if beat.Beaten() {
+				why = "last beat older than " + bound
+			}
+			line := fmt.Sprintf("ALARM friend=%s daemon down: %s", oneline.Field(name), why)
+			fmt.Fprintln(&b, line)
+			alarms = append(alarms, line)
+			row["down"] = true
+		}
+		rows = append(rows, row)
+	}
+	text := strings.TrimSuffix(b.String(), "\n")
+	return seatFriendReport{text: text, rows: rows, alarms: alarms}, nil
+}
+
+// beatDaemonVersion is the build stamp a friend's last beat carried
+// (sprint.FriendReport.DaemonVersion, friend beat --daemon-version); empty when
+// the beat carried none (her daemon never said, or she never beat).
+func beatDaemonVersion(beat sprint.Beat) string {
+	if beat.Friend == nil {
+		return ""
+	}
+	return beat.Friend.DaemonVersion
 }
 
 // seatRepair is seat --repair: the coordinator key written from the seat's

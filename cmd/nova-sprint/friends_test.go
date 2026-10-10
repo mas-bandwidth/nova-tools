@@ -485,6 +485,12 @@ func TestAFriendBeatsThroughTheServer(t *testing.T) {
 		assert.Equal(t, 2, res.Code, name)
 		assert.Contains(t, res.Stderr, "nothing was changed", name)
 	}
+	res = r.one("friend", "beat", "amy", "--daemon-version", "v1.2.0")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	assert.Contains(t, res.Stdout, "daemon_version=v1.2.0")
+	res = r.one("friend", "beat", "amy", "--daemon-version", "v1\nv2")
+	assert.Equal(t, 2, res.Code, res.Stderr)
+	assert.Contains(t, res.Stderr, "--daemon-version")
 }
 
 // A friend's beat answers her row as friend sync last wrote it, her delivery

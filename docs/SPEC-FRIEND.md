@@ -1311,6 +1311,43 @@ beat loops are retired, with no replacement"). The beat itself proves the daemon
 nothing more: it is recorded and shown, and it never makes her up (below); the
 session's answer it carries (`--pong`) is her session's evidence.
 
+### daemon-supervised-r-b.w7 — the installed agent is pinned and says which binary it runs (internal/friend/launchd.go)
+
+Every friend daemon runs under launchd by `nova-friend install`, and `install`
+refuses a plist that would not keep it alive (`CheckPlist`): RunAtLoad true,
+KeepAlive true, ThrottleInterval 5, and the program and the binary before its
+verb `run` by absolute path, every problem named at once, nothing written and
+no launchctl run. The daemon writes its build stamp (the tool's Stamp,
+`buildinfo.Version`) and the path of its binary into `status.json`
+(`daemon_version`, `binary`). `nova-friend status` prints `last_beat_age=`,
+`daemon_version=` and `binary=` after `last_beat=`. `nova-friend status --all`
+lists every friend daemon agent installed for this login
+(`~/Library/LaunchAgents/com.nova.friend-<name>.plist` whose program runs the
+daemon; the wake ping's agent is not a daemon), one `AGENT` line each:
+`name= daemon=<up|down|none> daemon_version= last_beat= last_beat_age=`, up
+while its status file is under DaemonStale old, none when it has no status
+file.
+
+The daemon's beat sends `nova-sprint friend beat <friend> --daemon-version <stamp>`.
+The sprint keeps the stamp on the beat's report
+(`sprint.FriendReport.DaemonVersion`, the `daemon_version` key of
+`friend-beat:<friend>`), and `nova-sprint seat` reads it for its `FRIEND` lines
+and drift alarms (docs/SPEC-SPRINT.md, daemon-supervised-r-b.w8).
+
+Check: `TestInstalledAgentKeepsAliveAndStatusSaysVersion` (internal/friend),
+`TestStatusSaysTheDaemonVersionAndStatusAllListsEveryAgent` (cmd/nova-friend).
+
+### daemon-supervised-r-b.w8 — the daemon's stamp rides on the friend row (internal/sprint/presence.go, internal/sprint/store/friends.go)
+
+`sprint.FriendReport.DaemonVersion` (friend beat --daemon-version) is copied onto
+the friend row (`store.FriendRow.DaemonVersion`) beside `load` by the same read
+that copies the load (`FriendRows`, internal/sprint/store/friends.go), so
+`where --json`'s friends carry `daemon_version` there. `report.window` stays the
+subscription window use and is not this stamp (subscription-pacing-is-a-setting.w1).
+
+Check: `TestSeatSaysEachDaemonsVersionAndAlarmsOnDriftAndADeadDaemon` (cmd/nova-sprint).
+
+
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things

@@ -291,10 +291,39 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 envelope=0 envelope_bytes=0 session=- mode=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- last_beat_age=- daemon_version=- binary=- delivered=2 envelope=0 envelope_bytes=0 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
+}
+
+// status says the daemon's version and its last beat's age, and status --all lists every
+// friend daemon agent installed for this login, the wake ping's agent not among them
+// (docs/SPEC-FRIEND.md, daemon-supervised-r-b.w7).
+func TestStatusSaysTheDaemonVersionAndStatusAllListsEveryAgent(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	cli.Do(t, "status", "--all").Exit(0).Out("STATUS OK agents=0", "NOTE no friend daemon agent is installed")
+	for _, a := range []friend.Agent{
+		{Friend: "bob", Harness: "opencode", Dir: "/w/bob", Width: 4, Binary: "/opt/nova/bin/nova-friend", Home: r.home},
+		{Friend: "cat", Harness: "claude", Dir: "/w/cat", Width: 2, Binary: "/opt/nova/bin/nova-friend", Home: r.home, StateDir: filepath.Join(r.home, "cat-state")},
+		{Friend: "dan", Harness: "codex", Dir: "/w/dan", Width: 1, Binary: "/opt/nova/bin/nova-friend", Home: r.home},
+		{Friend: "wake-ping-ada", Binary: "/opt/nova/bin/nova-friend", Home: r.home, Command: []string{"ping-install", "--as", "ada"}},
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(a.PlistPath()), 0o755))
+		require.NoError(t, os.WriteFile(a.PlistPath(), []byte(a.Plist()), 0o644))
+	}
+	require.NoError(t, friend.WriteStatus(friend.DefaultStateDir(r.home, "bob"), friend.Status{Friend: "bob", Harness: "opencode", At: start, DaemonVersion: "v1.2.0", Binary: "/opt/nova/bin/nova-friend", LastBeat: start.Add(-3 * time.Second)}))
+	require.NoError(t, friend.WriteStatus(filepath.Join(r.home, "cat-state"), friend.Status{Friend: "cat", Harness: "claude", At: start.Add(-time.Hour), DaemonVersion: "v1.1.9", LastBeat: start.Add(-time.Hour)}))
+	r.now = start // the rig's clock reads one second on: start+1s
+	cli.Do(t, "status", "--as", "bob", "--dir", "/w/bob").Exit(0).Out("last_beat=2026-10-04T02:59:57Z last_beat_age=4s daemon_version=v1.2.0 binary=/opt/nova/bin/nova-friend ")
+	r.now = start
+	cli.Do(t, "status", "--all").Exit(0).Out("STATUS OK agents=3",
+		"AGENT name=bob daemon=up daemon_version=v1.2.0 last_beat=2026-10-04T02:59:57Z last_beat_age=4s",
+		"AGENT name=cat daemon=down daemon_version=v1.1.9 last_beat=2026-10-04T02:00:00Z last_beat_age=1h0m1s",
+		"AGENT name=dan daemon=none daemon_version=- last_beat=- last_beat_age=-").NotOut("wake-ping")
+	cli.Do(t, "status").Exit(2).Err("--as is required", "--dir is required")
 }
 
 func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testing.T) {

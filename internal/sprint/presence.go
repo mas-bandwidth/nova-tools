@@ -130,6 +130,11 @@ type FriendReport struct {
 	Build   string    `json:"build,omitempty"`
 	Started time.Time `json:"started,omitzero"`
 	Present time.Time `json:"present,omitzero"`
+	// DaemonVersion is the daemon's build stamp (the tool's Stamp), as its beat carried it
+	// (friend beat --daemon-version): which binary each daemon runs, read by nova-sprint
+	// seat for version drift among friends (docs/SPEC-SPRINT.md, daemon-supervised-r-b.w8).
+	// Empty when the beat carried none.
+	DaemonVersion string `json:"daemon_version,omitempty"`
 }
 
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
