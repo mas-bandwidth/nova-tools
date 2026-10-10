@@ -13,7 +13,10 @@ import (
 
 func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
 	t.Parallel()
-	dir, git := fixtureCheckout(t, map[string]string{"base.txt": "base\n"})
+	dir, git := fixtureCheckout(t, map[string]string{
+		"base.txt":               "base\n",
+		"internal/ci/ci_test.go": "package ci\nimport \"testing\"\nfunc TestCI(t *testing.T) {}\n",
+	})
 	base := git("rev-parse", "HEAD")
 	var commits []string
 	for _, change := range []struct{ file, body string }{
