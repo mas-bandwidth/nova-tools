@@ -259,10 +259,8 @@ func TestTakeArgvs(t *testing.T) {
 func TestABatchTakeIsNotSentWhenNoReadyCardCarriesAnEpoch(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
-		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
-		r, _ := laneRig(t, h, 0)
-		r.mode = ModeBatch
+		r := newRig(t)
+		r.passive = true
 		srv := &takeServer{running: true, col: map[string]string{"c1~15": "ready"}}
 		r.d.Take = srv.take
 		r.d.Held = func(context.Context) (Row, error) {
