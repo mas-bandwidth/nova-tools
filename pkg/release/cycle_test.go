@@ -71,7 +71,7 @@ func cycleRig(t *testing.T, plays ...string) (args []string, deps Deps, play *fa
 	now := time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC)
 	play = &fakeAnsible{answers: plays}
 	deps = Deps{Ansible: play, Now: func() time.Time { now = now.Add(time.Minute); return now }}
-	args = []string{"cycle", "--version", "v1.1.0-dev.c2", "--source", source, "--out", t.TempDir(),
+	args = []string{"cycle", "--version", "v1.1.0-dev.c2", "--source", source, "--sprint-release", "/srv/nova-sprint-v1.2.3", "--out", t.TempDir(),
 		"--inventory", inventory, "--benches", "batman,vision", "--reason", "the member fix",
 		"--receipts", t.TempDir(), "--ansible", "/usr/bin/ansible-playbook"}
 	return args, deps, play
@@ -88,6 +88,7 @@ func TestCycleDryRunChecksAndInstallsNothing(t *testing.T) {
 	argv := play.runs[0]
 	assert.Equal(t, "--check", argv[len(argv)-1])
 	assert.Equal(t, "batman,vision,localhost,store_deployer", argv[slices.Index(argv, "--limit")+1])
+	assert.Contains(t, argv, "nova_sprint_release=/srv/nova-sprint-v1.2.3", "the play is not told the nova-sprint release")
 	assert.Contains(t, argv, "nova_version=v1.1.0-dev.c2")
 	var build map[string][]string
 	for _, a := range argv {

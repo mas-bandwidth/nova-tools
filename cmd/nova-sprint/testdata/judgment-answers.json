@@ -1,5 +1,0 @@
-{
-  "verb": {"choice": "rework", "p": {"rework": 0.91, "drop": 0.05, "wait": 0.04}},
-  "fix": {"choice": "own", "p": {"own": 0.88, "retry": 0.12}},
-  "reason": {"choice": "cannot-be-done", "p": {"cannot-be-done": 0.6, "already-done": 0.4}}
-}

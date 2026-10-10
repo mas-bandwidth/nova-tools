@@ -20,11 +20,11 @@ import (
 // --receipts, and pkg/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--waive-ci "<who, when>"] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--sprint-release <dir>] [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
 nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
-nova-update release cycle --version <v> --source <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
+nova-update release cycle --version <v> --source <dir> --sprint-release <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
 
 // CutNote is the gate in front of a tag, said where a person will meet it.
 // It is a var rather than a const because it names the list, and the list has
@@ -118,6 +118,11 @@ type options struct {
 	// runs it) or "report", which prints the open edges and builds.
 	gate        string
 	incremental bool
+	// sprintRelease is build's and cycle's --sprint-release: a downloaded
+	// nova-sprint release whose tools (nova-sprint, nova-card
+	// and nova-work, in their own repository since v1.2.3) ship in the same
+	// release, verified and never compiled here.
+	sprintRelease string
 	// cycle's own: the inventory, the benches, the ansible-playbook binary.
 	inventory, benches, ansible string
 	platforms                   platformList
@@ -270,6 +275,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	case "build":
 		f.StringVar(&o.out, "out", "", "the artifact root the release is written under, as <out>/<version>/<goos-goarch>/")
 		f.StringVar(&o.source, "source", "", "the checkout to build")
+		f.StringVar(&o.sprintRelease, "sprint-release", "", SprintReleaseFlag)
 		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
 		addDogfoodFlags(f, &o, "<--source>/docs/CLI.md")
 		f.StringVar(&o.gate, "gate", "refuse", "refuse: an open dogfood edge refuses the build; report: the edges are printed and the build goes on, --reason <why> required (a machinery install during a sprint; cut always refuses)")
@@ -279,6 +285,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// A cycle is a build and two plays: ten minutes is a cold build alone.
 		o.timeout = 30 * time.Minute
 		f.StringVar(&o.source, "source", "", "the nova-tools checkout to build; its fleet/tools.yml is the play")
+		f.StringVar(&o.sprintRelease, "sprint-release", "", SprintReleaseFlag+" (the play's nova_sprint_release)")
 		f.StringVar(&o.out, "out", "", "the artifact root the build writes under (the play's nova_release_out)")
 		f.StringVar(&o.inventory, "inventory", "", "the inventory the play reads, the nova-inventory script")
 		f.StringVar(&o.benches, "benches", "", "the machines to install on, comma-separated, as the inventory names them")
@@ -286,7 +293,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory (default: ~/"+DefaultReceiptsDir+" when it exists)")
 		f.StringVar(&o.ansible, "ansible", "", "the ansible-playbook binary")
 		f.BoolVar(&o.dryRun, "dry-run", false, "run the play with --check only: build nothing, install nothing")
-		required = []string{"version", "source", "out", "inventory", "benches", "reason", "ansible"}
+		required = []string{"version", "source", "sprint-release", "out", "inventory", "benches", "reason", "ansible"}
 	case "install":
 		f.StringVar(&o.from, "from", "", "the artifact root a release build wrote (its --out)")
 		f.StringVar(&o.bin, "bin", "", "the directory the binaries are installed into")

@@ -95,14 +95,12 @@ github.com/mas-bandwidth/nova-tools/cmd/nova-cairn	-	2.1
 github.com/mas-bandwidth/nova-tools/pkg/release	-	2.0
 github.com/mas-bandwidth/nova-tools/cmd/nova-check	-	1.8
 github.com/mas-bandwidth/nova-tools/internal/cairn	-	1.5
-github.com/mas-bandwidth/nova-tools/cmd/nova-work	-	1.4
 github.com/mas-bandwidth/nova-tools/cmd/nova-self-talk	-	1.3
 github.com/mas-bandwidth/nova-tools/cmd/nova-memory	-	1.2
 github.com/mas-bandwidth/nova-tools/internal/check	-	1.1
 github.com/mas-bandwidth/nova-tools/pkg/dogfood	-	1.1
 github.com/mas-bandwidth/nova-tools/cmd/nova-decide	-	1.0
 github.com/mas-bandwidth/nova-tools/cmd/nova-post	-	1.0
-github.com/mas-bandwidth/nova-tools/internal/worklang	-	0.9
 github.com/mas-bandwidth/nova-tools/internal/docs	-	0.8
 github.com/mas-bandwidth/nova-tools/pkg/safepath	-	0.8
 github.com/mas-bandwidth/nova-tools/pkg/sandbox	-	0.8

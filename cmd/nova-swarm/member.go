@@ -674,7 +674,7 @@ func childCard(p member.Packet) (string, error) {
 // route is what one launch runs on: the packet's route (the card's model, budget and
 // deadline, as the deal or the ask drew them), each part it leaves empty from the
 // member's override; a launch with no model, budget or deadline from either is
-// refused. A read's route is drawn from the reader tier (internal/sprint/route.go,
+// refused. A read's route is drawn from the reader tier (nova-sprint's
 // readRouteOf), so a reader needs no --model; a reader started with --model,
 // --tokens or --deadline runs its reads on what it names over the read's route.
 func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline time.Duration, err error) {

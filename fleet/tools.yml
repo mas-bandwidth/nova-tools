@@ -1,10 +1,14 @@
-# tools.yml: the build nova_version of the nova-tools checkout nova_source, built
-# once per platform the fleet runs on, in ~/.local/bin on every machine, the
+# tools.yml: the build nova_version of the nova-tools checkout nova_source, with
+# nova-sprint, nova-card and nova-work taken from mas-bandwidth/nova-sprint's own
+# release, downloaded into nova_sprint_release (`gh release download <tag> -R
+# mas-bandwidth/nova-sprint -D <dir>`; the split, v1.2.3: verified against its
+# checksums, never compiled here; one SHA256SUMS per platform over both
+# repositories' tools), built once per platform the fleet runs on, in ~/.local/bin on every machine, the
 # machine's nova_build fact (group_vars nova_build_file) set to it, and the
 # function library that build embeds on the store.
 #
-#   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> --check --diff | cat
-#   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> | cat
+#   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> -e nova_sprint_release=<nova-sprint release dir> --check --diff | cat
+#   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> -e nova_sprint_release=<nova-sprint release dir> | cat
 #
 # The build is one `nova-update release build` on the machine running the play,
 # every platform in one call; each machine installs its platform's directory
@@ -49,8 +53,8 @@
   tasks:
     - name: the version, the checkout and the dogfood receipts are named
       ansible.builtin.assert:
-        that: [nova_version is defined, nova_source is defined, "nova_dogfood_receipts is defined or nova_release_gate_args[0] == '--no-dogfood-gate'"]
-        fail_msg: "name the build: -e nova_version=<v> -e nova_source=<a nova-tools checkout at the commit to install> -e nova_dogfood_receipts=<the dogfood receipts directory>"
+        that: [nova_version is defined, nova_source is defined, nova_sprint_release is defined, "nova_dogfood_receipts is defined or nova_release_gate_args[0] == '--no-dogfood-gate'"]
+        fail_msg: "name the build: -e nova_version=<v> -e nova_source=<a nova-tools checkout at the commit to install> -e nova_sprint_release=<a directory holding one mas-bandwidth/nova-sprint release, from gh release download> -e nova_dogfood_receipts=<the dogfood receipts directory>"
         quiet: true
 
     - name: the platforms already built at this version (a SHA256SUMS each)
@@ -61,7 +65,8 @@
     - name: build the missing platforms in one call, niced, with its own Go cache
       ansible.builtin.command:
         argv: "{{ ['nice', '-n', '19', 'nova-update', 'release', 'build', '--version', nova_version, '--out', nova_release_out,
-                   '--source', nova_source, '--platform', tools_missing | join(',')] + nova_release_gate_args + nova_release_build_args }}"
+                   '--source', nova_source, '--sprint-release', nova_sprint_release, '--platform', tools_missing | join(',')]
+                   + nova_release_gate_args + nova_release_build_args }}"
       environment: { GOMAXPROCS: "4", GOCACHE: "{{ nova_release_gocache }}" }
       vars:
         tools_missing: "{{ tools_built.results | rejectattr('stat.exists') | map(attribute='item') | list }}"

@@ -3,7 +3,7 @@
 #
 # One line per loop: `<file> <func> <row>`, the func as the scanner names it
 # (Recv.Name for a method), the row the first cell of a row of the table in
-# docs/PUSH-NOT-POLL.md, section "Push, not poll". A line is an inventory entry,
+# docs/SPEC-SPRINT.md, section "Push, not poll". A line is an inventory entry,
 # never an excuse: the row says what the loop is, and a timer poll's row names
 # the card that makes it push or the measured reason it stays. A loop that
 # stops waiting on a clock (it became a push) has its line deleted in the same
@@ -25,33 +25,14 @@ cmd/nova-swarm/member.go memberLoop member pass
 pkg/member/member.go Member.BeatLoop member beat
 
 # the coordinator's inbox and wake (cmd/nova-sprint)
-cmd/nova-sprint/inboxwait.go serverSource.tickEnd coordinator inbox push, through the server
-internal/sprint/store/tickend.go Store.WaitTickEnd coordinator inbox push, on the store
-cmd/nova-sprint/watchwake.go runWake watch --wake
-cmd/nova-sprint/watchwake.go app.cmdWatch watch --wake
-cmd/nova-sprint/answer.go app.cmdAnswer answer pass
-cmd/nova-sprint/friend_loop.go app.friendSyncLoop friend sync
-cmd/nova-sprint/lane.go app.laneWait lane take wait
 
 # the sprint server's own loops (nova-sprint run --listen)
-cmd/nova-sprint/run.go app.runLoop sprint server tick
-cmd/nova-sprint/landloop.go app.landLoop land loop
-cmd/nova-sprint/decidelane.go app.decideLoop decide loop
-cmd/nova-sprint/balance.go app.balanceLoop provider balance
-cmd/nova-sprint/gc.go app.gcLoop machinery gc
-cmd/nova-sprint/promote.go app.cmdPromote promote
 
 # displays
-cmd/nova-sprint/dashboard.go app.cmdDashboard dashboard pull
-internal/sprintdash/events.go Server.Run dashboard pull
-internal/sprintdash/events.go Server.events dashboard pull
-cmd/nova-sprint/reads.go app.drawLoop table and where displays
-cmd/nova-sprint/watch.go app.pause table and where displays
 cmd/nova-table/watch.go application.cmdWatch table and where displays
 cmd/nova-table/watch.go watchLoop table and where displays
 
 # one machine's own samplers, watchdogs and heartbeats
-cmd/nova-sprint/run.go app.storeRTTLoop samplers and watchdogs
 cmd/nova-swarm/nativesample.go liveSampler.loop samplers and watchdogs
 cmd/nova-swarm/slotclean.go nativeRunner.cleaner samplers and watchdogs
 pkg/hostload/sampler.go Sampler.Run samplers and watchdogs
@@ -67,19 +48,14 @@ cmd/nova-friend/main.go world.openUntil waits and retries
 cmd/nova-friend/wakeping.go world.pingInstall waits and retries
 pkg/friend/launchd.go Install waits and retries
 pkg/friend/launchd.go WaitReleased waits and retries
-cmd/nova-sprint/run.go app.awaitGivenUp waits and retries
-cmd/nova-sprint/landpass.go lander.pass waits and retries
 cmd/nova-sandbox/run.go runInVolume waits and retries
 cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries
 cmd/nova-sandbox/runwin_windows.go winPlace.RemoveTree waits and retries
-cmd/nova-sprint/backup_out.go startServerTwin waits and retries
-cmd/nova-sprint/snapshot.go redisSource.Save waits and retries
 cmd/nova-swarm/member.go nativeRunner.Start waits and retries
 pkg/nsprint/testutil/pg/pg.go Server.ready waits and retries
 pkg/nsprint/testutil/redis.go startOnce waits and retries
 pkg/sandbox/tree.go Tree.KillAndAwait waits and retries
 pkg/secrets/seal.go sealCarry.carry waits and retries
-internal/sprint/control_line.go ControlLine.TickLock waits and retries
 pkg/swarm/deadline.go Reap waits and retries
 pkg/swarm/fileretry.go readFileSteadyBy waits and retries
 pkg/swarm/fileretry.go renameSteadyBy waits and retries
