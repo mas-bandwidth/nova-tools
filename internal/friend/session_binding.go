@@ -147,6 +147,8 @@ func PongSession(body string) string {
 // in through the ungated deliverer (the session check's path).
 const LiveSessionSubject = "live session id wanted"
 
+const activeQuestionPrefix = "\x00active-session-question:"
+
 // SessionRequest handles a request outside the daemon loop. The daemon uses
 // HandleSessionRequest so an asynchronous question is acknowledged only after
 // the adapter succeeds.
@@ -174,7 +176,7 @@ func (s *SessionCheck) HandleSessionRequest(ctx context.Context, msg bus.Message
 	if !ok {
 		return false
 	}
-	return s.pushQuestion(ctx, body, ack)
+	return s.pushQuestion(ctx, msg.ID, body, ack)
 }
 
 // ownSessionQuestion is the daemon's own live-session line, and only when an
@@ -193,12 +195,28 @@ func (s *SessionCheck) ownSessionQuestion(msg bus.Message) (string, bool) {
 // A test's Go runs it before the answer; production starts it asynchronously.
 // Both acknowledge only after successful delivery, so failure leaves the entry
 // for the next claim.
-func (s *SessionCheck) pushQuestion(ctx context.Context, body string, ack func() error) bool {
+func (s *SessionCheck) pushQuestion(ctx context.Context, id, body string, ack func() error) bool {
 	d := s.deliverer()
 	if d == nil {
 		return false
 	}
+	active := activeQuestionPrefix + id
+	s.mu.Lock()
+	if s.sent[active] {
+		s.mu.Unlock()
+		return true
+	}
+	if s.sent == nil {
+		s.sent = map[string]bool{}
+	}
+	s.sent[active] = true
+	s.mu.Unlock()
 	deliver := func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.sent, active)
+			s.mu.Unlock()
+		}()
 		exit, err := d.Deliver(ctx, body)
 		now := time.Time{}
 		if s.Now != nil {

@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -204,21 +205,78 @@ func TestTheDaemonRetriesAnAsynchronousSessionQuestionThatTheAdapterFails(t *tes
 
 	_, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: "request", Subject: "join", Body: "join"})
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	r.cancel = cancel
-	done := make(chan error, 1)
-	go func() { done <- r.d.Run(ctx) }()
+	done := make(chan struct{})
+	var daemonErr error
+	var released sync.Once
+	release := func() { released.Do(func() { close(app.release) }) }
+	t.Cleanup(func() {
+		release()
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("daemon did not stop during cleanup")
+		}
+	})
+	go func() {
+		daemonErr = r.d.Run(ctx)
+		close(done)
+	}()
 
-	assert.Equal(t, 1, <-app.started)
+	assert.Equal(t, 1, waitSessionQuestion(t, app.started))
 	pending, _, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	require.Contains(t, subjectsOf(pending), LiveSessionSubject, "the bus entry stays pending until the asynchronous adapter succeeds")
-	close(app.release)
-	<-app.failed
+	r.mu.Lock()
+	beats := r.beats
+	r.mu.Unlock()
 	r.store.Advance(bus.ClaimAfter)
-	assert.Equal(t, 2, <-app.started, "the failed question is claimed and delivered again")
+	require.Eventually(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.beats >= beats+2
+	}, 5*time.Second, time.Millisecond)
+	assert.Empty(t, app.started, "reclaiming an in-flight question does not start an overlapping adapter call")
+	release()
+	waitSessionQuestionDone(t, app.failed)
+	r.store.Advance(bus.ClaimAfter)
+	assert.Equal(t, 2, waitSessionQuestion(t, app.started), "the failed question is claimed and delivered again")
+	require.Eventually(t, func() bool {
+		pending, fresh, peekErr := r.bus.Peek(context.Background(), "bob")
+		if peekErr != nil {
+			return false
+		}
+		return !slices.Contains(subjectsOf(append(pending, fresh...)), LiveSessionSubject)
+	}, 5*time.Second, time.Millisecond, "the successful retry acknowledges the question")
 	cancel()
-	require.NoError(t, <-done)
+	select {
+	case <-done:
+		require.NoError(t, daemonErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not stop")
+	}
+}
+
+func waitSessionQuestion(t *testing.T, started <-chan int) int {
+	t.Helper()
+	select {
+	case call := <-started:
+		return call
+	case <-time.After(5 * time.Second):
+		t.Fatal("session question did not start")
+		return 0
+	}
+}
+
+func waitSessionQuestionDone(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session question did not finish")
+	}
 }
 
 func subjectsOf(entries []bus.Entry) []string {
