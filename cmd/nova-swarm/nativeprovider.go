@@ -36,7 +36,7 @@ import (
 //
 // A run with no result and neither stays `no-result` as before. The line this writes is
 // the one the member reads (cmd/nova-swarm/member.go, nativeEnd), and the finish it
-// causes redeals the card (internal/sprint, providerEnded).
+// causes redeals the card (nova-sprint's providerEnded, in its own repository).
 //
 // The line names the cause (internal/swarm providercause.go): the class, the status and the
 // provider's words, read from the session's own record of the failed message when it has

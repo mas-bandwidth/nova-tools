@@ -119,7 +119,7 @@ type options struct {
 	gate        string
 	incremental bool
 	// sprintRelease is build's and cycle's --sprint-release: a downloaded
-	// mas-bandwidth/nova-sprint release whose tools (nova-sprint, nova-card
+	// nova-sprint release whose tools (nova-sprint, nova-card
 	// and nova-work, in their own repository since v1.2.3) ship in the same
 	// release, verified and never compiled here.
 	sprintRelease string

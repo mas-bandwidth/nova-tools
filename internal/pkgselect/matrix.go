@@ -49,7 +49,7 @@ var DarwinOnly = []string{"./cmd/nova-sandbox", "./internal/sandbox"}
 // tests cost more than a macOS runner's two cores give in the two-minute cap (cmd/nova-swarm
 // about 200 CPU-seconds), so those legs were cancelled at the cap in every pull-request run
 // of 2026-10-04. Linux runs them in every pull request and in the merge group. cmd/nova-sprint,
-// the other one, left for mas-bandwidth/nova-sprint (the split, v1.2.3).
+// the other one, left for its own repository, nova-sprint (the split, v1.2.3).
 // A push and the nightly run still deal them to macOS.
 var LinuxOnly = []string{"./cmd/nova-swarm"}
 

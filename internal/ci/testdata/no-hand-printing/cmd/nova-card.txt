@@ -1,3 +1,2 @@
 # no-hand-printing: hand printing in a tool package; each row's count only falls
-# ceiling: 1
-cmd/nova-card:verbflag 2 two verbs build their flag set through verbflag.New: the tool is not on internal/tool, so each verb parses its own flags until the port
+# ceiling: 0

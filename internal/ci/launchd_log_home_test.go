@@ -34,7 +34,6 @@ var homePrefixes = []string{"{{ nova_home", "{{ ansible_env.HOME", "~/", "$HOME/
 // the file that chooses the path's default (the flag that overrides it is the
 // operator's choice).
 var goPlistWriters = map[string]struct{ defaults, snippet string }{
-	"internal/sprint/seatinstall.go": {"cmd/nova-sprint/seatinstall.go", `filepath.Join(home, "Library", "Logs"`},
 	"internal/friend/launchd.go":     {"cmd/nova-friend/main.go", `filepath.Join(w.home, "Library", "Logs"`},
 	"internal/up/redis.go":           {"internal/up/redis.go", `filepath.Join(e.Home, "Library", "Logs"`},
 }

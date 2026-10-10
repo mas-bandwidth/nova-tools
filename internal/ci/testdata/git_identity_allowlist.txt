@@ -9,9 +9,7 @@
 # Shrink-only: a file not listed, or a count that rises, is red; fixing a site means
 # lowering its row in the same change. NOVA_CI_UPDATE=1 lowers counts and drops rows
 # at zero; it never adds a row or raises a count.
-# ceiling: 54
-cmd/nova-card/generate_functional_test.go 1 predates the rule; route its commits through testgit.Environ
-cmd/nova-card/generate_test.go 1 predates the rule; route its commits through testgit.Environ
+# ceiling: 43
 cmd/nova-check/cli_examples_test.go 3 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/dogfood_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/hygiene_test.go 10 predates the rule; route its commits through testgit.Environ
@@ -23,12 +21,6 @@ cmd/nova-secrets/gate_flags_once_test.go 1 predates the rule; route its commits 
 cmd/nova-secrets/slow_functional_test.go 2 predates the rule; route its commits through testgit.Environ
 cmd/nova-secrets/testhelpers_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-secrets/upstream_functional_test.go 1 predates the rule; route its commits through testgit.Environ
-cmd/nova-sprint/carddiff_test.go 1 predates the rule; route its commits through testgit.Environ
-cmd/nova-sprint/friendclean_test.go 2 predates the rule; route its commits through testgit.Environ
-cmd/nova-sprint/land_clean_clone_test.go 2 predates the rule; route its commits through testgit.Environ
-cmd/nova-sprint/land_ledger_test.go 2 predates the rule; route its commits through testgit.Environ
-cmd/nova-sprint/land_test.go 1 predates the rule; route its commits through testgit.Environ
-cmd/nova-sprint/promote_functional_test.go 3 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/boundary_identity_test.go 2 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/contract_cases_functional_test.go 13 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/contract_functional_test.go 1 predates the rule; route its commits through testgit.Environ
@@ -61,6 +53,3 @@ internal/secrets/gate_test.go 2 predates the rule; route its commits through tes
 internal/secrets/model_invariants_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/secrets/seal_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/secrets/store_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/sprint/land_cure_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/sprint/store/branch_redeal_push_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/sprint/sync_twin_test.go 2 predates the rule; route its commits through testgit.Environ

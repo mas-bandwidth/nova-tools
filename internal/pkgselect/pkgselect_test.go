@@ -505,9 +505,9 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 
 func TestPullRequestSeparatesMeasuredHeavyPackages(t *testing.T) {
 	t.Parallel()
-	pkgs := []string{"./cmd/a", "./cmd/nova-sprint", "./cmd/b", "./cmd/nova-swarm", "./internal/ci", "./internal/docs", "./internal/sprint/store"}
+	pkgs := []string{"./cmd/a", "./cmd/b", "./cmd/nova-swarm", "./internal/ci", "./internal/docs"}
 	ordered := OrderHeavyFirst(pkgs)
-	assert.Equal(t, []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/ci", "./internal/sprint/store"}, ordered[:4])
+	assert.Equal(t, []string{"./cmd/nova-swarm", "./internal/ci"}, ordered[:2])
 	legs := Fanout("pull_request", ordered, DarwinSensitive{}, Groups{Linux: "space", Mac: "darwin"}, false)
 	home := map[string]string{}
 	for _, leg := range legs {
@@ -845,13 +845,13 @@ func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
 	assert.Len(t, home, len(pkgs), "every package is dealt once")
 }
 
-// A pull request deals cmd/nova-sprint and cmd/nova-swarm to the Linux legs alone, even
+// A pull request deals cmd/nova-swarm to the Linux legs alone, even
 // when they differ under macOS: their unit tests do not fit a macOS leg's two-minute cap.
 // A push still deals them to both.
-func TestAPullRequestKeepsNovaSprintAndNovaSwarmOffTheMacLegs(t *testing.T) {
+func TestAPullRequestKeepsNovaSwarmOffTheMacLegs(t *testing.T) {
 	t.Parallel()
 	g := Groups{Linux: "lin", Mac: "mac"}
-	pkgs := []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/other"}
+	pkgs := []string{"./cmd/nova-swarm", "./internal/other"}
 	sens := DarwinSensitive{All: true}
 	for _, leg := range Fanout("pull_request", pkgs, sens, g, true) {
 		if leg.OS == "macOS" {
