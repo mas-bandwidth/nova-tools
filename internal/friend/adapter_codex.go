@@ -29,7 +29,7 @@ import (
 // new request is queued first, and only once it is in is every request of its kind it
 // supersedes withdrawn (an older nonce, or the same nonce queued CodexCheckRequeue ago or
 // more), so a queue that fails leaves the old request standing. A queued message that
-// carries anything else (a bus message, a card dealt) is never withdrawn. A message is
+// carries anything else (a bus message) is never withdrawn. A message is
 // known by its text's shape: a person who types the exact shape of a pong request into the
 // chat has it treated as one.
 type Codex struct {
@@ -74,7 +74,7 @@ var pongNonce = regexp.MustCompile(` pong --as \S+ --nonce (\S+)`)
 // PongRequest reads a delivery's text for the pong it asks for: its kind (PongCheck for a
 // session check, else PongWake), the nonce of its pong command, and whether it asks for
 // nothing else (a session check, a wake turn, an idle wake, which a newer request of its kind
-// supersedes). A delivery carrying a bus message or a card dealt is never only a request.
+// supersedes). A delivery carrying a bus message is never only a request.
 func PongRequest(text string) (kind, nonce string, only bool) {
 	m := pongNonce.FindStringSubmatch(text)
 	if m == nil {
