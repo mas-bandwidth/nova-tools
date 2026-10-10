@@ -997,6 +997,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
+	if res.deadlined && res.blockedPath != "" {
+		fmt.Fprintf(stdout, "NATIVE NOTE: the card was ended at its deadline with commits and published no report of its own; one naming the work was written to %s\n", oneline.Field(res.blockedPath))
+	}
 	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST. --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A

@@ -203,6 +203,7 @@ type nativeRunResult struct {
 	lost         bool              // the provider read died after the request may have been accepted
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
+	deadlined    bool              // the deadline timer ended the run: the child was still working at its wall
 	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
 	starts       int               // the harness starts tried when every one failed (harnessStartFailed), else 0
 	// THE JOB'S OWN FIGURE (the budget rule keeps two numbers apart: the row is the launch's and
@@ -1254,6 +1255,7 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 		nativeKillGroup(st.pgid, st.started)
 		<-st.done
 		s.res.rc = -1
+		s.res.deadlined = true
 	case end := <-st.idleC:
 		st.stopDeadline()
 		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
@@ -1445,7 +1447,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			s.res.blockedPath = path
 		}
 	}
-	handedBack := false
+	handedBack, providerEnded := false, false
 	if !s.res.lost && !s.res.idled && !s.res.terminated && s.res.wallReport == "" && (s.res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(s.outLog); err == nil {
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: s.prep.jobDir, RC: s.res.rc, Wall: time.Duration(s.res.wallSeconds * float64(time.Second)), Route: s.prep.cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
@@ -1481,7 +1483,18 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 		if _, published := swarm.FindCardResult(s.prep.jobDir); !published {
 			if cause, ok := providerEnd(s.prep.cfg.headless(), s.prep.dataHome, s.providerMark, s.runStart, s.res.rc, tailSince(s.outLog, s.captureMark)); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model, cause)))
+				providerEnded = true
 			}
+		}
+	}
+	// AFTER the provider checks, never before: both ask FindCardResult, and a report written
+	// first would hide a provider failure the card must be handed on for (cold read, #5598).
+	if deadlineReportDue(s.res, handedBack, providerEnded) {
+		// the card worked to its wall: a commit in ./repo and no report is work to name, not a silent no-result (fault 9)
+		if path, wrote, err := swarm.WriteDeadlineResult(s.prep.jobDir, s.prep.cfg.label, true); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the deadline report could not be written: %s\n", oneline.Escape(err.Error()))
+		} else if wrote {
+			s.res.blockedPath = path
 		}
 	}
 	if s.prep.decided != "" {
@@ -3003,4 +3016,14 @@ func nativeNetAllow(cfg nativeRunConfig, provider string) string {
 		return ""
 	}
 	return providerLoopback(cfg.configFile, provider)
+}
+
+// deadlineReportDue is whether a finished run is one the deadline report may be written for:
+// the deadline ended it, and no other end owns it -- a lost response, the idle watch, a TERM,
+// a budget stop, a wall death or refusal, a shell denial, a provider hand-back or a provider
+// end each has its own line, and a report written beside one would hide it (fault 9).
+func deadlineReportDue(res nativeRunResult, handedBack, providerEnded bool) bool {
+	return res.deadlined && !res.lost && !res.idled && !res.terminated && res.stopped == "" &&
+		res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) &&
+		!handedBack && !providerEnded
 }

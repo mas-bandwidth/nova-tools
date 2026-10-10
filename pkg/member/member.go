@@ -1219,7 +1219,7 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 				continue // returned by this reader a moment ago: asked of it again later
 			}
 			if c.Col == "asked" && c.Packet != nil && len(ids) < room {
-				ids = append(ids, c.ID)
+				ids = append(ids, c.ID+"@"+strconv.Itoa(c.Gen))
 				packets = append(packets, *c.Packet)
 			}
 		}
