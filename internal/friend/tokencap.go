@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // A one-shot lane's card is capped by its tokens (docs/SPEC-FRIEND.md,
@@ -276,13 +277,15 @@ func (c *cardRuns) set(outbox string, t Tokens) {
 	c.runs[outbox] = t
 }
 
-// openCodeTokens is the part of `opencode export <session>` the token count reads: each
-// assistant message's tokens.
+// openCodeTokens is the part of `opencode export <session>` the token count and the
+// finish read: each assistant message's tokens, and the provider and model it ran.
 type openCodeTokens struct {
 	Messages []struct {
 		Info struct {
-			Role   string `json:"role"`
-			Tokens *struct {
+			Role     string `json:"role"`
+			Model    string `json:"modelID"`
+			Provider string `json:"providerID"`
+			Tokens   *struct {
 				Input     int64 `json:"input"`
 				Output    int64 `json:"output"`
 				Reasoning int64 `json:"reasoning"`
@@ -298,28 +301,60 @@ type openCodeTokens struct {
 // errNoTokenShape is an export whose assistant messages carry no tokens the count reads.
 var errNoTokenShape = errors.New("opencode export: no assistant message carries tokens")
 
-// SessionTokens is a session's tokens from its export: its assistant messages' tokens
-// summed. An export with no message carrying them answers errNoTokenShape, and the cap
-// is not applied; its price (SessionCost) stands as it is.
-func SessionTokens(export string) (Tokens, error) {
+// errEmptySession is an export with no assistant step at all: a session just opened, so
+// a card's baseline there is zero, never an unknown (lanes.go).
+var errEmptySession = errors.New("opencode export: no assistant step at all")
+
+// SessionUsageOf is a session's usage from its export: its assistant messages' tokens
+// summed (LaneTokens), and the provider and model they ran, "provider/model". An export
+// with no message carrying tokens answers errNoTokenShape, so a count that cannot be
+// read is an absence, never a zero; one with no assistant step at all answers
+// errEmptySession, the zero baseline of a session just opened. The export may be
+// preceded by a line of its own, as `opencode export` prints one.
+func SessionUsageOf(export string) (LaneTokens, string, error) {
 	at := strings.IndexByte(export, '{')
 	if at < 0 {
-		return Tokens{}, fmt.Errorf("opencode export: no JSON object in %q", oneLine(export, 120))
+		return LaneTokens{}, "", fmt.Errorf("opencode export: no JSON object in %q", oneLine(export, 120))
 	}
 	var e openCodeTokens
 	if err := json.NewDecoder(strings.NewReader(export[at:])).Decode(&e); err != nil {
-		return Tokens{}, fmt.Errorf("opencode export: %v", err)
+		return LaneTokens{}, "", fmt.Errorf("opencode export: %v", err)
 	}
-	sum, found := Tokens{}, false
+	sum, model, found, sawAssistant := Tokens{}, "", false, false
 	for _, m := range e.Messages {
-		if t := m.Info.Tokens; m.Info.Role == "assistant" && t != nil {
+		if m.Info.Role != "assistant" {
+			continue
+		}
+		sawAssistant = true
+		if t := m.Info.Tokens; t != nil {
 			sum, found = sum.add(Tokens{Input: t.Input, CacheRead: t.Cache.Read, CacheWrite: t.Cache.Write, Output: t.Output, Reasoning: t.Reasoning}), true
+		}
+		if m.Info.Model != "" {
+			model = m.Info.Model
+			if m.Info.Provider != "" && !strings.HasPrefix(model, m.Info.Provider+"/") {
+				model = m.Info.Provider + "/" + model
+			}
 		}
 	}
 	if !found {
-		return Tokens{}, errNoTokenShape
+		if !sawAssistant {
+			return LaneTokens{}, model, errEmptySession
+		}
+		return LaneTokens{}, model, errNoTokenShape
 	}
-	return sum, nil
+	return LaneTokens{Tokens: cardcost.Tokens{Input: sum.Input, CacheRead: sum.CacheRead, CacheWrite: sum.CacheWrite,
+		Output: sum.Output, Reasoning: sum.Reasoning, Requests: cardcost.Unreported, MaxPrompt: cardcost.Unreported}}, model, nil
+}
+
+// SessionTokens is a session's tokens alone from its export (SessionUsageOf's tokens);
+// the cap reads this. An export with no message carrying them answers errNoTokenShape,
+// and the cap is not applied; its price (SessionCost) stands as it is.
+func SessionTokens(export string) (Tokens, error) {
+	lt, _, err := SessionUsageOf(export)
+	if err != nil {
+		return Tokens{}, err
+	}
+	return Tokens{Input: lt.Input, CacheRead: lt.CacheRead, CacheWrite: lt.CacheWrite, Output: lt.Output, Reasoning: lt.Reasoning}, nil
 }
 
 // openCodeUsage is a lane turn's usage: its session's tokens since the read before the
