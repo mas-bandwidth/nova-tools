@@ -264,6 +264,14 @@ func (l *loop) outboxStep(now time.Time) {
 			if held := unaddressed(HeldByDaemon, report, jobFix(card.Brief, h.Brief)); held != "" {
 				verdict, report, written = "HOLD", held+"\n\n"+report, "LAND, "+held
 			}
+			// the finish checks the model her delivered brief names, never her row's now or
+			// the packet's: a model changed between the deal and the delivery must not
+			// accept a report on one she was not told to run (the server's friendFinish
+			// keeps the same rule; the daemon's finish bypassed it)
+			model, _ := briefModel(card.Brief)
+			if why := ModelMismatch(model, report); why != "" {
+				verdict, report, written = "HOLD", why+"\n\n"+report, "LAND, "+why
+			}
 		}
 		branch := h.Branch
 		if branch == "" {

@@ -172,13 +172,14 @@ func FriendStart(s *Snapshot, r FriendStartReq) Plan {
 // tick's clock), while she runs no job (her beat names none, and no card she started is
 // working on her row) and her daemon has seen no write of hers within the bound (Active), to another friend up with an idle lane (her width less the cards on
 // her row, ready and working, and those this tick places there: placed) below her room,
-// whose tiers hold its tier, whose work restriction holds its primary's stream and KIND
-// (friendRestrictionAllows), that it has not left, and who is not herself stuck so; the
+// whose tiers hold its tier and, for a card that carries a model, whose row names one for
+// it (friendReceives; one that names none is refused, and the card's refusal names the
+// tier; a moved card carries the receiver's model), whose work restriction holds its primary's
+// stream and KIND (friendRestrictionAllows), that it has not left, and who is not herself stuck so; the
 // friend preferredFriend picks. A hard pin (WHO: only friend) stays. It goes ready at its
 // next generation, she joins the friends it has left, and its line says why. At most limit
 // cards move (0: no bound).
-func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (time.Duration, bool), skip map[string]bool, placed map[string]int, limit int) Plan {
-	var p Plan
+func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (time.Duration, bool), skip map[string]bool, placed map[string]int, limit int) (p Plan) {
 	bound := s.FriendStartMax()
 	up := map[string]FriendSeat{}
 	var names []string
@@ -222,6 +223,11 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 		free[n] = room - friendLoad(s, n) - placed[n]
 	}
 	moved := 0
+	// a friend who takes its tier but whose row names no model for it is refused as the
+	// friend of a card that carries one (friendReceives), and the card's refusal names the
+	// tier
+	noModel := map[string]noModelRefusal{}
+	defer func() { p.Refused = append(p.Refused, noModelRefusals(noModel, p.Units)...) }()
 	for _, giver := range names {
 		for _, c := range stale[giver] {
 			if limit > 0 && moved >= limit {
@@ -232,6 +238,10 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 			var may []string
 			for _, n := range names {
 				if n != giver && len(stale[n]) == 0 && lanes[n] > 0 && free[n] > 0 && !slices.Contains(left, n) && friendTakes(s, up[n], tier) && friendRestrictionAllows(up[n], pr) {
+					if !friendReceives(s, up[n], tier, c.F(FieldModel)) {
+						noModel[c.ID] = noModel[c.ID].with(tier, n) // her row names no model for its tier
+						continue
+					}
 					may = append(may, n)
 				}
 			}
@@ -248,8 +258,10 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 			if !s.Fleet.HasRow(row) && !slices.Contains(p.Rows, RowAdd{Fleet, row}) {
 				p.Rows = append(p.Rows, RowAdd{Fleet, row})
 			}
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, row, Ready, set, FieldFriendDeadline))},
-				Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d (not started %s after its deal, and friend %s names no job running)", c.ID, c.Row, row, c.Int("gen")+1, bound, giver)})
+			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, row, Ready, set, FieldFriendDeadline))},
+				Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d (not started %s after its deal, and friend %s names no job running)", c.ID, c.Row, row, c.Int("gen")+1, bound, giver)}
+			// the receiver's model for its tier, never the giver's, rides on the moved card
+			p.Units = append(p.Units, withFriendModel(u, c.ID, tier, friendModelOf(up[to], tier)))
 		}
 	}
 	return p

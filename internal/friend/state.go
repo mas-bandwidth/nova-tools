@@ -136,7 +136,10 @@ type Pong struct {
 // Queue is the friend's queue file: one record per task; the coordinator
 // writes assignments into it, the session marks them working or done.
 type Queue struct {
-	Tasks []Task `json:"tasks"`
+	// Row is her nova-config row as friend sync last wrote it (models.go); nil when the
+	// file carries none.
+	Row   *QueueRow `json:"row,omitempty"`
+	Tasks []Task    `json:"tasks"`
 }
 
 // Task is one record of the queue file.
@@ -147,6 +150,11 @@ type Task struct {
 	ID          string `json:"id"`
 	State       string `json:"state"` // queued, working, done
 	Deliverable string `json:"deliverable,omitempty"`
+	// Tier and Model are the card's tier and her row's model for it (models.go): a
+	// one-shot lane launches her harness with the model's flag; empty when her row names
+	// none.
+	Tier  string `json:"tier,omitempty"`
+	Model string `json:"model,omitempty"`
 }
 
 // Counts is what the queue file says: tasks queued and tasks working.
