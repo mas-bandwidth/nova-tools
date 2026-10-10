@@ -374,7 +374,7 @@ func TestAStalledFinishDoesNotHoldTheNativeBeat(t *testing.T) {
 				for _, id := range []string{"first.w1", "second.w1"} {
 					card := workCard(id, "working")
 					inboxJob(t, r.d.Dir, card.Job, card.Brief)
-					outboxReport(t, r.d.Dir, card.Job, "Verdict: HOLD\n\nneeds repair\n")
+					outboxReport(t, r.d.Dir, card.Job, "Verdict: HOLD\nHead: -\n\nneeds repair\n")
 					row.set(append(row.cards, card)...)
 				}
 				var finishes int
