@@ -128,7 +128,7 @@ from the owner edits one line here and nothing else moves.
 1. LANDED: n of all; sub-line "<pct>% complete". Narrow: the number alone, sub-line "of <all> · <pct>%".
 2. ETA: "2h 9m"; sub-line "around 9:06 PM".
 3. COST: total to the cent; sub-line "$0.24 per card" (never "per landed card").
-4. IN FLIGHT: n; sub-line "14 working · 9 review" on one line.
+4. IN FLIGHT: n; sub-line "14 working · 9 verify" on one line (verify counts review, fix and merging together, one global state; the tooltip gives the review, fix and merging counts).
 5. THROUGHPUT: cards landed per hour over the last 60 min; "—" until ten minutes of samples; sub-line "cards / hour".
    A lone tile on its row spans the width with its figure centered.
 - No FLEET tile. Flash on change: LANDED only; the others never.
@@ -151,7 +151,7 @@ from the owner edits one line here and nothing else moves.
   cells run in the ladder, highest on the left: blocker (`--p-blocker`), critical (`--p-critical`), fix
   (purple), reads (orange, one cell a read), then the working blue, so the lit cells number the row's working; the
   Total row says "<n> fix" under the tracks when any row has one. The In flight tile counts a card at fix as
-  working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
+  verify. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
   defect, carry no dealt card, so the view cannot see them until where prints the Work row's `fix`.
   `TestFixView*` and `TestFixPage*` (internal/sprintdash/view_fix_test.go) hold it.
 
