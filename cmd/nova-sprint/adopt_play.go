@@ -199,7 +199,14 @@ func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
 	output, playErr := runner.Play(context.Background(), argv)
 	r := readAdopt(output)
 	for _, l := range r.lines {
-		if !strings.HasPrefix(l, "ADOPT REFUSED ") {
+		if strings.HasPrefix(l, "ADOPT REFUSED ") {
+			continue
+		}
+		if *dry {
+			if strings.Contains(l, " WOULD-CHANGE") {
+				fmt.Fprintln(stdout, oneline.Escape(strings.Replace(l, "ADOPT ", "ADOPT WOULD ", 1)))
+			}
+		} else {
 			fmt.Fprintln(stdout, oneline.Escape(l))
 		}
 	}
@@ -224,6 +231,17 @@ func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
 	case playErr != nil:
 		task := failedTask(output)
 		step, _, _ := strings.Cut(task, ":")
+		if *dry {
+			if step == "" {
+				step = "play"
+			}
+			fatal := adoptFatalRe.FindString(output)
+			if fatal == "" {
+				fatal = oneline.Err(playErr)
+			}
+			fmt.Fprintf(stderr, "%s adopt: ADOPT REFUSED step=%s dry-run=yes: %s; run: fix the failed play task and repeat the same nova-sprint adopt --dry-run command\n", prog, step, oneline.Escape(truncateLine(fatal, 300)))
+			return 1
+		}
 		if !slices.Contains(adoptPlaySteps, step) {
 			step = "play"
 		}
@@ -256,7 +274,19 @@ func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
 	}
 	word := "ADOPTED"
 	if *dry {
-		word = "WOULD-ADOPT"
+		if !slices.ContainsFunc(r.lines, func(l string) bool {
+			return strings.Contains(l, " WOULD-CHANGE") || strings.Contains(l, " UNCHANGED")
+		}) {
+			fmt.Fprintf(stdout, "ADOPT WOULD-ADOPT version=%s hosts=%s steps=%s\n", version, strings.Join(hosts, ","), strings.Join(adoptPlaySteps, ","))
+		}
+		steps := 0
+		for _, l := range r.lines {
+			if strings.HasPrefix(l, "ADOPT step=") && strings.Contains(l, " WOULD-CHANGE") {
+				steps++
+			}
+		}
+		fmt.Fprintf(stdout, "ADOPT DRY-RUN OK steps=%d\n", steps)
+		return 0
 	}
 	fmt.Fprintf(stdout, "ADOPT %s version=%s hosts=%s steps=%s\n", word, version, strings.Join(hosts, ","), strings.Join(adoptPlaySteps, ","))
 	return 0
