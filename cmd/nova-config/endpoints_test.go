@@ -34,8 +34,10 @@ func TestFileFleetEndpointsStayPartialUntilApply(t *testing.T) {
 				require.Zero(t, code, errs)
 			}
 			step("migrate")
+			delete(h.env, "NOVA_SPRINT_REDIS") // partial rows are stored before Redis can apply them
 			step("machine", "add", "bench-beta", "--user", "u", "--seat", "s", "--slots", "4")
 			step(append([]string{"fleet", "set", "--store", "bench-beta"}, tc.fields...)...)
+			h.env["NOVA_SPRINT_REDIS"] = "bench-beta:6380"
 			path := filepath.Join(h.dir, "try.json")
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
@@ -52,7 +54,9 @@ func TestFileFleetEndpointsStayPartialUntilApply(t *testing.T) {
 			assert.Equal(t, before, after, "a refused apply preserves the partial file")
 			step("apply", "--kind", "machine", "--dry-run")
 			assert.Equal(t, 1, h.redis.opens, "another kind may apply while endpoints are partial")
+			delete(h.env, "NOVA_SPRINT_REDIS")
 			step("fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn)
+			h.env["NOVA_SPRINT_REDIS"] = "bench-beta:6380"
 			step("apply", "--dry-run")
 			assert.Equal(t, 2, h.redis.opens, "the complete endpoint pair permits full apply")
 			assert.Empty(t, h.redis.log)
