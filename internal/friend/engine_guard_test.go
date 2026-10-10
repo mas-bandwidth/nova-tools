@@ -78,6 +78,29 @@ func TestLockReleasedOnExit(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
+func TestReleaseIfDeadDropsOnlyADeadHoldersLock(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	since := time.Date(2026, 10, 7, 19, 33, 0, 0, time.UTC)
+	alive := map[int]bool{100: true}
+	isAlive := func(pid int) bool { return alive[pid] }
+
+	h, err := AcquireEngine(dir, 100, since, isAlive)
+	require.NoError(t, err)
+
+	require.NoError(t, ReleaseIfDead(dir, isAlive))
+	_, err = os.Stat(filepath.Join(dir, EngineLockFile))
+	require.NoError(t, err, "a live holder keeps the lock")
+
+	alive[100] = false
+	require.NoError(t, ReleaseIfDead(dir, isAlive))
+	_, err = os.Stat(filepath.Join(dir, EngineLockFile))
+	assert.True(t, os.IsNotExist(err), "a dead holder's lock is dropped")
+
+	require.NoError(t, h.Release())
+	require.NoError(t, ReleaseIfDead(dir, isAlive))
+}
+
 func TestPlayWritesOneUnitPerBatchFriendAndRetiresAShellRunner(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
