@@ -1,0 +1,3 @@
+# Shrink-only ledger of duplicate function bodies in cmd/nova-sprint, internal/sprint, cmd/nova-friend, internal/friend
+# Format: <file:func> <file:func> <why>
+# New duplicates are refused; fixed duplicates are removed here.

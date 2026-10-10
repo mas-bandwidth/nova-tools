@@ -179,3 +179,18 @@ The carried dashboard work now merges with the current sprint base: its doctor c
 requires a loopback page to answer, and image routes identify raster content from the
 bytes before the file extension. Tests: `TestDashboardCheck` (internal/doctor) and
 `TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).
+
+### duplicate-paths-b.w2
+
+The `duplicate_paths_class_test.go` class test finds every pair of function bodies
+in `cmd/nova-sprint`, `internal/sprint`, `cmd/nova-friend`, and `internal/friend` that
+are the same after normalizing names (identifiers renamed in order of first use,
+literals kept, comments dropped). A body of at least 8 statements whose hash occurs
+twice is flagged as a duplicate pair. The ledger `internal/ci/testdata/duplicate-paths-ledger.txt`
+is shrink-only: new duplicates are refused; fixed duplicates are removed.
+
+Pairs found today:
+- `internal/sprint/twin_verb.go:twinOf` duplicates many helper functions in `internal/sprint/streams.go`, `internal/sprint/streams_view.go`, `internal/sprint/sync.go`, `internal/sprint/tick_gc.go`, `internal/sprint/tier_model.go`, `internal/sprint/timers.go` - deletion card: consolidate these into a single shared function
+- `internal/sprint/unpin.go:Unpin` duplicates functions in `internal/sprint/twins.go` (`Relink`, `Replace`, `mergeCardChanges`, `relinked`, `ruleOnBoth`, `twinWeights`) - deletion card: extract shared logic to a common helper
+- `internal/sprint/weight.go:weightsOver` duplicates `internal/sprint/weight.go:weighUnits` - deletion card: combine into single function
+- `internal/sprint/width.go:ParseMembers` duplicates functions in `internal/sprint/widen.go` - deletion card: factor out shared member parsing logic
