@@ -13,6 +13,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
+type applyResult struct {
+	kind string
+	res  config.Result
+}
+
 func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "apply"
 	fs := verbflag.New(verb)
@@ -93,34 +98,64 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	}
 	o := tool.Done().Fact("dry_run", *check)
 	o.Verb = verb
-	for _, kn := range kinds {
-		start := d.now()
-		applyKind := config.Apply
-		if *moveSeat {
-			applyKind = config.ApplyMovingSeat
-		}
-		res, err := applyKind(ctx, st, rs, kn, actor, *check, func(op config.Op) {
+	if *check || *asJSON {
+		for _, kn := range kinds {
+			applyKind := config.Apply
+			if *moveSeat {
+				applyKind = config.ApplyMovingSeat
+			}
+			res, err := applyKind(ctx, st, rs, kn, actor, *check, func(op config.Op) {
+				if *asJSON {
+					o.Item("op", "kind", kn, "op", op.Op, "name", op.Name, "changed", op.Changed)
+					return
+				}
+				fmt.Fprintln(stdout, config.SaidLine(word, kn, op)) // a held seat's line said whole
+			})
+			if err != nil {
+				if config.IsConflict(err) {
+					return refused(stderr, verb, err.Error(), toolName+" status (then apply from the store that is ahead)")
+				}
+				return storeErr(stderr, verb, err, toolName+" apply --dry-run")
+			}
 			if *asJSON {
-				o.Item("op", "kind", kn, "op", op.Op, "name", op.Name, "changed", op.Changed)
-				return
+				o.Item("kind", "kind", kn, "add", res.Add, "set", res.Set, "remove", res.Remove, "rev", res.Rev, "applied", res.RedisRev)
+				continue
 			}
-			fmt.Fprintln(stdout, config.SaidLine(word, kn, op)) // a held seat's line said whole
-		})
-		if err != nil {
-			if config.IsConflict(err) {
-				return refused(stderr, verb, err.Error(), toolName+" status (then apply from the store that is ahead)")
-			}
-			return storeErr(stderr, verb, err, toolName+" apply --dry-run")
-		}
-		if *asJSON {
-			o.Item("kind", "kind", kn, "add", res.Add, "set", res.Set, "remove", res.Remove, "rev", res.Rev, "applied", res.RedisRev)
-			continue
-		}
-		if *check {
 			fmt.Fprintf(stdout, "CONFIG CHECK kind=%s add=%d set=%d remove=%d rev=%d applied=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, res.RedisRev)
-			continue
 		}
-		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
+	} else {
+		// Collect results to determine if there are changes before printing
+		var changed bool
+		var results []applyResult
+		for _, kn := range kinds {
+			applyKind := config.Apply
+			if *moveSeat {
+				applyKind = config.ApplyMovingSeat
+			}
+			res, err := applyKind(ctx, st, rs, kn, actor, *check, func(op config.Op) {
+				fmt.Fprintln(stdout, config.SaidLine(word, kn, op)) // a held seat's line said whole
+			})
+			if err != nil {
+				if config.IsConflict(err) {
+					return refused(stderr, verb, err.Error(), toolName+" status (then apply from the store that is ahead)")
+				}
+				return storeErr(stderr, verb, err, toolName+" apply --dry-run")
+			}
+			if res.Add > 0 || res.Set > 0 || res.Remove > 0 {
+				changed = true
+			}
+			results = append(results, applyResult{kn, res})
+		}
+		// Print output based on whether there were changes
+		if !changed {
+			// Print "no change" line first when nothing changed (docs/SPEC-CONFIG.md, "Apply")
+			fmt.Fprintln(stdout, "no change: 0 rows differ")
+		}
+		// For APPLY mode, always print at the end after "no change" line if applicable
+		// This ensures "no change" comes first when there are no changes
+		for _, r := range results {
+			fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", r.kind, r.res.Add, r.res.Set, r.res.Remove, r.res.Rev, 0)
+		}
 	}
 	note := actorAliasNote(fs)
 	if note != "" {

@@ -570,7 +570,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	delete(h.env, "NOVA_FRIEND")
 	// The dry run takes the real run's checks: without an actor both refuse.
 	_, errs = step(2, "apply", "--check")
-	require.Contains(t, errs, "apply REFUSED: --actor is required: the name the write is recorded under (or NOVA_FRIEND)", "apply --check without --actor refusal: %q", errs)
+	require.Contains(t, errs, "apply REFUSED: --actor is required: the name the write is recorded under (from --actor flag, NOVA_FRIEND, or the seat login's recorded actor)", "apply --check without --actor refusal: %q", errs)
 	out, _ = step(0, "apply", "--check", "--actor", "rowan")
 	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn,loops_dir\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=heavy\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=3 set=0 remove=0 rev=0 applied=0\n"
 	require.Equal(t, want, out, "apply --check with --actor:\n%s\nwant:\n%s", out, want)
@@ -580,10 +580,10 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Equal(t, want, out, "apply --check with --actor:\n%s\nwant:\n%s", out, want)
 	// Real apply without --actor or NOVA_FRIEND refuses.
 	_, errs = step(2, "apply")
-	require.Contains(t, errs, "apply REFUSED: --actor is required: the name the write is recorded under (or NOVA_FRIEND); run: nova-config apply -h", "apply without --actor refusal: %q", errs)
+	require.Contains(t, errs, "apply REFUSED: --actor is required: the name the write is recorded under (from --actor flag, NOVA_FRIEND, or the seat login's recorded actor); run: nova-config apply -h", "apply without --actor refusal: %q", errs)
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
-	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn,loops_dir\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=heavy\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=3 set=0 remove=0 rev=0 ms=0\n"
+	want = "APPLY ADD kind=machine name=studio\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn,loops_dir\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nAPPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=heavy\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=tier add=3 set=0 remove=0 rev=0 ms=0\n"
 	require.Equal(t, want, out, "apply:\n%s\nwant:\n%s", out, want)
 	require.Equal(t, "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint write tier flash write tier heavy write tier pro", strings.Join(h.redis.log, " "), "redis after apply: %v %v", h.redis.log, h.redis.revs)
 	require.Equal(t, int64(3), h.redis.revs["friend"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
@@ -599,7 +599,8 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
-	require.Equal(t, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\n", out, "second apply: %q", out)
+	require.Contains(t, out, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\n", "second apply: %q", out)
+	require.Contains(t, out, "no change: 0 rows differ", "second apply: %q", out)
 	// The seat: a live coordinator the row disagrees with is held, its line printed whole
 	// (SaidLine), and moved only by --move-seat (ApplyMovingSeat).
 	h.redis.views["sprint"]["sprint"]["coordinator"] = "stella"

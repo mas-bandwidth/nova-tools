@@ -554,8 +554,10 @@ rewrote both in place rather than adding an alter.
 
 **Every write is also a history row, in the same transaction.** `add`
 records `before = null, after = the row`; `set` records the row before and
-after; `remove` records `before = the row, after = null`. `actor` is `--as`
-(or `NOVA_FRIEND`), required on every write. There is no path that changes
+after; `remove` records `before = the row, after = null`. `actor` is the name
+the write is recorded under, taken from the `--actor` flag, else `NOVA_FRIEND`
+environment variable, else the seat login's recorded actor; when none resolves,
+the write refuses naming all three sources. There is no path that changes
 a row without a record, and no path that edits history.
 
 **A kind's revision** is the greatest `history.id` of its rows, 0 for a
@@ -603,8 +605,9 @@ machine), routes:
    while it still reads the value step 2 read; a stamp that moved is
    `CONFLICT`.
 
-A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
-zero, the revision unchanged (steady apply is 8 Redis round trips down from 18, two of them the loop
+A second apply of the same Postgres is a no-op: it prints a first line
+`no change: 0 rows differ`, then the `APPLY` lines with counts zero, and the
+revision unchanged (steady apply is 8 Redis round trips down from 18, two of them the loop
 and route kinds' reads of a store with none of their rows: each kind's set
 and stamp in one trip, its hashes in a second only when it has rows;
 first run across the seed kinds takes 32 trips down from the 42 baseline, with
