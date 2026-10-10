@@ -62,6 +62,7 @@ var treeTests = []string{"internal/docs", "internal/ci"}
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
 	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
 	defer b.Cancel()
+	ownLandProcessGroup(b.Cmd)
 	var env []string
 	if l.a != nil {
 		env = l.a.gitEnv
@@ -95,6 +96,7 @@ func (l *lander) goCache(ctx context.Context, env []string) string {
 	l.a.goCacheOnce.Do(func() {
 		b := subproc.Prepare(ctx, time.Minute, "go", "env", "GOCACHE")
 		defer b.Cancel()
+		ownLandProcessGroup(b.Cmd)
 		b.Cmd.Env = env
 		if out, err := b.Cmd.Output(); err == nil {
 			l.a.goCachePath = strings.TrimSpace(string(out))

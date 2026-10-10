@@ -103,6 +103,8 @@ type app struct {
 	// profiled, when set, is told of each tick run finished, by its count:
 	// run --cpuprofile ends its profile at the last tick it covers.
 	profiled func(n int)
+	// landServerCancel stops the context that owns every landing subprocess.
+	landServerCancel context.CancelFunc
 	// dashListen, when set (a test), opens each of the dashboard's listeners in
 	// net.Listen's place, so the test holds the listener it was given.
 	dashListen func(network, addr string) (net.Listener, error)

@@ -319,6 +319,22 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if err := a.holdNamedUnitKeys(keyNames); err != nil {
 		return refuse(stderr, "run", err.Error())
 	}
+	serverCtx, stopServer := a.notify(context.Background())
+	if land {
+		a.landServerCancel = stopServer
+		if err := a.killStaleGate(stdout); err != nil {
+			stopServer()
+			a.landServerCancel = nil
+			return refuse(stderr, "run", "an earlier landing gate could not be ended: "+err.Error())
+		}
+		defer func() {
+			if err := a.stopLandingServer(); err != nil {
+				fmt.Fprintf(stderr, "RUN could not end landing gate: %v\n", err)
+			}
+		}()
+	} else {
+		defer stopServer()
+	}
 	if profile != "" {
 		stop, err := startProfile(profile)
 		if err != nil {
@@ -330,12 +346,16 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		defer stopped()
-		// a run stopped before its last profiled tick (a signal) still
-		// writes the profile of the ticks it made
+		// a run stopped before its last profiled tick still writes the profile it made
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 		go func() {
 			<-sigs
+			if a.landServerCancel != nil {
+				if err := a.stopLandingServer(); err != nil {
+					fmt.Fprintf(stderr, "RUN could not end landing gate: %v\n", err)
+				}
+			}
 			stopped()
 			os.Exit(0)
 		}()
@@ -361,12 +381,12 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 			b.landMore = append(b.landMore, "--land-parallel", strconv.Itoa(landParallel))
 			b.mu.Unlock()
 		}
-		go a.landLoop(context.Background(), c.redis, stdout)
+		go a.landLoop(serverCtx, c.redis, stdout)
 	}
 	// the providers' balances, read outside every tick (balance.go)
-	go a.balanceLoop(context.Background(), st, stdout)
+	go a.balanceLoop(serverCtx, st, stdout)
 	// the store round trip, timed every 10 s for where (store-latency-row-r.w2)
-	go a.storeRTTLoop(context.Background(), st)
+	go a.storeRTTLoop(serverCtx, st)
 	if decideDir != "" {
 		var b decide.Backend
 		if key := a.getenv(decide.JevSecret); key != "" {
@@ -378,7 +398,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		if a.decide.diffOf == nil {
 			a.decide.diffOf = a.cardDiff
 		}
-		go a.decideLoop(context.Background(), c.redis, stdout)
+		go a.decideLoop(serverCtx, c.redis, stdout)
 	}
 	// on server start, keep every in-flight read whose lease is live and only
 	// take back reads whose lease has lapsed (tla/ServerLanes.tla, Restart)
@@ -386,7 +406,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	_ = a.serverStart(context.Background(), st)
 
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
-	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
+	if a.runLoop(serverCtx, st, c.max, 0, stdout, stderr) {
 		return exitReplaced
 	}
 	return 0
@@ -653,6 +673,11 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			lift = liftAfterOverrun(a.tickDeadline, deadline)
 			if !a.awaitGivenUp(ended, deadline, began, &wedged, stdout, stderr) {
 				// serial stays held: the tick's goroutine is still in its plan
+				if a.landServerCancel != nil {
+					if err := a.stopLandingServer(); err != nil {
+						fmt.Fprintf(stderr, "RUN could not end landing gate: %v\n", err)
+					}
+				}
 				a.exit(exitTickDeadline)
 				return false
 			}

@@ -433,7 +433,7 @@ func (l *lander) resolveRecords(ctx context.Context, dir string, paths []string)
 		}
 		var sides [3][]byte
 		for i := range sides {
-			res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", ":"+strconv.Itoa(i+1)+":"+p)
+			res, err := landGitRun(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", ":"+strconv.Itoa(i+1)+":"+p)
 			if err != nil {
 				return nil, nil, "", p + " conflicts and has no stage " + strconv.Itoa(i+1) + " to resolve from: " + firstLine("", err), ""
 			}

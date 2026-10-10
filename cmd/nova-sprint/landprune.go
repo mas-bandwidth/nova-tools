@@ -411,7 +411,7 @@ func (a *app) tidyRefs(ctx context.Context, dir string, bases []string) (refs in
 // trimmed stdout (kept on a failure too: a push says what it did to each ref), and an
 // error carrying git's words.
 func (a *app) pruneGit(ctx context.Context, dir string, stdin io.Reader, args ...string) (string, error) {
-	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true, Stdin: stdin}, args...)
+	res, err := landGitRun(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true, Stdin: stdin}, args...)
 	out := strings.TrimSpace(string(res.Stdout))
 	if err != nil {
 		return out, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(res.Stderr)+"\n"+out))
