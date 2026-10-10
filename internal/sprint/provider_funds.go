@@ -119,7 +119,7 @@ func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][
 		e := newest[p]
 		m := causeRE.FindStringSubmatch(e.refused)
 		// a refused key rests until woken, never for a time: the key does not mend itself, and a
-		// timed rest only re-fails every take dealt after it ends (pro-abliterated-alex, 46 of 46
+		// timed rest only re-fails every take dealt after it ends (a pro route, 46 of 46
 		// takes refused with a 401 on 2026-10-09/10; tla/RouteRest.tla, AuthEndsOnlyWoken)
 		cause, until := m[1], OpenUntil
 		words := fmt.Sprintf("provider %s refused its key: card %s on route %s: class=%s status=%s msg=%s", p, e.card, on[p], m[1], m[2], m[3])

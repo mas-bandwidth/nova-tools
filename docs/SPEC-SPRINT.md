@@ -2757,7 +2757,7 @@ and it is the coordinator's decision, receipted.
     (`TestTheNightsBalanceRestLiftsOnTheNextPoll`).
     A take refused for the provider's key (`class=auth`) rests it until the coordinator wakes
     it (`routes wake <provider>`, once the owner has replaced the key), never for a time (a
-    timed rest only failed every take dealt after it ended: pro-abliterated-alex, 46 of 46
+    timed rest only failed every take dealt after it ended: a pro route, 46 of 46
     refused with a 401, 2026-10-09/10; `tla/RouteRest.tla`, AuthEndsOnlyWoken), and stops
     nothing.
   - A refused take rests the provider in the tick that sees it, over rule 3's rest of its
