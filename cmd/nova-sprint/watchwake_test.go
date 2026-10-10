@@ -13,6 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWatchWakeSynopsisNamesWakeFile(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range verbs {
+		if v.name == "watch" {
+			assert.Contains(t, v.syntax, "[--wake-file <path>]")
+			return
+		}
+	}
+	require.FailNow(t, "watch verb is registered", "watch verb is absent from the verb table")
+}
+
 // The wake verb's model is tla/CoordinatorWake.tla: these tests run runWake on a
 // fake world, its clock and its state file, and open no socket and never sleep.
 
