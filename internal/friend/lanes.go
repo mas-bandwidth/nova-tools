@@ -50,11 +50,28 @@ type LaneState struct {
 }
 
 // Card is one card a lane hands: its id (the queue file's), its brief, and
-// the outbox directory its REPORT.md and RESULT.md go to.
+// the outbox directory its REPORT.md and RESULT.md go to. Fix is the fix of a
+// rework staged in the last worktree (KeptFix), handed as the card's first line.
 type Card struct {
 	ID     string `json:"id"`
 	Brief  string `json:"brief"`
 	Outbox string `json:"outbox"`
+	Fix    string `json:"fix,omitempty"`
+}
+
+// FixLine is the first line a lane hands a rework staged in the last worktree: the fix, and
+// that the tree it needs is the one it is in.
+func (c Card) FixLine() string {
+	if c.Fix == "" {
+		return ""
+	}
+	return "The fix, first: " + c.Fix + " (a rework in the last attempt's worktree, kept: its JOB.md names it; make the fix there and push, nothing to re-learn)\n"
+}
+
+// LanePrompt is the text a one-shot run is handed for a card: its brief, after the fix line
+// of a rework staged in the last worktree.
+func LanePrompt(c Card, brief string) string {
+	return c.FixLine() + brief
 }
 
 // Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md).
@@ -335,14 +352,16 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 
 // CardText is one lane turn: the card and its three steps, every path absolute, the
 // brief's text inline (a model that reads a path relative still has it), then what else
-// rides along (the pong line first, the word about the coordinator, the bus messages
-// waiting, each labelled by its sender's authority against seat).
+// rides along (the pong line first, the fix of a rework staged in the last worktree
+// next: FixLine, the word about the coordinator, the bus messages waiting, each
+// labelled by its sender's authority against seat).
 func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat string, msgs []bus.Message) string {
 	c := job.Card
 	var b strings.Builder
 	if pong != "" {
 		b.WriteString("Run this now, first, exactly as written: " + pong + "\nThen read on.\n\n")
 	}
+	b.WriteString(c.FixLine())
 	fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
 	if job.Dir != "" {
 		fmt.Fprintf(&b, "Your working directory is the card's job directory, %s. Every path here is absolute: use it exactly as written, leading slash and all.\n", job.Dir)

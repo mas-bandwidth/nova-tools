@@ -520,7 +520,12 @@ come back by a rework, a return or a redo (its `reworks` or `returns` counted;
 `sprint.ReworkPinned`) is the hard pin `OnlyFriend`, dealt only to her as on its first
 deal, and while she is down, held or without room it waits ready, held as a hard pin is,
 dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone
-(`friend take`) counts neither, so a preference taken back from her is still offered on.
+(`friend take`) counts neither, so a preference taken back from her is still offered on. Dealt
+back to the friend who worked the attempt before, a rework whose fix names no file outside its
+PATHS starts in that attempt's worktree, kept by her daemon's prune until the card lands or is
+dropped, with no time bound (`ReworkKeptMax` caps only how many she keeps), the
+fix the first line its lane is handed (docs/SPEC-FRIEND.md, a rework starts in the last
+worktree).
 
 **A friend's card is working once she starts it** (the owner, 2026-10-05: "They
 are not working unless work turns from working to done."; the friends table had

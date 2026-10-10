@@ -101,7 +101,7 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 	if err != nil {
 		return LaneTurn{}, fmt.Errorf("the card's brief: %w", err)
 	}
-	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", string(brief), "--add-dir", c.Dir, "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
+	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", LanePrompt(card, string(brief)), "--add-dir", c.Dir, "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
 	// the run's stream-json usage counted as it prints, and the run stopped at the card's cap (tokencap.go)
 	limit := tokenCap(c.TokenCap)
 	run, watch, stop := watchClaude(ctx, limit, c.cards.prior(card.Outbox))
