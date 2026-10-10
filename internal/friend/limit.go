@@ -29,6 +29,11 @@ const LimitTail = 2048
 // named no reset is down before a wake is tried.
 const DefaultLimitWait = time.Hour
 
+// DefaultLimitSlack is how long past a provider's reset the limit layer waits
+// before a wake is tried: a reset named to the second is met with a moment to
+// spare, never a guess (docs/SPEC-FRIEND.md, a provider failure is typed).
+const DefaultLimitSlack = 30 * time.Second
+
 // Usage is a harness's measured utilization of its five-hour and weekly
 // windows, each a fraction (1 is the window spent), with when each resets
 // and when it was measured (zero: never).
@@ -228,6 +233,15 @@ type Limits struct {
 	// reset (DefaultLimitWait when zero): --limit-rest.
 	Harness string
 	Rest    time.Duration
+	// Slack is how long past a named reset the layer waits before a wake
+	// (DefaultLimitSlack when zero): a provider failure's retry-after is a
+	// floor, never a guess.
+	Slack time.Duration
+	// Record, when set, is told each typed provider failure (ProviderFailure)
+	// the layer holds the lanes for, one line (docs/SPEC-FRIEND.md, a provider
+	// failure is typed): the kind, the status, the retry-after and the
+	// request id.
+	Record func(line string)
 	// AllowOverage is the owner's word that this friend may spend paid
 	// overage; without it a harness on overage reads down.
 	AllowOverage bool
@@ -300,6 +314,14 @@ func (l *Limits) see(out string, failed bool) {
 	if found && lim.Limited && kind == "" {
 		kind = limitKindOf(lim.Reason)
 	}
+	if failed && !found {
+		// a provider failure the harness's own wording did not name: a typed
+		// record whose kind drives the layer, never the text again
+		if f, ok := ClassifyProviderFailure("", out, now); ok && f.IsLimit() {
+			l.Fail(f)
+			return
+		}
+	}
 	l.mu.Lock()
 	l.pace.Observe(uses)
 	if l.waking != "" && strings.Contains(out, l.waking) {
@@ -325,6 +347,44 @@ func (l *Limits) see(out string, failed bool) {
 	}
 	if judge && l.Unread != nil {
 		l.Unread(lim.Reason)
+	}
+}
+
+// Fail is one attempt's typed provider failure (ClassifyProviderFailure)
+// driving the layer by its kind, never by the text again (docs/SPEC-FRIEND.md,
+// a provider failure is typed): a rate limit or a usage limit with a known
+// reset parks the lanes until the reset plus Slack, then a wake; one with no
+// reset known, and out of funds, holds with no wake time (until zero: the gate
+// never guesses one). The record says the kind, status, retry-after and
+// request id, and Down says it to the sprint once.
+func (l *Limits) Fail(f ProviderFailure) { l.failAt(f, l.Now()) }
+
+func (l *Limits) failAt(f ProviderFailure, now time.Time) {
+	if !f.IsLimit() {
+		return
+	}
+	slack := l.Slack
+	if slack <= 0 {
+		slack = DefaultLimitSlack
+	}
+	l.mu.Lock()
+	if l.limited && l.kind == f.Kind {
+		l.mu.Unlock()
+		return // the same kind of failure holds her already
+	}
+	l.limited, l.kind, l.reason, l.waking, l.answered = true, f.Kind, f.Reason, "", false
+	l.until = time.Time{}
+	if f.RetryAfter > 0 {
+		l.until = now.Add(f.RetryAfter + slack)
+	}
+	l.episodes++
+	until := l.until
+	l.mu.Unlock()
+	if l.Record != nil {
+		l.Record(f.RecordLine())
+	}
+	if l.Down != nil {
+		l.Down(until, f.Reason)
 	}
 }
 
@@ -517,6 +577,11 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 	l.mu.Lock()
 	limited, until, reason := l.limited, l.until, l.reason
 	l.mu.Unlock()
+	if limited && until.IsZero() {
+		// no reset known: the lanes are held with no wake time, never a
+		// guessed one (docs/SPEC-FRIEND.md, a provider failure is typed)
+		return 0, Deferred{Reason: fmt.Sprintf("the harness is down with no reset known: %s", reason)}
+	}
 	if limited && now.Before(until) {
 		return 0, Deferred{Reason: fmt.Sprintf("the harness is at its limit until %s: %s", until.Format(time.RFC3339), reason)}
 	}

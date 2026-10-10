@@ -1601,7 +1601,12 @@ func (d *Daemon) flush(now time.Time) {
 			s.Session, s.LimitKind, s.LimitUntil = SessionLimited, kind, until
 			if d.limitSaid != until {
 				d.limitSaid = until
-				d.Record(fmt.Sprintf("%s session=limited kind=%s until=%s: nothing is delivered, every message stays pending, pings are answered", now.UTC().Format(time.RFC3339), kind, until.UTC().Format(time.RFC3339)))
+				// a limit with no reset known ("none") is held with no wake time, never a guessed one
+				untilText := until.UTC().Format(time.RFC3339)
+				if until.IsZero() {
+					untilText = "none"
+				}
+				d.Record(fmt.Sprintf("%s session=limited kind=%s until=%s: nothing is delivered, every message stays pending, pings are answered", now.UTC().Format(time.RFC3339), kind, untilText))
 			}
 		} else if !d.limitSaid.IsZero() {
 			d.limitSaid = time.Time{}
