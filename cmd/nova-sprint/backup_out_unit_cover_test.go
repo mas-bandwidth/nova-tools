@@ -47,11 +47,15 @@ func (s *coverStateSource) State(context.Context) (store.SprintState, error) {
 	return s.state, s.stateErr
 }
 
+// errCoverWrite is the sentinel every failing cover writer returns, so a test
+// can tell that writeStrings handed the writer's own error back unwrapped.
+var errCoverWrite = errors.New("cover: the writer failed")
+
 // coverFailWriter fails every write.
 type coverFailWriter struct{}
 
 func (coverFailWriter) Write([]byte) (int, error) {
-	return 0, errors.New("cover: the writer failed")
+	return 0, errCoverWrite
 }
 
 // coverFailAfter lets the first write through and fails the next: a map key
@@ -60,7 +64,7 @@ type coverFailAfter struct{ writes int }
 
 func (w *coverFailAfter) Write(p []byte) (int, error) {
 	if w.writes >= 1 {
-		return 0, errors.New("cover: the writer failed")
+		return 0, errCoverWrite
 	}
 	w.writes++
 	return len(p), nil
@@ -164,19 +168,19 @@ func TestSprintBackupOutCoverWriteStrings(t *testing.T) {
 	})
 	t.Run("writer fails on a string", func(t *testing.T) {
 		t.Parallel()
-		assert.Error(t, writeStrings(coverFailWriter{}, "alpha"))
+		assert.ErrorIs(t, writeStrings(coverFailWriter{}, "alpha"), errCoverWrite)
 	})
 	t.Run("writer fails inside an array", func(t *testing.T) {
 		t.Parallel()
-		assert.Error(t, writeStrings(coverFailWriter{}, []any{"alpha"}))
+		assert.ErrorIs(t, writeStrings(coverFailWriter{}, []any{"alpha"}), errCoverWrite)
 	})
 	t.Run("writer fails on a map key", func(t *testing.T) {
 		t.Parallel()
-		assert.Error(t, writeStrings(coverFailWriter{}, map[string]any{"alpha": 1}))
+		assert.ErrorIs(t, writeStrings(coverFailWriter{}, map[string]any{"alpha": 1}), errCoverWrite)
 	})
 	t.Run("writer fails on a map value", func(t *testing.T) {
 		t.Parallel()
-		assert.Error(t, writeStrings(&coverFailAfter{}, map[string]any{"alpha": "beta"}))
+		assert.ErrorIs(t, writeStrings(&coverFailAfter{}, map[string]any{"alpha": "beta"}), errCoverWrite)
 	})
 }
 
