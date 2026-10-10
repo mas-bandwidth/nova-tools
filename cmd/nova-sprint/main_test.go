@@ -353,7 +353,7 @@ func TestAStaleFinishIsRefusedAndARetryReplays(t *testing.T) {
 	ta.json("queue --as m1", &q)
 	card := q.Cards[0].ID
 	ta.ok("take --as m1 " + card + "@1")
-	ta.ok("fleet down m1")
+	ta.ok("fleet down m1 --reason 'test'")
 	code, _, errs := ta.do("finish --as m1 " + card + "@1")
 	require.Equal(t, 1, code, "a stale finish: %d %s", code, errs)
 	require.Contains(t, errs, "stale", "a stale finish: %d %s", code, errs)

@@ -150,18 +150,22 @@ func (a *app) runHold(verbName, stepVerb string, c common, st *store.Store, r sp
 // release): the member's unfinished work, ready and working, dealt round the fleet now.
 func (a *app) cmdFleetDown(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("fleet down")
+	reason := fs.String("reason", "", "why, in words: the log carries it; a down wants one")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet down", err.Error())
 	}
 	if len(pos) != 1 {
-		return refuse(stderr, "fleet down", "wants one member; run: nova-sprint hold <member> --reason <text> --return")
+		return refuse(stderr, "fleet down", "wants one member; run: nova-sprint fleet down <member> --reason <text>")
+	}
+	if strings.TrimSpace(*reason) == "" {
+		return refuse(stderr, "fleet down", "--reason <text> is required: why the member is going down, recorded in the log")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "fleet down", err.Error())
 	}
-	return a.runHold("fleet down", "fleet hold", *c, st, sprint.HoldReq{Names: pos, Kind: sprint.HoldMember, Return: true, Who: c.actor}, nil, stdout, stderr)
+	return a.runHold("fleet down", "fleet hold", *c, st, sprint.HoldReq{Names: pos, Kind: sprint.HoldMember, Return: true, Reason: *reason, Who: c.actor}, nil, stdout, stderr)
 }
 
 // oldHoldWords is what fleet down, reader away and reader up say on -h: the hold verb

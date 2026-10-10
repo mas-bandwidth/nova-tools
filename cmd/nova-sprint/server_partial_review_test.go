@@ -17,7 +17,7 @@ func TestServerReviewRetriesAPartialBatchAfterRestart(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --members m1:2 --readers reader-a,reader-b")
 	ta.ok("add --stream s1 --count 4")
-	ta.ok("fleet up m1")
+	ta.ok("fleet up m1 --reason 'test'")
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("stop --reason r --until 9999h")

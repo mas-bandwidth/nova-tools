@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // The coordinator's quiet on a machine (docs/SPEC-SPRINT.md section 5,
@@ -173,7 +175,7 @@ func quietPlan(s *Snapshot, r FleetReq) Plan {
 	}
 	n.Who = r.Who
 	p.Props = append(p.Props, PropWrite{Table: Fleet, Name: name, Value: q.value(), Was: was, WasAbsent: !had})
-	p.Units = append(p.Units, Unit{Key: CtlID(r.Member), Moved: n.What, Notes: []Note{n}})
+	p.Units = append(p.Units, Unit{Key: CtlID(r.Member), Changes: []Change{{Table: Fleet, Entry: ntable.BatchMemberEntry{ID: CtlID(r.Member), Expect: &ntable.MemberExpect{}, Set: map[string]string{FieldHeldReason: r.Reason}}}}, Moved: n.What, Notes: []Note{n}})
 	return p
 }
 

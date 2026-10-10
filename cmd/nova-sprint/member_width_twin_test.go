@@ -38,7 +38,7 @@ func TestAMemberRunsTheWidthOfItsFleetRow(t *testing.T) {
 	require.Contains(t, log.String(), "width 0 -> 2 (the fleet row)", "the row's width is read with the queue")
 	require.Len(t, rn.packets, 2, "two children at width 2: %s", log.String())
 
-	twin("nova-sprint fleet up m1 --width 1")
+	twin("nova-sprint fleet up m1 --width 1 --reason 'test'")
 	twin("nova-sprint tick")
 	end := func(card string) {
 		c := rn.children[card]

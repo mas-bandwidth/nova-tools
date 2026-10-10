@@ -2142,6 +2142,9 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			if r.Deadline > 0 {
 				fields[FieldMemberDeadline] = itoa(r.Deadline)
 			}
+			if r.Reason != "" {
+				fields[FieldHeldReason] = r.Reason
+			}
 			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0, fields)))
 		default:
 			set := map[string]string{}
@@ -2159,8 +2162,16 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			if r.DeadlineOff && ctl.F(FieldMemberDeadline) != "" {
 				unset = append(unset, FieldMemberDeadline)
 			}
+			// Record reason for down/hold and for up (unless releasing a held member)
+			if r.Reason != "" {
+				if r.Op != "release" || ctl.F("held") == "" {
+					set[FieldHeldReason] = r.Reason
+				} else {
+					unset = append(unset, FieldHeldReason)
+				}
+			}
 			if r.Op == "release" && ctl.F("held") != "" {
-				unset = append(unset, "held", FieldHeldBy, FieldHeldReason, FieldHeldFinish)
+				unset = append(unset, "held", FieldHeldBy, FieldHeldFinish)
 				if !comeUp {
 					line = r.Member + " released, down until it beats"
 				}
@@ -2262,7 +2273,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		// goes, so the sync never releases it
 		unset = append(unset, FieldHeldBy)
 	}
-	if r.Op == "hold" {
+	if r.Op == "hold" || r.Op == "down" {
 		// the coordinator's reason and whether working cards finish (hold.go): a
 		// later hold says them again, and a hold with neither clears both
 		if r.Reason != "" {

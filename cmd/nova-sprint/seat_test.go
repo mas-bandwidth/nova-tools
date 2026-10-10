@@ -192,7 +192,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	// add, and drop refuses a card a waiting card still needs without
 	// --cascade (docs/SPEC-SPRINT.md section 11), so no blocked judgment opens.
 	ta.ok("add --stream s3 b --one --needs s2-1")
-	ta.ok("fleet down m2")
+	ta.ok("fleet down m2 --reason 'test'")
 
 	out := ta.ok("handover")
 	for _, want := range []string{

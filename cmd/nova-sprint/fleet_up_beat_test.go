@@ -21,11 +21,11 @@ func TestFleetUpOnAMemberWithAnOldBeatKeepsItUpAtTheNextTick(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1,m2")
 	ta.ok("add --stream s1 --count 8")
 	ta.ok("start")
-	ta.ok("fleet down m1")
+	ta.ok("fleet down m1 --reason 'test'")
 	ta.ok("tick")
 	ta.live = nil // neither member beats from here on: m1's last beat gets old
 	ta.a.sleep(10 * time.Minute)
-	ta.ok("fleet up m1")
+	ta.ok("fleet up m1 --reason 'test'")
 	var w whereView
 	ta.json("where", &w)
 	require.Equal(t, sprint.Up, w.Tables["fleet"]["m1"]["status"], "released and up at once")

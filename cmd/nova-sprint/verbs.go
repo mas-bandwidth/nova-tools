@@ -97,8 +97,8 @@ func init() {
 		{"hold", "<member|reader|friend|stream>... --reason <text> [--return] [--dry-run]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},
 		{"unhold", "<member|reader|friend|stream>... [--reason <text>] [--dry-run]", "unhold m1 --reason 'the cleaner is fixed'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(true, args, o, e) }},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
-		{"fleet up", "<member> [--width <n> | --width 0]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
-		{"fleet down", "<member>", "fleet down m1", (*app).cmdFleetDown},
+		{"fleet up", "<member> [--width <n> | --width 0] --reason <text>", "fleet up m1 --width 64 --reason 'member coming back'", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
+		{"fleet down", "<member> --reason <text>", "fleet down m1 --reason 'machine reboot'", (*app).cmdFleetDown},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"fleet quiet", "<member> (--for <duration> | --until <RFC3339>) --reason <text> | <member> --end [--dry-run]", "fleet quiet m1 --for 11m --reason 'load 64: the macOS CI legs time out'", (*app).cmdFleetQuiet},
@@ -106,7 +106,7 @@ func init() {
 		{"collect", "[<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]", "collect --dead-lanes", (*app).cmdCollect},
 		{"friend beat", "<friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--check <nonce>] [--pong <nonce>] [--run <id>]", "friend beat friend-a --working 2 --queue 3 --load 40", (*app).cmdFriendBeat},
 		{"friend down", "<friend> [--reason <text>] [--until <RFC3339>]", "friend down friend-a --reason 'opus rate limited'", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
-		{"friend up", "<friend> [--width <n>]", "friend up friend-a --width 4", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
+		{"friend up", "<friend> [--width <n>] [--reason <text>]", "friend up friend-a --width 4 --reason 'friend back'", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"friend cards", "<friend> [--json]", "friend cards friend-a --json", (*app).cmdFriendCards},
 		{"friend take", "<friend> (<id>... | --all-unstarted) [--reason <text>]", "friend take friend-a s1-4 --reason 'she is on another job'", (*app).cmdFriendTake},
 		{"friend give", "<friend> <id>... [--reason <text>]", "friend give friend-a s1-4 --reason 'the take was the harness, not hers'", (*app).cmdFriendGive},
@@ -1119,7 +1119,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	var memberNames []string
 	for _, m := range specs {
-		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width, false, 0, false), steps, stderr); code != 0 {
+		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width, false, 0, false, ""), steps, stderr); code != 0 {
 			return code
 		}
 		memberNames = append(memberNames, m.Name)
@@ -3065,6 +3065,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it runs at once; the deal holds it at %d times that, ready and working; 1 to %d (default: as it is, %d for a new member); 0 drains the member: no new deals, its untaken ready cards are levelled away, its working cards finish (fleet down deals them again elsewhere)", sprint.DealAhead, sprint.MaxWidth, sprint.DefaultWidth))
 		deadline = fs.String("deadline", "", fmt.Sprintf("pin the deadline every card dealt to the member gets, a duration (45m, 2700s); default takes the pin off: each card's own deadline, or %d times the member's median run wall over its last %d ok attempts, whichever is larger", sprint.DeadlineK, sprint.DeadlineSamples))
 	}
+	reason := fs.String("reason", "", "why, in words: the log carries it; an up wants one")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
@@ -3090,11 +3091,21 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	if len(pos) == 1 {
 		member = pos[0]
 	}
+	rwhy := ""
+	if op == "up" || op == "down" {
+		if *reason == "" {
+			return refuse(stderr, name, "--reason <text> is required: why the member is changing, recorded in the log")
+		}
+		rwhy = strings.TrimSpace(*reason)
+	}
+	if op == "level" && *reason != "" {
+		return refuse(stderr, name, "--reason takes no value for level")
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain, d, off), stdout, stderr)
+	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain, d, off, rwhy), stdout, stderr)
 }
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {

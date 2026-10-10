@@ -30,10 +30,10 @@ func TestWorkerTakeRetryIdentityAndEmptyResultContract(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ta := newTestApp(t)
-			ta.ok("init --members m1:2 --readers reader-a,reader-b")
-			ta.ok("fleet up m1")
-			deal := func() {
+		ta := newTestApp(t)
+		ta.ok("init --members m1:2 --readers reader-a,reader-b")
+		ta.ok("fleet up m1 --reason 'test'")
+		deal := func() {
 				ta.ok("add --stream s1 --count 4")
 				ta.ok("start")
 				ta.ok("tick")
