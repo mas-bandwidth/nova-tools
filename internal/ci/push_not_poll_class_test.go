@@ -27,7 +27,7 @@ import (
 // func-valued Pause, pause, after, sleep or ticker given a duration, or a
 // parameter that is a channel of time.Time: a ticker made by the caller). Each
 // one is a line of testdata/push-loops.txt, `<file> <func> <row>`, and each row
-// it names is a row of the table in docs/SPEC-SPRINT.md, section "Push, not
+// it names is a row of the table in docs/PUSH-NOT-POLL.md, section "Push, not
 // poll". The table says each loop's direction, its mechanism (blocking read,
 // delivery into a session, beat, timer poll, a wait that moves nothing between
 // parties, or removed), its cadence, and,
@@ -39,7 +39,7 @@ import (
 
 const (
 	pushLoopsPath = "testdata/push-loops.txt"
-	pushTableDoc  = "docs/SPEC-SPRINT.md"
+	pushTableDoc  = "docs/PUSH-NOT-POLL.md"
 	// pushTableHeading is the section the table lives under.
 	pushTableHeading = "### Push, not poll"
 )

@@ -3,7 +3,7 @@
 #
 # One line per loop: `<file> <func> <row>`, the func as the scanner names it
 # (Recv.Name for a method), the row the first cell of a row of the table in
-# docs/SPEC-SPRINT.md, section "Push, not poll". A line is an inventory entry,
+# docs/PUSH-NOT-POLL.md, section "Push, not poll". A line is an inventory entry,
 # never an excuse: the row says what the loop is, and a timer poll's row names
 # the card that makes it push or the measured reason it stays. A loop that
 # stops waiting on a clock (it became a push) has its line deleted in the same

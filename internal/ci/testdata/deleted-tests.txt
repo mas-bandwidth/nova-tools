@@ -1473,3 +1473,4 @@ internal/docs/cli_memory_flags_test.go the reference lines it hand-held are gene
 internal/docs/cli_spelling_flags_test.go the reference line it hand-held is generated now: the clidoc block pastes `nova-check spelling -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 cmd/nova-sprint/recut_widen_test.go recut --widen is retired; TestBriefWidenKeepsTheId and TestAWidenReadsThePathBeforeTheProse cover the in-place brief --widen replacement
 internal/friend/adapter_standalone_test.go replaced by TestOpenCodeRunsStandaloneWhenTheHarnessOffersIt in internal/friend/adapter_test.go per sprint card opencode-run-standalone
+internal/docs/coordrules_test.go docs/SPRINT-COORDINATOR.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the runbook rules check goes with the runbook and is owed there

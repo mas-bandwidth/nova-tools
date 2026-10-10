@@ -1,5 +1,9 @@
 # nova-tools changelog
 
+## v1.2.3 — unreleased
+
+- split (layer L5): the sprint's TLA+ models and docs move to mas-bandwidth/nova-sprint. 24 modules that model only nova-sprint, nova-card and nova-work code leave `tla/` with their MC modules, 328 configurations, `CASES.tsv` and `RUNS.tsv` rows, 15 `COVERAGE.tsv` rows, READMEs and benches (CardMachine, CardContract, the Friend* models and StopReturn stay beside the code they model). SPEC-SPRINT.md, SPRINT-COORDINATOR.md, SPRINT-COORDINATOR-SEAT.md, SPEC-WORK-V1.md, SPEC-WORKLANG.md, docs/sprint/GLOSSARY.md and the sprint and work ratings move; links to them point at nova-sprint. SPEC-SPRINT-DASHBOARD.md stays until internal/sprintdash, whose test holds the page to it, leaves. The "Push, not poll" loop table, which covers every nova-tools loop, stays here as docs/PUSH-NOT-POLL.md.
+
 ## v1.2.0 — 2026-10-09
 
 This build improves sprint cancellation, code reviews, agent messaging and setup.
