@@ -59,7 +59,7 @@
    :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
     refuses unless an explicit opt-out flag is given."
    :origin "nova-tools PR #5571 cold read")
-  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "planned"
+  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "in-progress"
    :title "The release changelog lists merge-queue merges"
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
