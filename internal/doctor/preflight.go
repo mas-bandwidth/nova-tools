@@ -20,6 +20,10 @@ import (
 
 var (
 	schemaSentence = regexp.MustCompile(`schema config is at version (\d+) and this binary carries (\d+)`)
+	// serverActorDrift is the native seat result's server-actor drift
+	// (sprint.SeatDrift): the server runs as a named actor other than the seat's
+	// holder, whose fix is a restart, not `seat --repair`.
+	serverActorDrift = regexp.MustCompile(`the server runs as (\S+) and the seat is (\S+)'s`)
 )
 
 // migrationOwed reports a store schema older than the binary that read it. The next
@@ -93,16 +97,51 @@ func (r *jobRun) seatInstall() string {
 }
 
 // seat agreement and installed machinery precede proof (docs/SPEC-DOCTOR.md,
-// "Coordinator preflight"); native remedies are preserved.
+// "Coordinator preflight"). The native `seat` result names two drifts, each with
+// its own one supported command: a key that names someone the record does not is
+// `seat --repair`; a running server acting as a named actor other than the holder
+// is `install server` (the unit is reinstalled as the holder, whose
+// NOVA_SPRINT_ACTOR the loop reads). The server drift's own line is an instruction
+// ("change ... and restart it"), which is not a command, so it is never printed as
+// the fix.
 func stepSeatAgreement(ctx context.Context, r *jobRun) Result {
 	c := r.exec(ctx, "nova-sprint", "seat", "--actor", r.actor(), "--redis", r.redisAddr())
 	if c.code == -1 {
 		return notRun("nova-sprint", c)
 	}
-	if strings.Contains(c.out+" "+c.said, "DRIFT") {
-		return Result{Status: Fail, Evidence: firstLine(c.out + " " + c.said), Fix: fmt.Sprintf("nova-sprint seat --repair --reason 'doctor detects seat drift' --actor %s --redis %s", oneline.ShellWord(r.actor()), oneline.ShellWord(r.redisAddr()))}
+	text := c.out + " " + c.said
+	switch {
+	case strings.Contains(text, "the key says"):
+		return Result{Status: Fail, Evidence: firstLine(text), Fix: r.seatRepair()}
+	case strings.Contains(text, "the server runs as"):
+		return Result{Status: Fail, Evidence: firstLine(text), Fix: r.serverInstall(holderFromServerDrift(text, r.actor()))}
+	case strings.Contains(text, "DRIFT"):
+		return Result{Status: Fail, Evidence: firstLine(text), Fix: r.seatRepair()}
 	}
 	return Result{Status: OK, Evidence: firstLine(c.out)}
+}
+
+// seatRepair is the key/record drift's command: the record's holder or the owner
+// writes the key from the record.
+func (r *jobRun) seatRepair() string {
+	return fmt.Sprintf("nova-sprint seat --repair --reason 'doctor detects seat drift' --actor %s --redis %s", oneline.ShellWord(r.actor()), oneline.ShellWord(r.redisAddr()))
+}
+
+// serverInstall is the server-actor drift's command: the server unit is reinstalled
+// as the holder, so the loop restarts as the actor the seat names. --listen is the
+// server's fleet address, which no check reports, so it is named as a placeholder;
+// --actor names the holder, whose NOVA_SPRINT_ACTOR the unit's loop reads.
+func (r *jobRun) serverInstall(holder string) string {
+	return fmt.Sprintf("nova-sprint install server --listen <address:port> --redis %s --actor %s", oneline.ShellWord(r.redisAddr()), oneline.ShellWord(holder))
+}
+
+// holderFromServerDrift is the holder the server drift names (the seat's), read
+// from the native result so the fix names the seat's holder, not the caller's --as.
+func holderFromServerDrift(text, def string) string {
+	if m := serverActorDrift.FindStringSubmatch(text); m != nil && m[2] != "-" && m[2] != "" {
+		return m[2]
+	}
+	return def
 }
 
 func stepSeatService(ctx context.Context, r *jobRun) Result {
