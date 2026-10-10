@@ -16,7 +16,7 @@ var POLL_MS = 1000;
 var MIN_CELL = 4;  // px: a cell never gets narrower; cards per cell grows instead
 var GAP = 2;       // px between cells
 var TRACK_CELL = 1.6875, TRACK_GAP = 0.25; // rem: a fleet track cell and its gap (27 px and 4 px on a desktop), never scaled
-// the owner 2026-10-04 ~4:08 PM: the widest track always spans what 16 cells used to, "so no matter the size, it works out"
+// Glenn 2026-10-04 ~4:08 PM: the widest track always spans what 16 cells used to, "so no matter the size, it works out"
 var TRACK_SPAN = 16 * (TRACK_CELL + TRACK_GAP) - TRACK_GAP;
 function trackCell(scale) { scale = Math.max(1, scale); return (TRACK_SPAN - (scale - 1) * TRACK_GAP) / scale; }
 var $ = function (id) { return document.getElementById(id); };
@@ -32,7 +32,7 @@ function cents(s) { // "$26.16" -> 2616, "-" -> null; rounded up to the cent
   return c === 0 ? 0 : c;  // never -0: "$0.00" must not print as "$-0.00"
 }
 function money(c) { return "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-// whole dollars rounded up, for the Cost breakdown panel only (the owner 2026-10-04 2:45 PM: "Round up to nearest $", "for this case"); money() keeps the cent everywhere else
+// whole dollars rounded up, for the Cost breakdown panel only (Glenn 2026-10-04 2:45 PM: "Round up to nearest $", "for this case"); money() keeps the cent everywhere else
 function dollars(c) { var d = Math.ceil(c / 100 - 1e-9); return "$" + (d === 0 ? 0 : d).toLocaleString("en-US"); }
 function zoneAbbr(d) {
   try { var p = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" }).formatToParts(d).filter(function (x) { return x.type === "timeZoneName"; })[0]; return p ? p.value : ""; }
@@ -48,7 +48,7 @@ function etaAround(when, ms) {
   var day = ms >= 86400000 ? when.toLocaleDateString("en-US", { weekday: "short" }) + " " : "";
   return ("around " + day + clockShort(when) + " " + zoneAbbr(when)).trim();
 }
-// a tile's subline stays on one line (the owner 2026-10-04 3:20 PM): when it does not fit the tile,
+// a tile's subline stays on one line (Glenn 2026-10-04 3:20 PM): when it does not fit the tile,
 // the shorter forms in turn
 function fits(e) { return e.scrollWidth <= e.clientWidth + 1; }
 var etaAtLast = null;
@@ -64,8 +64,8 @@ function etaMs(s) { // "2h20m" or "2d17h" -> ms (the day form arrives with PR 51
   if (!m || !(m[1] || m[2] || m[3] || m[4])) return null;
   return (((int(m[1]) * 24 + int(m[2])) * 60 + int(m[3])) * 60 + int(m[4])) * 1000;
 }
-// One ordinary blank between the parts of a figure: it is set in the proportional face,
-// because a monospace blank is a full digit wide and
+// One ordinary space between the parts of a figure (SPEC.md, Glenn 10:00 and 10:03 PM): the
+// space is set in the proportional face, because a monospace space is a full digit wide and
 // reads as a double space beside the digits.
 var SP = "<span class=\"sp\"> </span>";
 function etaText(s) { return String(s).replace(/(\d+[dhms])(?=\d)/g, "$1" + SP); }
@@ -231,10 +231,13 @@ function digitsOf(n) { return String(Math.max(0, n)).length; }
 function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
 function setPill(p, text, tone, title) { setText(p._t, text); setClass(p, "pill " + tone); setTitle(p, title || text); }
 function setOk(o, p, done) { setText(o, p === null ? "-" : p.toFixed(1) + "%"); setClass(o, "num" + (done ? "" : " zero")); }
+// One vocabulary across the tables (SPEC.md, Glenn 8:04 AM: "change 'asleep' to 'down' so we have
+// consistency across all tables"): a store that still says "asleep" is shown as "down", in red.
 var STATUS_TONE = { up: "good", held: "warning", down: "critical" };
-// The server may carry a reason after the status; the pill shows only the status word.
-function shownStatus(st) { return String(st || "").trim().split(/[\s(]/)[0]; }
-// A suffixed friend label groups under the matching base name when that name is present.
+// the status word alone (up, held, down): the server may carry a reason after it ("held (why)"), which is the coordinator's view, never the pill's (Glenn 2026-10-04 10:40 PM)
+function shownStatus(st) { var w = String(st || "").trim().split(/[\s(]/)[0]; return w === "asleep" ? "down" : w; }
+// A bud shows as its person: "rowan-next" is "rowan (next)" when "rowan" is a friend too
+// (Glenn 2026-10-04 ~4:24 PM: "this enforces it is one person, but multiple buds").
 function budLabel(name, table) {
   var i = name.indexOf("-");
   if (i > 0 && table && table[name.slice(0, i)]) return name.slice(0, i) + " (" + name.slice(i + 1) + ")";
@@ -377,12 +380,12 @@ function renderOverall(sum, all) {
 }
 window.addEventListener("resize", function () { if (overallLast) renderOverall(overallLast.sum, overallLast.all); });
 
-// One renderer for Fleet and Friends (SPEC.md, the owner 8:07 PM: "the friends table should LOOK
+// One renderer for Fleet and Friends (SPEC.md, Glenn 8:07 PM: "the friends table should LOOK
 // exactly like the fleet table"): same columns, cells, pills (the fleet's up / held / down),
-// sort, total row and load column (a friend's load is "-" until it is measured: the owner 8:08 PM,
+// sort, total row and load column (a friend's load is "-" until it is measured: Glenn 8:08 PM,
 // "for now, just put load as \"-\""). `scale` is the cell grid both
 // tables share, so their columns have the same widths.
-// `clamp` (Friends only, SPEC.md "Friends working, clamped to width, soft", the owner 2026-10-03 12:14 PM):
+// `clamp` (Friends only, SPEC.md "Friends working, clamped to width, soft", Glenn 2026-10-03 12:14 PM):
 // a friend's working figure never exceeds its width; the raw count is the cell's title only.
 function fleetLike(box, table, nameLabel, scale, clamp) {
   function shownWorking(m) { var w = int(m.working); return clamp ? Math.min(w, int(m.width)) : w; }
@@ -405,12 +408,12 @@ function fleetLike(box, table, nameLabel, scale, clamp) {
   // the track column is exactly the widest track, so the figure sits right after it
   var tw = TRACK_SPAN.toFixed(3) + "rem";
   if (box.style.getPropertyValue("--track-w") !== tw) box.style.setProperty("--track-w", tw);
-  box.style.removeProperty("--frac-w"); // a measured fraction column (9:31 PM) broke the layout; the column is fixed in CSS (the owner 9:34 PM: "undo that last one")
+  box.style.removeProperty("--frac-w"); // a measured fraction column (9:31 PM) broke the layout; the column is fixed in CSS (Glenn 9:34 PM: "undo that last one")
   // one digit width for every "n / width" figure in the table, the Total's sums included, so the slashes line up
   // the rows' fraction is as wide as the widest row's figure, not the total's: the total sits
   // below with no bar beside it, so reserving its digits per row left a gap to the right of the
-  // bars (the owner 2026-10-06 9:25 PM); the total row uses its own digits
-  // the Total row's slash sits on the same line as the rows' (the owner 9:28 PM: "the totals are
+  // bars (Glenn 2026-10-06 9:25 PM); the total row uses its own digits
+  // the Total row's slash sits on the same line as the rows' (Glenn 9:28 PM: "the totals are
   // slightly misaligned"): every row's numerator, the total's included, is as wide as the widest
   // numerator; only the total's denominator may be wider
   var digits = names.reduce(function (a, n) { return Math.max(a, digitsOf(shownWorking(table[n])), digitsOf(int(table[n].width))); }, 1);
@@ -435,7 +438,7 @@ function fleetLike(box, table, nameLabel, scale, clamp) {
     setPill(r.pill, st || "-", STATUS_TONE[st] || "neutral");
     setTrack(r.track, working, width, scale, m);
     t.fix += int(m.fix_working != null ? m.fix_working : m.fix);
-    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : "")); // no reads count beside the fraction: the orange cells say it, and the label widened the column and broke the alignment (the owner 2026-10-06 9:08 PM)
+    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : "")); // no reads count beside the fraction: the orange cells say it, and the label widened the column and broke the alignment (Glenn 2026-10-06 9:08 PM)
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
@@ -443,7 +446,7 @@ function fleetLike(box, table, nameLabel, scale, clamp) {
   var c = box._total._c;
   setNum(c[2], t.ready);
   setText(c[3], t.fix ? t.fix + " fix" : ""); setClass(c[3], "num" + (t.fix ? "" : " zero"));
-  // working as "x / y": the sum of working over the sum of width (SPEC.md, the owner 8:10 PM)
+  // working as "x / y": the sum of working over the sum of width (SPEC.md, Glenn 8:10 PM)
   setHTML(c[4], frac(t.working, t.width, digits, Math.max(digits, totalDigits)));
   setNum(c[5], t.done);
   setOk(c[6], t.done ? t.ok / t.done * 100 : null, t.done);
@@ -475,7 +478,7 @@ function renderFriends(d) {
   setSideOff(box.closest("section"), d.friends_work);
 }
 // A side (fleet, friends) can be switched off or limited to some tiers (set --fleet on|off,
-// --fleet-tiers; the same for friends; the owner 2026-10-06 8:02 PM: "When [disabled], the table greys
+// --fleet-tiers; the same for friends; Glenn 2026-10-06 8:02 PM: "When [disabled], the table greys
 // out a bit visually", "both chevron'd and open"): the head says "· off" or "· tiers flash, pro",
 // and an off side's whole panel is dimmed, open or collapsed.
 function sideWord(work, tiers) {
@@ -489,21 +492,21 @@ function setSideOff(sec, work) { if (sec) sec.classList.toggle("off", String(wor
 // the machine pill: red when the machine line says every provider is out of credit (SPEC.md)
 function setMachine(line) {
   var text = String(line || "-").replace(/^machine:\s*/, "");
-  // the human page shows RUNNING, STOPPED or STALE; tick lateness is the coordinator's view only (the owner 2026-10-04 2:55 PM)
+  // the human page shows RUNNING, STOPPED or STALE; tick lateness is the coordinator's view only (Glenn 2026-10-04 2:55 PM)
   var late = /^running\b.*tick late (\d+)s/i.exec(text);
   if (late) text = Number(late[1]) >= 60 ? "STALE" : "running";
   else if (/^running\b/i.test(text)) text = "running";
   var stopped = /STOPPED/.test(text);
-  // the human page says STOPPED and nothing more; the reason is the coordinator's view (the owner 2026-10-04 10:15 PM: "STOPPED is plenty")
+  // the human page says STOPPED and nothing more; the reason is the coordinator's view (Glenn 2026-10-04 10:15 PM: "STOPPED is plenty")
   if (stopped) text = "STOPPED";
   setText($("machine"), text);
   setClass($("machine-chip"), "chip" + (stopped ? " alert" : ""));
-  // the bar pulses only while the machine runs (the owner 2026-10-04 9:14 AM)
+  // the bar pulses only while the machine runs (Glenn 2026-10-04 9:14 AM)
   var running = /^(running|STALE)\b/.test(text);
   var box = $("overall"); if (box) box.classList.toggle("stopped", !running);
 }
 
-// Providers (SPEC.md, the owner 8:03 and 8:18 AM): shown only when the store carries tables.providers
+// Providers (SPEC.md, Glenn 8:03 and 8:18 AM): shown only when the store carries tables.providers
 var PROVIDER_STATE = { up: ["up", "good"], resting: ["resting", "warning"], "out of credit": ["out of credit", "critical"],
   out: ["out of credit", "critical"], out_of_credit: ["out of credit", "critical"], unknown: ["unknown", "dim"] };
 function providerState(st) { return PROVIDER_STATE[String(st || "unknown").toLowerCase()] || [String(st), "neutral"]; }
@@ -586,7 +589,7 @@ function renderHero(d, s, ft) {
   if (m) {
     setHTML($("eta"), etaText(m[1]));
     var ms = etaMs(m[1]);
-    // the viewer's zone after the time, the same source as the Updated clock (SPEC.md, the owner 10:00 PM)
+    // the viewer's zone after the time, the same source as the Updated clock (SPEC.md, Glenn 10:00 PM)
     var etaAt = new Date(at.getTime() + ms);
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
   } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
@@ -635,11 +638,11 @@ function renderRelease(j) {
 }
 function setLive(since) {
   setClass($("live"), "live ok");
-  // the viewer's zone after the time, from the browser (SPEC.md, the owner 9:59 PM): EDT now, EST after the change
+  // the viewer's zone after the time, from the browser (SPEC.md, Glenn 9:59 PM): EDT now, EST after the change
   // "10:00:02 PM EDT": the digits right-aligned in a fixed 8ch box (no jump from 9 to 10 o'clock),
-  // then one ordinary (proportional) blank before PM and one before the zone. The browser's own time string
-  // may put a narrow no-break blank before PM, which the monospace face draws wide; so the
-  // parts are joined here with plain blanks.
+  // then one ordinary (proportional) space before PM and one before the zone. The browser's own time string
+  // may put a narrow no-break space before PM, which the monospace face draws wide; so the
+  // parts are joined here with plain spaces.
   var p = timeParts(since);
   setLiveHTML($("live-text"), "Updated <span class=\"mono clk\"><span class=\"hms\">" + p.hms + "</span>" + SP + p.ampm +
     SP + "<span class=\"tz\">" + zoneAbbr(since) + "</span></span>");
@@ -659,7 +662,7 @@ function fitTables() {
       // a number's flash tint bleeds 6 px into the gutter by design (.fv), so numbers get 7 px of slack
       return [].some.call(r.children, function (c) {
         var slack = (c.classList.contains("num") || c.classList.contains("frac")) ? 7 : 1;
-        // a name that does not fit is ellipsized (full text on hover), never a reason for the compact layout (the owner 11:50 AM)
+        // a name that does not fit is ellipsized (full text on hover), never a reason for the compact layout (Glenn 11:50 AM)
         if (c.classList.contains("name")) { if (c.scrollWidth > c.clientWidth + 1) c.title = c.textContent; return false; }
         return c.offsetParent !== null && !c.classList.contains("cells") && c.scrollWidth > c.clientWidth + slack;
       });
@@ -668,7 +671,7 @@ function fitTables() {
   });
 }
 window.addEventListener("resize", fitTables);
-// Spend row (the owner 2026-10-04 10:15 AM): the pie of cards by tier and the ten most expensive streams.
+// Spend row (Glenn 2026-10-04 10:15 AM): the pie of cards by tier and the ten most expensive streams.
 var TIERS = ["flash", "pro", "heavy", "frontier"], topN = 10, lastSpendData = null;
 window.addEventListener("resize", function () { if (lastSpendData) renderTopStreams(lastSpendData); });
 function tierColor(t) { return "var(--tier-" + (TIERS.indexOf(t) >= 0 ? t : "other") + ")"; }
@@ -679,7 +682,7 @@ function tierCounts(obj) { // {flash: "12", pro: 3} -> [[tier, n], ...] sorted b
   out.sort(function (a, b) { var ia = TIERS.indexOf(a[0]), ib = TIERS.indexOf(b[0]); if (ia < 0) ia = 99; if (ib < 0) ib = 99; return ia - ib || b[1] - a[1]; });
   return out;
 }
-// The Cost breakdown (the owner 2026-10-04 2:43 to 3:05 PM): the pie is the spend by tier and the
+// The Cost breakdown (Glenn 2026-10-04 2:43 to 3:05 PM): the pie is the spend by tier and the
 // tier line in the panel's header is its legend, open or folded. The spend per tier is summed
 // over every stream (tables.work[s].cost_by_tier); a tier at $0 is left out of the pie, the
 // legend and the table alike. One format for the whole panel, decided once: cents (rounded up)
@@ -690,7 +693,7 @@ function tierSpend(d) {
   var work = (d.tables && d.tables.work) || {}, byTier = {};
   Object.keys(work).forEach(function (k) {
     var b = work[k].cost_by_tier; if (!b || typeof b !== "object") return;
-    // the four tiers alone: a record with no tier ("untiered") is no tier and is left out (the owner 2026-10-04 3:10 PM)
+    // the four tiers alone: a record with no tier ("untiered") is no tier and is left out (Glenn 2026-10-04 3:10 PM)
     TIERS.forEach(function (t) { var c = cents(b[t]); if (c) byTier[t] = (byTier[t] || 0) + c; });
   });
   var order = Object.keys(byTier).sort(function (a, b) { return byTier[b] - byTier[a] || a.localeCompare(b); });
@@ -729,7 +732,7 @@ function renderPie(d) {
     a0 = a1;
   });
 }
-// the In flight tile's subline (the owner 2026-10-04 3:20 and 3:25 PM): one line, two parts,
+// the In flight tile's subline (Glenn 2026-10-04 3:20 and 3:25 PM): one line, two parts,
 // "<working> working · <review+merging> review + merge", each number white and its words grey;
 // the separate review and merging counts are in the tooltip
 var inflightLast = null;
@@ -861,7 +864,7 @@ function render(d) {
 }
 // One snapshot, from the poll or the stream: shown only when its `at` is newer than the one on
 // screen, so a slow response that arrives after a faster later one never moves the page backwards
-// (SPEC.md, the owner 11:30 AM). Accepts the /api/sprint envelope ({data, build, throughput}) or a bare
+// (SPEC.md, Glenn 11:30 AM). Accepts the /api/sprint envelope ({data, build, throughput}) or a bare
 // `where --json` snapshot (an /events message may carry either).
 function accept(j) {
   if (!j) return;
@@ -925,11 +928,11 @@ setInterval(function () { if (stream && Date.now() - streamHeard > STREAM_SILENT
 // The top bar's centre line is static CSS (index.html): nothing here moves the title, the
 // pills, the clock or the button after load.
 
-// theme: always dark (the owner 2026-10-04 2:21 PM: no light theme, no toggle)
+// theme: always dark (Glenn 2026-10-04 2:21 PM: no light theme, no toggle)
 startPoll();
 connectStream();
 
-// Landings (the owner 2026-10-04 4:20 PM, live/SPEC.md): cards landed per 10 minutes over the last 24 hours,
+// Landings (Glenn 2026-10-04 4:20 PM, live/SPEC.md): cards landed per 10 minutes over the last 24 hours,
 // fleet at the base and friends on top, drawn as plain SVG. The series comes from /landings.json, which
 // bin/landings.sh writes every 60 s (a STOPGAP until where --json carries it); the panel stays hidden
 // until that file is fetched, and redraws only when its "generated" changes or the window resizes.
