@@ -57,6 +57,7 @@ func TestNovaFriendCheckCoverNoPosFriendFromStore(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	// Ensure store.Friends is set so ListFriends returns from store
+	r.store.Friends = []string{"bob"}
 	cli := r.cli()
 	state := friend.DefaultStateDir(r.home, "bob")
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
@@ -75,7 +76,7 @@ func TestNovaFriendCheckCoverNoPosFriendFromStore(t *testing.T) {
 		At:    start,
 	}))
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
-	cli.Do(t, "check", "--as", "ada", "bob").Exit(1).
+	cli.Do(t, "check", "--as", "ada").Exit(1).
 		Out("friends=1")
 }
 
@@ -117,24 +118,26 @@ func TestNovaFriendCheckCoverStateDirSubdir(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	state := t.TempDir()
+	bobState := filepath.Join(state, "bob")
+	require.NoError(t, os.MkdirAll(bobState, 0o755))
 	// Write status using friend.WriteStatus
-	require.NoError(t, friend.WriteStatus(state, friend.Status{
+	require.NoError(t, friend.WriteStatus(bobState, friend.Status{
 		Friend:     "bob",
 		Harness:    "opencode",
 		At:         start,
 		Connection: friend.Connected,
 	}))
-	require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{
+	require.NoError(t, friend.WritePresence(bobState, friend.PresenceStatus{
 		Friend:    "bob",
 		Presence:  friend.PresenceUp,
 		At:        start,
 		LastHeard: start,
 	}))
-	require.NoError(t, friend.WritePong(state, friend.Pong{
+	require.NoError(t, friend.WritePong(bobState, friend.Pong{
 		Nonce: "n0",
 		At:    start,
 	}))
-	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
+	require.NoError(t, friend.Record(bobState, "2026-10-04T02:50:00Z subject=work exit=0"))
 	ran := cli.Do(t, "check", "--as", "ada", "--state-dir", state, "bob").Exit(1)
 	require.Contains(t, ran.Stdout, "harness=opencode")
 }
