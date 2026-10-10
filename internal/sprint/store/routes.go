@@ -87,6 +87,10 @@ type RouteSet struct {
 	Routes []sprint.Route
 	Tiers  map[string][]string
 	Bars   Bars
+	// FriendCaps is each friend's dollar cap per clock hour by name (a canonical decimal;
+	// empty for the default, sprint.DefaultFriendCapUSDHour), read with the routes by a
+	// step that deals, so the tick's cap judgment reaches the friends (FriendCaps).
+	FriendCaps map[string]string
 }
 
 // Bars is the sprint row's nova-decide bars, each by the name of its field, so no bar is
@@ -125,6 +129,7 @@ func (b *Bars) fields() map[string]*string {
 // into is the set as the snapshot carries it.
 func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.Routes, s.Tiers = rs.Routes, rs.Tiers
+	s.FriendCaps = rs.FriendCaps
 	s.DecideBounce, s.DecideReview, s.DecideGrade = rs.Bars.Bounce, rs.Bars.Review, rs.Bars.Grade
 	s.DecideAttemptNoResult, s.DecideAttemptNothingToDo = rs.Bars.AttemptNoResult, rs.Bars.AttemptNothingToDo
 	s.DecideScoreBar = rs.Bars.Score
@@ -178,6 +183,15 @@ func (st *Store) cached(ctx context.Context, c *RouteCache) (RouteSet, error) {
 		set, trips, err := st.routesTrips(ctx)
 		if err != nil {
 			return RouteSet{}, err
+		}
+		// the friends' hourly caps ride with the routes so the tick's deal reads them from
+		// the one route read it makes (Snapshot.FriendCaps, sprint.TickDeal); a roster that
+		// cannot be read fails the read, so a friend past her cap is never let through
+		// uncapped (fail closed: no cap known is an error, not no cap)
+		if caps, err := st.FriendCaps(ctx); err != nil {
+			return RouteSet{}, err
+		} else {
+			set.FriendCaps = caps
 		}
 		c.read, c.set, c.Trips = true, set, trips
 	}
@@ -235,7 +249,14 @@ func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
 	first, _ := strconv.ParseBool(h["first"])
-	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Harness: h["harness"], Tokens: n("tokens"), USD: h["usd"],
+	// a route whose row names no hourly cap takes its tier's (flash 5, pro 20, heavy 0):
+	// resolved here, where the row and its tier are read together, so the core's Route
+	// carries the effective cap and a route built by hand is uncapped when it names none
+	capUSDHour := h["cap_usd_hour"]
+	if capUSDHour == "" {
+		capUSDHour = sprint.TierCapUSDHour[h["tier"]]
+	}
+	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Harness: h["harness"], Tokens: n("tokens"), USD: h["usd"], CapUSDHour: capUSDHour,
 		Deadline: n("deadline"), Enabled: enabled, First: first, Prices: cardcost.PricesOf(h)}
 }
 

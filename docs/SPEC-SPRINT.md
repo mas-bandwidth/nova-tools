@@ -3134,6 +3134,17 @@ no fleet member, and an `--end` with no quiet in force are refused, nothing writ
 rule is `internal/sprint/fleet_quiet.go`; the twin test is
 `TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds`.
 
+### spend-circuit-breakerb-bb.w8
+
+Spend is watched by the machine, not by eye (the owner, 2026-10-04, the safety lens for v1.0.0: nothing runs away by accident). The tick sums, over the current clock hour (UTC, `[hh:00, hh+1:00)`), each route's and each friend's cost from the consumer records the primaries carry: each record's actual cost where reported, else its predicted one, exact (`hourSpendOf`, cost.go), by the route it ran on and, for a friend's take or read, by her. The clock is the snapshot's `Now`, so a test injects it.
+
+- A route whose sum has reached its cap (`cap_usd_hour`; the routes read resolves an empty row to the tier's default, flash 5, pro 20, heavy 0 meaning uncapped: `RouteOf`, internal/sprint/store/routes.go) rests as a provider out of funds rests: one line in the provider's `rule3_rest_<provider>` property (cause `cap`), ending at the next clock hour, with the reason `cap reached: $x of $y this hour`. The deal draws no card on it and withdraws a ready card dealt there (`restWithdrawals`); at the next hour the sum starts again, the rest has ended by itself, and the route is drawn again. A cap rest never counts toward stopping the sprint (`RouteRest.Out` is false).
+- One judgment per episode goes to the coordinator, `a route is past its hourly cap`, filed under `route:<name>`; it is written once while the rest holds, never once a tick, and closes when the route re-opens. It is a condition the tick keeps and the hour ends it by itself, so it lists no decisions and needs no answer; the remedy its text names is `nova-config route set <name> --cap_usd_hour <usd>`.
+- A friend (`cap_usd_hour`, 10 by default, empty in the map the tick reads means uncapped, `TickReq.FriendCaps` else `Snapshot.FriendCaps` by name) whose sum has reached her cap is dealt no card and levelled none until the next hour; her started cards finish. `a friend is past her hourly cap`, filed under `friend-cap:<name>`, is one per episode the same way.
+- Money is shown to the cent, rounded up (`cardcost.Cents`): a sum of `6.001` against a cap of `5` reads `cap reached: $6.01 of $5.00 this hour`. What is kept and compared is exact.
+- Pinned by `TestARoutePastItsHourlyCapRestsWithOneJudgment` (internal/sprint/spend_cap_test.go).
+- The friend's cap is read from the applied friend row (`internal/config/redis.go` writes `cap_usd_hour` on `friend:<f>:desired`; `cmd/nova-sprint/friends.go` copies it into `FriendSpec`) and from the roster (`Store.FriendCaps`, internal/sprint/store/friends.go). It rides the routes read into the tick (`RouteSet.FriendCaps`, `cached`, `RouteSet.into`).
+
 ## 6. The readers
 
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
@@ -164,6 +165,11 @@ const (
 	FieldCostRecord = "cost_record:" // + the consumer's key (Consumer.Key)
 	FieldCostTotal  = "cost_total"   // cardcost.Total.String over every record
 	FieldCostCut    = "cost_cut"     // how many records past MaxCostRecords were left out of the list
+	// FieldCutRoute and FieldCutFriend hold the charges of the records the list bound dropped
+	// (past MaxCostRecords), one line per record, "<hour-rfc3339> <name> <usd>", so the tick's
+	// hourly cap sum (hourSpendOf) still counts them by route and by friend.
+	FieldCutRoute  = "cost_cut_route"
+	FieldCutFriend = "cost_cut_friend"
 	// MaxCostRecords bounds the history on one card. A card's takes and reads are few;
 	// past the bound a record is still added to the total, exactly, and counted in
 	// FieldCostCut, and `card <id>` says the list was cut.
@@ -273,9 +279,78 @@ func addConsumer(pr *Card, set map[string]string, c Consumer) {
 	}
 	if n >= MaxCostRecords {
 		set[FieldCostCut] = itoa(max(pr.Int(FieldCostCut), atoiOr(set[FieldCostCut])) + 1)
+		addCutSummary(pr, set, c)
 		return
 	}
 	set[key] = c.line()
+}
+
+// consumerUSD is a consumer record's charge: its actual cost where reported, else its
+// predicted one, nil for a record with neither (a subscription run, an unpriced one).
+func consumerUSD(c Consumer) *big.Rat {
+	usd, err := cardcost.Decimal(c.Usage.Actual)
+	if err != nil {
+		if usd, err = cardcost.Decimal(c.Usage.Predicted); err != nil {
+			return nil
+		}
+	}
+	return usd
+}
+
+// consumerRoute is the route a consumer's record ran on, "" for none or a pin.
+func consumerRoute(c Consumer) string {
+	if r := cmp.Or(c.Route, c.Usage.Route); r != RoutePin {
+		return r
+	}
+	return ""
+}
+
+// consumerFriend is the friend a consumer's record is charged to: a work consumer's Who
+// is the member row (a friend's row names her), a read consumer's Who is the reader's name.
+// "" for none.
+func consumerFriend(c Consumer) string {
+	if f, ok := FriendOfRow(c.Who); ok {
+		return f
+	}
+	if c.Kind == "read" && c.Who != "" {
+		return c.Who
+	}
+	return ""
+}
+
+// addCutSummary keeps the charges the record-list bound dropped (past MaxCostRecords) for
+// the tick's hourly cap sum (hourSpendOf): one line per record under FieldCutRoute and
+// FieldCutFriend, "<hour-rfc3339> <name> <usd>", so a card past the bound still sums
+// exactly by route and friend. A record with no charge, no route or no friend adds nothing.
+func addCutSummary(pr *Card, set map[string]string, c Consumer) {
+	usd := consumerUSD(c)
+	if usd == nil {
+		return
+	}
+	at, err := time.Parse(time.RFC3339, c.At)
+	// ignored: a record whose timestamp is not RFC3339 cannot be put to a clock hour, so it adds nothing to the hourly cap sum
+	if err != nil {
+		return
+	}
+	hour := at.UTC().Truncate(time.Hour).Format(time.RFC3339)
+	appendLine := func(field, name string) {
+		line := hour + " " + name + " " + cardcost.Text(usd)
+		prev := set[field]
+		if prev == "" {
+			prev = pr.F(field)
+		}
+		if prev == "" {
+			set[field] = line
+			return
+		}
+		set[field] = prev + "\n" + line
+	}
+	if r := consumerRoute(c); r != "" {
+		appendLine(FieldCutRoute, r)
+	}
+	if f := consumerFriend(c); f != "" {
+		appendLine(FieldCutFriend, f)
+	}
 }
 
 // atoiOr is a count field's value, 0 when unset.
@@ -416,4 +491,85 @@ func MoneyText(usd string) string {
 		return "-"
 	}
 	return cardcost.Cents(r)
+}
+
+// hourSpend is what each route and each friend spent in one clock hour (docs/SPEC-SPRINT.md,
+// spend-circuit-breakerb-bb.w8): the sum, over the consumer records the primaries carry that
+// ended in [from, to), of each record's actual cost where reported, else its predicted one,
+// exact, by the route it ran on and, for a friend's take, by her. A record with neither
+// figure (a subscription run, an unpriced one) adds nothing.
+type hourSpend struct {
+	from, to      time.Time
+	route, friend map[string]*big.Rat
+}
+
+// clockHour is the clock hour holding now, in UTC: [from, to).
+func clockHour(now time.Time) (from, to time.Time) {
+	from = now.UTC().Truncate(time.Hour)
+	return from, from.Add(time.Hour)
+}
+
+// hourSpendOf is the spend of the clock hour holding s.Now, summed once from the work
+// table's cost records (the primary alone holds a card's cost, CardCostOf), the record
+// list's bound included (FieldCutRoute, FieldCutFriend). A snapshot with no work table
+// sums nothing.
+func hourSpendOf(s *Snapshot) *hourSpend {
+	h := &hourSpend{route: map[string]*big.Rat{}, friend: map[string]*big.Rat{}}
+	if s == nil {
+		return h
+	}
+	h.from, h.to = clockHour(s.Now)
+	if s.Work == nil {
+		return h
+	}
+	add := func(m map[string]*big.Rat, k string, v *big.Rat) {
+		if m[k] == nil {
+			m[k] = new(big.Rat)
+		}
+		m[k].Add(m[k], v)
+	}
+	addCut := func(m map[string]*big.Rat, lines string) {
+		for _, line := range strings.Split(lines, "\n") {
+			f := strings.Fields(line)
+			if len(f) != 3 {
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, f[0])
+			if err != nil || at.Before(h.from) || !at.Before(h.to) {
+				continue
+			}
+			usd, ok := new(big.Rat).SetString(f[2])
+			if !ok {
+				continue
+			}
+			add(m, f[1], usd)
+		}
+	}
+	for _, pr := range s.Work.Cards() {
+		for k, line := range pr.Fields {
+			key, ok := strings.CutPrefix(k, FieldCostRecord)
+			if !ok {
+				continue
+			}
+			c := parseConsumer(key, line)
+			at, err := time.Parse(time.RFC3339, c.At)
+			if err != nil || at.Before(h.from) || !at.Before(h.to) {
+				continue
+			}
+			usd := consumerUSD(c)
+			if usd == nil {
+				continue
+			}
+			if r := consumerRoute(c); r != "" {
+				add(h.route, r, usd)
+			}
+			if f := consumerFriend(c); f != "" {
+				add(h.friend, f, usd)
+			}
+		}
+		// the charges the list bound dropped: still summed, by route and friend, for the hour
+		addCut(h.route, pr.F(FieldCutRoute))
+		addCut(h.friend, pr.F(FieldCutFriend))
+	}
+	return h
 }
