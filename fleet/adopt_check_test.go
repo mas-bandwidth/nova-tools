@@ -50,8 +50,12 @@ elif name=='nova-sprint' and args[:2]==['server','switch'] and '--dry-run' in ar
  print('SWITCH DRY-RUN OK')
 elif name=='nova-config' and args[:2]==['migrate','--dry-run'] and '--json' in args:
  print(json.dumps({'result':{'status':'ok'},'facts':{'role':'nova_config','owner':'nova_config','ready':'yes'}}))
+elif name=='nova-config' and args[:2]==['migrate','--window']:
+ print('MIGRATE APPLIED fixture')
 elif name=='nova-redis' and args[:2]==['fn','check']:
  print('MATCH fixture')
+elif name=='nova-redis' and args[:2]==['fn','load']:
+ print('LOADED fixture')
 elif args and args[0]=='version': print('fixture-old')
 else: sys.exit('unexpected fixture command: '+name+' '+repr(args))
 `
