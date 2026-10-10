@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -92,14 +94,36 @@ func TestFriendGiveRefusesACardNeverTakenFromHer(t *testing.T) {
 	ta.clean()
 }
 
-// TestFriendGiveDealsAReadyUndealtCard gives a ready, undealt card to a friend up with room.
+// TestFriendGiveDealsAReadyUndealtCard gives a ready, undealt card to a friend up
+// with room: friend give hands it to the friend named, not the first the deal would
+// choose, and refuses a card at a tier she does not serve, naming the tier
+// (docs/SPEC-SPRINT.md section 1, a friend's card taken back).
 func TestFriendGiveDealsAReadyUndealtCard(t *testing.T) {
 	t.Parallel()
-	ta, _ := takeApp(t, 1, nil, "amy")
-	ta.ok("fleet down m1")
-	ta.ok("fleet down m2")
-	out := ta.ok("friend give amy s1-1 --reason 'the coordinator gives it'")
-	assert.Contains(t, out, "MOVED s1-1 may be dealt to amy again (the coordinator gives it)")
+	ta, _ := takeApp(t, 1, nil, "amy", "bob")
+	// a pro card neither friend serves: friend give refuses it, naming the tier
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "s1-2.md"),
+		[]byte(passingBrief("s1-2: a pro card tier: pro\nREPO: mas-bandwidth/nova-tools\nWHO: friend")), 0o644))
+	ta.ok("add --stream s1 --brief-dir " + dir)
+
+	// amy sorts first, so the deal would give the ready card to her; friend give
+	// hands it to bob instead
+	out := ta.ok("friend give bob s1-1 --reason 'the coordinator gives it'")
+	assert.Contains(t, out, "MOVED s1-1 may be dealt to bob again (the coordinator gives it)")
 	assert.Contains(t, out, "FRIEND-GIVE OK moved=1 refused=0")
+
+	code, _, errs := ta.do("friend give amy s1-2 --reason 'the coordinator gives it'")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "REFUSED s1-2: friend amy does not serve tier pro", "the refusal names the tier")
+	assert.Contains(t, errs, "FRIEND-GIVE FAILED moved=0 refused=1")
+
+	ta.ok("tick")
+	ta.ok("tick")
+	var c cardView
+	ta.json("card s1-1", &c)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, sprint.FriendRow("bob"), c.Work[0].Row, "dealt to the friend it was given to, not the first by name")
+	assert.Equal(t, sprint.Working, c.Primary.Col)
 	ta.clean()
 }

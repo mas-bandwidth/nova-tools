@@ -128,7 +128,7 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 }
 
 // friendGiveWords is what friend give says on -h.
-const friendGiveWords = "friend give is the undo of friend take: on each card named, ready or waiting, it clears the mark of the friend the card was taken back from, so the next deal may deal it to her again; a card whose WHO line pins her, which waits for no one else, is dealt to her. A card not ready or waiting, or never taken back from that friend, is refused, one REFUSED line each; the others named are given, and the exit is 1 when any is refused. Each card given says MOVED <card> may be dealt to <friend> again (<reason>).\n"
+const friendGiveWords = "friend give is the undo of friend take: on each card named, ready or waiting, it clears the mark of the friend the card was taken back from, so the next deal may deal it to her again; a card whose WHO line pins her, which waits for no one else, is dealt to her. A ready card no work card holds is given to the named friend by pinning it to her, so the deal deals it to her; her tier, room and work restriction are held as a deal's, so a card at a tier she does not serve is refused naming the tier. A card not ready or waiting, one taken back from another friend, and one already given back are refused, one REFUSED line each; the others named are given, and the exit is 1 when any is refused. Each card given says MOVED <card> may be dealt to <friend> again (<reason>).\n"
 
 func (a *app) cmdFriendGive(args []string, stdout, stderr io.Writer) int {
 	const name = "friend give"
@@ -149,7 +149,8 @@ func (a *app) cmdFriendGive(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	names, err := st.FriendNames(context.Background())
+	ctx := context.Background()
+	names, err := st.FriendNames(ctx)
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}
@@ -157,7 +158,13 @@ func (a *app) cmdFriendGive(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: no friend %s on the friends table (friends: %s); run: nova-sprint friend sync\n", prog, name, friend, orDashStr(strings.Join(names, ","), "none"))
 		return 1
 	}
-	step := store.FriendGiveStep(sprint.FriendGiveReq{Friend: friend, IDs: pos[1:], Reason: *reason, Who: c.actor})
+	// the friends as the deal reads them: the give of a ready, undealt card holds her
+	// tier, room and work restriction as a deal does (sprint.FriendGive)
+	seats, err := st.FriendSeats(ctx, a.now())
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	step := store.FriendGiveStep(sprint.FriendGiveReq{Friend: friend, IDs: pos[1:], Reason: *reason, Who: c.actor, Seats: seats})
 	step.Named = false // the givable are given and the rest refused
 	return a.runStep(name, *c, st, step, stdout, stderr)
 }

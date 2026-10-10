@@ -225,24 +225,72 @@ func friendLaneIdle(s *Snapshot, seats []FriendSeat, c *Card) (friend string, id
 const NGivenBack = "a card taken back from a friend given back"
 
 // FriendGiveReq is friend give: the friend, the cards named (each a primary or its work
-// card), and why.
+// card), why, and Seats, the friends as the caller read them (FriendSeat: her tiers and
+// width), which the give of a ready, undealt card reads to check her as a deal would.
 type FriendGiveReq struct {
 	Friend string
 	IDs    []string
 	Reason string
 	Who    string
+	Seats  []FriendSeat
+}
+
+// seatOf is the named friend's seat among the ones the caller read; false when it names none.
+func (r FriendGiveReq) seatOf() (FriendSeat, bool) {
+	for _, f := range r.Seats {
+		if f.Name == r.Friend {
+			return f, true
+		}
+	}
+	return FriendSeat{}, false
+}
+
+// friendGiveWhy is why a ready, undealt primary cannot be given to the friend: she is not
+// up, the friends' tiers or her own do not hold the card's tier, her work restriction leaves
+// it out, she has no room, or it is hard-pinned to another friend. "" when she may take it.
+// The checks are the deal's (friendDealable, friendTakes, friendRoom, friendRestrictionAllows;
+// docs/SPEC-SPRINT.md section 1, a friend's card).
+func friendGiveWhy(s *Snapshot, seat FriendSeat, have bool, friend string, pr *Card) string {
+	if !have {
+		return "friend " + friend + " has no row to read; run: nova-sprint friend sync"
+	}
+	if !friendDealable(s, seat) {
+		if seat.Why != "" {
+			return "friend " + friend + " is not up: " + seat.Why
+		}
+		return "friend " + friend + " is not up"
+	}
+	tier := s.DealTier(pr)
+	switch {
+	case !s.FriendsTake(tier):
+		return "the friends' tiers leave out " + tier + " (nova-sprint set --friends-tiers)"
+	case !friendTakes(s, seat, tier):
+		return "friend " + friend + " does not serve tier " + tier + " (her tiers: " + strings.Join(friendTiers(seat), ",") + ")"
+	case !friendRestrictionAllows(seat, pr):
+		return FriendRestrictionWhy(seat.Streams, seat.Kinds, pr.F("stream"), BriefKind(pr.F("brief")))
+	}
+	if room, _ := friendRoom(seat); room-friendLoad(s, seat.Name) <= 0 {
+		return "friend " + friend + " has no room"
+	}
+	if name, named := FriendCard(pr); named && name != "" && name != friend && OnlyFriend(pr) {
+		return "it is pinned to friend " + name + " alone; run: nova-sprint unpin " + pr.ID
+	}
+	return ""
 }
 
 // FriendGive is the coordinator's undo of a take-back (friend take): on each card named,
 // ready or waiting, its current attempt's work card loses the mark of the friend it was
 // taken from (FieldTakenFrom), so the deal may deal it to her again; a pinned card taken
-// from its friend waits for no one else and is dealt to her. A card not ready or waiting,
-// or never taken back from her, is refused, one refusal each, and the rest are given.
-// friend give also accepts ready, undealt cards (those never dealt), so the deal may deal
-// them to the named friend.
+// from its friend waits for no one else and is dealt to her. A ready primary no work card
+// holds (never dealt, or whose attempt left none) is given to the named friend by pinning
+// it to her (its stored WHO, as unpin removes one), so the deal deals it to her; her tier,
+// room and work restriction are held as a deal's, so a card at a tier she does not serve is
+// refused naming the tier. A card not ready or waiting, one taken back from another friend,
+// or one already given back, is refused, one refusal each, and the rest are given.
 func FriendGive(s *Snapshot, r FriendGiveReq) Plan {
 	var p Plan
 	row := FriendRow(r.Friend)
+	seat, haveSeat := r.seatOf()
 	reason := r.Reason
 	if reason == "" {
 		reason = "given back by the coordinator"
@@ -270,22 +318,26 @@ func FriendGive(s *Snapshot, r FriendGiveReq) Plan {
 		switch {
 		case pr.Col != Ready && pr.Col != Waiting:
 			p.refuse(id, fmt.Sprintf("%s is %s, not ready or waiting", pr.ID, pr.Col))
-		case pr.Int("attempt") == 0 && wc == nil:
-			// undealt card: accept for friend give (will be dealt to friend on next tick)
+		case pr.Col == Ready && wc == nil:
+			// a ready primary no work card holds: give it to the named friend by pinning it
+			// to her, so the deal deals it to her as it would any card of her tier
+			if why := friendGiveWhy(s, seat, haveSeat, r.Friend, pr); why != "" {
+				p.refuse(id, why)
+				continue
+			}
+			who := row
+			if name, named := FriendCard(pr); named && name == r.Friend && OnlyFriend(pr) {
+				who = "only." + row // her hard pin stays a hard pin
+			}
 			n := happened(NGivenBack, pr.Row, s.Now, pr.ID)
 			n.Who, n.What = r.Who, fmt.Sprintf("%s may be dealt to %s again (%s)", pr.ID, r.Friend, reason)
-			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Notes: []Note{n}, Moved: n.What})
-		case pr.Int("attempt") == 0:
-			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from no friend)", card, r.Friend))
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row,
+				Changes: []Change{change(Work, setEntry(pr, map[string]string{FieldWho: who}))}, Notes: []Note{n}, Moved: n.What})
 		case wc == nil:
 			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from no friend)", card, r.Friend))
 		case wc.F(FieldTakenFrom) != row:
 			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from %s)", card, r.Friend, from))
-		case wc.F(FieldTakenFrom) == "":
-			// was given back already: refuse
-			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from no friend)", card, r.Friend))
 		default:
-			// taken_from matches row: accept
 			n := happened(NGivenBack, pr.Row, s.Now, pr.ID)
 			n.Who, n.What = r.Who, fmt.Sprintf("%s may be dealt to %s again (%s)", pr.ID, r.Friend, reason)
 			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row,
