@@ -653,7 +653,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				if v := costs[pr.ID][FieldCostTotal]; v != "" {
 					at = withField(pr, FieldCostTotal, v)
 				}
-				if bb, ok := briefStopAt(s, at, c.Row, r.Finding); ok {
+				// a finding naming files outside PATHS is no bound: the read-broken rule widens
+				// the brief in place by them, the bound's own remedy (rules_read.go)
+				if bb, ok := briefStopAt(s, at, c.Row, r.Finding); ok && len(FilesOutsidePaths(pr.F("brief"), r.Finding)) == 0 {
 					// the same finding as the attempts before (briefStopAt: the same reader class,
 					// file and line, two in a row by default), or too many attempts on one brief:
 					// the brief is wrong, not the worker, and the judgment offers brief and drop

@@ -175,8 +175,7 @@ type RuleAnswer struct {
 	Waited string `json:"waited"`
 
 	fix   string
-	files []string // the files outside PATHS a twin widens them by (ruleReadBroken)
-	twin  string   // the twin's id (ActTwinWider)
+	files []string // the files outside PATHS a widening adds to them (ruleReadBroken)
 	from  string   // the friend a card is taken back from (ActTake), the reader a read is taken back from (ActAsk)
 	set   map[string]string
 	until time.Time
@@ -568,9 +567,9 @@ func baseGreenSaid(base, sha string) string {
 	return "the base " + orDash(base) + " passes its tree gate again at " + sha
 }
 
-// The tick's rule parts, in the order they run: the conflict's return, its resume, a twin
-// (read-broken, rules_read.go), every rework (failed, bound, read-broken, hold-need, the
-// conflict's redo), the late cards, the friends' cards taken back, a late read asked of
+// The tick's rule parts, in the order they run: the conflict's return, its resume, a
+// widening in place (read-broken, rules_read.go), every rework (failed, bound, read-broken,
+// hold-need, the conflict's redo), the late cards, the friends' cards taken back, a late read asked of
 // another reader, the HOLDs waiting on a card, the brief defects (judgment_rules.go). Each is
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
 // tick. With TickReq.AnswerRules false each is empty.
@@ -588,7 +587,7 @@ var TickRules = []TickPartDef{
 	{PartRulePaths, TickRulePaths},
 	{PartRuleReturn, TickRuleReturn},
 	{PartRuleResume, TickRuleResume},
-	{PartRuleTwin, TickRuleTwin},
+	{PartRuleWidenRead, TickRuleWidenRead},
 	{PartRuleRework, TickRuleRework},
 	{PartRuleLate, TickRuleLate},
 	{PartRuleTake, TickRuleTake},

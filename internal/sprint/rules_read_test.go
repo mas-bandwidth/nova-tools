@@ -16,7 +16,8 @@ import (
 // the coordinator answered "a reader found it broken" about forty times, every time with
 // `rework <card> --answers <id>`: the finding became the fix. Now the tick does it: the
 // finding is the fix of a rework on the same tier; a finding naming a file outside PATHS
-// twins the card with PATHS widened; a card at its brief's bound stays the coordinator's.
+// widens the card's PATHS in place, never a twin, at its brief's bound too; any other card at
+// its brief's bound stays the coordinator's.
 // On the twin store (store.Mem), every rule on.
 
 // readHead is the head each attempt pushes.
@@ -92,7 +93,7 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 		assert.Empty(t, r.coordinatorNotes("r-1"), "the coordinator is told nothing")
 		r.clean("reworked by rule")
 	})
-	t.Run("a finding naming a file outside PATHS: twinned with PATHS widened", func(t *testing.T) {
+	t.Run("a finding naming a file outside PATHS: PATHS widened in place, never a twin", func(t *testing.T) {
 		t.Parallel()
 		r := newConflictRig(t)
 		r.readCard()
@@ -101,25 +102,47 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 		r.tick()
 
 		s := r.snap()
-		old := s.Work.Card("r-1")
-		require.NotNil(t, old)
-		assert.False(t, old.Placed(), "the card is replaced")
-		assert.Contains(t, old.F("reason"), "replaced by r-1b")
-		twin := s.Work.Placed("r-1b")
-		require.NotNil(t, twin, "the twin is on the table")
-		assert.Equal(t, "r-1", twin.F(sprint.FieldReplaces))
-		brief := twin.F("brief")
+		assert.Nil(t, s.Work.Card("r-1b"), "no twin")
+		pr := s.Work.Placed("r-1")
+		require.NotNil(t, pr, "the same card, on the table")
+		assert.NotEqual(t, sprint.Review, pr.Col, "its next attempt is opened")
+		assert.Empty(t, pr.F(sprint.FieldReplaces))
+		assert.Equal(t, "1", pr.F(sprint.FieldBriefAttempt), "its brief's bound counts again from attempt 1")
+		brief := pr.F("brief")
 		assert.Contains(t, brief, "\nPATHS: internal/x/a.go,internal/y/b.go\n", "PATHS widened by exactly the file")
-		assert.Contains(t, brief, "CARRY: r-1 attempt 1 head="+readHead, "the twin starts from the broken attempt's head")
-		assert.Equal(t, finding, twin.F("fix"), "the finding is the twin's fix")
-		assert.True(t, strings.HasPrefix(twin.F("note"), "answered by rule "+sprint.RuleReadBroken+": "), "a note on the twin names the rule: %q", twin.F("note"))
+		assert.Contains(t, brief, "CARRY: r-1 attempt 1 head="+readHead, "its next attempt starts from the broken attempt's head")
+		assert.Equal(t, finding, pr.F("fix"), "the finding is the fix")
+		assert.True(t, strings.HasPrefix(pr.F("note"), "answered by rule "+sprint.RuleReadBroken+": "+sprint.ActWidenRead), "a note on the card names the rule: %q", pr.F("note"))
 		assert.Empty(t, r.openOnCard(sprint.NReadBroken, "r-1"), "the judgment is answered")
 		require.Len(t, r.answeredBy(sprint.RuleReadBroken), 1)
 		assert.Empty(t, r.coordinatorNotes("r-1"), "the coordinator is told nothing")
 
 		r.tick()
-		assert.Nil(t, r.snap().Work.Card("r-1c"), "twinned once")
-		r.clean("twinned by rule")
+		assert.Nil(t, r.snap().Work.Card("r-1b"), "never twinned")
+		assert.Len(t, r.answeredBy(sprint.RuleReadBroken), 1, "widened once")
+		r.clean("widened in place by rule")
+	})
+	t.Run("a finding outside PATHS at the brief's bound: widened in place, not stopped", func(t *testing.T) {
+		t.Parallel()
+		r := newConflictRig(t)
+		r.readCard()
+		r.brokenRead("r-1", "the change misses a caller outside PATHS; rename it too")
+		r.tick()
+		require.Equal(t, 2, r.snap().Work.Card("r-1").Int("attempt"), "a finding naming no file is reworked")
+		finding := "internal/y/b.go:40 still calls the old name, outside PATHS; rename the call too"
+		r.brokenRead("r-1", finding)
+		assert.Empty(t, r.openOnCard(sprint.NBriefWrong, "r-1"), "a finding naming a file outside PATHS raises no bound")
+		r.tick()
+
+		s := r.snap()
+		assert.Nil(t, s.Work.Card("r-1b"), "no twin")
+		pr := s.Work.Placed("r-1")
+		require.NotNil(t, pr)
+		assert.NotEqual(t, sprint.Review, pr.Col, "its next attempt is opened")
+		assert.Contains(t, pr.F("brief"), "\nPATHS: internal/x/a.go,internal/y/b.go\n")
+		assert.Equal(t, "2", pr.F(sprint.FieldBriefAttempt), "its brief's bound counts again from attempt 2")
+		assert.Empty(t, r.openOnCard(sprint.NReadBroken, "r-1"))
+		assert.Empty(t, r.openOnCard(sprint.NBriefWrong, "r-1"))
 	})
 	t.Run("at the brief's bound: the coordinator's", func(t *testing.T) {
 		t.Parallel()

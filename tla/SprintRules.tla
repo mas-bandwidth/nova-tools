@@ -19,9 +19,10 @@
 \*   only), and the return and redeal of one whose holder stamped and went silent.
 \* Part "reads": one card's attempts under a reader's broken reads (rules.go, ruleReadBroken):
 \*   the rule reworks it with the finding as the fix, on the same tier; a finding that names
-\*   a file outside PATHS twins it with PATHS widened by that file, its attempts on the new
-\*   brief from the first; a card at its brief's bound (the same finding twice, or Cap
-\*   attempts on one brief) is a mind's, never the rule's.
+\*   a file outside PATHS widens the card's PATHS in place by that file (the same card, never
+\*   a twin), its attempts on the widened brief from the first, at the brief's bound too (a
+\*   widened brief is the bound's remedy); a card at its brief's bound (the same finding
+\*   twice, or Cap attempts on one brief) on any other finding is a mind's, never the rule's.
 \* Part "gate": the lander's base tree gate on one base commit: red or green each time
 \*   it is gated; the third failure stops the stream.
 \* Part "idle": the fleet idle or working each tick; the alarm once an episode after
@@ -52,8 +53,10 @@
 \*   "stopfirst"  the base gate stops the stream on its first failure: BaseStopsOnThird
 \*   "everytick"  the idle alarm is pushed every tick of an episode: AlarmOncePerEpisode
 \*   "nobound"    the read-broken rule reworks a card at its brief's bound: ReadAnswersBounded
-\*   "twinall"    the read-broken rule twins a card whose finding names no file outside
-\*                PATHS: TwinsWiden
+\*   "widenall"   the read-broken rule widens a card whose finding names no file outside
+\*                PATHS: WidensWiden
+\*   "boundoutside" the read stops a finding naming a file outside PATHS at the brief's
+\*                bound instead of letting the rule widen it: OutsideNeverBound
 \*   "nofinding"  the read-broken rule reworks a broken read that carries no finding:
 \*                ReworkHasAFix
 \*   "recount"    a rework starts its attempt without counting it: ReworkKeepsCount
@@ -83,7 +86,7 @@ RdFindings == RdFiles \cup {"in1", "in2"}
 VARIABLES col, need, blocked, twin,               \* twins
           tier, fails, st, attempts, envFails,     \* rules
           gen, waited, progress, late, waits, lst, stamped, badReturn, \* late
-          rdst, rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal, \* reads
+          rdst, rdatt, rdlast, rdfind, rdpaths, rdwidens, rdtotal, \* reads
           gfails, stopped,                         \* gate
           idle, since, said, alarms, clk, nalarm, nclear, \* idle
           anst, anatt, anreworks, anhead, ancarry, anfind, anfail, anlast, anland, anlost, anfixless \* answers
@@ -91,7 +94,7 @@ VARIABLES col, need, blocked, twin,               \* twins
 twinVars == <<col, need, blocked, twin>>
 ruleVars == <<tier, fails, st, attempts, envFails>>
 lateVars == <<gen, waited, progress, late, waits, lst, stamped, badReturn>>
-rdVars == <<rdst, rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal>>
+rdVars == <<rdst, rdatt, rdlast, rdfind, rdpaths, rdwidens, rdtotal>>
 gateVars == <<gfails, stopped>>
 idleVars == <<idle, since, said, alarms, clk, nalarm, nclear>>
 anVars == <<anst, anatt, anreworks, anhead, ancarry, anfind, anfail, anlast, anland, anlost, anfixless>>
@@ -125,7 +128,7 @@ TypeOK ==
   /\ rdlast \in RdFindings \cup {None}
   /\ rdfind \in RdFindings \cup {None}
   /\ rdpaths \subseteq RdFiles
-  /\ rdtwins \in Nat
+  /\ rdwidens \in Nat
   /\ rdtotal \in Nat
   /\ gfails \in 0..3
   /\ stopped \in BOOLEAN
@@ -150,7 +153,7 @@ Init ==
   /\ gen = 0 /\ waited = -1 /\ progress = FALSE /\ late = FALSE /\ waits = 0 /\ lst = "working"
   /\ stamped = FALSE /\ badReturn = FALSE
   /\ rdst = "working" /\ rdatt = 1 /\ rdlast = None /\ rdfind = None /\ rdpaths = {}
-  /\ rdtwins = 0 /\ rdtotal = 0
+  /\ rdwidens = 0 /\ rdtotal = 0
   /\ gfails = 0 /\ stopped = FALSE
   /\ idle = FALSE /\ since = -1 /\ said = FALSE /\ alarms = 0 /\ clk = 0 /\ nalarm = 0 /\ nclear = 0
   /\ anst = "working" /\ anatt = 1 /\ anreworks = 0 /\ anhead = 0 /\ ancarry = 0
@@ -408,27 +411,29 @@ RdOutside(f) == f \in RdFiles /\ f \notin rdpaths
 RdAtBound(f) == f = rdlast \/ rdatt >= Cap
 
 \* the outside: a reader finds the attempt broken with finding f (Read writes the brief's
-\* bound judgment instead at the bound), or the attempt lands
+\* bound judgment instead at the bound, unless f names a file outside PATHS), or the attempt
+\* lands
 RdReadBroken(f) ==
   /\ rdst = "working"
   /\ rdfind' = f
-  /\ rdst' = IF RdAtBound(f) /\ Broken # "nobound" THEN "bound" ELSE "broken"
-  /\ UNCHANGED <<rdatt, rdlast, rdpaths, rdtwins, rdtotal>>
+  /\ rdst' = IF RdAtBound(f) /\ (~RdOutside(f) \/ Broken = "boundoutside") /\ Broken # "nobound"
+               THEN "bound" ELSE "broken"
+  /\ UNCHANGED <<rdatt, rdlast, rdpaths, rdwidens, rdtotal>>
 RdLands ==
   /\ rdst = "working"
   /\ rdst' = "done"
-  /\ UNCHANGED <<rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal>>
+  /\ UNCHANGED <<rdatt, rdlast, rdfind, rdpaths, rdwidens, rdtotal>>
 
-\* the rule: a finding naming a file outside PATHS twins the card with PATHS widened by it,
-\* attempts on the new brief from the first; any other finding is the fix of a rework on the
-\* same tier
+\* the rule: a finding naming a file outside PATHS widens the card's PATHS in place by it,
+\* attempts on the widened brief from the first; any other finding is the fix of a rework on
+\* the same tier
 RuleReadBroken ==
   /\ rdst = "broken"
-  /\ IF RdOutside(rdfind) \/ Broken = "twinall"
+  /\ IF RdOutside(rdfind) \/ Broken = "widenall"
        THEN /\ rdpaths' = rdpaths \cup ({rdfind} \cap RdFiles)
-            /\ rdatt' = 1 /\ rdlast' = None /\ rdtwins' = rdtwins + 1
+            /\ rdatt' = 1 /\ rdlast' = None /\ rdwidens' = rdwidens + 1
        ELSE /\ rdatt' = rdatt + 1 /\ rdlast' = rdfind
-            /\ UNCHANGED <<rdpaths, rdtwins>>
+            /\ UNCHANGED <<rdpaths, rdwidens>>
   /\ rdst' = "working" /\ rdtotal' = rdtotal + 1
   /\ UNCHANGED rdfind
 
@@ -436,16 +441,20 @@ RuleReadBroken ==
 RdMind ==
   /\ rdst = "bound"
   /\ rdst' = "judged"
-  /\ UNCHANGED <<rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal>>
+  /\ UNCHANGED <<rdatt, rdlast, rdfind, rdpaths, rdwidens, rdtotal>>
 
 RdNext == RdLands \/ RuleReadBroken \/ RdMind \/ \E f \in RdFindings : RdReadBroken(f)
 
-\* The rule's answers never loop: under Cap attempts a brief, and a twin only for a file
-\* that widens PATHS.
+\* The rule's answers never loop: under Cap attempts a brief, and a widening only for a file
+\* outside PATHS.
 ReadAnswersBounded == rdtotal <= Cap * (Cardinality(RdFiles) + 1)
 
-\* Every twin widens PATHS by a file.
-TwinsWiden == rdtwins <= Cardinality(rdpaths)
+\* Every widening widens PATHS by a file.
+WidensWiden == rdwidens <= Cardinality(rdpaths)
+
+\* A finding naming a file outside PATHS is never stopped at the brief's bound: the rule
+\* widens the brief in place, the bound's own remedy.
+OutsideNeverBound == rdst = "bound" => ~RdOutside(rdfind)
 
 \* Every broken read is answered: by rule below the bound, by a mind at it.
 ReadAnswered == (rdst \in {"broken", "bound"}) ~> (rdst \notin {"broken", "bound"})
