@@ -349,6 +349,89 @@ func TestCutRefusesAShaWhoseChecksAreNotGreen(t *testing.T) {
 	}
 }
 
+// A tag is a claim about source, and the one way to make it about a commit CI
+// never vouched for is the cut's own waiver: `--waive-ci "<who, when>"`. What
+// it let past is written into the tag annotation and the section that travels
+// by git, so the answer to "why did this ship red" is the tag itself and never
+// a hand-made tag outside the tool.
+func TestACutWithAWaiverRecordsItInTheTag(t *testing.T) {
+	t.Parallel()
+
+	red := []CheckRun{
+		{Name: "ci", Status: "completed", Conclusion: "failure"},
+		{Name: "certification", Status: "completed", Conclusion: "failure"},
+	}
+	redForge := func() *fakeForge {
+		f := cutForge()
+		f.checks = map[string][]CheckRun{"abc123abc123def": red}
+		return f
+	}
+
+	t.Run("a red or missing CI is refused without the flag", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name string
+			runs []CheckRun
+		}{
+			{"a failure", red},
+			{"no check at all", nil},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				f := cutForge()
+				f.checks = map[string][]CheckRun{"abc123abc123def": tc.runs}
+				var out, errs bytes.Buffer
+				code := Run("nova-update", cutArgs(changelogIn(t, t.TempDir())), &out, &errs, cutDeps(t, f))
+				if code != 2 {
+					require.Equal(t, 2, code, "a red CI was cut without a waiver: code=%d out=%s errs=%s", code, out.String(), errs.String())
+				}
+				assert.Empty(t, f.tagged, "a red sha was tagged without a waiver")
+			})
+		}
+	})
+
+	t.Run("the waiver and the red checks are in the tag and the section", func(t *testing.T) {
+		t.Parallel()
+		f := redForge()
+		changelog := changelogIn(t, t.TempDir())
+		const who = "the owner, 2026-10-09"
+		var out, errs bytes.Buffer
+		code := Run("nova-update", cutArgs(changelog, "--waive-ci", who), &out, &errs, cutDeps(t, f))
+		if code != 0 {
+			require.Equal(t, 0, code, "the waiver did not let the cut past: code=%d out=%s errs=%s", code, out.String(), errs.String())
+		}
+		require.Len(t, f.tagged, 1, "tagged %v", f.tagged)
+
+		message := f.messages["v0.16.0"]
+		assert.Contains(t, message, "CI waived: "+who, "the tag annotation does not carry the waiver:\n%s", message)
+		for _, check := range []string{"ci=failure", "certification=failure"} {
+			assert.Contains(t, message, check, "the tag annotation does not name the red check %q:\n%s", check, message)
+		}
+
+		raw, err := os.ReadFile(changelog)
+		require.NoError(t, err)
+		section := string(raw)
+		assert.Contains(t, section, "CI waived: "+who, "the section does not carry the waiver:\n%s", section)
+		for _, check := range []string{"ci=failure", "certification=failure"} {
+			assert.Contains(t, section, check, "the section does not name the red check %q:\n%s", check, section)
+		}
+	})
+
+	t.Run("an empty waiver is refused", func(t *testing.T) {
+		t.Parallel()
+		for _, empty := range []string{"", "   "} {
+			t.Run(fmt.Sprintf("%q", empty), func(t *testing.T) {
+				t.Parallel()
+				f := redForge()
+				var out, errs bytes.Buffer
+				code := Run("nova-update", cutArgs(changelogIn(t, t.TempDir()), "--waive-ci", empty), &out, &errs, cutDeps(t, f))
+				assert.Equal(t, 2, code, "an empty waiver was accepted: code=%d out=%s errs=%s", code, out.String(), errs.String())
+				assert.Empty(t, f.tagged, "an empty waiver tagged")
+			})
+		}
+	})
+}
+
 func cutForge() *fakeForge {
 	return &fakeForge{
 		head:   map[string]string{"main": "abc123abc123def"},

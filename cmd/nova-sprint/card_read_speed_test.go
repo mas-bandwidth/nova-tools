@@ -156,7 +156,9 @@ func TestCardReadTouchesOnlyItsOwnLogAndRows(t *testing.T) {
 		require.Zero(t, whole, "card %s read the log from its start", id)
 		require.LessOrEqual(t, lines, tail, "card %s read %d lines of a %d-line log: more than the %d-line tail the tick has not indexed", id, lines, len(now), tail)
 		assert.Equal(t, 1, ta.m.Calls["logat"]-before["logat"], "card %s: its indexed lines, read by id in one exchange", id)
-		assert.Equal(t, 1, ta.m.Calls["cells"]-before["cells"], "card %s: one read of the tables, its hold's with its needs' and its place's", id)
+		// at most one: none when the process's load cache holds the tables at their
+		// revision (store/loadcache.go)
+		assert.LessOrEqual(t, ta.m.Calls["cells"]-before["cells"], 1, "card %s: one read of the tables, its hold's with its needs' and its place's", id)
 		want := plain.ok("card " + id + " --json")
 		got := cardStory(t, out)
 		require.NotEqual(t, "null", string(got["held"]), "card %s: what holds it", id)

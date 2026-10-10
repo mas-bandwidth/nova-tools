@@ -66,8 +66,10 @@ beats for her. The beat is recorded and shown, and it never makes her up: her
 status is up only on evidence from her own session, a wake ping her session
 answered (friend health --state up) within `+sprint.FriendPongWindow.String()+` or a card of hers
 finished within `+sprint.FriendFinishWindow.String()+`, down otherwise with the missing evidence
-named on her row, and held while friend down holds her whatever she does.
-friend up releases the hold and is no evidence: a friend released with none
+named on her row, and held while friend hold <friend> --reason <text> (hold
+<friend>; friend down in the old words) holds her whatever she does. friend
+unhold <friend> (unhold; friend up) releases the hold and is no evidence: a
+friend released with none
 in its window is down until her session gives some. A friend down shows
 working 0: her cards stay on her row and count again when she is up; ready
 and done are as they were. where draws the

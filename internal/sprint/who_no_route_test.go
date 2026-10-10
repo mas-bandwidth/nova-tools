@@ -18,7 +18,7 @@ func TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier(t *testing.T) {
 	setup := func() *world {
 		w := friendWorld(t, "c: work tier: pro\n\nThe task.")
 		w.s.Routes = []Route{{Name: "pro-a", Tier: cardhdr.RoutePro, Provider: "p", Model: "m", Enabled: true}}
-		out := RouteRest{At: w.s.Now, Until: OpenUntil, Cause: RestCredit, Why: "out of credit: provider p refused card c1"}
+		out := RouteRest{At: w.s.Now, Until: OpenUntil, Cards: []string{"c1"}, Cause: RestCredit, Why: "out of credit: provider p refused card c1"}
 		w.s.Fleet.SetProps(map[string]string{PropProviderRest("p"): out.value()})
 		ws, _ := w.s.withRests()
 		_, why := ws.noRoute(w.s.Primary("s1-1"))

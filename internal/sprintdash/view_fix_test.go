@@ -204,12 +204,12 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	assert.Equal(t, []string{"ci", "working", "9", "1", "1", "0", "1", "1"}, res.CI[:8])
 	assert.Equal(t, "$2.15", res.CI[9])
 	assert.Equal(t, "1", res.WorkTotal[6], "the total row's fix")
-	assert.Equal(t, []string{"p-blocker", "p-critical", "p-fix", "p-fix", "p-reader", "p-reader", "working", "working", "", "", "", "", "", "", "", ""}, res.Bench,
-		"blocker, critical, fix, reads (two a cell), then the working blue")
+	assert.Equal(t, []string{"p-blocker", "p-critical", "p-fix", "p-fix", "p-reader", "p-reader", "p-reader", "working", "working", "", "", "", "", "", "", ""}, res.Bench,
+		"blocker, critical, fix, reads (one a cell), then the working blue")
 	assert.Equal(t, "9 working of 16: 1 blocker, 1 critical, 2 fix, 3 reads", res.BenchTitle)
 	assert.Equal(t, []string{"p-fix", "", "", "", "", "", "", ""}, res.Amy, "amy's second attempt is her purple cell")
-	assert.Equal(t, "1 fix", res.FriendsTotal, "the fix figure under the bars")
-	assert.Equal(t, "2 working (1 fix), 0 review, 1 merging", res.Inflight)
+	assert.Equal(t, "", res.FriendsTotal, "no fix figure under the bars (unasked text)")
+	assert.Equal(t, "1 working, 0 review, 1 fix, 1 merging", res.Inflight)
 }
 
 // New servers state the priority; legacy attempt inference must not override it.

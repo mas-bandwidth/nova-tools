@@ -563,6 +563,23 @@ type statsResetView struct {
 	Streams map[string]int64 `json:"streams,omitempty"`
 }
 
+// seatWaitsView is what waits on the seat as where carries it: the record's counts, the
+// oldest judgment's age at the view's time, and when the tick counted them.
+type seatWaitsView struct {
+	sprint.SeatWaits
+	OldestAgeSeconds int64     `json:"oldest_age_seconds"`
+	At               time.Time `json:"at"`
+}
+
+// seatWaitsOf is the seat's waits of the stops record, aged at now.
+func seatWaitsOf(r store.StopsRecord, now time.Time) *seatWaitsView {
+	w := &seatWaitsView{SeatWaits: r.Seat, At: r.At}
+	if !r.Seat.OldestAt.IsZero() && now.After(r.Seat.OldestAt) {
+		w.OldestAgeSeconds = int64(now.Sub(r.Seat.OldestAt) / time.Second)
+	}
+	return w
+}
+
 // whereView is the view, for a program.
 type whereView struct {
 	At      time.Time `json:"at"`
@@ -630,6 +647,13 @@ type whereView struct {
 	// read): what is held, its kind, the reason, by whom and since when; the tables' status
 	// cells read held beside it.
 	Holds []sprint.HoldView `json:"holds,omitempty"`
+	// SeatWaits is what waits on the seat (sprint.SeatWaitsOf; the owner, 2026-10-10: no
+	// silent waits): the open judgments, those past their deadline, the oldest with its age,
+	// and the level the late ones have escalated to, from the tick's stops record
+	// (store.StopsRecord) as of its at; absent before the first tick of an epoch. Stops is
+	// every automatic stop that holds (sprint.LiveStops), from the same record.
+	SeatWaits *seatWaitsView `json:"seat_waits,omitempty"`
+	Stops     []sprint.Stop  `json:"stops,omitempty"`
 	// Providers is the providers table (nova-tools#5199): each provider the routes name,
 	// its balance as the run loop's poll last read it, the spend an hour measured, and
 	// whether its routes serve; absent with no route. The text frame does not draw it.
@@ -1194,6 +1218,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if facts.HasStoreRTT {
 		p50, p99 := facts.StoreRTTP50MS, facts.StoreRTTP99MS
 		v.StoreRTTP50MS, v.StoreRTTP99MS = &p50, &p99
+	}
+	if facts.HasStops {
+		v.SeatWaits, v.Stops = seatWaitsOf(facts.Stops, now), facts.Stops.Stops
 	}
 	v.Held = int64(facts.Held)
 	v.Ready = readyPrimaries(shapes[0])
@@ -2474,8 +2501,8 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 // cmdRoutes is each route of the store with what its attempts did: the work
 // cards dealt on it, finished ok, failed, failed by the provider, and the mean
 // wall from take to finish, so a bad route shows (docs/SPEC-SPRINT.md, the
-// deal's route), and when its rest ends while the machine rests it for children
-// that ended with no result (rule 3, sprint.RouteRests).
+// deal's route), and when its rest ends while it rests: its provider's failures,
+// a refusal, or the coordinator's routes rest (sprint.RouteRests).
 func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("routes")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {

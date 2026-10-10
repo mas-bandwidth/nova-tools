@@ -31,30 +31,64 @@ unhold <name>... [--reason <text>] releases it: a member that beats is up at
 once, a reader's and a friend's state is their beat's, a stream is dealt again.
 fleet down <member> (hold --return), reader away <reader>... (hold --return),
 friend down <friend> (hold), reader up and friend up (unhold) are the old words
-for them, kept for one release; fleet up still adds a member and sets a width.`) + "\n"
+for them, kept for one release; fleet up still adds a member and sets a width.
+fleet hold <member>... and fleet unhold <member>... are hold and unhold of fleet
+members alone, friend hold <friend>... and friend unhold <friend>... of friends
+alone: the same step, the same writes and the same lines, a name of another kind
+refused with the verb that holds it.`) + "\n"
+}
+
+// kindHoldWords is what fleet hold, fleet unhold, friend hold and friend unhold say on
+// -h: hold or unhold of one kind (cmdHoldKind).
+func kindHoldWords(name string) string {
+	group, verb, _ := strings.Cut(name, " ")
+	kind, other, otherVerb := "fleet member", "friend", "friend "+verb
+	if group == "friend" {
+		kind, other, otherVerb = "friend", "fleet member", "fleet "+verb
+	}
+	return name + " is " + verb + " of " + kind + "s alone: the same step, the same writes and the same " + strings.ToUpper(verb) + " lines as nova-sprint " + verb + " <name>, every name a " + kind + " or the whole call refused, nothing written (a " + other + " is named with nova-sprint " + otherVerb + "; a reader or a stream with nova-sprint " + verb + ").\n\n" + holdWords()
 }
 
 // cmdHold is hold (release false) and unhold (release true), docs/SPEC-SPRINT.md section
 // 11: every name resolved to a fleet member, a reader, a friend or a stream, all or none,
 // in one step (sprint.HoldNames), the reason required of a hold.
 func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int {
+	return a.cmdHoldKind(map[bool]string{false: "hold", true: "unhold"}[release], "", release, args, stdout, stderr)
+}
+
+// cmdHoldKind is hold and unhold under the verb named (verb), its names held to one kind
+// when kind is set: fleet hold and fleet unhold (sprint.HoldMember), friend hold and
+// friend unhold (sprint.HoldFriend) are hold and unhold of that kind alone, aliases on
+// the same request, step and store writes (the owner, 2026-10-10: "you can add a fleet
+// hold if you want. it's a good idea. also a friend hold"; "even if just an alias"). A
+// name of another kind is refused with the verb that holds it (sprint.HoldTargets). The
+// OK and FAILED lines are hold's and unhold's own.
+func (a *app) cmdHoldKind(verb, kind string, release bool, args []string, stdout, stderr io.Writer) int {
 	name := map[bool]string{false: "hold", true: "unhold"}[release]
-	fs, c := a.verbSetup(name)
+	fs, c := a.verbSetup(verb)
 	reason := fs.String("reason", "", "why, in words: shown beside the held status and kept in the log; a hold wants one")
 	ret := false
-	if !release {
+	if !release && kind != sprint.HoldFriend {
 		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a stream's working cards withdrawn to ready (default: what is begun finishes, but a held friend keeps no card either way)")
 	}
 	dry := fs.Bool("dry-run", false, "check the names and the reason, print what would be held or released, and write nothing")
 	var repo listFlag
-	fs.Var(&repo, "repo", "also hold or release the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects")
-	expect := fs.Int("expect", 0, "with --repo: the number of streams it selects, as nova-sprint streams --repo <owner/name> printed it")
+	expect := new(int)
+	if kind == "" {
+		fs.Var(&repo, "repo", "also hold or release the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects")
+		expect = fs.Int("expect", 0, "with --repo: the number of streams it selects, as nova-sprint streams --repo <owner/name> printed it")
+	}
 	pos, err := parse(fs, args)
 	if err != nil {
-		return refuse(stderr, name, err.Error())
+		return refuse(stderr, verb, err.Error())
 	}
 	var probs []string
-	if len(pos) == 0 && len(repo) == 0 {
+	switch {
+	case len(pos) == 0 && kind == sprint.HoldMember:
+		probs = append(probs, "wants at least one fleet member")
+	case len(pos) == 0 && kind == sprint.HoldFriend:
+		probs = append(probs, "wants at least one friend")
+	case len(pos) == 0 && len(repo) == 0:
 		probs = append(probs, "wants at least one name: a fleet member, a reader, a friend or a stream (or --repo <owner/name> with --expect)")
 	}
 	for _, n := range pos {
@@ -69,7 +103,7 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 		probs = append(probs, "--repo wants --expect <n>, the number of streams it selects; run: nova-sprint streams --repo "+repo[0]+" to read it")
 	}
 	if len(probs) > 0 {
-		return refuse(stderr, name, strings.Join(probs, "; "))
+		return refuse(stderr, verb, strings.Join(probs, "; "))
 	}
 	if *dry && len(repo) == 0 {
 		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
@@ -77,7 +111,7 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	}
 	st, err := a.store(*c)
 	if err != nil {
-		return refuse(stderr, name, err.Error())
+		return refuse(stderr, verb, err.Error())
 	}
 	if len(repo) > 0 {
 		streams, err := a.repoStreams(context.Background(), st, repo)
@@ -96,7 +130,7 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
 		return 0
 	}
-	return a.runHold(name, "", *c, st, sprint.HoldReq{Names: pos, Release: release, Return: ret, Reason: *reason, Who: c.actor}, nil, stdout, stderr)
+	return a.runHold(name, "", *c, st, sprint.HoldReq{Names: pos, Release: release, Return: ret, Kind: kind, Reason: *reason, Who: c.actor}, nil, stdout, stderr)
 }
 
 // runHold runs one hold or unhold as verbName (an old verb's words when it aliases one:

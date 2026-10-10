@@ -18,6 +18,10 @@ const (
 	NFriendCollected = "a friend's card collected by reconcile"
 	NFriendDisagrees = "a friend's row disagrees with her QUEUE.json"
 	NFriendAgrees    = "a friend's row agrees with her QUEUE.json again"
+	// NFriendDirStalled is the run loop's reconcile passing a friend over because a read
+	// of her directory did not answer within its deadline (cmd/nova-sprint
+	// friendreconcile_tick.go), once an episode
+	NFriendDirStalled = "a friend's directory did not answer the reconcile"
 )
 
 // PropFriendDisagree is the fleet table's property of a friend's disagreement episode:

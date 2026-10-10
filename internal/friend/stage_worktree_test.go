@@ -15,12 +15,22 @@ import (
 )
 
 // worktreesOf is the checkouts a mirror's `git worktree list` names, the bare mirror itself
-// left out.
+// left out. The mirror is the record git marks "bare", never matched by path: git names it by
+// its real path, which is not the path the test made it at when the temporary directory is
+// under a symlink (macOS: /var is /private/var).
 func worktreesOf(t *testing.T, env []string, mirror string) []string {
 	var out []string
-	for _, l := range strings.Split(gitIn(t, env, mirror, "worktree", "list", "--porcelain"), "\n") {
-		if p, ok := strings.CutPrefix(l, "worktree "); ok && filepath.Clean(p) != filepath.Clean(mirror) {
-			out = append(out, p)
+	for _, rec := range strings.Split(gitIn(t, env, mirror, "worktree", "list", "--porcelain"), "\n\n") {
+		var path string
+		bare := false
+		for _, l := range strings.Split(rec, "\n") {
+			if p, ok := strings.CutPrefix(l, "worktree "); ok {
+				path = p
+			}
+			bare = bare || l == "bare"
+		}
+		if path != "" && !bare {
+			out = append(out, path)
 		}
 	}
 	return out

@@ -674,7 +674,6 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		if wall <= a.tickDeadline {
 			lift = 0 // the store is as fast as --tick-deadline again
 		}
-		a.serial.Unlock()
 		if a.ticked != nil {
 			a.ticked(i+1, began, why)
 		}
@@ -703,9 +702,13 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		if err == nil && res.State == store.Running {
 			// every friend reconciled after the tick's deal, with friend reconcile's plan
 			// (friendreconcile_tick.go; docs/SPEC-SPRINT.md section 1,
-			// friend-reconcile-every-tick-r.w1)
+			// friend-reconcile-every-tick-r.w1), in the tick's own turn of the line: on
+			// 2026-10-10 each friend's pass queued behind every waiting batch, and the
+			// passes cost 12 s a tick at the median (docs/SPEC-SPRINT.md section 14,
+			// store-trips-pipelinedb-bb)
 			a.reconcileFriendsTick(ctx, st, friends, stdout)
 		}
+		a.serial.Unlock()
 		if n != 0 && i == n-1 {
 			return false
 		}
@@ -797,14 +800,15 @@ sprint is done" to the coordinator and stops the machine itself: DONE, in
 where and the view; work added after leaves it STOPPED until nova-sprint
 start. run reads each provider's balance every 10 minutes through the seat's
 key (OPENROUTER_API_KEY, read in this process when --keys or keys.json names
-it; a BALANCE line): a provider out of credit by a
-refused take is rested until a payment is seen (a balance read higher than
-the read before it, or than at the refusal) or nova-sprint funded <provider>
-says it was paid; one out of credit by a balance at zero until a balance
-over zero; one low on funds (a balance not over an hour of its spend) until
-the balance is over it. When every provider is OUT the tick stops the
-machine (STOPPED, every provider is out of credit) and start is refused
-until one is paid. Low on funds never stops it. Every
+it; a BALANCE line) with its spend over the last hour from the sprint's cost
+records. A balance rests nothing: one not over an hour of its spend is the
+coordinator's judgment (a provider is low on funds), its routes serving until
+nova-sprint routes rest says otherwise. A provider that refuses a take for
+credit is rested until a payment is seen (a balance read higher than the read
+before it, or than at the refusal), nova-sprint funded <provider> says it was
+paid, or nova-sprint routes wake <provider> ends it. When every provider is
+OUT the tick stops the machine (STOPPED, every provider is out of credit) and
+start is refused until one is paid. Low on funds never stops it. Every
 other verbs can inspect and repair stopped state. run stops (exit 3) when its own binary is replaced
 on disk, so its supervisor starts the new build.`) + "\n"
 }

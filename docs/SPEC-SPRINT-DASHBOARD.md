@@ -29,8 +29,9 @@ tune the same way.
 serves the page on each `--listen` address (default `127.0.0.1:7390`), one listener
 each, sharing one cached copy of the sprint. It reads the sprint in-process the way
 `where --json --cards` does (through the sprint's server when `NOVA_SPRINT_SERVER` names
-one, else on the store `--redis` names), in one place, once per `--every` whether or not
-a page is open, so the copy is never older than a tick (the owner, 2026-10-04: "I need to
+one, else on the store `--redis` names; given none of them and no `--pull <url>`, it is
+refused on stderr at exit 2 before any listener opens), in one place, once per `--every`
+whether or not a page is open, so the copy is never older than a tick (the owner, 2026-10-04: "I need to
 be able to always trust the dashboard"; "Golang nova-tools and nova-sprint verbs only"):
 `/api/sprint` is that copy, with the build number and the throughput, and `/events`
 pushes each new copy as it is read (server-sent events); a request between two ticks is
@@ -119,15 +120,18 @@ from the owner edits one line here and nothing else moves.
   tile's own rounded corners; also the favicon. With no `--logo` the slot and the favicon render nothing.
 - The word "nova-sprint" in Nunito 800 (lowercase), the page's primary white (never cream), cap height about two
   thirds of the tile, optically centered with the pills.
-- Pills: coordinator <name>, epoch <n>, machine <state>; then the Updated clock with its live dot; no theme toggle (dark
+- Pills: coordinator <name>, epoch <n>, machine <state>, seat <waiting>; then the Updated clock with its live dot; no theme toggle (dark
   only, the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark.").
   The clock never flashes.
+- The seat pill (the owner, 2026-10-10: no silent waits): the judgments waiting on the seat and the oldest's age, "3
+  waiting · oldest 51h", from where --json's seat_waits (the tick's stops record); red while any is past its deadline,
+  its title the count past the deadline and the oldest's id and type. Hidden until the tick has counted them.
 
 ## Hero row: five tiles, one row at 2000 px, three and two below, two per row below 1100 px, large figure (72 px)
 1. LANDED: n of all; sub-line "<pct>% complete". Narrow: the number alone, sub-line "of <all> · <pct>%".
 2. ETA: "2h 9m"; sub-line "around 9:06 PM".
 3. COST: total to the cent; sub-line "$0.24 per card" (never "per landed card").
-4. IN FLIGHT: n; sub-line "14 working · 9 review" on one line.
+4. IN FLIGHT: n; sub-line "14 working · 9 verify" on one line (verify counts review, fix and merging together, one global state; the tooltip gives the review, fix and merging counts).
 5. THROUGHPUT: cards landed per hour over the last 60 min; "—" until ten minutes of samples; sub-line "cards / hour".
    A lone tile on its row spans the width with its figure centered.
 - No FLEET tile. Flash on change: LANDED only; the others never.
@@ -148,9 +152,9 @@ from the owner edits one line here and nothing else moves.
   sent out again sits (review -> working on rework), unless where prints the row's `fix` itself; the copy's
   `fix` is the Work rows' summed; and `priorities.fix` lists those primaries, off high and low. A track's lit
   cells run in the ladder, highest on the left: blocker (`--p-blocker`), critical (`--p-critical`), fix
-  (purple), reads (orange, one cell per two reads, a lone read a whole cell), then the working blue; the
+  (purple), reads (orange, one cell a read), then the working blue, so the lit cells number the row's working; the
   Total row says "<n> fix" under the tracks when any row has one. The In flight tile counts a card at fix as
-  working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
+  verify. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
   defect, carry no dealt card, so the view cannot see them until where prints the Work row's `fix`.
   `TestFixView*` and `TestFixPage*` (internal/sprintdash/view_fix_test.go) hold it.
 

@@ -2633,8 +2633,8 @@ and it is the coordinator's decision, receipted.
     a first bound that left no result, or whose member went down, it lists rework
     with a fix and drop. When the provider is back, the held judgment closes and the
     bound's plain one opens, so the wait ends in a judgment. A rested route is not
-    the provider back: rule 3 never rests a route for a provider failure (it counts
-    takes with no result), so that test would lift the bound at once. Nor is
+    the provider back: a route's rest ends by the clock or the coordinator's word,
+    never by a take finishing ok, so that test would lift the bound at once. Nor is
     `funded`: a take refused for credit or for its key rests its provider first
     (nova-tools#5199, below), the card waits ready under the rest, a rework onto a
     tier whose every route rests is refused, and after `funded` the attempt is dealt
@@ -2663,27 +2663,35 @@ and it is the coordinator's decision, receipted.
     provider failure, never `no result`, so the store can tell the outage from a real
     try; leaving a provider-failure bound out of the tier's count is an option the
     capped lift makes safe, and it is not taken here.
-- A route whose children end without a result rests (the owner, 2026-10-02,
-  nova-tools#5174: "A route whose children end without a result three times is
-  rested by the machine, never redealt on."). The tick's deal counts each route's
-  ended takes over a sliding window, the last RouteRestWindow (10) takes on it that
-  ended after its last rest began, in the order they ended: each take the provider
-  failed or that left no result (the work card's provider_take_<n> records) and each
-  work card's own finish; a take that ended with its member down keeps no record and
-  is not counted. When RouteRestAfter (3) of the window left no result, the tick
-  rests the route for RouteRestFor (30 minutes, the clock's): it writes that route's
-  line into the fleet table's one property per provider, `rule3_rest_<provider>`
-  (one line per route, `<route> <began> <ends> <card,card,card> no-result`, RFC3339,
-  the lines in route-name order, the whole value guarded on the value read), in the
-  deal's batch, and a happened note to the
-  coordinator, "a route rested: its children ended with no result", naming the
+- A route rests only on a provider-typed failure or the coordinator's word (the owner,
+  2026-10-10, through the seat: "this sounds like something the machine should not do. it
+  should raise it to you as a thing to do, but not do it automatically."; `tla/RouteRest.tla`,
+  `RestOnlyByProviderOrCoordinator`). A take that ended with NO RESULT is the model's output
+  on that card, never the provider's: it counts against the card's attempt and the route's
+  ok%, and it never rests the route (rule 3 of 2026-10-02, nova-tools#5174, rested a route on
+  three of them; it is retired, and a `no-result` line it wrote holds no route from the
+  moment the code that reads it runs: `RouteRest.Retired`). A retired rest stays the mark
+  the rules count after (`RouteRest.Mark`: its end, or when it began for one with no time),
+  so no end before it, a 402 included, rests anything again on deploy
+  (`TestARetiredRestKeepsItsMark`). The tick's deal counts each
+  route's ended takes over a sliding window, the last RouteRestWindow (10) takes on it that
+  ended after its last rest began, in the order they ended: each take the provider failed or
+  that left no result (the work card's provider_take_<n> records) and each work card's own
+  finish; a take that ended with its member down keeps no record and is not counted. When
+  RouteRestAfter (3) of the window are TRANSIENT provider failures (the member's provider
+  line, `class=rate-limited` a 429, `class=provider-5xx`, `class=timeout`), the tick rests
+  the route for RouteRestFor (30 minutes, the clock's): it writes that route's line into the
+  fleet table's one property per provider, `rule3_rest_<provider>` (one line per route,
+  `<route> <began> <ends> <card,card,card> provider`, RFC3339, the lines in route-name
+  order, the whole value guarded on the value read), in the deal's batch, and a happened
+  note to the coordinator, "a route rested: its provider failed its takes", naming the
   route, when the rest ends and the cards. While it rests the deal draws no work
   card on it, a first deal, a redeal (even when it is the tier's only route, where
   the exclusion of the routes drawn lapses) or a rework's, as it draws none on a
   disabled one; when every route of a tier rests, the tier's judgment `no route
   serves the tier` says so and names when each rest ends. The rest ends by itself at
-  its time, and the window begins again after it, so the ends that rested it never
-  rest it twice. Reads are drawn as before. The rests are settled once per tick part
+  its time, or on `routes wake`, and the window begins again after it, so the ends that
+  rested it never rest it twice. Reads are drawn as before. The rests are settled once per tick part
   or verb that draws work routes or asks why a card is not dealt (the tick's deal,
   `deal`, `rework`, and the held rule of the tick's check), from one scan of the fleet
   table, and each draw reads a map: at 984 ready primaries and 3,000 work cards each
@@ -2691,9 +2699,23 @@ and it is the coordinator's decision, receipted.
   `TICK-COST` lines; a scan per card was 1,969 scans and 3.82 s a check). The rest is
   the sprint's, in the store, never nova-config's: enabled stays the coordinator's (docs/SPRINT-COORDINATOR.md).
   `routes` prints `rested_until=<RFC3339>` while a route rests (`-` when not)
-  (`sprint.RestsDue`, `TestRestsDueCountsNoResultEndsInTheRoutesWindow`,
-  `TestARouteWhoseChildrenEndWithNoResultThreeTimesRests`,
+  (`sprint.RestsDue`, `TestRestsDueCountsTransientProviderFailuresNeverNoResults`,
+  `TestANoResultNeverRestsAndA429Does`, `TestARetiredRuleRestsNoRoute`,
   `TestARestingRouteServesNoDealWhileAnotherServes`).
+- The coordinator rests and wakes routes (`sprint.RestRoutes`, `sprint.WakeRoutes`):
+  `routes rest <provider|route> --reason <text> [--for <duration> | --until <RFC3339>]` rests
+  every route of the provider (its one property `provider_rest_<provider>`, cause
+  `coordinator`) or the one route (its line in `rule3_rest_<provider>`), until the time or,
+  with none, until woken; `routes wake <provider|route> --reason <text>` ends now the rest
+  holding the provider, whatever its cause (a refused take's included), and its routes' own,
+  or one route's own while its provider serves (a route under its provider's rest is
+  refused, naming the provider). `routes rest` never replaces a rest that holds: a provider
+  resting (a refused take's credit rest included) or a route resting on its own line is
+  refused, naming the rest, so a credit rest never loses its place in the all-out stop
+  (`TestRoutesRestNeverReplacesARestThatHolds`). A wake is never a payment: `funded` says one, and the seat
+  never says `funded` to lift a rest no payment ended. Each is refused whole with no reason,
+  a name that is neither a route nor a provider of one, or (wake) nothing resting
+  (`TestTheCoordinatorRestsAndWakesRoutes`).
   The property is one per provider, never one per route, so the table's properties
   (64, `ntable.LimitTableProps`) grow with the providers. At 100 routes over two
   providers, every route rested, the fleet table holds 4 properties
@@ -2715,30 +2737,24 @@ and it is the coordinator's decision, receipted.
     grow with the providers and never with the routes (`TestTheFleetPropertiesAtAHundredRoutesStayUnderTheBound`). A
     route rests while its rule-3 line or its provider's rest holds, the one that ends later
     deciding (`sprint.RouteRests`); `routes` prints each route's `rested_until=`.
-  - A provider has two rests of its funds, and only one stops the sprint. Each holds with no
-    time (`open`, said `until paid`) and ends on what is listed with it, or on `funded`:
-    - OUT OF CREDIT (cause `out-of-credit`): a take the provider refused for want of credit
-      (its line `provider: class=out-of-credit ...`, docs/SPEC-SWARM.md), or a balance the poll
-      reads at or under zero. The provider has no money. It counts toward stopping the sprint.
-      - Begun by a refused take, it ends ONLY on `funded` or on a payment the poll sees: a
-        balance read strictly higher than the read before it, or than the balance at the
-        refusal (the rest keeps it, `balance=<x>`). That read then decides as any other: over
-        the hour of spend the rest ends, over zero but not over it the provider is low on
-        funds, at or under zero it stays out of credit. A balance over zero that is not higher
-        never ends it: OpenRouter refuses with 402 a request whose estimated cost the balance
-        cannot cover, so a provider that refuses can still read a small balance over zero. It
-        stays out of credit, with its balance beside it on the providers table, and counts
-        toward the stop (`TestARefusedProviderReadingASmallBalanceRestsOnceBesideAServingOne`,
-        `TestARefusedProviderAloneStopsTheMachineOnceUntilAPayment`,
-        `TestAReadHigherThanTheReadBeforeItEndsARefusedTakesRest`).
-      - Begun by a balance at or under zero, it ends on a balance read over zero, after an
-        unknown read too (the rest names no card, so it is no refused take's): over the hour of
-        spend the rest ends, not over it the provider is low on funds from then
-        (`TestABalanceAtZerosRestEndsOnAReadOverZeroAfterAnUnknownOne`).
-    - LOW ON FUNDS (cause `balance`): a balance the poll reads over zero but not over one hour
-      of the provider's spend. The provider is excluded before it runs dry, and still has
-      money: it NEVER counts toward stopping the sprint. It ends on a balance read over the
-      hour of spend measured before the rest began; at or under zero it is out of credit.
+  - A provider has one rest of its funds, and it is the provider's own refusal, never a
+    balance read (the owner, 2026-10-10: a low balance is raised to the coordinator, never
+    rested by the machine). OUT OF CREDIT (cause `out-of-credit`): a take the provider
+    refused for want of credit (its line `provider: class=out-of-credit ...`,
+    docs/SPEC-SWARM.md). It holds with no time (`open`, said `until paid`) and counts toward
+    stopping the sprint. It ends ONLY on `funded`, on `routes wake`, or on a payment the poll
+    sees: a balance read strictly higher than the read before it, or than the balance at the
+    refusal (the rest keeps it, `balance=<x>`); when neither mark is known (no read before it,
+    none kept at the refusal: a cold start, nova-tools#5220), the first read over zero
+    (`TestARefusedRestWithNoMarkEndsOnTheFirstReadOverZero`). A balance over zero that is not higher never
+    ends it: OpenRouter refuses with 402 a request whose estimated cost the balance cannot
+    cover, so a provider that refuses can still read a small balance over zero. It stays out
+    of credit, with its balance beside it on the providers table, and counts toward the stop
+    (`TestARefusedProviderReadingASmallBalanceRestsOnceBesideAServingOne`,
+    `TestARefusedProviderAloneStopsTheMachineOnceUntilAPayment`,
+    `TestAReadHigherThanTheReadBeforeItEndsARefusedTakesRest`). A rest a balance poll wrote
+    before (cause `balance`, or `out-of-credit` naming no card) is retired and holds no route
+    (`TestTheNightsBalanceRestLiftsOnTheNextPoll`).
     A take refused for the provider's key (`class=auth`) rests it for RouteRestFor, ends at
     that time, and stops nothing.
   - A refused take rests the provider in the tick that sees it, over rule 3's rest of its
@@ -2751,7 +2767,7 @@ and it is the coordinator's decision, receipted.
     (`sprint.RestsDue`, `providerRestsDue`; `TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider`,
     `TestProviderRestsDueRestEveryRouteOfTheRefusedProvider`).
   - A card dealt on a route before its rest began is never taken there. `take` reads the
-    rest itself (its provider's property, for a rest the balance poll wrote between two ticks;
+    rest itself (its provider's property, for a rest a verb wrote between two ticks;
     a route's own rest is written only by the tick, which withdraws its cards in the same
     step): a take by id of a ready card on a resting route is refused, naming the rest, and a
     take by count passes over it. The tick withdraws every ready card on a route resting then,
@@ -2768,32 +2784,37 @@ and it is the coordinator's decision, receipted.
     anomalyco/opencode#44189, and its CLI reads none), so its balance is recorded `unknown` and
     why, as any provider's with no endpoint or no key. One step writes each read to the fleet
     table's property `provider_balance_<provider>` (`<balance|unknown> <at> <spend/hour>
-    <used|-> <note>`), the spend an hour measured from the provider's count used between two
-    reads. While the provider rests for its funds the step keeps the spend measured before the
-    rest began (a resting provider spends next to nothing), so a rest never lifts because its
-    own spend fell. The step writes, changes or ends the provider's rest as above; a read that
-    ends a rest of its funds writes a happened note, "a provider's routes serve again: its
-    balance is back". An unknown balance
-    writes and ends no rest. Each poll prints one `BALANCE` line naming the balances, never a
-    key (`sprint.Balance`; `TestTheBalancePollRestsAProviderUnderAnHourOfItsSpend`,
-    `TestLowOnFundsNeverStopsTheSprintAndOutOfCreditDoes`, `TestAnUnknownBalanceChangesNoRest`,
-    `TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns`).
+    <used|-> <note>`), the spend an hour being the provider's spend over the LAST HOUR as the
+    sprint's own cost records measure it (`sprint.SpendLastHour`: every take and read record
+    on the work table that ended in the hour, ran on the provider, and carries `actual_usd`,
+    each counted once by its key). It is never a rate scaled up from the gap between two
+    reads, and never held from before a rest: on 2026-10-10 the two-read rate of one ten-minute
+    gap, $234.82 an hour, was held from 01:54:32Z while the balance sat at $148.54 with nothing
+    spent, so the rest it began could never end (`TestSpendLastHourIsTheHoursRecordsCountedOnce`).
+    The step writes NO rest: it ends a refused take's rest on a payment seen, with a happened
+    note, "a provider's routes serve again: its balance is back". Each poll prints one
+    `BALANCE` line naming the balances, never a key (`sprint.Balance`;
+    `TestALowBalanceIsAJudgmentNeverARest`, `TestTheNightsBalanceRestLiftsOnTheNextPoll`).
   - `funded <provider> --reason <text>` is the coordinator's word that a provider was paid: it
     ends the provider's rest of its funds now, for a provider whose balance no poll can read
-    (opencode) as for any; it is refused when the provider does not rest for its funds.
-  - One judgment of the provider, never one per card, while it rests: `a provider is out of
-    funds` (`provider <p> is out of funds (balance $x): a payment is the owner's; it is
-    excluded: its routes ... rest until paid (...)`), `a provider is low on funds`
-    (its words say it is not out of credit and the sprint does not stop for it), or `a provider
-    refuses its key`. Its subject is `stream:provider:<p>`; the funds judgments' decisions are
-    `funded <p>`, ack and wait, never a rework (a payment is not the card's to fix, and is the
-    owner's, never the machine's). It closes when the rest ends.
+    (opencode) as for any; it is refused when the provider does not rest for its funds. A rest
+    to end with no payment made is `routes wake`'s.
+  - One judgment of the provider, never one per card: `a provider is out of funds` while a
+    refused take's rest holds (`provider <p> is out of funds (balance $x): it refused a take
+    for credit; ...`; decisions `funded <p>`, `routes wake <p>`, ack, wait), `a provider
+    refuses its key` while its key's rest holds, or `a provider is low on funds` while the
+    poll's last read is at or under one hour of the spend and no refusal rests it: its words
+    give the balance, the spend over the last hour, the hours left at it and the verbs
+    (`routes rest <p>`, `wait <note> --until <RFC3339>`, ack), and say its routes STILL SERVE:
+    the machine rests none of them for a balance, and the sprint does not stop for it. Its
+    subject is `stream:provider:<p>`; never a rework (a payment is not the card's to fix, and is
+    the owner's, never the machine's). It closes when its cause ends.
   - Every provider out stops the sprint. When every enabled route of every tier rests because
     its provider is out of credit, the tick's deal plans the stop and the binding STOPS the
     machine as the step commits: its record's cause `every provider is out of credit`, the
     machine line `machine: STOPPED (every provider is out of credit)`, and one judgment, `every
     provider is out of credit`, naming the providers. A provider low on funds keeps the machine
-    running: its tier's `no route serves the tier` says why nothing deals. The line says what
+    running, and its routes serving. The line says what
     counts as paid: `the sprint is STOPPED until a provider is paid: a balance over zero the
     poll reads higher than the one before or than the balance at the refusal, or nova-sprint
     funded <provider>`. `start` is refused
@@ -5577,6 +5598,77 @@ store, rule on and off) and `TestALandPassFindsTheBaseGreenAndItsStreamResumesBy
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).
 
+### No silent stops
+
+The owner, 2026-10-10 ~04:18Z: "sprint doctor can check this, but i still dislike these silent
+stops/failures"; and the night before, of a rest the machine made on an estimate: "it should
+raise it to you as a thing to do, but not do it automatically". The night of 2026-10-09 lost
+its throughput to stops the machine made and told no one, each found by a person reading the
+dashboard: two machine rows down since they never beat, a hard pin waiting on a friend who was
+down, a friend's stall judgment closed in the tick that raised it, the tick 20 to 90 s late for
+hours, a promotion's pull request ejected from the merge queue, and 111 judgments waiting on the
+seat, the oldest 51 hours. Every automatic stop is now a signal to the seat while it holds
+(internal/sprint/stops.go; the model is tla/CoordinatorPass.tla, Kind `stop`, invariant
+`StopSignalled`, witness `silentstop`):
+
+- **The pass's stops** (`StopTypes`, kept by the coordinator's pass as its own judgments,
+  raised once an episode and closed when the stop clears; each text says what stopped, the
+  evidence (an absolute time, never an age, so the text and the stops record change only when
+  the stop does), the effect and the undo verb). While any stop judgment has gone `PassEvery`
+  without a push, the pass writes one digest to the coordinator, `NStopsDigest`, at most once a
+  `PassEvery` (its clock the acknowledgement `NStopsDigestClock`): how many stops hold by kind,
+  the `StopsDigestOldest` (5) oldest with their undo verbs, and `nova-sprint doctor` for the
+  full list; a stop acknowledged, or waited to a review time not reached, is left out:
+  `NStopMemberDown`, a fleet machine down (or never beaten) that the coordinator did not hold,
+  past the status dwell, or held adopting past `StopAdoptAfter`: its width idles; `NStopPinWaits`,
+  a ready card hard-pinned (`WHO: only friend <name>`) to a friend who is not up, with the cards
+  that need it; `NFriendStalled`, the stall ladder at rung 3 or above while she holds cards (its
+  own type: as `stalled` the check closed it in the tick that raised it). A hold the coordinator
+  made (`fleet down`, `hold`) is hers and never a stop.
+- **The judgments late on the coordinator escalate**: the overdue line is addressed to the
+  coordinator, so the push delivers it at the deadline; `NCoordinatorBehind` opens with its level
+  (`level <n>: ...`), one level every `BehindEscalateEvery` (three `PassEvery`) of running time
+  since the overdue line of the oldest it counts, and the level is part of the condition, so a
+  new level is a new judgment whatever quieted the one before (`EscalatedPastAck`, witness
+  `ackforever`). A judgment the pass closes takes its overdue hold with it in the same tick.
+- **The late tick** cannot tell of itself: the push loop (`inbox --push`) reads the machine's
+  line at every look and, while the tick runs `TickLatePush` (30 s) late or more, writes
+  `TICKLATE-<time>.md` to the seat's inbox and delivers it, with the worst lateness seen
+  (cmd/nova-sprint/pushlate.go). It pushes at most once a `PassEvery`: the machine line counts
+  lateness from the last heartbeat, so a look just after a tick reads on time, and an episode
+  ends only after `PassEvery` of on-time looks; the last push is kept across episodes, and a
+  push loop that restarts reads it back from the newest `TICKLATE-*.md` of the inbox. The
+  model is tla/LatePush.tla (`OnePushAWindow`, `PushedWhileLate`; witnesses `wipe` and
+  `forget`).
+- **A promotion** tells the coordinator, through a note in the store (`Store.Tell`), of its
+  judgments (a failed check or merge-group run, a red pull request, a pull request closed) and
+  of its pull request found out of the merge queue neither merged nor closed
+  (`NPromoteEjected`); each was stdout alone.
+- **The stops record** (store key `stops`): every automatic stop that holds (`LiveStops`: the
+  pass's own, and those another part signals, the route and provider rests and a stream the
+  lander stopped, listed with their age) and what waits on the seat (`SeatWaitsOf`: the open
+  judgments, those past their deadline, the oldest, the level), written by the tick when it
+  changes and once a minute. `where --json` carries `seat_waits` and `stops` from it; the
+  dashboard's seat pill shows the judgments waiting and the oldest's age, red while any is past
+  its deadline.
+- **`nova-sprint doctor`** counts the same from a fresh read whether or not the machine ticks:
+  each layer (routes, machines, friends, cards) GREEN, or RED with every stop in it, one line each
+  with its age, effect and undo verb, then the seat's waits; exit 1 when a stop holds or a
+  judgment is past its deadline. The card the-doctor-checks-every-layer-and-refuses-a-red builds
+  its layers onto this verb.
+
+Left as they are, and listed: the route and provider rests (route_rest.go, provider_funds.go: a
+sibling card makes their decision the coordinator's); the stall ladder's take-back and down at
+rungs 4 and 5 (pushed to the coordinator as `friend stall` notes; their bound is modelled,
+tla/StallLadder.tla `NoCardHeldPastBound`). `TestAMemberDownTheCoordinatorDidNotHoldIsRaisedAgainUntilItIsHeld`,
+`TestACardPinnedToAFriendWhoIsNotUpIsRaisedUntilUnpinned`,
+`TestJudgmentsLateOnTheCoordinatorArePushedAndEscalatePastAWait` (internal/sprint/stops_test.go),
+`TestTheDoctorListsEveryAutomaticStopWithItsAgeAndUndo`,
+`TestThePushLoopTellsTheSeatOfALateTickEveryTenMinutes`,
+`TestALateTickSixtySecondsApartIsPushedAtMostSixTimesAnHour`,
+`TestARestartedPushLoopDoesNotRepushALateTickInsideTheWindow` and
+`TestAPromotionEjectedFromTheMergeQueueIsToldToTheSeat` (cmd/nova-sprint/stops_test.go) drive it.
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared
@@ -5726,7 +5818,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, hold, unhold, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend reconcile, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, stream archive, stream unarchive, merge-window open, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend reconcile, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, stream archive, stream unarchive, merge-window open, routes rest, routes wake, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -5770,7 +5862,7 @@ command that loads it.
 | progress | a holder stamps progress on the work cards it works: `progress --as <worker> <card>[@<gen>]... --epoch <n>` sets the card's `progress` field to the server's time and nothing else; refused for a card that is not working, one another row holds (only the holder stamps), and one named at a generation that is not its live one. The member sends it every 3 minutes for each card whose child printed since its last stamp, and the friend daemon for each card whose lane turn did; a child that prints nothing stamps nothing, and the late rule (section 8) reads that silence |
 | ask | deals primaries in review the reads each wants now, together (every read it still needs at once; once a read finds it broken no more is asked; section 6, the interim rules); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
-| routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
+| routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while it rests: its provider failed its takes, refused one, or the coordinator rested it (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
 | stats | the epoch's pass in seconds since the last `stats tidy` (the whole epoch before the first; a sample counts when it ended at or after the tidy, `sprint.StatsSince`, and the text frame's first line says `since <RFC3339> (stats tidy)`, the OK line `since=`), each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, or for a friend's card, which reports no usage, `taken` to `reported` (her REPORT.md's time, which `friend sync` keeps on the card, no later than the finish; `TestStatsTimesAFriendsRunFromHerReport`), report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json`. `--routes [--since <time>]` prints the route table from the log over that window instead, the window from the last tidy of the routes when `--since` is not given (refused, exit 2, with neither) (`sprint.RouteTable`): takes, ok, failed, no-result, provider failures, landed, first-take rate, wrong at review, dollars per take, dollars per landing, median wall, imputed; a finish before the window is left out, and the provider takes on that finish with it; a deal, a take, an accept and a read before the window stay, as the route, the wall and the review of a finish inside it; a provider take whose error begins `no result:` is a no-result and every other provider take is a provider failure; `actual_usd` counts when the usage writes it; an accept is the verb `accept` or `tick accept` |
 | stats reset | every figure counts from a mark, and nothing moves (the owner, 2026-10-09: "Clear the cost per-card right now. Clear the per-tier costs. Clear the total cost.", "Clear the done and the ok% for all friends now.", "tidy is different"): `stats reset --reason <text> [--dry-run] \| --show`, the coordinator's; see Statistics, below |
 | stats tidy | starts the statistics afresh and keeps the work (the owner, 2026-10-06: "can you please clear the sets of done consumer cards for all friends and fleet", "I would like a semi-fresh start to stats now"; named tidy the same day, "reset sounds too aggressive"): `stats tidy (--friends \| --fleet \| --routes \| --streams \| --all)... --reason <text> [--dry-run]`, the coordinator's; see Statistics, below |
@@ -5793,9 +5885,11 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | promote | the machine's promotion of the sprint branch into dev, carried from the cut to the recorded merge with no hand steps (the hand sequence of 2026-10-05, pull request 5351, as one verb). Each pass fetches origin and cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from `origin/<branch>`, never a local ref (a stale local ref, 0 ahead of dev, was cut and pushed twice on 2026-10-05), and refuses a cut not ahead of `origin/<base>`, exit 1, nothing cut. It merges `origin/<base>` into the cut without a checkout (`git merge-tree --write-tree`, then `git commit-tree` with the tip and the target as parents; the cut is the tip itself when the target is already in it); a conflict raises one judgment naming the conflicted files, decisions `merge-by-hand-and-recut` and `skip`, and stops with nothing cut or pushed: the tool resolves nothing. The cut is never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--once` carries one promotion to its end (recorded, a judgment, nothing to promote, or a refusal) and exits; `--poll <duration>` (default 1m) is how often a promotion in flight is looked at; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the cut before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since `origin/<base>`, oldest first. The clone records the promotion in flight (`promote.branch`, `promote.pr`, `promote.tip`, `promote.judged` in its local git config); one in flight is carried to its end before another is cut. Its checks are waited on (`PROMOTE WAIT ... checks pending: <names>`); once they pass, admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge moves `refs/promoted/last` and records `promoted --sha <merge>` in the store (section 7, dev is behind), `PROMOTE RECORDED sha=<merge>`; a store that does not record it names the `promoted` command to run. A failed check, or a failed merge-group run of the pull request (the queue's branch `gh-readonly-queue/<base>/pr-<n>-...`), raises one judgment naming the check, with the failing log's tail, decisions `fix-and-recut` and `skip`, and does not record the sha; it is not raised again while the sprint tip stands, and once the tip moves (the fix landed) the next pass cuts afresh. A pull request closed without a merge clears the promotion in flight, a judged one included, with one judgment naming it (`JUDGMENT closed-pr branch=<promo> pr=<n> decisions=recut,skip`), records nothing, and the next pass cuts afresh. The verb claims the promotion cleared only after every in-flight key is gone: a cleanup that fails (`git config --local --unset` exiting other than 5, the key absent) is a refusal naming the keys that remain, and the next pass would handle the closed pull request again. Every pass also reads the base's runs at the last promotion's merge (`refs/promoted/last`, the forge's failed runs of the base at that commit). A red run, on the pull request's branch or on the base after the merge, cuts its fix cards by the machine (`(*promoter).redJudgment`, cmd/nova-sprint/promote_red.go): each failed run's failed-steps log is read through the forge into its failing tests (`sprint.RedTests`, go test's output per job, one per distinct test name, a build failure naming no test), and one card per test is added to the day's stream `promote-red-<YYYY-MM-DD>`, its id `red-<TestName>` (the next free `-<n>` when a landed card holds it), its brief (`sprint.FixBrief`) line 1 the heavy tier, `REPO:` and `BASE:` the live sprint branch, `START:` the test, its file and its failing line from the log, `STOP:` the test green on the job (the runner) it failed on, `PATHS:` the test file and the package, `TEST:` the test (`-tags functional` when the job is named functional), held to the card lint as `add` holds a brief, ranked first (scored below every card on the work table), and deduplicated by test name against the open cards inside the one add step (`sprint.FixCards`: a test an open card's `TEST:` line names is cut by no one). The judgment names the cards cut and the tests already open (`JUDGMENT promotion red branch=<promo> decisions=fix-and-recut,skip cards=<ids> open=<tests>`, or `JUDGMENT dev red base=<base> sha=<sha> decisions=fix,skip cards=<ids> open=<tests>`, each red base run judged once); the coordinator writes no fix card by hand (`TestARedPromotionCutsOneFixCardPerFailingTest`). Every step prints a line as it goes (`PROMOTE FETCH`, `MERGE`, `GATE`, `PUSH`, `CUT`, `WAIT`, `QUEUE`, `MERGED`, `RECORDED`), and between looks `PROMOTE NEXT ... in=<duration>: <what it waits on>`, so the verb never waits without saying on what. Every forge call goes through one interface, `promoteForge` (cmd/nova-sprint/promote_forge.go: the gh CLI through internal/subproc, and a fake in the tests), the red-run reads included: the failed runs of a branch or of the base at a commit, a run's log, and the repository's name. `--dry-run` prints the branch and the cards, or the promotion in flight, and writes, enqueues and records nothing on any path: it reads origin's tips with `git ls-remote` and fetches their objects with no refmap and no FETCH_HEAD, so no ref, no config key, no push, no pull request, no queue entry and no store row is written, and an in-flight promotion is neither watched nor forgotten. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section; `TestPromoteCarriesACutToARecordedPromotion` drives it over a twin repository and a fake forge |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); `up <member> --deadline <duration|default>` pins the deadline every card dealt to the member gets, or takes the pin off (section 5, the deadline by machine); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
-| hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (and keeps none), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a stream's working cards finish; a friend keeps no card, with `--return` or without: every card she has begun (working, or read as started) is taken back to ready as `friend down` takes it, a started one with a push carrying its pushed head to the next taker, and her ready cards not begun are handed back too: a held friend keeps no card at all, with `--return` or without (the owner, 2026-10-09; `TestHoldingAFriendReturnsItsStartedCards`, `TestAHeldFriendKeepsNoReadyCards`). `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back every card of hers, started or not (`--until` is its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold; `--repo <owner/name>... --expect <n>` holds or releases the streams recording those repositories instead of a name (the same one-snapshot read as `streams --repo`, the count of streams required as `drop --repo` requires it) |
+| hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (and keeps none), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a stream's working cards finish; a friend keeps no card, with `--return` or without: every card she has begun (working, or read as started) is taken back to ready as `friend down` takes it, a started one with a push carrying its pushed head to the next taker, and her ready cards not begun are handed back too: a held friend keeps no card at all, with `--return` or without (the owner, 2026-10-09; `TestHoldingAFriendReturnsItsStartedCards`, `TestAHeldFriendKeepsNoReadyCards`). `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back every card of hers, started or not (`--until` is its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold; `--repo <owner/name>... --expect <n>` holds or releases the streams recording those repositories instead of a name (the same one-snapshot read as `streams --repo`, the count of streams required as `drop --repo` requires it); `fleet hold <member>...` and `fleet unhold <member>...` are hold and unhold of fleet members alone, `friend hold <friend>...` and `friend unhold <friend>...` of friends alone (the owner, 2026-10-10: "you can add a fleet hold if you want. it's a good idea. also a friend hold"), the same request with its kind set, the same step, writes and HOLD/UNHOLD lines, a name of another kind refusing the whole call with the verb that holds it (`no friend m1: m1 is a fleet member; run: nova-sprint fleet hold m1 --reason <text>`; `TestFleetHoldIsHoldOfAMemberAlone`, `TestFriendHoldIsHoldOfAFriendAlone`); the friend's hold and release are `FriendPresence.tla`'s `Hold(f)` and `Release(f)` |
 | unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's state is then its beat's and a friend's her session's evidence (a wake ping her session answered, or a card of hers finished, within its window); a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
+| routes rest | `routes rest <provider-or-route> --reason <text> [--for <duration> or --until <RFC3339>]`: the coordinator rests every route of the provider (the fleet property `provider_rest_<provider>`, cause `coordinator`) or one route (its line in `rule3_rest_<provider>`), until the time or until woken; a happened note; the coordinator's; refused whole, nothing written, with no reason, a name that is neither a route nor a provider of one, or a time not after now |
+| routes wake | `routes wake <provider-or-route> --reason <text>`: ends now the rest holding the provider (any cause, a refused take's included) and its routes' own, or one route's own while its provider serves, the reason on the rest's words; never a payment (that is `funded`); refused whole with no reason, an unknown name, nothing resting, or a route under its provider's rest |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1); `--every <d>` loops as the seat each pass, and `friend sync install --every <d>` / `friend sync uninstall` put that loop in place as this machine's service ("Handing over the seat") |
 | collect | every friend's outbox report of a card working on a friend's row finished as her row, a LAND only at origin's tip, and with `--dead-lanes` a lane her runner ENDed with no report finished failed (section 1, collect): `collect [<friend>...] [--dead-lanes] [--root <dir>] [--dry-run]`; never run by the server |
 | gc | the machinery's scratch reclaimed on the machine it runs on, or on `--machine`'s through the fleet runner (section 1, gc): `gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]`; job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past `--max-age`, the go caches trimmed to their cap, never a path under no known scratch root or a clone with work that is nowhere else; one line per class and `GC OK freed=<bytes> volume=<use%>`; run by `run` on every machine hourly and on a volume at 80%; never run by the server |
@@ -7195,6 +7289,58 @@ machine's records; `where --json` carries `store_rtt_p50_ms` and `store_rtt_p99_
 With no record, or one whose last sample is older than the window (a server that stopped
 measuring), both fields and the line are left out. Tested on the twin store with the harness's
 clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
+
+#### store-trips-pipelinedb-bb: the server reads only what it needs
+
+On 2026-10-10 the server called the table layer's read set on the fleet table about 56 times
+a second, 25 to 30 ms each, 62% of the store's one thread, and the rows it read were mostly
+the finished cards of the members' ok and failed cells, which grow with every landing; ticks
+began every 30 to 95 s and `where --json` took 6 to 15 s. Three changes:
+
+- A row's cells (`Store.ReadCells`; `queue --as <member>`, every worker's and reader's poll,
+  names ready, working and ctl) read the named cells' records alone: every other set column of
+  the row is read as text, which has no cell ids. On a copy of the live store this was most of
+  the fleet table's read sets.
+- A process keeps, for each table it loads, the placed records its last whole read found, at
+  the revision read, with the mark of the change event that left that revision (its stream id;
+  `store.LoadCache`, one per store address, shared by the verbs' stores). A later load
+  (`Store.Load`, and the fenced read of a step without the tick's twin,
+  `PipelinedLoadWithFence`) reads the shape and the change stream back from the shape's
+  revision to the cache's in one exchange; the cache is used only while the event at its
+  revision is still the one it was read at (the same mark), and then the records the writes
+  since changed are read again, as the tick's twin catches up. Read whole, and kept with the
+  mark read before it: a table the cache does not hold at its epoch, one whose stream does not
+  chain between the two revisions, one whose kept records do not add up to the shape's counts,
+  and one whose store is behind the cache or has another event at the cache's revision (the
+  entry is dropped). A store that loses its last writes (a restart from an AOF synced every
+  second, an RDB or a backup restore: the same epoch, a lower revision) and writes another
+  history from there gives those revisions new events with new ids, so the cache never serves
+  the lost history, whether the store is below, at or past the cached revision when it is next
+  read. Each load gets its own copy of every card. The model is `tla/LoadCache.tla`: two loads
+  at once over a shared cache, with record and display writes and a store that loses its last
+  writes; `LoadIsSnapshot` (every table a load took was, when it took it, the store's records
+  at the revision its shape read) and `CacheIsHistory`, each reversed by a witness (a catch-up
+  that misses the last write; a cache later than the shape used as it is; the mark not
+  checked).
+- The run loop's friend reconcile (section 1, friend-reconcile-every-tick-r.w1) runs in the
+  tick's own turn of the line, before the tick lets the line go, instead of taking a batch's
+  place in the line once per friend: each pass queued behind every waiting batch, and the
+  passes cost 12 s a tick at the median (the gap between ticks less the tick's own time, over
+  the 5,991 ticks of 2026-10-09 17:40 to 23:40 ET). The line still has one holder at a time
+  (`tla/ServerLanes.tla`: the tick is one holder from TickBegin to TickEnd), and the batches'
+  turn after a tick is as long as the tick held the line (`sprint.ControlLine`), the reconcile
+  included. Every read of a friend's directory in that pass (its stat, her QUEUE.json, each
+  card's outbox report) answers within `FriendReadDeadline` (2 s) or the friend is passed over
+  for the tick: one record line, and one note to the coordinator an episode ("a friend's
+  directory did not answer the reconcile"); what the pass settled before the stall stands, and
+  the read is left to finish on its own (it only reads).
+
+Tested on the twin store: `TestReadCellsReadsOnlyTheNamedCells`,
+`TestLoadCacheReadsOnlyWhatChanged`, `TestLoadCacheSnapshotsShareNothing`,
+`TestLoadCacheFencedReadAgrees`, `TestLoadCacheAfterTheStoreLostWrites`,
+`TestLoadCacheConcurrentLoads` (with -race) and
+`TestRunReconcilePassesOverAStalledFriendDirectory`; on a real Redis,
+`TestRedisLoadCacheAgreesWithAWholeRead` (functional).
 
 ## 15. Reminders
 

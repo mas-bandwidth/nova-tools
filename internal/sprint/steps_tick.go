@@ -1292,6 +1292,24 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 	p, due := tickOverdue(s, r)
 	pass, passDue := TickCoordinatorPass(s, r)
+	// a judgment the pass closes takes its overdue hold with it, in the same plan, so the
+	// next tick has nothing left to close (a level the pass escalates closes the one before)
+	closing := map[string]bool{}
+	for _, o := range p.Closes {
+		closing[OpenKey(o.Note.ID, o.Subject())] = true
+	}
+	closed := map[string]bool{}
+	for _, o := range pass.Closes {
+		if o.Note.Kind == Judgment {
+			closed[o.Note.ID] = true
+		}
+	}
+	for _, o := range s.Acked {
+		if o.Note.Type == NOverdue && closed[o.Note.What] && !closing[OpenKey(o.Note.ID, o.Subject())] {
+			closing[OpenKey(o.Note.ID, o.Subject())] = true
+			p.Closes = append(p.Closes, o)
+		}
+	}
 	p.Notes, p.Closes, p.Updates = append(p.Notes, pass.Notes...), append(p.Closes, pass.Closes...), append(p.Updates, pass.Updates...)
 	return p, due + passDue
 }
@@ -1351,7 +1369,9 @@ func tickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		if !n.Review.IsZero() {
 			past = "its review time " + stamp(n.Review)
 		}
-		line := Note{Kind: Happened, Type: NOverdue, Stream: n.Stream, Who: r.who(), At: s.Now,
+		// addressed to the coordinator, so the push delivers it: the first reminder of a
+		// judgment past its deadline (the pass's NCoordinatorBehind is the next)
+		line := Note{Kind: Happened, Type: NOverdue, Stream: n.Stream, Who: r.who(), To: s.Coordinator, At: s.Now,
 			What: fmt.Sprintf("%s (%s) open since %s, past %s; run: nova-sprint inbox", id, n.Type, stamp(n.At), past)}
 		hold := Note{Kind: Acknowledged, Type: NOverdue, Stream: n.Stream, What: id, Who: r.who(), At: s.Now,
 			StreamLevel: n.StreamLevel, SprintLevel: n.SprintLevel}
@@ -1399,9 +1419,14 @@ func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NBrokenReadsOutrun, NReaderBreaks,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NFriendSyncFailing:
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle,
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NFriendSyncFailing,
+		NStopMemberDown, NStopPinWaits, NFriendStalled:
 		what = ""
+	case NCoordinatorBehind:
+		// one condition a level (stops.go, BehindLevel): its count and its ages change
+		// within a level, and a new level is a new judgment
+		what = behindLevelWord(what)
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
 		// finished, not begun, not reported), whatever its facts say now
@@ -1555,7 +1580,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NBrokenReadsOutrun || c.typ == NReaderBreaks || c.typ == NFriendSyncFailing) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NBrokenReadsOutrun || c.typ == NReaderBreaks || c.typ == NFriendSyncFailing || slices.Contains(StopTypes, c.typ)) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}
