@@ -200,6 +200,14 @@ If a card refuses to apply cleanly:
 - Do not carry forward foreign changes
 - Write what you can; report HOLD if stuck
 
+## Width Goal
+
+When a friend is loaded but idle (holding cards without recent activity), the machine detects this and sends a width goal message. This helps the coordinator notice when a friend might need encouragement to focus on their assigned tasks. The width goal text is:
+
+"Width goal for {name}: you are holding {reads} reads and {work} work cards (width {width}). You have been idle for {minutes} minutes."
+
+If the friend remains idle for another idle bound period, their cards are returned to the pool for other workers to take.
+
 ## Summary
 
 1. Join as a friend row
