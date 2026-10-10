@@ -4469,12 +4469,12 @@ clusters the classes into the material for new finder rules.
 failure classified by the gate decision (docs/SPEC-NOVA-DECIDE.md section 12; section 5,
 the gate verdict) at the sprint row's bars, read once a land run, over its lines, the
 batch's PATHS and its diff from the base; the base is not run. Each decision is recorded
-and shown in a red batch's reason, `(the gate decision, <op>: <Test>:<class>:<p>,...;
-recorded; the flaky bar is unset, so nothing is rerun)` while the bar is empty, its
-default. When the flaky bar is set, no failure is caused and one is flaky at or above it,
-the check runs once more: green, the batch
-lands as any green batch; red, it is red as before, the reason ending `(run once more:
-the gate decision classed <tests> flaky, op <op>)`. The rerun's result is each flaky
+and shown in a red batch's reason. The flaky bar defaults to 0.8, so no failure caused and
+one flaky at or above it, the check runs once more: green, the batch lands as any green
+batch; red, it is red as before, the reason ending `(run once more: the gate decision
+classed <tests> flaky, op <op>)`. The explicit off (`decide_gate_flaky` "off") reruns
+nothing, its reason `(the gate decision, <op>: <Test>:<class>:<p>,...; recorded; the flaky
+bar is off, so nothing is rerun)`. The rerun's result is each flaky
 decision's outcome (`flaky`, or `red-again`). Every decision is in
 `<land root>/decide/gate.jsonl` under `land/<stream>@<tip 12>@gate/<pkg>.<Test>`. A gate
 red otherwise is red as before, its reason naming the decision's route; no key, or bars it

@@ -17,10 +17,11 @@ import (
 // gate decision at the sprint row's bars (decide_gate_flaky, decide_gate_preexisting) over its
 // lines, the batch's PATHS and its diff from the base; the base is not run. Every decision is
 // recorded in <land root>/decide/gate.jsonl under land/<stream>@<tip 12>@gate/<pkg>.<Test> and
-// shown in the red batch's reason. When the flaky bar is set, no failure is caused and one is
-// flaky at or above it, the check is run once more: green, the batch lands; red, it is red as
-// before; the rerun's result is attached to each flaky decision as its outcome. The bar is
-// empty by default, and then nothing is rerun. No key, bars it cannot read, or a backend that
+// shown in the red batch's reason. The flaky bar defaults to 0.8 (decide.DefaultFlaky), so
+// when no failure is caused and one is flaky at or above it, the check is run once more:
+// green, the batch lands; red, it is red as before; the rerun's result is attached to each
+// flaky decision as its outcome. The explicit off (decide_gate_flaky "off") turns the rerun
+// off, and then nothing is rerun. No key, bars it cannot read, or a backend that
 // fails: the red batch is red as before, with why the decision was not made.
 
 // landGate is what a red batch gate is decided with: the backend and its clock, the bars, and
@@ -110,10 +111,11 @@ func (l *lander) gateRerun(ctx context.Context, dir, stream, base, tip string, c
 	return again + " (run once more: the gate decision classed " + decide.Names(res.Rerun()) + " flaky, op " + op + ")"
 }
 
-// gateRouted says what a red batch's gate route did: nothing, when the flaky bar is unset.
+// gateRouted says what a red batch's gate route did: nothing, when the flaky bar is
+// explicitly off.
 func gateRouted(bars decide.GateBars, route string) string {
 	if !decide.Set(bars.Flaky) {
-		return "recorded; the flaky bar is unset, so nothing is rerun"
+		return "recorded; the flaky bar is off, so nothing is rerun"
 	}
 	return route + ", not rerun"
 }

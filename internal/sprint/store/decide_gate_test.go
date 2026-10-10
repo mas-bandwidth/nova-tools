@@ -6,14 +6,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // Every deal of a work card carries the sprint row's two gate bars as nova-config applied
 // them (docs/SPEC-SPRINT.md section 5, the gate verdict), and its packet hands them to the
 // member; a redeal takes the row's bars at the redeal, so bars turned off since are taken
-// off the card. With no bars in the sprint row no work card carries any. The store's
-// GateBars, the lander's read, is the row's.
+// off the card. With no bars in the sprint row the card carries none, and the store's
+// GateBars, the lander's read, applies the flaky bar's default (decide.DefaultFlaky), so a
+// flaky red gate is rerun once without a setting.
 func TestEveryWorkCardCarriesTheGateBars(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -27,7 +29,7 @@ func TestEveryWorkCardCarriesTheGateBars(t *testing.T) {
 			h.m.SetGateBars(tc.flaky, tc.pre)
 			bars, err := h.st.GateBars(h.ctx)
 			require.NoError(t, err)
-			assert.Equal(t, [2]string{tc.flaky, tc.pre}, bars)
+			assert.Equal(t, [2]string{decide.GateFlakyBar(tc.flaky), tc.pre}, bars, "the lander's read applies the flaky bar's default")
 			h.addReady("s1", 1, briefOf("flash", ""))
 			h.must(DealStep(sprint.DealReq{}))
 			w1 := h.workCards()["s1-1.w1"]

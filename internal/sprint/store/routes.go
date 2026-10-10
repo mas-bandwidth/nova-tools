@@ -9,6 +9,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -93,7 +94,8 @@ type RouteSet struct {
 // ever read as another: the decide read's bounce and review bars, the attempt decision's
 // no-result and nothing-to-do bars, the grade's, the landed score's, the gate decision's
 // flaky and pre-existing bars, and the judgment decision's (nova-sprint answer reads it
-// from routes --json). "" is no bar.
+// from routes --json). "" is no bar; an empty decide_gate_flaky is the gate decision's
+// default, applied by the lander's read (GateBars).
 type Bars struct {
 	Bounce, Review                      string // decide_bounce, decide_review
 	AttemptNoResult, AttemptNothingToDo string // decide_attempt_no_result, decide_attempt_nothing_to_do
@@ -262,10 +264,15 @@ func (m *Mem) SetGateBars(flaky, preExisting string) {
 }
 
 // GateBars is the gate decision's flaky and pre-existing bars as the routes read takes
-// them: the lander's, for its red batch gate (docs/SPEC-SPRINT.md section 7).
+// them: the lander's, for its red batch gate (docs/SPEC-SPRINT.md section 7). A sprint row
+// that leaves decide_gate_flaky empty reads DefaultFlaky, so a flaky red gate is rerun once
+// without a setting (decide.GateFlakyBar); the explicit GateOff turns the rerun off.
 func (st *Store) GateBars(ctx context.Context) ([2]string, error) {
 	set, err := st.routes(ctx)
-	return [2]string{set.Bars.GateFlaky, set.Bars.GatePreexisting}, err
+	if err != nil {
+		return [2]string{}, err
+	}
+	return [2]string{decide.GateFlakyBar(set.Bars.GateFlaky), set.Bars.GatePreexisting}, nil
 }
 
 // SetDecideBars gives the store the sprint row's nova-decide bars, as nova-config's apply

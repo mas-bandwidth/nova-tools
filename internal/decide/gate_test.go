@@ -62,10 +62,11 @@ func TestGateSchemaIsValid(t *testing.T) {
 	assert.NotEqual(t, ReadSchema().Hash(), s.Hash())
 }
 
-// The gate bars are each a probability or empty, unset (the sprint row's default): an unset
-// bar is reached by no probability, so its route is never taken and the decision is only
-// recorded; two set bars sum above 1, so no failure meets both; every problem is named in
-// one error.
+// The gate bars are each a probability, empty for unset, or the flaky bar's explicit off:
+// an unset bar is reached by no probability, so its route is never taken and the decision is
+// only recorded; two set bars sum above 1, so no failure meets both; every problem is named
+// in one error. The sprint row's read applies GateFlakyBar, so an empty flaky bar is the
+// default there.
 func TestParseGateBarsNamesEveryProblem(t *testing.T) {
 	t.Parallel()
 	b, err := ParseGateBars("0.8", " 0.75 ")
@@ -85,6 +86,38 @@ func TestParseGateBarsNamesEveryProblem(t *testing.T) {
 	assert.ErrorContains(t, err, `decide_gate_flaky "x" is not a decimal; decide_gate_preexisting 1.2 is not a probability in [0, 1]`)
 	_, err = ParseGateBars("0.5", "0.5")
 	assert.ErrorContains(t, err, "sum to at most 1, so one failure could meet both")
+}
+
+// The flaky rerun is on by default: the sprint row's read (GateFlakyBar) gives a row that
+// leaves decide_gate_flaky empty DefaultFlaky, so a gate red on a test the decision calls
+// flaky is rerun once without a setting, and the explicit off (GateOff) reruns nothing
+// (docs/SPEC-SPRINT.md section 7, the lander's gate; SPEC-NOVA-DECIDE.md section 12).
+func TestTheFlakyRerunIsOnByDefault(t *testing.T) {
+	t.Parallel()
+	fail := Failure{Pkg: "m/p", Test: "TestFlaky", Lines: []string{"x_test.go:1: timed out after 1s"}}
+	in := GateInput{Failures: []Failure{fail}, Paths: []string{"p/x.go"}}
+	p := map[string]map[string]float64{"TestFlaky": {Flaky: 0.9, Caused: 0.05, PreExisting: 0.05}}
+	for _, tc := range []struct {
+		name    string
+		setting string // the sprint row's decide_gate_flaky
+		want    string
+		reruns  int
+	}{
+		{"no setting reruns a flaky red once", "", Flaky, 1},
+		{"the explicit off reruns nothing", GateOff, Caused, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bars, err := ParseGateBars(GateFlakyBar(tc.setting), "")
+			require.NoError(t, err)
+			assert.Equal(t, tc.reruns == 1, Set(bars.Flaky), "the bar is set only when it reruns")
+			record := filepath.Join(t.TempDir(), "gate.jsonl")
+			r, err := Gate(context.Background(), &classed{p: p}, bars, in, record, "c1@2@gate", at)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, r.Route)
+			assert.Len(t, r.Rerun(), tc.reruns, "the failures the gate reruns once")
+		})
+	}
 }
 
 // classed answers the gate decision by the failure its state names: test -> p per class.

@@ -282,7 +282,8 @@ func GateState(in GateInput, i int) string {
 // GateBars are the two bars on a failure's class probabilities: at or above Flaky it is
 // rerun once, at or above PreExisting it is reported pre-existing. A bar that is unset is
 // Unset, above every probability, so its route is never taken: the decision is recorded
-// and shown, and nothing is rerun or reclassified on it.
+// and shown, and nothing is rerun or reclassified on it. The flaky bar's default comes from
+// the sprint row's read (GateFlakyBar), and GateOff is its explicit off.
 type GateBars struct {
 	Flaky       float64 `json:"flaky"`
 	PreExisting float64 `json:"pre_existing"`
@@ -291,23 +292,50 @@ type GateBars struct {
 // Unset is a gate bar the sprint row leaves empty: no probability reaches it.
 const Unset = 2.0
 
+// DefaultFlaky is the flaky bar the sprint row's read gives a row that leaves
+// decide_gate_flaky empty: a failure flaky at or above it is rerun once, so a gate red on a
+// test the decision calls flaky is rerun without a setting (docs/SPEC-SPRINT.md section 7,
+// the lander's gate; docs/SPEC-NOVA-DECIDE.md section 12). 0.8 is the calibration's
+// starting point.
+const DefaultFlaky = "0.8"
+
+// GateOff is the flaky bar's explicit off: a sprint row (or --bars) that holds it reruns
+// nothing, the route an empty bar took before the default.
+const GateOff = "off"
+
+// GateFlakyBar is a sprint row's decide_gate_flaky as its read takes it: an empty bar is
+// DefaultFlaky (the flaky rerun is on by default); GateOff and a decimal are themselves.
+func GateFlakyBar(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return DefaultFlaky
+	}
+	return raw
+}
+
 // Set says the bar routes: it is a probability, not Unset.
 func Set(bar float64) bool { return bar <= 1 }
 
-// ParseGateBars reads the bars as the sprint row holds them, decimals as text: each a
-// probability, or empty for Unset (its route is never taken; the sprint row's default);
-// two set bars sum above 1, so no failure meets both. Every problem is named.
+// ParseGateBars reads the bars as a flag (or a sprint row) holds them, decimals as text:
+// each a probability, empty for Unset (that route is never taken), or the flaky bar's
+// explicit GateOff; two set bars sum above 1, so no failure meets both. Every problem is
+// named. The sprint row's read passes the flaky bar through GateFlakyBar first.
 func ParseGateBars(flaky, preExisting string) (GateBars, error) {
 	b := GateBars{Flaky: Unset, PreExisting: Unset}
 	var p []string
 	for _, f := range []struct {
 		name, raw string
 		to        *float64
-	}{{"decide_gate_flaky", flaky, &b.Flaky}, {"decide_gate_preexisting", preExisting, &b.PreExisting}} {
-		if strings.TrimSpace(f.raw) == "" {
+		off       bool // the bar is the flaky one, where GateOff is the explicit off
+	}{{"decide_gate_flaky", flaky, &b.Flaky, true}, {"decide_gate_preexisting", preExisting, &b.PreExisting, false}} {
+		raw := strings.TrimSpace(f.raw)
+		if raw == "" {
 			continue
 		}
-		v, err := strconv.ParseFloat(strings.TrimSpace(f.raw), 64)
+		if f.off && raw == GateOff {
+			*f.to = Unset
+			continue
+		}
+		v, err := strconv.ParseFloat(raw, 64)
 		switch {
 		case err != nil:
 			p = append(p, fmt.Sprintf("%s %q is not a decimal", f.name, f.raw))
