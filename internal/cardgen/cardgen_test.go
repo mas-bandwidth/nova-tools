@@ -538,13 +538,12 @@ func TestAClassRedCardPassesTheLint(t *testing.T) {
 	}
 }
 
-// A generated brief does not ask the worker to set TMPDIR or GOTMPDIR by hand: the lane
-// that starts the card sets both inside the job directory and removes that directory
-// (docs/SPEC-SPRINT.md section 18, bench lanes).
+// A generated brief does not ask the worker to set TMPDIR or GOTMPDIR by hand: the
+// runner sets both outside the source checkout (docs/SPEC-SPRINT.md section 18).
 func TestAGeneratedBriefDoesNotAskTheWorkerToSetTmp(t *testing.T) {
 	t.Parallel()
 	brief := Render(header, Card{ID: "tmp", File: "internal/x/x.go", Paths: []string{"internal/x/x.go"}, Test: "internal/x TestX", Tier: "pro", Kind: "fix-red", Task: "Fix x."})
-	assert.Contains(t, brief, "TMPDIR and GOTMPDIR are already set inside the job directory by the card's lane")
-	assert.Contains(t, brief, "set neither by hand")
+	assert.Contains(t, brief, "TMPDIR and GOTMPDIR are already set by the bench runner outside the source checkout")
+	assert.Contains(t, brief, "Set neither by hand")
 	assert.NotContains(t, brief, "set TMPDIR and GOTMPDIR inside the job directory")
 }

@@ -7474,9 +7474,11 @@ named under the login's home, so it resolves against the home even though the co
 verdict, and the caller's cancellation does not end that remove. A directory whose lane
 is gone is removed on the next tick (`SweepBenchLanes`): each directory under the root
 whose lane is not live, and a name that is not one plain job is left. A worker's or a
-reader's card runs on the bench itself through the native runner, whose `TMPDIR` is the
-run's own slot temp (`<slot>/tmp/<label>`), removed by a deferred remove whatever the
-verdict and swept by the machine's disk guard when its run is killed.
+reader's card runs on the bench itself through the native runner, whose `TMPDIR` and
+`GOTMPDIR` are the run's own slot temp (`<slot>/tmp/<label>`). Native removes that temp
+before releasing its leases on a normal end or an early refusal. A killed native process
+cannot run the deferred removal; the current disk guard sweeps only an idle stopped pool
+after its idle bound, and retains the newest failed runs.
 
 The shared cache has one cap per bench. The cap is the sprint's `bench_cache_gib`, a
 whole number from 1 (`Snapshot.BenchCacheCapGiB`), and `BenchCacheCapGiBDefault` when
