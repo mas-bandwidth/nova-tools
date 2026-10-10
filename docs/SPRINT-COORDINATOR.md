@@ -953,8 +953,17 @@ The coordinator's hand wake script (`<coordinator-dir>/tmp/buswatch/watch.sh`) i
 `nova-sprint watch --wake` holds every behaviour it had, each pinned by a test, and its row
 in docs/STOPGAPS.md is `STATUS: retired`. Run the verb in the background as a nova-config loop
 row, `NOVA_SPRINT_SERVER=127.0.0.1:$PORT NOVA_SPRINT_ACTOR=<coordinator> nova-sprint watch
---wake --check 10m` (R80, R89, R91): stop the old background run, start the verb, then delete
-the script.
+--wake --check 10m --wake-file <coordinator-dir>/tmp/buswatch/wake` (R80, R89, R91): stop the
+old background run, start the verb, then delete the script.
+
+### simp-retire-buswatch-bc.w1
+
+The retired script's append wake is carried by the verb's `--wake-file`, so the launch
+command names `<coordinator-dir>/tmp/buswatch/wake`; with no flag the file is not watched
+and that half of the wake is lost. The wake-file baseline is tracked apart from the whole
+state's seed, so a state written before `--wake-file` was enabled starts at the file's end
+instead of waking on the lines already there. Tests:
+`TestWatchWakeWatchesTheWakeFile` and `TestWatchWakeSeededOldState` (cmd/nova-sprint).
 
 ## Open items
 
