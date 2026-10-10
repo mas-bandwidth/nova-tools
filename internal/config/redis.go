@@ -232,7 +232,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", FieldFriendModel, FieldFriendChildren, FieldFriendChildModel)
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -263,6 +263,10 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			// her optional work restriction, "" for none
 			"streams": str(d, 6),
 			"kinds":   str(d, 7),
+			// her models and her harness's abilities, plain fields beside mode
+			FieldFriendModel:      str(d, 8),
+			FieldFriendChildren:   str(d, 9),
+			FieldFriendChildModel: str(d, 10),
 		}
 	}
 	return views, revValue(rev), nil
@@ -445,7 +449,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeStreams := prev == nil || prev["streams"] != row.Fields["streams"]
 	writeKinds := prev == nil || prev["kinds"] != row.Fields["kinds"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writeRoles {
+	var plain []string // her models and abilities: plain fields beside mode, each written when it differs
+	for _, k := range []string{FieldFriendModel, FieldFriendChildren, FieldFriendChildModel} {
+		if prev == nil || prev[k] != row.Fields[k] {
+			plain = append(plain, k)
+		}
+	}
+	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writeRoles && len(plain) == 0 {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -467,6 +477,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeKinds { // her optional KIND restriction, a plain field beside streams
 		pipe.HSet(ctx, "friend:"+f+":desired", "kinds", row.Fields["kinds"])
+	}
+	for _, k := range plain {
+		pipe.HSet(ctx, "friend:"+f+":desired", k, row.Fields[k])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

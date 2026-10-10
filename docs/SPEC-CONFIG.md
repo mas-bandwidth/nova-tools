@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `model`, `children`, `child_model` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -228,6 +228,9 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
 | `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
 | `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
+| `model` | map: `<tier>=<model>,...`, each key a tier, given once, each value one word; sorted by tier | | the friend deal: the model of a card's tier, written on the card she is dealt (its packet's `model`), her brief's tier line (`tier: heavy model: claude-opus-5-5`), the delivery's first line, the lane's model flag, and the finish (a LAND whose report names another model is failed); a tier mapped to a model takes real cards only once her probe of it has reported that model; a tier of hers with no model is still served, with no model, and warned, but the level moves her no card that carries another friend's model for it (docs/SPEC-FRIEND.md, a friend's models). Migration 0037 gives every row before it the empty map | `friend:<f>:desired` model |
+| `children` | enum: yes, no; default yes | | whether her harness runs child agents; a batch friend with `no` works one card at a time (`config.FriendWidth` is 1 whatever `width` says) and runs every card on her session's model. Migration 0037: yes | `friend:<f>:desired` children |
+| `child_model` | enum: yes, no; default yes | | whether a child's model can be chosen; `no` runs every card on her session's model. Migration 0037: yes | `friend:<f>:desired` child_model |
 
 A friend row may restrict the work the sprint deals her: `streams` is a
 comma-separated list of glob patterns over stream names, and `kinds` is a
@@ -635,6 +638,13 @@ fleet set --coordinator <machine>`. Her width, when it differs, is a plain
 `HSET friend:<f>:desired width <n>`, a field no function reads or writes, and
 her mode and config_dir the same way, `HSET friend:<f>:desired mode <m>` and
 `HSET friend:<f>:desired config_dir <dir>` (`""` when unset).
+Her `model`, `children` and `child_model` are written the same way, each when it differs.
+
+The friend kind's `Check` refuses, beside a width under 1: a `model` entry for a tier she
+does not serve (`--tiers`), and a row whose every card runs on her session's model (mode
+batch with `children no` or `child_model no`) naming more than one model, for her harness
+cannot run them ("serve only the tiers of one model"). A tier she serves with no model is no
+refusal: `config.FriendModelWarnings` names it, and `nova-friend check` and `whoami` warn.
 `ns_friend_roles(f, roles)` when the
 roles differ (the actor must hold the coordinator role in Redis, or nobody
 does yet and this row makes the first): the roles written are the row's
