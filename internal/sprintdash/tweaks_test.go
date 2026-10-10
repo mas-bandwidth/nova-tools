@@ -17,7 +17,7 @@ import (
 // TestPageCarriesGlennsTweaksOf20261004 asserts the 7 dashboard tweaks Glenn approved
 // live on 2026-10-04 (2:41 PM and 2:55 PM):
 //  1. The big tile numbers (.big) use the system font with tabular figures, not monospace.
-//  2. The IN FLIGHT subline reads "<n> working · <n> review + fix + merge" on one line.
+//  2. The IN FLIGHT subline reads "<n> working · <n> verify" on one line.
 //  3. The cost breakdown legend sits in the panel header on the title's baseline:
 //     color square, tier name in grey, amount in white, sorted by spend, $0 tiers left out,
 //     spaced groups with no dots between them.
@@ -73,7 +73,7 @@ func TestPageCarriesGlennsTweaksOf20261004(t *testing.T) {
 	jsRes := runJSTweaks(t, app)
 
 	// 2 (behavior): In flight subline rendering
-	assert.Equal(t, "14 working · 9 review + fix + merge", jsRes.Inflight.Text)
+	assert.Equal(t, "14 working · 9 verify", jsRes.Inflight.Text)
 	assert.Equal(t, "14 working, 6 review, 0 fix, 3 merging", jsRes.Inflight.Title)
 
 	// 3, 4, 5, 6 (behavior): Cost breakdown with spend over $10:
