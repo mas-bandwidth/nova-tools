@@ -86,6 +86,12 @@ type Store struct {
 	// friend stall part of the tick climbs her ladder to rung 1 or 2 (sprint.TickFriendStall,
 	// a bus message pushed to her daemon); nil sends nothing and the rung climbs the same.
 	WakeFriend func(friend string, rung int, d time.Duration) error
+	// BriefDrift, when set (run and tick), is the deal-time brief lint: every ready
+	// card's brief is held to the brief checks at the tip of its BASE before the deal,
+	// and a card that no longer passes is parked rather than dealt (sprint.TickDeal,
+	// sprint.TickReq.BriefDrift; docs/SPEC-SPRINT.md section 11, the brief checks). nil
+	// is none read.
+	BriefDrift func(s *sprint.Snapshot, c *sprint.Card) string
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats

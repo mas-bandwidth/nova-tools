@@ -2445,7 +2445,8 @@ refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 
 ```
 nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]
-nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]]
+nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]] [--allow-personal-base] [--no-fix]
+nova-sprint lint <id>...
 nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
 nova-sprint release (<sentinel>... | <selector> [--dry-run]) --reason <text> [--answers <note>]
 nova-sprint release check [--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
@@ -2473,7 +2474,7 @@ nova-sprint rank (<id>... | <selector> [--dry-run]) (--score <n> | --first) [--a
 nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint sentinel set <id> --needs <a,b>
-nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]
+nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | <id> --fix [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]
 nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]
 nova-sprint twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
@@ -2840,10 +2841,19 @@ fetched once a call, read with git and no go command. The tokens are `paths-at-b
 `paths-cover-ledgers`, `paths-cover-docs`, `base-is-live`, `tier-set`, `tla-is-frontier` and
 `who-serves-tier`; each finding is a `LINT DRIFT card=<id> check=<token> line=<n>: <excerpt>
 remedy=<remedy>` line and each corrected header line a `LINT FIX card=<id> <line>` line (the
-`PATHS:`, `NEW:` or `SHARED:` line, or line 1, with every addition applied), then one refusal,
-exit 2, nothing written. A base that cannot be read refuses with `MISSING: <what>`; a brief
-naming no `REPO:` or no `BASE:` is held only to the checks that need no tree
-([SPEC-SPRINT.md](SPEC-SPRINT.md) section 11, the brief checks).
+`PATHS:`, `NEW:` or `SHARED:` line, or line 1, with every addition applied). `add` applies
+those corrected lines itself: it re-runs the checks, stores the corrected brief, prints one
+`LINT APPLIED card=<id> <line>` per line, and admits the card; `--no-fix` refuses instead. A
+finding with no corrected line (a wrong `REPO:`, a path that names nothing and is not `NEW:`)
+refuses, exit 2, nothing written. A base that cannot be read refuses with `MISSING: <what>`; a
+brief naming no `REPO:` or no `BASE:` is held only to the checks that need no tree
+([SPEC-SPRINT.md](SPEC-SPRINT.md) section 11, the brief checks). The same checks run again at
+every deal against the base tip of that moment: a card whose brief no longer passes is parked
+in the fix column with a `BRIEF DRIFT check=<token> line=<n>: <excerpt>` judgment and dealt to
+no worker. `nova-sprint lint <id>...` prints the `LINT DRIFT` and `LINT FIX` lines on demand
+(exit 0 when every named brief passes, 1 when one fails), and `nova-sprint brief <id> --fix`
+applies the corrected lines to the stored brief in place, prints `LINT APPLIED`, and releases
+the card.
 
 ### install-canary-shadow-tick-r.w1: the shadow tick before a server swap
 

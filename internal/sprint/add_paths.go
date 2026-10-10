@@ -378,6 +378,54 @@ func nearestFile(files []string, want string) string {
 	return best
 }
 
+// ApplyBriefFix is brief with each corrected header line of fix applied: the line for
+// the fix's key replaces the brief's first line with that key (line 1's RESULT: line
+// included), else is inserted after line 1. Every other line is left as it is. The fix
+// lines are the ones swarm.LintBrief computes for the brief at its base, and the brief
+// this returns is the one add stores, so a card is admitted with the header its own lint
+// asked for instead of the seat applying the lines by hand (docs/SPEC-SPRINT.md section
+// 11, the brief checks).
+func ApplyBriefFix(brief string, fix []string) string {
+	if len(fix) == 0 {
+		return brief
+	}
+	lines := strings.Split(brief, "\n")
+	for _, f := range fix {
+		k, v, ok := cardhdr.KeyValue(strings.TrimSpace(f))
+		if !ok || k == "" {
+			continue
+		}
+		at := -1
+		for i, l := range lines {
+			if lk, _, lok := cardhdr.KeyValue(strings.TrimSpace(l)); lok && lk == k {
+				at = i
+				break
+			}
+		}
+		if at >= 0 {
+			lines[at] = k + ": " + v
+			continue
+		}
+		// no line for the key: insert after the header block (line 1 and the KEY: lines
+		// under it, blanks skipped, the first prose line ending it), so the corrected
+		// header keeps the order the lint computed
+		at = 0
+		for i := 1; i < len(lines); i++ {
+			if strings.TrimSpace(lines[i]) == "" {
+				continue
+			}
+			if _, _, lok := cardhdr.KeyValue(strings.TrimSpace(lines[i])); !lok {
+				break
+			}
+			at = i
+		}
+		lines = append(lines, "")
+		copy(lines[at+2:], lines[at+1:])
+		lines[at+1] = k + ": " + v
+	}
+	return strings.Join(lines, "\n")
+}
+
 // pathParts is the shared prefix length of a and b, and the unmatched segments after it.
 func pathParts(a, b string) (common, unmatched int) {
 	as, bs := strings.Split(admitClean(a), "/"), strings.Split(admitClean(b), "/")

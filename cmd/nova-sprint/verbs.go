@@ -48,7 +48,8 @@ var verbs []verb
 func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base] [--no-fix]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"lint", "<id>...", "lint s1-4", (*app).cmdLint},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
 		{"release check", "[--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
@@ -84,7 +85,7 @@ func init() {
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
 		{"recut", "<id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]", "recut lint-pkg-cairn-t --tier heavy", (*app).cmdRecutSel},
 		{"twin", "<card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]", "twin cards3 --paths internal/b/** --instruction 'widen the fix'", (*app).cmdTwin},
-		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBriefSel},
+		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | <id> --fix [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBriefSel},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
@@ -1175,6 +1176,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	one := fs.Bool("one", false, "admit a single card (one positional id, --count 1 on one stream, or one --brief-file alone): refused without it, since cards are admitted in waves (--brief-dir, --count 2 or more, several --brief-file)")
 	replaces := fs.String("replaces", "", "the card this add admits is the twin of these `ids`, comma separated: it takes over every edge where a waiting card needs one of them (that card needs the twin instead, in the same place), each still on the table is dropped with the reason \"replaced by <the new id>\", and no blocked judgment is raised for it, in one step; a card dropped before is replaced too, and its blocked judgments are answered; one card only (it means --one), never a sentinel")
 	allowPersonal := fs.Bool("allow-personal-base", false, "admit cards whose brief's BASE: is a personal branch (<name>/* for the sprint's coordinator, its owner or a friends table row), by default refused naming the base and this flag: no sprint watches a personal branch's gate (docs/SPEC-SPRINT.md section 11, bases-view-r.w2)")
+	noFix := fs.Bool("no-fix", false, "keep today's refusal when a brief fails the brief checks at its BASE tip instead of applying the LINT FIX lines the lint computed to the brief add stores (each applied line prints as LINT APPLIED); a finding with no fix line refuses either way")
 	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	decideRecord := fs.String("decide-record", "", "the record `file` of the cards' brief decisions under JEV_API_KEY (default ~/nova-sprint/decide/brief.jsonl, the coordinator's root); each card stores it and its op, and land and drop attach the card's end there")
 	var briefOps stringList
@@ -1219,7 +1221,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *every != 0 || *last {
 			return refuse(stderr, "add", "--sentinel-every goes with --count, not a card per brief file")
 		}
-		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, *allowShared, *allowPersonal, *decideRecord, briefOps, sprint.Split(*replaces), c, stdout, stderr)
+		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, *allowShared, *allowPersonal, *noFix, *decideRecord, briefOps, sprint.Split(*replaces), c, stdout, stderr)
 	}
 	if len(briefFiles) == 1 {
 		if *brief != "" {
@@ -1267,6 +1269,23 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 			return code
 		}
 		c.says = append(c.says, unfilledSays("the brief", *brief)...)
+	}
+	// the brief checks at the base run here, before the card checks and the PATHS
+	// admission, and add applies the LINT FIX lines its own lint computed to the brief it
+	// stores, printing LINT APPLIED; --no-fix refuses instead (docs/SPEC-SPRINT.md section
+	// 11, the brief checks)
+	if *sentinel == "" && *brief != "" && a.gateOnly == nil {
+		if st == nil {
+			var err error
+			if st, err = a.store(*c); err != nil {
+				return refuse(stderr, "add", err.Error())
+			}
+		}
+		fixed, _, code := a.fixBriefBase("add", st, *allowPersonal, *noFix, stderr, briefCheck{id: strings.Join(ids, ","), brief: *brief})
+		if code != 0 {
+			return code
+		}
+		*brief = fixed[0].brief
 	}
 	cardNeeds := sprint.Split(*needs)
 	if *needs == "" {
@@ -1366,7 +1385,7 @@ func promotionGuard(step store.Step, rs []sprint.AddReq) store.Step {
 // the order the files were named. Every brief is read and linted first (one
 // failing brief refuses the whole call, exit 2, nothing written), and one
 // store write adds every card.
-func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared, allowPersonal bool, decideRecord string, briefOps, replaces []string, c *common, stdout, stderr io.Writer) int {
+func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared, allowPersonal, noFix bool, decideRecord string, briefOps, replaces []string, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
 		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or --brief-file <file>...")
 	}
@@ -1412,6 +1431,29 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	// nothing written, every failing file named with its findings.
 	if code := lintBriefFiles("add", cards, rs, c.max, stderr); code != 0 {
 		return code
+	}
+	// the brief checks at the base run here, and add applies the LINT FIX lines its own
+	// lint computed to each brief it stores, printing LINT APPLIED; --no-fix refuses
+	// instead (docs/SPEC-SPRINT.md section 11, the brief checks)
+	if a.gateOnly == nil {
+		if st == nil {
+			s, err := a.store(*c)
+			if err != nil {
+				return refuse(stderr, "add", err.Error())
+			}
+			st = s
+		}
+		checks := make([]briefCheck, len(cards))
+		for i, cd := range cards {
+			checks[i] = briefCheck{id: cd.ID, brief: cd.Brief}
+		}
+		fixed, _, code := a.fixBriefBase("add", st, allowPersonal, noFix, stderr, checks...)
+		if code != 0 {
+			return code
+		}
+		for i := range cards {
+			cards[i].Brief = fixed[i].brief
+		}
 	}
 	for i := range cards {
 		cards[i].Rules = cardRules(cards[i].Brief, rs).held // each card names the rules the member injects into it
@@ -2679,6 +2721,7 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	rules := fs.String("rules", "", "the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)")
 	tier := fs.String("tier", "", "re-tier the card instead of replacing its brief: the tier ("+cardhdr.RouteList+") every later deal and read of the card draws its route from, kept on the card as rework --tier keeps it (it pins the card, never escalated past it); taken on a RUNNING machine and for a card dealt, where it applies to the next attempt; not with --brief or --brief-file")
 	widen := fs.Bool("widen", false, "the card's brief edited in place with its PATHS widened by the PATHS-PROPOSED line of its latest attempt's report (the paths before any prose on that line) and a CARRY: line naming that attempt's pushed head, its next attempt starting from it; the same id, no twin; refused, exit 1, for no line, a glob that climbs out with .. or names no file at the base or the head")
+	fix := fs.Bool("fix", false, "apply the LINT FIX lines the brief checks computed to the card's stored brief in place, as brief <id> --brief-file <the corrected brief> would: a brief that drifted from its base is corrected and its card released; a brief that passes already is refused (nothing to fix), and a finding with no fix line is refused")
 	repoDir := fs.String("repo-dir", "", "with --widen: the clone the base's and the head's files are read in (default: land's clone of the card's REPO:)")
 	var s sel
 	fs.StringVar(&s.group, "group", "", "the members of the inbox group of this id (the id or alias inbox prints): a group of one takes --brief or --brief-file, a group of several --dir")
@@ -2706,6 +2749,40 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	}
 	if *widen && (len(ids) != 1 || *brief != "" || *briefFile != "" || *dir != "" || *rules != "" || s.group != "") {
 		return refuse(stderr, "brief", "--widen wants one primary and no --brief, --brief-file, --dir, --rules or --group: it writes the brief from the card's own")
+	}
+	if *fix {
+		if len(ids) != 1 || *brief != "" || *briefFile != "" || *dir != "" || *rules != "" || *widen || s.group != "" {
+			return refuse(stderr, "brief", "--fix wants one primary and no --brief, --brief-file, --dir, --rules, --widen or --group: it applies the lint's own fix lines to the card's brief")
+		}
+		st, err := a.store(*c)
+		if err != nil {
+			return refuse(stderr, "brief", err.Error())
+		}
+		snap, err := st.Load(context.Background(), []string{sprint.Work}, nil)
+		if err != nil {
+			return a.readFailed("brief", err, stderr)
+		}
+		card := snap.Work.Card(ids[0])
+		if card == nil {
+			return refuse(stderr, "brief", "no primary "+ids[0]+" on the work table")
+		}
+		cur := card.F("brief")
+		if cur == "" {
+			return refuse(stderr, "brief", ids[0]+" has no brief to fix")
+		}
+		fixed, applied, code := a.fixBriefBase("brief", st, true, false, stderr, briefCheck{id: ids[0], brief: cur})
+		if code != 0 {
+			return code
+		}
+		if applied == 0 {
+			return refuse(stderr, "brief", "the brief of "+ids[0]+" passes the brief checks at its base already: nothing to fix")
+		}
+		rs, code := a.holdBrief("brief", fixed[0].brief, "", c, &st, stderr)
+		if code != 0 {
+			return code
+		}
+		c.says = append(c.says, fmt.Sprintf("BRIEF FIXED %s %d lint line(s) applied in place", ids[0], applied))
+		return a.replaceBriefs([]sprint.CardAdd{{ID: ids[0], Brief: fixed[0].brief}}, answers(*ans), rs, c, st, stdout, stderr)
 	}
 	var st *store.Store
 	var members []string

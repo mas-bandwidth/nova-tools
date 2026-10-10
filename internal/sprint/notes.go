@@ -84,6 +84,7 @@ const (
 	NBriefDefect     = "a brief defect" // a HOLD naming the brief: re-cut it (brief_defect.go)
 	NReadBroken      = "a reader found it broken"
 	NBriefWrong      = "a card has reached its bound: the brief is wrong, not the worker" // brief_bound.go
+	NBriefDrift      = "a card's brief drifted from its base"                             // brief_drift.go: brief --fix releases it
 	NReadReturned    = "a reader returned a read"                                         // no verdict, not a read: asked again
 	NConflict        = "stream stopped: conflict on a card"
 	NRed             = "stream stopped: stream branch red"

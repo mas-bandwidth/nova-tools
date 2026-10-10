@@ -603,7 +603,7 @@ func TestTickKeptList(t *testing.T) {
 	t.Parallel()
 	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NStarving, NOverloaded, NAdoptFailed, NReadersBehind, NDevBehind, NRaiseReadTier, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendEmpty, NPinIgnored,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NStatus, NBrokenReadsOutrun, NReaderBreaks, NFriendSyncFailing}
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NStatus, NBrokenReadsOutrun, NReaderBreaks, NFriendSyncFailing, NBriefDrift}
 	got := []string{NRemindFailed}
 	for typ := range TickDecisions {
 		got = append(got, typ)
