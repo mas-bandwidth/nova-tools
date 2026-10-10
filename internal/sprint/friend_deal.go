@@ -435,7 +435,7 @@ func friendLanes(s *Snapshot, f FriendSeat, seats []FriendSeat) startedLanes {
 			}
 		}
 	}
-	if seats != nil && suppressReturn(s, f, seats) {
+	if seats != nil && suppressReturn(s, f, seats, st.returning) {
 		st.returning = nil
 	}
 	return finishStartedLanes(f, st)
@@ -490,27 +490,47 @@ func workingStartedNow(s *Snapshot, f FriendSeat) bool {
 	return false
 }
 
-// suppressReturn says this tick's deal must not return her unstarted cards. A recent
-// write with nothing else running may be a start friend sync has not read
-// (TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards). Otherwise the start-bound
-// level moves them when it will (she is not on other work, her last write is outside
-// the bound, and another friend is up). The level skips her when her beat names
-// something or a started card is working, and also when her last write is recent, so
-// a card it will not move goes back to the pool instead (TestAFriendRunningAJobReturnsAnUnstartedCard).
-func suppressReturn(s *Snapshot, f FriendSeat, seats []FriendSeat) bool {
-	other := false
-	for _, o := range seats {
-		if o.Name != f.Name && friendDealable(s, o) {
-			other = true
-			break
-		}
-	}
+// suppressReturn keeps an overdue card only when the start-bound level can actually
+// move every such card to another friend's free, eligible lane. An up friend with a full
+// lane or the wrong tier cannot take it (TestAFullSecondFriendCannotKeepUnstartedCardsOnTheFirst,
+// TestAnIneligibleSecondFriendCannotKeepUnstartedCardsOnTheFirst). A recent write with
+// nothing else running may be a start friend sync has not read; that keeps the cards too.
+func suppressReturn(s *Snapshot, f FriendSeat, seats []FriendSeat, overdue []*Card) bool {
 	recent, otherWork := activeRecent(s, f), onOtherWork(s, f)
 	skips := len(f.Running) > 0 || workingStartedNow(s, f) || recent
 	if recent && !otherWork {
 		return true
 	}
-	return !skips && other
+	if skips || len(overdue) == 0 || len(overdue) > FriendLevelPerTick {
+		return false
+	}
+	free := map[string]int{}
+	for _, o := range seats {
+		if o.Name == f.Name || !friendDealable(s, o) {
+			continue
+		}
+		room, width := friendRoom(o)
+		free[o.Name] = max(0, min(room, width)-friendLoad(s, o.Name))
+	}
+	for _, c := range overdue {
+		pr := s.Work.Placed(c.F("primary"))
+		if pr == nil {
+			return false
+		}
+		found := false
+		for _, o := range seats {
+			if free[o.Name] == 0 || slices.Contains(friendsLeft(c), o.Name) || !friendTakes(s, o, cardTierOf(pr)) || !friendRestrictionAllows(o, pr) {
+				continue
+			}
+			free[o.Name]--
+			found = true
+			break
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // finishStartedLanes sets lanes from a return, else from her record and what she runs.

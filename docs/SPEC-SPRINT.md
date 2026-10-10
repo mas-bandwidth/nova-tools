@@ -612,11 +612,13 @@ not name running (`friend beat --running`, by its work card id, its job or its
 primary) and that carries no progress, still unstarted when the start window
 has run, goes back to the pool in the tick's deal when the start-bound level
 will not move it: she is on other work (her beat names something, or a card
-she started is working), or no other friend up can take it. A recent write of
+she started is working), or the other friends lack eligible free lanes for
+every overdue card (a friend merely being up is not enough). A recent write of
 hers within `friend_start_max`, with nothing else showing she is on other
 work, keeps the card (the start may not be read yet). While she is idle and
-another friend up can take it, `friendUnstartedLevel` moves it and the deal
-does not also return it. The return withdraws it on her row at its next
+other friends can take all of those cards within the level's tick bound,
+`friendUnstartedLevel` moves them and the deal does not also return them.
+The level skips cards the deal returned in the same tick. The return withdraws it on her row at its next
 generation, `taken_back` and its NOTE line "not started by <friend> in
 <window>; back to the pool", `taken_from` her row (so no deal gives it back to
 her), its primary ready with its attempt as it was, as a take-back. The window

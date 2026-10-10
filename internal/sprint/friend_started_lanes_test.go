@@ -35,6 +35,18 @@ func onRow(w *world, friend, col string) []string {
 	return out
 }
 
+func returnedUnstartedNotes(p Plan) []string {
+	var notes []string
+	for _, u := range p.Units {
+		for _, n := range u.Notes {
+			if n.Type == NTakenBack {
+				notes = append(notes, n.What)
+			}
+		}
+	}
+	return notes
+}
+
 func TestAFriendIsDealtOnlyWhatHerSessionStarts(t *testing.T) {
 	t.Parallel()
 	brief := friendBrief("friend zhi")
@@ -155,6 +167,79 @@ func TestAFriendWhoStartsNoneHasHerCardsReturnedAndIsDealtByHerLanes(t *testing.
 	assert.Equal(t, 1, st.lanes)
 	assert.True(t, st.throttled)
 	assert.Empty(t, Check(w.s, nil))
+}
+
+// Another friend being up is not enough to move an overdue card: a full lane cannot
+// receive it, so the card returns to the pool and the original friend is throttled.
+func TestAFullSecondFriendCannotKeepUnstartedCardsOnTheFirst(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("only friend bob"))
+	amy := FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash"}
+	bob := FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash"}
+	dealWith(w, bob)
+	require.Equal(t, []string{"s1-1.w1"}, onRow(w, "bob", Ready))
+	addFriendCards(w, 2, 4, friendBrief("friend amy"))
+	dealWith(w, amy, bob)
+	require.Len(t, onRow(w, "amy", Ready), 4)
+
+	w.tick(FriendStartWindowDefault + time.Minute)
+	p := dealWith(w, amy, bob)
+	for _, id := range []string{"s1-2", "s1-3", "s1-4", "s1-5"} {
+		wc := w.s.Fleet.Card(id + ".w1")
+		require.NotNil(t, wc)
+		assert.Equal(t, Withdrawn, wc.Col, "%s must return when bob's lane is full", wc.ID)
+		assert.Equal(t, FriendRow("amy"), wc.F(FieldTakenFrom))
+		assert.Equal(t, Ready, w.s.StateOf(id))
+	}
+	assert.Empty(t, onRow(w, "amy", Ready))
+	assert.Contains(t, returnedUnstartedNotes(p), "not started by amy in 20m; back to the pool")
+	addFriendCards(w, 6, 4, friendBrief("friend amy"))
+	dealWith(w, amy, bob)
+	assert.Len(t, onRow(w, "amy", Ready), DealAhead, "zero starts leave one effective lane")
+}
+
+// A second friend with an idle lane but no matching tier cannot receive the card either.
+func TestAnIneligibleSecondFriendCannotKeepUnstartedCardsOnTheFirst(t *testing.T) {
+	t.Parallel()
+	brief := friendBrief("friend amy")
+	w := friendWorld(t, brief, brief, brief, brief)
+	amy := FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash"}
+	bob := FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "heavy"}
+	dealWith(w, amy, bob)
+	require.Len(t, onRow(w, "amy", Ready), 4)
+	w.tick(FriendStartWindowDefault + time.Minute)
+	p := dealWith(w, amy, bob)
+	for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
+		wc := w.s.Fleet.Card(id + ".w1")
+		require.NotNil(t, wc)
+		assert.Equal(t, Withdrawn, wc.Col, "%s must return when bob cannot take flash", wc.ID)
+		assert.Equal(t, Ready, w.s.StateOf(id))
+	}
+	assert.Empty(t, onRow(w, "amy", Ready))
+	assert.Contains(t, returnedUnstartedNotes(p), "not started by amy in 20m; back to the pool")
+}
+
+// One open lane cannot move a whole overdue batch. The deal returns the batch,
+// and the level must not also move one of its already returned cards.
+func TestAPartlyAvailableSecondFriendDoesNotSplitAnOverdueReturn(t *testing.T) {
+	t.Parallel()
+	brief := friendBrief("friend amy")
+	w := friendWorld(t, brief, brief, brief, brief)
+	amy := FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash"}
+	bob := FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash"}
+	dealWith(w, amy)
+	require.Len(t, onRow(w, "amy", Ready), 4)
+	w.tick(FriendStartWindowDefault + time.Minute)
+	p := dealWith(w, amy, bob)
+	for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
+		wc := w.s.Fleet.Card(id + ".w1")
+		require.NotNil(t, wc)
+		assert.Equal(t, Withdrawn, wc.Col, "%s is returned once", wc.ID)
+		assert.Equal(t, Ready, w.s.StateOf(id))
+	}
+	assert.Empty(t, onRow(w, "amy", Ready))
+	assert.Empty(t, onRow(w, "bob", Ready), "the level cannot move a returned card")
+	assert.Len(t, returnedUnstartedNotes(p), 4)
 }
 
 // The start window is the sprint's setting, and the card she started by a progress stamp

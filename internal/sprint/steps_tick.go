@@ -823,7 +823,15 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		// her (friendUnstartedLevel; docs/SPEC-SPRINT.md section 1, a friend's card is
 		// working once she starts it); the level then neither moves it again nor counts it
 		// on her row
-		up := friendUnstartedLevel(s, seats, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
+		returned := map[string]bool{}
+		for _, u := range fp.Units {
+			for _, n := range u.Notes {
+				if n.Type == NTakenBack && strings.HasPrefix(n.What, "not started by ") {
+					returned[u.Key] = true // the deal already returned it; the level must not move it too
+				}
+			}
+		}
+		up := friendUnstartedLevel(s, seats, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, returned, dealt, FriendLevelPerTick)
 		moved := map[string]bool{}
 		for _, u := range up.Units {
 			c := s.Fleet.Card(u.Key)

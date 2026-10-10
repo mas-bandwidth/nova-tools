@@ -1318,8 +1318,8 @@ coordinator's deal reads to bound a batch friend. Her card stays `ready` until
 she starts it. A card still ready that her beat does not name running, and
 that carries no progress, within the start window
 (`friend_start_window`, default 20 minutes) goes back to the pool when the
-start-bound level will not move it (she is on other work, or no other friend
-up can take it), with a NOTE line ("not started by <friend> in <window>; back
+start-bound level will not move it (she is on other work, or the other friends
+lack eligible free lanes for all overdue cards), with a NOTE line ("not started by <friend> in <window>; back
 to the pool"), and she is then dealt by the cards she has started, rising as
 she starts more, never past her width (docs/SPEC-SPRINT.md section 1, a friend
 is dealt what her session starts). A daemon or session that runs cards in
