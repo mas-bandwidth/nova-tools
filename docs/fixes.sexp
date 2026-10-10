@@ -69,6 +69,11 @@
    :text "Children on some direct routes work to the route deadline and never write their result file;
     give the route a longer deadline or reserve a margin to write the result."
    :origin "fault inventory, 2026-10-10")
+  (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "in-progress"
+   :title "Members are restarted and checked after adoption"
+   :text "After installing, the play restarts every member, reader and friend daemon whose binary it
+    replaced, and checks that each running process reports the installed version."
+   :origin "bug 13, fleet/tools.yml")
   (fix "draining-member-word-is-this-ticks" :release "v1.2.6" :status "in-progress"
    :title "A draining member's beat carries this tick's no-room word"
    :text "The member asks Room every tick before the drain return, so a member that drained under its
