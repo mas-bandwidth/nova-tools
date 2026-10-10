@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
@@ -211,10 +212,20 @@ type Daemon struct {
 	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
 	// its brief alone.
 	Stage func(ctx context.Context, p Packet) (string, error)
-	// Prune removes finished jobs' worktrees past FinishedJobsKept (Stager.Prune), given the
-	// jobs that are live (held on her row, run by a lane, being staged), after each inbox
+	// Prune removes finished jobs (Stager.Prune): one whose report names a head origin holds
+	// even inside FinishedJobsKept, and the other worktrees past that cap, given the jobs
+	// that are live (held on her row, run by a lane, being staged), after each inbox
 	// cleanup, and answers the jobs it removed; nil prunes none.
 	Prune func(ctx context.Context, live map[string]bool) ([]string, error)
+	// Release removes jobs/<job> once its report names a head origin holds (Stager.Release),
+	// at the lane's end, so the directory does not wait for the card to leave her row. Nil
+	// removes none. BenchRoot is the bench directory a recorded read's copy is removed
+	// under (reads/<id> beneath buds/<friend>); empty removes only the local checkout. Bench
+	// is the transport (ssh) that reaches a Linux bench a read named, which removes its bench
+	// copy there (reads/<id> under ~/nova-bench/buds/<friend>); nil removes no remote copy.
+	Release   func(ctx context.Context, job string) error
+	BenchRoot string
+	Bench     bench.Transport
 	// Tip is origin's tip of a branch of a repository (owner/name), "" when origin has no
 	// such branch (Stager.Tip: one git ls-remote): a report's LAND finishes only at that tip,
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its

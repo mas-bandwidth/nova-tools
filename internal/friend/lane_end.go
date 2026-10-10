@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -281,6 +282,25 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	return words + " sent=server"
 }
 
+// releaseJob removes the job directory once its report names a head origin holds
+// (Stager.Release; tla/DeliveryLane.tla End). A head origin does not hold, a dirty
+// checkout, a mirror a stage holds, and a job already gone are left for the next prune;
+// any other error is said.
+func (l *loop) releaseJob(job string, now time.Time) {
+	d := l.d
+	if d.Release == nil || !validJob(job) {
+		return
+	}
+	err := d.Release(l.ctx, job)
+	switch {
+	case err == nil:
+		d.Record(fmt.Sprintf("%s release: removed %s/%s: its report names a head origin holds", now.UTC().Format(time.RFC3339), JobsDir, job))
+	case errors.Is(err, errHeadUnconfirmed), errors.Is(err, errCheckoutDirty), errors.Is(err, errMirrorHeld), errors.Is(err, errJobGone):
+	default:
+		d.Record(fmt.Sprintf("%s release: not removed %s/%s: %s", now.UTC().Format(time.RFC3339), JobsDir, job, oneLine(err.Error(), 300)))
+	}
+}
+
 // FinishWait bounds a lane's finish to the sprint server; one not answered is left to
 // friend sync, which reads the REPORT.md the lane wrote.
 const FinishWait = 10 * time.Second
@@ -291,6 +311,7 @@ func (l *loop) endStarted(now time.Time) {
 	s := l.lanes
 	for job, st := range s.state.Started {
 		words := l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
+		l.releaseJob(job, now)
 		if !s.given[job] {
 			s.given[job] = true
 			s.state.GivenUp = append(s.state.GivenUp, job)
