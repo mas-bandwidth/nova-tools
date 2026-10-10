@@ -7133,6 +7133,43 @@ With no record, or one whose last sample is older than the window (a server that
 measuring), both fields and the line are left out. Tested on the twin store with the harness's
 clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
 
+#### store-trips-pipelinedb-bb: the server reads only what it needs
+
+On 2026-10-10 the server called the table layer's read set on the fleet table about 56 times
+a second, 25 to 30 ms each, 62% of the store's one thread, and the rows it read were mostly
+the finished cards of the members' ok and failed cells, which grow with every landing; ticks
+began every 30 to 95 s and `where --json` took 6 to 15 s. Three changes:
+
+- A row's cells (`Store.ReadCells`; `queue --as <member>`, every worker's and reader's poll,
+  names ready, working and ctl) read the named cells' records alone: every other set column of
+  the row is read as text, which has no cell ids. On a copy of the live store this was most of
+  the fleet table's read sets.
+- A process keeps, for each table it loads, the placed records its last whole read found, at
+  the revision read (`store.LoadCache`, one per store address, shared by the verbs' stores): a
+  later load (`Store.Load`, and the fenced read of a step without the tick's twin,
+  `PipelinedLoadWithFence`) reads the shape, and when the revision moved brings the kept
+  records to it from the table's change stream, reading only the records the writes since
+  changed, as the tick's twin catches up. A table whose stream does not account for every
+  revision between, whose kept records do not add up to the shape's counts, or that the cache
+  holds at a later revision than the shape's, is read whole, and that read is kept. Each load
+  gets its own copy of every card. The model is `tla/LoadCache.tla`: two loads at once over a
+  shared cache, with record and display writes between; `LoadIsSnapshot` (every table a load
+  took is the store's records at the revision its shape read), `CacheIsHistory` and
+  `CacheNotAhead`, each reversed by a witness (a catch-up that misses the last write; a cache
+  later than the shape used as it is).
+- The run loop's friend reconcile (section 1, friend-reconcile-every-tick-r.w1) runs in the
+  tick's own turn of the line, before the tick lets the line go, instead of taking a batch's
+  place in the line once per friend: each pass queued behind every waiting batch, and the
+  passes cost 12 s a tick at the median (the gap between ticks less the tick's own time, over
+  the 5,991 ticks of 2026-10-09 17:40 to 23:40 ET). The line still has one holder at a time
+  (`tla/ServerLanes.tla`: the tick is one holder from TickBegin to TickEnd), and the batches'
+  turn after a tick is as long as the tick held the line (`sprint.ControlLine`), the reconcile
+  included.
+
+Tested on the twin store: `TestReadCellsReadsOnlyTheNamedCells`,
+`TestLoadCacheReadsOnlyWhatChanged`, `TestLoadCacheSnapshotsShareNothing`,
+`TestLoadCacheFencedReadAgrees`.
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,
