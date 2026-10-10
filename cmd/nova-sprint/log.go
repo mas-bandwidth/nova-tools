@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +23,7 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 	card := fs.String("card", "", "the lines about this card (a primary: its work, read and merge cards too)")
 	stream := fs.String("stream", "", "the lines of this stream")
 	member := fs.String("member", "", "the lines of this fleet member or reader: what was dealt to, taken from or read by it")
-	since := fs.String("since", "", "the lines at or after this time: a duration back from now (10m) or a time (RFC 3339)")
+	since := fs.String("since", "", "the lines at or after this time: a duration back from now (10m, 2d) or a time (RFC 3339, 2006-01-02, 01-02 15:04)")
 	atEpoch := fs.Int64("at-epoch", -1, "the log of an earlier epoch (before a clear), as it was")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
@@ -30,12 +31,10 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 	}
 	var from time.Time
 	if *since != "" {
-		if d, err := time.ParseDuration(*since); err == nil {
-			from = a.now().Add(-d)
-		} else if t, err := time.Parse(time.RFC3339, *since); err == nil {
-			from = t
-		} else {
-			return refuse(stderr, "log", "--since wants a duration back from now (10m) or an RFC 3339 time, found "+*since)
+		var err error
+		from, err = parseSince(*since, a.now(), a.zone())
+		if err != nil {
+			return refuse(stderr, "log", "--since wants a duration back from now (10m, 2d) or a time (RFC 3339, 2006-01-02, 01-02 15:04), found "+*since)
 		}
 	}
 	st, err := a.storeAt(*c, *atEpoch)
@@ -117,8 +116,84 @@ func (a *app) zone() *time.Location {
 	return time.Local
 }
 
+// parseSinceDuration is a --since window back from now: a Go duration (10m,
+// 36h), or a whole number of days with a d suffix (1d, 2d), the unit
+// time.ParseDuration has none for.
+func parseSinceDuration(s string) (time.Duration, error) {
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+	if v, ok := strings.CutSuffix(s, "d"); ok {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n >= 0 {
+			return time.Duration(n * float64(24*time.Hour)), nil
+		}
+	}
+	return 0, fmt.Errorf("unknown duration %q", s)
+}
+
+// sinceInstant is one shape --since reads as an instant. yearless says the
+// layout names no year: its value is completed with the run's current year
+// before it is parsed, so the parser holds the whole calendar date and the
+// year a value does name, the valid year zero included, is kept as written.
+type sinceInstant struct {
+	layout   string
+	yearless bool
+}
+
+// sinceInstants are the instant shapes --since takes, beside RFC 3339 and
+// RFC 3339 with nanoseconds: the dates and times a person types, each with an
+// optional zone, and the month-and-day shapes that omit the year.
+var sinceInstants = []sinceInstant{
+	{time.RFC3339Nano, false},
+	{time.RFC3339, false},
+	{"2006-01-02T15:04:05Z07:00", false},
+	{"2006-01-02 15:04:05Z07:00", false},
+	{"2006-01-02 15:04Z07:00", false},
+	{time.DateOnly, false},
+	{"2006-01-02T15:04:05", false},
+	{"2006-01-02 15:04:05", false},
+	{"2006-01-02T15:04", false},
+	{"2006-01-02 15:04", false},
+	{"01-02 15:04:05Z07:00", true},
+	{"01-02 15:04Z07:00", true},
+	{"01-02 15:04:05", true},
+	{"01-02 15:04", true},
+	{"01-02", true},
+}
+
+// parseSince is a --since window: a duration back from now, or an instant at
+// or after which the lines are wanted. An instant names its own zone or is
+// read in loc. A shape that omits the year is completed with now's year in
+// loc before it is parsed, so the whole date is validated (a yearless 02-29 is
+// refused in a current year without one) and an explicit year, year zero
+// included, is never mistaken for an omitted one. The shapes a person types
+// are here beside RFC 3339, so a window wider than a page is one value,
+// whatever its shape.
+func parseSince(s string, now time.Time, loc *time.Location) (time.Time, error) {
+	if d, err := parseSinceDuration(s); err == nil {
+		return now.Add(-d), nil
+	}
+	year := now.In(loc).Year()
+	for _, in := range sinceInstants {
+		layout, text := in.layout, s
+		if in.yearless {
+			// the value names no year: give it now's, then let the parser
+			// hold the completed calendar date
+			layout = "2006-" + layout
+			text = fmt.Sprintf("%04d-%s", year, s)
+		}
+		if t, err := time.ParseInLocation(layout, text, loc); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unknown since %q", s)
+}
+
+// keepLine says one line is in the --since window and the caller's other
+// filters. The window is the instant it names: the comparison is in UTC, so a
+// line and a window written in different zones are still compared as times.
 func keepLine(l sprint.Line, card, stream, member string, from time.Time) bool {
-	if !from.IsZero() && l.At.Before(from) {
+	if !from.IsZero() && l.At.UTC().Before(from.UTC()) {
 		return false
 	}
 	if card != "" && !l.About(card) {

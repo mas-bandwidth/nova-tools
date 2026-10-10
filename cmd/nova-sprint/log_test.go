@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // log prints every line of the epoch in local time, filtered by card,
@@ -165,4 +167,154 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	block := tableOf(out, "merge")
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)
+}
+
+// log --json --since takes a window wider than about 22 h in every shape a
+// caller types: a Go duration, a whole number of days and a date or an
+// instant, each wider than a page, and returns every entry at or after the
+// window's time. The window is the instant it names, compared in UTC; the
+// clock is the twin store's, injected, so the test reads no real time.
+func TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.ok("init --readers reader-a --members m1")
+	ta.mu.Lock()
+	t0 := ta.now
+	ta.mu.Unlock()
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "early card"))
+	ta.deal(1)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red'")
+	ta.ok("ask")
+	ta.mu.Lock()
+	ta.now = ta.now.Add(25 * time.Hour) // s1-1 is now 25 h old: wider than 22 h
+	ta.mu.Unlock()
+	ta.ok("add --stream s1 --count 1 --one --after s1-1 --brief-file " + writeBrief(t, "later card"))
+
+	// capture unfiltered baseline to compare against for wide windows
+	var j struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log", &j)
+	baseline := append([]sprint.Line(nil), j.Lines...)
+
+	// assert repeated/no-card entries are present (pinned by the full baseline==wide compare below)
+	hasNoCard, hasRepeat := false, false
+	counts := map[string]int{}
+	for _, l := range baseline {
+		if l.Card != "" {
+			counts[l.Card]++
+			if counts[l.Card] > 1 {
+				hasRepeat = true
+			}
+		} else if l.Note != nil {
+			hasNoCard = true
+		}
+	}
+	assert.True(t, hasRepeat, "log has repeated card entries")
+	assert.True(t, hasNoCard, "log has no-card (note) entries")
+
+	// 26 h back is wider than 22 h: returns every entry (incl repeated for a card, no-card lines), in exact order.
+	ta.json("log --since 26h", &j)
+	assert.Equal(t, baseline, j.Lines, "26h wide window returns every entry since, in order")
+	// re-run identical query to pin read idempotency
+	var j2 struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log --since 26h", &j2)
+	assert.Equal(t, j.Lines, j2.Lines, "identical --since query returns identical result")
+
+	// inclusive cutoff: a --since at an entry's At keeps that entry
+	if len(baseline) > 0 {
+		cut := baseline[0].At
+		ta.json("log --since "+cut.Format(time.RFC3339), &j)
+		require.NotEmpty(t, j.Lines, "cutoff at first entry's time keeps it")
+		assert.Equal(t, baseline[0].At, j.Lines[0].At, "inclusive cutoff entry is present first")
+		assert.Equal(t, baseline, j.Lines, "from first entry time returns all")
+	}
+
+	// cards is the card ids the verb returned for a --since window (for the narrower windows below).
+	cards := func(line string) map[string]bool {
+		t.Helper()
+		ta.json(line, &j)
+		got := map[string]bool{}
+		for _, l := range j.Lines {
+			if l.Card != "" {
+				got[l.Card] = true
+			}
+		}
+		return got
+	}
+	// A whole number of days: the unit time.ParseDuration has none for.
+	day := cards("log --since 1d")
+	assert.False(t, day["s1-1"], "1d: s1-1, 25 h old, is before a 24 h window")
+	assert.True(t, day["s1-2"], "1d: s1-2 is in a 24 h window")
+	twoDays := cards("log --since 2d")
+	assert.True(t, twoDays["s1-1"], "2d: s1-1 is in a 48 h window")
+	assert.True(t, twoDays["s1-2"], "2d: s1-2 is in a 48 h window")
+	// A date, in the run's own zone.
+	date := cards("log --since " + t0.Format(time.DateOnly))
+	assert.True(t, date["s1-1"], "the date: s1-1 is at or after its midnight")
+	assert.True(t, date["s1-2"], "the date: s1-2 is at or after its midnight")
+	// A date and time without seconds, the shape a person pastes.
+	space := cards("log --since '" + t0.Format("2006-01-02 15:04Z07:00") + "'")
+	assert.True(t, space["s1-1"], "the date and time without seconds: s1-1 is in the window")
+	assert.True(t, space["s1-2"], "the date and time without seconds: s1-2 is in the window")
+	// An instant in RFC 3339, the form the child cut its window to.
+	instant := cards("log --since " + t0.Format(time.RFC3339))
+	assert.True(t, instant["s1-1"], "the instant: s1-1 is at or after it")
+	assert.True(t, instant["s1-2"], "the instant: s1-2 is at or after it")
+}
+
+// A full RFC 3339 cutoff names its year, and year zero is a year the parser
+// holds: it must not be read as a year left out and moved to the run's
+// current one. The entry here is written in the last hour of 2029, the run's
+// clock moves into 2030, and a cutoff of 0000-01-01T00:00:00Z still admits it;
+// reading year zero as absent moved the cutoff to 2030-01-01 and hid every
+// historical entry, the same zero-results symptom a wide window had.
+func TestLogSinceKeepsAnExplicitYearZeroCutoff(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.mu.Lock()
+	ta.now = time.Date(2029, 12, 31, 23, 0, 0, 0, time.UTC)
+	ta.mu.Unlock()
+	ta.ok("init --readers reader-a --members m1")
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "a historical card"))
+	ta.mu.Lock()
+	ta.now = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC) // the run's clock moves into the next year
+	ta.mu.Unlock()
+	var j struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log --card s1-1 --since 0000-01-01T00:00:00Z", &j)
+	require.NotEmpty(t, j.Lines, "a cutoff that names year zero must keep an entry written in 2029")
+}
+
+// parseSince names the instant a value gives: a value that names its year is
+// kept exactly, the valid year zero included; a shape that omits the year is
+// completed with the run's current year in the run's zone before it is
+// parsed, so a yearless 02-29 is refused in a year that has none instead of
+// being normalized into March.
+func TestParseSinceHoldsAnExplicitYearAndCompletesAYearlessDate(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2030, 6, 1, 12, 0, 0, 0, time.UTC)
+	zero, err := parseSince("0000-01-01T00:00:00Z", now, time.UTC)
+	require.NoError(t, err)
+	assert.Equal(t, 0, zero.Year(), "a named year zero is a year, not a year left out")
+	assert.Equal(t, time.January, zero.Month())
+	assert.Equal(t, 1, zero.Day())
+	day, err := parseSince("01-02", now, time.UTC)
+	require.NoError(t, err)
+	assert.Equal(t, 2030, day.Year(), "a yearless date is read in the run's current year")
+	assert.Equal(t, time.January, day.Month())
+	assert.Equal(t, 2, day.Day())
+	leap, err := parseSince("02-29", time.Date(2028, 6, 1, 0, 0, 0, 0, time.UTC), time.UTC)
+	require.NoError(t, err, "2028 has a February 29")
+	assert.Equal(t, 2028, leap.Year())
+	assert.Equal(t, time.February, leap.Month())
+	assert.Equal(t, 29, leap.Day())
+	_, err = parseSince("02-29", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.UTC)
+	assert.Error(t, err, "a yearless 02-29 is not a date in a year without one")
 }
