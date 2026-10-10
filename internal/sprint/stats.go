@@ -3,6 +3,7 @@ package sprint
 import (
 	"cmp"
 	"maps"
+	"math/big"
 	"slices"
 	"strings"
 	"time"
@@ -48,12 +49,21 @@ type MemberStat struct {
 
 // ReaderStat is one reader's read cards, asked of it (retired ones too): the begin
 // wait (asked to begun), the run wall and the report lag (read - begun - wall).
+// Cost is the charged sum of its priced reads (actual where the harness reported
+// one, else predicted), dollars and cents rounded up, "-" when none was priced.
+// CostMedian is the median of those charged figures, the middle one, or the mean
+// of the two middle ones when the count is even, rounded up the same way.
+// Unpriced is how many of its finished reads carry no dollar figure. A subscription
+// read's tokens are not among them (its cost is the tokens).
 type ReaderStat struct {
-	Reader    string  `json:"reader"`
-	Cards     int     `json:"cards"`
-	BeginWait Measure `json:"begin_wait"`
-	RunWall   Measure `json:"run_wall"`
-	ReportLag Measure `json:"report_lag"`
+	Reader     string  `json:"reader"`
+	Cards      int     `json:"cards"`
+	BeginWait  Measure `json:"begin_wait"`
+	RunWall    Measure `json:"run_wall"`
+	ReportLag  Measure `json:"report_lag"`
+	Cost       string  `json:"cost"`
+	CostMedian string  `json:"cost_per_read_median"`
+	Unpriced   int     `json:"unpriced_reads"`
 }
 
 // RouteTakes is one route's takes, work and read, as the primaries' cost records
@@ -118,6 +128,7 @@ func statsPrimaries(s *Snapshot) []*Card {
 func StatsSince(s *Snapshot, since time.Time) PassStats {
 	var deal, toReads, toLand, total []float64
 	work, reads, routes := map[string]*samples{}, map[string]*samples{}, map[string]*samples{}
+	readCosts := map[string]*readMoney{}
 	ps := PassStats{Epoch: s.Epoch, Since: since}
 	// span is appendSpan of a stage that ended at or after since
 	span := func(xs []float64, a, b time.Time) []float64 {
@@ -170,6 +181,23 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 			own := s.Fleet.Card(c.Card)
 			if c.Kind == "read" {
 				own = s.Readers.Card(c.Card)
+				// the reader's money is the primary's record, so a read card retired
+				// or gone still counts: who ran it, else the card it was
+				row := ""
+				if own != nil {
+					row = own.Row
+				}
+				who := cmp.Or(c.Who, own.F("reader"), row, "-")
+				m := readCosts[who]
+				if m == nil {
+					m = &readMoney{}
+					readCosts[who] = m
+				}
+				if usd := cmp.Or(c.Usage.Actual, c.Usage.Predicted); usd != "" && c.Usage.Unpriced != WhySubscription {
+					m.costs = append(m.costs, usd)
+				} else if c.Usage.Unpriced != WhySubscription {
+					m.unpriced++
+				}
 			}
 			name := cmp.Or(c.Route, c.Usage.Route, own.F(FieldRoute), "-")
 			if name == RoutePin {
@@ -177,7 +205,7 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 			}
 			z := sampleOf(routes, name)
 			switch {
-			case c.Kind == "read" && c.End != "returned", c.Kind == "work" && c.End == "ok":
+			case c.Kind == "read" && (c.End == "ok" || c.End == "broken"), c.Kind == "work" && c.End == "ok":
 				z.ok++
 			case strings.HasPrefix(c.End, cardhdr.EndProvider), strings.HasPrefix(c.End, cardhdr.EndNoResult):
 				z.provider++
@@ -195,9 +223,24 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 		x := work[name]
 		ps.Work = append(ps.Work, MemberStat{Member: name, Cards: x.n, Failed: x.failed, TakeWait: measure(x.wait), RunWall: measure(x.wall), ReportLag: measure(x.lag)})
 	}
-	for _, name := range slices.Sorted(maps.Keys(reads)) {
+	readers := map[string]struct{}{}
+	for name := range reads {
+		readers[name] = struct{}{}
+	}
+	for name := range readCosts {
+		readers[name] = struct{}{}
+	}
+	for _, name := range slices.Sorted(maps.Keys(readers)) {
 		y := reads[name]
-		ps.Reads = append(ps.Reads, ReaderStat{Reader: name, Cards: y.n, BeginWait: measure(y.wait), RunWall: measure(y.wall), ReportLag: measure(y.lag)})
+		m := readCosts[name]
+		st := ReaderStat{Reader: name, Cost: "-", CostMedian: "-"}
+		if y != nil {
+			st.Cards, st.BeginWait, st.RunWall, st.ReportLag = y.n, measure(y.wait), measure(y.wall), measure(y.lag)
+		}
+		if m != nil {
+			st.Cost, st.CostMedian, st.Unpriced = readCostTotal(m.costs), readCostMedian(m.costs), m.unpriced
+		}
+		ps.Reads = append(ps.Reads, st)
 	}
 	for _, name := range slices.Sorted(maps.Keys(routes)) {
 		z := routes[name]
@@ -225,12 +268,62 @@ func before(c *Card, since time.Time, fields ...string) bool {
 
 // anyCardSince says a work or read card of the primary p ended, or is open, at or after since.
 func anyCardSince(s *Snapshot, p *Card, since time.Time) bool {
+	for _, c := range CardCostOf(p).Consumers {
+		if at, err := time.Parse(time.RFC3339, c.At); err == nil && !at.Before(since) {
+			return true // retained costs survive a retired or removed consumer card
+		}
+	}
 	for k := 1; k <= p.Int("attempt"); k++ {
 		if w := s.Fleet.Card(WorkCardID(p.ID, k)); w != nil && !before(w, since, "finished", "taken", "dealt") {
 			return true
 		}
 	}
 	return false
+}
+
+// readMoney is one reader's finished reads, from the primaries' cost records:
+// the charged figure of each priced read, and how many carried none.
+type readMoney struct {
+	costs    []string
+	unpriced int
+}
+
+// readCostTotal is the charged sum of a reader's priced reads, as a table shows
+// money (MoneyText); "-" when none was priced.
+func readCostTotal(costs []string) string {
+	if len(costs) == 0 {
+		return "-"
+	}
+	sum, ok := cardcost.Sum(costs...)
+	if !ok || sum == "" {
+		return "-"
+	}
+	return MoneyText(sum)
+}
+
+// readCostMedian is the median charged cost of those reads: the middle one, or
+// the mean of the two middle ones when the count is even, the same rule as
+// measure, then dollars and cents rounded up. "-" when none was priced.
+func readCostMedian(costs []string) string {
+	var rats []*big.Rat
+	for _, usd := range costs {
+		r, err := amountOf(usd)
+		if err != nil || r == nil {
+			continue
+		}
+		rats = append(rats, r)
+	}
+	if len(rats) == 0 {
+		return "-"
+	}
+	slices.SortFunc(rats, func(a, b *big.Rat) int { return a.Cmp(b) })
+	n := len(rats)
+	med := new(big.Rat).Set(rats[n/2])
+	if n%2 == 0 {
+		med.Add(rats[n/2-1], rats[n/2])
+		med.Quo(med, big.NewRat(2, 1))
+	}
+	return cardcost.Cents(med)
 }
 
 // samples are one member's, reader's or route's cards and their samples, in seconds.
