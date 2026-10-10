@@ -852,7 +852,7 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 func classifyGateOutput(out string) (isRed bool, kind string, what string) {
 	out = strings.TrimSpace(out)
 	if out == "" {
-		return false, "", ""
+		return true, "", ""
 	}
 	first := strings.TrimSpace(strings.SplitN(out, "\n", 2)[0])
 	// Bench faults first: infrastructure problems are never a red tree,
@@ -1651,6 +1651,12 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	}
 	if red == benchGateUnavailableWhy {
 		return nil, 0, red, "" // no cure search or red-base retry for a missing bench
+	}
+	if strings.HasPrefix(red, "LAND DEFERRED") {
+		return nil, 0, red, "" // no cure search or red-base retry for deferred bench faults
+	}
+	if strings.HasPrefix(red, "LAND DEFERRED") {
+		return nil, 0, red, "" // no cure search or red-base retry for deferred bench faults
 	}
 	if red == "" {
 		return nil, 0, "", ""

@@ -40,6 +40,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -203,6 +204,19 @@ type baseGateFail struct {
 	next time.Time
 }
 
+// benchFaultBound is a faulted bench's skip bound: 15 minutes.
+const benchFaultBound = 15 * time.Minute
+
+// benchFaultRecord is a bench's fault record: kind and until when it is skipped.
+type benchFaultRecord struct {
+	kind  string
+	until time.Time
+}
+
+func (r benchFaultRecord) rowMark() string {
+	return "bench-fault " + r.kind + " until " + r.until.Format(time.RFC3339)
+}
+
 // treeGateBase gates the base's tip at baseSha: "" when green, else the finding, and stop
 // when the stream stops on it. A green base is cached for its commit, so the same base
 // commit is not re-gated across streams or rounds. A red one is the base-gate rule's
@@ -243,6 +257,9 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch .
 	}
 	if why == benchGateUnavailableWhy {
 		return why, false // infrastructure refusal is not a red base or a retry
+	}
+	if strings.HasPrefix(why, "LAND DEFERRED") {
+		return why, false // bench faults are not a red base
 	}
 	if why != "" {
 		base := l.base
@@ -364,7 +381,11 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 				if code == 0 {
 					return ""
 				}
-				return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench seam", code), out)
+				isRed, kind, what := classifyGateOutput(out)
+				if isRed {
+					return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench seam", code), out)
+				}
+				return "GATE FAULT bench=seam kind=" + kind + " what=" + oneline.Quote(what)
 			}
 		}
 	}
@@ -446,6 +467,7 @@ func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs
 func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (string, bool) {
 	skips := l.stageSkips()
 	tried, said := map[string]bool{}, map[string]bool{}
+	var faults []string
 	for {
 		ring, notes := skips.Ring(benchRing(l.gateKey, hosts))
 		for _, n := range notes {
@@ -461,6 +483,15 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 			}
 		}
 		if len(live) == 0 {
+			if len(faults) > 0 {
+				l.locks().gateMu.Lock()
+				if !l.locks().faultsRaised {
+					l.locks().faultsRaised = true
+					l.raiseFaultJudgment(faults)
+				}
+				l.locks().gateMu.Unlock()
+				return fmt.Sprintf("LAND DEFERRED stream=%s faults=%d", l.gateKey, len(faults)), true
+			}
 			return "", false
 		}
 		host, err := l.takeGateLane(ctx, live)
@@ -475,6 +506,12 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 		}
 		if strings.HasPrefix(why, "GATE FAULT") {
 			l.copySaid(why)
+			kind := ""
+			if _, k, ok := strings.Cut(why, " kind="); ok {
+				kind, _, _ = strings.Cut(k, " ")
+			}
+			faults = append(faults, kind)
+			l.markFault(host, kind)
 			continue
 		}
 		if ran {
@@ -630,6 +667,9 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop, remot
 	inLoop = b.flight != nil
 	seam := b.gateBench
 	b.mu.Unlock()
+	if testguard.Refusing() && seam != nil {
+		inLoop = true
+	}
 	if !inLoop || (testguard.Refusing() && seam == nil) {
 		return nil, inLoop, false
 	}
@@ -646,15 +686,23 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop, remot
 			break
 		}
 	}
+	l.locks().gateMu.Lock()
+	faults := l.locks().benchFaults
+	now := l.clock()
 	for _, m := range s.UpMembers() {
 		if self != "" && strings.EqualFold(m, self) {
 			continue
 		}
-		if bench.CheckHost(m) != nil {
+		if rec, ok := faults[m]; ok && now.Before(rec.until) {
+			continue
+		}
+		err := bench.CheckHost(m)
+		if err != nil {
 			continue
 		}
 		hosts = append(hosts, m)
 	}
+	l.locks().gateMu.Unlock()
 	return hosts, inLoop, remote
 }
 
@@ -909,4 +957,39 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 	}
 	l.baseFix = cure.ID + " " + c.resolved
 	return i, ""
+}
+
+func (l *lander) markFault(host, kind string) {
+	if kind != "disk" && kind != "tmp" && kind != "git" {
+		return
+	}
+	l.locks().gateMu.Lock()
+	if l.locks().benchFaults == nil {
+		l.locks().benchFaults = map[string]benchFaultRecord{}
+	}
+	l.locks().benchFaults[host] = benchFaultRecord{kind: kind, until: l.clock().Add(benchFaultBound)}
+	l.locks().gateMu.Unlock()
+	go bench.Run(context.Background(), bench.Exec{}, bench.Options{
+		Hosts: []string{host},
+		Argv:  []string{"nova-swarm", "disk-guard"},
+		Now:   l.clock,
+	})
+}
+
+func (l *lander) raiseFaultJudgment(faults []string) {
+	if l.a == nil || l.st == nil {
+		return
+	}
+	var kinds []string
+	for _, f := range faults {
+		if !slices.Contains(kinds, f) {
+			kinds = append(kinds, f)
+		}
+	}
+	l.st.Run(context.Background(), store.NoteStep("land", sprint.Note{
+		Kind:        sprint.Judgment,
+		Type:        "every bench faulted: " + strings.Join(kinds, ", "),
+		Stream:      l.gateKey,
+		StreamLevel: true,
+	}))
 }
