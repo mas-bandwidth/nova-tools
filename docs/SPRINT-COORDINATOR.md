@@ -349,6 +349,11 @@ The server's `--land` merges each card whose reads passed (one for a flash card,
   request does not; when it ejects the batch, `gh run list --event merge_group --limit 5` and
   `gh run view <run id> --log-failed` name the failing test. A red on `dev`'s own tip is fixed first by a
   small pull request of its own.
+- The queue itself, without a hand GraphQL call: `nova-sprint mergequeue [--base <branch>] [--json]` lists one
+  line per entry with its position, pull request number and title, the card id when its branch is a card's, the
+  entry state (queued, awaiting checks, mergeable, unmergeable, locked), the merge group's head and its check
+  run, and the time in queue; the summary line gives the count and the oldest entry. `--base` is the branch
+  whose queue is read (default `dev`).
 - After it: close each head the batch carried (`gh pr close <number> --comment 'carried by <batch number>'`);
   merge `dev` into the sprint branch (`git merge origin/dev`) and push it plain, so cards land on a tip that
   includes `dev`; a rejected push is fetched and merged again, never forced. Then the install.

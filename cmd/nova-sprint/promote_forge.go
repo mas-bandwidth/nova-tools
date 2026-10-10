@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // promoteForge is every forge call a promotion makes (promote.go), so a test
@@ -71,6 +72,11 @@ func (p *promoter) forger() promoteForge {
 const (
 	promoteEnqueueQuery = `mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id}}}`
 	promoteQueueQuery   = `query($id:ID!){node(id:$id){... on PullRequest{mergeQueueEntry{id state}}}}`
+	// promoteEntriesQuery reads a branch's merge queue: one entry per pull
+	// request, with its position, state and enqueued time, its pull request's
+	// number, title and head branch, and the merge group's head commit with its
+	// check runs (mergequeue).
+	promoteEntriesQuery = `query($owner:String!,$name:String!,$branch:String!){repository(owner:$owner,name:$name){mergeQueue(branch:$branch){entries(first:100){nodes{position state enqueuedAt pullRequest{number title headRefName} headCommit{oid statusCheckRollup{contexts(first:20){nodes{__typename ... on CheckRun{name conclusion}}}}}}}}}}`
 )
 
 // ghForge is the forge through gh (promoter.gh: internal/subproc, or the
@@ -224,4 +230,80 @@ func (g ghForge) FailedRuns(ctx context.Context, branch, commit string) ([]promo
 func (g ghForge) Repo(ctx context.Context) (string, error) {
 	repo, err := g.p.gh(ctx, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
 	return strings.TrimSpace(repo), err
+}
+
+// QueueEntries is the entries of a branch's merge queue, in the forge's order
+// (mergequeue): the same client and query style as the rest of the forge. The
+// repository is read once (Repo), then one GraphQL query lists its queue. The
+// state enum becomes the queue's words; a check run the merge group's head
+// holds is read by name and conclusion.
+func (g ghForge) QueueEntries(ctx context.Context, base string) ([]mergeQueueEntry, error) {
+	repo, err := g.Repo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owner, name, ok := strings.Cut(strings.TrimSpace(repo), "/")
+	if !ok || owner == "" || name == "" {
+		return nil, errors.New("the repository " + oneLine(repo) + " is not owner/name")
+	}
+	raw, err := g.p.gh(ctx, "api", "graphql", "-f", "query="+promoteEntriesQuery,
+		"-f", "owner="+owner, "-f", "name="+name, "-f", "branch="+base)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data struct {
+			Repository struct {
+				MergeQueue *struct {
+					Entries struct {
+						Nodes []struct {
+							Position   int    `json:"position"`
+							State      string `json:"state"`
+							EnqueuedAt string `json:"enqueuedAt"`
+							Pull       struct {
+								Number      int    `json:"number"`
+								Title       string `json:"title"`
+								HeadRefName string `json:"headRefName"`
+							} `json:"pullRequest"`
+							HeadCommit *struct {
+								OID               string `json:"oid"`
+								StatusCheckRollup *struct {
+									Contexts struct {
+										Nodes []mergeQueueCheckNode `json:"nodes"`
+									} `json:"contexts"`
+								} `json:"statusCheckRollup"`
+							} `json:"headCommit"`
+						} `json:"nodes"`
+					} `json:"entries"`
+				} `json:"mergeQueue"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if jerr := json.Unmarshal([]byte(raw), &resp); jerr != nil {
+		return nil, fmt.Errorf("merge queue query: %s", oneLine(raw))
+	}
+	if resp.Data.Repository.MergeQueue == nil {
+		return nil, nil
+	}
+	var entries []mergeQueueEntry
+	for _, n := range resp.Data.Repository.MergeQueue.Entries.Nodes {
+		e := mergeQueueEntry{
+			Position: n.Position,
+			Number:   strconv.Itoa(n.Pull.Number),
+			Title:    n.Pull.Title,
+			Branch:   n.Pull.HeadRefName,
+			State:    mergeQueueState(n.State),
+		}
+		if n.HeadCommit != nil {
+			e.Head = n.HeadCommit.OID
+			if n.HeadCommit.StatusCheckRollup != nil {
+				e.Check = mergeQueueCheck(n.HeadCommit.StatusCheckRollup.Contexts.Nodes)
+			}
+		}
+		if at, terr := time.Parse(time.RFC3339, n.EnqueuedAt); terr == nil {
+			e.Enqueued = at
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
 }

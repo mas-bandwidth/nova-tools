@@ -93,6 +93,7 @@ func init() {
 		{"demo load", "<backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]", "demo load sprint-store-2026-10-04-2336.redis.txt.xz.part-aa sprint-store-2026-10-04-2336.redis.txt.xz.part-ab", (*app).cmdDemoLoad},
 		{"demo stop", "[--dir <dir>]", "demo stop --dir ./no-demo-here", (*app).cmdDemoStop},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
+		{"mergequeue", "[--base <branch>] [--json]", "mergequeue --base dev", (*app).cmdMergeQueue},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"hold", "<member|reader|friend|stream>... --reason <text> [--return] [--dry-run]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},
 		{"unhold", "<member|reader|friend|stream>... [--reason <text>] [--dry-run]", "unhold m1 --reason 'the cleaner is fixed'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(true, args, o, e) }},
