@@ -99,6 +99,16 @@ func ExtractLastLines(text string, n int) []string {
 // WindowReader reads the text of a GUI harness window through the accessibility API.
 type WindowReader func(ctx context.Context, bundle, target string) (string, error)
 
+// appleScriptQuote escapes s for a double-quoted AppleScript string literal:
+// a backslash and a double quote each take a leading backslash, so a target
+// holding either cannot close the literal and hand osacompile a syntax error
+// (docs/SPEC-FRIEND.md, Screen: the window is found by the friend's recorded
+// directory or live session title, either of which may hold a quote or a
+// backslash).
+func appleScriptQuote(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
+}
+
 // DefaultWindowReader runs osascript via the Exec seam.
 func DefaultWindowReader(run Exec) WindowReader {
 	return func(ctx context.Context, bundle, target string) (string, error) {
@@ -130,7 +140,7 @@ tell application "System Events"
 			return out
 		end tell
 	end tell
-end tell`, appName, target, noWindowTextMarker)
+end tell`, appleScriptQuote(appName), appleScriptQuote(target), noWindowTextMarker)
 		out, exit, err := run(ctx, "", "osascript", []string{"-e", script}, "")
 		if err != nil || exit != 0 {
 			combined := strings.ToLower(out)

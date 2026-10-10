@@ -202,6 +202,32 @@ func TestScreenWindowReaderRequiresATextArea(t *testing.T) {
 	assert.NotContains(t, script, "name of targetWin")
 }
 
+// TestScreenWindowReaderEscapesAQuotedTarget pins that the recorded directory
+// or session title never reaches the AppleScript source unescaped: a target
+// holding a double quote or a backslash is passed as an escaped string
+// literal, so a valid directory such as /w/bob"notes compiles instead of
+// failing with a syntax error (docs/SPEC-FRIEND.md, Screen: the window is
+// found by the friend's recorded directory or session title).
+func TestScreenWindowReaderEscapesAQuotedTarget(t *testing.T) {
+	t.Parallel()
+
+	var script string
+	run := func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
+		require.Equal(t, "osascript", name)
+		script = args[len(args)-1]
+		return "text\n", 0, nil
+	}
+
+	_, err := DefaultWindowReader(run)(context.Background(), AntigravityApp.Bundle, `/w/bob"notes`)
+	require.NoError(t, err)
+	assert.Contains(t, script, `contains "/w/bob\"notes"`)
+	assert.NotContains(t, script, `contains "/w/bob"notes"`)
+
+	_, err = DefaultWindowReader(run)(context.Background(), AntigravityApp.Bundle, `/w/bob\notes`)
+	require.NoError(t, err)
+	assert.Contains(t, script, `contains "/w/bob\\notes"`)
+}
+
 // TestScreenRefusesAWindowWithNoReadableText pins the seam's answer: a reader
 // that finds no text area refuses, naming the missing text, rather than
 // printing anything it found instead (docs/SPEC-FRIEND.md, Screen).

@@ -1235,7 +1235,7 @@ a daemon ack that clears it).
 
 ## Screen (internal/friend/screen.go)
 
-`nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]` reads the last lines of a friend's open session without a person. A hosted tmux session is captured through the Exec seam. A GUI harness window is selected only when its title matches the friend's recorded directory or live session title; the tool refuses rather than selecting another window. Missing accessibility permission, missing readable text, and a harness with no screen are refusals. The result is a `SCREEN` header and text, or the same `friend`, `source`, `at`, and `lines` values as JSON. This is a read-only query and needs no TLA+ state model.
+`nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]` reads the last lines of a friend's open session without a person. A hosted tmux session is captured through the Exec seam. A GUI harness window is selected only when its title matches the friend's recorded directory or live session title; the target is escaped into the accessibility script's string literal, so a directory or session title holding a quote or a backslash reads as it is rather than failing to compile, and the tool refuses rather than selecting another window. Missing accessibility permission, missing readable text, and a harness with no screen are refusals. The result is a `SCREEN` header and text, or the same `friend`, `source`, `at`, and `lines` values as JSON. This is a read-only query and needs no TLA+ state model.
 
 ## Notifications
 
