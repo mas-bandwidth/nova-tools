@@ -80,3 +80,37 @@ func TestFleetHelpSaysHowStatusComesAbout(t *testing.T) {
 	}
 	assert.Contains(t, ta.ok("help fleet beat"), "-load", "help fleet beat lacks --load")
 }
+
+// TestFleetBeatPreservesStopReturnsWhenOmittedAndClearsOnZero verifies that omitting
+// --stop-returns preserves the previous owed count, and --stop-returns 0 explicitly clears it.
+func TestFleetBeatPreservesStopReturnsWhenOmittedAndClearsOnZero(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.live = nil
+
+	// 1. Initial beat with explicit --stop-returns 3
+	var b1 beatReport
+	ta.json("fleet beat m1 --stop-returns 3", &b1)
+	require.Equal(t, 3, b1.StopReturns, "explicit --stop-returns sets count")
+
+	// 2. Subsequent beat with no --stop-returns flag: must preserve previous count 3
+	out := ta.ok("fleet beat m1")
+	assert.Contains(t, out, "stop_returns=3")
+	var b2 beatReport
+	ta.json("fleet beat m1", &b2)
+	require.Equal(t, 3, b2.StopReturns, "omitted --stop-returns flag preserves previous owed count")
+
+	// 3. Subsequent beat with explicit --stop-returns 0: clears to 0
+	out = ta.ok("fleet beat m1 --stop-returns 0")
+	assert.NotContains(t, out, "stop_returns=")
+	var b3 beatReport
+	ta.json("fleet beat m1 --stop-returns 0", &b3)
+	require.Equal(t, 0, b3.StopReturns, "explicit --stop-returns 0 clears owed count")
+
+	// 4. Subsequent beat with no --stop-returns flag: keeps 0
+	out = ta.ok("fleet beat m1")
+	assert.NotContains(t, out, "stop_returns=")
+	var b4 beatReport
+	ta.json("fleet beat m1", &b4)
+	require.Equal(t, 0, b4.StopReturns, "omitted flag keeps cleared count at 0")
+}

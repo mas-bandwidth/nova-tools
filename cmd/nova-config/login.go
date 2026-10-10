@@ -294,9 +294,10 @@ func loginVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:      "login",
 		Usage:     "login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --actor <name> [--sops <path>]\nlogin --check",
-		Detail:    "records the DSN and where the password is; never the password",
-		Effect:    tool.LocalWrite,
+		Detail:    "records the DSN and where the password is; never the password; --dry-run checks the same and resolves the secret, and records nothing",
+		Effect:    tool.LocalWrite + ": the login file (0600) under the per-user config directory; --check and --dry-run write nothing",
 		ExitTable: "0 done, 1 refused (the verb ran and the secret did not resolve), 2 could not run (usage, or a store that did not answer)",
+		DryRun:    true,
 		Flags:     loginFlags,
 		Run:       func(c *tool.Call) *tool.Out { return runLogin(c, d) },
 	}
@@ -306,9 +307,10 @@ func logoutVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:      "logout",
 		Usage:     "logout",
-		Detail:    "removes the recorded login",
-		Effect:    tool.LocalWrite,
+		Detail:    "removes the recorded login; --dry-run says whether one is recorded and removes nothing",
+		Effect:    tool.LocalWrite + ": removes the login file; --dry-run writes nothing",
 		ExitTable: "0 done, 2 could not run",
+		DryRun:    true,
 		Flags:     func(f *tool.Flags) { f.Prints() },
 		Run:       func(c *tool.Call) *tool.Out { return runLogout(c, d) },
 	}
@@ -331,7 +333,7 @@ func loginFlags(f *tool.Flags) {
 // would use and whether the secret resolves.
 func runLogin(c *tool.Call, d deps) *tool.Out {
 	const verb = "login"
-	check := c.Bool("check")
+	check, dry := c.Bool("check"), c.DryRun()
 	path, err := loginPathFrom(d.getenv)
 	if err != nil {
 		refuse(c.Stderr, verb, err.Error())
@@ -398,6 +400,11 @@ func runLogin(c *tool.Call, d deps) *tool.Out {
 		}
 		refuse(c.Stderr, verb, "nothing was recorded: the password of "+l.Friend+" does not resolve from "+l.Secret+": "+err.Error()+"; run: nova-config login again with the store, seat, key and secret that hold it")
 		return tool.Exit(2)
+	}
+	if dry {
+		// every check the real run makes, the secret resolved and dropped, and no write
+		fmt.Fprintf(c.Stdout, "LOGIN DRY-RUN file=%s %s resolves=yes dry_run=true; nothing was recorded\n", oneline.Field(path), l.line())
+		return tool.Exit(0)
 	}
 	b, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
@@ -484,10 +491,19 @@ func isEnvWord(s string) bool {
 // runLogout removes the recorded login.
 func runLogout(c *tool.Call, d deps) *tool.Out {
 	const verb = "logout"
+	dry := c.DryRun()
 	path, err := loginPathFrom(d.getenv)
 	if err != nil {
 		refuse(c.Stderr, verb, err.Error())
 		return tool.Exit(2)
+	}
+	if dry {
+		was := "recorded"
+		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+			was = "none"
+		}
+		fmt.Fprintf(c.Stdout, "LOGOUT DRY-RUN file=%s was=%s dry_run=true; nothing was removed\n", oneline.Field(path), was)
+		return tool.Exit(0)
 	}
 	switch err := os.Remove(path); {
 	case errors.Is(err, os.ErrNotExist):

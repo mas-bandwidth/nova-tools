@@ -293,6 +293,15 @@ func TestInputsFollowAModuleNamedAfterANestedModule(t *testing.T) {
 	require.Contains(t, got, "tla/C.tla", "inputs %v, %v", got, got)
 }
 
+// referencesParsedCount is how many times the text has been parsed by
+// cachedModuleReferences: 0 when it never was.
+func referencesParsedCount(text []byte) int64 {
+	if hit, ok := referencesCache.Load(sha256.Sum256(text)); ok {
+		return hit.(*referencesEntry).parsed.Load()
+	}
+	return 0
+}
+
 func TestAModulesReferencesAreParsedOncePerText(t *testing.T) {
 	t.Parallel()
 	root := inputsTree(t)

@@ -106,12 +106,8 @@ func (r openCodeReader) binary() (string, error) {
 	return exec.LookPath(SQLiteBinary)
 }
 
-// readOpenCodeUsage reads one job's accounting out of its own database.
-func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
-	return openCodeReader{}.read(dataHome)
-}
-
-// read is readOpenCodeUsage on the reader's own lookup.
+// read reads one job's accounting out of its own database, resolving the one program
+// through the reader's own lookup.
 //
 // A DATABASE THAT IS NOT THERE IS NOT AN ERROR: it is the harness having reported nothing
 // yet. A database that is there and cannot be read IS one, and rule 13 ends the job
@@ -152,7 +148,7 @@ func (r openCodeReader) read(dataHome string) (ProviderUsage, error) {
 // reads would be counted as failures.
 const LiveSampleLimit = 5 * time.Second
 
-// ReadJobUsageLiveWithin is rule 13d's LIVE sample: the same statement readOpenCodeUsage runs,
+// ReadJobUsageLiveWithin is rule 13d's LIVE sample: the same statement openCodeReader.read runs,
 // against the same database at the same two spellings, and different from it in exactly two
 // ways that the rule names.
 //

@@ -17,10 +17,12 @@ nova-doctor version
 
 ## First run
 
-The commands below are the tool's own example block, run by `cmd/nova-doctor/firstrun_test.go`.
+The command below is the tool's own example; `TestDoctorRunsEveryRegisteredCheckAndExitsByTheWorst` in `internal/doctor/doctor_test.go` runs `--local` against stand-in checks.
 
 ```text
-$ nova-doctor --local
+$ nova-doctor run --check harness
+$ nova-doctor run --local
+$ nova-doctor run --local --json
 ```
 
 ## Verbs

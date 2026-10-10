@@ -36,6 +36,7 @@ func briefTwin(t *testing.T) (dir, sha string) {
 		"internal/x/testdata/in.txt":                   "in\n",
 		"internal/ci/testdata/errcheck/internal/x.txt": "internal/x 1\n",
 		"internal/ci/testdata/dead_code_allowlist.txt": "# ledger\ninternal/x 2\n",
+		"internal/ci/deadcode_test.go":                 "package ci\n\nimport \"testing\"\n\nfunc TestDeadCode(t *testing.T) {}\n",
 		"cmd/nova-sprint/verbs.go":                     "package main\n",
 		"docs/CLI.md":                                  "# CLI\n",
 		"docs/SPEC-SPRINT.md":                          "# SPEC\n",
@@ -58,7 +59,7 @@ func briefTwin(t *testing.T) (dir, sha string) {
 // header lines of over replacing its own (a value "\x00" drops the line) and task its
 // THE TASK paragraph when not "".
 func twinBrief(repo string, over map[string]string, task string) []byte {
-	order := []string{"REPO", "BASE", "START", "PATHS", "NEW", "SHARED", "TEST", "WHO"}
+	order := []string{"REPO", "BASE", "KIND", "START", "PATHS", "NEW", "SHARED", "TEST", "WHO"}
 	h := map[string]string{
 		"REPO":   repo,
 		"BASE":   "sprint/s1",
@@ -245,4 +246,53 @@ func TestAddLintRefusesABriefWhosePathsMissTheFilesItNames(t *testing.T) {
 		fs, _ = LintBrief(twinBrief(repo, map[string]string{"BASE": "\x00"}, ""), BriefBase{Friends: bb.Friends})
 		assert.Empty(t, fs, "no BASE: the tree checks do not run, and the rest pass")
 	})
+}
+
+// A LEDGER CARD KEEPS ITS CLASS TEST (the seat, 2026-10-07): a card nova-card generate cuts
+// from a ledger names the ledger's class test, which is green at the base by construction,
+// and its proof is the ledger shrinking. donewhen-test-name lets that existing test pass only
+// when both hold: the brief says KIND: ledger, and its TEST is under internal/ci/. Without
+// the marker, or for a test outside internal/ci/, an existing test is still refused.
+func TestALedgerCardsExistingClassTestPassesDonewhenOnlyWithItsMarker(t *testing.T) {
+	t.Parallel()
+	repo, sha := briefTwin(t)
+	bb := BriefBase{Repo: repo, Sha: sha, Listed: []string{"sprint/s1"}}
+	ledger := map[string]string{
+		"START": "internal/x/x.go (Fix), internal/ci (read)",
+		"PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/*.go,internal/ci/*_test.go,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt",
+		"TEST":  "internal/ci TestDeadCode",
+	}
+	with := func(over map[string]string) map[string]string {
+		out := map[string]string{}
+		for k, v := range ledger {
+			out[k] = v
+		}
+		for k, v := range over {
+			out[k] = v
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name   string
+		over   map[string]string
+		refuse bool
+	}{
+		{name: "KIND: ledger and an existing class test under internal/ci", over: map[string]string{"KIND": LedgerKind}},
+		{name: "the marker in another case, the package written ./", over: map[string]string{"KIND": "Ledger", "TEST": "./internal/ci TestDeadCode"}},
+		{name: "no KIND: line", refuse: true},
+		{name: "another kind", over: map[string]string{"KIND": "fix-red"}, refuse: true},
+		{name: "KIND: ledger and an existing test outside internal/ci", over: map[string]string{"KIND": LedgerKind, "TEST": "./internal/x TestOld"}, refuse: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, _ := LintBrief(twinBrief(repo, with(tc.over), ""), bb)
+			got := findingsFor(fs, "donewhen-test-name")
+			if !tc.refuse {
+				assert.Empty(t, got, "a ledger card's class test exists at the base and passes")
+				return
+			}
+			require.Len(t, got, 1, "%v", fs)
+			assert.Contains(t, got[0].Excerpt, "exists in", "an existing test with no ledger marker is still refused")
+			assert.Contains(t, got[0].Excerpt, "so it cannot be red there")
+		})
+	}
 }

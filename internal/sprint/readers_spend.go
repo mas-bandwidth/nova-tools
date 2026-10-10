@@ -3,7 +3,6 @@ package sprint
 import (
 	"cmp"
 	"math/big"
-	"sort"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
@@ -14,10 +13,11 @@ import (
 // track spend on readers, can you do this before we start?"). Every read's run is already a
 // consumer record on its primary (readConsumer: who read it, its route, its charged figure),
 // so a reader's spend is a sum over the records the tick reads anyway, never a tally of the
-// log by hand: each stream's where record carries its readers' sums (TierCosts.Readers),
-// ReaderSpendsOf adds them over the streams, and Cells are what the readers table of the
-// where view is to show beside each reader's counts (spend, spend_1h, per_read, reads_priced;
-// drawing them is cmd/nova-sprint's, owed).
+// log by hand: each stream's where record carries its readers' sums (TierCosts.Readers), and
+// Cells are what the readers table of the where view is to show beside each reader's counts
+// (spend, spend_1h, per_read, reads_priced). Drawing them is cmd/nova-sprint's, owed, and so
+// is the sum over the streams it draws: its rule is written down in the test until then
+// (ReaderSpendsOf, ReaderSpendTotal, readers_spend_test.go).
 
 // ReaderSpendWindow is the recent window a reader's spend is also summed over: the last hour.
 const ReaderSpendWindow = time.Hour
@@ -70,23 +70,6 @@ func (r *ReaderSpend) addRead(con Consumer, now time.Time) {
 	}
 }
 
-// plus is the two spends summed: the same reader's on two streams.
-func (r ReaderSpend) plus(o ReaderSpend) ReaderSpend {
-	out := ReaderSpend{Reads: r.Reads + o.Reads, Priced: r.Priced + o.Priced, HourPriced: r.HourPriced + o.HourPriced, Tokens: r.Tokens + o.Tokens}
-	out.USD, out.HourUSD = usdPlus(r.USD, o.USD), usdPlus(r.HourUSD, o.HourUSD)
-	return out
-}
-
-// usdPlus is two exact dollar figures summed, "" when neither is one: nothing priced stays
-// nothing priced, never $0.00.
-func usdPlus(a, b string) string {
-	if a == "" || b == "" {
-		return a + b
-	}
-	sum, _ := cardcost.Sum(a, b)
-	return sum
-}
-
 // PerRead is what one priced read cost on average, dollars and cents rounded up (MoneyText);
 // "-" when none was priced.
 func (r ReaderSpend) PerRead() string {
@@ -106,41 +89,4 @@ func (r ReaderSpend) Cells() map[string]string {
 		ReaderPerReadCol:   r.PerRead(),
 		ReaderPricedCol:    itoa(r.Priced),
 	}
-}
-
-// ReaderSpendsOf is each reader's spend summed over the streams' where records
-// (TierCosts.Readers): what the readers table is to show, read off the tick's
-// record, never off the cards at where.
-func ReaderSpendsOf(streams map[string]TierCosts) map[string]ReaderSpend {
-	out := map[string]ReaderSpend{}
-	names := make([]string, 0, len(streams))
-	for st := range streams {
-		names = append(names, st)
-	}
-	sort.Strings(names) // the sums are exact; the order only keeps the walk the same
-	for _, st := range names {
-		for rd, sp := range streams[st].Readers {
-			out[rd] = out[rd].plus(sp)
-		}
-	}
-	return out
-}
-
-// ReaderSpendTotal is every reader's spend summed: the readers table's one row.
-func ReaderSpendTotal(spends map[string]ReaderSpend) ReaderSpend {
-	names := make([]string, 0, len(spends))
-	for rd := range spends {
-		names = append(names, rd)
-	}
-	sort.Strings(names)
-	var all ReaderSpend
-	for _, rd := range names {
-		all = all.plus(spends[rd])
-	}
-	return all
-}
-
-// ReaderSpends is each reader's spend over every primary of the work table, all streams.
-func ReaderSpends(s *Snapshot) map[string]ReaderSpend {
-	return ReaderSpendsOf(StreamTierCosts(s))
 }

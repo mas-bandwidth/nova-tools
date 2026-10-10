@@ -55,12 +55,16 @@ type WhereRecord struct {
 	ReadsWaiting     int                 `json:"reads_waiting,omitempty"`
 	Priorities       map[string][]string `json:"priorities,omitempty"`
 	StreamPriorities map[string]string   `json:"stream_priorities,omitempty"`
+	// ReadsWindow is the ok and broken verdicts over the last 30 minutes of running time
+	// (sprint.ReadsWindowOf), as of the count.
+	ReadsWindow sprint.ReadsWindowView `json:"reads_window,omitzero"`
 	// FleetRev is the fleet table's revision at the count: a take moves the fleet alone.
 	// RowCards is each fleet row's cards by level and its reads, ReadCards the epoch's read
 	// cards (sprint.RowCardCounts), the dashboard's rows and read_cards.
 	FleetRev  uint64                    `json:"fleet_rev,omitempty"`
 	RowCards  map[string]map[string]int `json:"row_cards,omitempty"`
 	ReadCards sprint.ReadCardCounts     `json:"read_cards"`
+	FixStates map[string]map[string]int `json:"fix_states,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -74,11 +78,13 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 	}
 	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
 		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s),
-		ReadsWaiting: sprint.ReadsWaiting(s), Priorities: sprint.PriorityCounts(s), StreamPriorities: sprint.StreamPriorities(s)}
+		ReadsWaiting: sprint.ReadsWaiting(s), Priorities: sprint.PriorityCounts(s), StreamPriorities: sprint.StreamPriorities(s),
+		ReadsWindow: sprint.ReadsWindowOf(s, m.StoppedBetween)}
 	if s.Fleet != nil {
 		r.FleetRev = s.Fleet.Revision
 	}
 	r.RowCards, r.ReadCards = sprint.RowCardCounts(s)
+	r.FixStates = sprint.FixStateCounts(s)
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -289,11 +295,14 @@ type WhereFacts struct {
 	// RowCards and ReadCards are the record's (sprint.RowCardCounts); nil and zero without it.
 	RowCards  map[string]map[string]int
 	ReadCards sprint.ReadCardCounts
+	FixStates map[string]map[string]int
 	// ReadsWaiting, Priorities and StreamPriorities are the record's (WhereRecord); zero
 	// without the record.
 	ReadsWaiting     int
 	Priorities       map[string][]string
 	StreamPriorities map[string]string
+	// ReadsWindow is the record's verdicts window (sprint.ReadsWindowOf); zero without it.
+	ReadsWindow sprint.ReadsWindowView
 	// HasStoreRTT is set when the server's store round trip record has a sample
 	// within StoreRTTWindow; StoreRTTP50MS and StoreRTTP99MS are its p50 and p99.
 	HasStoreRTT   bool
@@ -344,7 +353,9 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
+			f.ReadsWindow = r.ReadsWindow
 			f.RowCards, f.ReadCards = r.RowCards, r.ReadCards
+			f.FixStates = r.FixStates
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

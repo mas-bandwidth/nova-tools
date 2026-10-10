@@ -3,6 +3,7 @@ package friend
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 // never started by the model (SPEC-FRIEND.md, the daemon).
 type Agent struct {
 	Friend, Harness, Dir, Session string
+	Adapter, DeliveryDir          string // explicit Codex folder route; session remains the real harness session
 	StateDir                      string // the daemon's state files, when not the default under Home
 	Width                         int
 	Binary                        string   // this tool, by absolute path
@@ -42,10 +44,23 @@ type Agent struct {
 	// Command, when set, is what the agent runs in place of the daemon: this tool's
 	// own verb and flags, after Binary (the wake ping loop, nova-friend ping-install).
 	Command []string
+	// Sleep is how Install waits between two looks at the old service after the
+	// bootout (ReleasePoll); nil is time.Sleep. A test passes its own clock.
+	Sleep func(time.Duration)
+	// NotificationsOnly has its own agent label and carries its policy through install
+	// (SPEC-FRIEND.md, notifications); it never replaces the native scheduler.
+	NotificationsOnly bool
+	NotifyKinds       string
+	NotifyWindow      time.Duration
 }
 
 // Label is the agent's launchd label.
-func (a Agent) Label() string { return "com.nova.friend-" + a.Friend }
+func (a Agent) Label() string {
+	if a.NotificationsOnly {
+		return "com.nova.friend-notifications-" + a.Friend
+	}
+	return "com.nova.friend-" + a.Friend
+}
 
 // PlistPath is where the agent's plist lives under home.
 func (a Agent) PlistPath() string {
@@ -69,8 +84,20 @@ func (a Agent) Args() []string {
 		args = append(args, "--")
 	}
 	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
+	if a.NotificationsOnly {
+		args = append(args, "--notifications-only")
+		if a.NotifyKinds != "" {
+			args = append(args, "--notify-kinds", a.NotifyKinds)
+		}
+		if a.NotifyWindow > 0 {
+			args = append(args, "--notify-window", a.NotifyWindow.String())
+		}
+	}
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
+	}
+	if a.Adapter != "" {
+		args = append(args, "--adapter", a.Adapter, "--delivery-dir", a.DeliveryDir)
 	}
 	if a.StateDir != "" {
 		args = append(args, "--state-dir", a.StateDir)
@@ -238,15 +265,68 @@ func removePartial(path string, err error) error {
 // for a second or so after the bootout, measured 2026-10-04).
 const BootstrapTries = 5
 
+// ReleasePoll is how often Install asks launchd, after the bootout, whether it still holds
+// the old service; DefaultExitTimeout is how long it asks, the launchd default for a plist
+// with no ExitTimeOut (the time launchd gives a daemon to exit before it kills it).
+const (
+	ReleasePoll        = 250 * time.Millisecond
+	DefaultExitTimeout = 20 * time.Second
+)
+
+// ExitTimeout is the plist's ExitTimeOut, DefaultExitTimeout when it has none.
+func ExitTimeout(plist string) time.Duration {
+	_, rest, ok := strings.Cut(plist, "<key>ExitTimeOut</key>")
+	if !ok {
+		return DefaultExitTimeout
+	}
+	rest = strings.TrimSpace(rest)
+	v, ok := strings.CutPrefix(rest, "<integer>")
+	if !ok {
+		return DefaultExitTimeout
+	}
+	v, _, ok = strings.Cut(v, "</integer>")
+	var n int
+	if _, err := fmt.Sscan(strings.TrimSpace(v), &n); !ok || err != nil || n <= 0 {
+		return DefaultExitTimeout
+	}
+	return time.Duration(n) * time.Second
+}
+
+// WaitReleased waits until launchd no longer holds the service target (gui/<uid>/<label>)
+// after its bootout: `launchctl print <target>` asked every poll, until it no longer finds
+// the service (anything but exit 0 with the service's own `<target> = {` block), at most
+// timeout. A bootstrap sent while launchd is still removing the old service is refused with
+// "37: Operation already in progress" for as long as the old daemon takes to exit (about
+// 5 s, the seat's adopt runs of 2026-10-07), more than BootstrapTries one second apart.
+// It answers how long it waited, and on timeout an error naming the label and the seconds.
+func WaitReleased(ctx context.Context, run Launchctl, target string, timeout, poll time.Duration, sleep func(time.Duration)) (time.Duration, error) {
+	var waited time.Duration
+	for {
+		out, err := run(ctx, "print", target)
+		if err != nil || !strings.Contains(out, target+" = {") {
+			return waited, nil
+		}
+		if waited >= timeout {
+			return waited, fmt.Errorf("launchd still holds %s %.0fs after its bootout (its exit timeout): the old daemon has not exited; nothing was bootstrapped", target, waited.Seconds())
+		}
+		if ctx.Err() != nil {
+			return waited, ctx.Err()
+		}
+		sleep(poll)
+		waited += poll
+	}
+}
+
 // Install writes the plist and loads it. A binary on /Volumes is copied under
 // the home first (PlanBinary); a copy that cannot be made is refused and
 // nothing is written (docs/SPEC-FRIEND.md). Then a bootout of whatever that
-// label runs now (nothing loaded is fine), then a bootstrap into the user's
+// label runs now (nothing loaded is fine), a wait until launchd no longer holds
+// the label (WaitReleased), then a bootstrap into the user's
 // domain, sent again after wait() while launchd answers EIO, so running it
 // again replaces the agent with the same result. It answers the plist's
 // path and the commands it ran.
 func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(path string, data []byte) error, wait func()) (path string, ran []string, err error) {
-	placed, copy, err := PlanBinary(a.Binary, a.Home)
+	placed, copy, err := a.BinaryPlan()
 	if err != nil {
 		return "", nil, err
 	}
@@ -259,6 +339,15 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		}
 	}
 	a.Binary = placed
+	if a.NotificationsOnly {
+		verified, _, err := a.BinaryPlan()
+		if err != nil {
+			return "", nil, err
+		}
+		if verified != placed {
+			return "", nil, fmt.Errorf("notification binary changed during copy; preserve the previous service and install the reviewed binary again")
+		}
+	}
 	path = a.PlistPath()
 	if err := CheckPlist(a.Plist()); err != nil {
 		return path, nil, err
@@ -273,6 +362,18 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	bootout := []string{"bootout", domain + "/" + a.Label()}
 	ran = append(ran, "launchctl "+strings.Join(bootout, " "))
 	_, _ = run(ctx, bootout...) // ignored: a label that is not loaded answers an error, and that is the state wanted
+	sleep := a.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	target := domain + "/" + a.Label()
+	waited, err := WaitReleased(ctx, run, target, ExitTimeout(a.Plist()), ReleasePoll, sleep)
+	if waited > 0 {
+		ran = append(ran, fmt.Sprintf("launchctl print %s (every %s until launchd released it: %s)", target, ReleasePoll, waited))
+	}
+	if err != nil {
+		return path, ran, err
+	}
 	bootstrap := []string{"bootstrap", domain, path}
 	for try := 1; ; try++ {
 		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
@@ -280,7 +381,7 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		if err == nil {
 			return path, ran, nil
 		}
-		if try == BootstrapTries || !strings.Contains(out, "Input/output error") {
+		if try == BootstrapTries || !(strings.Contains(out, "Input/output error") || strings.Contains(out, "Operation already in progress")) {
 			return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
 		}
 		wait()
@@ -488,7 +589,11 @@ func daemonPart(args []string) []string {
 // secrets wrap by its names and seat, then the daemon's own flags, --redis
 // and --server left to the install line that gave them.
 func (a Agent) Said() string {
-	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d, with --redis and --server as given here", a.Friend, a.Harness, a.Dir, a.Width)
+	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d", a.Friend, a.Harness, a.Dir, a.Width)
+	if a.Adapter == "folder" {
+		said += " --session " + a.Session + " --adapter folder --delivery-dir " + a.DeliveryDir
+	}
+	said += ", with --redis and --server as given here"
 	if len(a.Secrets) == 0 {
 		return said
 	}
@@ -497,4 +602,38 @@ func (a Agent) Said() string {
 		wrap += " --require " + name
 	}
 	return wrap + " -- " + said
+}
+
+// BinaryPlan isolates notification executables by content hash (SPEC-FRIEND.md,
+// notifications), so installing or rolling one back never overwrites the native binary.
+func (a Agent) BinaryPlan() (path string, copy bool, err error) {
+	if !a.NotificationsOnly {
+		return PlanBinary(a.Binary, a.Home)
+	}
+	home := slashClean(a.Home)
+	if home == "" || home == "." || home == "/" || onRemovableVolume(home) {
+		return "", false, fmt.Errorf("notification binary wants a home off /Volumes")
+	}
+	in, err := os.Open(a.Binary)
+	if err != nil {
+		return "", false, err
+	}
+	st, err := in.Stat()
+	if err != nil {
+		return "", false, closeWith(in, err)
+	}
+	if !st.Mode().IsRegular() {
+		return "", false, closeWith(in, fmt.Errorf("notification binary %s is not a regular file; install a reviewed executable", a.Binary))
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, in)
+	closeErr := in.Close()
+	if copyErr != nil {
+		return "", false, copyErr
+	}
+	if closeErr != nil {
+		return "", false, closeErr
+	}
+	path = filepath.Join(home, ".nova-friend", "notifications", "bin", fmt.Sprintf("%x", hash.Sum(nil)), "nova-friend")
+	return path, slashClean(a.Binary) != slashClean(path), nil
 }

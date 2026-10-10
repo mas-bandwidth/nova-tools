@@ -70,7 +70,7 @@ var verbEffect = map[string]string{
 	"streams":           "inspection: reads the work and merge tables once and prints each stream with the repositories and bases its cards record, its release, its open and landed counts, and with --cards every card's id, state, tier, title and needs; writes nothing",
 	"held":              "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":         "inspection: reads the sentinels and what each waits on, writes nothing",
-	"sentinel set":      "local write: replaces the sentinel's needs in the sprint's store, keeping its id, stream, score and log",
+	"sentinel set":      "local write: replaces the sentinel's needs in the sprint's store, keeping its id, stream, score and log; --dry-run writes nothing",
 	"view cards":        "inspection: lists or counts (--by tier|stream|col|holder) the work table's primaries, filtered by --col, --stream, --holder; writes nothing",
 	"view coordinator":  "inspection: reads what needs the seat (the tables, the inbox, the friends and the machines), writes nothing",
 	"view worker":       "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
@@ -80,7 +80,7 @@ var verbEffect = map[string]string{
 	"relink":            "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
 	"friend cards":      "inspection: reads the cards held on the friend's row, their packets and briefs, writes nothing",
 	"friend take":       "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
-	"friend give":       "local write: clears the friend's take-back mark on the named cards in the sprint's store",
+	"friend give":       "local write: clears the friend's take-back mark on the named cards in the sprint's store; --dry-run writes nothing",
 	"friend level":      "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",
 	"friend health":     "local write: records the coordinator's observation of the friend in the sprint's store, or removes it with --clear; --dry-run writes nothing",
 	"reader retire":     "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
@@ -98,6 +98,33 @@ var verbEffect = map[string]string{
 	"lane list":        "inspection: lists every machine's lanes and holders, writes nothing",
 	"lane take":        "store write: takes one lane on the machine for the worker, or joins the queue; --dry-run checks availability and writes nothing",
 	"lane give":        "store write: gives the worker's lane or queue position back; --dry-run checks whether a lane is held and writes nothing",
+	// the verbs whose one write is their store step, planned and not committed by --dry-run (stepdry.go)
+	"accept":   "local write: moves the eligible primaries in review into the merge queue, or records the coordinator's heavy read on each named primary, in the sprint's store; --dry-run writes nothing",
+	"ack":      "local write: closes the named notifications, nothing to be done, with the reason, in the sprint's store; --dry-run writes nothing",
+	"ask":      "local write: asks a reader for each named primary (one more with --another, another in place with --instead) in the sprint's store; --dry-run writes nothing",
+	"ci":       "local write: records the CI run's result, red or green, on each named primary in the sprint's store; --dry-run writes nothing",
+	"funded":   "local write: ends the provider's rest of its funds in the sprint's store, with the reason; --dry-run writes nothing",
+	"move":     "local write: moves the named cards to the stream, in line where --before, --after or --score says, in the sprint's store; --dry-run writes nothing",
+	"priority": "local write: with a level, sets it on the named cards or the stream in the sprint's store; with none, prints the levels and writes nothing; --dry-run writes nothing",
+	"redo":     "local write: returns, reworks and resumes the named conflicted cards in one step in the sprint's store; --dry-run writes nothing",
+	"resolve":  "local write: moves the waiting primaries whose needs landed in the sprint's store; --dry-run writes nothing",
+	"resume":   "local write: resumes each named stopped stream in the sprint's store, with what was done; --dry-run writes nothing",
+	"set":      "local write: sets the sprint's settings named in the sprint's store; --dry-run writes nothing",
+	"twin":     "local write: replaces the card by its twin in the sprint's store (a merging card is returned first, then twinned; its dry run plans the return alone); --dry-run writes nothing",
+
+	// card base (the base's 5a9340a155) writes through one store step too; its --dry-run is stepdry.go's
+	"card base": "local write: re-points the merging card's BASE to the branch in the sprint's store, after asking origin (a read) whether it holds that branch; --dry-run asks origin the same and plans the step, and --dry-run writes nothing",
+
+	// stop-return (the base's #5499) writes through one store step too; its --dry-run is stepdry.go's
+	"stop-return": "local write: returns the named stopped cards to the owner row that acknowledges the cancellation, keeping their placement and attempt, in the sprint's store; --dry-run writes nothing",
+
+	// seat push and seat pong (the base's #5477) write the seat's push record; each --dry-run is its own
+	"seat push": "store write: with --harness and --target, records the seat's push target (harness, target, session, adapter) in the sprint's store; with --sent, records the push loop's delivery of a check or its failure; with neither, prints the record and whether the seat is live and writes nothing; --dry-run checks the same and writes nothing",
+	"seat pong": "store write: proves the seat live by the nonce of the last check delivered, recording the proof in the sprint's store; --dry-run checks the nonce against the record and writes nothing",
+
+	// verbs that read and write nothing
+	"goal show": "inspection: reads the goals in the sprint's store, writes nothing",
+	"fsck seat": "inspection: reads the coordinator key, the seat record and the server's actor from the sprint's store and the sprint row's coordinator from nova-config's store, writes nothing",
 }
 
 // commonExit is the codes of every other verb.

@@ -398,6 +398,9 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		if width >= 0 {
 			out["width"] = width // the worker runs this many: the fleet row is the truth
 		}
+		if word := machineWord(ctx, st); word != "" {
+			out["machine"] = word // STOPPED: the worker cancels its lanes and takes nothing (internal/member machineStop)
+		}
 		if *as != "" {
 			out["reader"] = isReader // --as is a row of the readers table
 		}
@@ -576,6 +579,9 @@ type whereView struct {
 	// StreamCosts is each stream's cards by their briefs' tier (`tiers`, counts) and its
 	// spend by the tier each attempt and read ran on (`cost_by_tier`, money strings), from
 	// the tick's where record (sprint.TierCosts); absent before the first tick of an epoch.
+	// A stream's complete cost (`total_cost`, and `per_landed` on its work row) includes
+	// its reads. The reads are also on their own: `cost_reads` (the same dollars as
+	// `read_cost`) and `reads_unpriced` (finished reads with no dollar figure).
 	StreamCosts map[string]sprint.TierCosts `json:"stream_costs,omitempty"`
 	// ReadSpend is the day's read spend per route, one line under the summary
 	// (sprint.ReadSpendLine), from the tick's where record; absent when no read ended today.
@@ -652,10 +658,15 @@ type whereView struct {
 	// tick's where record (sprint.ReadsWaiting).
 	Backup       string `json:"backup"`
 	ReadsWaiting int    `json:"reads_waiting"`
+	// ReadsWindow is the ok and broken verdicts over the last 30 minutes of running time and
+	// when that window began (sprint.ReadsWindowOf), from the tick's where record; zero before
+	// the first tick of an epoch.
+	ReadsWindow sprint.ReadsWindowView `json:"reads_window"`
 	// ReadCards is the epoch's read cards ready, working and done, and each fleet and friends
 	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
 	// where record (sprint.RowCardCounts).
 	ReadCards sprint.ReadCardCounts `json:"read_cards"`
+	Fix       int                   `json:"fix,omitempty"`
 	// Priorities is every open primary whose level is not normal, by level, and
 	// StreamPriorities each stream's default level that is not normal, from the tick's where
 	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
@@ -763,6 +774,7 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+	Priority string    `json:"priority,omitempty"`
 	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
 }
 
@@ -860,7 +872,7 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 			continue
 		}
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
-			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier)}
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier), Priority: queuePriority(c)}
 		own := "dealt"
 		if c.Col == string(sprint.Working) {
 			own = "taken"
@@ -1173,6 +1185,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	working, review, merging := pipelineCounts(shapes[0])
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
 	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
+	v.ReadsWindow = facts.ReadsWindow
 	v.ReadCards = facts.ReadCards
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
@@ -1226,7 +1239,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if line := backupLine(v.Backup, working, review, merging, v.ReadsWaiting); line != "" {
 		b.WriteString(line + "\n")
 	}
-	// the day's read spend per route, from the same record (cost_view.go)
+	// the day's read spend per route, from the same record (cost_view.go). A reader's
+	// own sum, the median per read and the unpriced count are the stats reads table
+	// (sprint.ReaderStat); a stream's reads are cost_reads and reads_unpriced here.
 	if v.ReadSpend = sprint.ReadSpendLine(facts.Streams); v.ReadSpend != "" {
 		b.WriteString(v.ReadSpend + "\n")
 	}
@@ -1378,6 +1393,24 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 	}
 	v.Releases = sprint.WhereReleasesCountCardsLeft(clocks, streamLeft)
+	for stream, cols := range facts.FixStates {
+		row := v.Tables[sprint.Work][stream]
+		if row == nil {
+			continue
+		}
+		n := 0
+		for col, count := range cols {
+			existing, _ := strconv.Atoi(fmt.Sprint(row[col])) // ignored: absent column is zero
+			count = min(count, existing)
+			row[col] = strconv.Itoa(existing - count)
+			n += count
+		}
+		if n > 0 {
+			row["fix"] = strconv.Itoa(n)
+			v.Fix += n
+		}
+	}
+
 	return v, b.String(), nil
 }
 
@@ -1848,7 +1881,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if *atEpoch >= 0 || *timeout <= 0 {
 			return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
 		}
-		src, err := a.storeSource(ctx, st, *deadline, *stale)
+		src, err := a.storeSource(ctx, st, c.redis, *deadline, *stale)
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}

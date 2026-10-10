@@ -207,3 +207,27 @@ func TestBackupOutPrintsItsResultLine(t *testing.T) {
 	require.Contains(t, stdout, "bytes=", "the bytes")
 	require.Contains(t, stdout, "secrets=1 matched=0", "the scan's verdict")
 }
+
+// The throwaway's socket stays in the work directory while its path fits a Unix
+// socket; under a work directory too deep for one (a CI runner's long TMPDIR) it
+// goes to a fresh private directory whose path fits, which the twin removes.
+func TestTheTwinSocketFitsAUnixSocketPath(t *testing.T) {
+	t.Parallel()
+	short := t.TempDir()
+	if len(filepath.Join(short, "twin.sock")) <= twinSocketMax {
+		sock, dir, err := twinSocket(short)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(short, "twin.sock"), sock, "a path that fits stays in work")
+		assert.Empty(t, dir, "nothing is made for a socket in work")
+	}
+	deep := filepath.Join(short, strings.Repeat("d", 120))
+	sock, dir, err := twinSocket(deep)
+	require.NoError(t, err)
+	require.NotEmpty(t, dir, "a socket too long for work gets a directory of its own")
+	t.Cleanup(func() { _ = os.Remove(dir) }) // ignored: the empty directory twinSocket made
+	assert.LessOrEqual(t, len(sock), twinSocketMax, "the socket path fits a Unix socket: %s", sock)
+	assert.Equal(t, dir, filepath.Dir(sock))
+	fi, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), "the socket's directory is private")
+}

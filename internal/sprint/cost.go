@@ -305,7 +305,7 @@ func readConsumer(s *Snapshot, c *Card, run int, end, rec string) Consumer {
 	if !subscriptionUsage(u) {
 		model = cmp.Or(u.Model, c.F(FieldModel)) // a routed read ran its route's model
 	}
-	return Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: u.Route, Model: model,
+	return Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: cmp.Or(u.Route, c.F(FieldRoute)), Model: model,
 		Tier: c.F(FieldTier), End: end, At: stamp(s.Now), Key: key, Usage: u}
 }
 

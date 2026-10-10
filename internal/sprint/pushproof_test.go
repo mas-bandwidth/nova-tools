@@ -26,7 +26,7 @@ func TestThePushProofIsLiveOnlyAfterThePongOfTheLastCheck(t *testing.T) {
 	rec = PushSent(rec, "n1", "", t0)
 	assert.False(t, PushDue(rec, t0.Add(PushAnswerBound-time.Second)), "the check waits its answer bound")
 	assert.True(t, PushDue(rec, t0.Add(PushAnswerBound)), "an unanswered check is asked again")
-	assert.Contains(t, PushWhy("rowan", rec, true, t0), "the push check n1 went into rowan's opencode session and no pong")
+	assert.Contains(t, PushWhy("rowan", rec, true, t0), "the push check went into rowan's opencode session and no pong")
 	_, why = PushPong(rec, true, "n0", t0)
 	assert.Contains(t, why, "only the session's answer to the last check counts")
 
@@ -50,8 +50,8 @@ func TestThePushProofIsLiveOnlyAfterThePongOfTheLastCheck(t *testing.T) {
 	_, why = PushPong(failed, true, "n2", at.Add(PushProofEvery))
 	assert.Contains(t, why, "a pong to it is no proof")
 
-	assert.Contains(t, PushCheckText("rowan", "n3"), PushCheckPrefix+"n3\n")
-	assert.Contains(t, PushCheckText("rowan", "n3"), "nova-sprint seat pong n3 --actor rowan")
+	assert.Contains(t, PushCheckText("n3", PushPongCommand("rowan", "n3", "127.0.0.1:6380", "")), PushCheckPrefix+"n3\n")
+	assert.Contains(t, PushCheckText("n3", PushPongCommand("rowan", "n3", "127.0.0.1:6380", "")), "nova-sprint seat pong n3 --actor rowan")
 	assert.Equal(t, "nova-sprint seat install --actor rowan --harness opencode --target /w", PushSetup("rowan", rec, true))
 	assert.Contains(t, NotPushTarget(PushRecord{Name: "rowan", Target: "/w"}), "--harness <name> is required")
 	assert.Contains(t, NotPushTarget(PushRecord{Name: "rowan", Harness: "codex"}), "--target <dir> is required")
@@ -75,7 +75,7 @@ func TestTheSeatCheckSaysPushDownWithTheRemedy(t *testing.T) {
 	assert.False(t, ok, "an unmeasured push says no line")
 	l, ok := line(PushM{Measured: true, Holder: "rowan"})
 	require.True(t, ok)
-	assert.Equal(t, `MACHINERY push DOWN holder=rowan harness=- adapter=- why="rowan has no push target recorded: the push loop cannot reach the session" remedy="nova-sprint seat install --actor rowan --harness <harness> --target <session dir>"`, l.String())
+	assert.Equal(t, `MACHINERY push DOWN holder=rowan harness=- adapter=- proven=- why="rowan has no push target recorded: the push loop cannot reach the session" remedy="nova-sprint seat install --actor rowan --harness <harness> --target <session dir>"`, l.String())
 	rec := PushRecord{Name: "rowan", Harness: "opencode", Target: "/w", Nonce: "n1", Sent: now.Add(-2 * time.Minute), Proven: now.Add(-time.Minute), PongOf: "n1"}
 	l, _ = line(PushM{Measured: true, Holder: "rowan", Record: rec, Recorded: true})
 	assert.Equal(t, "MACHINERY push OK holder=rowan harness=opencode adapter=opencode proven=1m0s ago", l.String())
@@ -88,11 +88,12 @@ func TestAFolderSeatIsRefusedWithItsTwoCommands(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 6, 13, 0, 0, 0, time.UTC)
 	rec := PushRecord{Name: "rowan", Harness: "claude", Adapter: AdapterFolder, Target: "/w/rowan's inbox"}
-	watch := `d='/w/rowan'\''s inbox'; s=$(ls -1 "$d"); while sleep 5; do n=$(ls -1 "$d"); [ -n "$n" ] && printf '%s\n' "$n" | grep -vxF "$s" | sed "s|^|$d/|"; s=$n; done`
+	watch := `nova-sprint seat watch '/w/rowan'\''s inbox'`
 	assert.Equal(t, watch, FolderWatch(rec.Target))
 	assert.Equal(t, "PUSH DOWN: no push check has been delivered into rowan's claude session yet: is inbox --wait --push seat running?; a coordinator that cannot be reached is not a coordinator, and nothing was changed; run: nova-sprint seat install --actor rowan --harness claude --target /w/rowan's inbox; then, from inside the session, watch the folder with a Monitor: "+watch+" ; and answer the PROOF-<nonce> file it shows: nova-sprint seat pong <nonce> --actor rowan", PushDown("rowan", rec, true, now))
 	rec = PushSent(rec, "n1", "", now)
-	assert.Contains(t, PushDown("rowan", rec, true, now), "answer the PROOF-n1 file it shows: nova-sprint seat pong n1 --actor rowan")
+	assert.NotContains(t, PushDown("rowan", rec, true, now), "n1")
+	assert.Contains(t, PushDown("rowan", rec, true, now), "answer the PROOF-<nonce> file it shows: nova-sprint seat pong <nonce> --actor rowan")
 	rec, why := PushPong(rec, true, "n1", now)
 	require.Empty(t, why)
 	assert.Empty(t, PushDown("rowan", rec, true, now), "proven")

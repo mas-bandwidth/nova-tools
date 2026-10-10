@@ -57,14 +57,14 @@ What `--local` never touches, and how each step decides it has nothing to do, is
 
 ### setup-nova-doctor-r-r5.w1: nova-doctor
 
-When anything is wrong, run `nova-doctor` first. It runs every check, prints one
+When anything is wrong, run `nova-doctor run` first. It runs every check, prints one
 `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line each, and gives the one fix
 line for each thing that is not ok. It changes nothing.
 
 ```
-nova-doctor            every check
-nova-doctor --local    skip the checks only a fleet needs, and say which
-nova-doctor --check self --json
+nova-doctor run                     every check
+nova-doctor run --local             skip the checks only a fleet needs, and say which
+nova-doctor run --check self --json
 ```
 
 Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
@@ -138,6 +138,40 @@ no `go` there it is ok. On a bench it fails when `go` is absent, when its versio
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
 
+### dep-redis-stores-b.w7: the Redis stores and their ACL users
+
+The Redis stores and their ACL users are a hidden dependency because the sprint store,
+the bus store and any other the inventory names each have ACL users per role
+(coordinator, member, friend, reader). The `nova-redis acl` verbs render and compare
+the store's ACL with the expected users and rules as code in `internal/redisacl`; a
+misconfigured ACL will cause card runs to fail or behave unexpectedly.
+
+Who needs it: any machine that runs cards with Redis stores. `nova-up --local` provides
+the Redis store on the one machine it sets up, with ACL users `coordinator`, `bench`,
+`ns-table` and `ns-friend` rendered by `nova-redis acl render` and sealed into the
+secrets store; the `redis` step in `nova-up` (`internal/up/redis.go`) applies the ACL
+users and their passwords. A person on another machine does the same by hand: ensure
+the Redis store is running, then run `nova-redis acl render` to see the expected users,
+and `nova-redis acl check --redis <addr> --user <user> --password-env <NAME>` to verify
+the live ACL matches, and `nova-redis acl apply --redis <addr> --user <user> --password-env <NAME>` to fix any drift. The doctor check `redis-stores`
+(`internal/doctor/check_redis.go`) reads each store's ACL and compares it with the
+expected users, reporting any missing or different user by name with the fix line.
+
+The `redis-stores` doctor check is fleet only, so `nova-doctor --local` skips it and
+lists it among the skipped checks. Without `--local` it fails when the Redis store is
+not running or its ACL does not match the expected users; the evidence names each
+missing or different user and the fix line runs `nova-redis acl apply` with the needed
+address and user. The check passes when every store's ACL has the expected users present
+with the expected command and key rules.
+
+```sh
+# Check the ACL of a Redis store
+nova-redis acl check --redis 127.0.0.1:6390 --user coordinator --password-env NOVA_REDIS_PASSWORD
+
+# Apply ACL fixes if drift is found
+nova-redis acl apply --redis 127.0.0.1:6390 --user coordinator --password-env NOVA_REDIS_PASSWORD
+```
+
 ### dep-tailnet-b.w4: the tailnet
 
 A fleet's machines reach each other and the stores only over its tailnet (tailscale): the
@@ -156,6 +190,14 @@ when its backend state is not `Running`, when this machine has no name on the ta
 a machine of `nova-config machine list` is not named on the tailnet; the evidence names each
 missing machine and the fix line runs `tailscale up` on it. The check passes when tailscale is
 up, this machine is named, and every inventory machine answers on the tailnet.
+
+### sprint-local-only-mode-r-bcb.w5: when to use local-only mode
+
+Use local-only mode on one machine with no tailnet, the setup a stranger runs with
+`nova-up --local`: set `NOVA_SPRINT_LOCAL=1` in the environment of every nova-sprint process on
+that machine. nova-sprint then accepts only loopback addresses, the store's and the listeners'
+alike; a tailnet or other address is refused naming the mode, so nothing asks for a tailnet,
+and nova-doctor's tailnet check skips with the reason `local-only mode: no tailnet is asked for and none is needed`. Leave it unset on a machine that is on the fleet's tailnet.
 
 ### dep-secrets-bb.w4: the secrets store and keys
 
@@ -188,7 +230,7 @@ each row whose `seat` is this machine's) appears in the store's own listing
 naming the verb or the step above: install `sops`, set the missing variable, `chmod 600` or
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
-checks and says which; run `nova-doctor` plain to see it.
+checks and says which; run `nova-doctor run` without `--local` to see it.
 
 ### dep-ssh-b.w8: ssh between the coordinator and the benches
 
@@ -215,4 +257,36 @@ The `ssh` doctor check (`internal/doctor/check_ssh.go`) reads the inventory
 runs that probe once per machine, each bounded by the check's own deadline. It names every
 bench whose probe fails and the reason (unknown host key, no key or permission denied,
 timeout), with the one fix line above. It is fleet-only, so `nova-doctor --local` skips it
-and says which; run `nova-doctor` plain to include it.
+and says which; run `nova-doctor run` without `--local` to include it.
+
+### sprint-dashboard-verb-r-b.w7: the sprint dashboard
+
+The sprint dashboard is `nova-sprint dashboard`, run as a loop record on the
+coordinator's machine, never a hand-written launchd or systemd unit. Add the record, apply
+it, and the fleet's loops play writes its unit:
+
+```
+nova-config loop add sprint-dashboard --machine <m> --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--logo","<home>/sprint-logo.svg"]' --keepalive true --as <name>
+```
+
+It serves the page on `127.0.0.1:7390` and reads the sprint once a second whether or not
+a page is open; `--logo` is optional. The contract is
+[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
+[FLEET.md](FLEET.md). `nova-doctor --check dashboard` says `ok` when the loop record's unit
+is installed and its loopback port answers, `warn` when no loop record runs the dashboard
+on this machine or a hand unit serves it, and `fail` when the unit is there and the port
+does not answer. It is a fleet check: `--local` skips it.
+
+### sprint-dashboard-verb-r-b.w8: the dashboard's loopback check and logo type
+
+`nova-doctor --check dashboard` fails, not passes, when the loop record runs
+`nova-sprint dashboard` but its `--listen` names no loopback address: the fix line names
+the loop record and a loopback address to add. The logo routes type the image by its magic
+bytes before its file name, so a WebP image named `logo.png` is served as `image/webp`.
+
+### sprint-dashboard-verb-r-b.w9: the dashboard fixes carried onto the current base
+
+The doctor check requires the loop record's dashboard to answer on loopback, and the
+logo routes detect raster content from its bytes before the file name. Tests:
+`TestDashboardCheck` (internal/doctor) and
+`TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).

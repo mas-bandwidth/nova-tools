@@ -121,15 +121,23 @@ func (r *rig) world() world {
 				"lan.test":   {netip.AddrFrom4([4]byte{10, 0, 0, 5})},    // a private network that is not the tailnet
 			}[host], nil
 		},
-		now:      func() time.Time { return r.now },
-		fileSize: func(string) (int64, error) { return 0, nil },
-		fileLine: func(_ string, from int64) (string, int64, error) {
+		now: func() time.Time { return r.now },
+		wakeArm: func(_ string, token string) (wakeCursor, error) {
+			if token != "" {
+				return parseWakeCursor(token)
+			}
+			return wakeCursor{Version: 1, Identity: "fake", Hash: strings.Repeat("0", 64)}, nil
+		},
+		wakeLine: func(_ string, c wakeCursor) (string, wakeCursor, error) {
 			if len(r.wake) == 0 {
-				return "", from, nil
+				return "", c, nil
 			}
 			line := r.wake[0]
 			r.wake = r.wake[1:]
-			return line, from + int64(len(line)) + 1, nil
+			if line != "" {
+				c.Offset += int64(len(line)) + 1
+			}
+			return line, c, nil
 		},
 	}
 }
@@ -495,4 +503,24 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.OK(t, "send", "--as", "bob", "--to", "ada", "--re", mid, "--subject", "re first", "--body", "done")
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
+}
+
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	// Capture help output
+	topHelp := cli.Do(t, "help").Exit(0).Stdout
+	sendHelp := cli.Do(t, "help", "send").Exit(0).Stdout
+
+	// The precedence string that should appear in the flag help
+	// The tool reads: --redis flag default (NOVA_BUS_REDIS), else NOVA_SPRINT_REDIS, else fleet:bus
+	const precedence = "NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus"
+
+	// Top-level help should mention NOVA_BUS_REDIS
+	assert.Contains(t, topHelp, "NOVA_BUS_REDIS", "top-level help should mention NOVA_BUS_REDIS")
+
+	// Help send should contain the full precedence
+	assert.Contains(t, sendHelp, precedence, "help send should name the full Redis address precedence")
 }

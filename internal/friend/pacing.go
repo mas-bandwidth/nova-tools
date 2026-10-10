@@ -251,23 +251,6 @@ func PacingOf(setting float64) float64 {
 	return DefaultPacing
 }
 
-// ParsePacing reads the friend's pacing off her beat's answer
-// (row_pacing=<percent>, beside row_mode and row_width) as a fraction; ok
-// is false when the answer carries none, or one that is no percent in
-// (0, 100].
-func ParsePacing(answer string) (pacing float64, ok bool) {
-	for _, w := range strings.Fields(answer) {
-		if v, found := strings.CutPrefix(w, "row_pacing="); found {
-			n, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
-			if err != nil || n <= 0 || n > 100 {
-				return 0, false
-			}
-			return n / 100, true
-		}
-	}
-	return 0, false
-}
-
 // PacingJudgmentText is what the coordinator is told when a friend's lanes
 // are paced below half her row's width: one judgment.
 func PacingJudgmentText(friend string, paced, width int, pacing float64, use string) (subject, body string) {

@@ -256,9 +256,19 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	// stopped for three hours: no deadline runs
 	h.stopMachine()
 	h.tick(3 * time.Hour)
+	// The stopped children return their captured leases before START. Stopped
+	// wall time must not itself create an unfinished-work deadline.
+	m, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	require.Len(t, m.StopDebt, 2)
+	for _, d := range m.StopDebt {
+		h.must(StopReturnStep(sprint.StopReturnReq{As: d.Row, IDs: []string{d.ID}, Gens: map[string]int{d.ID: d.Gen}, Reason: "child stopped"}))
+	}
 	h.startMachine()
 	h.machine()
 	require.Equal(t, 0, h.written(sprint.NWorkLate), "a deadline ran while the machine was stopped")
+	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+	h.run(TakeStep(sprint.TakeReq{As: "m2", Sel: sprint.Sel{Limit: 1}, Who: "m2"}))
 	h.tick(sprint.DeadlineUnfinished + time.Minute)
 	h.machine()
 	// each member's work card, taken and not finished
@@ -323,19 +333,25 @@ func TestStopLetsTheTickInFlightFinish(t *testing.T) {
 	require.Empty(t, res.Parts, "a tick began after the stop: %+v", res)
 }
 
-func TestOutsideActorsWorkWhileStopped(t *testing.T) {
+func TestOwnerWorkWaitsForStartWhileCoordinatorCanLandStopped(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
 	h.startMachine()
 	h.machine()
 	h.stopMachine()
+	res := h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+	require.NotEmpty(t, res.Refused, "STOP refuses a new worker child")
+	h.startMachine()
 	h.work("m1")
 	h.work("m2")
-	h.startMachine()
 	h.machine()
 	h.stopMachine()
+	res = h.run(ReadStep(sprint.ReadReq{As: "reader-a", Verdict: "ok", Sel: sprint.Sel{Limit: 1}, Who: "reader-a"}))
+	require.NotEmpty(t, res.Refused, "STOP refuses a new read report")
+	h.startMachine()
 	h.readAll()
+	h.stopMachine()
 	h.landAll("s1")
 	s := h.snap()
 	require.Equal(t, 2, s.Work.Count("s1", sprint.Landed), "landed %d while stopped", s.Work.Count("s1", sprint.Landed))

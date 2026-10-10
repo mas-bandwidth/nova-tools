@@ -136,17 +136,6 @@ type FriendHealthWrite struct {
 	Health FriendHealth `json:"health"`
 }
 
-// ObservedStatus is the friends' rule over the coordinator's observation
-// alone at now: up only when the observation's word is up (a wake ping her
-// session answered), under the current seat generation (an old seat's proof
-// never looks up under a new seat), with its proof under FriendPongWindow old
-// and not dated after now (a negative age is no proof); down otherwise,
-// whatever finer word the row keeps (DaemonPong, her daemon's own pong, is down).
-func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
-	status, _ := FriendEvidence(FriendPresence{Health: h, Generation: generation}, now)
-	return status
-}
-
 // FriendPresence is everything the friends' rule reads of one friend: the
 // coordinator's hold, her own beat (shown, never evidence), the coordinator's
 // observation of her, the seat's generation now, and when a card of hers last

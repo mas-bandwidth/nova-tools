@@ -178,7 +178,11 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		oneline.Field(opts.AsName), oneline.Field(opts.From), len(names))
 	switch {
 	case opts.NoPR:
-		return fmt.Sprintf("%s committed branch=%s", head, oneline.Field(branch)), nil
+		// SPEC-SECRETS "seat inject" says the result names the next command; the
+		// store is a command argument, so quote it as one POSIX shell word.
+		return fmt.Sprintf("%s committed branch=%s\n"+
+			"SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C %s push -u origin %s, then open and merge its pull request",
+			head, oneline.Field(branch), oneline.ShellWord(opts.StoreDir), oneline.Field(branch)), nil
 	case !merged:
 		return fmt.Sprintf("%s pr=#%s open (gate not yet approved)", head, prNum), nil
 	}

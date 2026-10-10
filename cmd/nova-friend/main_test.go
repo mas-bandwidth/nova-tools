@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/friend/friendtest"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -53,8 +54,8 @@ type rig struct {
 	home         string
 	answered     map[string]bool // the session checks bob's fake session has answered
 	alive        friend.Aliver
-	deaf         bool          // bob's opencode session takes a turn and never runs the pong line
-	fs           *friend.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	deaf         bool              // bob's opencode session takes a turn and never runs the pong line
+	fs           *friendtest.MemFS // the harness settings' filesystem: bob's directory /w/bob
 }
 
 type fakeAlive struct {
@@ -71,14 +72,16 @@ func (f fakeAlive) Alive(context.Context) friend.Liveness {
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	fs := friend.NewMemFS()
+	fs := friendtest.NewMemFS()
 	require.NoError(t, fs.MkdirAll("/w/bob", 0o755))
 	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}, fs: fs}
 }
 
 func (r *rig) world() world {
 	return world{
-		getenv: func(k string) string { return r.env[k] },
+		stepBeat: true,
+		checkGo:  func(f func()) { f() }, // fake-clock checks complete before the clock advances again
+		getenv:   func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
 				return nil, nil, r.store.Fail
@@ -287,7 +290,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- last_beat_age=- daemon_version=- binary=- delivered=2 session=- mode=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- last_beat_age=- daemon_version=- binary=- delivered=2 envelope=0 envelope_bytes=0 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
@@ -337,7 +340,7 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`,
 			"INSTALL NOTE check: CHECK OK harness=opencode took=", "NOTE check it: nova-friend status --as bob --dir /w/bob")
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>--session</string>\n    <string>ses_1</string>")
@@ -382,7 +385,7 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>"+dst+"</string>")
 	assert.NotContains(t, string(raw), "/Volumes/")
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 
 	refused := newRig(t, "ada", "bob")
 	refused.copy = func(string, string) error { return errors.New("disk full") }
@@ -429,6 +432,8 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 	written, err := os.ReadDir(agents)
 	require.NoError(t, err)
 	assert.Len(t, written, 1, "install writes the daemon's agent alone; the beat needs no plist of its own")
+	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390", "--dry-run").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390 dry_run=true")
+	assert.Empty(t, r.beats, "a dry run sends no beat")
 	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390")
 	assert.Equal(t, []string{"127.0.0.1:6390 bob"}, r.beats, "the verb makes the same call the daemon's loop makes")
 	r.beatErr = errors.New("the sprint server at 127.0.0.1:6390 did not answer")
@@ -500,7 +505,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
 			assert.Equal(t, 0, code, errb.String())
 			assert.NotContains(t, out.String(), "REFUSED")
-			assert.Contains(t, out.String(), "push proof: none owed: claude runs each card as a process of its own")
+			assert.Contains(t, out.String(), "push proof: owed by the folder: claude runs each card as a process of its own, so the session check goes in as")
 			assert.Contains(t, out.String(), "mode: one-shot, from batch (the friend row)")
 		})
 	}
@@ -729,7 +734,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken mode=- held=- inbox=- missing=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
+		Out(`delivered=0 envelope=0 envelope_bytes=0 session=broken mode=- held=- inbox=- missing=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
@@ -954,6 +959,15 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.StateDirIn(dir)
 	w := r.world()
+	checksStarted := 0
+	w.checkGo = func(f func()) {
+		checksStarted++
+		if checksStarted == 1 { // establish initial proof before the fake clock jumps; later turns remain asynchronous
+			f()
+			return
+		}
+		go f()
+	}
 	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
 		return nil, "ada", nil // the carried startup note comes from the actual seat
 	}
@@ -1052,16 +1066,24 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		"no up beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
 	// her beat says down instead, with the until and the reason (limits-mean-down-w-r5.w1~15)
 	require.NotEmpty(t, downBeats, "she beats down while limited")
+	limitBeats := 0
 	for _, b := range downBeats {
 		if strings.HasPrefix(b.reason, "push unproven: ") {
 			// the daemon's start, before its first check is answered: its own word, down
 			assert.True(t, b.at.Before(turns[0].at), "a push-unproven down beat only at the start: %s", b.at)
 			continue
 		}
+		if strings.HasPrefix(b.reason, "no session answer to session check ") {
+			// The fake clock may outrun an asynchronous check turn. Its unanswered
+			// nonce must still beat down, never manufacture an up session.
+			continue
+		}
+		limitBeats++
 		assert.False(t, b.at.Before(turns[0].at) || b.at.After(turns[2].at), "a down beat only while limited, the wake turn's answer ending it: %s", b.at)
 		assert.False(t, b.until.Before(turns[0].at.Add(10*time.Minute)), "until the reset the text named: %s", b.until)
 		assert.Equal(t, "harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.", b.reason)
 	}
+	assert.Positive(t, limitBeats, "the harness limit itself must be reported down")
 	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
 	require.NoError(t, err)
 	var told []string
@@ -1257,7 +1279,7 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	// the plan, from the same pong line, with nothing delivered and no store opened
 	r.store.Fail = errors.New("store down")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--to", "ada", "--dry-run").Exit(0).
-		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --to ada\"", "NOTE nothing was delivered")
+		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --dir /w/bob --to ada\"", "NOTE nothing was delivered")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(2).Err("CHECK REFUSED: the store did not answer: store down")
 
 	// install: the check's fail is a NOTE, the agent stays loaded
@@ -1319,6 +1341,9 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		Args: []string{"host", "--as", "bob", "--harness", "aider", "--dir", "./bob", "--dry-run", "--", "aider"},
 		Want: []string{"HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command=\"tmux new-session -d -s friend-bob -c ./bob -- aider\""},
 	}
+	doc, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), strings.TrimPrefix(step.Line, "$ "), "the executed command is also in the reference")
 	var out, errb strings.Builder
 	w := newRig(t).world()
 	code := run(step.Args, strings.NewReader(""), &out, &errb, w)

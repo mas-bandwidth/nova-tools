@@ -186,10 +186,15 @@ func Add(s *Snapshot, r AddReq) Plan {
 		p.Places = append(p.Places, pl)
 	}
 	var head []Change
+	reopen := false
 	switch {
 	case ctl == nil:
 		head = append(head, change(Merge, createEntry(CtlID(r.Stream), r.Stream, Ctl, 0,
 			map[string]string{"kind": "stream", "state": StreamWaiting, "since": stamp(s.Now)})))
+	case ctl.F("state") == StreamLanded && StopHasLanded(s, r.Stream):
+		// a card past a landed stop reopens the stream; no stop, and it comes back waiting
+		reopen = true
+		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWorking, "since": stamp(s.Now)})))
 	case ctl.F("state") == StreamLanded:
 		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})))
 	}
@@ -619,6 +624,24 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	// More work: the sprint is not done. An add that only opens a stream
 	// admits no card, and leaves it done.
+	if reopen && admits(p) {
+		var stopID string
+		var admitted, extra []string
+		var got []float64
+		for _, a := range in {
+			extra = append(extra, a.id)
+			if !planCreates(p, a.id) {
+				continue
+			}
+			got = append(got, a.score)
+			if a.sent || a.gate {
+				stopID = a.id
+				continue
+			}
+			admitted = append(admitted, a.id)
+		}
+		p = reopenAdd(p, s, r.Stream, r.Who, stopID, admitted, got, extra)
+	}
 	if admits(p) {
 		for _, o := range s.Open {
 			if o.Note.Type == NSprintDone {
@@ -1207,11 +1230,12 @@ func named(sel Sel) bool { return len(sel.IDs) > 0 || sel.Only != nil }
 // name, or names and is not the card's live one.
 func liveGen(verb string, c *Card, gens map[string]int) string {
 	g, ok := gens[c.ID]
+	live := max(c.Int("gen"), 1) // legacy first read cards omit gen; their lease is g1
 	switch {
 	case !ok:
-		return fmt.Sprintf("names no generation; the live one is %d: %s %s@%d", c.Int("gen"), verb, c.ID, c.Int("gen"))
-	case g != c.Int("gen"):
-		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, c.Int("gen"), orDash(c.Row))
+		return fmt.Sprintf("names no generation; the live one is %d: %s %s@%d", live, verb, c.ID, live)
+	case g != live:
+		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, live, orDash(c.Row))
 	}
 	return ""
 }
@@ -1456,11 +1480,15 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				return why
 			}
 		}
-		if !c.Placed() || c.Col != Working {
+		late := byID && lateFinish(s, c)
+		if (!c.Placed() || c.Col != Working) && !late {
 			return "not working (it is " + placeWord(c) + ")"
 		}
 		if len(members) > 0 && !contains(members, c.Row) {
 			return "dealt to " + c.Row + ", not " + r.As
+		}
+		if late {
+			return lateFinishWhy(c, r)
 		}
 		if pr := s.Work.Placed(c.F("primary")); pr == nil || pr.Col != Working || pr.F("work") != c.ID {
 			return "its primary " + c.F("primary") + " is not working on it"
@@ -1498,6 +1526,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			who = r.Who
 		}
 		pr := s.Work.Placed(c.F("primary"))
+		late := c.Col == DoneFailed // a late report for the attempt a deadline failed (lateFinish)
 		// how a failed finish is routed: by the reason line's prefix, or by the take's
 		// attempt decision at or above its class's bar on the card (decide.go, finishKind)
 		kind, class, used := "", "", false
@@ -1585,6 +1614,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		identical := false
 		if r.Failed && !passed && defect == "" {
 			set["failed"] = itoa(pr.Int("failed") + 1)
+			if late {
+				set["failed"] = pr.F("failed") // the attempt failed once: its late HOLD is the same failure
+			}
 			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go);
 			// a decided class is the class when the decision routed the finish
 			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
@@ -1596,6 +1628,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		addConsumer(pr, set, cons)
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
+		if late {
+			// the attempt's failed judgments are this report's to answer: closed, and the
+			// finish writes its own below
+			u.Closes = closesFor(s.Open, []string{NWorkFailed, NBound, NStranded}, pr.ID)
+			u.Moved = fmt.Sprintf("%s failed -> done %s (a late report for the attempt the deadline failed); %s review at attempt %d", c.ID, result, pr.ID, pr.Int("attempt"))
+		}
 		if defect != "" {
 			set[FieldBriefDefect] = defect
 			u.Moved = fmt.Sprintf("%s working -> done defect (a brief defect: %s); %s working -> review", c.ID, defect, pr.ID)
@@ -1616,6 +1654,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			from, _ := CardTiers(pr)
 			why := fmt.Sprintf("escalated from %s to %s: attempts %d and %d failed the same way (%s) on %s", from, next, attempt-1, attempt, set[FieldFailure], from)
 			set[FieldTierNow], set["why"] = next, why
+			reworkPriority(s, pr, set)
 			delete(set, "result")
 			delete(set, FieldFailure)
 			delete(set, FieldFailureAt)
@@ -1678,14 +1717,67 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
-		friendNext(s, c, &u, p.Units)
+		if !late { // a late report frees no lane: the deadline's failure freed it
+			friendNext(s, c, &u, p.Units)
+		}
 		p.Units = append(p.Units, u)
 	}
 	return p
 }
 
+// lateFinish says the finish of work card c is a late report for the attempt a deadline
+// already failed (docs/SPEC-SPRINT.md section 8, "A late report finishes the failed
+// attempt"; tla/SprintRules.tla, Part "answers", LateReportFinishes): c is done failed, and its primary is in review on it at its attempt, failed,
+// so no later attempt has started. Such a report finishes that attempt rather than be
+// refused, so the card does not go round again for work that is done. Only an attempt the
+// deadline failed takes one (deadlineFailed): an attempt its own worker failed was
+// reported already, and a finish for it again (a retry, a duplicate) is refused as before.
+func lateFinish(s *Snapshot, c *Card) bool {
+	if c == nil || !c.Placed() || c.Col != DoneFailed || c.F("kind") == "read" {
+		return false
+	}
+	if !deadlineFailed(c.F("report")) {
+		return false
+	}
+	pr := s.Work.Placed(c.F("primary"))
+	return pr != nil && pr.Col == Review && pr.F("work") == c.ID && pr.F("result") == "failed" && pr.Int("attempt") == c.Int("attempt")
+}
+
+// deadlineFailed says a work card's failed report is the attempt's end with no report from
+// its worker: the lane died or the runner ended it, the deadline passed, or no result came
+// back (HarnessFault's classes "lane died", "deadline" and "no result"). Any other failed
+// report, "red" or a HOLD, is the worker's own finish, and no later report answers it.
+func deadlineFailed(report string) bool {
+	switch HarnessFault(report) {
+	case "lane died", "deadline", "no result":
+		return true
+	}
+	return false
+}
+
+// lateFinishWhy is why a late report is refused: only a LAND with its head or a HOLD (a
+// failed report that says the word) finishes a failed attempt. A FAIL, a provider failure, a
+// take with no result, a staging refusal and a lane cap are the deadline's failure again, and
+// the very report the attempt failed on already is a retry of the finish that failed it
+// (store.TestARestartOnADumpWithoutTheResultsCannotAnswerTheRetry), not a late report.
+func lateFinishWhy(c *Card, r FinishReq) string {
+	if r.Decided != "" {
+		return "failed already (" + placeWord(c) + "): a late report carries no attempt decision"
+	}
+	if !r.Failed {
+		return ""
+	}
+	if !reportHolds(r.Report) {
+		return "not working (it is " + placeWord(c) + "): its attempt failed already, and this report is no LAND or HOLD"
+	}
+	if strings.TrimSpace(r.Report) == strings.TrimSpace(c.F("report")) {
+		return "not working (it is " + placeWord(c) + "): its attempt failed already on this same report"
+	}
+	return ""
+}
+
 // friendNext is a friend's own take: her finish moves the oldest ready card on her row
-// (the deal dealt it ready behind her working cards: friendDeal) into working in the
+// (the deal dealt it ready behind her working cards: friendDealPass) into working in the
 // same step, taken now, so she never waits for a tick between one card and the next
 // (the owner, 2026-10-04: "just like the fleet"). In one-shot mode (docs/SPEC-SPRINT.md
 // section 1, "A friend's card"), the next is only after the last finished: already-started
@@ -2202,9 +2294,12 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		if !isRead(c) {
 			return false
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+		u := Unit{Key: c.ID, Stream: c.F("stream"),
 			Changes: []Change{change(Fleet, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByAway}))},
-			Moved:   c.ID + " taken back: " + r.Member + " is " + r.Op})
+			Moved:   c.ID + " taken back: " + r.Member + " is " + r.Op}
+		// a working read has started: its cost stays. a ready read has not
+		u.Changes = retiredReadCosts(s, u.Changes)
+		p.Units = append(p.Units, u)
 		return true
 	})
 	withdrew := 0

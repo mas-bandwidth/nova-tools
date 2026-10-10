@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -226,6 +226,15 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
+| `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
+| `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
+
+A friend row may restrict the work the sprint deals her: `streams` is a
+comma-separated list of glob patterns over stream names, and `kinds` is a
+comma-separated list of card `KIND:` values. Each empty list is no restriction,
+today's behavior; `nova-sprint friend sync` carries both into her friends
+record, `add` and `brief` refuse a named friend card outside her restriction
+with the restriction named, and the tick's deal hands her none.
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -297,7 +306,10 @@ command the first still owns. The command is what follows `--` (the unit's own, 
 `nova-secrets exec` prefix; no store is opened), else the row's `argv` read from the store: a
 disabled row, a row with `keys` (its secrets open through the prefix the plays add, which the row
 does not carry) and a row with no command are
-refused with exit 1, a name with no row too. The pieces are `config.LoopRunArgv`,
+refused with exit 1, a name with no row too. `--dry-run` resolves the command the same way (the
+row is read when no command follows `--`) and the start count, prints the `LOOP RUN` line the run
+would print with `dry_run=true`, and takes no lock, writes nothing and runs nothing; a row the run
+refuses it refuses the same. The pieces are `config.LoopRunArgv`,
 `config.NextLoopStarts` and `config.LoopMetrics` (internal/config/looprun.go).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
@@ -700,8 +712,9 @@ MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-
 MIGRATE NOT-OWNED table=config.<t> owner=<role> role=<role>   (migrate --dry-run: a table the role does not own)
+MIGRATE SESSION role=<role> pid=<n> app=<name>|-   (migrate --dry-run: another nova session holding the database; migrate --window refuses while there is one)
 MIGRATE WOULD-REFUSE <the refusal migrate would print>; run: ALTER TABLE config."<t>" OWNER TO "<role>"; ...   (migrate --dry-run, ready=no)
-CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n> role=<role> ready=yes|no]
+CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n> role=<role> ready=yes|no owner=<role>|mixed|none sessions=<n>]
 CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
 NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)
@@ -812,7 +825,10 @@ login, is a refusal naming the file and the remedy (`nova-config login
 `login --check` prints the recorded login, which environment source would win
 (`dsn-wins=env:…`, `password-wins=env:…`, `friend-wins=env:…`), and
 `resolves=yes|no` (exit 1 on no). The password is never shown. `logout`
-removes the file (`was=recorded|none`). The code is `cmd/nova-config/login.go`;
+removes the file (`was=recorded|none`). `login --dry-run` makes every check
+`login` makes, the secret resolved and dropped, and prints `LOGIN DRY-RUN ...
+resolves=yes dry_run=true` without recording; `logout --dry-run` says
+`was=recorded|none dry_run=true` and removes nothing. The code is `cmd/nova-config/login.go`;
 `TestABareVerbConnectsWithTheRecordedLogin` measures it on the fake store with
 a fake secrets reader.
 

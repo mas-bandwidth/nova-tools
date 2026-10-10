@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -237,7 +238,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"]})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -417,6 +418,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	present := fs.String("present", "", "when her daemon sent her the present on its start, RFC3339: the snap-to-present step of a friend come up")
 	running := fs.String("running", "", "the cards she is running now, comma separated (work card ids, her job names or primaries): friend take and friend down leave them with her")
 	working := fs.String("working", "", "how many jobs she is working now, as her daemon counts them")
+	stopReturns := fs.String("stop-returns", "", "how many stop-returns her lanes still owe after the machine's stop (section 14): start waits for zero")
 	queue := fs.String("queue", "", "how many jobs she holds queued, as her daemon counts them")
 	width := fs.String("width", "", "her width as her daemon has it (the deal's is the roster's: friend up --width)")
 	load := fs.String("load", "", "her load as a percent, as fleet beat --load gives a machine's")
@@ -431,7 +433,15 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if code != 0 {
 		return code
 	}
-	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	provided := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+	rep := sprint.FriendReport{}
+	if provided["running"] {
+		rep.Running = sprint.Split(*running)
+		if rep.Running == nil {
+			rep.Running = []string{} // a named empty list clears the stored list
+		}
+	}
 	if b := strings.TrimSpace(*build); b != "" {
 		rep.Build = oneline.Field(b)
 	}
@@ -480,8 +490,11 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		flag, text string
 		min        int
 		to         **int
-	}{{"--working", *working, 0, &rep.Working}, {"--queue", *queue, 0, &rep.Queue}, {"--width", *width, 1, &rep.Width}} {
+	}{{"--working", *working, 0, &rep.Working}, {"--queue", *queue, 0, &rep.Queue}, {"--width", *width, 1, &rep.Width}, {"--stop-returns", *stopReturns, 0, &rep.StopReturns}} {
 		if n.text == "" {
+			if provided[strings.TrimPrefix(n.flag, "--")] {
+				return refuse(stderr, name, n.flag+" wants a whole number, found an empty value")
+			}
 			continue
 		}
 		v, err := strconv.Atoi(n.text)
@@ -520,7 +533,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
+	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339)+" set="+proof.Set, map[string]any{"friend": friend, "at": b.At, "set": proof.Set}
 	if words.Check != "" {
 		line += " check=" + words.Check
 		facts["check"] = words.Check
@@ -563,7 +576,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	for _, n := range []struct {
 		key string
 		v   *int
-	}{{"working", rep.Working}, {"queue", rep.Queue}, {"width", rep.Width}} {
+	}{{"working", rep.Working}, {"queue", rep.Queue}, {"width", rep.Width}, {"stop_returns", rep.StopReturns}} {
 		if n.v != nil {
 			line += fmt.Sprintf(" %s=%d", n.key, *n.v)
 			facts[n.key] = *n.v
@@ -601,6 +614,12 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if !rep.Until.IsZero() {
 		line += " down=true until=" + rep.Until.Format(time.RFC3339)
 		facts["down"], facts["until"], facts["reason"] = true, rep.Until, rep.Reason
+	}
+	// the machine's word, so her daemon cancels its lanes on STOPPED and starts nothing
+	// (docs/SPEC-SPRINT.md section 14, stop cancels jobs; internal/friend/stop.go)
+	if word := machineWord(ctx, st); word != "" {
+		line += " machine=" + word
+		facts["machine"] = word
 	}
 	sayOK(stdout, c.json, name, line, facts)
 	return 0

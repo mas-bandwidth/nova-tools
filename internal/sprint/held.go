@@ -237,7 +237,7 @@ func newHeld(h HeldState, now time.Time) *held {
 	sp, _ := s.withRests()
 	s = *sp
 	// the friends' deal is a part of the next tick too: it deals with the friends the
-	// snapshot holds (friendDeal), as the tick does
+	// snapshot holds (friendDealPass), as the tick does
 	c := &held{h: h, s: &s, req: TickReq{Who: MachineActor, Stopped: h.Stopped, Friends: s.Friends},
 		tick: map[string]string{}, tickStream: map[string]string{}, marks: map[string]bool{},
 		judged: map[string][]string{}, memo: map[string]Hold{}, on: map[string]bool{}}
@@ -394,8 +394,18 @@ func (c *held) actor(pr *Card) string {
 				if !friendReadAgrees(rc) {
 					continue
 				}
-				if d, ok := c.running(rc.F("asked")); ok && d <= DeadlineUnbegun {
-					return fmt.Sprintf("friend %s holds %s (%s), %s of %s running", rc.F("reader"), rc.ID, rc.Col, d.Round(time.Second), DeadlineUnbegun)
+				// a read card holds it to its own deadline, as the ask takes it back
+				// (readCardsTakeBack): working, ReadCardDeadline from its start; ready, the
+				// deal bound from its ask
+				from, limit := rc.F("asked"), DeadlineUnbegun
+				if rc.F(FieldReadCard) != "" {
+					limit = s.DealtMax()
+					if rc.Col == Working {
+						from, limit = stamp(readStart(rc)), ReadCardDeadline
+					}
+				}
+				if d, ok := c.running(from); ok && d <= limit {
+					return fmt.Sprintf("%s %s holds %s (%s), %s of %s running", unitWord(rc), rc.F("reader"), rc.ID, rc.Col, d.Round(time.Second), limit)
 				}
 			}
 		}
@@ -557,7 +567,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	case Ready:
 		if OnlyFriend(pr) {
 			// the one hard pin (WHO: only friend <name>) waits for her up below her room,
-			// DealAhead times her width (friendDeal), whose beats and widths are the friends'
+			// DealAhead times her width (friendDealPass), whose beats and widths are the friends'
 			// records, not the tables'; every other card a friend may take is the fleet's
 			// when no friend takes it (WHO is a preference)
 			name, _ := FriendCard(pr)
@@ -719,4 +729,12 @@ func (c *held) decisions(pr *Card) []string {
 		out = []string{"look at the card", "drop"}
 	}
 	return append(out, "wait")
+}
+
+// unitWord is "friend" for a read card on a friend's row, else "member".
+func unitWord(rc *Card) string {
+	if IsFriendRow(rc.Row) {
+		return "friend"
+	}
+	return "member"
 }

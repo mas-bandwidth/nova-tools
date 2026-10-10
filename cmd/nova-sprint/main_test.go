@@ -50,6 +50,8 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
 	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return ta.m, nil }
+	// a broken read's branch is checked against origin only by a test that gives a tip
+	ta.a.readTip, ta.a.readHeads = nil, nil
 	// the friends' bus: every message sent is kept, none goes anywhere
 	ta.a.bus = func(_ context.Context, m bus.Message, _ func(string)) error {
 		ta.mu.Lock()
@@ -71,6 +73,20 @@ func newTestApp(t *testing.T) *testApp {
 		return nil
 	}
 	return ta
+}
+
+// homeOfItsOwn gives the app a home under the test's temp: a verb that walks the
+// home reads that, never the machine's (gc --dry-run walks the bench root and every Go
+// build cache under it; on a bench that is millions of entries and a minute of a test).
+func (ta *testApp) homeOfItsOwn() {
+	home := ta.t.TempDir()
+	env := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return env(k)
+	}
 }
 
 // beat is one beat of every live member, at load 0.
@@ -138,6 +154,20 @@ func (ta *testApp) ok(line string) string {
 	code, out, errs := ta.do(line)
 	require.Equal(ta.t, 0, code, "%s: exit %d\n%s%s", line, code, out, errs)
 	return out
+}
+
+// clearWithReturns exercises Clear's STOP fence before clearing an epoch with
+// active owner work. The fixture observes each child exit before returning it.
+func (ta *testApp) clearWithReturns(epoch uint64, row string, cards ...string) string {
+	ta.t.Helper()
+	code, _, why := ta.do("clear --confirm sprint")
+	require.Equal(ta.t, 2, code, "clear captures active owner leases: %s", why)
+	require.Contains(ta.t, why, "captured owner work/read leases")
+	for _, card := range cards {
+		ta.ok("stop-return --as " + row + " --epoch " + strconv.FormatUint(epoch, 10) + " " + card + " --reason 'fixture child exited'")
+	}
+	ta.ok("start")
+	return ta.ok("clear --confirm sprint")
 }
 
 // split is words, with '...' quoting one word.
@@ -461,10 +491,10 @@ func TestClearByTheCommand(t *testing.T) {
 	ta.ok("take --as m1 --limit 2")
 	code, _, _ := ta.do("clear --confirm other")
 	require.Equal(t, 2, code, "clear with another prefix: %d", code)
-	out := ta.ok("clear --confirm sprint")
+	out := ta.clearWithReturns(0, "m1", "s1-1.w1@1", "s1-2.w1@1")
 	require.Contains(t, out, "CLEAR OK epoch=0->1", "clear")
 	require.Contains(t, out, "primaries=2", "clear")
-	require.True(t, strings.HasSuffix(strings.TrimSpace(out), "\nSTOPPED"), "clear: %s", out)
+	require.Contains(t, out, "\nSTOPPED\n", "clear: %s", out)
 	require.NotContains(t, out, "-> ETA", "clear")
 	code, _, errs := ta.do("finish --as m1 --epoch 0 s1-1.w1@1")
 	require.Equal(t, 1, code, "a late finish: %d %s", code, errs)
@@ -489,8 +519,9 @@ func TestClearByTheCommand(t *testing.T) {
 	require.Equal(t, uint64(1), q.Epoch, "the same ids in the new epoch: %+v", q)
 	require.Len(t, q.Cards, 2, "the same ids in the new epoch: %+v", q)
 	require.Equal(t, "s1-1.w1", q.Cards[0].ID, "the same ids in the new epoch: %+v", q)
+	ta.ok("start")
 	ta.ok("take --as m1 --epoch 1 s1-1.w1@1")
-	ta.ok("clear --confirm sprint")
+	ta.clearWithReturns(1, "m1", "s1-1.w1@1")
 	ta.clean()
 }
 

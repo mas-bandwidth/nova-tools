@@ -35,12 +35,24 @@ import (
 // land together over time; the machines do equal shares; a tick that addressed
 // the coordinator wrote one note and an idle tick none; the tick's own queue
 // always started the next tick. The wall time and the ticks are printed.
+//
+// A thousand cards a stream is the drive against a bench's store (GateStoreEnv,
+// the certification tier). The functional tier drives four hundred a stream: since
+// the tick's ask asks five primaries a fenced step within its two-second budget
+// (store/tick_ask.go), each tick with reads to ask spends that budget, and three
+// thousand cards on the container's two CPUs took over two minutes alone, past the
+// package's whole timeout. Twelve hundred keep every invariant below, the merge's
+// batch scaled with them (play --batch, a tenth of a stream): the streams' spread is
+// held to a tenth of the total, three batches at either size.
 const (
 	driveStreams   = 3
 	drivePerStream = 1000
-	driveMembers   = 8
-	driveWidth     = 64
-	driveSample    = 50 // ticks between two samples of the streams (every tick before the 50th)
+	// driveFunctionalPerStream is each stream's cards where the drive runs outside
+	// a bench's store (the functional tier).
+	driveFunctionalPerStream = 400
+	driveMembers             = 8
+	driveWidth               = 64
+	driveSample              = 50 // ticks between two samples of the streams (every tick before the 50th)
 	// MaxTickWall is the gate every tick of the drive is held to, the owner's
 	// law of 2026-09-30: "the whole intent is sub-second ticks. This is a
 	// requirement." A tick over it fails the drive, named with its parts,
@@ -123,9 +135,13 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		spec = append(spec, members[i-1]+":"+strconv.Itoa(driveWidth))
 	}
 	streams := []string{"a", "b", "c"}
-	total := driveStreams * drivePerStream
+	perStream := driveFunctionalPerStream
+	if os.Getenv(GateStoreEnv) == "1" {
+		perStream = drivePerStream
+	}
+	total := driveStreams * perStream
 	do(world, "init", "--readers", "reader-a,reader-b,reader-c", "--members", strings.Join(spec, ","))
-	do(world, "add", "--stream", strings.Join(streams, ","), "--count", strconv.Itoa(drivePerStream))
+	do(world, "add", "--stream", strings.Join(streams, ","), "--count", strconv.Itoa(perStream))
 	for _, m := range members {
 		do(world, "fleet", "beat", m)
 	}
@@ -362,7 +378,12 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			}
 			if still++; n < total && still > 60 {
 				var b strings.Builder
-				for _, args := range [][]string{{"where"}, {"inbox"}, {"check"}} {
+				// the inbox as the coordinator goroutine saw it: its `inbox --read`
+				// moves the cursor, so a second inbox read here would show nothing
+				mu.Lock()
+				fmt.Fprintf(&b, "inbox (the coordinator's reads): %v\njudgments: %s\n", notesSeen, strings.Join(judgments, "; "))
+				mu.Unlock()
+				for _, args := range [][]string{{"where"}, {"check"}} {
 					var out, errb bytes.Buffer
 					code := coord.run(args, &out, &errb)
 					fmt.Fprintf(&b, "%v: %d\n%s%s\n", args, code, tail(out.String(), 60), errb.String())
@@ -374,19 +395,21 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}()
 
 	began := time.Now()
-	var pout, perr bytes.Buffer
+	var pout, perr lockedBuffer // the play writes while the watchdog reads
 	played := make(chan int, 1)
 	go func() {
-		played <- world.run([]string{"play", "--every", "10ms", "--broken", "0", "--fail", "0", "--stuck", "0", "--cross", "0", "--down", "0", "--up", "0"}, &pout, &perr)
+		// a merge step's batch is a tenth of a stream (play's default of 100 at a thousand),
+		// so the streams' spread is held to the same three batches at either size
+		played <- world.run([]string{"play", "--every", "10ms", "--batch", strconv.Itoa(perStream / 10), "--broken", "0", "--fail", "0", "--stuck", "0", "--cross", "0", "--down", "0", "--up", "0"}, &pout, &perr)
 	}()
 	select {
 	case code = <-played:
 	case why := <-stalled:
 		cancel()
-		t.Fatalf("the sprint stalled: %s", why)
+		t.Fatalf("the sprint stalled: %s\nplay so far:\n%s%s", why, tail(pout.String(), 40), perr.String())
 	case <-ctx.Done():
 		cancel()
-		t.Fatalf("the sprint did not land in 12 minutes")
+		t.Fatalf("the sprint did not land in 12 minutes\nplay so far:\n%s%s", tail(pout.String(), 40), perr.String())
 	}
 	wall := time.Since(began)
 	// let the loop's last tick say the sprint is done, then stop it

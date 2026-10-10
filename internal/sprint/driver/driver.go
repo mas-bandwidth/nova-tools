@@ -25,6 +25,11 @@ import (
 	"time"
 )
 
+// ReadUsage is the token report every reader of the played world gives with its
+// verdict (read --usage): a read is priced as work is, and a routed read's verdict
+// with no usage is no verdict (sprint.ReadUsageMissing).
+const ReadUsage = "input=1000 output=100"
+
 // Facts is where the outside world's results come from. The loop does not
 // know whether they are real or invented.
 type Facts interface {
@@ -482,14 +487,15 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		}
 		asked, reported := 0, 0
 		for _, card := range q.Cards {
+			word := card.ID + "@" + strconv.Itoa(max(card.Gen, 1))
 			switch {
 			case card.Col == "asked" && asked < c.ReadLimit:
 				asked++
-				begin = append(begin, card.ID)
+				begin = append(begin, word)
 			case card.Col == "reading" && reported < c.ReadLimit:
 				reported++
 				if good, finding := d.Facts.Read(card.ID); good {
-					ok = append(ok, card.ID)
+					ok = append(ok, word)
 				} else {
 					// one finding per attempt: a card found broken again at its next attempt is
 					// found broken another way, as readers find it (the same finding twice is
@@ -497,7 +503,7 @@ func (d *Driver) tick(tick int, c Config, w where) {
 					// attempt number still go in one batch (the read card's id carries the
 					// attempt: <primary>.r<attempt>.<reader>)
 					finding = fmt.Sprintf("%s (attempt %s)", finding, readAttempt(card.ID))
-					broken[finding] = append(broken[finding], card.ID)
+					broken[finding] = append(broken[finding], word)
 				}
 			}
 		}
@@ -508,9 +514,13 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			beginners = append(beginners, r)
 		}
 	}
-	d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--ok"}, held...), ok)
+	// a verdict carries the run's token report, as a reader's harness gives it: a
+	// routed read's verdict without one is refused (sprint.ReadUsageMissing), all
+	// or none, and the world would read the same cards every tick, never landing
+	usage := []string{"--usage", ReadUsage}
+	d.batches(append(append([]string{"read", "--as", strings.Join(reporters, ","), "--ok"}, held...), usage...), ok)
 	for _, f := range slices.Sorted(maps.Keys(broken)) {
-		d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--broken", "--finding", f}, held...), broken[f])
+		d.batches(append(append([]string{"read", "--as", strings.Join(reporters, ","), "--broken", "--finding", f}, held...), usage...), broken[f])
 	}
 	d.batches(append([]string{"read", "--as", strings.Join(beginners, ","), "--begin"}, held...), begin)
 	// Each stream's merge step, with its facts. A stream's queue is read just

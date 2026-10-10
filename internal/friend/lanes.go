@@ -44,6 +44,9 @@ type LaneState struct {
 	Sessions map[int]string     `json:"sessions"`
 	GivenUp  []string           `json:"given_up,omitempty"`
 	Started  map[string]Started `json:"started,omitempty"`
+	// StopReturns is every card the machine's stop took out of a lane and the stop-return
+	// owed or taken for it (stop.go): a daemon starting up sends what is owed first.
+	StopReturns []StopReturn `json:"stop_returns,omitempty"`
 }
 
 // Card is one card a lane hands: its id (the queue file's), its brief, and
@@ -228,6 +231,7 @@ type lane struct {
 	baseOK   bool
 	polled   time.Time // when the card's tokens were last read for the cap
 	capped   bool      // stopped at the row's token cap
+	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
 }
 
 type laneResult struct {
@@ -242,6 +246,7 @@ type laneResult struct {
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
 	lanes   []*lane
+	stopped bool // the machine's word is STOPPED (stopStep): said once each way
 	given   map[string]bool
 	state   LaneState
 	loaded  bool
@@ -255,6 +260,7 @@ type laneSet struct {
 	marked  bool              // the hold in force is the pause marker's (a person lifts it)
 	loaded1 bool              // lanes are held to the load width
 	took    map[string]bool
+	faults  FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
 }
 
 func (s *laneSet) running() bool {
@@ -327,18 +333,30 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 	return b.String()
 }
 
-// CardText is one lane turn: the card and its three steps, then what else
-// rides along (the pong line first, the word about the coordinator, the bus
-// messages waiting, each labelled by its sender's authority against seat).
-func CardText(c Card, n, width int, sendLine, pong, notice string, seat string, msgs []bus.Message) string {
+// CardText is one lane turn: the card and its three steps, every path absolute, the
+// brief's text inline (a model that reads a path relative still has it), then what else
+// rides along (the pong line first, the word about the coordinator, the bus messages
+// waiting, each labelled by its sender's authority against seat).
+func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat string, msgs []bus.Message) string {
+	c := job.Card
 	var b strings.Builder
 	if pong != "" {
 		b.WriteString("Run this now, first, exactly as written: " + pong + "\nThen read on.\n\n")
 	}
 	fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
-	fmt.Fprintf(&b, "1. Do the card. Its brief is %s; work as it says, only where it says.\n", c.Brief)
+	if job.Dir != "" {
+		fmt.Fprintf(&b, "Your working directory is the card's job directory, %s. Every path here is absolute: use it exactly as written, leading slash and all.\n", job.Dir)
+	}
+	if job.Brief != "" {
+		fmt.Fprintf(&b, "1. Do the card. Its brief is %s, and its whole text is below; work as it says, only where it says.\n", c.Brief)
+	} else {
+		fmt.Fprintf(&b, "1. Do the card. Its brief is %s; work as it says, only where it says.\n", c.Brief)
+	}
 	fmt.Fprintf(&b, "2. Write %s/REPORT.md and %s/RESULT.md as the brief's END step says.\n", c.Outbox, c.Outbox)
 	fmt.Fprintf(&b, "3. Send one bus line: %s\n", sendLine)
+	if job.Brief != "" {
+		fmt.Fprintf(&b, "\nTHE BRIEF (%s):\n\n%s\nEND OF THE BRIEF\n", c.Brief, strings.TrimRight(job.Brief, "\n"))
+	}
 	if notice != "" {
 		b.WriteString("\nnova-friend: " + notice + "\n")
 	}
@@ -382,12 +400,29 @@ func (l *loop) laneStep(now time.Time, width int) {
 		for _, id := range s.state.GivenUp {
 			s.given[id] = true
 		}
-		if len(s.state.Started) > 0 {
-			l.endStarted(now)
-		}
 		if s.state.Started == nil {
 			s.state.Started = map[string]Started{}
 		}
+		for i, r := range s.state.StopReturns {
+			// a run the stop cancelled before this daemon started is gone with it: its
+			// stop-return is owed first, never a FAIL (StopReturnsSurviveRestart); a taken
+			// record is the past, and the card's later run under the same job name is a
+			// started one like any other
+			if !r.Owed() {
+				continue
+			}
+			delete(s.state.Started, r.Job)
+			if !r.Ended {
+				s.state.StopReturns[i].Ended, s.state.StopReturns[i].Exit = true, -1
+			}
+		}
+		d.owed.Store(int64(s.state.owed()))
+		if len(s.state.Started) > 0 {
+			l.endStarted(now)
+		}
+	}
+	if l.stopStep(now) {
+		paused = true // NoLaunchAfterStop: no open, no turn, no card taken while STOPPED
 	}
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
@@ -450,6 +485,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.card == nil {
+			if d.machineStopped() {
+				continue // the word read right before the take, before any claim (NoLaunchAfterStop)
+			}
 			asking = ln.n
 			c, found, err := d.nextCard(held)
 			if err != nil {
@@ -470,7 +508,25 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue
 			}
 			delete(s.refused, filepath.Base(c.Outbox))
-			ln.card, ln.attempts, ln.marked = &c, 0, now
+			// every path the harness is handed absolute, the brief inline, run in the job
+			// directory; a path that cannot be made absolute refuses the lane (lane_parity.go)
+			job, err := LaneJobOf(d.Dir, c, filepath.Abs)
+			if err == nil {
+				var raw []byte
+				if raw, err = os.ReadFile(job.Card.Brief); err == nil {
+					job.Brief = string(raw)
+				}
+			}
+			if err != nil {
+				jobName := filepath.Base(c.Outbox)
+				if why := "not started: " + err.Error(); s.refused[jobName] != why { // said once while it stands
+					s.refused[jobName] = why
+					d.Record(fmt.Sprintf("%s lane %d: card %s %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(why, 400)))
+				}
+				_ = os.Remove(laneMarkPath(d.Dir, jobName)) // ignored: the claim just made is this lane's; one left stands until stale
+				continue
+			}
+			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
 			ln.tier = d.cardTier(c)
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
@@ -478,11 +534,17 @@ func (l *loop) laneStep(now time.Time, width int) {
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
 		}
+		if d.machineStopped() {
+			// the word turned between the claim and the start: the card is given up, owed
+			// its stop-return, never held with no turn (NoLaunchAfterStop)
+			l.releaseHeld(ln, now)
+			continue
+		}
 		if perCard { // the brief alone: no message, pong or notice rides with it
-			t, c := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, *ln.card
+			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
-				lt, err := runner.RunCard(LaneContext(ctx), c)
+				lt, err := runner.RunCard(WithLaneDir(LaneContext(ctx), dir), c)
 				return laneResult{ln: ln, turn: lt, err: err, t: t}
 			})
 			continue
@@ -500,10 +562,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if d.CardDone != nil {
 			send = d.CardDone(ln.card.ID, l.coordinator())
 		}
-		t.text = CardText(*ln.card, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
+		t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
 		ln.t = t
+		dir := ln.job.Dir
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
-			lt, err := lh.DeliverTo(LaneContext(ctx), ln.session, t.text)
+			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), dir), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}
@@ -535,6 +598,10 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
+	if t.byStop && ln.card != nil {
+		l.stopDone(ln, t, r, now) // cancelled by the machine's stop: never finished
+		return
+	}
 	if ln.ended != "" {
 		// another lane finished the card: its messages go back pending, counted toward nothing
 		for _, e := range t.entries {
@@ -596,6 +663,12 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		ln.card, ln.attempts = nil, 0
 		return
 	}
+	if !exists(card.Result()) && !exists(card.Report()) {
+		// a report written under a relative spelling of the outbox, inside the job: moved home
+		if moved := RescueStray(ln.job); len(moved) > 0 {
+			line += fmt.Sprintf(" stray=%q", strings.Join(moved, ","))
+		}
+	}
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
 		line += " card=done " + l.endCard(ln.n, card, end, now)
@@ -616,6 +689,12 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		s.state.GivenUp = append(s.state.GivenUp, job)
 		l.saveLanes(now)
 		ln.card, ln.attempts = nil, 0
+		return
+	}
+	// exit 0 and no report: the harness's fault, never the worker's failed attempt; the card
+	// stays in the lane's hand, its attempt not counted, and nothing goes to the sprint server
+	if first, fault := l.harnessFault(r, t, card); fault {
+		l.faultTurn(ln, line, HarnessFaultNoReport, first, now)
 		return
 	}
 	ln.attempts++
@@ -643,6 +722,47 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	ln.card, ln.attempts = nil, 0
 	l.tell(fmt.Sprintf("friend %s: card %s not finished after %d turns (lane %d): %s", d.Friend, card.ID, CardTurns, ln.n, oneLine(why, 200)),
 		fmt.Sprintf("Lane %d of %s handed card %s (%s) %d times and no RESULT.md appeared in %s. The last turn: %s. The lane has set the card aside, finished it failed in the sprint (its REPORT.md says how the run ended) and takes the next.\n", ln.n, d.Friend, card.ID, card.Brief, CardTurns, card.Outbox, why), now)
+}
+
+// harnessFault says a lane turn that ended on its own is a harness fault: it exited 0 with no
+// refused permission and no error but its outbox's lack (NoReport), and its card has neither
+// RESULT.md nor REPORT.md. first is the harness's first error line, from the turn's own word,
+// else its output's tail.
+func (l *loop) harnessFault(r laneResult, t *turn, card Card) (first string, fault bool) {
+	var none NoReport
+	if t.stopped || t.capped || r.turn.Exit != 0 || r.turn.Rejected != "" || (r.err != nil && !errors.As(r.err, &none)) {
+		return "", false
+	}
+	if exists(card.Result()) || exists(card.Report()) {
+		return "", false
+	}
+	first = r.turn.FirstError
+	if first == "" {
+		first = HarnessFirstError(t.tail.String())
+	}
+	return first, true
+}
+
+// faultTurn is a lane's turn that ended in a harness fault: said on the record with the
+// harness's first error line, the card kept in the lane's hand with its attempt not counted
+// and no finish sent, so it is not a reader's finding; the same fault FaultRepeats times
+// within FaultWithin on her row marks her down until FaultDownFor later (her lanes held, her
+// beat down with the reason), with one judgment to the seat, not one per card.
+func (l *loop) faultTurn(ln *lane, line, fault, first string, now time.Time) {
+	d, s := l.d, l.lanes
+	reason := FaultWords(fault, first)
+	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d reason=%q", ln.attempts, CardTurns, reason))
+	until, down := s.faults.Observe(fault, now)
+	if !down {
+		return
+	}
+	s.gov.PauseUntil(until, reason)
+	d.Record(fmt.Sprintf("%s harness fault: %d alike within %s: her row down until %s, her lanes held: %s", now.UTC().Format(time.RFC3339), FaultRepeats, FaultWithin, until.UTC().Format(time.RFC3339), oneLine(reason, 300)))
+	if d.FaultDown != nil {
+		d.FaultDown(until, reason)
+	}
+	subject, body := FaultDownText(d.Friend, reason, until)
+	l.tellKind(bus.KindBlocker, subject, body, now)
 }
 
 // heldTurn is a lane's turn a provider failure stopped (stopEvery) before its card had a
@@ -680,9 +800,8 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 	for _, e := range t.entries {
 		delete(l.inHand, e) // pending: the claim hands them in again
 	}
-	if t.notice != nil && l.notice == nil {
-		l.notice = t.notice
-		l.saidSilent = t.notice.Subject != "coordinator silent"
+	if t.notice != nil {
+		l.owedAgain(t.notice, now)
 	}
 	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d", ln.attempts, CardTurns))
 	l.providerLimit(r.err, t.started, now)

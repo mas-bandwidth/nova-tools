@@ -43,6 +43,10 @@ type LaneTurn struct {
 	// (a Claude Code run's rate_limit_event lines, ReadRateLimitEvents); nil when
 	// it reported none. The lanes are paced by it (pacing.go).
 	Windows []WindowUse
+	// FirstError is the first line of the turn's output that says an error
+	// (HarnessFirstError), "" when none does: a run that exits 0 with no report
+	// is a harness fault said with it (lanes.go, faultTurn).
+	FirstError string
 }
 
 // permissionRejected is a line of a turn's output where a tool call was
@@ -196,35 +200,47 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 		return nil, fmt.Errorf("opencode session list: %w", err)
 	}
 	if exit != 0 {
+		if match := wallRefusalReason.FindStringSubmatch(listing); match != nil {
+			if match[1] == "bad_profile" && strings.Contains(match[0], "denies nothing") {
+				return nil, fmt.Errorf("opencode session list: friend wall refused reason=bad_profile: the profile denies nothing; the daemon needs a coordinator-self deny path (nova-friend run --deny-self) before a lane can open (exit %d)", exit)
+			}
+			return nil, fmt.Errorf("opencode session list: friend wall refused reason=%s (exit %d)", match[1], exit)
+		}
 		return nil, fmt.Errorf("opencode session list exited %d", exit)
 	}
-	var rows []session
-	if err := json.Unmarshal([]byte(listing), &rows); err != nil {
-		return nil, fmt.Errorf("opencode session list: not a JSON list: %v", err)
+	rows, err := decodeSessions(listing)
+	if err != nil {
+		recordListing(o.Out, listing)
 	}
-	return rows, nil
+	return rows, err
 }
+
+var wallRefusalReason = regexp.MustCompile(`(?m)^WALL REFUSED reason=([a-z_]+)\b[^\n]*`)
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
 // <id> <text>` in Dir, its output read for a refused permission, and its
 // tail for a rate limit or out of funds (ProviderLimit, whatever the exit:
 // the lanes heed it only when the card has no RESULT.md) before a provider's
 // refusal of the session.
+//
+// A lane's turn runs in the card's job directory, the one its context carries
+// (WithLaneDir), so a path the model reads relative is read inside the job;
+// with none it runs in Dir.
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
+	out, exit, err := o.Run(ctx, LaneDirOf(ctx, o.Dir), o.program(), []string{"run", "--session", id, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	if err == nil {
 		if limit := laneLimit(id, out); limit != nil {
 			o.turns.saw(id, exit, limit)
-			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
+			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, limit
 		}
 	}
 	exit, err = refused(id, out, exit, err)
 	o.turns.saw(id, exit, err)
-	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, err
 }
 
 // RunRead is one read as a one-shot of the friend's opencode: `opencode run

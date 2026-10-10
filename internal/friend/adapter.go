@@ -29,6 +29,16 @@ type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
+// TextLimit is the most bytes of text d takes as one turn: its own
+// TextLimit() when it has one above zero, else BatchBytes. The daemon's
+// envelope is cut to it (Envelope).
+func TextLimit(d Deliverer) int {
+	if l, ok := d.(interface{ TextLimit() int }); ok && l.TextLimit() > 0 {
+		return l.TextLimit()
+	}
+	return BatchBytes
+}
+
 // Deferred is a Deliverer's answer when the session cannot take a turn now
 // and nothing has failed (for example, neither Codex queue nor resume can
 // accept it). The daemon keeps the message in hand, tries again
@@ -96,20 +106,6 @@ type tailKey struct{}
 // prints to stdout or stderr.
 func WithOutputTail(ctx context.Context, tail func([]byte)) context.Context {
 	return context.WithValue(ctx, tailKey{}, tail)
-}
-
-// Printed is p, printed by the command a delivery runs, said to ctx's watch and tail: what
-// RealExec does with each write, for a harness that runs no command through it.
-func Printed(ctx context.Context, p []byte) {
-	if len(p) == 0 {
-		return
-	}
-	if seen, _ := ctx.Value(outputKey{}).(func()); seen != nil {
-		seen()
-	}
-	if tail, _ := ctx.Value(tailKey{}).(func([]byte)); tail != nil {
-		tail(p)
-	}
 }
 
 // seenWriter is a Builder that says each write to the context's watch and tail.
@@ -289,13 +285,38 @@ type session struct {
 	Updated   int64  `json:"updated"`
 }
 
-// NewestSession picks the most recently updated session of dir from the
-// listing's JSON.
-func NewestSession(listing, dir string) (string, error) {
+// decodeSessions reads the listing's JSON. A fresh install with no session
+// yet prints nothing at all (opencode 1.18.20, 2026-10-08, zero bytes), so an
+// empty or whitespace-only listing is an empty list: no session is the
+// friend's state, never a broken harness. Anything else that is not a JSON
+// list is refused with the JSON error alone (it names the offending character
+// and its offset); the listing's own text never enters the error, since the
+// harness's stdout can carry anything (docs/SPEC-CI.md, secrets in errors).
+// Its first line goes to the daemon's record instead (recordListing).
+func decodeSessions(listing string) ([]session, error) {
+	if strings.TrimSpace(listing) == "" {
+		return nil, nil
+	}
 	var rows []session
 	if err := json.Unmarshal([]byte(listing), &rows); err != nil {
-		return "", fmt.Errorf("opencode session list: not a JSON list: %v", err)
+		return nil, fmt.Errorf("opencode session list: not a JSON list: %v", err)
 	}
+	return rows, nil
+}
+
+// recordListing writes the first line of a listing that was not a JSON list
+// to the daemon's record, when there is one, so the operator sees what the
+// harness printed without it ever entering an error.
+func recordListing(out io.Writer, listing string) {
+	if out == nil {
+		return
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(listing), "\n")
+	fmt.Fprintf(out, "opencode session list: not a JSON list; its first line: %q\n", Head(first, OutputKept))
+}
+
+// newestOf picks the most recently updated session of dir from decoded rows.
+func newestOf(rows []session, dir string) (string, error) {
 	best := session{}
 	for _, r := range rows {
 		if r.Directory == dir && r.Updated > best.Updated {
@@ -321,7 +342,12 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 		if exit != 0 {
 			return 0, fmt.Errorf("opencode session list exited %d", exit)
 		}
-		if id, err = NewestSession(listing, o.Dir); err != nil {
+		rows, err := decodeSessions(listing)
+		if err != nil {
+			recordListing(o.Out, listing)
+			return 0, err
+		}
+		if id, err = newestOf(rows, o.Dir); err != nil {
 			return 0, err
 		}
 	}

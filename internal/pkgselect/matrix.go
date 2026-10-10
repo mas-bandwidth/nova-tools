@@ -53,10 +53,10 @@ var DarwinOnly = []string{"./cmd/nova-sandbox", "./internal/sandbox"}
 // A push and the nightly run still deal them to macOS.
 var LinuxOnly = []string{"./cmd/nova-sprint", "./cmd/nova-swarm"}
 
-// HeavyFirst are the packages the fan-out deals first, so the heaviest never
-// share a shard: dealt round-robin from the sorted list, the two heaviest sat
-// eight apart and so shared a leg on every push.
-var HeavyFirst = []string{"./cmd/nova-swarm"}
+// HeavyFirst are the measured expensive packages the fan-out deals first, so
+// a four-leg PR gives each a separate leg. Ordinary round-robin put all four
+// on the first leg; that job crossed its wall even when its test step passed.
+var HeavyFirst = []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/ci", "./internal/sprint/store"}
 
 // DarwinBranches are the target branches whose changes meet the darwin legs:
 // the integration branches (the concurrency group's integration list in

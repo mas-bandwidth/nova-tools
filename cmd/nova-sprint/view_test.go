@@ -182,6 +182,70 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 	assert.False(t, ok, "she reported")
 }
 
+// The judgments the tick's lane check kept from rising are the coordinator's count
+// (a-judgment-checks-the-lane-before-it-rises.w2): a friend whose beat names her card running
+// inside its cap raises no finishes none, and the view counts it once, suppressed 1, its cause
+// a live lane beside it, in the JSON and in the text's summary, however many ticks keep it
+// quiet; when her beat names the running list empty her finishes none rises and the count stays.
+func TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	v := ta.coordView("")
+	assert.Equal(t, 0, v.N.Suppressed, "nothing kept quiet yet: %+v", v.N)
+	assert.Contains(t, v.Sum, "| suppressed 0 (lane 0 readers 0 tier 0)")
+
+	// 41 minutes with no finish, past the friend-finish window, her beat naming the card running
+	for range 4 {
+		ta.a.sleep(10*time.Minute + 15*time.Second)
+		ta.ok("friend beat amy --running s1-1.w1")
+		ta.pong("amy")
+		ta.ok("tick")
+	}
+	assert.Empty(t, groupsOf(ta, sprint.NFriendIdle), "a live lane inside its cap raises nothing")
+	assert.Empty(t, groupsOf(ta, sprint.NStalled), "and no stall")
+	v = ta.coordView("")
+	assert.Equal(t, 1, v.N.Suppressed, "one judgment kept quiet, counted once over the ticks: %+v", v.N)
+	assert.Equal(t, suppressedWhy{Lane: 1}, v.N.By, "its cause: a live lane")
+	assert.Contains(t, v.Sum, "| suppressed 1 (lane 1 readers 0 tier 0)")
+	assert.Contains(t, strings.SplitN(ta.ok("view coordinator"), "\n", 2)[0], "| suppressed 1 (lane 1 readers 0 tier 0)", "the text's summary line")
+	var raw map[string]json.RawMessage
+	ta.json("view coordinator", &raw)
+	assert.Contains(t, string(raw["n"]), `"suppressed":1,"by":{"lane":1,"readers":0,"tier":0}`)
+	var row viewRow
+	for _, r := range ta.coordView("--all").Rows {
+		if r.K == "f:amy" {
+			row = r
+		}
+	}
+	assert.Regexp(t, `^running [0-9]+m of [0-9]+m$`, row.Run, "her row says her run: %+v", row)
+
+	// her beat names the list empty, so it stops naming the card (a bare beat leaves the
+	// list): her finishes none rises (her running beat a minute ago is still activity to
+	// the stall ladder, so it is not a stall), and what was kept quiet stays counted
+	ta.a.sleep(time.Minute)
+	ta.ok("friend beat amy --running=")
+	ta.pong("amy")
+	ta.ok("tick")
+	idle := groupsOf(ta, sprint.NFriendIdle)
+	require.Len(t, idle, 1, "no live lane: her finishes none rises, and nothing keeps it quiet: %+v", ta.inboxGroups())
+	assert.Equal(t, []string{"friend.amy"}, idle[0].Primaries)
+	assert.Equal(t, 1, ta.coordView("").N.Suppressed)
+}
+
+// groupsOf is the inbox's groups of the type, of any kind (a judgment a rule answered is
+// decided).
+func groupsOf(ta *testApp, typ string) []sprint.Group {
+	ta.t.Helper()
+	var out []sprint.Group
+	for _, g := range ta.inboxGroups() {
+		if g.Type == typ {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 // A member's view: its cards in order, working first, each with its brief, base, paths and
 // deadline, and next the step that moves its first card.
 func TestTheWorkerViewOfAMember(t *testing.T) {

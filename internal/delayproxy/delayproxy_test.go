@@ -219,11 +219,11 @@ func TestStopEndsEveryGoroutineWhileWritesAreHeld(t *testing.T) {
 		require.NoError(t, err, err)
 		r.await()
 	}
-	got, want := p.Live(), acceptLoop+GoroutinesPerConn*heldClients
-	require.Equal(t, want, got, "Live = %d with %d connections held; want %d: one to accept and %d each", got, heldClients, want, GoroutinesPerConn)
+	got, want := int(p.live.Load()), acceptLoop+GoroutinesPerConn*heldClients
+	require.Equal(t, want, got, "live = %d with %d connections held; want %d: one to accept and %d each", got, heldClients, want, GoroutinesPerConn)
 	p.Stop()
-	got = p.Live()
-	require.Zero(t, got, "Live = %d after Stop returned; want 0", got)
+	got = int(p.live.Load())
+	require.Zero(t, got, "live = %d after Stop returned; want 0", got)
 	p.Stop() // a second call only waits
 	for i, c := range conns {
 		got, err := io.ReadAll(c)
@@ -252,8 +252,8 @@ func TestAClientPastTheBoundWaitsForASlot(t *testing.T) {
 	require.NoError(t, err, err)
 	n := r.echo.accepted.Load()
 	require.Equal(t, int64(slots), n, "the target has taken %d connections with %d slot and the first still open; want %d", n, slots, slots)
-	live, want := p.Live(), acceptLoop+GoroutinesPerConn*slots
-	require.Equal(t, want, live, "Live = %d; want %d: the accept loop and the one connection", live, want)
+	live, want := int(p.live.Load()), acceptLoop+GoroutinesPerConn*slots
+	require.Equal(t, want, live, "live = %d; want %d: the accept loop and the one connection", live, want)
 	err = first.Close()
 	require.NoError(t, err, err)
 	gotBytes := make([]byte, len("second"))

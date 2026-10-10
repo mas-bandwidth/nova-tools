@@ -1,0 +1,3 @@
+# refusal-grammar: the refusals of this tool that are not the one grammar; each row's count only falls
+# ceiling: 1
+cmd/nova-sandbox:verb-no-flags 9 the egress (apply, check, drop, plan), policy, probe, reap, run and worktree refusals carry no `; run:` remedy; each why names the missing input (seed)

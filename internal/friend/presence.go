@@ -409,6 +409,19 @@ func (s *SessionCheck) BeatOr(beat func(ctx context.Context) error, down func(ct
 	}
 }
 
+// BeatAlways is beat with the check stepped first and never held back: a
+// claude friend's (docs/SPEC-FRIEND.md, The push proof), whose cards run as
+// processes of their own and whose presence at the server is their finishes;
+// her session check goes in by the folder (FolderCheck) and its answer rides
+// the beat (Words), so a live session proves the push and no session refuses
+// nothing.
+func (s *SessionCheck) BeatAlways(beat func(ctx context.Context) error) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		s.Step(ctx)
+		return beat(ctx)
+	}
+}
+
 // downBeat is the down beat's until and reason at now: an open check's bound,
 // else the next check's bound (SessionQuiet after the last, or now when one is
 // owed), and the reason naming the check's nonce.
@@ -448,6 +461,9 @@ func (s *SessionCheck) downBeat(now time.Time) (until time.Time, reason string) 
 // counts an answer only when it names a check this run asked (sprint.ProveBeat).
 type BeatWords struct {
 	Run, Check, Pong string
+	// StopReturns is how many stop-returns the lanes owe (stop.go, OwedStopReturns): the
+	// beat carries it (friend beat --stop-returns) while it is above zero.
+	StopReturns int
 }
 
 // Words is what the next beat says: the check asked and the check answered that
@@ -644,6 +660,13 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 	run := s.Go
 	if run == nil {
 		run = func(f func()) { go f() }
+	}
+	if under(s.Deliver, func(a Deliverer) bool { _, ok := a.(InPlace); return ok }) {
+		// a check that is a file (FolderCheck) holds no turn of the session, so it
+		// goes in here, in place: on disk before ask returns, and so before any
+		// beat says the check (docs/SPEC-FRIEND.md, The push proof: the file,
+		// then the beat); Go schedules only a delivery that is a turn
+		run = func(f func()) { f() }
 	}
 	run(func() {
 		if locked {

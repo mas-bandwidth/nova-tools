@@ -242,9 +242,12 @@ func TestFarStopsInCleanupAndLeavesNothingRunning(t *testing.T) {
 	var p *delayproxy.Proxy
 	var ln net.Listener
 	var left net.Conn
+	var live atomic.Int64
 	t.Run("a test that ends with a write held", func(sub *testing.T) {
 		fake := &farClock{blocked: make(chan struct{}, 1)}
-		p = real.far(sub, target, farDelay, fake.options(), func(network, address string) (net.Listener, error) {
+		opts := fake.options()
+		opts.Live = &live
+		p = real.far(sub, target, farDelay, opts, func(network, address string) (net.Listener, error) {
 			var err error
 			ln, err = net.Listen(network, address)
 			return ln, err
@@ -257,11 +260,11 @@ func TestFarStopsInCleanupAndLeavesNothingRunning(t *testing.T) {
 			require.NoError(sub, err, err)
 		}
 		<-fake.blocked // held
-		if got, want := p.Live(), 1+delayproxy.GoroutinesPerConn; got != want {
+		if got, want := int(live.Load()), 1+delayproxy.GoroutinesPerConn; got != want {
 			require.Equal(sub, want, got, "Live = %d with one client; want %d: one to accept and %d for the client", got, want, delayproxy.GoroutinesPerConn)
 		}
 	})
-	if got := p.Live(); got != 0 {
+	if got := int(live.Load()); got != 0 {
 		require.Zero(t, got, "Live = %d after the test's cleanup; want 0", got)
 	}
 	got, err := io.ReadAll(left)

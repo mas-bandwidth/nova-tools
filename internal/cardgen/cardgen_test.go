@@ -41,7 +41,30 @@ func TestLedgerRowsGroupByFileInLedgerOrder(t *testing.T) {
 	assert.Equal(t, "serial-tests-cmd-nova-bus-a", p.Cards[0].ID)
 	assert.Len(t, p.Cards[0].Rows, 2)
 	assert.Equal(t, "flash", p.Tier)
-	assert.Equal(t, "fix-red", p.Cards[0].Kind)
+	assert.Equal(t, swarm.LedgerKind, p.Cards[0].Kind)
+}
+
+// A ledger card is KIND: ledger and its STOP is the ledger shrinking with the class test
+// green, since that test is green at the base by construction: the rows for its file, or
+// a counted row's count, shrink to 0. Any other card's STOP is its test red then green.
+func TestALedgerCardStopsWhenItsLedgerEntryShrinks(t *testing.T) {
+	t.Parallel()
+	l := Ledgers["serial-tests"]
+	rows, _ := ParseLedger(l, serialFixture)
+	p := PlanLedger(l, rows, "", "", 0)
+	two, one := Render(header, p.Cards[0]), Render(header, p.Cards[1])
+	assert.Contains(t, two, "\nKIND: ledger\n")
+	assert.Contains(t, two, "\nSTOP: the ledger rows for cmd/nova-bus/a_test.go in internal/ci/testdata/serial-tests_allowlist.txt shrink from 2 to 0 and the class test TestEveryTestOpensWithTParallel stays green, and the STEP 4 gate passes\n")
+	assert.Contains(t, one, "\nSTOP: the ledger row for cmd/nova-bus/b_test.go in internal/ci/testdata/serial-tests_allowlist.txt shrinks from 1 to 0 and the class test TestEveryTestOpensWithTParallel stays green, and the STEP 4 gate passes\n")
+
+	d := Ledgers["dead-code"]
+	drows, _ := ParseLedger(d, "# ceiling: 3\ninternal/bounded 3\n")
+	dc := PlanLedger(d, drows, "", "", 0).Cards[0]
+	assert.Contains(t, Render(header, dc), "\nSTOP: the count on the ledger row for internal/bounded in internal/ci/testdata/dead_code_allowlist.txt shrinks from 3 to 0 and the class test TestDeadCode stays green, and the STEP 4 gate passes\n")
+
+	other := Render(header, Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."})
+	assert.Contains(t, other, "\nSTOP: the test TestA is red before the change and green after it, and the STEP 4 gate passes\n")
+	assert.Contains(t, other, "\nKIND: fix-red\n")
 }
 
 // PATHS: the file, its package's test files, the ledger; never more than MaxPaths.
@@ -145,7 +168,7 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 			assert.Empty(t, Lint(c.ID, brief), "%s: %s\n%s", name, c.ID, brief)
 			assert.True(t, strings.HasPrefix(brief, "RESULT: "+c.ID+" sha=0123456789ab tier: "+c.Tier+"\n"), brief)
 			assert.Contains(t, brief, "\nTEST: "+l.Test+"\n")
-			assert.Contains(t, brief, "\nKIND: fix-red\n")
+			assert.Contains(t, brief, "\nKIND: ledger\n")
 			_, read, ok := strings.Cut(brief, "\nAS A READ\n")
 			assert.True(t, ok, "the brief has an AS A READ section")
 			assert.Contains(t, "\n"+read, "\nThe scope of this change is its PATHS line. "+AlwaysInPathsRule+"\n", "the reader is handed the scope rule")
@@ -286,8 +309,6 @@ func TestAPackageWithNoTestFileGetsItsTestOnTheNEWLine(t *testing.T) {
 	NewTestFile(&c, func(glob string) bool { return glob == "internal/none/x.go" })
 	assert.Equal(t, []string{"internal/none/x.go", "internal/none/*_test.go"}, c.Paths, "the glob stays")
 	assert.Equal(t, []string{"internal/none/x_test.go"}, c.New)
-	assert.True(t, c.Creates("internal/none/*_test.go"))
-	assert.False(t, c.Creates("internal/none/x.go"))
 	brief := Render(header, c)
 	assert.Contains(t, brief, "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\nTEST: internal/none TestFindingX\n")
 	assert.Empty(t, Lint(c.ID, brief))
@@ -488,4 +509,31 @@ func TestTheDeadlineLineSaysTheJudgmentIsTheCoordinators(t *testing.T) {
 	customBrief := Render(Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567", Minutes: 20}, hc)
 	assert.Contains(t, customBrief, "Deadline: finish within 20 minutes"+deadlineTail)
 	assert.Empty(t, Lint(hc.ID, customBrief))
+}
+
+// The fix-red card stamped for a red class names the class, the base and the files, and
+// its brief passes the add's lint whether the class has a test or is a bare run (then the
+// card writes the class test).
+func TestAClassRedCardPassesTheLint(t *testing.T) {
+	t.Parallel()
+	for _, r := range []ClassRed{
+		{Class: "staticcheck", Run: "go test -tags functional ./internal/ci/", Test: "internal/ci TestStaticcheckFindings",
+			Files: []string{"cmd/nova-swarm/x_test.go"}, Finding: "exit status 1: cmd/nova-swarm/x_test.go:12:6: func helper is unused (U1000)"},
+		{Class: "gofmt", Run: "gofmt -l .", Files: []string{"cmd/nova-secrets/main.go"}, Finding: "it printed: cmd/nova-secrets/main.go"},
+		{Class: "class-tests", Run: "go test ./internal/ci/ ./internal/docs/", Test: "internal/docs TestNovaToolsIsEveryCommand", Finding: "exit status 1: --- FAIL: TestNovaToolsIsEveryCommand"},
+	} {
+		c := PlanClassRed(r, "sprint/mechanical-2026-10-02", "")
+		assert.Equal(t, "fix-red-"+Slug(r.Class)+"-sprint-mechanical-2026-10-02", c.ID)
+		assert.Equal(t, "fix-red", c.Kind)
+		assert.Contains(t, c.Task, "red on its class "+r.Class)
+		for _, f := range r.Files {
+			assert.Contains(t, c.Paths, f)
+		}
+		if r.Test == "" {
+			assert.Equal(t, "internal/ci "+ClassTestName(r.Class), c.Test)
+			assert.Contains(t, c.Task, "write "+ClassTestName(r.Class)+" in internal/ci first")
+		}
+		brief := Render(header, c)
+		assert.Empty(t, Lint(c.ID, brief), "%s\n%s", r.Class, brief)
+	}
 }

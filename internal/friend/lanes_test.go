@@ -370,7 +370,9 @@ func TestLanesRetryANewGenerationAfterGivingUpTheOldJob(t *testing.T) {
 		require.NoError(t, os.MkdirAll(job, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("work"), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued","gen":2,"job":"c1~15.g2"}]}`), 0o600))
-		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		// each turn ends in a refused permission, an attempt that counts (a run that exits 0 with no
+		// report is a harness fault and counts none: lane_path_test.go)
+		h := &lanesHarness{dir: dir, active: map[string]int{}, reject: map[string]string{"c1": "Permission to read /elsewhere was auto-rejected"}}
 		r, state := laneRig(t, h, 2)
 		*state = LaneState{GivenUp: []string{"c1", "c1~15"}}
 		r.run(t, 12)
@@ -397,9 +399,11 @@ func claudeRig(t *testing.T, dir, configDir string, run Exec) (*rig, *LaneState)
 
 // A claude lane is a process per card: no session opened, the brief the
 // prompt, the result read from the outbox. A card whose run wrote REPORT.md
-// and RESULT.md is done; one whose run wrote nothing is a failed attempt,
-// run again once, then set aside and reported, though the run exited 0. A
-// bus message rides with no card: it waits, pending.
+// and RESULT.md is done; one whose run exited 0 and wrote nothing is a
+// harness fault, never a failed attempt: kept in the lane's hand and run
+// again, never set aside, and the third alike marks her row down once with
+// one judgment to the seat (the-lane-hands-the-brief-by-absolute-path-bb;
+// lane_path_test.go). A bus message rides with no card: it waits, pending.
 func TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -428,17 +432,18 @@ func TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox(t *testing.T) {
 		r.run(t, 20)
 
 		mu.Lock()
-		assert.Equal(t, []string{"RESULT: c1\n", "RESULT: c2\n", "RESULT: c2\n"}, prompts, "one run per card turn, the brief its prompt")
+		assert.Equal(t, []string{"RESULT: c1\n", "RESULT: c2\n", "RESULT: c2\n", "RESULT: c2\n"}, prompts, "one run per card turn, the brief its prompt; the third fault holds the lane")
 		mu.Unlock()
 		assert.Empty(t, state.Sessions, "no session is opened")
-		assert.Equal(t, []string{"c2~15"}, state.GivenUp)
+		assert.Empty(t, state.GivenUp, "a harness fault never sets the card aside")
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 1, strings.Count(records, " card=done"), records)
-		assert.Contains(t, records, `card=again turn=1/2 reason="claude -p exited 0 and `+filepath.Join(dir, "outbox", "c2~15")+` holds no REPORT.md and no RESULT.md"`)
-		assert.Contains(t, records, "card=set_aside turn=2/2")
+		assert.Contains(t, records, `error="claude -p exited 0 and `+filepath.Join(dir, "outbox", "c2~15")+` holds no REPORT.md and no RESULT.md" card=kept turn=0/2 reason="harness-fault: no report; first error: the harness printed no error line"`)
+		assert.NotContains(t, records, "card=again")
+		assert.NotContains(t, records, "card=set_aside")
 		got := r.adaGot(t)
-		require.Len(t, got, 1)
-		assert.True(t, strings.HasPrefix(got[0], "friend bob: card c2 not finished after 2 turns (lane 1): claude -p exited 0"), got[0])
+		require.Len(t, got, 1, "one judgment, not one per card")
+		assert.True(t, strings.HasPrefix(got[0], "friend bob down until "), got[0])
 		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
 		require.NoError(t, err)
 		assert.Empty(t, pending)

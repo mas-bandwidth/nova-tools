@@ -85,6 +85,7 @@ func landRefused(s *Snapshot, r MergeReq, way, state string, ctl *Card, ctlSet m
 			u.Changes = append(u.Changes, change(Readers, removeEntry(rc, map[string]string{"retired": now, "retired_by": "rework"})))
 		}
 	}
+	reworkPriority(s, pr, set)
 	set["fix"], set["why"], set["finding"] = LandRefusedFix(orDash(r.Note)), refusal, finding
 	set["reworks"], set["broken_reads"] = itoa(pr.Int("reworks")+1), itoa(pr.Int("broken_reads")+broken)
 	set[FieldFindingAttempt] = attempt
@@ -194,6 +195,7 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 			FieldReturnedAttempt: itoa(c.Int("attempt")),
 			"broken_reads":       itoa(c.Int("broken_reads") + broken),
 		}
+		c = reworkPriority(s, c, set)
 		unset := []string{"readers"}
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
 			set[FieldPassedHead] = c.F("head")

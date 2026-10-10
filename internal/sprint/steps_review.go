@@ -74,6 +74,9 @@ func (s *Snapshot) decideFields(pr *Card, first bool) map[string]string {
 
 // readsAt is the primary's placed read cards at an attempt, in reader row order.
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	if !anyReadCardAt(s, pr, attempt) {
+		return nil
+	}
 	var out []*Card
 	for _, r := range s.Readers.Rows() {
 		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
@@ -324,6 +327,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if j, ok := reviewJudgment(s, c, reviewStep{moved: asked, closing: noteIDs(u.Closes), who: r.Who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
+		// --instead of a reading card, and only that: an away take-back is still
+		// asked, and an unbegun ask adds no cost (retiredReadCosts)
+		u.Changes = retiredReadCosts(s, u.Changes)
 		p.Units = append(p.Units, u)
 	}
 	roundWrites(&p, rr, moves)
@@ -391,10 +397,15 @@ func NamedExtras(table string, ids []string) func(*Snapshot) map[string][]string
 type ReadReq struct {
 	Sel
 	As      string
-	Begin   bool   // asked -> reading
-	Verdict string // ok or broken
+	Gens    map[string]int // named begin and post-STOP verdicts guard the live read lease
+	Begin   bool           // asked -> reading
+	Verdict string         // ok or broken
 	Finding string
 	Who     string
+	// Missing is the server's check at the close of a broken read, by read card: the
+	// branch the read named is not on origin (read_missing.go). Such a verdict is no
+	// verdict: the read is retired and asked again, the card not reworked.
+	Missing map[string]MissingBranch `json:",omitempty"`
 	// Return hands the named read back, with the reason: no verdict, no
 	// finding against the work, not a read; the tick asks it again.
 	Return bool   `json:",omitempty"`
@@ -440,7 +451,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		return p
 	}
 	// a read asked of a friend is on her fleet row, not the readers table
-	// (FriendReadAsk): the verb her packet prints closes it there
+	// (friendReadAsk): the verb her packet prints closes it there
 	for _, rd := range readers {
 		name, friend := FriendOfRow(rd)
 		member := !friend && s.Fleet != nil && s.Fleet.HasRow(rd) && (s.Readers == nil || !s.Readers.HasRow(rd))
@@ -468,6 +479,20 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	}
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
+		// A cached queue packet names its read and generation. Once STOP
+		// returns it to Asked at a new generation, that old packet cannot
+		// begin the new lease. An unnamed selection reads the fresh table
+		// state here and may still begin the live card without a packet.
+		if r.Begin && (len(r.Gens) > 0 || len(sel.IDs) > 0 && c.F("stopped_from_gen") != "") {
+			if why := liveGen("read --begin", c, r.Gens); why != "" {
+				return why
+			}
+		}
+		if !r.Begin && (len(r.Gens) > 0 || c.F("stopped_from_gen") != "") {
+			if why := liveGen("read", c, r.Gens); why != "" {
+				return why
+			}
+		}
 		if !c.Placed() && c.F("retired") != "" {
 			if c.F("retired_by") == "away" {
 				return "retired at " + c.F("retired") + ": the reader was away; the read was asked of another reader"
@@ -519,6 +544,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	// primary in the plan
 	costs := map[string]map[string]string{}
 	costUnit := map[string]int{}
+	var verdicts []ReadVerdict // the ledger's (reads_window.go)
 	record := func(pr *Card, con Consumer) {
 		if !pr.Placed() {
 			return
@@ -587,6 +613,11 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				Moved:   c.ID + " " + c.Col + " -> asked (returned)", Notes: []Note{n}})
 			continue
 		}
+		if m, ok := r.missingBranch(c); ok {
+			// the machine's fault, not the card's: no verdict, asked again (read_missing.go)
+			p.Units = append(p.Units, missingBranchUnit(s, Readers, c, pr, m, r.Finding, r.Usage, r.Who))
+			continue
+		}
 		set := map[string]string{"verdict": r.Verdict, "read": stamp(s.Now)}
 		if c.Col == Asked { // a report on a card never begun is the begin and the report in one step
 			set["begun"] = stamp(s.Now)
@@ -606,6 +637,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if pr != nil {
 			record(pr, readConsumer(s, c, 0, r.Verdict, rec))
 		}
+		verdicts = append(verdicts, verdictOf(s, c, pr, c.Row, r.Verdict, r.Finding))
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set, FieldReturned))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}
 		if pr != nil {
@@ -648,6 +680,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if j, ok := reviewJudgment(s, pr, reviewStep{moved: moved[id], writes: written[id], who: lastReader[id]}); ok {
 			p.Units[i].Notes = append(p.Units[i].Notes, j)
 		}
+	}
+	if pw, ok := windowWrite(s.Readers, Readers, verdicts); ok {
+		p.Props = append(p.Props, pw)
 	}
 	// each primary's records ride on the unit of its last read in the plan: a running
 	// machine queues the work-table change for the pump, under that read's words
@@ -816,6 +851,10 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	case pr.F("result") == "failed":
 		typ, why = NStranded, "its work came back failed and nothing is open on it"
 	case reads == 0 && len(before) == 0:
+		return Note{}, false
+	case reads == 0 && s.ReadCardsOn() && readCardsWanted(s, pr, nil) > 0:
+		// its read cards are the read-card ask's: dealt, marked waiting for a reader, or
+		// cannot ask (readCardsAskPart), never stranded as never asked
 		return Note{}, false
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
@@ -1030,6 +1069,9 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
 		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
+		// a reading card retired by accept keeps its ended run; an ask still
+		// unbegun adds none (retiredReadCosts)
+		u.Changes = retiredReadCosts(s, u.Changes)
 		p.Units = append(p.Units, u)
 	}
 	// A waiting stream with something queued is merging.
@@ -1302,6 +1344,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			set[FieldWho] = WhoFriend
 		}
 		maps.Copy(set, one.Set)
+		c = reworkPriority(s, c, set)
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
@@ -1360,6 +1403,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u.Moved += "; its orphan merge card off " + m.Col
 			orphans[c.ID] = true
 		}
+		// a reading card, or a working read card, retired by rework keeps its ended
+		// run on the primary this unit already writes; an unbegun ask adds none
+		u.Changes = retiredReadCosts(s, u.Changes)
 		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
 		if one.Rule != "" {
 			// the rule's answer is the decided note of every judgment the rework closes

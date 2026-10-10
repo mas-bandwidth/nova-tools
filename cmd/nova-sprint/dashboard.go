@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 )
 
@@ -28,10 +29,6 @@ const (
 
 // noListener is the --listen or --pull word that serves nothing there.
 const noListener = "none"
-
-// tailnetRange is the addresses a tailnet hands out (100.64.0.0/10, the shared range):
-// with the private and loopback ranges, the only ones the dashboard listens on.
-var tailnetRange = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
 // cmdDashboard serves the sprint dashboard (docs/SPEC-SPRINT-DASHBOARD.md) until it is
 // interrupted: the page from the files embedded in the binary, and /api/sprint, the
@@ -80,8 +77,10 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	srv := a.dashboardServer(c.redis, redis, from, *every, *logo, stdout)
 	ctx, stop := a.notify(context.Background())
 	defer stop()
-	// the sprint is read each --every whoever is looking, each new copy pushed to the
-	// /events clients as it is read, and its freshness checked
+	// one poller: the first read before any listener opens, then one each --every whoever
+	// is looking (back to back when a read takes longer), each new copy pushed to the
+	// /events clients as it is read and its freshness checked; a page reads the copy only
+	srv.Tick()
 	tick := time.NewTicker(*every)
 	defer tick.Stop()
 	runCtx, endRun := context.WithCancel(ctx)
@@ -162,18 +161,17 @@ func (a *app) whereJSON(addr string, given bool) ([]byte, error) {
 	}
 	var out, errb bytes.Buffer
 	if code := a.run(argv, &out, &errb); code != 0 {
-		why := fmt.Sprintf("where exited %d", code)
-		if line, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n"); line != "" {
-			why += ": " + line
-		}
-		return nil, errors.New(why)
+		// the page is shown the exit alone; where's own line goes to the log
+		line, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n")
+		return nil, &sprintdash.ReadError{Why: fmt.Sprintf("where exited %d", code), Detail: line}
 	}
 	return out.Bytes(), nil
 }
 
 // dashboardAddrs is the --listen or --pull list (flag), each a host:port whose host is an
-// IP address of loopback, a private range or the tailnet's (or localhost), each once; none
-// is no address.
+// IP address of loopback or the tailnet's (or localhost), each once; none is no address.
+// The address rule is sprint.CheckAddr's, so a private address outside the tailnet is
+// refused as well (docs/SPEC-SPRINT.md, sprint-local-only-mode-r-bcb.w5).
 func dashboardAddrs(flag, list string) ([]string, error) {
 	if strings.TrimSpace(list) == noListener {
 		return nil, nil
@@ -192,6 +190,9 @@ func dashboardAddrs(flag, list string) ([]string, error) {
 			if why := listenable(net.ParseIP(host)); why != "" {
 				return nil, fmt.Errorf("%s %s: %s", flag, addr, why)
 			}
+			if why := sprint.CheckAddr(addr, sprint.LocalOnlyMode()); why != "" {
+				return nil, fmt.Errorf("%s %s: %s", flag, addr, why)
+			}
 		}
 		if !slices.Contains(out, addr) {
 			out = append(out, addr)
@@ -204,8 +205,16 @@ func dashboardAddrs(flag, list string) ([]string, error) {
 }
 
 // listenable is why the dashboard does not listen on ip, "" when it does: loopback, a
-// private range or the tailnet's, never every network and never a public address.
+// private range or the tailnet's, never every network and never a public address. In
+// local-only mode nothing but loopback is listened on, and the refusal names the mode
+// (sprint.CheckAddr, docs/SPEC-SPRINT.md, sprint-local-only-mode-r-bcb.w5).
 func listenable(ip net.IP) string {
+	if sprint.LocalOnlyMode() {
+		if ip == nil {
+			return "local-only mode allows only loopback; a name is not loopback"
+		}
+		return sprint.CheckAddr(net.JoinHostPort(ip.String(), "7391"), true)
+	}
 	switch {
 	case ip == nil:
 		return "the address is an IP address of this machine (loopback, or its address on the fleet's private network), never a name"
@@ -213,7 +222,7 @@ func listenable(ip net.IP) string {
 		return "a link-local address; the page checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
 	case ip.IsUnspecified():
 		return "the page shows the sprint and checks no credential, so it does not listen on every network; name loopback or this machine's tailnet address"
-	case !ip.IsLoopback() && !ip.IsPrivate() && !tailnetRange.Contains(ip):
+	case !ip.IsLoopback() && !ip.IsPrivate() && !sprint.IsTailnet(ip):
 		return "a public address; the page shows the sprint and checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
 	}
 	return ""

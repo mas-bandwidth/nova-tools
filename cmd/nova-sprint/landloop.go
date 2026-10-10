@@ -27,12 +27,24 @@ import (
 const LandEvery = 2 * time.Second
 
 // LandDeadline is how long a landing may run before the loop raises one judgment
-// naming the stage it is in. The landing is not stopped. A hand land of two cards
-// finished in under eight minutes; the gate's own budget stays landGoBudget.
+// naming the stage it is in. The pass also abandons an earlier batch gate at
+// this bound so a ready later stream can land, and a batch still waiting for a
+// slot, the chain or another stream's gate of its base commit leaves that wait
+// at the bound (landpass.go merges, acquireGate); the landing continues. A hand
+// land of two cards finished in under eight minutes; each gate run still has
+// its own landGoBudget.
 const LandDeadline = 10 * time.Minute
 
-// landLaneWho is the holder the lander records on a bench's Go lane.
+// landLaneWho is the lander's name on a bench's Go lane, and the prefix of every holder it
+// records there: a stream's gate holds as lander/<stream> (fork, laneWho), the base
+// re-check as landLaneBase, so the parallel pass's forks are distinct holders and a sibling
+// asking a bench one of them holds is queued, never granted by the other's name, and one
+// fork's give never frees another's bench (docs/SPEC-SPRINT.md section 7). A lander that is
+// neither (none today) holds as landLaneWho.
 const landLaneWho = "lander"
+
+// landLaneBase is the holder the base re-check's gate records on a bench's Go lane.
+const landLaneBase = landLaneWho + "/base"
 
 // landLoop runs one land cycle every LandEvery until ctx ends. Each cycle writes
 // one line: LAND OK, LAND REFUSED, or LAND IDLE. A landing runs beside the loop,
@@ -47,34 +59,6 @@ func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 		}
 		a.sleep(LandEvery)
 	}
-}
-
-// landRound runs one land over every stream with cards queued, as the sprint's
-// coordinator, and prints what it did: a landing, a failed report, a conflict or a red
-// check, each with what land said of it; a stream with nothing queued prints nothing.
-// A round that could not read the merge queue says so and fails: an unreadable queue is
-// not an empty one. A failed round prints only when it begins: the same failure again
-// prints nothing until it changes or clears (a.landFailed), so a store that is down or
-// a landing refused round after round is said once, not every LandEvery. more is further
-// arguments of land (none from the loop: the clone, the base and the check are land's
-// defaults). It returns land's exit code.
-//
-// After the landing, and never during one, the round runs the cleanup (landprune.go)
-// when it is due: a round with nothing queued to merge, or PruneEvery branches waiting,
-// and no failed cleanup waiting out PruneRetry. Its PRUNE lines are printed as land's.
-// A stop of the loop flushes nothing: what is still queued then stays on origin.
-// Then, still outside the landing, it runs the promote step when one is armed
-// (promote.go). Nil arms nothing, so run --land does not open a pull request.
-func (a *app) landRound(ctx context.Context, addr string, more []string, stdout io.Writer) int {
-	code, idle := a.landOnce(ctx, addr, more, stdout)
-	if a.prune.due(idle, a.now()) {
-		at := oneline.Field(a.now().Format("15:04:05"))
-		for _, r := range a.flushPrune(ctx, false) {
-			fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(r.line(false)))
-		}
-	}
-	a.promoteOnTick(ctx, stdout)
-	return code
 }
 
 // landOnce is a round's landing: land's exit code, and idle when the merge queue was
@@ -418,7 +402,12 @@ func (a *app) raiseIfStuck(ctx context.Context, addr string, f *landFlight) {
 	f.mu.Unlock()
 }
 
-// landAfter is the cleanup and the promote step, never during a landing.
+// landAfter is the cleanup and the promote step, never during a landing. The cleanup
+// (landprune.go) runs when it is due: a round with nothing queued to merge, or PruneEvery
+// branches waiting, and no failed cleanup waiting out PruneRetry; its PRUNE lines are
+// printed as land's. A stop of the loop flushes nothing: what is still queued then stays
+// on origin. Then it runs the promote step when one is armed (promote.go); nil arms
+// nothing, so run --land does not open a pull request.
 func (a *app) landAfter(ctx context.Context, idle bool, stdout io.Writer) {
 	if a.prune.due(idle, a.now()) {
 		at := oneline.Field(a.now().Format("15:04:05"))

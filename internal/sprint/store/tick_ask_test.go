@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func opPrimaries(op OpRecord) []string {
 }
 
 // inReview is a harness whose n primaries are in review, none asked yet: the
-// next tick's ask asks them.
+// next tick's ask asks them. Worker takes and reports require RUNNING.
 func inReview(t *testing.T, n int) *harness {
 	t.Helper()
 	h := newHarness(t)
@@ -73,12 +74,9 @@ func inReview(t *testing.T, n int) *harness {
 	h.startMachine()
 	h.machine()
 	h.st.CheckTwin = nil // the racing writers commit from inside the ask's write
-	// the workers finish while the machine is stopped, so no tick asks before
-	// the one under test
-	h.stopMachine()
+	// No second tick runs between finish and the ask under test.
 	h.work("m1")
 	h.work("m2")
-	h.startMachine()
 	require.Len(t, h.snap().Work.Column(sprint.Review), n, "the primaries in review before the tick")
 	return h
 }
@@ -99,11 +97,28 @@ func askOf(res TickResult) (asked []string, refused []sprint.Refusal) {
 	return asked, refused
 }
 
+// An uncontended review backlog fits in one fenced ask step: the tick still
+// asks every primary, but does not replan the review table after each five.
+func TestTheAskBatchesTwentyPrimariesInOneStep(t *testing.T) {
+	t.Parallel()
+	h := inReview(t, 20)
+	writes := 0
+	h.st.B = racingAsk{Mem: h.m, h: h, writes: &writes}
+	res, err := h.st.Tick(h.ctx)
+	require.NoError(t, err)
+	asked, refused := askOf(res)
+	require.Empty(t, refused)
+	require.Len(t, asked, 20)
+	require.Equal(t, 1, writes, "one fenced ask for twenty primaries")
+	h.st.B = h.m
+	h.clean("after the batched ask")
+}
+
 // The ask writes in small fenced steps: other writers commit every 60 ms and a
 // write's window is 10 ms a primary it names, so a write of six or more always
-// holds another writer's commit. Twenty primaries in one write lost every try
-// (the live failure of 2026-10-06); in steps of five, every one is asked in the
-// one tick and none is refused for the fence.
+// holds another writer's commit. A large batch loses its tries (the live
+// failure of 2026-10-06); the ask retries its primaries alone, so every one
+// is asked in the one tick and none is refused for the fence.
 func TestTheAskStepAsksInSmallFencedSteps(t *testing.T) {
 	t.Parallel()
 	h := inReview(t, 20)
@@ -203,8 +218,9 @@ func TestALostBatchIsCountedAsDue(t *testing.T) {
 	asked, refused := askOf(res)
 	require.Empty(t, asked)
 	require.Empty(t, refused, "a lost batch is no primary's refusal")
-	require.Regexp(t, regexp.MustCompile(` readers/ask=\d+ms/\d+t/0asked/0refused/5lost`), res.TimesLine())
-	require.GreaterOrEqual(t, res.Due, 10, "the lost batch's five and the five the ask did not reach are due")
+	lost := min(AskBatch, 10)
+	require.Regexp(t, regexp.MustCompile(fmt.Sprintf(` readers/ask=\d+ms/\d+t/0asked/0refused/%dlost`, lost)), res.TimesLine())
+	require.GreaterOrEqual(t, res.Due, 10, "the lost batch and the cards the ask did not reach are due")
 	h.st.B = h.m
 	h.tick(time.Second)
 	res = h.machine()
@@ -228,7 +244,9 @@ func (h *harness) friendRead(name, primary, report string) {
 	card := sprint.ReadCardID(primary, h.snap().Work.Card(primary).Int("attempt"), name)
 	h.must(Step{Verb: "read", Named: true, Mirrors: true, Load: []string{sprint.Fleet, sprint.Work},
 		Extras: sprint.NamedExtras(sprint.Fleet, []string{card}), Actor: sprint.FriendRow(name), Epoch: &at,
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendReadClose(s, name, primary, report) }})
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.FriendReadCloseChecked(s, name, primary, "", report, nil)
+		}})
 }
 
 // friendReadsOf is the friends' read cards placed for the primary, by friend.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,6 +15,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// run is one nova-check invocation with the production seams, as main runs it.
+func run(args []string, stdout, stderr io.Writer) int {
+	return runWith(seams{}, args, stdout, stderr)
+}
+
+// runWith is one invocation with the seams s, stdin the process's.
+func runWith(s seams, args []string, stdout, stderr io.Writer) int {
+	return novaCheck(s).Run(args, os.Stdin, stdout, stderr)
+}
 
 // The no-guessing rule at the CLI: a missing flag is a refusal (exit 2)
 // that names the flag, never a fallback to a default path.

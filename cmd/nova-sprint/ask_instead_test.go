@@ -64,7 +64,11 @@ func TestAskInsteadTakesOneReadOffOneReaderStoppedAndRunning(t *testing.T) {
 		assert.Contains(t, out, "MOVED s1-1 asked of "+free[0]+"; its read taken back from "+held[0]+" (instead)", machine)
 		code, out, errs := ta.do("read --as " + held[0] + " --ok " + sprint.ReadCardID("s1-1", 1, held[0]))
 		assert.NotEqual(t, 0, code, machine)
-		assert.Contains(t, out+errs, "the coordinator took the read back and asked another reader instead", machine)
+		if strings.HasPrefix(machine, "stop") {
+			assert.Contains(t, out+errs, "the machine is STOPPED: a late work or read report cannot finish", machine)
+		} else {
+			assert.Contains(t, out+errs, "the coordinator took the read back and asked another reader instead", machine)
+		}
 		now, _ := holds()
 		assert.ElementsMatch(t, []string{held[1], free[0]}, now, machine)
 		takenBack = append(takenBack, held[0])

@@ -170,7 +170,7 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		putAttemptWork(w, "s1-1", 2, branch, workHead, "")
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, t.TempDir())})
 		id := ReadCardID("s1-1", 2, "amy")
-		w.must(FriendReadClose(w.s, "amy", "s1-1", "Verdict: LAND\n"))
+		w.must(FriendReadCloseChecked(w.s, "amy", "s1-1", "", "Verdict: LAND\n", nil))
 		rc := w.s.Fleet.Card(id)
 		require.NotNil(t, rc)
 		require.False(t, rc.Placed())
@@ -182,13 +182,27 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		require.Empty(t, w.notesOf(NReadBroken))
 	})
 
+	t.Run("stale outbox generation", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, "reader-a", "reader-b")
+		putReview(w, "s1-1", body, 2, 1, primHead)
+		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, t.TempDir())})
+		rc := w.s.Fleet.Card(ReadCardID("s1-1", 2, "amy"))
+		require.NotNil(t, rc)
+		rc.Fields["gen"] = "2" // same read returned and taken after a STOP
+		late := FriendReadCloseChecked(w.s, "amy", "s1-1", "", "Verdict: LAND\n", nil, 1)
+		require.NotEmpty(t, late.Refused, "the old outbox cannot close a resumed read")
+		require.True(t, rc.Placed())
+		w.must(FriendReadCloseChecked(w.s, "amy", "s1-1", "", "Verdict: LAND\n", nil, 2))
+	})
+
 	t.Run("hold", func(t *testing.T) {
 		t.Parallel()
 		w := newWorld(t, "reader-a", "reader-b")
 		putReview(w, "s1-1", body, 2, 1, primHead)
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, t.TempDir())})
 		id := ReadCardID("s1-1", 2, "amy")
-		w.must(FriendReadClose(w.s, "amy", "s1-1", "Verdict: HOLD\nmain.go is wrong\n"))
+		w.must(FriendReadCloseChecked(w.s, "amy", "s1-1", "", "Verdict: HOLD\nmain.go is wrong\n", nil))
 		rc := w.s.Fleet.Card(id)
 		require.False(t, rc.Placed())
 		require.Equal(t, "broken", rc.F("verdict"))

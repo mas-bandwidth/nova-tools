@@ -8,6 +8,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// firstPlainValue returns the first root-level key whose value is not encrypted
+// and not permitted in the clear by unencryptedRegex. An unencryptedRegex that does
+// not compile is the rule's own defect: it is returned as an error, and nothing is
+// judged against a regex that does not compile, so the gate refuses on the real cause
+// instead of reporting a permitted key as a plain value.
+func firstPlainValue(data []byte, unencryptedRegex string) (string, bool, error) {
+	keys, err := plainValues(data, unencryptedRegex)
+	if err != nil {
+		return "", false, err
+	}
+	if len(keys) == 0 {
+		return "", false, nil
+	}
+	return keys[0], true, nil
+}
+
 // A broken unencrypted_regex is the rule's own defect, so it is refused as one:
 // firstPlainValue returns the regexp.Compile error instead of discarding it, and the
 // gate's line names the invalid unencrypted_regex rather than reporting a clear key as

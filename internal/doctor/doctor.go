@@ -140,7 +140,7 @@ func runOne(ctx context.Context, env Env, c Check) (res Result) {
 	defer func() {
 		if p := recover(); p != nil {
 			res = Result{Status: Fail, Evidence: fmt.Sprintf("the check panicked: %v", p),
-				Fix: "report this to the nova-tools maintainers with the output of `nova-doctor --check " + c.Name + " --json`"}
+				Fix: "report this to the nova-tools maintainers with the output of `nova-doctor run --check " + c.Name + " --json`"}
 		}
 		res.Check, res.Dependency = c.Name, c.Dependency
 		res.Evidence = oneLine(res.Evidence)
@@ -200,7 +200,9 @@ func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 func (l *list) Get() any           { return []string(*l) }
 
 // Tool is nova-doctor on the nova tool skeleton: one verb, run, which is also the
-// default, so `nova-doctor --local` is a run.
+// default, so `nova-doctor --local` is a run. A bare `nova-doctor` is no run: it is
+// refused naming the verbs and the door, as every tool's bare command is
+// (docs/ONBOARDING.md point 1).
 func Tool(reg *Registry, env Env, stamp string) *tool.Tool {
 	return &tool.Tool{
 		Name:    "nova-doctor",
@@ -210,15 +212,15 @@ func Tool(reg *Registry, env Env, stamp string) *tool.Tool {
 		How: `each check covers one dependency: ok, warn or fail, with evidence and a fix line.
 Every check runs; a fail does not stop the others. --local skips the checks only a fleet
 needs and says which. Exit 0 is all ok (or warn), 1 a warn under --strict, 2 a fail.
-first run: the binary alone, no flags; nothing is changed, no fix is run for you.`,
+first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 		NoJSON:    "run prints one `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line per check; with --json it prints the same results as one object",
 		ExitTable: "0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage",
 		Verbs: []tool.Verb{{
 			Name:    "run",
 			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json]",
-			Example: "--local",
+			Example: "run --check harness\nrun --local\nrun --local --json",
 			Effect:  tool.Inspection,
-			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\nexample: nova-doctor --local",
+			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\nexample: nova-doctor run --local",
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				f.Var(new(list), "check", "run only this check (repeatable); the names are in `help run`")
@@ -256,11 +258,10 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 	}
 }
 
-// Main runs nova-doctor over args: no arguments is a run.
+// Main runs nova-doctor over args. No arguments is refused at exit 2 with the
+// verbs and `run: nova-doctor help` (internal/tool's Run), never a run: a
+// bare command is no invocation (docs/ONBOARDING.md point 1).
 func Main(reg *Registry, env Env, stamp string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		args = []string{"run"}
-	}
 	return Tool(reg, env, stamp).Run(args, stdin, stdout, stderr)
 }
 

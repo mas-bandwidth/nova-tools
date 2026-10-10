@@ -29,8 +29,13 @@ func fixed(name string, fleet bool, status Status, fix string) Check {
 // "The exit").
 func TestDoctorRunsEveryRegisteredCheckAndExitsByTheWorst(t *testing.T) {
 	t.Parallel()
+	// run is the run verb over args; with none it is `nova-doctor run`, since a
+	// bare `nova-doctor` is refused (the subtest below).
 	run := func(t *testing.T, reg *Registry, args ...string) (int, string, string) {
 		t.Helper()
+		if len(args) == 0 {
+			args = []string{"run"}
+		}
 		var out, errb bytes.Buffer
 		code := Main(reg, fakeEnv{}, "", args, strings.NewReader(""), &out, &errb)
 		return code, out.String(), errb.String()
@@ -43,6 +48,21 @@ func TestDoctorRunsEveryRegisteredCheckAndExitsByTheWorst(t *testing.T) {
 		return r
 	}
 
+	t.Run("a bare nova-doctor runs no check and is refused naming the door", func(t *testing.T) {
+		t.Parallel()
+		ran := false
+		r := reg(Check{Name: "a", Dependency: "d", Run: func(context.Context, Env) Result { ran = true; return Result{Status: OK} }})
+		var out, errb bytes.Buffer
+		code := Main(r, fakeEnv{}, "", nil, strings.NewReader(""), &out, &errb)
+		assert.Equal(t, 2, code)
+		assert.Empty(t, out.String(), "a refusal is on stderr")
+		assert.Contains(t, errb.String(), "REFUSED")
+		assert.Contains(t, errb.String(), "run: nova-doctor help")
+		assert.False(t, ran, "no check ran")
+		code, out2, _ := run(t, r, "--local")
+		assert.Equal(t, 0, code, "a flag alone is still a run: run is the default verb")
+		assert.Contains(t, out2, "DOCTOR a ok")
+	})
 	t.Run("every check runs and is printed", func(t *testing.T) {
 		t.Parallel()
 		code, out, _ := run(t, reg(fixed("b", false, OK, ""), fixed("a", false, OK, "")))

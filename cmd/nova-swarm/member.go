@@ -546,7 +546,8 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
+		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc}
 		go func() {
 			for processAlive(pid) {
 				time.Sleep(time.Second)
@@ -640,7 +641,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -766,6 +767,33 @@ type nativeChild struct {
 	err                         error
 	once                        sync.Once
 	result                      member.Result
+	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
+	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
+	proc *os.Process
+}
+
+// StopGrace is how long a native child told to stop by the machine's stop has to end by
+// itself (native reaps its harness group within swarm.TerminateGrace) before it is killed.
+const StopGrace = 60 * time.Second
+
+// Stop is member.Stopper: native is told to stop (SIGTERM; where the system has no such
+// signal, killed), its working tree and log left as they are, and killed if it is still
+// there after StopGrace. It returns native's pid, the evidence the lane record names.
+func (c *nativeChild) Stop() int {
+	if c.proc == nil {
+		return 0
+	}
+	if err := c.proc.Signal(syscall.SIGTERM); err != nil {
+		_ = c.proc.Kill() // ignored: a process already gone is the end wanted
+	}
+	time.AfterFunc(StopGrace, func() {
+		select {
+		case <-c.done:
+		default:
+			_ = c.proc.Kill() // ignored: the wait on done reads the end
+		}
+	})
+	return c.proc.Pid
 }
 
 // noUsageReported is the usage of a launch whose harness reported no token and left no
@@ -866,6 +894,7 @@ func (c *nativeChild) Printed() time.Time {
 }
 
 var _ member.Printer = (*nativeChild)(nil)
+var _ member.Stopper = (*nativeChild)(nil)
 
 var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\S+)`)
 

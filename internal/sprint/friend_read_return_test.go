@@ -7,7 +7,7 @@ import (
 )
 
 // friendReadAsked is a world with s1-1 in review at attempt 1 and its read asked of
-// friend amy on her fleet row (FriendReadAsk), and the read card's id.
+// friend amy on her fleet row (friendReadAsk), and the read card's id.
 func friendReadAsked(t *testing.T) (*world, string) {
 	t.Helper()
 	w := newWorld(t, "reader-a", "reader-b")
@@ -75,7 +75,7 @@ func TestReadAsFriendClosesAFriendRowRead(t *testing.T) {
 		a, id := friendReadAsked(t)
 		b, _ := friendReadAsked(t)
 		va := Read(a.s, ReadReq{Sel: Sel{IDs: []string{id}}, As: FriendRow("amy"), Verdict: "ok"})
-		vb := FriendReadClose(b.s, "amy", "s1-1", "Verdict: LAND\n")
+		vb := FriendReadCloseChecked(b.s, "amy", "s1-1", "", "Verdict: LAND\n", nil)
 		require.Len(t, va.Units, 1)
 		require.Len(t, vb.Units, 1)
 		require.Equal(t, vb.Units[0].Changes, va.Units[0].Changes)

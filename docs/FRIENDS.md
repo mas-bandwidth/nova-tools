@@ -47,14 +47,17 @@ hours). Name the real path with `--dir`.
 ## Her inbox pushes to her: the push proof
 
 `nova-friend install` and `run` refuse a harness nothing pushes into: one
-with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and has no session to push into) is refused
+with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and proves by the folder: its check is written as `<dir>/inbox/SESSION-CHECK-<nonce>` for a live session to answer) is refused
 before anything is written, with the adapter card as the remedy; a dsh
 session under an agent preset is refused with `start a session in <dir> with
 no agent preset and name it with --session <id>`. `run` delivers one SESSION
 CHECK before its loop and exits 2 when no pong comes back within five
 minutes. Her beat carries her session's last proof, and the sprint deals
 nothing to a friend whose proof is older than fifteen minutes
-(docs/SPEC-FRIEND.md, "The push proof").
+(docs/SPEC-FRIEND.md, "The push proof"). The bus never refuses a message on
+the proof: `nova-bus send` and `recv` print `push=<state> for <name>` as a
+NOTE and deliver all the same (docs/SPEC-BUS.md,
+bus-requires-inbox-push-proof).
 
 A dsh session that cannot take a turn defers its messages and never loses
 one, but it does not read up: a headless turn whose output carries the agent
@@ -127,6 +130,8 @@ nova-config apply --kind friend
 ```
 
 ## A sprint card
+
+Each sync pass sends a batch-mode friend (the default) at most one status wake for the cards it delivers, naming their count and up to ten card ids with the remaining count, her inbox directory and the sentence that starts the work. A friend whose store row says mode `one-shot` keeps one wake per card so her runner starts its lane. A pass that delivers no file sends no wake. The per-card inbox file is the record: a failed batch wake leaves every delivered file in place and is said and recorded once for the pass as `NFriendNotWoken`.
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
 `WHO: only friend <name>`, and a card with no WHO line whose tier a friend covers,
@@ -206,6 +211,17 @@ first pass that is ok after it prints `FRIEND-SYNC OK again after <n> failing
 passes`. An interrupt ends it with 0 (`FRIEND-SYNC STOP interrupted`), and a
 binary replaced under it with 3, so its supervisor starts the new one.
 
+A loop failing for a minute (four passes) is one judgment in the coordinator's
+inbox, `friend sync keeps refusing`, naming the refusal and its remedy (the
+loop's own line, `schema config is at version 35 and this binary carries 36;
+run: nova-config migrate`, say): the loop records its standing failure on the
+fleet table (`FRIEND-SYNC JUDGMENT recorded`), the tick raises the judgment on
+the record, once, and the first ok pass clears the record, which closes the
+judgment (`ack` or `wait` are its only answers). The loop keeps retrying every
+pass as before. On 2026-10-08 the loop refused from 01:05 to 08:51 ET, no card
+was delivered or collected for 7h45m, and its one FAILING line in its own log
+told no one.
+
 It is installed as a nova-config loop row kept alive on the machine that holds
 the friends' working directories, its secrets by name from that machine's seat
 and no shell in its argv; `--root` is left out, so the friends' directories are
@@ -251,6 +267,14 @@ move her cards: she keeps the cards dealt to her row and the deadline judges
 them; the coordinator takes the unstarted ones back with `nova-sprint friend
 take <friend> --all-unstarted` (or `friend down`), and nothing does it by
 itself.
+
+A beat leaves a field it does not name. `--running`, `--working` and `--queue`
+absent stay as the store has them: a bare `friend beat <friend>` (the daemon's
+keepalive) does not clear her running list and does not write zero over a count.
+`--running` with a list replaces the list; `--running ''`, the flag given and
+empty, clears it. `--working` and `--queue` given, including 0, replace that
+count. The beat names the fields it set, `set=running,working` or `set=-` when it
+set none, and the result line carries that (`FRIEND-BEAT OK <friend> at=<time> set=...`).
 
 ## Where a job's work lives
 
@@ -349,3 +373,5 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    --wake --to-friends --every <d>` (installed with `ping-install`), which
    pings every friend the friends table holds up and tells the coordinator
    which sessions were deaf (docs/SPEC-FRIEND.md, "The wake ping loop").
+
+For new friends, see [FRIEND-ONBOARDING.md](FRIEND-ONBOARDING.md) for step-by-step guidance from joining to a first finished card.

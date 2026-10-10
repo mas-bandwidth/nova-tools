@@ -11,6 +11,8 @@
 
 # the friend's daemon (internal/friend, cmd/nova-friend)
 internal/friend/daemon.go loop.read friend bus read
+internal/friend/daemon.go Daemon.beatLoop friend beat
+internal/friend/notifications.go Daemon.runNotifications notification delivery recovery
 internal/friend/adapter_tmux.go Tmux.Deliver friend delivery
 cmd/nova-friend/serve.go world.serve coordinator ping
 cmd/nova-friend/wakeping.go world.wakeFriends wake ping
@@ -39,6 +41,9 @@ cmd/nova-sprint/balance.go app.balanceLoop provider balance
 cmd/nova-sprint/gc.go app.gcLoop machinery gc
 cmd/nova-sprint/promote.go app.cmdPromote promote
 
+# the data backups (docs/DATA.md)
+cmd/nova-config/backup.go runBackup waits and retries
+
 # displays
 cmd/nova-sprint/dashboard.go app.cmdDashboard dashboard pull
 internal/sprintdash/events.go Server.Run dashboard pull
@@ -60,9 +65,13 @@ internal/swarm/nativeidle.go WatchIdle samplers and watchdogs
 # waits on a process, a lock, a file, a server coming up, or a retry backoff
 cmd/nova-friend/main.go realWorld waits and retries
 cmd/nova-friend/main.go world.install waits and retries
+cmd/nova-friend/notifications.go world.installNotifications waits and retries
 cmd/nova-friend/main.go world.openUntil waits and retries
 cmd/nova-friend/wakeping.go world.pingInstall waits and retries
+internal/friend/launchd.go Install waits and retries
+internal/friend/launchd.go WaitReleased waits and retries
 cmd/nova-sprint/run.go app.awaitGivenUp waits and retries
+cmd/nova-sprint/landpass.go lander.pass waits and retries
 cmd/nova-sandbox/run.go runInVolume waits and retries
 cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries
 cmd/nova-sandbox/runwin_windows.go winPlace.RemoveTree waits and retries

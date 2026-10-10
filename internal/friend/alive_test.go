@@ -82,7 +82,7 @@ func TestAnAdapterThatCannotTellLeavesTheSessionCheckAlone(t *testing.T) {
 	require.NotNil(t, w.Alive, "every adapter answers the check, a stub with cannot tell")
 	r.run(t, 40)
 	assert.Equal(t, 40, r.beats, "every beat goes out")
-	assert.Equal(t, HarnessUnknown, w.Seen())
+	assert.Equal(t, HarnessUnknown, watchSeen(w))
 	assert.Contains(t, strings.Join(r.records, "\n"), "harness check: cannot tell: claude has no adapter")
 }
 
@@ -228,30 +228,31 @@ func TestAHeadlessFriendIsAliveWithNoAppProcess(t *testing.T) {
 	}
 
 	step(0)
-	assert.Equal(t, HarnessUnknown, w.Seen(), "no turn yet: the session check alone")
+	assert.Equal(t, HarnessUnknown, watchSeen(w), "no turn yet: the session check alone")
 
 	got, err := dsh.Deliver(ctx, SessionCheckPrefix+"z1")
 	require.NoError(t, err)
 	require.Zero(t, got)
 	step(AliveEvery)
-	assert.Equal(t, HarnessRunning, w.Seen(), "the session check ended exit 0 with no app running: alive")
-	assert.Equal(t, RuleSession, d.status.HarnessAlive)
+	assert.Equal(t, HarnessRunning, watchSeen(w), "the session check ended exit 0 with no app running: alive")
+	_, rule := w.Status()
+	assert.Equal(t, RuleSession, rule)
 	step(AliveWithin - AliveEvery)
-	assert.Equal(t, HarnessRunning, w.Seen(), "still within the window")
+	assert.Equal(t, HarnessRunning, watchSeen(w), "still within the window")
 	step(AliveEvery)
-	assert.Equal(t, HarnessUnknown, w.Seen(), "quiet past the window: a one-shot harness is seen by its next turn, never not seen")
+	assert.Equal(t, HarnessUnknown, watchSeen(w), "quiet past the window: a one-shot harness is seen by its next turn, never not seen")
 
 	_, err = dsh.Deliver(ctx, "a card")
 	require.NoError(t, err)
 	step(AliveEvery)
-	assert.Equal(t, HarnessRunning, w.Seen(), "a delivery counts as the check does")
+	assert.Equal(t, HarnessRunning, watchSeen(w), "a delivery counts as the check does")
 
 	mu.Lock()
 	exit = 1
 	mu.Unlock()
 	_, _ = dsh.Deliver(ctx, "a card the session cannot take") // ignored: the exit is what is read
 	step(AliveEvery)
-	assert.Equal(t, HarnessNotSeen, w.Seen(), "the last turn failed")
+	assert.Equal(t, HarnessNotSeen, watchSeen(w), "the last turn failed")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -277,4 +278,11 @@ func TestADeferredTurnIsNoTurnAndARefusedOneIsAFailure(t *testing.T) {
 	assert.True(t, l.Known)
 	assert.False(t, l.Running)
 	assert.Contains(t, l.Why, "an agent preset")
+}
+
+// watchSeen is what the last check read: HarnessRunning, HarnessNotSeen, or
+// HarnessUnknown when the adapter cannot tell or nothing was asked yet.
+func watchSeen(w *HarnessWatch) string {
+	s, _ := w.Status()
+	return s
 }

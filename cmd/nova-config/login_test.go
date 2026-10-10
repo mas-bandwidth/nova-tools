@@ -103,6 +103,17 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 
 	loginArgs := []string{"login", "--store", store, "--as", "studio", "--key", key, "--sops", sops,
 		"--secret", secretName, "--dsn", dsn, "--friend", "rowan"}
+	// --dry-run makes every check the login makes, the secret resolved, and records nothing
+	code, out, errs = do(append(loginArgs, "--dry-run")...)
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "LOGIN DRY-RUN file="+file)
+	assert.Contains(t, out, "resolves=yes dry_run=true")
+	assert.NoFileExists(t, file, "a dry run recorded the login")
+	assert.Len(t, reads, 1, "a dry run resolves the secret")
+	reads = nil
+	code, out, errs = do("logout", "--dry-run")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "was=none dry_run=true")
 	code, out, errs = do(loginArgs...)
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, "LOGIN RECORDED file="+file)
@@ -239,6 +250,10 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 	assert.Contains(t, errs, "is not a login")
 	assert.Contains(t, errs, "run: nova-config logout")
 
+	code, out, errs = do("logout", "--dry-run")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "was=recorded dry_run=true")
+	assert.FileExists(t, file, "a dry run removed the login")
 	code, out, errs = do("logout")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, "was=recorded")

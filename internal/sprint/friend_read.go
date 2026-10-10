@@ -222,17 +222,24 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
 	}
-	return fleetReadLiveOf(s, pr, s.Fleet.Cards())
+	// only the cards whose id is a read of this attempt: the table is walked by
+	// id, never copied and sorted whole for each primary a step asks of
+	return fleetReadLiveOf(s, pr, s.Fleet.WithPrefix(attemptReadPrefix(pr)))
+}
+
+// attemptReadPrefix is the id prefix of every read card of the primary's attempt.
+func attemptReadPrefix(pr *Card) string {
+	attempt := pr.Int("attempt")
+	if attempt == 0 {
+		attempt = 1
+	}
+	return pr.ID + ".r" + itoa(attempt) + "."
 }
 
 // fleetReadLiveOf is friendReadLive over the fleet cards given (every card of the table,
 // or those of the primary a caller indexed once: fleetReadIndex).
 func fleetReadLiveOf(s *Snapshot, pr *Card, cards []*Card) (placed, okCards, broken []*Card) {
-	attempt := pr.Int("attempt")
-	if attempt == 0 {
-		attempt = 1
-	}
-	prefix := pr.ID + ".r" + itoa(attempt) + "."
+	prefix := attemptReadPrefix(pr)
 	for _, c := range cards {
 		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
 			continue
@@ -298,15 +305,20 @@ func machineReaderHasRoom(s *Snapshot, pr *Card) bool {
 	return false
 }
 
-// attemptEnds is the work card's branch and head, and the commit the attempt
-// started from (the last earlier attempt that finished ok). Finish writes the
-// branch on the work card, not the primary (steps_work.go).
+// attemptEnds is the branch that holds the work card's head (ReadBranch: the branch the work
+// pushed, never one named by a later generation), its head, and the commit the attempt
+// started from (the last earlier attempt that finished ok). Finish writes the branch on the
+// work card, not the primary (steps_work.go).
 func attemptEnds(s *Snapshot, primary string, attempt int) (branch, start, head string) {
 	if s.Fleet == nil {
 		return "", "", ""
 	}
 	if wc := s.Fleet.Card(WorkCardID(primary, attempt)); wc != nil {
-		branch, head = wc.F("branch"), wc.F("head")
+		var pr *Card
+		if s.Work != nil {
+			pr = s.Work.Card(primary)
+		}
+		branch, head = ReadBranch(s.Prefix, s.Epoch, pr, wc), wc.F("head")
 	}
 	var earlier []*Card
 	for a := 1; a < attempt; a++ {
@@ -352,24 +364,17 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 	return fallback
 }
 
-// FriendReadAsk asks each read in review of a friend with room at or above its
-// read tier, the same chooser as friendDeal (preferredFriend: an idle lane,
-// then the most room, then by name), and decrements that free width as
-// friendDeal does (docs/SPEC-SPRINT.md, a read asked of any unit with room at
-// or above the read tier). dir is a working directory used when the seat names
-// none; empty writes no brief (friend sync writes it). A friend whose read of
-// the attempt was taken back is not asked it again; another friend is. A paid
-// reader is left the read when no such friend has room. When every such friend
-// is at her room and no paid reader has room, the read waits for a reader.
-func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
-	p, _, err := friendReadAsk(s, seats, dir)
-	return p, err
-}
-
-// friendReadAsk is FriendReadAsk with the primaries it left waiting: a friend
-// at or above the read tier is up who may read the attempt, every such friend
-// is at her room, and no paid reader has room. The tick's ask records those as
-// waiting for a reader and counts them due (friendAskPart).
+// friendReadAsk asks each read in review of a friend with room at or above its
+// read tier, the same chooser as the friend deal (preferredFriend: an idle lane,
+// then the most room, then by name), and decrements that free width as the deal
+// does (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the
+// read tier). dir is a working directory used when the seat names none; empty
+// writes no brief (friend sync writes it). A friend whose read of the attempt
+// was taken back is not asked it again; another friend is. A paid reader is left
+// the read when no such friend has room. It answers too the primaries it left
+// waiting: a friend at or above the read tier is up who may read the attempt,
+// every such friend is at her room, and no paid reader has room. The tick's ask
+// records those as waiting for a reader and counts them due (friendAskPart).
 func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits []*Card, err error) {
 	if s == nil || s.Work == nil || s.Fleet == nil {
 		return p, nil, nil
@@ -473,12 +478,13 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 	return nil
 }
 
-// FriendReadClose applies one friend's read report to the read card on her
-// fleet row. LAND and HOLD retire that card (it is not moved to a fleet
-// column the fleet does not use, and not onto a readers column). HOLD with a
-// finding raises the same broken-read judgment Read raises. The readers table
-// gains no row.
-func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
+// FriendReadCloseChecked applies one friend's read report to the read card named (card, the
+// packet's own key: a re-asked read is a later identity of the plain one, ReadCardGenIDs; "" is
+// the one of her identities at the attempt that is placed), with the server's check of the
+// read's branch at its close (missing, as ReadReq.Missing): a broken report on a read whose
+// branch origin does not hold is retired with no verdict (read_missing.go). generation, when
+// given, must be the read card's live one (a stale report is refused).
+func FriendReadCloseChecked(s *Snapshot, name, primary, card, report string, missing map[string]MissingBranch, generation ...int) Plan {
 	var p Plan
 	pr := s.Work.Card(primary)
 	if pr == nil {
@@ -489,10 +495,13 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 	if attempt == 0 {
 		attempt = 1
 	}
-	id := ReadCardID(primary, attempt, name)
-	rc := s.Fleet.Card(id)
-	if rc == nil || !rc.Placed() {
+	rc := friendReadCardOf(s, name, primary, attempt, card)
+	if rc == nil {
 		p.refuse(primary, "no read asked of "+name)
+		return p
+	}
+	if len(generation) > 0 && max(generation[0], 1) != max(rc.Int("gen"), 1) {
+		p.refuse(primary, fmt.Sprintf("stale read report: generation %d is not the live one (%d)", generation[0], max(rc.Int("gen"), 1)))
 		return p
 	}
 	verdict, finding, why := ParseFriendReadReport(report)
@@ -500,8 +509,34 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 		p.refuse(primary, why)
 		return p
 	}
+	if m, ok := (ReadReq{Verdict: verdict, Missing: missing}).missingBranch(rc); ok {
+		p.Units = append(p.Units, missingBranchUnit(s, Fleet, rc, pr, m, finding, "", FriendRow(name)))
+		return p
+	}
 	p.Units = append(p.Units, friendReadCloseUnit(s, name, pr, rc, verdict, finding, ""))
+	if pw, ok := windowWrite(s.Fleet, Fleet, []ReadVerdict{verdictOf(s, rc, pr, FriendRow(name), verdict, finding)}); ok {
+		p.Props = append(p.Props, pw)
+	}
 	return p
+}
+
+// friendReadCardOf is the friend's placed read card of the primary at the attempt: the one
+// named (card, one of her identities, ReadCardGenIDs), or with none named the placed one of
+// them; nil when none is placed on her row.
+func friendReadCardOf(s *Snapshot, name, primary string, attempt int, card string) *Card {
+	ids := ReadCardGenIDs(primary, attempt, name)
+	if card != "" {
+		if !slices.Contains(ids, card) {
+			return nil
+		}
+		ids = []string{card}
+	}
+	for _, id := range ids {
+		if rc := s.Fleet.Card(id); rc != nil && rc.Placed() && rc.Row == FriendRow(name) {
+			return rc
+		}
+	}
+	return nil
 }
 
 // friendReadCloseUnit is the one close of a friend's read card on her fleet row,
@@ -533,15 +568,17 @@ func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, findin
 		notes = append(notes, j)
 	}
 	changes := []Change{change(Fleet, removeEntry(rc, set))}
+	// the terminal record is unconditional: an outbox report carries no usage, and
+	// that run is unpriced with the reason, never omitted (cost.go)
+	rec := readCostRecord(s, rc, usage, rc.F("asked"), cmp.Or(rc.F("begun"), stamp(s.Now)))
 	if strings.TrimSpace(usage) != "" {
-		rec := readCostRecord(s, rc, usage, rc.F("asked"), cmp.Or(rc.F("begun"), stamp(s.Now)))
 		set[FieldUsage] = rec
 		maps.Copy(set, readUsageFields(rc, usage))
-		if pr.Placed() {
-			costs := map[string]string{}
-			addConsumer(pr, costs, readConsumer(s, rc, 0, verdict, rec))
-			changes = append(changes, change(Work, setEntry(pr, costs)))
-		}
+	}
+	if pr.Placed() {
+		costs := map[string]string{}
+		addConsumer(pr, costs, readConsumer(s, rc, 0, verdict, rec))
+		changes = append(changes, change(Work, setEntry(pr, costs)))
 	}
 	return Unit{Key: pr.ID, Stream: pr.Row, Changes: changes, Moved: rc.ID + " retired " + verdict, Notes: notes}
 }
@@ -583,6 +620,11 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	}
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
+		if len(r.Gens) > 0 || c.F("stopped_from_gen") != "" {
+			if why := liveGen("read", c, r.Gens); why != "" {
+				return why
+			}
+		}
 		switch {
 		case c.F("kind") != "read":
 			return "not a read (it is " + orDash(c.F("kind")) + "): work is reported with finish"
@@ -598,22 +640,42 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 		return ""
 	}, s.Fleet.Card)
 	namePrimarysReads(&p, all)
+	var verdicts []ReadVerdict // the ledger's (reads_window.go)
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Return {
 			set := map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByReturned, "reason": cutText(r.Reason, MaxCardTextBytes)}
-			if r.Usage != "" {
+			changes := []Change{change(Fleet, removeEntry(c, set))}
+			if c.Col == Working {
+				rec := readCostRecord(s, c, r.Usage, c.F("asked"), stamp(readStart(c)))
+				if r.Usage != "" {
+					set[FieldUsage] = rec
+					maps.Copy(set, readUsageFields(c, r.Usage))
+				}
+				costs := map[string]string{}
+				addConsumer(pr, costs, readConsumer(s, c, 0, "retired returned", rec))
+				changes = append(changes, change(Work, setEntry(pr, costs)))
+			} else if r.Usage != "" {
 				set["usage"] = r.Usage
 			}
 			n := happened(NReadReturned, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt, n.What = name, c.Int("attempt"), name+" returned "+c.ID+": "+r.Reason
-			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{change(Fleet, removeEntry(c, set))},
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: changes,
 				Moved: c.ID + " " + c.Col + " -> returned (retired: " + name + " gave no verdict)", Notes: []Note{n}})
+			continue
+		}
+		if m, ok := r.missingBranch(c); ok {
+			// the machine's fault, not the card's: no verdict, asked again (read_missing.go)
+			p.Units = append(p.Units, missingBranchUnit(s, Fleet, c, pr, m, r.Finding, r.Usage, r.Who))
 			continue
 		}
 		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding, r.Usage)
 		u.Moved = c.ID + " " + c.Col + " -> " + r.Verdict + " (retired: read by " + name + ")"
 		p.Units = append(p.Units, u)
+		verdicts = append(verdicts, verdictOf(s, c, pr, row, r.Verdict, r.Finding))
+	}
+	if pw, ok := windowWrite(s.Fleet, Fleet, verdicts); ok {
+		p.Props = append(p.Props, pw)
 	}
 	return p
 }

@@ -106,15 +106,3 @@ func RecordedTokensIn(s *Snapshot, from, to time.Time) map[string]int64 {
 	})
 	return out
 }
-
-// RecordConsumer writes a consumer's record onto a primary in place, as a step that ends
-// the run writes it (once per key, the primary's total with it): a world built outside a
-// step, a release's spend check's tests among them, records its runs through it.
-func RecordConsumer(pr *Card, c Consumer) {
-	if pr.Fields == nil {
-		pr.Fields = map[string]string{}
-	}
-	set := map[string]string{}
-	addConsumer(pr, set, c)
-	maps.Copy(pr.Fields, set)
-}

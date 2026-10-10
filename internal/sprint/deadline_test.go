@@ -3,8 +3,10 @@ package sprint
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The member's median run wall is over its last DeadlineSamples ok attempts, newest
@@ -91,4 +93,54 @@ func TestOneDeadlineRuleForMembersAndFriends(t *testing.T) {
 	}
 	assert.Equal(t, 300, w.s.memberDeadline("m1", 200), "member deadline uses unified function")
 	assert.Equal(t, 600, w.s.memberDeadline("m1", 600), "member deadline respects own when larger")
+}
+
+// cellsMeasured is how many times member's done-ok cell has been measured.
+// The counter is process-global (medianWalls), so the caller holds its lock.
+func cellsMeasured(member string) int {
+	medianWalls.mu.Lock()
+	defer medianWalls.mu.Unlock()
+	return medianWalls.measured[member]
+}
+
+// TickDeal asks the member's median for every card it deals, and measures the
+// done-ok cell once across those asks and across plans of the same snapshot
+// (deadline.go). The plan is not applied: applying it can put cards and
+// legitimately change the cell. The member names are this test's alone.
+func TestTickDealMeasuresEachDoneOKCellOnce(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a")
+	members := []string{"deal-once-a", "deal-once-b"}
+	for _, m := range members {
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
+	}
+	w.s.Routes = []Route{{Name: "flash-deal-once", Tier: "flash", Provider: "prov-deal-once", Model: "model-deal-once", Tokens: 1000, Deadline: int(10 * time.Minute / time.Second), Enabled: true}}
+	for _, m := range members {
+		for i := 1; i <= 3; i++ {
+			w.s.Fleet.Put(&Card{ID: fmt.Sprintf("%s-h%d", m, i), Row: m, Col: DoneOK, Rev: 1,
+				Fields: map[string]string{"kind": "work", "primary": fmt.Sprintf("%s-p%d", m, i), "attempt": "1", "ok": "yes", "finished": fmt.Sprintf("2030-01-01T00:%02d:00Z", i), FieldUsage: "wall=100s"}})
+		}
+	}
+	w.must(Add(w.s, AddReq{Stream: "s-deal-once", Count: 4}))
+
+	before := map[string]int{}
+	cell0 := map[string]**Card{}
+	for _, m := range members {
+		cell := w.s.Fleet.Cell(m, DoneOK)
+		require.Greater(t, len(cell), 1, "%s's done-ok cell", m)
+		cell0[m] = &cell[0]
+		before[m] = cellsMeasured(m)
+	}
+	var units int
+	for range 3 {
+		p, _ := TickDeal(w.s, TickReq{})
+		require.Greater(t, len(p.Units), 1, "one deal planned %d units", len(p.Units))
+		units = len(p.Units)
+	}
+	for _, m := range members {
+		cell := w.s.Fleet.Cell(m, DoneOK)
+		require.Same(t, cell0[m], &cell[0], "TickDeal changed %s's done-ok cell", m)
+		got := cellsMeasured(m) - before[m]
+		require.Equal(t, 1, got, "%s's done-ok cell was measured %d times across three deals of %d units", m, got, units)
+	}
 }

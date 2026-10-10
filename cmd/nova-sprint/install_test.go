@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
 // install writes each of nova-sprint's units for macOS and Linux into a fake home,
@@ -78,18 +79,18 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			}
 			b, err := os.ReadFile(file("server"))
 			require.NoError(t, err)
-			args, err := sprint.UnitArgs(goos, b)
+			args, err := units.UnitArgs(goos, b)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"/opt/nova/bin/nova-sprint", "run", "--listen", "127.0.0.1:6390", "--redis", "127.0.0.1:6380", "--land", "--decide", "/srv/decide"}, args)
 			assert.Contains(t, string(b), "owner-a", "the owner's name rides in the unit's environment")
 			b, err = os.ReadFile(file("member"))
 			require.NoError(t, err)
-			args, err = sprint.UnitArgs(goos, b)
+			args, err = units.UnitArgs(goos, b)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"/opt/nova/bin/nova-swarm", "member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"}, args)
 			b, err = os.ReadFile(file("table"))
 			require.NoError(t, err)
-			args, err = sprint.UnitArgs(goos, b)
+			args, err = units.UnitArgs(goos, b)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"/opt/nova/bin/nova-sprint", "where", "--watch", "--every", "1s", "--redis", "127.0.0.1:6380"}, args)
 			assert.Len(t, calls, 5, "each unit loaded once")

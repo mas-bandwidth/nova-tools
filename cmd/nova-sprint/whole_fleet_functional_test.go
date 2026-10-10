@@ -132,7 +132,8 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		spec = append(spec, members[i-1]+":64")
 	}
 	do("init", "--readers", "reader-a,reader-b,reader-c", "--members", strings.Join(spec, ","))
-	do("add", "--stream", "a,b,c", "--count", "1000")
+	const cards = 3 * 1000
+	do("add", "--stream", "a,b,c", "--count", strconv.Itoa(cards/3))
 	for _, m := range members {
 		do("fleet", "beat", m)
 	}
@@ -178,6 +179,15 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		for _, m := range members {
 			assert.Equal(t, max(0, beforeReady[m]-64), fleetReady(t, do, m), "round %d: %s takes its width in this tick", i+1, m)
 			assert.Equal(t, min(64, beforeReady[m]), snap.Fleet.Count(m, sprint.Working), "round %d: %s fills its running width", i+1, m)
+		}
+		// every card is dealt: a round after it deals nothing and asserts nothing of the
+		// deal, and its tick spends the ask's budget on reads (store/tick_ask.go)
+		n := 0
+		for _, d := range loopDeals(out.String()) {
+			n += len(d)
+		}
+		if n >= cards {
+			break
 		}
 	}
 

@@ -92,7 +92,7 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		// machine and the worker, and nothing more; the server never waits (--wait asks again
 		// from the worker's side)
 		rest := argv[2:]
-		if len(rest) != 5 || !slices.Contains(sprint.LaneKinds, rest[0]) || rest[1] != "--machine" || !sprint.ValidID(rest[2]) || rest[3] != "--as" || !sprint.ValidID(rest[4]) {
+		if len(rest) != 5 || !slices.Contains(sprint.LaneKinds, rest[0]) || rest[1] != "--machine" || !sprint.ValidID(rest[2]) || rest[3] != "--as" || !sprint.ValidLaneWho(rest[4]) {
 			return "", 0, "a lane's verb sent to the server is `lane " + argv[1] + " <kind> --machine <m> --as <worker>` and nothing more, the kind one of " + strings.Join(sprint.LaneKinds, ", ")
 		}
 		return rest[4], 2, ""
@@ -347,11 +347,22 @@ func takesGzip(accept string) bool {
 // listenRefused is why host is not an address the server binds, "" when it is.
 // The decision is listenable's, so the server and the dashboard refuse the same
 // addresses: a name, a public address, a link-local address and an unspecified
-// address. Loopback, a private address and the tailnet stay. docs/SPEC-SPRINT.md
-// section 14, The server. The caller returns this before net.Listen.
+// address. Loopback, a private address and the tailnet stay outside local-only
+// mode; in local-only mode nothing but loopback binds, and the refusal names the
+// mode, an empty host included (sprint.CheckAddr, docs/SPEC-SPRINT.md,
+// sprint-local-only-mode-r-bcb.w5). The caller returns this before net.Listen.
 func listenRefused(host string) string {
 	const refused = "--listen wants one address of this machine (its address on the fleet's private network, or 127.0.0.1): the server checks no credential, so it does not listen on every network"
-	if host == "" || listenable(net.ParseIP(host)) != "" {
+	if host == "" {
+		if sprint.LocalOnlyMode() {
+			return "local-only mode allows only loopback; a --listen address with no host names every network: " + refused
+		}
+		return refused
+	}
+	if why := listenable(net.ParseIP(host)); why != "" {
+		if sprint.LocalOnlyMode() {
+			return why
+		}
 		return refused
 	}
 	return ""
@@ -371,6 +382,12 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 		return fmt.Errorf("--listen wants host:port, found %s", addr)
 	}
 	if why := listenRefused(host); why != "" {
+		return errors.New(why)
+	}
+	// the address rule the card states, applied to the listener too: loopback or the
+	// tailnet and nothing else, so a private address outside the tailnet is refused
+	// here (sprint.CheckAddr, docs/SPEC-SPRINT.md, sprint-local-only-mode-r-bcb.w5)
+	if why := sprint.CheckAddr(addr, sprint.LocalOnlyMode()); why != "" {
 		return errors.New(why)
 	}
 	// the fleet's listener takes the workers' verbs; the loopback one, on the same port,

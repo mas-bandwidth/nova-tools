@@ -60,3 +60,16 @@ func TestLocalReadsThisMachineOpenFiles(t *testing.T) {
 	}
 	require.True(t, found, "this test's own process holds descriptors")
 }
+
+// TestParseFileNr: Linux's /proc/sys/fs/file-nr is allocated, unused and the maximum.
+func TestParseFileNr(t *testing.T) {
+	t.Parallel()
+	open, maxFiles, ok := ParseFileNr("15139\t0\t9223372036854775807\n")
+	require.True(t, ok)
+	require.Equal(t, 15139, open)
+	require.Equal(t, 9223372036854775807, maxFiles)
+	_, _, ok = ParseFileNr("x 0 1\n")
+	require.False(t, ok)
+	_, _, ok = ParseFileNr("")
+	require.False(t, ok)
+}

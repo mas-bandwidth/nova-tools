@@ -83,6 +83,7 @@ usage:
                     [--kind <kind>] [--dry-run] [--json]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
                         [--timeout <duration>] [--example]
+  nova-config backup --dir <dir> [--pg <dsn>] [--keep <n>] [--every <duration>] [--json]
   nova-config <kind> add <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> remove <name> --actor <name> [--dry-run] [--json]
@@ -227,6 +228,9 @@ type pgStore interface {
 	Version(ctx context.Context) (int, error)
 	// Applied is the migration ledger, every version recorded, in order.
 	Applied(ctx context.Context) ([]int, error)
+	// Sessions is every other nova session holding the database: migrate
+	// --window refuses while there is one.
+	Sessions(ctx context.Context) ([]config.Session, error)
 	Close() error
 }
 
@@ -258,6 +262,10 @@ type deps struct {
 	probe config.VerbProbe
 	// runLoop runs loop run's command (startLoop); nil runs none.
 	runLoop runLoop
+	// pgRun runs pg_dump and pg_restore for backup (runPGTool when nil), and
+	// pause is backup --every's wait between dumps (sleepCtx when nil).
+	pgRun pgRun
+	pause func(ctx context.Context, d time.Duration) error
 }
 
 type redisApplier struct {
@@ -288,6 +296,8 @@ func realDeps() deps {
 		tailscale: config.TailscaleStatus,
 		probe:     config.HelpProbe,
 		runLoop:   startLoop,
+		pgRun:     runPGTool,
+		pause:     sleepCtx,
 	}
 }
 
@@ -347,7 +357,7 @@ func dispatch(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	defer verbflag.RecoverWith(stdout, toolName, banner(), &code, verbExtra)
 	ctx := context.Background()
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, login, logout, or a kind ("+strings.Join(config.KindNames(), ", ")+") then add|set|remove|list|show|history")
+		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, backup, login, logout, or a kind ("+strings.Join(config.KindNames(), ", ")+") then add|set|remove|list|show|history")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -382,13 +392,15 @@ func dispatch(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return runApply(ctx, args[1:], stdout, stderr, d)
 	case "inventory":
 		return runInventory(ctx, args[1:], stdout, stderr, d)
+	case "backup":
+		return runBackupTool(ctx, args, stdout, stderr, d)
 	case "login", "logout":
 		return runLoginTool(ctx, args, stdout, stderr, d)
 	}
 	if k, ok := config.Lookup(args[0]); ok {
 		return runKind(ctx, k, args[1:], stdout, stderr, d)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, inventory, login, logout, or a kind (%s) then add|set|remove|list|show|history", oneline.Quote(args[0]), strings.Join(config.KindNames(), ", ")))
+	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, inventory, backup, login, logout, or a kind (%s) then add|set|remove|list|show|history", oneline.Quote(args[0]), strings.Join(config.KindNames(), ", ")))
 }
 
 // refuse is the exit 2 line: the invocation could not run (a flag, an input,

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -59,7 +60,7 @@ func (a *app) cmdMachineStop(args []string, stdout, stderr io.Writer) int {
 // changed, and the sprint line. Setting the state the machine has changes
 // nothing and says so. A stop wants --reason and --until (docs/SPEC-SPRINT.md
 // section 14): the machine line says who stopped it, why and when it is back,
-// and at --until the tick starts it; a stop of a STOPPED machine replaces the
+// and only an explicit start resumes it; a stop of a STOPPED machine replaces the
 // two.
 func (a *app) setMachine(name string, running bool, args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
@@ -293,12 +294,14 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profile, listen, decideDir, keyNames string
 	var profileTicks int
 	var land bool
+	landParallel := landParallelDefault
 	var rules, idle bool
 	st, c, code := a.machineVerb("run", args, stderr, answerRulesFlag(&rules, true), idleAlarmFlag(&idle, true), func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; a name, a public address, a link-local address, and an every-network address are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
 		fs.StringVar(&keyNames, "keys", "", "the `NAME,...` of secrets this process reads from the seat login's nova-secrets seat (also recorded as keys.json beside the login): the decision key and each provider key. A name that cannot be read refuses at start. The unit's environment carries no key value")
 		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment or read in this process when --keys or keys.json names it, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); every cycle prints one line, and a landing still running after "+LandDeadline.String()+" raises one judgment naming the stage; land is then not run by hand")
+		fs.IntVar(&landParallel, "land-parallel", landParallelDefault, "with --land, how many streams each landing merges at once before it lands them one at a time (land --land-parallel)")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 		fs.DurationVar(&a.tickDeadline, "tick-deadline", TickDeadline, "the least time a tick may take before it is given up (stretched to 3 x the median wall of the last 20 ticks, at most "+TickDeadlineCap.String()+"): past it the stacks are printed, the tick's plan is given up and the loop goes on; three wedged ticks in a row (given up and not stopped within a further deadline) exit 4 so the supervisor starts the loop again (0: wait for ever)")
@@ -352,6 +355,12 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if land {
+		if landParallel != landParallelDefault {
+			b := a.landState()
+			b.mu.Lock()
+			b.landMore = append(b.landMore, "--land-parallel", strconv.Itoa(landParallel))
+			b.mu.Unlock()
+		}
 		go a.landLoop(context.Background(), c.redis, stdout)
 	}
 	// the providers' balances, read outside every tick (balance.go)
@@ -774,9 +783,10 @@ func machineWords() string {
 	return strings.TrimSpace(`
 The machine: nova-sprint start sets it RUNNING, nova-sprint stop --reason
 <text> --until <time or duration> sets it STOPPED: where, inbox and the
-dashboard say "STOPPED by <actor>: <reason>, back by 2:04 PM", and at --until
-the tick starts it again unless it was stopped again since (a clear takes the
-time off); nova-sprint run ticks as soon as a line comes on the log (a verb's
+dashboard say "STOPPED by <actor>: <reason>, back by 2:04 PM". That time is
+display metadata; only an explicit start resumes after every owned working
+job has been cancelled and returned with stop-return. nova-sprint run ticks
+as soon as a line comes on the log (a verb's
 step: a finish, a merge, a start), at most every 100ms, and once a second
 while the log is quiet; nova-sprint tick is one tick by hand. Each tick deals
 ready primaries, asks readers, resolves waiting primaries whose needs landed,
@@ -795,7 +805,7 @@ over zero; one low on funds (a balance not over an hour of its spend) until
 the balance is over it. When every provider is OUT the tick stops the
 machine (STOPPED, every provider is out of credit) and start is refused
 until one is paid. Low on funds never stops it. Every
-verb works in both states. run stops (exit 3) when its own binary is replaced
+other verbs can inspect and repair stopped state. run stops (exit 3) when its own binary is replaced
 on disk, so its supervisor starts the new build.`) + "\n"
 }
 
@@ -805,7 +815,7 @@ on disk, so its supervisor starts the new build.`) + "\n"
 // moves alone unless it says so.
 func answerRulesFlag(on *bool, byDefault bool) func(flagSet) {
 	return func(fs flagSet) {
-		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
+		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: a harness fault or a HOLD with findings reworked on its tier with the failure as its fix, any other failure redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
 	}
 }
 

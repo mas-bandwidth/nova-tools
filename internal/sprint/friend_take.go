@@ -17,7 +17,7 @@ import (
 // friend (friend down) takes back every one of hers she has not started, as a held machine's
 // cards are withdrawn: the work card is withdrawn on her row (never a failure: no redeal of
 // its bound is spent, FieldTakeEnded is not set), its primary goes back to ready, and the
-// friends' deal (friendDeal) places the same card again at its next generation, on its own
+// friends' deal (friendDealPass) places the same card again at its next generation, on its own
 // branch and job. A card she has started stays with her and finishes under the coordinator's
 // take: one she pushed to, one her beat names running (the caller reads both: Started), and
 // one she finished (in review or later, so no longer ready or working on her row). With cards
@@ -183,7 +183,31 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 				what += ": no push to carry"
 			}
 		}
+		// A working read has run. Its withdrawal ends that run as surely as an
+		// outbox verdict does: keep the priced or explicitly unpriced terminal
+		// record on the primary in the same unit (docs/SPEC-SPRINT.md, What a
+		// card cost). A ready read has not started and adds no record.
+		var readPrimary *Card
+		var readCosts map[string]string
+		if isRead(c) && c.Col == Working {
+			readPrimary = s.Work.Placed(c.F("primary"))
+			if readPrimary != nil {
+				rec := readCostRecord(s, c, c.F(FieldUsage), c.F("asked"), stamp(readStart(c)))
+				set[FieldUsage] = rec
+				end := "retired-taken-back"
+				if r.Hold {
+					end = "retired-hold"
+				} else if r.Spends {
+					end = "retired-returned"
+				}
+				readCosts = map[string]string{}
+				addConsumer(readPrimary, readCosts, readConsumer(s, c, 0, end, rec))
+			}
+		}
 		u := withdrawUnit(s, c, set, unset, NTakenBack, r.Who, what)
+		if readPrimary != nil && len(readCosts) > 0 {
+			u.Changes = append(u.Changes, change(Work, setEntry(readPrimary, readCosts)))
+		}
 		if c.Col == Working && len(next) > 0 {
 			n := next[0]
 			next = next[1:]

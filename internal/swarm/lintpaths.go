@@ -27,7 +27,9 @@ import (
 //	                      at the BASE tip, or is a new `_test` file, or a NEW: line names it
 //	donewhen-test-name    the base check of the same name, read off the TEST line when the brief
 //	                      has one: it reads, and its test is absent at the BASE tip in its
-//	                      package, so it can be red there
+//	                      package, so it can be red there; a ledger card (KIND: ledger) whose
+//	                      TEST is a class test under internal/ci/ is the one exception, see
+//	                      LedgerKind
 //	paths-cover-named     every repository path START and THE TASK name as a file to change is
 //	                      covered by PATHS or NEW; a START entry marked `(read)` is only read
 //	paths-cover-test      the TEST package's `_test` files are covered
@@ -61,6 +63,27 @@ var BriefBaseRemedies = map[string]string{
 	"tier-set":             "line 1 names the card's tier, `tier: flash|pro|heavy|frontier`; a card with no tier, or `-`, was dealt to friends who could not serve it",
 	"tla-is-frontier":      "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the frontier tier's work: write `tier: frontier` on line 1, or take tla/ out of PATHS: and give the model to its own card",
 	"who-serves-tier":      "the friend WHO: names serves the card's tier (her row's tiers, else her class), or for `WHO: friend` some friend does; name a friend who serves it, raise the tier to one she serves, or drop the WHO: line so the fleet deals it",
+}
+
+// LedgerKind is the KIND: of a ledger card, the card nova-card generate cuts from a
+// ratchet ledger of internal/ci (internal/cardgen PlanLedger). Its TEST is the ledger's
+// class test, green at the base by construction, and its proof is the ledger shrinking
+// with that test still green, never a test red at the base. So donewhen-test-name lets a
+// TEST that exists at the base pass for such a card, and for no other: only when the brief
+// says KIND: ledger AND its TEST names a test under internal/ci/ (classTestPackage).
+const LedgerKind = "ledger"
+
+// classTestPackage says pkg, a TEST line's package, is internal/ci or a package under it,
+// where the class tests and their ledgers live.
+func classTestPackage(pkg string) bool {
+	p := strings.TrimPrefix(path.Clean(strings.TrimSpace(pkg)), "./")
+	return p == "internal/ci" || strings.HasPrefix(p, "internal/ci/")
+}
+
+// ledgerClassTest says the brief is a ledger card whose TEST names a class test: its
+// KIND: is LedgerKind and its TEST package is under internal/ci/.
+func ledgerClassTest(kind, pkg string) bool {
+	return strings.EqualFold(strings.TrimSpace(kind), LedgerKind) && classTestPackage(pkg)
 }
 
 // BriefBase is the evidence the brief checks read beside the brief.
@@ -163,6 +186,8 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 		switch {
 		case err != nil:
 			add("donewhen-test-name", testF.line, fmt.Sprintf("MISSING: could not search the tree at %s for %s: %v", at(), tl.Name, err))
+		case present && ledgerClassTest(h["KIND"].value, tl.Package):
+			// a ledger card: its class test is green at the base by construction (LedgerKind)
 		case present:
 			add("donewhen-test-name", testF.line, fmt.Sprintf("TEST %s exists in %s at %s, so it cannot be red there; name the new test the card adds", tl.Name, tl.Package, at()))
 		}

@@ -38,7 +38,7 @@ func (h *cappedHarness) DeliverTo(ctx context.Context, _, _ string) (LaneTurn, e
 	n := h.lines
 	h.mu.Unlock()
 	for i := range n {
-		Printed(ctx, fmt.Appendf(nil, "line %d of the lane\n", i))
+		printed(ctx, fmt.Appendf(nil, "line %d of the lane\n", i))
 	}
 	<-ctx.Done()
 	return LaneTurn{Exit: -1}, errors.New("the delivery was stopped with its process group")
@@ -183,4 +183,18 @@ func TestALanesCapIsItsTiersFromTheRowOrTheDefaults(t *testing.T) {
 	assert.Equal(t, sprint.LaneCap{Cap: 15 * time.Minute, Overrun: 2 * time.Second, Tier: "flash"}, lc)
 	assert.Equal(t, "capped at 2h30m0s (tier -, overrun 0s)", CappedWords(150*time.Minute, "", -time.Second))
 	assert.Equal(t, "line 2\nline 3", LastLines("line 1\nline 2\nline 3\n", 2))
+}
+
+// printed is p, printed by the command a delivery runs, said to ctx's watch and tail: what
+// RealExec does with each write, for a test harness that runs no command through it.
+func printed(ctx context.Context, p []byte) {
+	if len(p) == 0 {
+		return
+	}
+	if seen, _ := ctx.Value(outputKey{}).(func()); seen != nil {
+		seen()
+	}
+	if tail, _ := ctx.Value(tailKey{}).(func([]byte)); tail != nil {
+		tail(p)
+	}
 }

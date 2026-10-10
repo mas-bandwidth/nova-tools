@@ -107,32 +107,33 @@ const (
 
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
-	NReadyToAccept:   {"accept", "rework", "drop"},
-	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
-	NWorkFailed:      {"rework with a fix", "drop"},
-	NBriefDefect:     {DecisionRecut, "drop"}, // never a redeal of the brief as cut
-	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
-	NBriefWrong:      {"brief", "drop"}, // never rework: a --fix changes the brief not at all (brief_bound.go)
-	NConflict:        {"resolve and resume", "rework", "drop"},
-	NRed:             {"take the suspect off and resume", "rework the suspect"},
-	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
-	NRejected:        {"resume", "return", "drop"},
-	NBaseRed:         {"resume", "wait"},
-	NMissingBase:     {"rebase", "wait", "drop"},
-	NBlocked:         {"drop", "ack"},
-	NMissingNeed:     {"drop", "ack"},
-	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
-	NReadsExhausted:  {"ask another reader", "rework", "drop"},
-	NStranded:        {"ask", "rework", "drop"},
-	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
-	NOpStuck:         {"check", "ack"},
-	NOverdue:         {"act"},
-	NStreamStale:     {"look", "wait"},
-	NSprintDone:      {"clear", "add"},
-	NSentinelReached: {"release", "do more before going on", "drop"},
-	NScoredLow:       {"add a repair card", "ack"}, // landed: a rework is a new card; ack accepts the landing
-	NTimer:           {"ack"},                      // a timer the actor set woke it: nothing to decide
-	NStalled:         {"look at the card", "wait"}, // each stall names its own
+	NReadyToAccept:     {"accept", "rework", "drop"},
+	NReturned:          {"rework", "accept", "drop"}, // accept only while its reads stand at its head
+	NWorkFailed:        {"rework with a fix", "drop"},
+	NBriefDefect:       {DecisionRecut, "drop"}, // never a redeal of the brief as cut
+	NReadBroken:        {"rework with the finding", "ask another reader", "drop"},
+	NBriefWrong:        {"brief", "drop"}, // never rework: a --fix changes the brief not at all (brief_bound.go)
+	NConflict:          {"resolve and resume", "rework", "drop"},
+	NRed:               {"take the suspect off and resume", "rework the suspect"},
+	NCross:             {"rank that card first", "wait", "look at both", "return", "drop"},
+	NRejected:          {"resume", "return", "drop"},
+	NBaseRed:           {"resume", "wait"},
+	NMissingBase:       {"rebase", "wait", "drop"},
+	NBlocked:           {"drop", "ack"},
+	NReadBranchMissing: {"ack", "rework with a fix", "drop"}, // read_missing.go: ack once the branch is on origin
+	NMissingNeed:       {"drop", "ack"},
+	NCIRed:             {"rework with a fix", "return", "drop", "look", "ack"},
+	NReadsExhausted:    {"ask another reader", "rework", "drop"},
+	NStranded:          {"ask", "rework", "drop"},
+	NRepairSkipped:     {"look at the card", "return", "drop", "rework", "ack"},
+	NOpStuck:           {"check", "ack"},
+	NOverdue:           {"act"},
+	NStreamStale:       {"look", "wait"},
+	NSprintDone:        {"clear", "add"},
+	NSentinelReached:   {"release", "do more before going on", "drop"},
+	NScoredLow:         {"add a repair card", "ack"}, // landed: a rework is a new card; ack accepts the landing
+	NTimer:             {"ack"},                      // a timer the actor set woke it: nothing to decide
+	NStalled:           {"look at the card", "wait"}, // each stall names its own
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second

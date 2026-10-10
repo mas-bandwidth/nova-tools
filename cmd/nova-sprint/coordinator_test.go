@@ -85,6 +85,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"relink":            "relink s1-1 s1-2",
 		"sentinel set":      "sentinel set s1-stop --needs s1-2",
 		"recut":             "recut s1-1 --tier heavy",
+		"twin":              "twin s1-1",
 		"brief":             "brief s1-1 --brief b",
 		"move":              "move s1-2 --stream s2",
 		"resume":            "resume --stream s1",
@@ -134,6 +135,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		// the friends' directories are read only after the store refuses the intruder
 		"friend reconcile": "friend reconcile friend-a",
 		"collect":          "collect",
+		"card base":        "card base s1-1 main",
 		"rebase":           "rebase --from a --to b",
 	}
 	for _, v := range verbs {

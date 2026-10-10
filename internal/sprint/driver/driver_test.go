@@ -71,7 +71,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	}
 	all := strings.Join(lines, "\n")
 	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --redis 127.0.0.1:1", "take --as m1 --limit 64 --epoch 0 --redis 127.0.0.1:1",
-		"read --as reader-a --ok --epoch 0 s1-5.r1.reader-a --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a --redis",
+		"read --as reader-a --ok --epoch 0 --usage " + ReadUsage + " s1-5.r1.reader-a@1 --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a@1 --redis",
 		"merge --stream s1 --batch 5"} {
 		assert.Contains(t, all, want, "no %q in\n%s", want, all)
 	}
@@ -454,7 +454,7 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 	assert.Len(t, calls, 7, "the calls of a tick: %v", calls)
 	assert.Equal(t, 80, finished, "m1 and m2 finished %d of their 80 working cards in the two calls", finished)
 	text := out.String()
-	assert.Contains(t, text, "read --as reader-a --begin --epoch 0 [40 cards: s1-1.r1.reader-a s1-2.r1.reader-a s1-3.r1.reader-a ...]", "a batch prints its count and first three:\n%s", text)
+	assert.Contains(t, text, "read --as reader-a --begin --epoch 0 [40 cards: s1-1.r1.reader-a@1 s1-2.r1.reader-a@1 s1-3.r1.reader-a@1 ...]", "a batch prints its count and first three:\n%s", text)
 	for _, l := range strings.Split(text, "\n") {
 		n := 0
 		for _, x := range strings.Fields(l) {

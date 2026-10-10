@@ -707,9 +707,11 @@ const SeatMarkKey = "NOVA_SECRETS_WRITTEN_BY"
 var seatMarkValue = regexp.MustCompile(`^(seal|seat add|seat inject) ` + markVersionPattern + `$`)
 
 // markVersionPattern is a release tag or "dev", and nothing a value could ride in: a
-// shape check alone let 256 bits of hex pass as a version, and an unbounded suffix did the
-// same after a tag (the second and third reads of 2026-10-06).
-const markVersionPattern = `(dev|v?\d+\.\d+\.\d+(-rc\d{1,3})?)`
+// shape check alone let 256 bits of hex pass as a version, an unbounded suffix did the
+// same after a tag (the second and third reads of 2026-10-06), and an unbounded numeric
+// component let eighty digits ride in the clear (the read of 2026-10-07). Each component
+// is capped at four digits, the most a real release tag holds.
+const markVersionPattern = `(dev|v?\d{1,4}\.\d{1,4}\.\d{1,4}(-rc\d{1,3})?)`
 
 // markVersion is MarkVersion when it is a version the gate reads as one, and "dev"
 // otherwise: a verb never writes a mark its own gate refuses.

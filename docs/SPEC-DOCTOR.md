@@ -26,6 +26,11 @@ edits no other. A duplicate or unnamed registration panics at start-up.
 nova-doctor [run] [--check <name>]... [--local] [--strict] [--json]
 ```
 
+`run` is the one verb and the default: `nova-doctor --local` is `nova-doctor run --local`.
+A bare `nova-doctor`, with no verb and no flag, runs no check: it is refused at exit 2 on
+stderr, naming the verbs and `run: nova-doctor help`, as every tool's bare command is
+(docs/ONBOARDING.md point 1).
+
 - `--check <name>` runs only that check; repeatable. A name that is no check is refused
   at exit 2, naming the checks there are.
 - `--local` skips the checks only a fleet needs and says which, in one line:
