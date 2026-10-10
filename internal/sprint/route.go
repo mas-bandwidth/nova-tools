@@ -93,14 +93,21 @@ const (
 // (round.go, roundWrites).
 func PropRouteIndex(tier string) string { return "route_index_" + tier }
 
-// NNoRoute is the tick's judgment of a tier no route serves, once per tier (its
-// subject is the tier's, StreamSubject(TierSubject(tier))), closed when the tier is
-// served or no card of it waits.
+// NNoRoute is the tick's judgment of a route no up capable machine can launch, and of
+// a tier no route serves. A route's subject is its own (StreamSubject(RouteSubject(name))),
+// closed when a capable machine is up or the route is disabled; a tier's is the tier's
+// (StreamSubject(TierSubject(tier))), closed when the tier is served or no card of it
+// waits.
 const NNoRoute = "no route serves the tier"
 
 // TierSubject is the stream word a tier's judgment is filed under: no stream id has
 // a colon, so it is never a stream's.
 func TierSubject(tier string) string { return "tier:" + tier }
+
+// RouteSubject is the stream word a route's judgment is filed under: the route no up
+// capable machine can launch (swarm.Unserved, TickDeal). No stream id has a colon, so it
+// is never a stream's.
+func RouteSubject(route string) string { return "route:" + route }
 
 // noRoute is why a primary's tier is not served: "" when a route serves it (or the store
 // has no route at all) or a friend up does (tierServed), else the tier it is judged under
@@ -235,7 +242,7 @@ func preferFirst(arr []string, served map[string]Route, skip []string, hold bool
 // c's unit; nil reads the index and moves nothing (tla/RouteIndex.tla: Deal, Redeal, Pin).
 // An entry that names no enabled route of the tier (a route disabled or removed since
 // the array was set) is skipped as an excluded one is.
-func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string, byFriend bool) {
+func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes, member ...string) (set map[string]string, tier, why string, byFriend bool) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	tier = drawTier(c, m)
 	if tier == "" {
@@ -272,6 +279,9 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		}
 		if rest, ok := s.resting(r.Name); ok {
 			rested = append(rested, r.Name+" until "+rest.UntilSaid()+": "+rest.Said())
+			continue
+		}
+		if len(member) > 0 && !s.memberCanLaunch(member[0], r) {
 			continue
 		}
 		served[r.Name] = r
@@ -482,7 +492,7 @@ func (s *Snapshot) readTierOf(pr *Card) string {
 // as a redeal leaves out the routes already taken. The tier alone when the store holds
 // no route or none serves the tier: the read carries no route and its reader runs its
 // own --model.
-func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[string]string {
+func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string, reader ...string) map[string]string {
 	tier, key := s.readTierOf(pr), pr.ID
 	if len(s.Routes) == 0 || ri[tier] == nil {
 		return map[string]string{FieldTier: tier}
@@ -490,6 +500,9 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 	served := map[string]Route{}
 	for _, r := range s.Routes {
 		if r.Tier == tier && r.Enabled {
+			if len(reader) > 0 && !s.ownModelReader(reader[0]) && !s.readerCanLaunchRoute(reader[0], r) {
+				continue
+			}
 			served[r.Name] = r
 		}
 	}

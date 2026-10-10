@@ -996,8 +996,12 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		// its bench: the members its brief's BENCH line names, and the deal deals it to
 		// none other; with no member of it up it waits ready (bench_deal.go)
 		bench := Bench(c)
-		members := onlyBench(up, bench)
+		members := s.membersForRoute(escalating(s, c), onlyBench(up, bench))
 		if len(members) == 0 {
+			if len(onlyBench(up, bench)) > 0 {
+				p.refuse(c.ID, "no up member of its bench can launch a route of tier "+s.dealTierOf(escalating(s, c))+": list the harness on a machine with its login and run nova-config apply and nova-sprint fleet sync")
+				continue
+			}
 			p.refuse(c.ID, benchRefusal(bench))
 			continue
 		}
@@ -1105,7 +1109,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	route, _, why, _ := s.routeOf(c, nil, ri)
+	route, _, why, _ := s.routeOf(c, nil, ri, m)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -1173,7 +1177,7 @@ func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int,
 // (tla/DirtyTick.tla DealOne). Its route is the next at its tier's index that the
 // card was not dealt on (ri, moved past it and the entries skipped: route.go).
 func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexes) (Unit, string) {
-	route, _, why, _ := s.routeOf(c, wc, ri)
+	route, _, why, _ := s.routeOf(c, wc, ri, m)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -2014,7 +2018,8 @@ type FleetReq struct {
 	DeadlineOff bool `json:",omitempty"`
 	// Sync, with Op sync, is every machine the inventory says is a member
 	// and its width (fleet_sync.go); Member is empty.
-	Sync []SyncMember `json:",omitempty"`
+	Sync      []SyncMember      `json:",omitempty"`
+	Harnesses map[string]string `json:",omitempty"`
 	// HeldBy, with hold, marks the hold as made by that mechanism (the sync's,
 	// fleet_sync.go) and not the coordinator's: the control card's held_by.
 	HeldBy string `json:",omitempty"`
@@ -2210,7 +2215,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 	case "quiet":
 		return quietPlan(s, r)
 	case "sync":
-		return fleetSyncPlan(s, r, rr, moves)
+		return fleetSyncRoutes(s, r, rr, moves)
 	default:
 		p.refuse(r.Op, "fleet wants up, down, level, hold, release, sync or quiet")
 	}
@@ -2312,7 +2317,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// member at its width takes no more.
 			// a bench card goes to a member of its bench alone: with none of it up it is
 			// withdrawn, and waits ready for its bench (bench_deal.go)
-			if m := rr.next(onlyBench(without(up, StagingRefusers(c)), benchOfWork(s, c)), q, widths, ""); m != "" {
+			if m := rr.next(s.membersForExisting(c, onlyBench(without(up, StagingRefusers(c)), benchOfWork(s, c))), q, widths, ""); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
 				q[m]++
@@ -2465,7 +2470,7 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 		for ; i >= 0 && to == ""; i-- {
 			// a bench card is never moved off its bench: the members its BENCH line does not
 			// name are avoided as a member that refused it at staging is (bench_deal.go)
-			to = target(rr, up, n, held, widths, long, append(StagingRefusers(q[i]), notBench(up, benchOfWork(s, q[i]))...))
+			to = target(rr, s.membersForExisting(q[i], up), n, held, widths, long, append(StagingRefusers(q[i]), notBench(up, benchOfWork(s, q[i]))...))
 		}
 		if to == "" {
 			return

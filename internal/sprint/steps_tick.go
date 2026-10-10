@@ -745,6 +745,17 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		conds = append(conds, cond{typ: NNoRoute, stream: TierSubject(tier), streamLevel: true, primaries: unserved[tier],
 			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
 	}
+	// one persistent judgment per enabled route no member up can launch (swarm.Unserved;
+	// docs/SPEC-SWARM "A member draws only routes whose harness it can launch"): naming
+	// the route and its machines, closed when a capable machine is up or the route is
+	// disabled. Raised only while a member is up: with the whole fleet down the judgment
+	// is NNoMember's, never one line per route.
+	if len(up) > 0 {
+		for _, u := range s.routeUnserved() {
+			conds = append(conds, cond{typ: NNoRoute, stream: RouteSubject(u.Route), streamLevel: true,
+				what: u.Judgment()})
+		}
+	}
 	// one judgment per provider while its routes rest for its funds or its key, never one
 	// per card (provider_funds.go)
 	pc, stop := providerConds(s)
