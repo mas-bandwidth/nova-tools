@@ -44,6 +44,20 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	day := a.now().UTC().Format("2006-01-02")
+	// After the route inventory is read, an absent provider key refuses all
+	// provider requests and store writes, dry-run included. The refusal names the exact command that puts the
+	// key in the environment. A provider with no key variable (opencode) is not
+	// this refusal: it stays unknown inside the step.
+	var missing []string
+	for _, p := range slices.Sorted(maps.Keys(names)) {
+		if env := provbalance.KeyEnv[p]; env != "" && a.getenv(env) == "" {
+			missing = append(missing, env)
+		}
+	}
+	if len(missing) > 0 {
+		env := missing[0]
+		return refuse(stderr, verb, env+" is not in this environment; run: nova-secrets exec --only "+env+" -- nova-sprint cost reconcile")
+	}
 	var reads []sprint.UsageRead
 	for _, p := range slices.Sorted(maps.Keys(names)) {
 		reads = append(reads, provbalance.ReadUsage(ctx, a.transport, p, day, a.getenv))

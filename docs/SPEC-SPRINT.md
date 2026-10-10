@@ -2082,12 +2082,31 @@ fleet read returned with `read --return` records its run on the primary in the
 same unit as retirement, priced from `--usage` or unpriced with `no-tokens` when
 usage is absent. An unbegun Ready read returned or retired adds no cost record.
 
-**Every run's cost, whatever its end.** A take or a read records its cost in the step
+**Every run's cost, whatever its end.** A missing usage line does not make a
+no-result run free (`TestARunWithNoResultIsPricedOrCarriesItsReason`). Measured
+usage is priced first. If it is absent, a launch's native log and its own
+`harness-output.log` supply OpenRouter generation ids; the member reads
+`GET /api/v1/generation?id=<id>` through its held key. Distinct ids are read once,
+with at most 128 quotes and one bounded read window. Complete provider costs
+become `actual_usd` with `actual_by=generation`; complete token quotes without
+an invoice are priced at the route's sheet. Partial or mismatched quotes never
+pretend to be the whole run. Without a complete quote, the member keeps the
+exact initial launch prompt length as `prompt_bytes`. Its input estimate uses
+four bytes per token, rounded up, at the route's input price (long-context and
+gateway prices included), marked `estimated=yes`; estimated counts never become
+reported tokens. A route without a price sheet keeps `unpriced=no-price-sheet`.
+An unavailable prompt, missing input price or malformed sheet stays unpriced
+with its reason; no zero-dollar charge is invented. Estimated and provider
+charges enter the primary total, stream `total_cost` and the cost written at
+landing. `unpriced_runs` counts records still lacking a charged figure.
+
+**Terminal cost records.** A take or a read records its cost in the step
 that ends it, whatever the end (done, failed, no result, the provider's failure, a refusal
 at staging, a read of any verdict or none): the consumer record carries its route, model,
 tier, card, kind (work or read) and end, and its charged figure is the harness's own cost
 where it reported one, else its tokens at the route's prices (`costRecord`); a run that
-reported no token is counted unpriced, never as a zero. A launch's child appends one row
+reported no token and carried neither a provider quote nor prompt bytes is counted
+unpriced, never as a zero. A launch's child appends one row
 per attempt to its job's `usage.tsv` before the summary line that carries the launch's
 spend; a launch stopped between the two still reports what the rows say
 (`member.ReceiptUsage`): every attempt's tokens summed, the model, and the harness's cost
@@ -2164,10 +2183,16 @@ spread as the records are, `reads are $4.00 of the records (40.0%, work $6.00), 
 the records are, about $4.00 of the gap is reads` (an estimate, said as one: the gap is what no
 record holds); the record keeps `internal_reads` beside `internal`, and the step's line says
 `reads=<$>` (`TestTheReconcileJudgmentNamesTheReadShareOfTheGap`); a read back within
-the bound closes it. A provider with no usage endpoint (opencode) or no key is recorded
-unknown with why, and changes nothing. **`nova-sprint cost reconcile [--dry-run] [--json]`** runs it
-once: each provider the routes name is read through the seat's key in its own environment
-(`provbalance.ReadUsage`, today's UTC day), the reads go to the step (`store.CostReconcileStep`),
+the bound closes it. A provider with no usage endpoint (opencode) is recorded unknown with why.
+The core records an unavailable provider read explicitly; the CLI refuses an absent key before requests or writes. **`nova-sprint cost reconcile [--dry-run] [--json]`** runs it
+once: each provider the routes name is read through the seat's key in its own environment.
+An absent key refuses the verb before provider requests or writes, including
+`--dry-run`, naming `nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint
+cost reconcile`; a provider without a usage endpoint stays explicitly unknown.
+The retained reconciliation row records the provider's daily report and remaining
+gap beside the records; a reported gap is never relabelled as a known per-run charge.
+Provider usage comes from `provbalance.ReadUsage` for today's UTC day. The reads
+go to the step (`store.CostReconcileStep`),
 and one line per provider is printed, `COST provider=<p> day=<d> provider_usd=<$> records=<$>
 gap=<$> share=<n>%` or `COST provider=<p> unknown: <why>`, then `COST RECONCILE OK
 providers=<n> notes=<n>` (with `--json`, the providers' records and the notes written; with

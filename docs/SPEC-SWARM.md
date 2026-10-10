@@ -771,3 +771,21 @@ scanned as before:
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
+
+
+### Every run's cost
+
+A member reports usage when it collects a held launch's terminal result, with
+any result or none. A moved or dropped claim is reaped without this collection;
+its spend remains visible only through provider reconciliation. Durable
+per-attempt receipts recover a lost native summary. When measured usage is
+absent, generation ids from the native log and the launch's own
+`harness-output.log` recover complete OpenRouter request quotes through the
+member's held key. Duplicate ids are counted once, at most 128 distinct requests
+are fetched, replies are bounded to 64 KiB, redirects are refused, and one
+provider read window bounds the set. Incomplete quotes fall back to the exact
+initial native prompt's bytes, including its frame prefix and RESULT format;
+JOB.md content is a separate read, not the prompt. The sprint prices those bytes
+at the route's input price as `estimated=yes`, keeping reported token counts
+unknown. A missing or unreadable prompt remains explicitly unpriced. A cached
+terminal result never requests the same provider quotes again.

@@ -1,7 +1,11 @@
 package cardcost
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/json"
+	"errors"
+	"io"
 	"math/big"
 	"slices"
 	"strconv"
@@ -21,12 +25,13 @@ import (
 //	actual_usd=0.04219614 actual_by=harness wait=3s run=52s price_route=pro-a
 //	prices=in:0.27,cr:0.07,out:1.1,ro:true predicted_usd=0.00680779 cost=both
 //
-// A count the harness did not report is left out, never written as 0; a cost is
-// never guessed: actual_usd only when the harness reported one, predicted_usd only
-// when the route that served the run has a price sheet (else unpriced=<why>). cost
-// says which of the two the record holds: both, predicted, actual or none. A line of
-// the older shape (wall= and budget= alone) reads as a record with no token, no
-// time and no cost.
+// A count the harness did not report is left out, never written as 0. actual_usd
+// only when the harness or the provider's per-request usage reported one,
+// predicted_usd when the route's sheet prices the tokens, or when a run with no
+// usage line is estimated from its prompt bytes (estimated=yes). Else unpriced=<why>.
+// cost says which of the two the record holds: both, predicted, actual or none. A
+// line of the older shape (wall= and budget= alone) reads as a record with no token,
+// no time and no cost.
 type Usage struct {
 	Wall     string `json:"wall,omitempty"`   // the harness's wall, as native's line says it ("49.49s")
 	Budget   string `json:"budget,omitempty"` // the budget word (swarm.BudgetWord)
@@ -46,8 +51,45 @@ type Usage struct {
 	Predicted string `json:"predicted_usd,omitempty"`
 	Long      bool   `json:"long,omitempty"`
 	Unpriced  string `json:"unpriced,omitempty"`
+	// PromptBytes is the prompt sent, in bytes, when the harness reported no usage
+	// line. Zero means it was not kept. Estimated says predicted_usd is that prompt
+	// priced at the route's input price (EstimatePrompt), not a token report.
+	PromptBytes int64 `json:"prompt_bytes,omitempty"`
+	Estimated   bool  `json:"estimated,omitempty"`
+	// GenerationID is the provider's per-request id (OpenRouter's generation id).
+	// The generation_* words are that endpoint's answer before ApplyGeneration folds
+	// them into the token counts and actual_usd; empty once folded.
+	GenerationID        string `json:"generation_id,omitempty"`
+	GenerationInput     string `json:"-"`
+	GenerationOutput    string `json:"-"`
+	GenerationReasoning string `json:"-"`
+	GenerationUSD       string `json:"-"`
 	// Extra are words of the line this record does not know, kept in order.
 	Extra []string `json:"-"`
+}
+
+// HasActual says the record holds a valid non-negative actual amount, including
+// zero (SPEC-SPRINT, Every run's cost). Missing or malformed is not a quote.
+func (u Usage) HasActual() bool {
+	_, err := amount(u.Actual)
+	return err == nil
+}
+
+// ActualByGeneration says the provider's per-request usage endpoint reported the
+// cost (OpenRouter GET /api/v1/generation), not the harness.
+const ActualByGeneration = "generation"
+
+// GenerationUsage is one request as the provider's per-request usage endpoint
+// reports it. A token count is Unreported when the answer did not carry it.
+type GenerationUsage struct {
+	ID              string
+	Model           string
+	PromptTokens    int64
+	CacheReadTokens int64
+	MaxPromptTokens int64
+	OutputTokens    int64
+	ReasoningTokens int64
+	CostUSD         string
 }
 
 // ActualByHarness says the harness reported the cost: opencode prices each message
@@ -86,7 +128,9 @@ func ParseUsage(line string) Usage {
 	counts := map[string]*int64{"input": &u.Tokens.Input, "cache_read": &u.Tokens.CacheRead, "cache_write": &u.Tokens.CacheWrite,
 		"output": &u.Tokens.Output, "reasoning": &u.Tokens.Reasoning, "requests": &u.Tokens.Requests, "max_prompt": &u.Tokens.MaxPrompt}
 	texts := map[string]*string{"wall": &u.Wall, "budget": &u.Budget, "model": &u.Model, "actual_usd": &u.Actual, "actual_by": &u.ActualBy,
-		"price_route": &u.Route, "prices": &u.Prices, "predicted_usd": &u.Predicted, "unpriced": &u.Unpriced}
+		"price_route": &u.Route, "prices": &u.Prices, "predicted_usd": &u.Predicted, "unpriced": &u.Unpriced,
+		"generation_id": &u.GenerationID, "generation_input": &u.GenerationInput, "generation_output": &u.GenerationOutput,
+		"generation_reasoning": &u.GenerationReasoning, "generation_usd": &u.GenerationUSD}
 	for _, w := range strings.Fields(line) {
 		k, v, ok := strings.Cut(w, "=")
 		switch {
@@ -109,6 +153,12 @@ func ParseUsage(line string) Usage {
 			}
 		case k == "long":
 			u.Long = v == "yes"
+		case k == "estimated":
+			u.Estimated = v == "yes"
+		case k == "prompt_bytes":
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				u.PromptBytes = n
+			}
 		case k == "cost":
 			// derived (Present): read back from the fields
 		default:
@@ -157,6 +207,17 @@ func (u Usage) String() string {
 		add("long", "yes")
 	}
 	add("unpriced", u.Unpriced)
+	if u.PromptBytes > 0 {
+		count("prompt_bytes", u.PromptBytes)
+	}
+	add("generation_id", u.GenerationID)
+	add("generation_input", u.GenerationInput)
+	add("generation_output", u.GenerationOutput)
+	add("generation_reasoning", u.GenerationReasoning)
+	add("generation_usd", u.GenerationUSD)
+	if u.Estimated {
+		add("estimated", "yes")
+	}
 	ws = append(ws, u.Extra...)
 	return strings.Join(append(ws, "cost="+u.Present()), " ")
 }
@@ -167,6 +228,10 @@ func word(v string) string { return strings.Join(strings.Fields(v), "_") }
 // Priced is the record with its prediction under the sheet of the route named,
 // the sheet copied beside it: route "" (no route found) is unpriced=no-route.
 func (u Usage) Priced(route string, p Prices) Usage {
+	if !u.Tokens.Reported() && !u.HasActual() && u.PromptBytes > 0 {
+		return u.EstimatedFrom(route, p)
+	}
+	u.Estimated = false
 	u.Route, u.Prices, u.Predicted, u.Long, u.Unpriced = "", "", "", false, ""
 	if route == "" {
 		u.Unpriced = WhyNoRoute
@@ -180,6 +245,173 @@ func (u Usage) Priced(route string, p Prices) Usage {
 	u.Predicted, u.Long, u.Unpriced = pr.USD, pr.Long, pr.Why
 	return u
 }
+
+// GenerationQuote is the provider endpoint's answer still carried as generation_*
+// words. False when the line has none (an id alone is not a quote).
+func (u Usage) GenerationQuote() (GenerationUsage, bool) {
+	if u.GenerationInput == "" && u.GenerationOutput == "" && u.GenerationReasoning == "" && u.GenerationUSD == "" {
+		return GenerationUsage{}, false
+	}
+	g := GenerationUsage{ID: u.GenerationID, PromptTokens: Unreported, CacheReadTokens: Unreported, MaxPromptTokens: Unreported, OutputTokens: Unreported, ReasoningTokens: Unreported, CostUSD: u.GenerationUSD}
+	set := func(s string, dst *int64) {
+		if s == "" {
+			return
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err == nil && n >= 0 {
+			*dst = n
+		}
+	}
+	set(u.GenerationInput, &g.PromptTokens)
+	set(u.GenerationOutput, &g.OutputTokens)
+	set(u.GenerationReasoning, &g.ReasoningTokens)
+	if _, err := amount(g.CostUSD); err != nil {
+		g.CostUSD = ""
+	}
+	if g.PromptTokens < 0 && g.OutputTokens < 0 && g.ReasoningTokens < 0 && g.CostUSD == "" {
+		return GenerationUsage{}, false
+	}
+	return g, true
+}
+
+// ApplyGeneration folds the endpoint's answer into the token counts and, when the
+// cost is a decimal, actual_usd. The generation_* words are consumed; the id stays.
+func (u Usage) ApplyGeneration(g GenerationUsage) Usage {
+	if g.PromptTokens >= 0 {
+		u.Tokens.Input = g.PromptTokens
+	}
+	if g.CacheReadTokens >= 0 {
+		u.Tokens.CacheRead = g.CacheReadTokens
+	}
+	if g.MaxPromptTokens >= 0 {
+		u.Tokens.MaxPrompt = g.MaxPromptTokens
+	}
+	if g.OutputTokens >= 0 {
+		u.Tokens.Output = g.OutputTokens
+	}
+	if g.ReasoningTokens >= 0 {
+		u.Tokens.Reasoning = g.ReasoningTokens
+	}
+	if g.CostUSD != "" {
+		if _, err := amount(g.CostUSD); err == nil {
+			u.Actual = g.CostUSD
+			u.ActualBy = ActualByGeneration
+		}
+	}
+	if g.Model != "" && u.Model == "" {
+		u.Model = g.Model
+	}
+	if g.ID != "" {
+		u.GenerationID = g.ID
+	}
+	u.GenerationInput, u.GenerationOutput, u.GenerationReasoning, u.GenerationUSD = "", "", "", ""
+	u.Estimated = false
+	return u
+}
+
+// EstimatedFrom prices the prompt bytes at the route's input price and marks the
+// record estimated. route "" is unpriced=no-route. A sheet that cannot price the
+// prompt leaves the reason (no-price-sheet, no-price:input) and is not estimated.
+func (u Usage) EstimatedFrom(route string, p Prices) Usage {
+	u.Estimated = false
+	u.Route, u.Prices, u.Predicted, u.Long, u.Unpriced = "", "", "", false, ""
+	if route == "" {
+		u.Unpriced = WhyNoRoute
+		return u
+	}
+	u.Route = route
+	if p.Priced() {
+		u.Prices = p.Copy()
+	}
+	pr := EstimatePrompt(u.PromptBytes, p)
+	u.Predicted, u.Long, u.Unpriced = pr.USD, pr.Long, pr.Why
+	u.Estimated = pr.USD != ""
+	return u
+}
+
+// ParseOpenRouterGeneration reads OpenRouter's per-request usage answer
+// (GET /api/v1/generation?id=). The cost is kept as the decimal text of the JSON
+// number, never a float; a cost that is not a decimal is left off and the tokens
+// still stand. An answer with neither tokens nor a cost is an error.
+func ParseOpenRouterGeneration(body []byte) (GenerationUsage, error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var wire struct {
+		Data struct {
+			ID               string      `json:"id"`
+			Model            string      `json:"model"`
+			Prompt           json.Number `json:"tokens_prompt"`
+			NativePrompt     json.Number `json:"native_tokens_prompt"`
+			Completion       json.Number `json:"tokens_completion"`
+			NativeCompletion json.Number `json:"native_tokens_completion"`
+			Cached           json.Number `json:"native_tokens_cached"`
+			Reasoning        json.Number `json:"native_tokens_reasoning"`
+			Cost             json.Number `json:"total_cost"`
+		} `json:"data"`
+	}
+	if err := dec.Decode(&wire); err != nil {
+		return GenerationUsage{}, errGenerationShape
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return GenerationUsage{}, errGenerationShape
+	}
+	g := GenerationUsage{ID: wire.Data.ID, Model: wire.Data.Model, PromptTokens: Unreported, CacheReadTokens: Unreported, MaxPromptTokens: Unreported, OutputTokens: Unreported, ReasoningTokens: Unreported}
+	set := func(n json.Number, dst *int64) {
+		if n == "" {
+			return
+		}
+		v, err := n.Int64()
+		if err == nil && v >= 0 {
+			*dst = v
+		}
+	}
+	set(wire.Data.Prompt, &g.PromptTokens)
+	set(wire.Data.NativePrompt, &g.PromptTokens)
+	set(wire.Data.Completion, &g.OutputTokens)
+	set(wire.Data.NativeCompletion, &g.OutputTokens)
+	set(wire.Data.Reasoning, &g.ReasoningTokens)
+	// Provider native prompt/completion totals include their cached/reasoning
+	// subsets; Usage keeps those classes apart (SPEC-SPRINT, What a card cost).
+	if wire.Data.NativePrompt != "" {
+		g.MaxPromptTokens = g.PromptTokens
+		set(wire.Data.Cached, &g.CacheReadTokens)
+		if g.CacheReadTokens > g.PromptTokens {
+			return GenerationUsage{}, errGenerationShape
+		}
+		if g.CacheReadTokens >= 0 {
+			g.PromptTokens -= g.CacheReadTokens
+		}
+	}
+	if wire.Data.NativeCompletion != "" && g.ReasoningTokens >= 0 {
+		if g.ReasoningTokens > g.OutputTokens {
+			return GenerationUsage{}, errGenerationShape
+		}
+		g.OutputTokens -= g.ReasoningTokens
+	}
+	if c := wire.Data.Cost.String(); c != "" {
+		// Bound provider number expansion before allocating an exact rational.
+		if len(c) > 128 {
+			return GenerationUsage{}, errGenerationShape
+		}
+		if i := strings.IndexAny(c, "eE"); i >= 0 {
+			exponent, err := strconv.ParseInt(c[i+1:], 10, 16)
+			if err != nil || exponent > MaxFraction || exponent < -MaxFraction {
+				return GenerationUsage{}, errGenerationShape
+			}
+		}
+		if r, ok := new(big.Rat).SetString(c); ok && r.Sign() >= 0 {
+			g.CostUSD = Text(r)
+		}
+	}
+	if g.PromptTokens < 0 && g.OutputTokens < 0 && g.ReasoningTokens < 0 && g.CostUSD == "" {
+		return GenerationUsage{}, errGenerationShape
+	}
+	return g, nil
+}
+
+// errGenerationShape is an OpenRouter generation answer with nothing to price.
+var errGenerationShape = errors.New("generation answer has no tokens and no cost")
 
 // Timed is the record with its waiting and running time: from the stamp it was
 // dealt (asked) to the one it was taken (begun), and from that to end; a stamp
