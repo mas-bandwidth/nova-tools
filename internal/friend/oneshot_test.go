@@ -311,6 +311,9 @@ func TestTheGatesKeepAOneShotHarnessAndHoldNoTurnForALane(t *testing.T) {
 	gated := sc.Gate(lim)
 	oh, ok := gated.(OneShotHarness)
 	require.True(t, ok, "the check's gate keeps it one")
+	sc.Deliver = gated
+	assert.Equal(t, lim, sc.deliverer(), "the check, holding the turn itself, delivers under the gate, never through it")
+	assert.True(t, under(gated, func(d Deliverer) bool { return d == Deliverer(h) }), "the adapter is found under both gates")
 	sc.turn.Lock() // a session check in her session: a lane's run does not wait on it
 	defer sc.turn.Unlock()
 	h.release("c01")

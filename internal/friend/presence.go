@@ -275,9 +275,13 @@ func under(d Deliverer, f func(Deliverer) bool) bool {
 			d = g.Deliverer
 		case turnGatedLanes:
 			d = g.Deliverer
+		case turnGatedOneShot:
+			d = g.Deliverer
 		case *gated:
 			d = g.d
 		case *gatedLanes:
+			d = g.d
+		case *gatedOneShot:
 			d = g.d
 		default:
 			return false
@@ -781,6 +785,8 @@ func (s *SessionCheck) deliverer() Deliverer {
 	case turnGated:
 		return g.Deliverer
 	case turnGatedLanes:
+		return g.Deliverer
+	case turnGatedOneShot:
 		return g.Deliverer
 	}
 	return s.Deliver
