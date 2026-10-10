@@ -155,7 +155,7 @@ func TierSubject(tier string) string { return "tier:" + tier }
 // has no route at all) or a friend up does (tierServed), else the tier it is judged under
 // and the sentence. It moves no index.
 func (s *Snapshot) noRoute(c *Card) (tier, why string) {
-	_, tier, why, byFriend := s.routeOf(c, nil, nil)
+	_, tier, why, byFriend := s.routeOf(c, nil, nil, "")
 	if byFriend {
 		return tier, ""
 	}
@@ -283,16 +283,11 @@ func preferFirst(arr []string, served map[string]Route, skip []string, hold bool
 // index moves past the entry taken and every entry skipped before it, recorded under
 // c's unit; nil reads the index and moves nothing (tla/RouteIndex.tla: Deal, Redeal, Pin).
 // An entry that names no enabled route of the tier (a route disabled or removed since
-// the array was set) is skipped as an excluded one is. It names no member: every route
-// is drawable (routeFor draws for one).
-func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string, byFriend bool) {
-	return s.routeFor(c, wc, ri, "")
-}
-
-// routeFor is routeOf for a deal to the member: an entry whose route that member cannot
-// launch (Launches) is skipped as an unserved one is, and a tier with no route it can
-// launch is not dealt to it, why naming the routes and the member.
-func (s *Snapshot) routeFor(c, wc *Card, ri routeIndexes, member string) (set map[string]string, tier, why string, byFriend bool) {
+// the array was set) is skipped as an excluded one is. member is the member the deal
+// draws for: an entry whose route that member cannot launch (Launches) is skipped as an
+// unserved one is, and a tier with no route it can launch is not dealt to it, why naming
+// the routes and the member; "" draws every route (a check of the tier alone).
+func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes, member string) (set map[string]string, tier, why string, byFriend bool) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	tier = drawTier(c, m)
 	if tier == "" {
@@ -370,7 +365,7 @@ func (s *Snapshot) routeFor(c, wc *Card, ri routeIndexes, member string) (set ma
 	}
 	up, why := s.tierServed(tier, rested)
 	if len(up) == 0 && len(unlaunchable) > 0 {
-		why = "member " + member + " can launch no enabled route of tier " + tier + " that serves: " + strings.Join(unlaunchable, ", ") + " and its control card names no such harness (fleet up " + member + " --harnesses <h,...> declares the ones on its PATH); the deal deals it to a member that can"
+		why = "member " + member + " can launch no route of tier " + tier + " that serves: " + strings.Join(unlaunchable, ", ") + " and its control card names no such harness (fleet up " + member + " --harnesses <h,...> declares the ones on its PATH); the deal deals it to a member that can"
 	}
 	return nil, tier, why, len(up) > 0
 }

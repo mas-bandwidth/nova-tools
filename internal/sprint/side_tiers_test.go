@@ -32,12 +32,12 @@ func sidePrimary(brief string) *Card {
 func TestAModelPinDoesNotOverrideTheFleetsTiers(t *testing.T) {
 	t.Parallel()
 	w := sideTierWorld(t)
-	set, tier, why, _ := w.s.routeOf(sidePrimary("c: a card tier: pro\nmodel: p/m\ntokens: 1000\ndeadline: 600\n"), nil, nil)
+	set, tier, why, _ := w.s.routeOf(sidePrimary("c: a card tier: pro\nmodel: p/m\ntokens: 1000\ndeadline: 600\n"), nil, nil, "")
 	assert.Nil(t, set, "no pin route for a tier the fleet's set leaves out")
 	assert.Equal(t, cardhdr.RoutePro, tier)
 	assert.Contains(t, why, "--fleet-tiers")
 
-	set, _, why, _ = w.s.routeOf(sidePrimary("c: a card\nmodel: p/m\ntokens: 1000\ndeadline: 600\n"), nil, nil)
+	set, _, why, _ = w.s.routeOf(sidePrimary("c: a card\nmodel: p/m\ntokens: 1000\ndeadline: 600\n"), nil, nil, "")
 	require.Empty(t, why)
 	assert.Equal(t, RoutePin, set[FieldRoute], "a flash card pinned to a model runs on its pin")
 }
@@ -50,9 +50,9 @@ func TestAFrontierCardsJudgmentIsUnchangedByTheFleetsTiers(t *testing.T) {
 	w := sideTierWorld(t)
 	w.s.Friends = []FriendSeat{{Name: "fay", Width: 2, Status: Up, Tiers: []string{cardhdr.RouteFrontier}}}
 	c := sidePrimary("c: a card tier: frontier\n")
-	_, tier, why, byFriend := w.s.routeOf(c, nil, nil)
+	_, tier, why, byFriend := w.s.routeOf(c, nil, nil, "")
 	w.s.Work.SetProp(PropFleetTiers, TiersAll)
-	_, tierAll, whyAll, byFriendAll := w.s.routeOf(c, nil, nil)
+	_, tierAll, whyAll, byFriendAll := w.s.routeOf(c, nil, nil, "")
 	assert.Equal(t, cardhdr.RouteFrontier, tier)
 	assert.Contains(t, why, "a frontier card waits for the coordinator")
 	assert.False(t, byFriend)

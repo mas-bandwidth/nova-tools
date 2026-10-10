@@ -679,7 +679,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		if IsSentinel(c) {
 			continue
 		}
-		if _, tier, why, byFriend := s.routeOf(escalating(s, c), nil, nil); byFriend {
+		if _, tier, why, byFriend := s.routeOf(escalating(s, c), nil, nil, ""); byFriend {
 			// no route serves its tier and a friend up does: the friends' deal's, never a
 			// machine's (tierServed); withdrawn or taken back from every such friend, no worker
 			// is left for it, and the tier's one judgment names it

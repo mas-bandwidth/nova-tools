@@ -486,7 +486,7 @@ func (c *held) judgment(pr *Card) string {
 		}
 		// friends alone serve its tier and none up who serves it may be dealt it: the same
 		// judgment of the tier names it (TickDeal)
-		if _, tier, _, byFriend := c.s.routeOf(escalating(c.s, pr), nil, nil); byFriend && len(c.s.friendsFor(pr, tier)) == 0 && len(c.judged[StreamSubject(TierSubject(tier))]) > 0 {
+		if _, tier, _, byFriend := c.s.routeOf(escalating(c.s, pr), nil, nil, ""); byFriend && len(c.s.friendsFor(pr, tier)) == 0 && len(c.judged[StreamSubject(TierSubject(tier))]) > 0 {
 			return "no worker is left for it on tier " + tier + "; open: " + strings.Join(c.judged[StreamSubject(TierSubject(tier))], ", ")
 		}
 	}
@@ -589,7 +589,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			// deals it to another member, so what holds it is its bench's beat and hold
 			return benchWaits(b), "", true
 		}
-		if _, tier, _, byFriend := s.routeOf(escalating(s, pr), nil, nil); byFriend {
+		if _, tier, _, byFriend := s.routeOf(escalating(s, pr), nil, nil, ""); byFriend {
 			// friends alone serve its tier (tierServed): the friends' deal's, never a
 			// machine's, so what holds it is their room, not the machines'
 			return c.friendWaits(pr, tier)

@@ -32,20 +32,20 @@ func TestADealDrawsOnlyARouteItsMemberCanLaunch(t *testing.T) {
 	}
 	card := &Card{ID: "s1-1", Fields: map[string]string{"brief": "tier: flash\n"}}
 
-	set, _, why, _ := s.routeFor(card, nil, nil, "m1")
+	set, _, why, _ := s.routeOf(card, nil, nil, "m1")
 	require.Empty(t, why)
 	assert.Equal(t, "flash-oc", set[FieldRoute], "m1 has no claude: the claude entry at the place is walked past")
-	set, _, why, _ = s.routeFor(card, nil, nil, "m2")
+	set, _, why, _ = s.routeOf(card, nil, nil, "m2")
 	require.Empty(t, why)
 	assert.Equal(t, "flash-claude", set[FieldRoute], "m2 names claude: the entry at the place")
-	set, _, why, _ = s.routeOf(card, nil, nil)
+	set, _, why, _ = s.routeOf(card, nil, nil, "")
 	require.Empty(t, why)
 	assert.Equal(t, "flash-claude", set[FieldRoute], "no member named: every route draws")
 
 	s.Routes[1].Enabled = false
-	_, _, why, _ = s.routeFor(card, nil, nil, "m1")
+	_, _, why, _ = s.routeOf(card, nil, nil, "m1")
 	assert.Contains(t, why, "member m1 can launch no enabled route of tier flash that serves: flash-claude (runs under claude)")
-	_, _, why, _ = s.routeFor(card, nil, nil, "m2")
+	_, _, why, _ = s.routeOf(card, nil, nil, "m2")
 	assert.Empty(t, why, "m2 launches it")
 
 	onClaude := &Card{ID: "s1-2.w1", Fields: map[string]string{FieldHarness: "claude"}}

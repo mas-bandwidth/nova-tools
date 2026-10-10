@@ -210,7 +210,7 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 		m := ""
 		_, friend := FriendCard(c)
 		// no route serves its tier and a friend up does: the friends' deal's, never a machine's
-		_, _, toFriend, byFriend := s.routeOf(c, nil, nil)
+		_, _, toFriend, byFriend := s.routeOf(c, nil, nil, "")
 		if len(up) > 0 && !friend && !byFriend {
 			m = rr.next(up, q, room, reworkAvoid(s, c))
 		}

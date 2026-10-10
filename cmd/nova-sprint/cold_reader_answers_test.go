@@ -53,7 +53,7 @@ func TestAMisspelledFlagNamesTheNearestAndTheVerbsFlags(t *testing.T) {
 	assert.NotContains(t, errs, "provided but not defined")
 	code, _, errs = ta.do("fleet up m1 --wdth 3")
 	assert.Equal(t, 2, code)
-	assert.Equal(t, "nova-sprint fleet up REFUSED: unknown flag --wdth; the flags of fleet up are --actor, --deadline, --epoch, --json, --max, --op, --redis, --width; did you mean --width?; run: nova-sprint help fleet up\n", errs)
+	assert.Equal(t, "nova-sprint fleet up REFUSED: unknown flag --wdth; the flags of fleet up are --actor, --deadline, --epoch, --harnesses, --json, --max, --op, --redis, --width; did you mean --width?; run: nova-sprint help fleet up\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help fleet up\n", "a two-word verb's help is its own")
 }
 

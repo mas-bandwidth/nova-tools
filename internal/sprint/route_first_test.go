@@ -26,19 +26,19 @@ func TestDealHonoursTheRouteFirstField(t *testing.T) {
 		return &Card{ID: id, Fields: map[string]string{"brief": "tier: flash\n"}}
 	}
 	for _, id := range []string{"s1-1", "s1-2"} {
-		set, tier, why, _ := s.routeOf(fresh(id), nil, nil)
+		set, tier, why, _ := s.routeOf(fresh(id), nil, nil, "")
 		require.Empty(t, why, id)
 		assert.Equal(t, cardhdr.RouteFlash, tier, id)
 		assert.Equal(t, "flash-b", set[FieldRoute], "the route with first set deals before flash-a, %s", id)
 		assert.Equal(t, "q/b", set[FieldModel], id)
 	}
 	again := &Card{ID: "s1-1", Fields: map[string]string{"brief": "tier: flash\n", FieldRoutes: "flash-b"}}
-	set, _, why, _ := s.routeOf(again, nil, nil)
+	set, _, why, _ := s.routeOf(again, nil, nil, "")
 	require.Empty(t, why)
 	assert.Equal(t, "flash-a", set[FieldRoute], "a card that already drew the first route takes the other")
 
 	s.Routes[1].First = false
-	set, _, why, _ = s.routeOf(fresh("s1-3"), nil, nil)
+	set, _, why, _ = s.routeOf(fresh("s1-3"), nil, nil, "")
 	require.Empty(t, why)
 	assert.Equal(t, "flash-a", set[FieldRoute], "with first unset the walk starts at the index")
 }

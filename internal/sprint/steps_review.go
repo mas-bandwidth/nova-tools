@@ -1353,7 +1353,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		_, friend := FriendCard(c)
 		bench := Bench(c)
 		// no route serves its tier and a friend up does: the friends' deal's, never a machine's
-		_, _, toFriend, byFriend := s.routeOf(c, nil, nil)
+		_, _, toFriend, byFriend := s.routeOf(c, nil, nil, "")
 		if len(up) > 0 && !friend && !byFriend {
 			// a bench card's next attempt goes to a member of its bench alone (bench_deal.go)
 			m = rr.next(onlyBench(up, bench), q, room, reworkAvoid(s, c))

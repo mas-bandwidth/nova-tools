@@ -87,7 +87,7 @@ func TestTierFollowsTheGatesMeasuredWall(t *testing.T) {
 			assert.Equal(t, tc.wall+" n=2 over 15m0s", fields[FieldGateWall], "the measurement and its source ride on the card")
 			assert.Contains(t, p.Units[0].Moved, "admitted pro: gate ./internal/slow measured 22m30s (median of 2 ok takes) over the flash bound 15m0s")
 			pr := &Card{ID: id, Row: "new", Col: Ready, Fields: fields}
-			_, tier, _, _ := w.s.routeOf(pr, nil, nil)
+			_, tier, _, _ := w.s.routeOf(pr, nil, nil, "")
 			assert.Equal(t, cardhdr.RoutePro, tier, "its first deal draws pro, never flash")
 			assert.Empty(t, w.s.NextTier(pr), "pro is the top of the ladder")
 		})

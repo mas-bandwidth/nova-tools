@@ -1045,7 +1045,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				p.Units = append(p.Units, u)
 				continue
 			}
-			if _, _, why, _ := s.routeOf(c, nil, nil); why != "" {
+			if _, _, why, _ := s.routeOf(c, nil, nil, ""); why != "" {
 				p.refuse(c.ID, why) // a machine draws a route: a tier friends alone serve is theirs
 				continue
 			}
@@ -1073,7 +1073,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			p.Units = append(p.Units, u)
 			continue
 		}
-		if _, _, why, _ := s.routeOf(c, nil, nil); why != "" {
+		if _, _, why, _ := s.routeOf(c, nil, nil, ""); why != "" {
 			p.refuse(c.ID, why) // a machine draws a route: a tier friends alone serve is theirs
 			continue
 		}
@@ -1105,7 +1105,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	route, _, why, _ := s.routeFor(c, nil, ri, m)
+	route, _, why, _ := s.routeOf(c, nil, ri, m)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -1173,7 +1173,7 @@ func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int,
 // (tla/DirtyTick.tla DealOne). Its route is the next at its tier's index that the
 // card was not dealt on (ri, moved past it and the entries skipped: route.go).
 func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexes) (Unit, string) {
-	route, _, why, _ := s.routeFor(c, wc, ri, m)
+	route, _, why, _ := s.routeOf(c, wc, ri, m)
 	if why != "" {
 		return Unit{}, why
 	}
