@@ -385,7 +385,7 @@ const FieldAnswerRulesOff = "answer_rules_off"
 // finding twice (a brief defect), the lander's base tree gate retried, a friend's card she
 // has not started taken back, failed work that HOLDs for a card not landed waiting for it, a
 // reader's finding reworked as the fix, and a late read asked of another reader.
-var AnswerRules = []string{"base-gate", "bound", "brief-defect", "conflict", "failed", "friend-take", "hold-need", "late", "read-broken", "read-late"}
+var AnswerRules = []string{"base-gate", "bound", "brief-defect", "conflict", "failed", "friend-idle", "friend-idle-return", "friend-take", "hold-need", "late", "read-broken", "read-late"}
 
 // FieldDecideBriefBar is the sprint row's bar on a brief decision's p(converges)
 // (internal/decide, BriefBar; docs/SPEC-NOVA-DECIDE.md section 14): nova-sprint add

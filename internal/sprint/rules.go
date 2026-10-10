@@ -41,10 +41,14 @@ const (
 	// (config.AnswerRules, held equal to RuleNames) does not name it yet, so only run
 	// --answer-rules=false turns it off.
 	RulePaths = "paths"
+	// RuleFriendIdle is the rule that detects when a friend is loaded but idle and sends the width goal.
+	RuleFriendIdle = "friend-idle"
+	// RuleFriendIdleReturn is the rule that returns a friend's cards when they remain idle.
+	RuleFriendIdleReturn = "friend-idle-return"
 )
 
 // RuleNames is every rule nova-config's answer_rules_off names, in name order.
-var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
+var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendIdle, RuleFriendIdleReturn, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
 
 // The fields the rules write.
 const (
@@ -575,12 +579,14 @@ func baseGreenSaid(base, sha string) string {
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
 // tick. With TickReq.AnswerRules false each is empty.
 const (
-	PartRulePaths  = "rule paths"
-	PartRuleReturn = "rule return"
-	PartRuleResume = "rule resume"
-	PartRuleRework = "rule rework"
-	PartRuleLate   = "rule late"
-	PartRuleBrief  = "rule brief"
+	PartRulePaths      = "rule paths"
+	PartRuleReturn     = "rule return"
+	PartRuleResume     = "rule resume"
+	PartRuleRework     = "rule rework"
+	PartRuleLate       = "rule late"
+	PartRuleIdle       = "rule friend idle"
+	PartRuleIdleReturn = "rule friend idle return"
+	PartRuleBrief      = "rule brief"
 )
 
 // TickRules is the rule parts, run at the tick's end before its checks.
@@ -594,6 +600,8 @@ var TickRules = []TickPartDef{
 	{PartRuleTake, TickRuleTake},
 	{PartRuleAsk, TickRuleAsk},
 	{PartRuleNeed, TickRuleNeed},
+	{PartRuleIdle, TickRuleIdle},
+	{PartRuleIdleReturn, TickRuleIdleReturn},
 	{PartRuleBrief, TickRuleBrief},
 }
 
