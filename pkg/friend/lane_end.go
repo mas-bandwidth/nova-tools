@@ -120,6 +120,9 @@ func EndReport(friend string, lane int, c Card, end LaneEnd, head, branch string
 // <name> <verdict>: <paragraph>").
 func FinishArgv(friend string, c Card, report, head, branch string) []string {
 	argv := []string{"finish", "--as", "friend." + friend, c.ID + "@" + strconv.Itoa(c.Gen()), "--epoch", c.Epoch(), "--failed"}
+	if c.Lane > 0 {
+		argv = append(argv, "--lane", strconv.Itoa(c.Lane)) // the lane the server says holds it (lane_take.go)
+	}
 	if head != "" {
 		argv = append(argv, "--head", head)
 	}

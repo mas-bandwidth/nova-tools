@@ -132,6 +132,9 @@ func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report strin
 	if branch != "" {
 		argv = append(argv, "--branch", branch)
 	}
+	if c.Lane > 0 {
+		argv = append(argv, "--lane", strconv.Itoa(c.Lane))
+	}
 	return append(argv, "--report", words)
 }
 
@@ -257,7 +260,12 @@ func (l *loop) outboxStep(now time.Time) {
 		if t, ok := o.tried[job]; ok && now.Sub(t) < OutboxRetry {
 			continue
 		}
-		card := Card{ID: id, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(outbox, job)}
+		// the lane the server says holds it, named on the finish: another lane's card is refused
+		card := Card{ID: id, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(outbox, job), Lane: h.Lane}
+		if h.Lane > 0 {
+			// a lane's card is reported at the epoch and generation the server says it holds
+			card.ServerEpoch, card.ServerGen = strconv.FormatUint(h.Epoch, 10), h.Gen
+		}
 		written := verdict
 		if verdict == "LAND" {
 			// a LAND that does not address its brief's first line is a HOLD (rework.go)

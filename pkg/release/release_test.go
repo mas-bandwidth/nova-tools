@@ -523,6 +523,31 @@ func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
 	}
 }
 
+// A merge-queue merge is a `Merge pull request #n from o/b` subject whose number
+// is not on the end as a squash merge's is; it must still list, with the PR's own
+// title from the body's first line, and the `#n` a title mentions is not a member.
+func TestPullRequestsListsMergeQueueMerges(t *testing.T) {
+	t.Parallel()
+
+	commits := []Commit{
+		{SHA: "aaa", Message: "feat: some feature (#123)\n\nbody"},
+		{SHA: "bbb", Message: "Merge pull request #456 from mas-bandwidth/rowan/some-feature\n\nfix: the merge queue's merge (closes #123)"},
+		{SHA: "ccc", Message: "fix: a fix (#789)\n\nbody"},
+	}
+
+	prs := PullRequests(commits)
+
+	require.Len(t, prs, 3, "prs=%v", prs)
+	sort.Slice(prs, func(i, j int) bool { return prs[i].Number < prs[j].Number })
+	require.Equal(t, 123, prs[0].Number)
+	require.Equal(t, "feat: some feature", prs[0].Title)
+	require.Equal(t, 456, prs[1].Number)
+	require.Equal(t, "fix: the merge queue's merge (closes #123)", prs[1].Title)
+	require.Empty(t, prs[1].Members, "the title's #123 was filed as a member: %v", prs[1].Members)
+	require.Equal(t, 789, prs[2].Number)
+	require.Equal(t, "fix: a fix", prs[2].Title)
+}
+
 func TestCutDryRunWritesNothingAndTagsNothing(t *testing.T) {
 	t.Parallel()
 
