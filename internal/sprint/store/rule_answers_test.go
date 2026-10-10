@@ -304,10 +304,11 @@ func (h *harness) judgmentsOf(typ string) []sprint.Open {
 	return out
 }
 
-// A failure many cards share is the fleet's, not the card's: the failed rule leaves it to a
-// mind rather than climb the ladder with every card (a toolchain the machine cannot run,
-// "Permission denied", came back on six cards at once on 2026-10-04).
-func TestTheSameFailureOnManyCardsIsLeftToAMind(t *testing.T) {
+// A failure many cards share is still the card's: the failed rule advances each on its tier
+// rather than leave them as one fleet judgment (a toolchain the machine cannot run,
+// "Permission denied", came back on six cards at once on 2026-10-04). A failed attempt never
+// waits on the seat.
+func TestTheSameFailureOnManyCardsIsAdvancedByRule(t *testing.T) {
 	t.Parallel()
 	h := ruled(t)
 	h.addReady("s1", sprint.RuleSameFailureCards, briefOf("flash", ""))
@@ -317,12 +318,11 @@ func TestTheSameFailureOnManyCardsIsLeftToAMind(t *testing.T) {
 		h.failTake(fmt.Sprintf("s1-%d.w1", i), "step 2 broken: post: exit0 go vet ./...: exit status 126; exec: go: Permission denied")
 	}
 	h.machine()
-	assert.Len(t, h.judgmentsOf(sprint.NWorkFailed), sprint.RuleSameFailureCards, "left: the fleet's failure")
-	for _, a := range sprint.RuleAnswers(h.snap(), sprint.TickReq{AnswerRules: true}) {
-		if a.Type == sprint.NWorkFailed {
-			assert.Equal(t, sprint.ActLeft, a.Act)
-			assert.Contains(t, a.Why, "the same failure on")
-		}
+	assert.Empty(t, h.judgmentsOf(sprint.NWorkFailed), "no failed-attempt judgment waits on the seat")
+	for i := 1; i <= sprint.RuleSameFailureCards; i++ {
+		pr := h.snap().Work.Card(fmt.Sprintf("s1-%d", i))
+		assert.Equal(t, 2, pr.Int("attempt"), "%s: advanced by rule, never left", pr.ID)
+		assert.Empty(t, pr.F(sprint.FieldTier), "%s: on its tier", pr.ID)
 	}
-	assert.Equal(t, 1, h.snap().Work.Card("s1-1").Int("attempt"))
+	assert.NotEmpty(t, h.answeredBy(sprint.RuleFailed), "the answer is logged with the rule's name")
 }

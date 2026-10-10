@@ -90,8 +90,8 @@ const (
 	// RuleLateWait is the late rule's one wait.
 	RuleLateWait = 30 * time.Minute
 	// RuleSameFailureCards is how many cards failing the same way (their failure's class)
-	// make the failure the fleet's, not the card's: the failed and bound rules leave each to a
-	// mind rather than climb the ladder with every card (sameFailure).
+	// make the failure the fleet's, not the card's: the bound rule leaves each to a mind
+	// rather than climb the ladder with every card (sameFailure).
 	RuleSameFailureCards = 3
 )
 
@@ -306,10 +306,6 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 	}
 	if bb, ok := AtBriefBound(pr, brokenFindings(s, pr), s.ReworkBound(pr.Row)); ok {
 		parkAnswer(a, pr, boundFinding(s, pr, bb), bb.String()+"; parked in fix")
-		return
-	}
-	if why := sameFailure(s, pr.F(FieldFailure)); why != "" {
-		left(a, why)
 		return
 	}
 	a.Card = pr.ID
@@ -771,9 +767,9 @@ var BaseGateRetries = []time.Duration{2 * time.Minute, 5 * time.Minute}
 
 // sameFailure is why a failure is the fleet's and not the card's: RuleSameFailureCards or
 // more cards hold it now (in review with their work failed that way, or ready at their
-// redeal bound with that class), "" when fewer do or the class is unknown. A toolchain a
-// machine cannot run, a provider down: the ladder would raise every card a tier for a
-// failure no tier changes, so a mind looks first.
+// redeal bound with that class), "" when fewer do or the class is unknown. The bound rule
+// (a card at its redeal bound) leaves each to a mind rather than raise every card a tier
+// for a failure no tier changes, a toolchain a machine cannot run or a provider down.
 func sameFailure(s *Snapshot, class string) string {
 	if class == "" {
 		return ""

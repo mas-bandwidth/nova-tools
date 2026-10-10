@@ -93,3 +93,50 @@ func TestAFinishUnderItsBoundIsNotParked(t *testing.T) {
 	a := answerOn(t, w, on(), NWorkFailed, "s1-1")
 	assert.Equal(t, ActRework, a.Act, "one attempt of six is no bound: the next attempt is opened")
 }
+
+func TestABrokenReadAtTheBriefBoundIsParkedByRule(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	finished(w, "s1-1", false)
+	brokenOnce(t, w, "internal/x/a.go:12 drops the error")
+	require.Len(t, openOf(w, NReadBroken, "s1-1"), 1)
+	w.s.Work.SetProp(PropReworkBound, "2")
+	rules(w, on())
+	require.Equal(t, 2, w.s.Work.Card("s1-1").Int("attempt"), "the first finding, below the bound, is reworked")
+	brokenOnce(t, w, "internal/x/b.go:3 off by one")
+	a := answerOn(t, w, on(), NReadBroken, "s1-1")
+	require.Equal(t, RuleReadBroken, a.Rule)
+	require.Equal(t, ActPark, a.Act, a.Why)
+	rules(w, on())
+	pr := w.s.Work.Card("s1-1")
+	assert.Equal(t, Review, pr.Col, "parked in review, not dealt again")
+	assert.True(t, strings.HasPrefix(pr.F(FieldFix), "BRIEF s1-1: "), "its fix is the BRIEF line: %q", pr.F(FieldFix))
+	assert.NotEmpty(t, pr.F(FieldBriefDefect), "the card is marked a brief defect")
+	assert.Empty(t, openOf(w, NReadBroken, "s1-1"), "the reader's judgment is closed: one judgment per card")
+}
+
+func TestTheSameFailureOnManyCardsIsAdvancedByRule(t *testing.T) {
+	t.Parallel()
+	w := setup(t, RuleSameFailureCards)
+	report := "verdict not-done; step 2 broken: exec: go: Permission denied"
+	for i := 1; i <= RuleSameFailureCards; i++ {
+		id := "s1-" + itoa(i)
+		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
+		wc := w.s.Fleet.Card(WorkCardID(id, 1))
+		w.must(Take(w.s, TakeReq{As: wc.Row, Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID), Failed: true, Report: report}))
+	}
+	for _, a := range RuleAnswers(w.s, on()) {
+		if a.Type == NWorkFailed {
+			require.Equal(t, RuleFailed, a.Rule)
+			require.NotEqual(t, ActLeft, a.Act, a.Why)
+		}
+	}
+	rules(w, on())
+	for i := 1; i <= RuleSameFailureCards; i++ {
+		pr := w.s.Work.Card("s1-" + itoa(i))
+		assert.Equal(t, 2, pr.Int("attempt"), "%s: advanced by rule, never left", pr.ID)
+		assert.Empty(t, pr.F(FieldTier), "%s: on its tier", pr.ID)
+		assert.Empty(t, openOf(w, NWorkFailed, pr.ID), "%s: no failed-attempt judgment waits", pr.ID)
+	}
+}
