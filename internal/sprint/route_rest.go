@@ -3,10 +3,14 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"maps"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // Rule 3 of the sprint's cost rules (nova-tools#5174; the owner, 2026-10-02): "A route
@@ -34,6 +38,126 @@ func PropRule3Rest(provider string) string { return "rule3_rest_" + provider }
 // provider, never a copy on each of its routes, so a provider's rest is one write and the
 // table's properties (ntable.LimitTableProps) grow with the providers, not the routes.
 func PropProviderRest(provider string) string { return "provider_rest_" + provider }
+
+// NRouteCap and NFriendCap are the tick's judgments of a route, or a friend, past its
+// hourly dollar cap: one per episode, filed under RouteSubject or FriendCapSubject, closed
+// when the hour turns and the cap holds no more (docs/SPEC-SPRINT.md,
+// spend-circuit-breakerb-bb.w8).
+const (
+	NRouteCap  = "a route is past its hourly cap"
+	NFriendCap = "a friend is past her hourly cap"
+)
+
+// RouteSubject is the stream word a route's judgment is filed under: no stream id has a
+// colon, so it is never a stream's.
+func RouteSubject(route string) string { return "route:" + route }
+
+// FriendCapSubject is the stream word a friend's cap judgment is filed under.
+func FriendCapSubject(friend string) string { return "friend-cap:" + friend }
+
+// TierCapUSDHour is the dollar cap per clock hour a route of the tier has when its row
+// names none: flash 5, pro 20, heavy 0 (uncapped: its cost is a subscription's).
+var TierCapUSDHour = map[string]string{"flash": "5", "pro": "20", "heavy": "0"}
+
+// DefaultFriendCapUSDHour is the cap a friend row without one has; a friend on a
+// subscription reports no dollars and never reaches it. config.DefaultFriendCapUSDHour
+// holds the same number.
+const DefaultFriendCapUSDHour = "10"
+
+// hourCap is a cap as its row says it, v, else def: the amount, and false for none
+// (0, empty or unreadable is uncapped).
+func hourCap(v, def string) (*big.Rat, bool) {
+	d, err := cardcost.Decimal(cmp.Or(v, def))
+	if err != nil || d.Sign() <= 0 {
+		return nil, false
+	}
+	return d, true
+}
+
+// capWhy is the words of a cap reached: `cap reached: $x of $y this hour`, money to the
+// cent, rounded up.
+func capWhy(spent, limit *big.Rat) string {
+	return "cap reached: " + cardcost.Cents(spent) + " of " + cardcost.Cents(limit) + " this hour"
+}
+
+// spendCapRests is the rests the hourly cap writes now: each enabled route not resting at
+// s.Now whose spend over the clock hour (hourSpend) has reached its cap (Route.CapUSDHour,
+// which the store resolves to the tier's default when its row names none) is rested to the
+// next hour, for cause RestCap, whose words are capWhy. A route built by hand with no cap
+// is uncapped.
+func spendCapRests(s *Snapshot, rests map[string]RouteRest) []RouteRest {
+	sp := s.spend
+	if sp == nil {
+		sp = hourSpendOf(s)
+	}
+	var out []RouteRest
+	for _, r := range s.Routes {
+		if !r.Enabled {
+			continue
+		}
+		if last, had := rests[r.Name]; had && last.Resting(s.Now) {
+			continue
+		}
+		limit, ok := hourCap(r.CapUSDHour, "")
+		spent := sp.route[r.Name]
+		if !ok || spent == nil || spent.Cmp(limit) < 0 {
+			continue
+		}
+		out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: sp.to, Cause: RestCap, Why: capWhy(spent, limit)})
+	}
+	return out
+}
+
+// friendCaps is each friend of seats whose spend over the clock hour has reached her cap
+// (caps by name; a friend the map names none is uncapped, and an empty value is
+// DefaultFriendCapUSDHour), by name, with the words capWhy says.
+func friendCaps(s *Snapshot, seats []FriendSeat, caps map[string]string) map[string]string {
+	sp := s.spend
+	if sp == nil {
+		sp = hourSpendOf(s)
+	}
+	out := map[string]string{}
+	for _, f := range seats {
+		v, has := caps[f.Name]
+		if !has {
+			continue
+		}
+		limit, ok := hourCap(v, DefaultFriendCapUSDHour)
+		if !ok {
+			continue
+		}
+		if spent := sp.friend[f.Name]; spent != nil && spent.Cmp(limit) >= 0 {
+			out[f.Name] = capWhy(spent, limit)
+		}
+	}
+	return out
+}
+
+// FriendCapped is the status word of a friend past her hourly cap in the tick's seats: not
+// up, so the deal and the level give her no card until the hour turns; her started cards finish.
+const FriendCapped = "capped"
+
+// capConds is the cap judgments that hold at s.Now: one for each route resting for its cap
+// (from the rests a dealing step settled), and one for each friend past hers, in name order.
+func capConds(s *Snapshot, friends map[string]string) []cond {
+	var conds []cond
+	for _, r := range s.Routes {
+		rest, ok := s.rests[r.Name]
+		if !ok || rest.Cause != RestCap {
+			continue
+		}
+		conds = append(conds, cond{typ: NRouteCap, stream: RouteSubject(r.Name), streamLevel: true,
+			what: fmt.Sprintf("route %s is past its hourly cap (%s): it rests until %s and re-opens by itself; the deal draws no card on it until then; raise the cap with nova-config route set %s --cap_usd_hour <usd>",
+				r.Name, rest.Why, stamp(rest.Until), r.Name)})
+	}
+	for _, f := range slices.Sorted(maps.Keys(friends)) {
+		_, to := clockHour(s.Now)
+		conds = append(conds, cond{typ: NFriendCap, stream: FriendCapSubject(f), streamLevel: true,
+			what: fmt.Sprintf("friend %s is past her hourly cap (%s): she is dealt no card until %s and starts again by herself; raise the cap with nova-config friend set %s --cap_usd_hour <usd>",
+				f, friends[f], stamp(to), f)})
+	}
+	return conds
+}
 
 // NRouteRested is the happened note of a rest the tick wrote, to the coordinator, and
 // NProviderRested the note of a provider's (provider_funds.go).
@@ -70,6 +194,9 @@ const (
 	RestCredit   = "out-of-credit"
 	RestAuth     = "auth"
 	RestBalance  = "balance"
+	// RestCap is a route past its dollar cap for the clock hour (spendCapRests): it rests to
+	// the next hour and re-opens by itself. It is not out of credit (RouteRest.Out).
+	RestCap = "cap"
 )
 
 // OpenUntil is the end of a rest that has no time: a provider resting for its funds rests
@@ -336,10 +463,18 @@ func RestsDue(s *Snapshot) []RouteRest {
 		return nil
 	}
 	rests, ends := RouteRests(s.Routes, s.Fleet), routeEnds(s.Fleet)
+	capped := map[string]RouteRest{}
+	for _, c := range spendCapRests(s, rests) {
+		capped[c.Route] = c
+	}
 	var out []RouteRest
 	for _, r := range s.Routes {
 		last, had := rests[r.Name]
 		if had && last.Resting(s.Now) {
+			continue
+		}
+		if c, ok := capped[r.Name]; ok {
+			out = append(out, c) // past its hourly cap: rested to the next hour (spendCapRests)
 			continue
 		}
 		var window []routeEnd
@@ -402,7 +537,10 @@ func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
 			n.rests[name] = r
 		}
 	}
-	due := RestsDue(s)
+	if n.Work != nil {
+		n.spend = hourSpendOf(s)
+	}
+	due := RestsDue(&n)
 	for _, r := range due {
 		for _, name := range restedRoutes(r, s.Routes) {
 			x := r
@@ -504,6 +642,9 @@ func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
 		}
 		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: name, Value: rule3Text(merged), Was: was, WasAbsent: !had})
 		for _, r := range b.routes {
+			if r.Cause == RestCap {
+				continue // the cap's notice is its judgment (capConds), one per episode
+			}
 			tier := ""
 			for _, x := range s.Routes {
 				if x.Name == r.Route {
