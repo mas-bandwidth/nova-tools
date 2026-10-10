@@ -79,7 +79,7 @@ start from that one tool without this page. Read the one you chose:
 - [nova-doctor](cmd/nova-doctor/README.md) — says what is missing for the nova tools to work, and the one line that fixes each
 - [nova-up](cmd/nova-up/README.md) — sets up nova on one machine, from nothing to a first sprint
 
-`nova-sprint`'s guide is the sprint contract, [docs/SPEC-SPRINT.md](docs/SPEC-SPRINT.md); start from `nova-sprint help`.
+`nova-sprint`'s guide is the sprint contract, [docs/SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md); start from `nova-sprint help`.
 
 ## Try one on a small example
 
@@ -99,9 +99,9 @@ listens on `127.0.0.1:6379`. Supply its address and login when they differ.
 Choose the row that matches your work, then read that tool’s section in the
 [command reference](docs/CLI.md). It names the inputs, effects and limits.
 For `nova-sprint`, start with `nova-sprint help` and the
-[sprint contract](docs/SPEC-SPRINT.md); its command help names the current
+[sprint contract](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md); its command help names the current
 verbs and prerequisites. Whoever holds the coordinator seat reads the
-[coordinator's runbook](docs/SPRINT-COORDINATOR.md).
+[coordinator's runbook](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR.md).
 Start with its example data or a directory you made for the trial. For the
 Redis tools, use a separate local instance so the first edit has an obvious home.
 

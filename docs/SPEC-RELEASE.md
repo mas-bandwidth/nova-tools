@@ -562,8 +562,8 @@ for an unkept promise, not for evidence about something else: evidence that does
 `nova-sprint adopt` runs `fleet/tools.yml` for the seat. Its checks precede the installation window; the
 configuration store migrates as its owning role, and a refusal in the window restores the previous tools
 and function library while leaving the migration in place. The command is not called by the sprint tick.
-The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "Adopting a build"; the coordinator procedure is in
-[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md), "Adopting the seat build".
+The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), "Adopting a build"; the coordinator procedure is in
+[SPRINT-COORDINATOR.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR.md), "Adopting the seat build".
 
 *Test: `TestAdoptRunsThePlayAndRefusesAHalfMove`.*
 
