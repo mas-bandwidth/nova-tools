@@ -360,7 +360,7 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	}
 	rep, set := friendBeatReport(prev.Beat.Friend, rep)
 	b := sprint.Beat{At: now}
-	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
+	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() || rep.Tests != nil {
 		b.Friend = &rep // a beat that still reports nothing carries no report
 	}
 	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() {

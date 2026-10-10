@@ -5164,6 +5164,16 @@ whose text opens with `runaway test processes:`. Its decisions are `fleet up <m>
 --width <half>`, `fleet down <m>`, `ack` and `wait 15m`. The found case was one
 member's machine on 2026-10-04, 289 `nova-sprint.test` processes, killed by hand.
 
+### fleet-test-process-alarm-bc.w5
+
+The `--tests` reading is kept in the record the beat's own write stores, never a
+second write of the beat key: `fleet beat` folds the count and the oldest parent
+pid into its one beat write (`Store.BeatTests`, with `Store.BeatOwing` for a beat
+that carries no reading), and `friend beat` folds them into her report, which the
+beat's one write persists (`Store.FriendBeatProof`). A beat that lands while
+another is in flight can then never have its count erased by the older one, and
+the verb writes the beat once.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you

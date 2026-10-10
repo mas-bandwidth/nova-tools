@@ -466,6 +466,11 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		}
 		given = &v
 	}
+	if testsOK {
+		// the reading rides her report into the beat's one write, so it can never
+		// race a newer beat; a beat with no --tests sets neither
+		rep.Tests, rep.TestParent = &testsN, testsParent
+	}
 	c.orActor(friend)
 	st, err := open(*c)
 	if err != nil {
@@ -475,12 +480,6 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
-	}
-	if testsOK {
-		if err := recordFriendTests(ctx, st, friend, testsN, testsParent); err != nil {
-			fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
-			return 1
-		}
 	}
 	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339)+" set="+proof.Set, map[string]any{"friend": friend, "at": b.At, "set": proof.Set}
 	if words.Check != "" {

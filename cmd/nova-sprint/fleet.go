@@ -239,18 +239,16 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		v := *stopReturns
 		owing = &v
 	}
-	b, err := st.BeatOwing(context.Background(), pos[0], nil, src, owing)
+	var b sprint.Beat
+	if testsOK {
+		// the reading is folded into the beat's one write, so it can never race a newer beat
+		b, err = st.BeatTests(context.Background(), pos[0], nil, src, owing, testsN, testsParent)
+	} else {
+		b, err = st.BeatOwing(context.Background(), pos[0], nil, src, owing)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
-	}
-	if testsOK {
-		b.Tests = &testsN
-		b.TestParent = testsParent
-		if err := recordMachineTests(context.Background(), st, pos[0], b); err != nil {
-			fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
-			return 1
-		}
 	}
 	last := 0.0
 	if n := len(b.Samples); n > 0 {
@@ -316,58 +314,4 @@ func beatTestCount(text, oldestText string) (n, parent int, ok bool, why string)
 		parent = p
 	}
 	return v, parent, true, ""
-}
-
-// recordMachineTests writes the test-process reading onto the beat the store
-// just stored. store.Beat has no field for it, and the beat key is the one
-// store writes (beat:<member>).
-func recordMachineTests(ctx context.Context, st *store.Store, member string, b sprint.Beat) error {
-	kv, ok := st.B.(store.KV)
-	if !ok {
-		return fmt.Errorf("this store keeps no beats")
-	}
-	raw, err := json.Marshal(b)
-	if err != nil {
-		return err
-	}
-	return kv.SetKey(ctx, "beat:"+member, string(raw))
-}
-
-// recordFriendTests writes the same reading onto a friend's beat, keeping the
-// pong the store stored beside it. A beat that reported nothing else still
-// carries a friend report, so the tick's read of friend beats sees the count.
-func recordFriendTests(ctx context.Context, st *store.Store, friend string, n, parent int) error {
-	kv, ok := st.B.(store.KV)
-	if !ok {
-		return fmt.Errorf("this store keeps no beats")
-	}
-	key := "friend-beat:" + friend
-	raw, found, err := kv.GetKey(ctx, key)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("no beat was written")
-	}
-	var rec struct {
-		sprint.Beat
-		Pong    time.Time           `json:"pong,omitzero"`
-		Asked   []sprint.AskedCheck `json:"asked,omitempty"`
-		NoProof string              `json:"no_proof,omitempty"`
-	}
-	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-		return err
-	}
-	rec.Tests = &n
-	rec.TestParent = parent
-	if rec.Friend == nil {
-		rec.Friend = &sprint.FriendReport{}
-	}
-	rec.Friend.Tests = &n
-	rec.Friend.TestParent = parent
-	out, err := json.Marshal(&rec)
-	if err != nil {
-		return err
-	}
-	return kv.SetKey(ctx, key, string(out))
 }
