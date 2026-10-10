@@ -946,7 +946,11 @@ jobs:
     # default feedback path is still the self-hosted matrix and costs nothing
     # here. ci-ok does not gate on it for a dispatch: the run is evidence to
     # read, not an automatic merge gate.
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Fault 20 (2026-10-10): a push to dev no longer spends hosted minutes (the
+    # private repo's CI is the fleet's, and the hosted legs failed there on
+    # fleet-shaped tests, TestWallCapsAForkBomb and TestJobsAreWorktreesOfOneMirror);
+    # a push to main keeps the full hosted suite.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     #
     # SHARDS PER OS (dev push run 36269122367 at f7aa36530): at four
     # shards per OS, ubuntu-latest's shards 1, 2 and 4 went green at 88-95 s and
@@ -1887,8 +1891,15 @@ jobs:
         run: |
           echo "a fork's pull request: the self-hosted CL-tier jobs do not run on fork code, so ci-ok is red"
           exit 1
+      - name: every CL-tier job succeeded (push to dev: no hosted suite)
+        if: always() && github.event_name == 'push' && github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }}
       - name: every CL-tier job succeeded (push to main)
-        if: always() && github.event_name == 'push'
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
