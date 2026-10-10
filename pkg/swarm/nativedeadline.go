@@ -10,8 +10,8 @@ import (
 )
 
 // A card that works to its wall and is killed there can have committed real work and written
-// no RESULT.md (fault 9, 2026-10-10: superman's pro-deepseek-v4-direct and
-// flash-deepseek41-direct children; once a commit was pushed and nothing reported it). The
+// no RESULT.md (fault 9, 2026-10-10: children on two direct routes; once a commit was pushed and nothing
+// reported it). The
 // card is told to finish at WallFinishShare of its wall (member.WallText); this is the
 // backstop for the card that does not: at the deadline, a job that holds commits past its base
 // and published no report gets one written FOR it, so the work is named and the harvester

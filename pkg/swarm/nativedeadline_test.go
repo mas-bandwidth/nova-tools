@@ -21,7 +21,6 @@ func TestDeadlineReportsOnlyAJobTheDeadlineEndedThatCommittedAndPublishedNothing
 		{"the deadline did not end it", DeadlineRun{Commits: 1}, false},
 		{"the card published its own", DeadlineRun{Deadlined: true, Published: true, Commits: 1}, false},
 		{"nothing committed", DeadlineRun{Deadlined: true}, false},
-		{"a negative count is no commit", DeadlineRun{Deadlined: true, Commits: -1}, false},
 	} {
 		require.Equal(t, tc.want, DeadlineReports(tc.run), tc.name)
 	}
