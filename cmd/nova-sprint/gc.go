@@ -30,7 +30,7 @@ func init() {
 	// it works on the directories of the machine it runs on (or the one --machine names)
 	notServed = append(notServed, "gc")
 	verbExit["gc"] = "exit codes: 0 GC OK, 1 a removal or a read failed (GC FAILED names each; the summary is GC INCOMPLETE) or --machine did not answer, 2 usage"
-	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, a landed or dropped card's job directory after one hour whatever its git state (class landed), reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, and trims the go caches to their cap; never a path under no known scratch root, never a clone with work that is nowhere else except a landed or dropped card's job; --dry-run removes nothing; --class landed runs only that class"
+	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, a landed or dropped card's job directory after one hour whatever its git state (class landed), reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, and trims the go caches to their cap, and with --judgment writes one open judgment through the sprint store (the disk guard's below-stop seat judgment); never a path under no known scratch root, never a clone with work that is nowhere else except a landed or dropped card's job; --dry-run removes nothing; --class landed runs only that class"
 }
 
 // gcRunner runs one line on a machine through the fleet runner: its exit status, and an
@@ -54,12 +54,16 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 	aiRoot := fs.String("ai-root", "", "the AI root the working directories are under (else NOVA_AI_ROOT, else ~/ai, else the one the home's <name>-working links name); an absolute path")
 	maxAge := fs.String("max-age", "2d", "how old a bench directory, a lander worktree or a job no runner names is before it goes: days (2d) or a Go duration (36h)")
 	class := fs.String("class", "", "which class to run: empty is every class, including landed; landed is only the jobs of landed or dropped cards")
+	judgment := fs.String("judgment", "", "write one open judgment with this text through the sprint store (the disk guard's below-stop judgment) and remove nothing; wants a store address")
 	pos, err := parse(fs, args)
 	switch {
 	case err != nil:
 		return refuse(stderr, name, err.Error())
 	case len(pos) > 0:
 		return refuse(stderr, name, "takes no words, found "+oneline.Escape(pos[0]))
+	}
+	if *judgment != "" {
+		return a.judgeVolume(*judgment, stdout, stderr)
 	}
 	age, err := gcAge(*maxAge)
 	if err != nil {
@@ -94,6 +98,44 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 	if res.Failed > 0 {
 		return 1
 	}
+	return 0
+}
+
+// judgeVolume writes one open judgment (sprint.VolumeJudgment) through the
+// sprint store, the disk guard's below-stop seat judgment: the machine held its
+// own deals, and the judgment names the volume and its free figure. It removes
+// nothing. A run with no store address refuses, as a judgment with no store is
+// nowhere.
+func (a *app) judgeVolume(text string, stdout, stderr io.Writer) int {
+	const name = "gc"
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "localhost"
+	} else if short, _, dotted := strings.Cut(host, "."); dotted {
+		host = short
+	}
+	addr := firstEnv(a.getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR")
+	if strings.TrimSpace(addr) == "" {
+		fmt.Fprintf(stderr, "%s gc: GC FAILED: no store address to write the judgment to; run: NOVA_SPRINT_REDIS=<address> nova-sprint gc --judgment '<text>'\n", prog)
+		return 1
+	}
+	st, err := a.store(common{verb: "gc", redis: addr, actor: a.getenv("NOVA_SPRINT_ACTOR"), epoch: -1})
+	if err != nil {
+		return refuse(stderr, name, "the sprint's store could not be read: "+err.Error())
+	}
+	if _, err := st.Run(context.Background(), store.Step{
+		Verb:  "gc",
+		Actor: sprint.MachineActor,
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			if n, ok := sprint.VolumeJudgment(s, host, text); ok {
+				return sprint.Plan{Notes: []sprint.Note{n}}
+			}
+			return sprint.Plan{}
+		},
+	}); err != nil {
+		return refuse(stderr, name, "the judgment was not written: "+err.Error())
+	}
+	fmt.Fprintf(stdout, "GC OK judgment=%s\n", oneline.Escape(text))
 	return 0
 }
 

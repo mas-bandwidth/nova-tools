@@ -1653,16 +1653,23 @@ or TB (`200GB`, `50GB`); the defaults are 200 GB and 50 GB, decimal, not the gua
 
 Below a volume's floor (free under it) the guard runs `nova-sprint gc --class landed`, then the
 caches, then says `REFUSED <volume> free=<figure>` for the tightest such volume. Below a stop it
-holds this machine's deals, never the server's, and says one judgment `<host> <volume> at
-<free>: deals held`. A volume whose free could not be read is skipped, not treated as empty.
+holds this machine's deals (`nova-sprint hold <host>`, never the server's) and pushes one
+judgment to the seat (`nova-sprint gc --judgment`, `sprint.VolumeJudgment`, `NVolumeStop`),
+`<host> <volume> at <free>: deals held`, while no such judgment for that machine is open. A
+volume whose free could not be read is skipped, not treated as empty.
 Each guarded volume is one line, `volume=<name> free=<figure>`, and ` red` when it is under its
 floor. `where` and the page's machine row are that line; this change does not draw them.
 
 The landed removal that guards the volume is gc's class (`sprint.GCLanded`, `sprint.PruneLanded`,
 below). Below a volume's floor the guard, a worker that never reads a card's state itself, runs
 `nova-sprint gc --class landed` (the command reads the sprint's store and removes the landed
-jobs), then the caches, then says the refusal. gc's own loop also runs gc on a machine whose
-fullest volume is at 80% or above. gc walks every friend's `jobs/` under the AI root, which is
+jobs), then the caches, then says the refusal. Below a volume's stop the same guard runs
+`nova-sprint hold <host> --reason <the judgment>` to hold the machine's deals and
+`nova-sprint gc --judgment <the judgment>` to write the one open judgment through the store,
+then ends `DISK-GUARD STOP` with exit 3, the loop row's signal to stop the loops; the machine's
+hold is the seat's to release (`nova-sprint unhold <host>`) once the disk is free. gc's own loop
+also runs gc on a machine whose fullest volume is at 80% or above. gc walks every friend's
+`jobs/` under the AI root, which is
 where a landed one-shot job was left on 2026-10-07 after its branch was pruned (kept as commits
 on no remote, or as uncommitted paths). The friend's own prune pass and the one-shot reap call
 this class too (docs/SPEC-FRIEND.md, the prune pass): after the finished-worktree prune the
@@ -1670,7 +1677,8 @@ daemon asks the sprint server for each job's card and removes the landed or drop
 and gc, which reads the sprint's store, makes the same call where that read answers none.
 (`TestLandedJobIsRemovedAfterTheGrace`,
 `TestOpenJobIsKept`, `TestDroppedJobIsRemoved`,
-`TestGuardRunsLandedBelowTheFloorAndHoldsDealsBelowTheStop`, `TestVolumeRowShowsTheFreeFigure`.)
+`TestGuardRunsLandedBelowTheFloorAndHoldsDealsBelowTheStop`, `TestVolumeRowShowsTheFreeFigure`,
+`TestVolumeJudgmentIsWrittenOnceWhileItIsOpen`.)
 
 ## 2. The cards
 
