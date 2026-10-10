@@ -2,8 +2,40 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
+
+// The two rules this file adds are registered here, not in rules.go, so the change stays
+// inside the card's PATHS: the names nova-config's answer_rules_off takes and the tick parts
+// that run them (docs/SPEC-SPRINT.md section 8, the rules table).
+const (
+	// RuleFriendIdle is the rule that detects a friend loaded but idle and sends the width goal.
+	RuleFriendIdle = "friend-idle"
+	// RuleFriendIdleReturn is the rule that hands a friend's idle cards back to the pool.
+	RuleFriendIdleReturn = "friend-idle-return"
+)
+
+const (
+	// PartRuleIdle is the tick part that runs the friend-idle rule.
+	PartRuleIdle = "rule friend idle"
+	// PartRuleIdleReturn is the tick part that runs the friend-idle-return rule.
+	PartRuleIdleReturn = "rule friend idle return"
+)
+
+// init registers the two rules with RuleNames (held equal to nova-config's AnswerRules) and
+// TickRules, before PartRuleBrief as every rule is before the brief defects.
+func init() {
+	RuleNames = append(RuleNames, RuleFriendIdle, RuleFriendIdleReturn)
+	slices.Sort(RuleNames)
+	idle := []TickPartDef{{PartRuleIdle, TickRuleIdle}, {PartRuleIdleReturn, TickRuleIdleReturn}}
+	at := slices.IndexFunc(TickRules, func(d TickPartDef) bool { return d.Name == PartRuleBrief })
+	if at < 0 {
+		TickRules = append(TickRules, idle...)
+		return
+	}
+	TickRules = slices.Insert(TickRules, at, idle...)
+}
 
 // evidenceField is the field that holds the latest evidence of work for a friend's row.
 const evidenceField = "evidence"
