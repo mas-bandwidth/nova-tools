@@ -104,7 +104,7 @@ func TestALaneNeverStartsACardItsTakeWasRefusedAndTakesItAgainOnALaterPass(t *te
 		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true, "c2": true}, active: map[string]int{}}
 		r, _ := laneRig(t, h, 2)
 		srv := &takeServer{col: map[string]string{"c1~15": "ready", "c2~15": "ready"}}
-		r.d.Held, r.d.Take = srv.held, srv.take
+		r.d.Held, r.d.Take, r.d.Finish = srv.held, srv.take, srv.finish
 		var turnsWhileRefused []string
 		var takesWhileRefused int
 		r.at[20] = func() {
@@ -131,7 +131,8 @@ func TestALaneNeverStartsACardItsTakeWasRefusedAndTakesItAgainOnALaterPass(t *te
 		takes, cols := srv.got()
 		assert.Contains(t, takes, "take --as friend.bob c1@1 --epoch 15")
 		assert.Contains(t, takes, "take --as friend.bob c2@1 --epoch 15")
-		assert.Equal(t, map[string]string{"c1~15": "working", "c2~15": "working"}, cols, "every card run is working on her row")
+		assert.Equal(t, map[string]string{"c1~15": "done", "c2~15": "done"}, cols, "every card run was working on her row, and its finish was taken")
+		assert.NotContains(t, records, "finish refused", "no finish of a card the server does not have working")
 		assert.Regexp(t, `lane \d: took card c1@1 \(ready -> working on her row\)`, records)
 	})
 }
@@ -191,7 +192,7 @@ func TestACardSetAsideButStillReadyOnHerRowIsTakenAgain(t *testing.T) {
 	})
 }
 
-// Batch mode (zhi: dsh opens no session per lane, so her row's one-shot runs in batch): her
+// Batch mode (a dsh friend opens no session per lane, so her row's one-shot runs in batch): her
 // ready cards are taken by her daemon, the server choosing which and cutting to her width,
 // never while the machine is STOPPED, a refusal asked again at the next BatchTakeEvery.
 func TestABatchDaemonTakesHerReadyCardsAndAsksAgainAfterARefusal(t *testing.T) {
@@ -215,6 +216,6 @@ func TestABatchDaemonTakesHerReadyCardsAndAsksAgainAfterARefusal(t *testing.T) {
 func TestTakeArgvs(t *testing.T) {
 	t.Parallel()
 	c := Card{ID: "c1", Brief: "/w/inbox/c1~16.g2/BRIEF.md", Outbox: "/w/outbox/c1~16.g2"}
-	assert.Equal(t, []string{"take", "--as", "friend.freddy", "c1@2", "--epoch", "16"}, LaneTakeArgv("freddy", c))
-	assert.Equal(t, []string{"take", "--as", "friend.zhi", "--max", "3"}, BatchTakeArgv("zhi", 3))
+	assert.Equal(t, []string{"take", "--as", "friend.ann", "c1@2", "--epoch", "16"}, LaneTakeArgv("ann", c))
+	assert.Equal(t, []string{"take", "--as", "friend.ann", "--max", "3"}, BatchTakeArgv("ann", 3))
 }

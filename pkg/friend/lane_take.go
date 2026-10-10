@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// The take before the lane (v1.2.6; the fault of 2026-10-10 20:14Z on mini-m5). The server is
+// The take before the lane (v1.2.6; the fault of 2026-10-10 20:14Z on a friend host). The server is
 // the one source of truth for what her lanes work: a card is hers to run only once the server
 // has moved it to working on her row. Before this, a free lane was handed any card on her row,
 // ready or working (nextCard), so with the sprint started a second after her daemon staged its
 // dealt cards, 23 lanes ran cards still ready on her row, every progress and finish was refused
-// ("not working (it is friend.freddy:ready)"), and the lanes set the cards aside, stranded.
+// ("not working (it is friend.<name>:ready)"), and the lanes set the cards aside, stranded.
 //
 // Now a free lane runs a card only when the server says it is working on her row (a card her
 // own finish took for her, friendNext, or one a lane held before a restart: resumed, never a
