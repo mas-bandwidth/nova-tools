@@ -20,11 +20,16 @@ type scriptExec struct {
 	texts []string
 }
 
-func (s *scriptExec) run(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+func (s *scriptExec) run(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
 	s.texts = append(s.texts, args[len(args)-1])
 	i := len(s.texts) - 1
 	if i >= len(s.outs) {
 		return "", 0, nil
+	}
+	if s.exits[i] != 0 {
+		if w := CapturedStderr(ctx); w != nil {
+			_, _ = w.Write([]byte(s.outs[i]))
+		}
 	}
 	return s.outs[i], s.exits[i], nil
 }

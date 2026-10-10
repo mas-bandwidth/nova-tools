@@ -61,23 +61,31 @@ func TestEachHarnessUsageLimitAndCreditsTextParsesWithItsReset(t *testing.T) {
 	assert.False(t, ok, "a harness with no words has no limit")
 }
 
-// A turn that succeeded and only talks of a limit sends no one down, and a
-// failed one whose text is not a limit is an ordinary failure.
+// A turn that succeeded and only talks of a limit sends no one down, a failed one
+// with credit words on stdout alone does not down the friend, and a failed one with
+// credit words on stderr marks the friend down.
 func TestAReplyThatTalksOfLimitsIsNoLimit(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		out    string
+		stderr string
 		exit   int
 		limits bool
 	}{
-		{"The credit balance is too low in the test I wrote.\n", 0, false},
-		{"Credit balance is too low\n", 1, true},
-		{"cannot open file: permission denied\n", 1, false},
+		{"The credit balance is too low in the test I wrote.\n", "", 0, false},
+		{"Credit balance is too low\n", "", 1, false},
+		{"Credit balance is too low\n", "Credit balance is too low\n", 1, true},
+		{"cannot open file: permission denied\n", "cannot open file: permission denied\n", 1, false},
 	} {
 		downs := 0
 		l := &Limits{Now: func() time.Time { return now }, Harness: "claude", Down: func(time.Time, string) { downs++ }}
-		_, _, _ = l.Watch(func(context.Context, string, string, []string, string) (string, int, error) {
+		_, _, _ = l.Watch(func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+			if tc.stderr != "" {
+				if w := CapturedStderr(ctx); w != nil {
+					_, _ = w.Write([]byte(tc.stderr))
+				}
+			}
 			return tc.out, tc.exit, nil
 		})(context.Background(), "", "x", nil, "")
 		_, _, limited := l.Limited()
