@@ -1405,6 +1405,19 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, set, unset...))},
 			Moved: fmt.Sprintf("%s fleet ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
+	if len(chosen) > 0 && IsFriendRow(r.As) {
+		ctl := s.MemberCtl(r.As)
+		if ctl == nil && s.Fleet != nil {
+			ctl = s.Fleet.Card(r.As)
+		}
+		if ctl != nil && (ctl.F("status") == "idle" || ctl.F(FieldFriendIdleSince) != "" || ctl.F(FieldFriendIdleReason) != "" || ctl.F(FieldFriendIdleLoaded) != "") {
+			p.Units = append(p.Units, Unit{
+				Key:     ctl.ID,
+				Changes: []Change{change(Fleet, setEntry(ctl, nil, "status", FieldFriendIdleSince, FieldFriendIdleReason, FieldFriendIdleLoaded))},
+				Moved:   fmt.Sprintf("friend %s took card: idle cleared", r.As),
+			})
+		}
+	}
 	return p
 }
 
