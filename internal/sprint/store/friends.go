@@ -63,6 +63,9 @@ type friendEntry struct {
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
+	// CapUSDHour is her row's dollar cap per clock hour ("" takes the default,
+	// sprint.DefaultFriendCapUSDHour; "0" is none), read by FriendCaps into the tick.
+	CapUSDHour string `json:"cap_usd_hour,omitempty"`
 	// TokenCap is her row's per-card token cap. TokenCapSet is whether friend
 	// sync wrote one: a roster from before the field is unset, and her beat
 	// answers the default. An explicit 0 is no cap; omitempty would drop that
@@ -94,6 +97,8 @@ type FriendSpec struct {
 	Mode  string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
+	// CapUSDHour is her row's cap_usd_hour ("" when it names none: the tick's default).
+	CapUSDHour string
 	// TokenCap is her row's per-card token cap. TokenCapSet is false for a
 	// spec built before the field: her beat then answers the default, and an
 	// explicit 0 (no cap) is TokenCapSet with TokenCap 0.
@@ -231,11 +236,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.CapUSDHour != s.CapUSDHour || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.CapUSDHour, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds = s.Width, s.Class, s.Mode, s.ConfigDir, s.CapUSDHour, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -586,6 +591,24 @@ func (st *Store) friendSeats(ctx context.Context, _ *sprint.Snapshot, now time.T
 	return st.FriendSeats(ctx, now)
 }
 
+// FriendCaps is each friend's dollar cap per clock hour as the roster holds it, by name
+// (TickReq.FriendCaps and Snapshot.FriendCaps). A friend whose row names none is left out
+// and the tick treats her as uncapped; an empty value in the map is the default
+// (sprint.DefaultFriendCapUSDHour). nil when the roster is empty.
+func (st *Store) FriendCaps(ctx context.Context) (map[string]string, error) {
+	r, _, err := st.roster(ctx)
+	if err != nil || len(r) == 0 {
+		return nil, err
+	}
+	out := map[string]string{}
+	for n, e := range r {
+		if e.CapUSDHour != "" {
+			out[n] = e.CapUSDHour
+		}
+	}
+	return out, nil
+}
+
 // FriendNames is every friend of the roster in name order (the friends table's rows), for
 // add's hold of a WHO line's name; none when the store keeps no records.
 func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
@@ -609,7 +632,7 @@ func (st *Store) FriendSpecs(ctx context.Context) ([]FriendSpec, error) {
 	for _, name := range names {
 		e := r[name]
 		out = append(out, FriendSpec{Name: name, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir,
-			TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Streams: e.Streams, Kinds: e.Kinds})
+			CapUSDHour: e.CapUSDHour, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Streams: e.Streams, Kinds: e.Kinds})
 	}
 	return out, nil
 }
@@ -778,7 +801,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, CapUSDHour: e.CapUSDHour, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last
