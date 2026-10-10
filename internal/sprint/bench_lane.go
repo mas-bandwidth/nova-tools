@@ -99,15 +99,27 @@ func (l BenchLane) Dir() string { return BenchLaneRoot + "/" + l.Kind + "/" + l.
 // Tmp is the lane's TMPDIR and GOTMPDIR, inside its directory.
 func (l BenchLane) Tmp() string { return l.Dir() + "/tmp" }
 
-// Env is the environment the lane's command runs under.
+// Env is the environment the lane's command runs under. TMPDIR, GOTMPDIR and
+// GOCACHE are named as paths under the login's home (benchHome), so they resolve
+// against the home even though the command has cd'd into the checkout.
 func (l BenchLane) Env(cache string) []string {
 	return []string{
-		"TMPDIR=" + benchQuote(l.Tmp()),
-		"GOTMPDIR=" + benchQuote(l.Tmp()),
-		"GOCACHE=" + benchQuote(cache),
+		"TMPDIR=" + benchHome(l.Tmp()),
+		"GOTMPDIR=" + benchHome(l.Tmp()),
+		"GOCACHE=" + benchHome(cache),
 		"GOFLAGS=-mod=readonly",
 		"NOVA_TEST_NO_HOST=1",
 	}
+}
+
+// benchHome is a bench path (relative to the login's home) as the shell reads it:
+// "$HOME"/<path>, so it names the home however the login spells it; an absolute
+// path is kept as it is.
+func benchHome(p string) string {
+	if strings.HasPrefix(p, "/") {
+		return benchQuote(p)
+	}
+	return `"$HOME"/` + benchQuote(p)
 }
 
 // BenchLaneOptions is one lane's run.
@@ -328,7 +340,7 @@ func BenchTmpJudgment(s *Snapshot, who string, t BenchTmp) (Note, bool) {
 	}
 	what := fmt.Sprintf("%s/tmp is %d%% full, over %d%%; its largest: %s; a lane runs in %s and removes its own directory, so these are left by something else",
 		head, t.UsedPct, BenchTmpOverPct, largest, BenchLaneRoot)
-	return Note{Kind: Judgment, Type: NBenchTmp, Who: who, To: s.Coordinator, At: s.Now, What: what}, true
+	return Note{Kind: Judgment, Type: NBenchTmp, Primaries: []string{t.Bench}, Who: who, To: s.Coordinator, At: s.Now, What: what}, true
 }
 
 func benchShell(ctx context.Context, sh BenchShell, host, line string, stdout, stderr io.Writer) (int, error) {

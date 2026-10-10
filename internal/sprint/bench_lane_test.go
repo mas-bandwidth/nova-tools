@@ -93,9 +93,9 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 				return
 			}
 			assert.Contains(t, exec, "cd '"+dir+"/repo'")
-			assert.Contains(t, exec, "TMPDIR='"+dir+"/tmp'", "TMPDIR is inside the job directory")
-			assert.Contains(t, exec, "GOTMPDIR='"+dir+"/tmp'", "GOTMPDIR is inside the job directory")
-			assert.Contains(t, exec, "GOCACHE='"+BenchCacheDefault+"'", "GOCACHE is the bench's one shared cache")
+			assert.Contains(t, exec, "TMPDIR=\"$HOME\"/'"+dir+"/tmp'", "TMPDIR is inside the job directory, under the home")
+			assert.Contains(t, exec, "GOTMPDIR=\"$HOME\"/'"+dir+"/tmp'", "GOTMPDIR is inside the job directory, under the home")
+			assert.Contains(t, exec, "GOCACHE=\"$HOME\"/'"+BenchCacheDefault+"'", "GOCACHE is the bench's one shared cache, under the home")
 			assert.NotContains(t, exec, "/tmp/", "nothing is put in the bench's shared temporary directory")
 			assert.Contains(t, exec, "nice -n 19 'go' 'test' './internal/sprint'")
 		})
@@ -112,8 +112,8 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 			assert.Equal(t, want, res.Dir, kind)
 			assert.True(t, res.Removed, kind)
 			joined := strings.Join(sh.lines, "\n")
-			assert.Contains(t, joined, "TMPDIR='"+want+"/tmp'", kind)
-			assert.Contains(t, joined, "GOTMPDIR='"+want+"/tmp'", kind)
+			assert.Contains(t, joined, "TMPDIR=\"$HOME\"/'"+want+"/tmp'", kind)
+			assert.Contains(t, joined, "GOTMPDIR=\"$HOME\"/'"+want+"/tmp'", kind)
 		}
 	})
 

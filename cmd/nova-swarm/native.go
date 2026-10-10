@@ -774,6 +774,8 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 			// ignored: clean up auth copy on early refusal path
 			_ = removeAuthCopy(dataHome, errOut)
 		}
+		// ignored: best-effort cleanup of the run's own slot temp on an early refusal
+		_ = removeNativeSlotTemp(cfg.slotDir, tmpDir)
 	}
 	if reason != "" {
 		cleanup()
@@ -1521,6 +1523,14 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	return s.res, 0
 }
 
+// removeNativeSlotTemp removes the run's own slot temp (<slot>/tmp/<label>) when the slot
+// lease ends, so a temp directory left behind by a card does not accumulate slot after slot
+// (docs/SPEC-SWARM.md). It goes through safepath.RemoveUnder, which allows it only because
+// it sits strictly below the slot's tmp directory.
+func removeNativeSlotTemp(slotDir, tmpDir string) error {
+	return safepath.RemoveUnder(filepath.Join(slotDir, "tmp"), tmpDir)
+}
+
 // nativeRun executes one frozen configuration and returns the recorded result and
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
 // errOut). A refusal is a defect in the configuration the run can see before it
@@ -1533,6 +1543,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	defer p.releaseLease()
 	defer p.releaseSlot()
+	defer func() {
+		if err := removeNativeSlotTemp(p.cfg.slotDir, p.tmpDir); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the slot temp %s was not removed: %s\n", oneline.Field(p.tmpDir), oneline.Err(err))
+		}
+	}()
 	if p.proxy != nil {
 		defer p.proxy.Close()
 	}

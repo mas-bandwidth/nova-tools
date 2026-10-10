@@ -45,9 +45,13 @@ func TestRunRemovesTheRunDirectoryWhenTheCopyFails(t *testing.T) {
 
 func TestLinesQuoteEveryWord(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, `cd '/r/run.x/repo' && GOCACHE='/c' GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 nice -n 19 'go' 'test' '-run' 'A B'\''C'`,
+	assert.Equal(t, `cd '/r/run.x/repo' && TMPDIR='/r/run.x/tmp' GOTMPDIR='/r/run.x/tmp' GOCACHE='/c' GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 nice -n 19 'go' 'test' '-run' 'A B'\''C'`,
 		ExecLine("/r/run.x", "/c", []string{"go", "test", "-run", "A B'C"}))
+	// a relative run and cache resolve against the login's home, before the cd
+	assert.Equal(t, `cd 'r/run.x/repo' && TMPDIR="$HOME"/'r/run.x/tmp' GOTMPDIR="$HOME"/'r/run.x/tmp' GOCACHE="$HOME"/'c' GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 nice -n 19 'go' 'version'`,
+		ExecLine("r/run.x", "c", []string{"go", "version"}))
 	assert.Equal(t, "rm -rf -- 'r/run.x'", RemoveLine("r/run.x"))
+	assert.Equal(t, `mkdir -p 'nova-bench/runs' && d=$(mktemp -d 'nova-bench/runs/run.XXXXXXXX') && mkdir -p "$d"/tmp && printf '%s' "$d"`, MakeLine(DefaultRoot))
 }
 
 // The copy's tar stream holds the tree relative to its root, modes and

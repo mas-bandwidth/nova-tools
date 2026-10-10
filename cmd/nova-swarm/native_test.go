@@ -104,6 +104,24 @@ func aSlot(t *testing.T) (root, slot string) {
 	return root, slot
 }
 
+// A native run removes its own slot temp (<slot>/tmp/<label>) through safepath.RemoveUnder
+// when the slot lease ends: the directory the card was handed as TMPDIR is gone, and a path
+// outside the slot's tmp is refused (docs/SPEC-SWARM.md, native).
+func TestNativeRemovesItsSlotTemp(t *testing.T) {
+	t.Parallel()
+	_, slot := aSlot(t)
+	tmp := filepath.Join(slot, "tmp", "card")
+	require.NoError(t, os.MkdirAll(tmp, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "x"), []byte("x"), 0o644))
+	require.NoError(t, removeNativeSlotTemp(slot, tmp), "the slot temp is removed when the slot lease ends")
+	assert.NoDirExists(t, tmp, "the slot temp is removed when the slot lease ends")
+	// a path outside the slot's tmp is refused, and nothing is removed
+	outside := filepath.Join(slot, "data")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.Error(t, removeNativeSlotTemp(slot, outside), "a path outside the slot's tmp is refused")
+	assert.DirExists(t, outside, "a path outside the slot's tmp is never removed")
+}
+
 // TestNativeRunRefusesMissingBinary: a binary that does not exist, and one that exists but
 // is not executable, are both the refusal that runs before any child can start.
 func TestNativeRunRefusesMissingBinary(t *testing.T) {

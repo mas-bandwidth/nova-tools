@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // gc is the verb that reclaims the machinery's scratch (sprint.GC is the rule;
@@ -29,7 +30,7 @@ func init() {
 	// it works on the directories of the machine it runs on (or the one --machine names)
 	notServed = append(notServed, "gc")
 	verbExit["gc"] = "exit codes: 0 GC OK, 1 a removal or a read failed (GC FAILED names each; the summary is GC INCOMPLETE) or --machine did not answer, 2 usage"
-	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, sweeps the bench lane directories whose lane is gone, and trims the go caches to their cap, and says a bench whose /tmp is nearly full, naming it and its largest directories; never a path under no known scratch root, never a clone with work that is nowhere else; --dry-run removes nothing"
+	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, sweeps the bench lane directories whose lane is gone, and trims the go caches to their cap, and writes one open judgment of a bench whose /tmp is nearly full, naming it and its largest directories; never a path under no known scratch root, never a clone with work that is nowhere else; --dry-run removes nothing and sweeps nothing"
 }
 
 // gcRunner runs one line on a machine through the fleet runner: its exit status, and an
@@ -71,7 +72,9 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, name, "--machine: "+err.Error())
 		}
 		code := gcOn(context.Background(), gcRemote, m, *dry, *maxAge, *aiRoot, stdout, stderr)
-		a.sweepBenchLanes(c, m, stdout, stderr)
+		if !*dry {
+			a.sweepBenchLanes(c, m, stdout, stderr)
+		}
 		return code
 	}
 	res := a.gcLocal(*dry, age, *aiRoot)
@@ -152,25 +155,36 @@ func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge, a
 	return 0
 }
 
-// sweepBenchLanes sweeps machine's bench lane directories whose lane is gone, and says the
-// bench's /tmp when it is nearly full: a machine with a live Go lane holder is running
-// something and is left alone; one with no holder has no live lane, so every directory under
-// nova-bench/lanes there is a killed lane's (docs/SPEC-SPRINT.md section 18, bench lanes).
-// The sweep and the /tmp line are the check beside the mechanism: a lane removes its own
-// directory whatever the verdict; the sweep is for the lane killed before its remove, and
-// the /tmp line names a bench whose /tmp is over BenchTmpOverPct and its largest directories.
+// sweepBenchLanes sweeps machine's bench lane directories whose lane is gone, and raises the
+// bench's /tmp judgment when it is nearly full: a machine with a live Go lane holder is
+// running something and is left alone; one with no holder has no live lane, so every
+// directory under nova-bench/lanes there is a killed lane's (docs/SPEC-SPRINT.md section 18,
+// bench lanes). The sweep and the /tmp judgment are the check beside the mechanism: a lane
+// removes its own directory whatever the verdict; the sweep is for the lane killed before
+// its remove, and the /tmp judgment names a bench whose /tmp is over BenchTmpOverPct and its
+// largest directories, written through the sprint store as one open judgment while one such
+// judgment for that bench is open.
 func (a *app) sweepBenchLanes(c *common, machine string, stdout, stderr io.Writer) {
+	st, err := a.store(*c)
+	if err != nil { // ignored: no store, no live lanes to read, no judgment to write
+		return
+	}
 	var tmpOut bytes.Buffer
 	if code, err := gcRemote(context.Background(), machine, sprint.BenchTmpLine, &tmpOut, &tmpOut); err == nil && code == 0 {
-		if tmp, err := sprint.BenchTmpFrom(machine, tmpOut.String()); err == nil {
-			if n, ok := sprint.BenchTmpJudgment(&sprint.Snapshot{Now: a.now()}, "gc", tmp); ok {
-				fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(n.What))
+		if tmp, err := sprint.BenchTmpFrom(machine, tmpOut.String()); err == nil && tmp.UsedPct > sprint.BenchTmpOverPct {
+			if _, err := st.Run(context.Background(), store.Step{
+				Verb:  "gc",
+				Actor: sprint.MachineActor,
+				Plan: func(s *sprint.Snapshot) sprint.Plan {
+					if n, ok := sprint.BenchTmpJudgment(s, "gc", tmp); ok {
+						return sprint.Plan{Notes: []sprint.Note{n}}
+					}
+					return sprint.Plan{}
+				},
+			}); err != nil {
+				fmt.Fprintf(stderr, "%s gc: GC FAILED machine=%s: the /tmp judgment was not written: %s\n", prog, oneline.Escape(machine), oneline.Err(err))
 			}
 		}
-	}
-	st, err := a.store(*c)
-	if err != nil { // ignored: no store, no live lanes to read, nothing swept
-		return
 	}
 	rows, err := st.LaneRows(context.Background())
 	if err != nil { // ignored: lanes that cannot be read are not swept away
@@ -353,6 +367,29 @@ func (a *app) gcLoop(ctx context.Context, stdout io.Writer) {
 				fmt.Fprintf(stdout, "%s GC machine=%s why=%s: GC FAILED no answer: %s\n", a.now().Format("15:04:05"), oneline.Escape(run.Machine), oneline.Escape(run.Why), oneline.Escape(oneline.Cap(out.String(), 300)))
 			}
 		}
+		// The bench lanes' sweep and the /tmp judgment run every round for every remote
+		// bench, not only when gc is due: a lane killed before its remove is swept on the
+		// next tick, and a bench whose /tmp is over the threshold is judged while it
+		// stands (docs/SPEC-SPRINT.md section 18, bench lanes).
+		c := a.gcCommon()
+		for _, n := range names {
+			if n == local {
+				continue
+			}
+			a.sweepBenchLanes(c, n, stdout, stdout)
+		}
+	}
+}
+
+// gcCommon is the common the gc loop reaches the store through: the environment's Redis
+// and actor, as the run verb's own would be read. gc is a machine verb, so an absent actor
+// is not a refusal; the judgment it writes is the machine's (sprint.MachineActor).
+func (a *app) gcCommon() *common {
+	return &common{
+		verb:  "gc",
+		redis: firstEnv(a.getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR", seatLoginAddr),
+		actor: a.getenv("NOVA_SPRINT_ACTOR"),
+		epoch: -1,
 	}
 }
 

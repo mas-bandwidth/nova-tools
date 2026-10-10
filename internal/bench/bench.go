@@ -14,18 +14,20 @@
 // THE RUN, per host, in order:
 //
 //  1. make: one ssh that makes the root and a fresh run directory under it
-//     with mktemp -d, so two runs never share a directory and the run knows
-//     exactly the one it made. A host that does not answer (ssh's own exit
-//     255, or ssh not starting) is passed over for the fallback; a host that
-//     answers and refuses is the end of the run, never a reason to try another.
+//     with mktemp -d, and its tmp inside it, so two runs never share a
+//     directory and the run knows exactly the one it made. A host that does
+//     not answer (ssh's own exit 255, or ssh not starting) is passed over for
+//     the fallback; a host that answers and refuses is the end of the run,
+//     never a reason to try another.
 //  2. copy: the tree into <run>/repo, .git left out unless WithGit; or, with a
 //     Stage, the tree staged from the bench's own mirror at one commit
 //     (stage_mirror.go), so only the sha crosses the wire. Either way the
 //     run's Stage says what it did, and a refusal is a *StageError naming the
 //     step, its exit, its stderr's tail and the wall time.
-//  3. exec: cd <run>/repo, then the command under nice -n 19 with GOCACHE,
-//     GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1, its output streamed to the
-//     caller as it arrives. Its exit status is the run's.
+//  3. exec: cd <run>/repo, then the command under nice -n 19 with TMPDIR and
+//     GOTMPDIR <run>/tmp and GOCACHE, GOFLAGS=-mod=readonly and
+//     NOVA_TEST_NO_HOST=1, its output streamed to the caller as it arrives.
+//     Its exit status is the run's.
 //  4. remove: rm -rf of the run directory step 1 printed and nothing else,
 //     whatever happened in 2 and 3, under a context the caller's cancellation
 //     does not end, so an interrupted run still cleans up after itself.
@@ -320,23 +322,35 @@ func remove(ctx context.Context, t Transport, host, dir string) error {
 	return nil
 }
 
-// MakeLine is the remote line of the make step.
+// MakeLine is the remote line of the make step: the root, then a fresh run
+// directory under it, and its tmp inside it, so the command has a TMPDIR of its
+// own (ExecLine). The run directory's name is printed, alone.
 func MakeLine(root string) string {
-	return "mkdir -p " + Quote(root) + " && mktemp -d " + Quote(root+"/run.XXXXXXXX")
+	return "mkdir -p " + Quote(root) + " && d=$(mktemp -d " + Quote(root+"/run.XXXXXXXX") + ") && mkdir -p \"$d\"/tmp && printf '%s' \"$d\""
 }
 
-// ExecLine is the remote line that runs argv in dir/repo.
+// ExecLine is the remote line that runs argv in dir/repo, with TMPDIR and
+// GOTMPDIR dir/tmp and GOCACHE cache; each is under the login's home when it is
+// relative (homePath), so it names the home however the login spells it.
 func ExecLine(dir, cache string, argv []string) string {
-	gocache := Quote(cache)
-	if !strings.HasPrefix(cache, "/") {
-		gocache = `"$HOME"/` + gocache
-	}
+	gocache := homePath(cache)
+	tmp := homePath(dir + "/tmp")
 	words := make([]string, len(argv))
 	for i, a := range argv {
 		words[i] = Quote(a)
 	}
-	return "cd " + Quote(dir+"/repo") + " && GOCACHE=" + gocache + " " + strings.Join(Env, " ") +
+	return "cd " + Quote(dir+"/repo") + " && TMPDIR=" + tmp + " GOTMPDIR=" + tmp + " GOCACHE=" + gocache + " " + strings.Join(Env, " ") +
 		" nice -n " + strconv.Itoa(Nice) + " " + strings.Join(words, " ")
+}
+
+// homePath is a bench path as the shell reads it: "$HOME"/<path> when it is
+// relative to the login's home, itself when it is absolute.
+func homePath(p string) string {
+	q := Quote(p)
+	if !strings.HasPrefix(p, "/") {
+		q = `"$HOME"/` + q
+	}
+	return q
 }
 
 // RemoveLine is the remote line of the remove step: the one directory made.

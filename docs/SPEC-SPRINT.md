@@ -7468,7 +7468,9 @@ A lane the machinery starts on a bench (a worker, a reader, a lander, a bench ga
 is `RunBenchLane` (`internal/sprint/bench_lane.go`). Its directory is
 `nova-bench/lanes/<kind>/<job>` and its `tmp` is inside that directory. The command
 runs with `TMPDIR` and `GOTMPDIR` set to that `tmp`, and with `GOCACHE` the bench's
-one shared cache (`nova-bench/cache/go-build` when the lane names none). The directory
+one shared cache (`nova-bench/cache/go-build` when the lane names none); each is named
+under the login's home, so it resolves against the home even though the command has
+`cd`'d into the checkout. The directory
 is removed when the lane ends, whatever the verdict, and the caller's cancellation
 does not end that remove. A directory whose lane is gone is removed on the next tick
 (`SweepBenchLanes`): each directory under the root whose lane is not live, and a name
@@ -7480,7 +7482,8 @@ the sprint sets none. Before the command the cache is measured; over the cap it 
 cleaned with `go clean -cache`. A clean that fails does not fail the lane.
 
 A bench whose `/tmp` is over `BenchTmpOverPct` raises one judgment (`BenchTmpFrom`,
-`NBenchTmp`, `BenchTmpJudgment`) naming the bench and its largest directories, while one such
+`NBenchTmp`, `BenchTmpJudgment`) naming the bench and its largest directories, written
+through the sprint store as an open judgment, while one such
 judgment for that bench is open, and none at the threshold or under. The judgment is
 the check beside the mechanism: a lane runs in `nova-bench/lanes` and removes its own
 directory, so what remains was left by something else.
