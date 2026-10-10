@@ -91,12 +91,16 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 		ok := body != "" && strings.Contains(body, redisInstallCall)
 		assert.True(t, ok, "certification.yml job %s does not install redis-server", job)
 	}
-	// The installer is the tools/ci install-redis-server verb; its own tests run the apt
-	// branch (apt-get install -y -qq redis-server) and the Homebrew branch, and this reads
-	// that the two are there.
+	// The installer is the tools/ci install-redis-server verb. The version is
+	// the test of installed: it keeps a redis-server only when
+	// `redis-server --version` reports the pin, and otherwise builds the pinned
+	// release from source. It never runs apt-get or brew, which install whatever
+	// version the distribution or Homebrew carries.
 	installer := readFile(t, filepath.Join(root, redisInstallerSource))
-	require.Contains(t, installer, `h.aptInstall("redis-server")`, "the installer does not apt-get install redis-server for the hosted Linux row")
-	require.Contains(t, installer, `"brew", "install", "redis"`, "the installer does not brew install redis for the Studio")
+	require.Contains(t, installer, `h.redisVersion(`, "the installer does not check redis-server --version against the pin")
+	require.Contains(t, installer, `buildRedisFromSource`, "the installer does not build the pinned release when the server's version is not the pin")
+	require.NotContains(t, installer, `aptInstall(`, "the installer runs apt-get, which installs the distribution's redis-server")
+	require.NotContains(t, installer, `"brew", "install"`, "the installer runs brew, which installs whatever redis-server Homebrew carries")
 }
 
 // redisCIChild re-executes this test as the missing-binary case. PATH is not
