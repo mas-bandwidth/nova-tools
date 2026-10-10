@@ -216,3 +216,33 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: go run ./tools/ghrelease attach
+
+      - name: per-platform SHA256SUMS for adopt and pull
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          while IFS=' ' read -r goos goarch; do
+            [[ -z "$goos" || "$goos" =~ ^# ]] && continue
+            target="${goos}_${goarch}"
+            grep "_${TAG}_${target}" dist/SHA256SUMS > "dist/SHA256SUMS_${target}"
+          done < tools/ghrelease/release-targets
+          gh release upload "$TAG" dist/SHA256SUMS_* --clobber
+
+      - name: write CHANGELOG digest into release body and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          digest=$(awk -v tag="$TAG" '
+            $0 ~ "^## " tag " " { in_tag=1; next }
+            in_tag && /^## / { in_tag=0 }
+            in_tag && /^SHA256SUMS digest: / { print $3; exit }
+          ' CHANGELOG.md)
+          if [ -n "$digest" ]; then
+            current_body=$(gh release view "$TAG" --json body -q .body)
+            new_body=$(printf "%s\n\nSHA256SUMS digest: %s\nAdopt this release with \`--expect-sums %s\`." "$current_body" "$digest" "$digest")
+            gh release edit "$TAG" --draft=false --notes "$new_body"
+          else
+            gh release edit "$TAG" --draft=false
+          fi

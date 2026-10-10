@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -58,6 +59,229 @@ func PullRequests(commits []Commit) []PR {
 		prs = append(prs, pr)
 	}
 	return prs
+}
+
+// certificationRuns keeps the certification.yml evidence out of a list of runs
+// that also carries ordinary CI. The workflow-runs read returns certification
+// runs only, but the check-runs fallback (readCertRuns) does not, so the filter
+// lives here where both paths share it.
+func certificationRuns(runs []CertRun) []CertRun {
+	var out []CertRun
+	for _, r := range runs {
+		if r.Name == "certification" || r.Name == "certification-ok" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// CertRun is one certification.yml workflow run on a commit, the evidence
+// `cut` reads before a tag. It is the same evidence release.yml reads through
+// `go run ./tools/ghrelease certified` (tools/ghrelease/certified.go): the
+// run's status and conclusion, and the UpdatedAt stamp that orders it. The
+// stamp, not a run id or an array position, decides which evidence is newest,
+// because a rerun of an older run is newer evidence than a later run never
+// rerun.
+type CertRun struct {
+	Name       string
+	Status     string // queued, waiting, in_progress, completed
+	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral
+	UpdatedAt  string // RFC3339 UTC; the newest run decides
+}
+
+// CertificationRuns reads certification.yml's runs on sha. It asks the
+// workflow-runs endpoint rather than the check-runs endpoint because the run's
+// own name and its updated_at are what the gate orders evidence by, and the
+// answer is one snapshot: every run on the commit is fetched once, so a run
+// that finishes red between two asks cannot slip between them.
+func (g *GH) CertificationRuns(ctx context.Context, repo, sha string) ([]CertRun, error) {
+	out, err := g.api(ctx, "api", "--paginate",
+		"repos/"+repo+"/actions/workflows/certification.yml/runs?head_sha="+sha+"&per_page=100",
+		"--jq", ".workflow_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, UpdatedAt:.updated_at}")
+	if err != nil {
+		return nil, err
+	}
+	var runs []CertRun
+	dec := json.NewDecoder(strings.NewReader(out))
+	for {
+		var r CertRun
+		if err := dec.Decode(&r); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("cannot read gh's certification runs: %w", err)
+		}
+		runs = append(runs, r)
+	}
+	return runs, nil
+}
+
+// DispatchWorkflow requests that GitHub run the named workflow on ref. It is
+// the one mutation the certification gate needs: `cut` offers to dispatch
+// certification.yml on the exact sha being cut and wait for it, rather than
+// telling the reader to run the command by hand.
+func (g *GH) DispatchWorkflow(ctx context.Context, repo, workflow, ref string) error {
+	_, err := g.api(ctx, "workflow", "run", workflow, "-R", repo, "--ref", ref)
+	return err
+}
+
+// certReader is the forge question the certification gate needs: every
+// certification.yml run on a commit, with the updated_at stamp that orders it.
+// It is a separate interface rather than a Forge method so a forge that cannot
+// answer it still builds; readCertRuns falls back to CheckRuns then.
+type certReader interface {
+	CertificationRuns(ctx context.Context, repo, sha string) ([]CertRun, error)
+}
+
+// readCertRuns is certification.yml's runs on sha, from the workflow-runs
+// endpoint when the forge answers it and from the ordinary check runs when it
+// does not. The fallback cannot order evidence by updated_at (CheckRun carries
+// no stamp), so every certification run it finds decides together.
+func readCertRuns(ctx context.Context, forge Forge, repo, sha string) ([]CertRun, error) {
+	if r, ok := forge.(certReader); ok {
+		return r.CertificationRuns(ctx, repo, sha)
+	}
+	runs, err := forge.CheckRuns(ctx, repo, sha)
+	if err != nil {
+		return nil, err
+	}
+	var out []CertRun
+	for _, r := range runs {
+		if r.Name == "certification" || r.Name == "certification-ok" {
+			out = append(out, CertRun{Name: r.Name, Status: r.Status, Conclusion: r.Conclusion})
+		}
+	}
+	return out, nil
+}
+
+// newestCertification returns every certification run sharing the latest
+// UpdatedAt: the group that decides. The stamp, not a run id or an array
+// position, orders certification evidence, because a rerun of an older run id
+// carries a newer stamp than a later run that was never rerun. Two runs can
+// share the maximal stamp to the second, and the stamp supplies no order
+// between them, so the whole group is returned and must be uniformly green.
+func newestCertification(certs []CertRun) []CertRun {
+	max := ""
+	for _, r := range certs {
+		if r.UpdatedAt > max {
+			max = r.UpdatedAt
+		}
+	}
+	var group []CertRun
+	for _, r := range certs {
+		if r.UpdatedAt == max {
+			group = append(group, r)
+		}
+	}
+	return group
+}
+
+// certified is the release gate. A commit must be vouched for by certification.yml
+// before a release can be cut, and it is the same check release.yml makes
+// through `go run ./tools/ghrelease certified`: every certification run on the
+// commit must have completed, and the run carrying the latest update must be
+// green. An older green does not vouch for a newer red or a still-running run,
+// because a tag release.yml then refuses is exactly the release cut by hand this
+// gate exists to prevent. The waivers (dogfood, journey, spend) never cover
+// certification.
+func certified(runs []CertRun, sha string) error {
+	certs := certificationRuns(runs)
+	if len(certs) == 0 {
+		cmd := fmt.Sprintf("gh workflow run certification.yml --ref %s", sha)
+		return refuse(fmt.Sprintf("certify it first: %s", cmd),
+			"no certification run has vouched for this commit: run %s", cmd)
+	}
+	for _, r := range certs {
+		if r.Status != "completed" {
+			return refuse("wait for certification to finish and cut again",
+				"certification.yml is still running on this commit")
+		}
+	}
+	latest := newestCertification(certs)
+	for _, r := range latest {
+		if r.Conclusion != "success" {
+			return refuse("fix the certification failure and cut again; a tag cannot be amended",
+				"certification.yml failed on this commit: %s", r.Conclusion)
+		}
+	}
+	return nil
+}
+
+// isCertificationFailure reports whether certification has finished on this
+// commit and its newest evidence is red -- the one outcome the dispatch loop
+// must not keep polling for. A run still in flight, or no run at all, is not a
+// failure.
+func isCertificationFailure(runs []CertRun) bool {
+	certs := certificationRuns(runs)
+	if len(certs) == 0 {
+		return false
+	}
+	for _, r := range certs {
+		if r.Status != "completed" {
+			return false
+		}
+	}
+	for _, r := range newestCertification(certs) {
+		if r.Conclusion != "success" {
+			return true
+		}
+	}
+	return false
+}
+
+func restStep(seam func(time.Duration), d time.Duration) {
+	if seam != nil {
+		seam(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// workflowDispatcher is the one forge mutation the certification gate needs:
+// ask GitHub to run a workflow on a ref. Like certReader it is a separate
+// interface so a forge that cannot dispatch still builds.
+type workflowDispatcher interface {
+	DispatchWorkflow(ctx context.Context, repo, workflow, ref string) error
+}
+
+// dispatchRequested reports whether `cut` should dispatch certification.yml on
+// an uncertified commit and wait, rather than refuse naming the manual command.
+// An automated cutter opts in once in its environment; an interactive cutter
+// gets the refusal and runs the named command itself.
+func dispatchRequested() bool {
+	return os.Getenv("NOVA_RELEASE_DISPATCH_CERTIFICATION") == "1"
+}
+
+// dispatchCertification is the dispatch-and-wait loop: dispatch
+// certification.yml on the exact sha, then poll the commit's certification
+// runs until the newest evidence is uniformly green, giving up at once when
+// that evidence turns red. It is a separate function so its single dispatch and
+// its polling are asserted by a test rather than by reading cut's body.
+func dispatchCertification(ctx context.Context, forge Forge, repo, sha string, sleep func(time.Duration)) error {
+	d, ok := forge.(workflowDispatcher)
+	if !ok {
+		return refuse("dispatch certification.yml by hand and cut again",
+			"this forge cannot dispatch a workflow")
+	}
+	if err := d.DispatchWorkflow(ctx, repo, "certification.yml", sha); err != nil {
+		return fmt.Errorf("cannot dispatch certification.yml: %w", err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		restStep(sleep, 100*time.Millisecond)
+		certs, err := readCertRuns(ctx, forge, repo, sha)
+		if err != nil {
+			return err
+		}
+		if err := certified(certs, sha); err == nil {
+			return nil
+		} else if isCertificationFailure(certs) {
+			return err
+		}
+	}
 }
 
 // green is the gate. A tag is the one thing in this repository that cannot be
@@ -491,8 +715,34 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the checks on %s: %w (ask again when the forge answers)", sha, err))
 	}
-	if err := green(runs); err != nil {
+	// EVERYTHING EXCEPT CERTIFICATION FIRST. The certification runs are
+	// certification.yml's to judge, specifically; green() judges the rest.
+	var nonCertRuns []CheckRun
+	for _, r := range runs {
+		if r.Name != "certification" && r.Name != "certification-ok" {
+			nonCertRuns = append(nonCertRuns, r)
+		}
+	}
+	if err := green(nonCertRuns); err != nil {
 		return refusal(errs, "CUT", err)
+	}
+
+	// CERTIFICATION LAST, AND THE WAIVERS DO NOT COVER IT. The commit must be
+	// vouched for by certification.yml -- the same check release.yml makes
+	// through `go run ./tools/ghrelease certified` -- before a tag exists,
+	// because a tag is the one thing here that cannot be amended.
+	certs, err := readCertRuns(ctx, forge, o.repo, sha)
+	if err != nil {
+		return refusal(errs, "CUT", fmt.Errorf("cannot read the certification runs on %s: %w (ask again when the forge answers)", sha, err))
+	}
+	if err := certified(certs, sha); err != nil {
+		if !dispatchRequested() {
+			return refusal(errs, "CUT", err)
+		}
+		progress(errs, "dispatching certification.yml on %s", sha)
+		if derr := dispatchCertification(ctx, forge, o.repo, sha, nil); derr != nil {
+			return refusal(errs, "CUT", derr)
+		}
 	}
 	// THE PROMISED RECOVERY JOURNEYS, once the revision is known: evidence is
 	// proof about one revision, and this is the one the tag will name.
@@ -561,7 +811,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes\n",
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes publish=workflow\n",
 			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
 		fmt.Fprint(errs, section)
 		return 0
@@ -577,7 +827,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no\n",
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no publish=workflow\n",
 		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
 	return 0
 }

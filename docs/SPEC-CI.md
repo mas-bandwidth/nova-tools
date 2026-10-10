@@ -1193,10 +1193,11 @@ min(share, 2) and the Makefile's `GOTEST_P ?= 2` on `go test -p` and
 `-parallel` — and its PATH holds a `redis-server` that prints `unit tier:
 redis-server is functional-only (build tag functional)` and exits 86, so
 `testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
-`functional` job, `make test-functional`) runs only the `//go:build functional`
-tests of the selected packages, on `merge_group`, `schedule` and
-`workflow_dispatch`, never on `pull_request`, six Linux shards under the
-two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
+`functional` job, `make test-functional`) runs the `//go:build functional`
+tests of the selected packages on `pull_request`, `merge_group`, `schedule` and
+`workflow_dispatch` -- a card PR into a stream branch and a stream PR into dev
+both run it -- on the Linux shards under the two-minute cap; `ci-ok`
+requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
 measurement, printed on every leg and enforced only on the nightly Linux legs;
 what is enforced on every leg is static (`unitwaits`). The unit legs (`test`
@@ -1213,7 +1214,7 @@ queue waits on CI.
 does and runs it: exit 86 and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
 closed), `TestUnitLegTakesAtMostTwoCores` (the share
-function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
+function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge` and
 `TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
 `TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test is exit 0 with its
@@ -1734,7 +1735,8 @@ has) on its first line, or move its redis-backed tests to
 through a package-local helper is held by the compiler instead: the helper's
 file is tagged, so an untagged caller does not build, and the lint job's
 `go vet ./...` is red on it. The functional tier runs where a whole stream
-lands (`make check`, ci.yml's `functional` job on merge_group and schedule) and nightly
+lands (`make check`, ci.yml's `functional` job on pull_request, merge_group,
+schedule and a manual run) and nightly
 (nightly-slow.yml's `functional` leg); the lint job's `make vet-functional`
 compiles it on every change.
 
