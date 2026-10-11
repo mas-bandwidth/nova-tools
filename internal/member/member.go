@@ -509,6 +509,11 @@ type Member struct {
 	// is marked stopped; forget subtracts one when that launch is dropped.
 	owedStopReturns atomic.Int64
 
+	// stopWord is the machine's word apart from the pass: machineStop sets it where it
+	// sets m.stopped, so a launch's long work reads it without a data race right before
+	// it begins a child (GateBeforeStart; tla/StopCancels.tla).
+	stopWord atomic.Bool
+
 	// lastStart is when this member last started a harness, for StartGap.
 	lastStart time.Time
 	passNow   time.Time // the pass's own time (Tick's), for what a start records
@@ -532,9 +537,13 @@ type post struct {
 	note     string // a line for the log: a script read that gave no verdict, its model read begun
 	child    Child
 	startErr error
-	res      *Result
-	push     *Push
-	decided  *decided
+	// cancelled says the start began no child: the machine's word was read right before the
+	// launch and said STOPPED (GateBeforeStart; tla/StopCancels.tla). collect drops the
+	// launch and the stop hands its card back with stop-return, never finished.
+	cancelled bool
+	res       *Result
+	push      *Push
+	decided   *decided
 }
 
 // decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
@@ -1327,6 +1336,15 @@ func (m *Member) start(p Packet) bool {
 	m.long(func() {
 		m.startMu.Lock()
 		m.staggerStart()
+		// the word is read again right before the launch (tla/StopCancels.tla,
+		// GateBeforeStart, NoLaunchAfterStop): a start the pass began while RUNNING but
+		// that the stop caught waiting behind startMu begins no child. collect drops it
+		// and machineStop hands its card back with stop-return, never a finish.
+		if m.stopWord.Load() {
+			m.startMu.Unlock()
+			m.post(p.Card, post{cancelled: true})
+			return
+		}
 		ch, note, err := m.scriptOrStart(p)
 		m.startMu.Unlock()
 		m.post(p.Card, post{child: ch, note: note, startErr: err})
@@ -1395,6 +1413,15 @@ func (m *Member) collect() (acted int) {
 			fmt.Fprintf(m.out, "read %s: %s\n", card, po.note)
 		}
 		switch {
+		case po.cancelled:
+			// the word was read again right before the launch and said STOPPED: no child was
+			// begun. The card is the stop's, handed back by stop-return, never finished
+			// (tla/StopCancels.tla, GateBeforeStart, NoLaunchAfterStop); it is still working
+			// under this row with no child of ours, and machineStop's loop for exactly that
+			// case hands it back on this or the next pass.
+			delete(m.running, card)
+			fmt.Fprintf(m.out, "start %s: not started: the machine is STOPPED; handed back by stop-return\n", card)
+			continue
 		case po.startErr != nil:
 			p := l.packet
 			delete(m.running, card)
@@ -1451,6 +1478,9 @@ func (m *Member) forget(id string, failed bool) {
 // generation). A refusal is said and tried again next pass while the machine stays STOPPED.
 // Nothing is taken, started, recovered or finished while STOPPED: a card cancelled by the
 // stop is never finished (NoLaunchAfterStop, EveryLaneReturnsOnStop; tla/StopCancels.tla).
+// The word is read again right before each launch (GateBeforeStart): a start the pass began
+// while RUNNING that the stop catches waiting behind startMu begins no child, and is handed
+// back by stop-return like any other cancelled launch.
 // RUNNING again takes the queue's cards as they are, at the generation the queue carries.
 
 // StopReturnReason is the reason every stop-return names.
@@ -1483,11 +1513,13 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 	case q.Machine == "STOPPED":
 		if !m.stopped {
 			m.stopped = true
+			m.stopWord.Store(true)
 			fmt.Fprintf(m.out, "MEMBER STOP machine STOPPED: taking no card; %d running lane(s) are cancelled and handed back with stop-return\n", m.Running())
 		}
 	case q.Machine != "":
 		if m.stopped {
 			m.stopped = false
+			m.stopWord.Store(false)
 			fmt.Fprintf(m.out, "MEMBER START machine %s: taking cards again\n", q.Machine)
 		}
 	}
