@@ -56,6 +56,9 @@ func newCaseEnv(t *testing.T, remote bool) *caseEnv {
 		cfg := filepath.Join(dir, "gitconfig")
 		write(t, cfg, "[url \""+e.origin+"\"]\n\tinsteadOf = "+e.repoURL+"\n")
 		e.env = []string{"HOME=" + home, "GIT_CONFIG_GLOBAL=" + cfg}
+	} else {
+		// the launch is the built binary: a HOME of the case's own (launchHome)
+		e.env = []string{launchHome(t)}
 	}
 	e.env = append(e.env, "GH_TOKEN=a-forge-token-the-child-never-sees")
 	e.gh = filepath.Join(dir, "gh")

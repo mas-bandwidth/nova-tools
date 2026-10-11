@@ -488,6 +488,20 @@ func builtBinaries(t *testing.T) (string, string) {
 	return builtTool, builtPath
 }
 
+// launchHome is the HOME entry for a built nova-swarm a test starts as a launch (`native`,
+// directly or through a nativeRunner): an empty directory of the test's own, as a bench's
+// swarm already gives its binary (HOME=b.dir). The launch preflight (doctor.go) compares
+// the executable actually running with ~/.local/bin/nova-swarm under HOME and refuses a
+// mismatch. A freshly built test binary is never the machine's own install, so under the
+// machine's HOME every such launch was refused for the machine's sake, not the code's,
+// before its harness or its staging ran. The refusal
+// itself is pinned in-process through the preflight's seams (doctorEnv.self,
+// doctorRunningExe): TestPreflightRefusesAStaleRunningBinaryWhenPATHIsClean.
+func launchHome(t *testing.T) string {
+	t.Helper()
+	return "HOME=" + t.TempDir()
+}
+
 // swarm runs the built binary, which is what a stranger meets at a shell prompt. It fails
 // the test on a binary that would not run at all, so it belongs to the TEST GOROUTINE:
 // anything running beside the test calls swarmTry and hands the answer back.
