@@ -47,6 +47,12 @@ type CheckRun struct {
 	Name       string
 	Status     string // queued, in_progress, completed
 	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral
+	// Workflow provenance is present only when the forge joins this check's
+	// suite to an unambiguous Actions run on the same commit.
+	WorkflowPath string
+	HeadBranch   string
+	Event        string
+	TagPush      bool // the workflow at this commit permits tag pushes but no branch pushes
 }
 
 // Commit is one commit in a range, with the whole message: the subject carries
@@ -69,9 +75,9 @@ type PR struct {
 	Members []int
 }
 
-// Forge is the edge between this tool and GitHub. Seven questions, one gh
-// invocation each -- Tag is two, for the reason it gives -- and every one of
-// them is a read except Tag.
+// Forge is the edge between this tool and GitHub. Every question is a read
+// except Tag. CheckRuns joins check suites to workflow runs when cancellation
+// needs provenance; Tag uses two calls, for the reason it gives.
 type Forge interface {
 	// HeadSHA resolves a branch to the commit it points at.
 	HeadSHA(ctx context.Context, repo, branch string) (string, error)

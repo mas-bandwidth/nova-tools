@@ -3,9 +3,11 @@ package release
 import (
 	"archive/tar"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/testguard"
+	"gopkg.in/yaml.v3"
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the
@@ -77,7 +80,7 @@ func runCommandCapped(ctx context.Context, cap int, stdin io.Reader, dir, name s
 	return captured, false, err
 }
 
-// GH is the production forge: one `gh` invocation per question, each under the
+// GH is the production forge: bounded `gh` reads, each under the
 // run's deadline. gh carries its own credential; nothing here reads, logs or
 // passes one.
 type GH struct{ Timeout time.Duration }
@@ -125,23 +128,135 @@ func (g *GH) HeadSHA(ctx context.Context, repo, branch string) (string, error) {
 // this repository runs more than a page of them on a self-hosted fleet and a
 // first page read as the whole set is a green nobody checked.
 func (g *GH) CheckRuns(ctx context.Context, repo, sha string) ([]CheckRun, error) {
-	out, err := g.api(ctx, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/check-runs",
-		"--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion}")
+	return checkRuns(ctx, repo, sha, g.api)
+}
+
+// checkRuns joins by suite and exact commit, never by a job's display name
+// (docs/SPEC-RELEASE.md section 19). Both reads are paginated; unmatched or
+// conflicting provenance leaves the check subject to the ordinary CI gate.
+func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, ...string) (string, error)) ([]CheckRun, error) {
+	out, err := api(ctx, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/check-runs",
+		"--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, SuiteID:.check_suite.id, HeadSHA:.head_sha}")
 	if err != nil {
 		return nil, err
 	}
 	var runs []CheckRun
+	suites := map[int64][]int{}
 	dec := json.NewDecoder(strings.NewReader(out))
 	for {
-		var r CheckRun
+		var r struct {
+			CheckRun
+			SuiteID int64
+			HeadSHA string
+		}
 		if err := dec.Decode(&r); err == io.EOF {
 			break
 		} else if err != nil {
 			return nil, fmt.Errorf("cannot read gh's check runs: %w", err)
 		}
-		runs = append(runs, r)
+		if r.Status == "completed" && r.Conclusion == "cancelled" && r.SuiteID > 0 && r.HeadSHA == sha {
+			suites[r.SuiteID] = append(suites[r.SuiteID], len(runs))
+		}
+		runs = append(runs, r.CheckRun)
+	}
+	if len(suites) == 0 {
+		return runs, nil
+	}
+	out, err = api(ctx, "api", "--paginate", "repos/"+repo+"/actions/runs?head_sha="+url.QueryEscape(sha)+"&per_page=100",
+		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event}")
+	if err != nil {
+		return nil, fmt.Errorf("cannot read check provenance: %w", err)
+	}
+	type provenance struct {
+		SuiteID                                  int64
+		HeadSHA, WorkflowPath, HeadBranch, Event string
+	}
+	bySuite := map[int64]provenance{}
+	ambiguous := map[int64]bool{}
+	dec = json.NewDecoder(strings.NewReader(out))
+	for {
+		var r provenance
+		if err := dec.Decode(&r); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("cannot read gh's workflow runs: %w", err)
+		}
+		if r.HeadSHA != sha || len(suites[r.SuiteID]) == 0 {
+			continue
+		}
+		if previous, ok := bySuite[r.SuiteID]; ok && previous != r {
+			ambiguous[r.SuiteID] = true
+		}
+		bySuite[r.SuiteID] = r
+	}
+	var tagPush bool
+	for suite, r := range bySuite {
+		if !ambiguous[suite] && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push" {
+			tagPush, err = releaseTagPush(ctx, repo, sha, api)
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+	for suite, indexes := range suites {
+		if ambiguous[suite] {
+			continue
+		}
+		r := bySuite[suite]
+		for _, i := range indexes {
+			runs[i].WorkflowPath, runs[i].HeadBranch, runs[i].Event = r.WorkflowPath, r.HeadBranch, r.Event
+			runs[i].TagPush = tagPush && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push"
+		}
 	}
 	return runs, nil
+}
+
+// releaseTagPush reads the workflow at the checked commit, not at a mutable
+// branch or tag: a same-named branch cannot qualify as an older publication
+// (docs/SPEC-RELEASE.md section 19).
+func releaseTagPush(ctx context.Context, repo, sha string, api func(context.Context, ...string) (string, error)) (bool, error) {
+	out, err := api(ctx, "api", "repos/"+repo+"/contents/.github/workflows/release.yml?ref="+url.QueryEscape(sha), "--jq", ".content")
+	if err != nil {
+		return false, fmt.Errorf("cannot read release workflow: %w", err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
+	if err != nil {
+		return false, fmt.Errorf("cannot decode release workflow content: %w", err)
+	}
+	return tagOnlyPush(raw)
+}
+
+// tagOnlyPush accepts only an explicit, unambiguous tag-only push mapping
+// (docs/SPEC-RELEASE.md section 19). yaml.v3 resolves aliases and rejects
+// duplicate mapping keys; unsupported trigger shapes establish no proof.
+func tagOnlyPush(raw []byte) (bool, error) {
+	var workflow map[string]any
+	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	if err := dec.Decode(&workflow); err != nil {
+		return false, fmt.Errorf("cannot read release workflow YAML: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return false, fmt.Errorf("cannot read release workflow YAML: %w", err)
+		}
+		return false, nil
+	}
+	on, _ := workflow["on"].(map[string]any)
+	push, _ := on["push"].(map[string]any)
+	for _, key := range []string{"branches", "branches-ignore", "tags-ignore"} {
+		if _, ok := push[key]; ok {
+			return false, nil
+		}
+	}
+	tags, _ := push["tags"].([]any)
+	for _, tag := range tags {
+		if s, ok := tag.(string); !ok || s == "" {
+			return false, nil
+		}
+	}
+	return len(tags) > 0, nil
 }
 
 // Tags lists tag names. The caller picks the highest by semantic order; this
