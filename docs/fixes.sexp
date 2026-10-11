@@ -798,7 +798,7 @@
   (fix "nova-config-lints-every-stored-friend-row" :release "v1.2.14" :status "planned"
    :title "nova-config friend lint checks stored friend rows"
    :text "A lint verb over friend validates every stored friend row against each field's write-time validator, printing one LINT line per row and field that fails, with the value and the fix. Empty required fields are reported like any other invalid value. A store whose rows all pass prints LINT OK rows=<n>."
-   :origin "card nova-config-lints-every-stored-friend-row.w4; the owner, 2026-10-11, nova doctor should catch these things")
+   :origin "nova-config-lints-every-stored-friend-row.w6, 2026-10-11")
 
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
