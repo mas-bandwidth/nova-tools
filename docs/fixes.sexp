@@ -175,4 +175,9 @@
   (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
    :title "A HOLD report with zero findings is malformed"
    :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
-   :origin "PR #4635")))
+   :origin "PR #4635")
+  (fix "swarm-doctor-checks-running-executable" :release "v1.2.9" :status "planned"
+   :title "nova-swarm doctor checks the running executable, not only PATH"
+   :text "The launch preflight refuses a new binary found on PATH but passes the same binary by absolute
+    path. It checks the executable that is actually running."
+   :origin "issue #3469")))

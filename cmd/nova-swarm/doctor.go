@@ -2,12 +2,13 @@
 //
 // A card that a rebuilt swarm starts must run the build that was rebuilt. When PATH puts an
 // older nova-swarm before the one at ~/.local/bin, every card runs the older one and nothing
-// downstream can tell which build ran. The doctor reads the one `version` line the nova-swarm
-// first on PATH prints and the one the literal ~/.local/bin/nova-swarm prints, and if the two
-// differ it prints both in full and names the fix. `native` runs the same check
-// before they start anything, so a launch refuses before it spends rather than after
-// somebody notices. It invents no version of its own: pkg/buildinfo produces the line
-// and this file only reads what a binary said.
+// downstream can tell which build ran. The `doctor` verb reads the one `version` line the
+// nova-swarm first on PATH prints and the one the literal ~/.local/bin/nova-swarm prints, and
+// if the two differ it prints both in full and names the fix. `native` runs the same check
+// against the executable that is actually running before it starts anything, so a binary
+// launched by absolute path is judged by its own bytes, not by what PATH names, and a launch
+// refuses before it spends rather than after somebody notices. It invents no version of its
+// own: pkg/buildinfo produces the line and this file only reads what a binary said.
 //
 // `DOCTOR OK stamp=<line>` says the two agree, or that there is one binary to read. A
 // mismatch is exit 2 with both stamps and one remedy, because a refusal that does not say
@@ -25,9 +26,10 @@
 // neither memory nor an unbounded line. The two binaries are read at the same time under one
 // deadline.
 //
-// The machine is a doctorEnv (the PATH lookup, the home directory and the version reader),
-// so the whole check is driven with fixed binaries and short deadlines; production uses the
-// real LookPath, the real home, and `<path> version`.
+// The machine is a doctorEnv (the PATH lookup, the running executable, the home directory and
+// the version reader), so the whole check is driven with fixed binaries and short deadlines;
+// production uses the real LookPath, the real os.Executable, the real home, and
+// `<path> version`.
 package main
 
 import (
@@ -63,6 +65,11 @@ var doctorHomeDir = os.UserHomeDir
 // doctorReadVersion reads the one `version` line a binary prints. A package var so a test
 // never runs a binary it went looking for.
 var doctorReadVersion = readVersionLine
+
+// doctorRunningExe is the executable that is actually running: the path this process was
+// started from, which is the binary a launch under it runs. A package var so a test answers
+// it with a fixed path rather than the machine's own test binary.
+var doctorRunningExe = os.Executable
 
 // doctorVersionDeadline bounds one `<binary> version` run. A version line is instant, so a
 // binary that has not answered by then is hung, and the doctor refuses naming it rather than
@@ -192,13 +199,17 @@ func readVersionLineUnder(parent context.Context, path string, deadline, grace t
 	return line, nil
 }
 
-// doctorEnv is what the doctor asks of the machine: where nova-swarm is on PATH, where home
-// is, and what a binary reports for `version`. A test builds one with its own reader (and
-// its own deadline), so the whole preflight is driven without a package var.
+// doctorEnv is what the doctor asks of the machine: where nova-swarm is on PATH, which
+// executable is actually running, where home is, and what a binary reports for `version`. A
+// test builds one with its own reader (and its own deadline), so the whole preflight is
+// driven without a package var.
 type doctorEnv struct {
 	lookPath func(string) (string, error)
 	homeDir  func() (string, error)
 	read     func(string) (string, error)
+	// self is the executable that is actually running (os.Executable): the binary a launch
+	// under this process runs, which the PATH lookup can only guess at.
+	self func() (string, error)
 	// run runs a headless harness's verb (`<binary> --version`, its login verb) under the
 	// doctor's deadline: its first line and its exit code; nil runs it (runVerbLine).
 	run func(binary string, args ...string) (line string, rc int)
@@ -206,7 +217,7 @@ type doctorEnv struct {
 
 // liveDoctorEnv is the machine's environment through the package seams.
 func liveDoctorEnv() doctorEnv {
-	return doctorEnv{lookPath: doctorLookPath, homeDir: doctorHomeDir, read: doctorReadVersion, run: runVerbLine}
+	return doctorEnv{lookPath: doctorLookPath, homeDir: doctorHomeDir, read: doctorReadVersion, self: doctorRunningExe, run: runVerbLine}
 }
 
 // runVerbLine runs `<binary> <args...>` under the version deadline, stdin closed, and
@@ -294,13 +305,32 @@ func (e doctorEnv) resolveBinaries(pathOverride, localOverride string) (onPath, 
 			onPath = found
 		}
 	}
-	local = strings.TrimSpace(localOverride)
+	return onPath, e.resolveLocal(localOverride)
+}
+
+// resolveLocal resolves the literal ~/.local/bin copy. The override is the verb's --local;
+// empty means resolve from the home directory.
+func (e doctorEnv) resolveLocal(localOverride string) string {
+	local := strings.TrimSpace(localOverride)
 	if local == "" {
 		if home, err := e.homeDir(); err == nil && strings.TrimSpace(home) != "" {
 			local = filepath.Join(home, ".local", "bin", "nova-swarm")
 		}
 	}
-	return onPath, local
+	return local
+}
+
+// resolveRunning answers the preflight's two questions: which executable is actually
+// running, and where the literal ~/.local/bin copy is. The running binary is the truth the
+// PATH lookup only guesses at: a binary launched by absolute path runs its own bytes even
+// when PATH names an older one. A name that cannot be resolved is the empty string.
+func (e doctorEnv) resolveRunning(localOverride string) (running, local string) {
+	if e.self != nil {
+		if found, err := e.self(); err == nil {
+			running = strings.TrimSpace(found)
+		}
+	}
+	return running, e.resolveLocal(localOverride)
 }
 
 // doctorRead is one binary's answer: the first line it printed (kept even when the run then
@@ -314,15 +344,15 @@ type doctorRead struct {
 // doctorReport is what one comparison found, so the printing and the refusing are two thin
 // readers of one result rather than two places that each re-run the check.
 type doctorReport struct {
-	pathBinary  string       // the nova-swarm first on PATH
+	pathBinary  string       // the nova-swarm the comparison reads first: PATH's, or the running executable
 	pathLine    string       // the full `version` line it printed, "" when it printed none
 	localBinary string       // the literal ~/.local/bin/nova-swarm
 	localLine   string       // the full `version` line it printed, "" when it printed none
 	shadowed    bool         // both stamps read, and the two lines differ
 	unreadable  []doctorRead // every binary compared whose read failed
-	pathCause   string       // why PATH's binary could not be read, "" when it was
+	pathCause   string       // why the first binary could not be read, "" when it was
 	localCause  string       // why the local copy could not be read, "" when it was, "not found" when absent
-	sameFile    bool         // PATH's binary is the local copy: there is one binary
+	sameFile    bool         // the first binary is the local copy: there is one binary
 	stamp       string       // the line to report when the pair is fine
 }
 
@@ -343,11 +373,11 @@ func (e doctorEnv) readOne(binary string) doctorRead {
 }
 
 // compareBinaries is the whole decision. There is no refusal when the two names are one file
-// and it answers, when no nova-swarm is on PATH, or when ~/.local/bin has no copy to shadow
-// with (the one absence that is tolerated): there is no second stamp to disagree with. Every
-// other binary the comparison reads must answer, and one that does not is named in the
-// report; a stamp it printed first is still compared. The two are read at the same time, so
-// two hung binaries cost one deadline plus the pipe grace, not two deadlines.
+// and it answers, when the first binary resolves to nothing, or when ~/.local/bin has no copy
+// to shadow with (the one absence that is tolerated): there is no second stamp to disagree
+// with. Every other binary the comparison reads must answer, and one that does not is named
+// in the report; a stamp it printed first is still compared. The two are read at the same
+// time, so two hung binaries cost one deadline plus the pipe grace, not two deadlines.
 func (e doctorEnv) compareBinaries(pathBinary, localBinary string) doctorReport {
 	r := doctorReport{pathBinary: pathBinary, localBinary: localBinary}
 	readPath := pathBinary != ""
@@ -509,10 +539,10 @@ func doctorOtherSentence(r doctorReport, role string) string {
 func doctorLaunchVerb(v string) bool { return v == "native" }
 
 // preflightDoctor is what main calls before the dispatcher. It is at the process boundary
-// rather than inside cmdRun/cmdNative on purpose: the question is about the real PATH and
-// the real home, and the dispatcher is the thing tests call with fake ones. A shadowed pair
-// stops the launch with exit 2 before run() is reached; every other verb, and an
-// unresolvable pair, proceeds untouched.
+// rather than inside cmdRun/cmdNative on purpose: the question is about the real running
+// executable and the real home, and the dispatcher is the thing tests call with fake ones.
+// A shadowed pair stops the launch with exit 2 before run() is reached; every other verb,
+// and an unresolvable pair, proceeds untouched.
 func preflightDoctor(args []string, stderr io.Writer) (int, bool) {
 	return liveDoctorEnv().preflight(args, stderr)
 }
@@ -529,7 +559,7 @@ func (e doctorEnv) preflight(args []string, stderr io.Writer) (int, bool) {
 	if len(args) == 0 || !doctorLaunchVerb(args[0]) || doctorLaunchHelp(args[0], args[1:]) {
 		return 0, false
 	}
-	r := e.compareBinaries(e.resolveBinaries("", ""))
+	r := e.compareBinaries(e.resolveRunning(""))
 	if !r.refused() {
 		return 0, false
 	}

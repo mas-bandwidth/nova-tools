@@ -224,9 +224,10 @@ func refuse(stderr io.Writer, where, what string) int {
 
 func main() {
 	args := os.Args[1:]
-	// Before a launch verb starts a card, refuse a nova-swarm whose PATH copy is not the
-	// built one (doctor.go). The check is at the process boundary because it reads the real
-	// PATH and the real home; the dispatcher below is what the tests drive with fakes.
+	// Before a launch verb starts a card, refuse a nova-swarm whose running executable is not
+	// the built one (doctor.go). The check is at the process boundary because it reads the
+	// real running executable and the real home; the dispatcher below is what the tests drive
+	// with fakes.
 	if code, stop := preflightDoctor(args, os.Stderr); stop {
 		os.Exit(code)
 	}
