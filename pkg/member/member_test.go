@@ -940,6 +940,9 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 	require.NoError(t, err)
 	for i := range ps {
 		g.r.child(ps[i].Card).end(Result{Ran: false, Report: "STAGE FAIL no bench mirror"})
+		// the pass that reports the return holds the lane while its report is in
+		// flight, so the next read is begun by the pass after (reportRun; step 5
+		// takes before the reports are collected)
 		cards := []queueCard{reading(ps[i].Card, &ps[i])}
 		if i+1 < len(ps) {
 			cards = append(cards, asked(ps[i+1].Card, &ps[i+1]))
@@ -948,6 +951,11 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 		_, err := g.tick(t)
 		require.NoError(t, err)
 		assert.LessOrEqual(t, g.m.Running(), 1, "after return %d", i+1)
+		if i+1 < len(ps) {
+			g.s.set("queue", 0, queueJSON(t, 7, asked(ps[i+1].Card, &ps[i+1])))
+			_, err := g.tick(t)
+			require.NoError(t, err)
+		}
 	}
 	assert.Len(t, g.s.lines("return"), 3)
 	assert.Equal(t, []string{"read --as r --begin r2@0 --epoch 7", "read --as r --begin r3@0 --epoch 7"}, g.s.lines("begin"))

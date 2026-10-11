@@ -62,7 +62,8 @@
      lines per repository and package, product against test, from a baseline taken before the first
      pass.")
    (release "v1.2.14" :status "planned" :date "2026-10-11"
-    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find."))
+    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
+   (release "v1.2.15" :status "planned" :text "The next small product fixes, one concern each."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -732,4 +733,15 @@
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
-   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")))
+   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+
+  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.15" :status "in-progress"
+   :title "A member reports its ended cards side by side"
+   :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
+    verb that may wait on the wire, so a lane stayed held after its child ended for the length of the report lag.
+    The pass now runs up to pushWidth reports side by side (reportGate), each still one verb with its own refusal
+    contract, and posts its exit code and output for the pass goroutine's collect to apply; a launch being reported
+    is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
+    reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
+    its reports, so it is still one step."
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77; card a-member-reports-its-ended-cards-beside-the-fill.w1")))
