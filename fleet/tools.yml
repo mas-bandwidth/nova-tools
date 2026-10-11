@@ -794,7 +794,7 @@
          | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
          | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else []) | list
          + (seat_replaced | rejectattr('role', 'equalto', 'friend')
-            | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false)) | list) }}
+            | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else []) | list) }}
     seat_restart_labels: "{{ seat_restart | map(attribute='label') | list }}"
     # The stale friend daemons live lists (role friend, stale), split by what
     # launchd holds: the ones it holds are the friends the friends table places

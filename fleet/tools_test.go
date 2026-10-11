@@ -496,6 +496,8 @@ func TestRestartSelectsEveryReplacedDaemon(t *testing.T) {
 	assert.NotContains(t, replaced, "seat_restart")
 	assert.Contains(t, restart, "seat_replaced", "the restart set is built from the replaced set")
 	assert.Contains(t, restart, "selectattr('tool', 'defined')", "the base's stale-with-tool restart is kept beside the replaced set")
+	assert.Equal(t, 3, strings.Count(restart, "else []"),
+		"each of the three seat_restart terms carries the else [] fallback, so a closed window yields [], never undefined")
 }
 
 // TestInstallPlayRestartsReplacedMembersAndReaders pins the restart in the
