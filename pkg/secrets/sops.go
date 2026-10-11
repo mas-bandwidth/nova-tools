@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -70,10 +71,44 @@ func sopsDecryptFailure(keyPath, filePath, stderr string) string {
 	return ""
 }
 
+// toolRemedy is the one command that provides tool on goos, for an absent binary
+// (upgrade false) or one too old (upgrade true); the refusal's remedy the design
+// owes the reader (docs/SPEC-SECRETS.md, Dependencies). It copies the two commands
+// internal/up/layout.go's tools table holds and its program.install picks: sops is
+// brew "sops" on darwin and "go install github.com/getsops/sops/v3/cmd/sops@latest"
+// elsewhere; age-keygen is brew "age" on darwin and apt "age" on linux. pkg/secrets
+// does not import internal/up, so the two commands are kept matching that table by
+// hand: a change to the table is a change here.
+func toolRemedy(tool string, upgrade bool, goos string) string {
+	verb := "install"
+	if upgrade {
+		verb = "upgrade"
+	}
+	switch tool {
+	case "sops":
+		if goos == "darwin" {
+			return "brew " + verb + " sops"
+		}
+		return "go install github.com/getsops/sops/v3/cmd/sops@latest"
+	case "age":
+		if goos == "darwin" {
+			return "brew " + verb + " age"
+		}
+		return "sudo apt-get install -y age"
+	}
+	return ""
+}
+
 // CheckSopsVersion probes the sops binary with --disable-version-check to prevent network calls.
 func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
+	return checkSopsVersion(run, sopsPath, runtime.GOOS)
+}
+
+// checkSopsVersion is CheckSopsVersion with the platform named by the caller, so
+// the remedy each refusal carries can be pinned for every platform in a test.
+func checkSopsVersion(run execCommand, sopsPath, goos string) (string, error) {
 	if !filepathIsExecutable(sopsPath) {
-		return "", fmt.Errorf("sops binary %s is absent or not executable; run: brew install sops", sopsPath)
+		return "", fmt.Errorf("sops binary %s is absent or not executable; run: %s", sopsPath, toolRemedy("sops", false, goos))
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", sopsPath, "--version", "--disable-version-check")
@@ -96,7 +131,7 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 3 || (major == 3 && minor < 13) || (major == 3 && minor == 13 && patch < 3) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: brew upgrade sops", major, minor, patch, MinSopsVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinSopsVersion, toolRemedy("sops", true, goos))
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
@@ -104,8 +139,14 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 
 // CheckAgeKeygenVersion probes the age-keygen binary.
 func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error) {
+	return checkAgeKeygenVersion(run, ageKeygenPath, runtime.GOOS)
+}
+
+// checkAgeKeygenVersion is CheckAgeKeygenVersion with the platform named by the
+// caller, so the remedy each refusal carries can be pinned for every platform.
+func checkAgeKeygenVersion(run execCommand, ageKeygenPath, goos string) (string, error) {
 	if !filepathIsExecutable(ageKeygenPath) {
-		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: brew install age", ageKeygenPath)
+		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: %s", ageKeygenPath, toolRemedy("age", false, goos))
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", ageKeygenPath, "--version")
@@ -124,7 +165,7 @@ func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 1 || (major == 1 && minor < 3) || (major == 1 && minor == 3 && patch < 2) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: brew upgrade age", major, minor, patch, MinAgeKeygenVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinAgeKeygenVersion, toolRemedy("age", true, goos))
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
