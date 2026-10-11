@@ -534,7 +534,15 @@ type Member struct {
 	drain       bool
 	noRow       bool   // a reader whose queue said it is no row of the readers table, said once
 	beaten      uint64 // the Meter's samples the last written beat has carried
-	noRoom      bool   // Room said no on the last tick it was asked
+	// lastLoad is the last load percent a beat carried, else 0; a beat always names a
+	// load, so with no new sample it names this (member.Beat).
+	lastLoad float64
+	// probedLU and hasLU are the once-at-start probe of the installed nova-sprint's
+	// `fleet beat -h` for --load-unmeasured: a no-sample beat carries the flag only when
+	// the CLI lists it, else it sends `--load 0` alone (member.loadUnmeasured).
+	probedLU bool
+	hasLU    bool
+	noRoom   bool // Room said no on the last tick it was asked
 	// draining is drain for the beat, which goes on its own goroutine (BeatLoop): its beat
 	// says the member drains (fleet beat --draining, a reader's queue --draining), so the
 	// server holds it (the deal gives it nothing, and returns what it was dealt and has not
@@ -800,13 +808,29 @@ func (m *Member) Stalled() time.Duration {
 	return since
 }
 
+// loadUnmeasured reports whether the installed nova-sprint's `fleet beat -h` lists
+// --load-unmeasured, probed once (docs/SPEC-SWARM.md, `member`): a beat always carries
+// --load, and the flag says a load of 0 is "no sample yet", not an idle machine.
+func (m *Member) loadUnmeasured() bool {
+	if m.probedLU {
+		return m.hasLU
+	}
+	m.probedLU = true
+	if code, help := m.sprint.Run("fleet", "beat", "-h"); code == 0 {
+		m.hasLU = strings.Contains(string(help), "--load-unmeasured")
+	}
+	return m.hasLU
+}
+
 // Beat is one beat of this member's presence, apart from the work pass. A member's is
-// `fleet beat <member>`, naming the highest one-second load sample since the last beat
-// written, so the ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md,
-// the fleet) is the highest of the last ten seconds; with no sample it names none and
-// nova-sprint fleet beat measures the machine itself. A reader's is its queue, the verb that
-// is a reader's beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A beat that
-// fails is the error: the next goes at the next interval.
+// `fleet beat <member>`, always carrying `--load <pct>`: the highest one-second load
+// sample since the last beat written, so the ten-second highest nova-sprint keeps over
+// its beats (docs/SPEC-SPRINT.md, the fleet) is the highest of the last ten seconds, else
+// the last sample it carried, else 0 with `--load-unmeasured` when the installed
+// nova-sprint lists it (v1.2.11's CLI refuses a beat without --load, so a member with no
+// sample must still name a load). A reader's is its queue, the verb that is a reader's
+// beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A beat that fails is the
+// error: the next goes at the next interval.
 func (m *Member) Beat() error {
 	m.beatMu.Lock()
 	defer m.beatMu.Unlock()
@@ -822,12 +846,22 @@ func (m *Member) Beat() error {
 		args = []string{"fleet", "beat", m.cfg.As, "--stop-returns", strconv.Itoa(m.OwedStopReturns())}
 		args = append(args, m.noRoomArgs()...)
 		args = append(args, m.drainArgs()...)
+		pct, measured := m.lastLoad, false
 		if m.cfg.Meter != nil {
-			var pct float64
-			var ok bool
-			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); ok {
-				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
+			p, t, ok := m.cfg.Meter.Peak(m.beaten)
+			total = t
+			if ok {
+				pct, measured = p, true
 			}
+		}
+		m.lastLoad = pct
+		load := strconv.FormatFloat(pct, 'f', 1, 64)
+		if pct == 0 {
+			load = "0"
+		}
+		args = append(args, "--load", load)
+		if !measured && pct == 0 && m.loadUnmeasured() {
+			args = append(args, "--load-unmeasured")
 		}
 	}
 	run := m.sprint.Run

@@ -37,6 +37,8 @@ func newScript() *scriptSprint { return &scriptSprint{answers: map[string]answer
 
 func verbOf(args []string) string {
 	switch {
+	case args[0] == "fleet" && slices.Contains(args, "-h"):
+		return "beathelp"
 	case args[0] == "fleet":
 		return "beat"
 	case args[0] == "read" && slices.Contains(args, "--begin"):
@@ -594,10 +596,9 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
 }
 
-// TestBeatCarriesNoLoadOfItsOwn pins the beat as `fleet beat <member>` alone, however
-// many cards are running: the load is the machine's CPU use, which nova-sprint fleet beat
-// measures and keeps the ten-second peak of (docs/SPEC-SPRINT.md, the fleet), never the
-// member's running over its width.
+// TestBeatCarriesNoLoadOfItsOwn pins the beat's load as the machine's CPU use, never the
+// member's running over its width, however many cards are running; a member with no meter
+// still carries `--load 0`, never a beat without --load (docs/SPEC-SWARM.md, `member`).
 func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ running, width int }{{0, 4}, {1, 3}, {2, 2}} {
@@ -615,7 +616,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
-			require.Equal(t, []string{"fleet beat m --stop-returns 0"}, g.s.lines("beat"))
+			require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0"}, g.s.lines("beat"))
 		})
 	}
 }
@@ -1462,7 +1463,8 @@ func secondsOfLoad(pcts ...float64) (s *hostload.Sampler, feed func(...float64))
 // TestBeatCarriesTheHighestSecondSinceTheLastBeat: the beat names the highest of the
 // one-second samples taken since the last beat that was written (so nova-sprint's own
 // ten-second highest over the beats is the highest of the last ten seconds, not of
-// twenty); with no sample it names none and the beat measures; a beat the store did not
+// twenty); a beat always carries --load, so with no sample it names the last sample it
+// had, else 0 (v1.2.11's CLI refuses a beat without --load); a beat the store did not
 // answer leaves its samples for the next.
 func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	t.Parallel()
@@ -1475,10 +1477,10 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 		require.NoError(t, g.m.Beat())
 		return strings.Join(g.s.lines("beat"), "|")
 	}
-	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample yet: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 0", beat(), "no sample yet: the beat names 0")
 	feed(10, 70, 20)
 	require.Equal(t, "fleet beat m --stop-returns 0 --load 70.0", beat(), "10, 70, 20 beat 70")
-	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample since: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 70.0", beat(), "no sample since: the beat carries the last sample it had")
 	feed(5, 5, 5)
 	g.s.set("beat", 2, "no store")
 	g.s.reset()

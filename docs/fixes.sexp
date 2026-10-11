@@ -583,6 +583,18 @@
     them. Tests and models only, no product change."
    :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
 
+  (fix "a-member-beat-always-carries-its-load" :release "v1.2.12" :status "planned"
+   :title "A member's beat always carries --load"
+   :text "nova-sprint v1.2.11's CLI refuses a fleet beat with no --load (the server cannot measure
+    the worker's machine), but pkg/member's Beat sent --load only when its meter had a new sample and
+    otherwise sent a beat without it, so every beat from a member whose meter never had a sample was
+    refused: on darwin/amd64 (batman, superman) this read every member down within four minutes
+    (17,881 refusals in one log). Beat now always names --load: the highest one-second sample since
+    the last beat written, else the last sample it carried, else 0, with --load-unmeasured when the
+    installed nova-sprint's `fleet beat -h` lists that flag and --load 0 otherwise (probed once at
+    start, member.loadUnmeasured); a beat is never sent without --load."
+   :origin "the seat, 2026-10-11 ~18:35Z: after the fleet adopt of v1.2.11, batman and superman (darwin/amd64) went down within four minutes; card a-member-beat-always-carries-its-load.w2")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
