@@ -318,6 +318,17 @@
     readLaneStep's statements now run. Tests and models only, no product change."
    :origin "the card cover-friend-read-lane-step.w1 (the coordinator, 2026-10-11: tmp/v1.2.12-inventory-2026-10-11.md section 8 item C8)")
 
+  (fix "tla-coverage-names-every-module-in-nova-tools" :release "v1.2.12" :status "planned"
+   :title "Every TLA+ module is named by a COVERAGE row"
+   :text "TestEveryStateMachineHasACurrentModel walked only the rows of tla/COVERAGE.tsv, so a module
+    no row names was never measured: BusSendOnce, Delivery, FriendNotifications, FriendNotificationsCapacity,
+    FriendPresence, Reach, StopCancels, StopReturn and LoopRedial were named by none. A new check
+    holds every tla/<X>.tla whose name does not start with MC to exactly one row's module column,
+    the nine modules get rows (partial or stale, each naming the card that owes its model), and the
+    drifted current rows become partial with the cards that owe them. Tests and models only, no
+    product change."
+   :origin "the card tla-coverage-names-every-module-in-nova-tools.w3 (the coordinator, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
