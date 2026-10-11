@@ -709,12 +709,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "PR #4628; PR #4630; PR #4631; PR #4633; PR #4638")
-  (item "swarm-hold-zero-findings-malformed" :group "quality"
-   :title "A HOLD report with zero findings is malformed"
-   :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "PR #4635")
   (item "cairn-bench-store-open-and-append-lock" :group "quality"
    :title "Cairn open works on a bench store and an append is one critical section"
    :text "Open creates the session file in the store's own shape. An append is one critical section per

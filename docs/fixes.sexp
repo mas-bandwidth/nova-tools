@@ -171,4 +171,8 @@
    :title "Idle-reaped cards report their real cause and are not wrongly reaped"
    :text "A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced
     working cards. The verdict states idle reaping and the idle watch accounts for the shell cap."
-   :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")))
+   :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")
+  (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
+   :title "A HOLD report with zero findings is malformed"
+   :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
+   :origin "PR #4635")))
