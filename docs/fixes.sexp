@@ -784,6 +784,11 @@
     stop-return, never finished."
    :origin "the audit defect \"a background start after STOP launches a child\" (nova-tools pkg/member staggerStart / scriptOrStart), confirmed by reading nova-tools dev 2314d43 on 2026-10-11; card a-start-scheduled-before-stop-launches-no-child.w2")
 
+  (fix "nova-config-lints-every-stored-friend-row" :release "v1.2.14" :status "planned"
+   :title "nova-config friend lint checks stored friend rows"
+   :text "A lint verb over friend validates every stored friend row against each field's write-time validator, printing one LINT line per row and field that fails, with the value and the fix. Empty required fields are reported like any other invalid value. A store whose rows all pass prints LINT OK rows=<n>."
+   :origin "card nova-config-lints-every-stored-friend-row.w4; the owner, 2026-10-11, nova doctor should catch these things")
+
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."

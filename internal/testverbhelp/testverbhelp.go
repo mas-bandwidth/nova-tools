@@ -17,12 +17,12 @@ package testverbhelp
 
 import (
 	"bytes"
+	"embed"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +30,9 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
+
+//go:embed ledger.txt
+var ledgerData embed.FS
 
 // Run is the tool, in process: args after the tool's name, the two streams,
 // the exit code.
@@ -249,10 +252,9 @@ const (
 	GapMissingPrefix = "flag-missing:"
 )
 
-// LedgerPath is the shrink-only ledger, found from this source file.
+// LedgerPath is the shrink-only ledger path for embed.FS.
 func LedgerPath() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	return "ledger.txt"
 }
 
 var (
@@ -436,7 +438,7 @@ func Judge(key string, gaps, ledgered []string) []string {
 // Complete holds every case's captured help to the rule, against the ledger.
 func Complete(t *testing.T, cases []Case, seen []captured) {
 	t.Helper()
-	text, err := os.ReadFile(LedgerPath())
+	text, err := ledgerData.ReadFile(LedgerPath())
 	if err != nil {
 		t.Fatalf("the help-complete ledger is unreadable: %v", err)
 	}
