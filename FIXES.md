@@ -89,6 +89,7 @@ Cut from dev between sprint releases, paired with nova-sprint v1.2.10: the limit
 Small bug fixes, one concern each, and no model change. They run as cards on v1.2.10 once it is adopted, so the sprint dogfoods the release it just cut.
 
 - **The fixes ledger brought level with the code** (in-progress). Fixes marked planned or in-progress that had already landed are marked shipped in the release that carried them (commit 53bc5748c). Landed on dev; ships with v1.2.11. From: card fx-empty-fixes-file-after-the-clear, landed on dev as 7b6cccbc2.
+- **Nightly and certification jobs fail on an untidy go.mod** (in-progress). The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three. From: issue #5497; card go-mod-tidy-nightly-jobs.w5.
 
 ## v1.2.12 (planned, 2026-10-11)
 
