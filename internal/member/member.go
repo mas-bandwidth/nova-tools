@@ -483,7 +483,10 @@ type Member struct {
 	saidNoWidth  bool // the NOTE that no row names a width has been said
 	drain        bool
 	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
-	beaten       uint64 // the Meter's samples the last written beat has carried
+	beaten       uint64  // the Meter's samples the last written beat has carried
+	lastLoad     float64 // the last load percent a beat carried, else 0
+	probedLU     bool    // the probe for --load-unmeasured has been run
+	hasLU        bool    // the installed nova-sprint's fleet beat lists --load-unmeasured
 	noRoom       bool   // Room said no on the last tick it was asked
 	// usageStopped is when a launch of this member last ended because its usage source
 	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
@@ -723,13 +726,29 @@ func (m *Member) Stalled() time.Duration {
 	return since
 }
 
+// loadUnmeasured reports whether the installed nova-sprint's `fleet beat -h` lists
+// --load-unmeasured, probed once (docs/SPEC-SPRINT.md, the fleet): a beat always carries
+// --load, and the flag says a load of 0 is "no sample yet", not an idle machine.
+func (m *Member) loadUnmeasured() bool {
+	if m.probedLU {
+		return m.hasLU
+	}
+	m.probedLU = true
+	if code, help := m.sprint.Run("fleet", "beat", "-h"); code == 0 {
+		m.hasLU = strings.Contains(string(help), "--load-unmeasured")
+	}
+	return m.hasLU
+}
+
 // Beat is one beat of this member's presence, apart from the work pass. A member's is
-// `fleet beat <member>`, naming the highest one-second load sample since the last beat
-// written, so the ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md,
-// the fleet) is the highest of the last ten seconds; with no sample it names none and
-// nova-sprint fleet beat measures the machine itself. A reader's is its queue, the verb that
-// is a reader's beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A beat that
-// fails is the error: the next goes at the next interval.
+// `fleet beat <member>`, always carrying `--load <pct>`: the highest one-second load
+// sample since the last beat written, so the ten-second highest nova-sprint keeps over
+// its beats (docs/SPEC-SPRINT.md, the fleet) is the highest of the last ten seconds, else
+// the last sample it carried, else 0 with `--load-unmeasured` when the installed
+// nova-sprint lists it (v1.2.11's CLI refuses a beat without --load, so a member with no
+// sample must still name a load). A reader's is its queue, the verb that is a reader's
+// beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A beat that fails is the
+// error: the next goes at the next interval.
 func (m *Member) Beat() error {
 	m.beatMu.Lock()
 	defer m.beatMu.Unlock()
@@ -741,12 +760,22 @@ func (m *Member) Beat() error {
 	var total uint64
 	if !m.cfg.Reader {
 		args = []string{"fleet", "beat", m.cfg.As, "--stop-returns", strconv.Itoa(m.OwedStopReturns())}
+		pct, measured := m.lastLoad, false
 		if m.cfg.Meter != nil {
-			var pct float64
-			var ok bool
-			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); ok {
-				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
+			p, t, ok := m.cfg.Meter.Peak(m.beaten)
+			total = t
+			if ok {
+				pct, measured = p, true
 			}
+		}
+		m.lastLoad = pct
+		load := strconv.FormatFloat(pct, 'f', 1, 64)
+		if pct == 0 {
+			load = "0"
+		}
+		args = append(args, "--load", load)
+		if !measured && pct == 0 && m.loadUnmeasured() {
+			args = append(args, "--load-unmeasured")
 		}
 	}
 	run := m.sprint.Run
