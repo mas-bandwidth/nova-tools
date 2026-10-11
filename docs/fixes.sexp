@@ -6,7 +6,14 @@
  :title "nova-tools fixes"
  :text "The point releases after v1.2.2: what each one shipped, is shipping or will ship. A point release
   carries fixes only; new work is in ROADMAP.md. nova-sprint's point releases are in that repository's
-  FIXES.md."
+  FIXES.md. The point releases after v1.2.10 (the owner, 2026-10-11): v1.2.11 small fixes, v1.2.12 tests and
+  models only, v1.2.13 contraction, v1.2.14 the next small fixes, each release's scope below. Point
+  releases continue until only architectural items are open; those are v1.3's re-architecture, and
+  ROADMAP.md says how the two fit. An area stops taking point fixes when a fix there is the same problem
+  in another form, or would be its third fix: from then on it is architectural, and its v1.3 item names
+  the point fixes it replaces. Friend work is dogfooded within the week once more friends are online:
+  the current point release adopted, friends alone first, then friends and fleet together, and each
+  friend bug found becomes a point-release card."
  :releases
  ((release "v1.2.3" :status "shipped" :date "2026-10-10"
    :text "The split: nova-sprint, nova-card and nova-work, with their models and docs, leave this
@@ -22,7 +29,28 @@
    (release "v1.2.8" :status "planned"
     :text "The fleet-install fixes found while dogfooding v1.2.5 and later.")
    (release "v1.2.9" :status "planned"
-    :text "A worker card whose last turn is a question ends as asked instead of holding its slot."))
+    :text "A worker card whose last turn is a question ends as asked instead of holding its slot.")
+   (release "v1.2.11" :status "planned" :date "2026-10-11"
+    :text "Small bug fixes, one concern each, and no model change. They run as cards on v1.2.10 once it is
+     adopted, so the sprint dogfoods the release it just cut.")
+   (release "v1.2.12" :status "planned" :date "2026-10-11"
+    :text "Tests and models only, no product change. More unit and functional tests, and every TLA+ model
+     checked against the code it claims to model (its state, actions and invariants) and run again with
+     TLC on a bench; owed models and stale or timed-out records are made real. The new tests are written
+     against behaviour (the verbs, the store's steps, the wire, the TLA+ invariants), not internals, so
+     the same tests run unchanged against v1.3 and say whether it keeps the behaviour. TLC runs where the
+     cards run first. A real defect a new test finds is written as a v1.2.14 card, never fixed inside a
+     test card.")
+   (release "v1.2.13" :status "planned" :date "2026-10-11"
+    :text "Contraction: fewer lines, no behaviour change, with v1.2.12's tests and checked models as the net
+     under it. Passes in this order, one writer per package: remove dead and stale code; adopt the Go
+     standard library or established packages where they replace hand-rolled code; run go fix (and gopls
+     modernize) over all Go code; pull code the tools share into modules, then code the modules share
+     into modules; make each test minimal, on test frameworks and shared helper modules. Measured as
+     lines per repository and package, product against test, from a baseline taken before the first
+     pass.")
+   (release "v1.2.14" :status "planned" :date "2026-10-11"
+    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -66,17 +94,17 @@
     the provider refused it. The stored key is replaced by the owner, then the friend AI restarts
     through the play."
    :origin "v1.2.5 candidate list")
-  (fix "release-build-refuses-without-sprint-release" :release "v1.2.6" :status "in-progress"
+  (fix "release-build-refuses-without-sprint-release" :release "v1.2.11" :status "in-progress"
    :title "release build refuses to ship without the sprint release"
    :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
     refuses unless an explicit opt-out flag is given."
    :origin "nova-tools PR #5571 cold read")
-  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "in-progress"
+  (fix "changelog-lists-merge-queue-merges" :release "v1.2.14" :status "in-progress"
    :title "The release changelog lists merge-queue merges"
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
-  (fix "worker-writes-result-before-deadline" :release "v1.2.6" :status "planned"
+  (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
    :title "A child ended at its deadline with a commit and no result gets a report"
    :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
     to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the
@@ -120,7 +148,7 @@
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
    :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
-   (fix "fleet-loops-refuses-version-mismatch" :release "v1.2.6" :status "planned"
+   (fix "fleet-loops-refuses-version-mismatch" :release "v1.2.14" :status "planned"
     :title "A fleet loops play refuses when its checkout version differs from the adopted release"
     :text "Fleet plays run only from the checkout of the adopted release, and refuse when the
      checkout's version differs from the release installed on the host."
@@ -159,7 +187,7 @@
     (its add refuses a held rules file that differs), stops children rewriting history, which caused the
     does-not-descend refusals. A test pins the file's digest in both repositories."
    :origin "v1.2.5 candidate list")
-  (fix "friend-width-fits-slots" :release "v1.2.6" :status "planned"
+  (fix "friend-width-fits-slots" :release "v1.2.11" :status "planned"
    :title "A friend's width fits within her slots"
    :text "nova-config refuses a friend width larger than her slots and names both values, so one-shot
     lanes cannot silently halve the friend's available capacity."
@@ -185,7 +213,7 @@
     on the dead socket; fleet/loops.yml takes nova_loop_restart=<records> to restart a hung loop
     through the play, never by hand."
    :origin "measured 2026-10-11 01:05-01:20Z: after the v1.2.6 adopt every Linux reader loop stopped at its last connection-refused line while the member loops on the same hosts recovered, 24 reads waited with 0 reading and the server raised cannot ask (0 free readers) until each reader unit was restarted by hand")
-  (fix "worker-question-ending-asked" :release "v1.2.9" :status "planned"
+  (fix "worker-question-ending-asked" :release "v1.2.14" :status "planned"
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
      holding its slot to the deadline."
@@ -217,16 +245,16 @@
    :text "A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced
     working cards. The verdict states idle reaping and the idle watch accounts for the shell cap."
    :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")
-  (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
+  (fix "swarm-hold-zero-findings-malformed" :release "v1.2.11" :status "planned"
    :title "A HOLD report with zero findings is malformed"
    :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
    :origin "PR #4635")
-  (fix "update-adopt-partial-release-dir" :release "v1.2.9" :status "planned"
+  (fix "update-adopt-partial-release-dir" :release "v1.2.11" :status "planned"
    :title "Release adopt does not trust a partial release directory"
    :text "A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt
     verifies completeness or uses a temporary dir renamed at the end."
    :origin "issue #1981")
-  (fix "swarm-slot-lease-release-by-id" :release "v1.2.9" :status "planned"
+  (fix "swarm-slot-lease-release-by-id" :release "v1.2.11" :status "planned"
    :title "The dispatcher releases a slot lease by its own id"
    :text "Release removes every lease with the same owner and label. It releases only the one lease it took."
    :origin "issue #1582")
@@ -258,4 +286,24 @@
     the harness is pointed at the proxy; the harness's own header and request timeouts are turned off
     on that route so a request waiting on its budget stalls and is never aborted. A route with no limit
     is unchanged; deepseek is not seeded."
-   :origin "the card tmp/next-sprint-cards/inception-behind-the-limiter-proxy.md (the seat, 2026-10-11 ~02:55Z: the first Mercury 3 take on a limited route logged that inception had no http baseURL and the rpm bucket stayed at in_use=0)")))
+   :origin "the card tmp/next-sprint-cards/inception-behind-the-limiter-proxy.md (the seat, 2026-10-11 ~02:55Z: the first Mercury 3 take on a limited route logged that inception had no http baseURL and the rpm bucket stayed at in_use=0)")
+
+  (fix "v1-2-12-inventory" :release "v1.2.12" :status "planned"
+   :title "Inventory the tests and models before v1.2.12's first test card"
+   :text "Coverage per package, the functional tier's state, each TLA+ model against the code it claims
+    to model, and each RUNS.tsv record's age and result. The tests and model cards of v1.2.12 are cut
+    from it."
+   :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
+
+  (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
+   :title "Extract the roadmap tool into nova-roadmap"
+   :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
+    tools/roadmap (about 1,300 lines with their tests, about 930 without), and in nova-sprint as
+    internal/roadmap, internal/roadmapdoc, tools/roadmap and the nova-work roadmap verbs, with two
+    diverging copies of the generator. Unify the s-expression format first; then one module and one
+    CLI, nova-roadmap, living in the nova-sprint repository (a module and cmd/nova-roadmap there): it
+    reads and writes the data, renders ROADMAP.md and FIXES.md, and runs the sync check. Both
+    repositories use it and delete their own copies: this one imports nova-roadmap from nova-sprint and
+    deletes internal/roadmap and tools/roadmap. Net fewer lines. Its s-expressions stay importable
+    later as a node by nova-work; that import is a v1.3 item, not this one."
+   :origin "the owner, 2026-10-11: v1.2.13 contraction, pass 4 (shared code into modules); nova-roadmap lives in nova-sprint")))

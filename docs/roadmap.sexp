@@ -4,10 +4,20 @@
 ; The shape is in internal/roadmap's package comment.
 (roadmap "v1"
  :title "nova-tools roadmap"
- :text "This is the work planned after v1.4. The release ladder is fixed (the owner, 2026-10-09): v1.2.1 is
-  small fixes; v1.3 is larger fixes, and fixes only; v1.4 is v1.3 plus unit tests, cleanup, dead code,
-  adoption of the standard library and modules, and test refactors. Then the line stops, and anything
-  outside the ladder is recorded here instead of being worked. nova-sprint, nova-card and
+ :text "This is the work after the point releases. The release plan (the owner, 2026-10-11) replaces the
+  ladder of 2026-10-09. The v1.2.x point releases come first and are cut in turn: v1.2.10 (being cut),
+  v1.2.11 small fixes, v1.2.12 tests and models only, v1.2.13 contraction (fewer lines, no behaviour
+  change), v1.2.14 the next small fixes; FIXES.md holds each one's scope and fixes, and an item below
+  whose target is a v1.2.x release is waiting for its card. The aim is v1.2.x working pretty well, so
+  it is the reference for intended behaviour: v1.3, unstable, is the re-architecture (the client/server
+  conversion, then each layer secured from the bottom), built by the sprint running on v1.2.x and
+  checked against it, rather than a blind rewrite; like getting a compiler self-hosting, then using it
+  to build a better compiler. v1.4 is the stable release of v1.3, architecturally correct top to bottom.
+  Point releases continue until only architectural items are open: an area stops taking point fixes
+  when a fix there is the same problem in another form, or would be its third, and each v1.3
+  architectural item names the point fixes it replaces. Friend work is dogfooded within the week, once
+  more friends are online: friends alone, then friends and fleet together, each friend bug a
+  point-release card. nova-sprint, nova-card and
   nova-work moved to mas-bandwidth/nova-sprint with the split (v1.2.3), and their items are in that
   repository's ROADMAP.md. Point-release work is in FIXES.md, not here. Each
   item says what it is and why it waits. Where the code already has part of an item, the item says
@@ -513,13 +523,13 @@
    :text "The darwin wall denies a directory membership lookup that stalls sqlite3 and git for about 0.8 s
     per launch; allow it with the measurement in the commit."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.14"
    :origin "card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "vet-clean-table-tests" :group "quality"
    :title "Make ntable tests vet-clean"
    :text "go vet fails on the ntable test files; fix them with the cause named and keep vet in the gate."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.2.12"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "push-notifications-required-at-setup" :group "ops"
    :title "Push notifications are required before inbox tools work"
@@ -561,14 +571,14 @@
    :text "The config test for a DSN keyword flag with a password fails; either the test or the resolver is
     wrong and the fix says which."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.12"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-delivery-test-flaky" :group "tests"
    :title "Fix the flaky deferred delivery test in the friend package"
    :text "The deferred delivery test fails in some runs; the race is found and fixed with an injected
     clock and no real time."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.12"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "tokens-reads-redis-bus" :group "ops"
    :title "nova-tokens reads the Redis bus log"
@@ -747,7 +757,7 @@
    :text "The installer keeps a PATH redis-server only if it reports the pinned version, and the test
     helper refuses any other version."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.12"
    :origin "PR #5155; issue #5151")
   (item "sandbox-temp-and-symlink-containment" :group "quality"
    :title "Contain the default temp directory; refuse symlinks on swarm auth, config, usage writes"
@@ -818,7 +828,7 @@
    :text "The script runs with an empty, root, relative or one component HOME. It refuses those, since
     every path it may remove is built from HOME."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.11"
    :origin "issue #1282")
   (item "bus-per-session-cursor" :group "friends"
    :title "nova-bus gives each session of one participant its own cursor"
@@ -882,7 +892,7 @@
    :text "Native windows is no longer supported, only WSL. The remaining hosted windows leg of the smoke
     job is removed."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.2.14"
    :origin "issue #1487")
   (item "spec-work-harness-wake-table" :group "docs"
    :title "SPEC-WORK records which harnesses a process can wake"
@@ -910,7 +920,7 @@
    :text "One idle-watch test hangs for the full timeout under capped gate flags. It must finish fast and
     not stall the package."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.12"
    :origin "issue #1983")
   (item "release-draft-upload-boundary" :group "ops"
    :title "Release upload must respect the draft then publish sequence"
@@ -1145,7 +1155,7 @@
    :text "Confidence and floor in a decision event use presence-aware types so a missing value is not
     emitted as a false zero."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.14"
    :origin "issue #2633")
   (item "tokens-bulk-session-ingest" :group "ops"
    :title "nova-tokens fold ingests a whole session store for one provider"
@@ -1203,7 +1213,7 @@
    :text "The test treats the socket file existing as ready, but the file appears before the socket
     accepts. It waits for a real accepted connection."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.12"
    :origin "issue #3391")
   (item "tokens-redis-user-auth" :group "ops"
    :title "nova-tokens ledger and report accept a Redis user"
@@ -1245,7 +1255,7 @@
    :text "The verb prints nothing even with live leases. It prints a summary line like the other read
     verbs, even at zero."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.14"
    :origin "issue #3523")
   (item "tailnet-policy-gitops" :group "ops"
    :title "Manage the tailnet policy file through GitOps"
@@ -1335,7 +1345,7 @@
    :text "nova-secrets tells Linux users to use Homebrew. It should name the install path for each
     platform, pinned by a test."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.14"
    :origin "issue #5016")
   (item "tokens-prose-pass-defects" :group "quality"
    :title "Fix four defects the tokens prose pass left"
@@ -1370,21 +1380,21 @@
    :text "When the remote promotion branch is absent, a retained local ref still excuses deletions.
     Invalidate it."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.14"
    :origin "issue #5161")
   (item "generality-scan-more-suffixes" :group "tests"
    :title "The generality text scan covers html, js and css"
    :text "The scan reads a fixed suffix list that misses shipped web files. Add them so a name in a
     stylesheet is found."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.14"
    :origin "issue #5165")
   (item "help-time-budget-flake" :group "tests"
    :title "The help-time budget is not a wall-clock unit test"
    :text "A 50 ms wall-clock limit on help answers fails under load. Move the timing out of the unit tier
     or count work instead."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.12"
    :origin "issue #5185")
   (item "bus-inbox-fetch-before-read" :group "ops"
    :title "nova-bus inbox fetches before it reads"
@@ -1425,7 +1435,7 @@
    :text "Every job exits at the go.mod update check. Tidy the module file and add a check that keeps it
     tidy."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.11"
    :origin "issue #5497")
   (item "version-snapshot-help-and-manifest" :group "ops"
    :title "nova-version snapshot appears in help and honours a manifest"
@@ -1598,7 +1608,7 @@
    :text "The release spec says a typed --expect-sums wins over --expect-sums-from, which wins over
     --repo. Adopt follows that order and a test proves it."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.2.14"
    :origin "issue #2284")
   (item "version-moved-verb" :group "ops"
    :title "Add nova-version moved, reading each build and refusing with one remedy"
