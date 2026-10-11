@@ -652,10 +652,12 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 		name    string
 		restart bool // a second Run: the memory is gone, the receipt stands
 		noStamp bool // the acted stamp is refused: the memory stands
+		rewrite bool // the refused acted stamp is written again once the store answers
 	}{
 		{name: "the memory"},
 		{name: "the receipt, across a restart", restart: true},
 		{name: "the memory, with no acted stamp", noStamp: true},
+		{name: "the receipt, written again after a failed stamp, across a restart", restart: true, noStamp: true, rewrite: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -665,6 +667,16 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 			m := r.send(t, "ada", "hello", "once")
 			if tc.noStamp {
 				r.at[1] = func() { r.store.FailForward = errors.New("NOPERM receipts") } // after the delivered stamp, before the turn ends
+			}
+			if tc.rewrite {
+				// the store answers again after the turn's failed acted stamp is on the record
+				r.at[2] = func() {
+					r.mu.Lock()
+					seen := strings.Contains(strings.Join(r.records, "\n"), "receipt=acted-not-written")
+					r.mu.Unlock()
+					require.True(t, seen, "the failed acted stamp is on the record before the store answers again: %v", r.records)
+					r.store.FailForward = nil
+				}
 			}
 			if !tc.restart {
 				r.at[4] = func() { r.store.Advance(bus.ClaimAfter) }
@@ -691,7 +703,7 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 			got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
 			require.NoError(t, err)
 			want := bus.Acted
-			if tc.noStamp {
+			if tc.noStamp && !tc.rewrite {
 				want = bus.Delivered
 			}
 			assert.Equal(t, want, got[0].State)

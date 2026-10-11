@@ -66,7 +66,11 @@ const (
 // turn that ended acted: a second delivery of one (the claim hands a message
 // in again when its ack was lost) is dropped and acked, never pushed in twice.
 // Past the memory, the message's receipt says acted all the same (Entry.Stage;
-// docs/SPEC-BUS.md, message-receipts; tla/Bus2Receipts.tla, Take).
+// docs/SPEC-BUS.md, message-receipts; tla/Bus2Receipts.tla, Take). An acted
+// stamp the store refused is owed, at most ActedKept of them, oldest dropped
+// first, and is written again before the next read once the store answers; only
+// a restart while the store stays down can still redeliver (docs/SPEC-BUS.md,
+// message-receipts).
 const ActedKept = 4096
 
 // SeatCacheFor is how long the daemon keeps the seat holder it read from the
@@ -536,6 +540,9 @@ type loop struct {
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	acted        map[string]bool // message ids pushed into a turn that ended acted, at most ActedKept
 	actedOrder   []string        // the same ids, oldest first, for the bound
+	owedActed    []string        // ids whose acted receipt a failed stamp still owes, oldest first
+	owedActedSet map[string]bool // the same ids, for the bound and the dedup
+	owedSaid     bool            // the owed stamp's refusal was said and it still stands
 	now          time.Time       // the step's clock, for a line said beside a verb (OnStampError)
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
@@ -646,6 +653,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	l.acted = map[string]bool{}
+	l.owedActedSet = map[string]bool{}
 	l.b.OnStampError = func(err error) { d.Record(l.now.UTC().Format(time.RFC3339) + " " + oneLine(err.Error(), 300)) }
 	if l.silentStop <= 0 {
 		l.silentStop = DefaultSilentStop
@@ -1091,6 +1099,7 @@ func (l *loop) read(now time.Time) bool {
 			block = 0
 			defer d.Pause(l.ctx, BeatEvery)
 		}
+		l.writeOwedActed(now) // the store answers here: an acted receipt a failed stamp owes is written again
 		e, ok, err := b.Recv(l.ctx, d.Friend, block)
 		for err == nil && ok {
 			msg := e.Message()
@@ -1501,9 +1510,48 @@ func (l *loop) stampTurn(t *turn, state string) string {
 		ids[i] = m.ID
 	}
 	if _, err := l.b.Stamp(l.ctx, l.d.Friend, state, ids...); err != nil {
+		if state == bus.Acted {
+			l.oweActed(ids) // an acted receipt the store refused is owed; a read stamp is not
+		}
 		return fmt.Sprintf(" receipt=%s-not-written error=%q", state, oneLine(err.Error(), 200))
 	}
 	return ""
+}
+
+// oweActed keeps the ids whose acted receipt a failed stamp still owes: the
+// next step the store answers writes them again, in one stamp, forward only.
+// At most ActedKept, oldest dropped first (docs/SPEC-BUS.md, message-receipts).
+func (l *loop) oweActed(ids []string) {
+	for _, id := range ids {
+		if l.owedActedSet[id] {
+			continue
+		}
+		l.owedActedSet[id] = true
+		l.owedActed = append(l.owedActed, id)
+	}
+	for len(l.owedActed) > ActedKept {
+		delete(l.owedActedSet, l.owedActed[0])
+		l.owedActed = l.owedActed[1:]
+	}
+}
+
+// writeOwedActed writes again the acted receipts a failed stamp owes, in one
+// stamp, forward only (a receipt moves only forward, so a repeat is harmless),
+// and forgets the ones it wrote; a failure keeps them owed and is said once
+// while it stands, never once a beat (docs/SPEC-BUS.md, message-receipts).
+func (l *loop) writeOwedActed(now time.Time) {
+	if len(l.owedActed) == 0 {
+		return
+	}
+	if _, err := l.b.Stamp(l.ctx, l.d.Friend, bus.Acted, l.owedActed...); err != nil {
+		if !l.owedSaid {
+			l.owedSaid = true
+			l.d.Record(fmt.Sprintf("%s receipt=acted-not-written error=%q", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 200)))
+		}
+		return
+	}
+	l.owedSaid = false
+	l.owedActed, l.owedActedSet = nil, map[string]bool{}
 }
 
 // remember keeps the ids of the messages t carried, a turn that ended acted,
