@@ -583,6 +583,18 @@
     them. Tests and models only, no product change."
    :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
 
+  (fix "tla-friend-one-shot-lanes-and-caps" :release "v1.2.12" :status "planned"
+   :title "Friend's one-shot lanes and caps model the code: no limit gate, a fault kept, a cap set aside after one turn"
+   :text "LaneStart no longer needs the harness up: the lanes bypass the limit gate (gatedLanes), so a lane's
+    card turn starts while the harness is limited and a turn that hits a limit sends the friend down all the
+    same. A card's end gains a fault outcome (exit 0, no report) that keeps the card in the lane's hand counted
+    toward nothing, and a capped outcome that sets the card aside after one turn. SetAsideAfterCardTurns is
+    restated: a card a lane still holds has fewer than CardTurns tries, and a card set aside by its turns had
+    its CardTurns turns. The reversed witness faultcounts (MCFriendBrokenFaultCounts.cfg) counts a fault toward
+    the tries and fails the restated invariant. lanes.go cites the module from laneStep and laneDone, limit.go
+    from Gate. Tests and models only, no product change."
+   :origin "card tla-friend-one-shot-lanes-and-caps.w7 (nova-tools drift read at dev 2314d437f, 2026-10-11; the last of three Friend cards, chained)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

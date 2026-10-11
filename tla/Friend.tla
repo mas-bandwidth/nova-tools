@@ -52,17 +52,23 @@
 \*   One-shot mode: each lane is its own session and holds one card (lcard)
 \*   until its RESULT.md appears (cst "done"); a turn that ends without one
 \*   hands the same card again, and after CardTurns such turns (tries) the card
-\*   is set aside (cst "aside", laneDone). The messages in the hand ride along
-\*   with a lane's card turn and are settled as a batch turn's are; a lane
-\*   holding no card takes the next queued one, and with none takes nothing,
-\*   messages included. A lane turn the provider rate-limited or held out of
-\*   funds keeps its card, counted toward nothing, its messages pending
-\*   (limitedTurn); the governor's pause (ratelimit.go) is lim here. The
-\*   refusal streak is the daemon's, across its lanes, as the code keeps it.
+\*   is set aside (cst "aside", laneDone). A lane turn needs the session proven
+\*   and unbroken but not the harness up: the lanes bypass the limit gate
+\*   (gatedLanes), so a lane turn starts while the harness is limited and a
+\*   turn that hits one sends the friend down all the same (limitedTurn). A
+\*   harness fault (exit 0, no report) keeps the card in the lane's hand,
+\*   counted toward nothing (cst "lane", tries unchanged); a turn at the card's
+\*   cap sets it aside at once (cst "capped"), whatever its tries. The messages
+\*   in the hand ride along with a lane's card turn and are settled as a batch
+\*   turn's are; a lane holding no card takes the next queued one, and with
+\*   none takes nothing, messages included. A lane turn the provider
+\*   rate-limited or held out of funds keeps its card, counted toward nothing,
+\*   its messages pending (limitedTurn); the governor's pause (ratelimit.go) is
+\*   lim here. The refusal streak is the daemon's, across its lanes, as the
+\*   code keeps it.
 \* Mode is chosen at Init from Modes (the friend row); a change of mode, which
 \* waits for every turn to end, is not modelled, nor the deferral of a batch
-\* turn by the pacing, a lane's wall cap by its tier (lane_cap.go), the lane
-\* sessions' opening, or the reads.
+\* turn by the pacing, the lane sessions' opening, or the reads.
 \*
 \* Broken = "none" is the design. Every other value is a reversed witness,
 \* each caught by one property below:
@@ -91,7 +97,9 @@
 \*   "fixedkill"      a running turn is stopped whether it prints or not:
 \*                    StopOnlyWhenSilent
 \*   "asideearly"     a lane sets its card aside after one turn with no
-\*                    RESULT.md: SetAsideAfterCardTurns
+\*                    RESULT.md and no cap: SetAsideAfterCardTurns
+\*   "faultcounts"    a harness fault counts toward the card's tries:
+\*                    SetAsideAfterCardTurns
 
 EXTENDS Naturals, FiniteSets
 
@@ -154,7 +162,7 @@ TypeOK ==
   /\ lcard \in [L -> 0..Cards]
   /\ lrun \in [L -> 0..2]
   /\ lquiet \in [L -> 0..SilentStop]
-  /\ cst \in [C -> {"queued", "lane", "done", "aside"}]
+  /\ cst \in [C -> {"queued", "lane", "done", "aside", "capped"}]
   /\ tries \in [C -> 0..CardTurns]
 
 Busy == turns > 0
@@ -251,6 +259,14 @@ HeadOwed == IF chal # "quiet" THEN FALSE ELSE owed
 \* A delivery may start: the session has proved its push, is not broken and
 \* the harness is up (each witness lets one through).
 Deliverable == (proven \/ Broken = "noproof") /\ (~broken \/ Broken = "deliverbroken") /\ (lim = "up" \/ Broken = "deliverlimited")
+
+\* A lane's turn may start without the harness being up (gatedLanes.OpenSession
+\* and DeliverTo go straight to the harness, not through the gate): a lane turn
+\* needs the session proven and unbroken, but not the limit. Its output is
+\* still read for a limit (Watch), so a turn that hits one sends the friend
+\* down all the same (LaneLimited).
+LaneDeliverable == (proven \/ Broken = "noproof") /\ (~broken \/ Broken = "deliverbroken")
+
 SessionFree == turns = 0 \/ (Broken = "twoturns" /\ turns < 2)
 
 \* A turn carrying every message in the hand starts in the free batch session
@@ -385,7 +401,7 @@ InLane(l) == {m \in M : carry[m] = l}
 LaneFree(l) == lrun[l] = 0 \/ (Broken = "twoturns" /\ lrun[l] < 2 /\ lcard[l] # 0)
 LaneStart(l) ==
   /\ mode = "oneshot" /\ LaneFree(l)
-  /\ Deliverable
+  /\ LaneDeliverable
   /\ \E c \in C :
        /\ IF lcard[l] # 0 THEN c = lcard[l] ELSE cst[c] = "queued"
        /\ lcard' = [lcard EXCEPT ![l] = c]
@@ -400,37 +416,55 @@ LaneStart(l) ==
   /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, pel, acked, inHand, failed, sessvars, tries>>
 
 \* What a lane's turn end does to its card (laneDone): RESULT.md there, the
-\* card is done and the lane free; none, one more turn, and at CardTurns the
-\* card is set aside and the lane free. The witness sets it aside at once.
-CardAfter(l, result) ==
+\* card is done and the lane free; a harness fault (exit 0, no report) keeps
+\* the card in the lane's hand counted toward nothing; a turn at the card's
+\* cap sets it aside at once (cst "capped"); else one more turn, and at
+\* CardTurns the card is set aside and the lane free. The witnesses set it
+\* aside after one turn whatever the cap ("asideearly") and count a fault
+\* toward the tries ("faultcounts").
+CardOutcomes == {"done", "failed", "fault", "capped"}
+
+CardAfter(l, e) ==
   LET c == lcard[l]
       t == tries[c] + 1
-  IN IF result
-       THEN /\ cst' = [cst EXCEPT ![c] = "done"] /\ lcard' = [lcard EXCEPT ![l] = 0]
-            /\ UNCHANGED tries
-       ELSE /\ tries' = [tries EXCEPT ![c] = IF t > CardTurns THEN CardTurns ELSE t]
-            /\ IF t >= CardTurns \/ Broken = "asideearly"
-                 THEN cst' = [cst EXCEPT ![c] = "aside"] /\ lcard' = [lcard EXCEPT ![l] = 0]
-                 ELSE UNCHANGED <<cst, lcard>>
+      step == IF t > CardTurns THEN CardTurns ELSE t
+  IN CASE e = "done" ->
+       /\ cst' = [cst EXCEPT ![c] = "done"] /\ lcard' = [lcard EXCEPT ![l] = 0]
+       /\ UNCHANGED tries
+     [] e = "fault" ->
+       /\ UNCHANGED <<cst, lcard>>
+       /\ IF Broken = "faultcounts"
+            THEN tries' = [tries EXCEPT ![c] = step]
+            ELSE UNCHANGED tries
+     [] e = "capped" ->
+       /\ cst' = [cst EXCEPT ![c] = "capped"] /\ lcard' = [lcard EXCEPT ![l] = 0]
+       /\ tries' = [tries EXCEPT ![c] = step]
+     [] OTHER ->
+       /\ tries' = [tries EXCEPT ![c] = step]
+       /\ IF t >= CardTurns \/ Broken = "asideearly"
+            THEN cst' = [cst EXCEPT ![c] = "aside"] /\ lcard' = [lcard EXCEPT ![l] = 0]
+            ELSE UNCHANGED <<cst, lcard>>
 
-\* Lane l's turn ends by itself with o, its card's RESULT.md written or not.
-LaneEnds(l, o, result) ==
+\* Lane l's turn ends by itself with o, its card ended e (RESULT.md, a failed
+\* turn, a harness fault, or the card's cap).
+LaneEnds(l, o, e) ==
   /\ lrun[l] > 0
   /\ lrun' = [lrun EXCEPT ![l] = lrun[l] - 1]
   /\ Settle(InLane(l), o)
-  /\ CardAfter(l, result)
+  /\ CardAfter(l, e)
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
   /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, hand, readm, lquiet>>
 
 \* The silence rule on a lane's turn: stopped, a failure, its card handed
 \* again or set aside as any turn without a RESULT.md (or done, when the
-\* session wrote it before it fell silent).
+\* session wrote it before it fell silent). A stopped turn is no fault and
+\* no cap, so the card ends done or failed only.
 LaneStop(l, result) ==
   /\ lrun[l] > 0 /\ Stopping(lquiet[l])
   /\ lrun' = [lrun EXCEPT ![l] = lrun[l] - 1]
   /\ lastStop' = StopSaid(lquiet[l])
   /\ Settle(InLane(l), "failed")
-  /\ CardAfter(l, result)
+  /\ CardAfter(l, IF result THEN "done" ELSE "failed")
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
   /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, hand, readm, lquiet>>
 
@@ -468,7 +502,7 @@ Next ==
   \/ \E n \in 1..MaxPings : Pong(n)
   \/ \E l \in L :
        \/ LaneStart(l)
-       \/ \E o \in EndOutcomes, result \in BOOLEAN : LaneEnds(l, o, result)
+       \/ \E o \in EndOutcomes, e \in CardOutcomes : LaneEnds(l, o, e)
        \/ \E result \in BOOLEAN : LaneStop(l, result)
        \/ LanePrint(l)
        \/ LaneLimited(l)
@@ -508,10 +542,12 @@ OwedOnlyWhileAsked == owed => chal # "quiet"
 \* A turn starts: in the batch session, or in a lane's.
 TurnStarts == turns' > turns \/ \E l \in L : lrun'[l] > lrun[l]
 
-\* No turn starts while the harness is limited (limits-mean-down-w-r.w1~15):
+\* No batch turn starts while the harness is limited (limits-mean-down-w-r.w1~15):
 \* a message or a wake check never goes into a session that cannot answer, so
 \* every message stays pending, counted toward nothing. Pings are no turn.
-NoTurnWhileLimited == [][TurnStarts => lim = "up"]_vars
+\* A lane's turn is exempt: the lanes bypass the gate, and a lane turn that
+\* hits a limit sends the friend Down all the same (LaneLimited).
+NoTurnWhileLimited == [][(turns' > turns) => lim = "up"]_vars
 
 \* No turn starts until the session has proved its push (daemon.go proof, the
 \* push-proof gate): nothing goes into a session that has not answered.
@@ -555,10 +591,14 @@ PingNeverDelivered == pingIn = "none"
 StopOnlyWhenSilent == lastStop # "printing"
 
 \* A lane holds its card until its RESULT.md appears or CardTurns turns ended
-\* without one; a card is held by one lane at most; and a card set aside had
-\* its CardTurns turns.
+\* without one; a card is held by one lane at most; and a card set aside by
+\* its turns had its CardTurns turns (one set aside by its cap is "capped",
+\* whatever its tries). A card a lane still holds has not had its CardTurns
+\* turns: a harness fault counts toward nothing, so it never sets a card
+\* aside.
 SetAsideAfterCardTurns ==
   /\ \A c \in C : cst[c] = "aside" => tries[c] = CardTurns
+  /\ \A c \in C : cst[c] = "lane" => tries[c] < CardTurns
   /\ \A l \in L : lcard[l] # 0 => cst[lcard[l]] = "lane"
   /\ \A l1, l2 \in L : l1 # l2 /\ lcard[l1] # 0 => lcard[l1] # lcard[l2]
 
