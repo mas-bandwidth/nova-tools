@@ -592,6 +592,9 @@ type loop struct {
 	proofTold    bool                 // the harness proof's failure has been told to the coordinator, once
 	instantFails int                  // consecutive card runs that ended with no report within InstantFail (lanes.go, "A lane proves its harness")
 	results      chan result
+	outboxRes    chan outboxResult // the finishes that ended off the loop, applied by the step (outbox.go)
+	outboxFly    map[string]bool   // the outbox jobs whose tip check and finish are in flight now
+	finishWG     sync.WaitGroup    // the finishes in flight: waited for when Run ends (outbox.go)
 	lanes        *laneSet
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
@@ -686,6 +689,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		outboxRes: make(chan outboxResult, 64), outboxFly: map[string]bool{},
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	l.acted = map[string]bool{}
@@ -753,15 +757,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		l.capWatch(now)
 		l.stampProgress(now)
-		select {
-		case r := <-l.results:
-			l.batchDone(r, now)
-		case r := <-l.lanes.results:
-			l.laneDone(r, now)
-		case r := <-l.reads.results:
-			l.readDone(r, now)
-		default:
-		}
+		l.drainResults(now)
 		if d.Mailbox != nil {
 			// off the loop: a move sends the old conversation's unread deliveries again, and the
 			// beat never waits for it
@@ -854,7 +850,45 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		d.flush(now)
 	}
-	return nil
+	// a finish in flight when the loop stops is waited for, up to FinishWait, and
+	// its answer applied here, so a restart does not send an answered finish again;
+	// a finish that never answered is not marked finished and is sent again next run
+	l.finishWG.Wait()
+	for {
+		select {
+		case r := <-l.outboxRes:
+			l.applyOutboxResult(r, l.now)
+		default:
+			return nil
+		}
+	}
+}
+
+// maxStepResults bounds the ended results one step applies: one select is not
+// enough while several lanes end together, so the step drains every channel
+// until none has a value, and the cap keeps one step bounded with the rest
+// seen the next step.
+const maxStepResults = 64
+
+// drainResults applies every ended result already waiting: the batch turn, the
+// lanes, the reads and the outbox finishes (outbox.go), in the loop goroutine,
+// so the daemon's state stays single-writer. It stops at maxStepResults, when
+// the three channels and the finishes are empty, or at that cap.
+func (l *loop) drainResults(now time.Time) {
+	for n := 0; n < maxStepResults; n++ {
+		select {
+		case r := <-l.results:
+			l.batchDone(r, now)
+		case r := <-l.lanes.results:
+			l.laneDone(r, now)
+		case r := <-l.reads.results:
+			l.readDone(r, now)
+		case r := <-l.outboxRes:
+			l.applyOutboxResult(r, now)
+		default:
+			return
+		}
+	}
 }
 
 // The push proof's words in the status file.
