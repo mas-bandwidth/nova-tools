@@ -647,6 +647,18 @@
     check."
    :origin "card tla-coverage-names-every-module-in-nova-tools-after-the-retire.w4 (stream v1212, 2026-10-11; the module walk the retired CardMachine copy left)")
 
+  (fix "tla-delivery-note-from-the-seat" :release "v1.2.12" :status "planned"
+   :title "Delivery's present takes its note only from the seat"
+   :text "The module took any note as the newest and always delivered it in the present step, with a gap
+    rule that always applied. It now carries a seat variable: the note is the newest note from the seat
+    (none while the seat is unknown, and a one-shot present supersedes the note too), a present whose
+    turn fails is owed again after RecheckEvery carrying the same note, and the gap rule holds only in
+    batch mode, never for a passive harness, and not before the first beat. NoteFromSeat holds, with a
+    new reversed witness anysender that picks a note not from the seat; the three existing witnesses keep
+    their results. adapter_tmux.go's Deliver comment no longer cites Delivery for the idle pane, which
+    the module does not model. Tests and models only, no product change."
+   :origin "card tla-delivery-note-from-the-seat.w10 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
@@ -705,6 +717,11 @@
    :title "Nightly and certification jobs fail on an untidy go.mod"
    :text "The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three."
    :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")
+
+  (fix "adopt-play-loops-step-works-on-every-host" :release "v1.2.11" :status "in-progress"
+   :title "The adopt's loops step works on every host"
+   :text "One nova-sprint live manifest command per platform (launchd agents and system-domain LaunchDaemons on Darwin, systemd units on Linux, defined once in group_vars); the loops step succeeds when every member and reader already runs the installed binary and refuses only a manifest with no member or reader; each stale agent restarts through its own target's domain, and the adoption table's disk-free read runs under --check and defaults an empty df."
+   :origin "card adopt-play-loops-step-works-on-every-host.w4")
 
   (fix "a-run-that-ends-at-its-first-result-is-not-a-finish" :release "v1.2.14" :status "planned"
    :title "A run that ends at its first RESULT.md is a no-result finish"
