@@ -50,3 +50,4 @@ The fixes held during the split, the point-release candidates found on 2026-10-1
 A worker card whose last turn is a question ends as asked instead of holding its slot.
 
 - **End a card as asked when its last turn is a question** (planned). A headless card whose last turn asks the user a question ends at once as asked instead of holding its slot to the deadline. From: issue #2548.
+- **Idle-reaped cards report their real cause and are not wrongly reaped** (planned). A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced working cards. The verdict states idle reaping and the idle watch accounts for the shell cap. From: issue #2157; issue #2158; issue #2577; issue #2579; issue #2585.

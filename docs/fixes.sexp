@@ -146,4 +146,9 @@
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
      holding its slot to the deadline."
-   :origin "issue #2548")))
+   :origin "issue #2548")
+  (fix "swarm-idle-reap-verdict" :release "v1.2.9" :status "planned"
+   :title "Idle-reaped cards report their real cause and are not wrongly reaped"
+   :text "A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced
+    working cards. The verdict states idle reaping and the idle watch accounts for the shell cap."
+   :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")))
