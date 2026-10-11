@@ -307,6 +307,11 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "in-progress"
+   :title "Unit tests for nova-friend's run, serve and dispatcher faults"
+   :text "Adds cmd/nova-friend/run_serve_faults_test.go. Pins the dispatcher's wall no-command, unknown-flag and -h answers and the hook -h/--help help; serve's one note while the store is down and the note when it answers again, one note for a later row re-read failure with the pings going on, an unopenable store retried with a doubling wait then stopped on interrupt, and the dry run's exit 2 on an unopenable store. Behaviour only, through the package's rig and the fake bus store."
+   :origin "card cover-nova-friend-run-and-serve-faults.w1, stream v1212")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
