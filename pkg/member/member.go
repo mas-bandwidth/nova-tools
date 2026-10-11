@@ -169,6 +169,10 @@ type Result struct {
 	// passed their rerun), which the reader of the result takes as the verdict ok; "" for none.
 	Gate      string
 	GateTests string
+	// Wall is the run's wall clock as native's NATIVE line states it, 0 when
+	// unknown: Judge reads it to tell a run that ended at its first RESULT.md from
+	// a finish, under FirstResultWall (docs/SPEC-CARD-CONTRACT.md section 4).
+	Wall time.Duration
 	// Carry is where a rework was staged, as native's STAGE CARRY line says it
 	// (cardcontract.Carry.Words: the staged commit, the tip of its base branch, and whether
 	// the work before it carried); the finish's report carries it, so the card's timeline
@@ -182,6 +186,14 @@ const (
 	GatePreExisting = cardhdr.EndPreExisting
 	GateGreen       = "green"
 )
+
+// FirstResultWall is how soon a run that wrote only its first RESULT.md — its
+// harness read that much and then stopped — is the same no-result kind as a run
+// that wrote no RESULT.md at all: under it, with the verdict not-done, nothing
+// committed and no gate, no work came back either way
+// (a-run-that-ends-at-its-first-result-is-not-a-finish;
+// docs/SPEC-CARD-CONTRACT.md section 4, the finish).
+const FirstResultWall = 2 * time.Minute
 
 // The ends Judge names first in a failed finish.
 const (
@@ -288,6 +300,14 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the gate decision classed every failure that stayed red pre-existing: the base's
 		// or the member's, never the card's (sprint.FailureClass gives it no class)
 		return FinishFailed, cardhdr.EndPreExisting + ": " + r.GateTests
+	case r.Shaped && r.Verdict == "not-done" && r.End == "" && r.Gate == "" && pu.Sha == "" && pu.Refused == "" && 0 < r.Wall && r.Wall < FirstResultWall:
+		// the run wrote only its first RESULT.md (its harness read that much, the child's
+		// brief asks for it early, and then stopped), committed nothing and ran no gate:
+		// no work came back, so it is the same no-result kind as a run that wrote no
+		// RESULT.md at all, and the sprint deals the card again on a route it has not been
+		// drawn on (cardhdr.EndNoResult; docs/SPEC-CARD-CONTRACT.md section 4, the finish;
+		// tla/CardContract.tla, JudgeOf; a-run-that-ends-at-its-first-result-is-not-a-finish)
+		return FinishFailed, EndNoResult + ": the run ended at its first RESULT.md (verdict not-done, nothing committed, after " + r.Wall.Round(time.Second).String() + ")"
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":
@@ -481,6 +501,11 @@ type Member struct {
 	// every lane was told to stop and nothing is taken, started or recovered until a
 	// queue says it runs again (machineStop; tla/StopCancels.tla).
 	stopped bool
+	// stoppedWord is stopped as the launch's long work may read it: the pass writes it with
+	// m.stopped (machineStop), and a start reads it again right before it launches, after
+	// staggerStart and holding startMu, so a start already queued when STOP arrives launches
+	// no child (GateBeforeStart, NoLaunchAfterStop; tla/StopCancels.tla).
+	stoppedWord atomic.Bool
 	// stopRetry is when each card's refused stop-return is tried again (StopReturnRetry),
 	// and stopRefused the refusal last said for it, said once while its text stands.
 	stopRetry   map[string]time.Time
@@ -489,6 +514,13 @@ type Member struct {
 	// at: a queue read before the store moved it still lists it working at that
 	// generation, and it is never recovered at it (the store deals it again at the next).
 	handedBack map[string]int
+	// finishRefused is each card whose pushed generation's finish the store refused, by
+	// card id: its generation, the finish's arguments exactly as sent, the refusal's text,
+	// how many times in a row that same text came back and when to send it again. The
+	// member sends that finish again, never the run, and recoverWorking never runs the card
+	// at that generation while it is held (a finish is reported again, never pushed again:
+	// launch.push; docs/SPEC-CARD-CONTRACT.md, the member's finish).
+	finishRefused map[string]*refusedFinish
 	// returnedAt is when this reader returned a read with no verdict, by card id: a read
 	// asked of it again is not begun before ReadStageRetry has passed, so a reader that
 	// cannot launch does not take and return the same read every pass
@@ -565,6 +597,11 @@ type post struct {
 	res      *Result
 	push     *Push
 	decided  *decided
+	// cancelledByStop says the machine's word was STOPPED where the start read it again
+	// (GateBeforeStart): no child was launched, and the card is left working under this row
+	// with no child of ours for machineStop to hand back with stop-return, never finished
+	// (NoLaunchAfterStop, NoFinishOfACancelledCard; tla/StopCancels.tla).
+	cancelledByStop bool
 }
 
 // decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
@@ -579,7 +616,7 @@ type decided struct {
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
-		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}}
+		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}, finishRefused: map[string]*refusedFinish{}}
 	m.advanced() // a member begins with its pass going on
 	return m
 }
@@ -974,6 +1011,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
+	// the queue is read: the memory of a card the queue no longer lists at its generation,
+	// working on this row, goes before anything is reported or recovered from the answer
+	// (pruneFinishRefused; member.go, handedBack)
+	m.pruneFinishRefused(byID)
 	if acted += m.machineStop(q, byID, now); m.stopped {
 		m.spent.Fill = since()
 		return acted, nil
@@ -1041,6 +1082,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if out := m.stampProgress(now); out != nil {
 		noAnswer("progress", out)
 	}
+	// the reports are made: a refused finish of a pushed generation that is due is sent
+	// again here, byte for byte, never the run (retryFinishes; launch.push)
+	acted += m.retryFinishes(now)
 	m.spent.Report += since()
 	// Room is asked every tick, a draining member's too, after the reports, so a launch whose
 	// end rested the member (room) rests it in this pass, and the word its beats carry
@@ -1094,7 +1138,8 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 	}
 	launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
 	var args []string
-	ok := r.OK // as reported: a work card whose push was refused is reported failed
+	var pushedHead string // the head a work finish carried, "" when the run pushed nothing
+	ok := r.OK            // as reported: a work card whose push was refused is reported failed
 	if m.reads(l) {
 		// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure and a read the
 		// reader's OWN ENVIRONMENT ended -- the wall refused a write outside the job, so
@@ -1185,6 +1230,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 		args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", finding}, usageArgs(r)...), launched...)
 	} else {
 		pu := *l.push
+		pushedHead = pu.Sha
 		fin, why, report := finishReport(r, pu, l.branch)
 		switch {
 		case pu.Sha != "":
@@ -1227,6 +1273,16 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 	if code == 2 {
 		noAnswer(args[0]+" "+id, out)
 		return false
+	}
+	if code != 0 {
+		// the refusal's own words are said; a refused finish of a generation that pushed is
+		// remembered, so the same finish is sent again and the card is never run again
+		// (launch.push: a finish is reported again, never pushed again)
+		text := oneLine(strings.TrimSpace(string(out)))
+		fmt.Fprintf(m.out, "NOTE %s %s refused: %s\n", args[0], id, text)
+		if !m.reads(l) && pushedHead != "" {
+			m.rememberFinish(id, l.gen, pushedHead, args, text, now)
+		}
 	}
 	m.forget(id, !m.reads(l) && !ok) // refused (1) too: the card is no longer ours to report
 	return true
@@ -1375,6 +1431,15 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 			}
 			delete(m.handedBack, id)
 		}
+		if rf, held := m.finishRefused[id]; held {
+			if _, gen, _ := m.claim(c); gen == rf.gen {
+				// a pushed generation whose finish the store refused is never run again: its
+				// finish is sent again (retryFinishes; launch.push: never pushed again)
+				fmt.Fprintf(m.out, "recover %s held: generation %d pushed %s; its finish is sent again, never the run\n", id, rf.gen, rf.head)
+				continue
+			}
+			delete(m.finishRefused, id)
+		}
 		if c.Packet == nil {
 			continue
 		}
@@ -1406,6 +1471,14 @@ func (m *Member) start(p Packet) bool {
 	m.long(func() {
 		m.startMu.Lock()
 		m.staggerStart()
+		// GateBeforeStart (tla/StopCancels.tla): the word is read again here, after the
+		// stagger and holding startMu, and a STOPPED word launches no child
+		// (NoLaunchAfterStop): the launch is handed back to m.post as cancelled by the stop.
+		if m.stoppedWord.Load() {
+			m.startMu.Unlock()
+			m.post(p.Card, post{cancelledByStop: true})
+			return
+		}
 		ch, note, err := m.scriptOrStart(p)
 		m.startMu.Unlock()
 		m.post(p.Card, post{child: ch, note: note, startErr: err})
@@ -1474,6 +1547,16 @@ func (m *Member) collect() (acted int) {
 			fmt.Fprintf(m.out, "read %s: %s\n", card, po.note)
 		}
 		switch {
+		case po.cancelledByStop:
+			// the machine's word said STOPPED where the launch read it again, so no child
+			// was started: the launch is dropped and the card left working under this row
+			// with no child of ours, for machineStop to hand back with stop-return. It is
+			// never finished and never returned unstarted (NoFinishOfACancelledCard;
+			// NoLaunchAfterStop; tla/StopCancels.tla).
+			delete(m.running, card)
+			fmt.Fprintf(m.out, "start %s: not started: the machine is STOPPED; handed back by stop-return\n", card)
+			acted++
+			continue
 		case po.startErr != nil:
 			p := l.packet
 			delete(m.running, card)
@@ -1528,8 +1611,10 @@ func (m *Member) forget(id string, failed bool) {
 // (the store's verb: it returns the same card to ready, a read to asked, at a new generation,
 // idempotent on replay, and refuses a worker that is not the owner or names a stale
 // generation). A refusal is said and tried again next pass while the machine stays STOPPED.
-// Nothing is taken, started, recovered or finished while STOPPED: a card cancelled by the
-// stop is never finished (NoLaunchAfterStop, EveryLaneReturnsOnStop; tla/StopCancels.tla).
+// The word is read again, from the atomic machineStop sets (stoppedWord), right before each
+// launch, so a start already queued when STOP arrives launches no child. Nothing is taken,
+// started, recovered or finished while STOPPED: a card cancelled by the stop is never
+// finished (GateBeforeStart, NoLaunchAfterStop, EveryLaneReturnsOnStop; tla/StopCancels.tla).
 // RUNNING again takes the queue's cards as they are, at the generation the queue carries.
 
 // StopReturnReason is the reason every stop-return names.
@@ -1538,6 +1623,44 @@ const StopReturnReason = "owned process stopped"
 // StopReturnRetry is how long a refused stop-return waits before it is sent again: the
 // store's verb may be absent or the machine already RUNNING, and a verb a pass is a flood.
 const StopReturnRetry = time.Minute
+
+// FinishRefusedRetry is how long a finish the store refused waits before the member sends
+// the same finish again; it doubles after each refusal, at most finishRefusedRetryMax.
+const FinishRefusedRetry = time.Minute
+
+// FinishRefusedMax is how many times in a row the store may refuse the same finish (the same
+// text) before the member hands the card back with stop-return instead of sending it again.
+const FinishRefusedMax = 3
+
+// finishRefusedRetryMax is the longest a refused finish waits between two sends.
+const finishRefusedRetryMax = 8 * time.Minute
+
+// refusedFinish is a work card's pushed generation whose finish a store refused, kept so the
+// member sends the same finish again and never runs the card at that generation (a finish is
+// reported again, never pushed again: launch.push). args is the finish's arguments exactly as
+// sent (the same --head, --branch, --report, usage and --epoch), text the refusal's words,
+// count how many times in a row that same text came back, due when it is sent next.
+type refusedFinish struct {
+	gen   int
+	head  string
+	args  []string
+	text  string
+	count int
+	due   time.Time
+}
+
+// finishBackoff is how long a refused finish that came back n times in a row waits: FinishRefusedRetry
+// doubled once per refusal already taken, at most finishRefusedRetryMax.
+func finishBackoff(n int) time.Duration {
+	d := FinishRefusedRetry
+	for i := 1; i < n; i++ {
+		d *= 2
+		if d >= finishRefusedRetryMax {
+			return finishRefusedRetryMax
+		}
+	}
+	return d
+}
 
 // OwedStopReturns is how many of this member's launches the stop cancelled whose card is
 // not yet handed back: the beat carries it (fleet beat --stop-returns), and start waits on
@@ -1562,11 +1685,13 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 	case q.Machine == "STOPPED":
 		if !m.stopped {
 			m.stopped = true
+			m.stoppedWord.Store(true) // a start in flight reads the word again right before it launches
 			fmt.Fprintf(m.out, "MEMBER STOP machine STOPPED: taking no card; %d running lane(s) are cancelled and handed back with stop-return\n", m.Running())
 		}
 	case q.Machine != "":
 		if m.stopped {
 			m.stopped = false
+			m.stoppedWord.Store(false)
 			fmt.Fprintf(m.out, "MEMBER START machine %s: taking cards again\n", q.Machine)
 		}
 	}
@@ -1668,6 +1793,99 @@ func (m *Member) stopReturn(id string, gen int, epoch uint64, pid int, now time.
 	}
 	fmt.Fprintf(m.out, "STOP-RETURN OK card=%s gen=%d epoch=%d pid=%d: handed back to %s ready by the machine's stop%s\n", id, gen, epoch, pid, m.cfg.As, why)
 	return true
+}
+
+// rememberFinish holds a pushed generation's refused finish so the member sends the same
+// finish again and never runs the card at that generation (launch.push: a finish is reported
+// again, never pushed again; docs/SPEC-CARD-CONTRACT.md, the member's finish). A refusal whose
+// text is the same as the last counts up; a different one starts the count again at 1.
+func (m *Member) rememberFinish(id string, gen int, head string, args []string, text string, now time.Time) {
+	if old, ok := m.finishRefused[id]; ok && old.gen == gen && old.text == text {
+		old.args = slices.Clone(args)
+		old.count++
+		old.due = now.Add(finishBackoff(old.count))
+		return
+	}
+	m.finishRefused[id] = &refusedFinish{gen: gen, head: head, args: slices.Clone(args), text: text, count: 1, due: now.Add(finishBackoff(1))}
+}
+
+// retryFinishes sends each remembered refused finish that is due again, byte for byte the same
+// arguments, once a pass where the reports are made. Exit 0 drops the memory; exit 2 changes
+// nothing and it is due again next pass; any other exit is another refusal: the same text adds
+// to the count (handing the card back at FinishRefusedMax), a different text starts it again at
+// 1 (member.go, the launch.push rule; docs/SPEC-CARD-CONTRACT.md, the member's finish).
+func (m *Member) retryFinishes(now time.Time) (acted int) {
+	for _, id := range slices.Sorted(maps.Keys(m.finishRefused)) {
+		rf := m.finishRefused[id]
+		if now.Before(rf.due) {
+			continue
+		}
+		code, out := m.run(rf.args...)
+		switch {
+		case code == 0:
+			// the store took it: the generation's finish is reported and the memory goes. The
+			// queue read before it still lists the card working at that generation, so it is
+			// recorded handed back and never recovered at it.
+			delete(m.finishRefused, id)
+			m.handedBack[id] = rf.gen
+			fmt.Fprintf(m.out, "NOTE finish %s taken on retry: generation %d pushed %s\n", id, rf.gen, rf.head)
+			acted++
+		case code == 2:
+			// the store did not answer: nothing changes and it is due again next pass
+		default:
+			text := oneLine(strings.TrimSpace(string(out)))
+			fmt.Fprintf(m.out, "NOTE finish %s refused: %s\n", id, text)
+			if text == rf.text {
+				rf.count++
+			} else {
+				rf.text, rf.count = text, 1
+			}
+			if rf.count >= FinishRefusedMax {
+				if m.handBackFinishRefused(id, rf, now) {
+					acted++
+				}
+				continue
+			}
+			rf.due = now.Add(finishBackoff(rf.count))
+		}
+	}
+	return acted
+}
+
+// handBackFinishRefused hands a card whose same finish the store refused FinishRefusedMax
+// times back to its own ready row with the stop's stop-return, recording handedBack at the
+// generation so it is never recovered at it (stopReturn). It returns whether the store took
+// the return; a refused one keeps the memory and is tried again at its next due time.
+func (m *Member) handBackFinishRefused(id string, rf *refusedFinish, now time.Time) bool {
+	epoch := rf.args[len(rf.args)-1] // the finish's own --epoch value, sent last
+	reason := fmt.Sprintf("finish refused %d times: %s", rf.count, rf.text)
+	code, out := m.run("stop-return", "--as", m.cfg.As, fmt.Sprintf("%s@%d", id, rf.gen), "--epoch", epoch, "--reason", reason)
+	if code != 0 {
+		text := oneLine(strings.TrimSpace(string(out)))
+		rf.due = now.Add(finishBackoff(rf.count))
+		fmt.Fprintf(m.out, "STOP-RETURN refused card=%s gen=%d exit=%d: %s; tried again in %s\n", id, rf.gen, code, text, finishBackoff(rf.count))
+		return false
+	}
+	delete(m.finishRefused, id)
+	m.handedBack[id] = rf.gen
+	fmt.Fprintf(m.out, "NOTE finish %s handed back: the store refused the same finish %d times: %s\n", id, rf.count, rf.text)
+	return true
+}
+
+// pruneFinishRefused drops the memory of every card the queue no longer lists at its
+// generation, working or reading on this row: it is absent, at another generation, or in
+// another column, so its refused finish is a claim the store moved (member.go, handedBack).
+func (m *Member) pruneFinishRefused(byID map[string]queueCard) {
+	for id, rf := range m.finishRefused {
+		c, listed := byID[id]
+		if !listed || (c.Col != "working" && c.Col != "reading") {
+			delete(m.finishRefused, id)
+			continue
+		}
+		if _, gen, _ := m.claim(c); gen != rf.gen {
+			delete(m.finishRefused, id)
+		}
+	}
 }
 
 // Waiter is a child that says when it has ended: a Background member's loop is woken then

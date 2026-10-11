@@ -145,6 +145,62 @@ func TestStoppedTakesAndRecoversNothing(t *testing.T) {
 	assert.Equal(t, 0, m.Running())
 }
 
+// GateBeforeStart, NoLaunchAfterStop (tla/StopCancels.tla): the word is read again right
+// before each launch, not only at the head of the pass. A Background member takes two cards
+// in one RUNNING pass; the first start to take startMu launches at once, the second blocks
+// in Sleep for the whole StartGap (the clock is fixed, so none of the gap has passed). The
+// machine is STOPPED while it waits, so when the wait ends the second start must read the
+// word STOPPED and launch no child: the runner starts exactly one card, and the other is
+// handed back with stop-return, never finished (the stop owns it).
+func TestAStartQueuedBehindStartMuDoesNotLaunchAfterStop(t *testing.T) {
+	t.Parallel()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	sleep := func(time.Duration) {
+		once.Do(func() { close(entered) })
+		<-release
+	}
+	m, s, r, out := stopRig(Config{
+		As: "m", Width: 2, Background: true,
+		Clock: func() time.Time { return time.Unix(0, 0) },
+		Sleep: sleep,
+	})
+	p1, p2 := pk("c1"), pk("c2")
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1"), ready("c2")))
+	s.set("take", 0, takeJSON(t, p1, p2))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+
+	// one start takes startMu and launches at once; the other is in Sleep, the fixed clock
+	// leaving the whole StartGap to wait
+	<-entered
+
+	// the machine STOPPED while the queued start waits: both cards are working under this row
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p1), working("c2", 1, &p2)))
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	require.True(t, m.stopped)
+
+	// the wait ends: the queued start runs now, after the stop
+	close(release)
+	m.WaitLong()
+
+	assert.Len(t, r.started(), 1, "a start queued behind startMu launches no child after STOP: %s", out.String())
+	blocked := "c1"
+	started := r.started()
+	if len(started) > 0 && started[0] == "c1" {
+		blocked = "c2"
+	}
+
+	// the next pass: the card the stop took has no child of ours, so the stop hands it back
+	_, err = m.Tick(time.Unix(20, 0))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"stop-return --as m " + blocked + "@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.Empty(t, s.lines("finish"), "a card the stop took is never finished: %s", out.String())
+	assert.NotContains(t, out.String(), "launch refused", "no failed launch for the cancelled start: %s", out.String())
+}
+
 // A stop-return the server refuses is said once while its text stands and tried again after
 // StopReturnRetry, whatever the word: the machine RUNNING again between the refusal and the
 // retry (start by hand, or a store that counted only the friends' owed returns) still hands

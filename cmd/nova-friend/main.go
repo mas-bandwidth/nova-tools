@@ -1479,6 +1479,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		reason string
 	}
 	var faultDown atomic.Pointer[faultHold]
+	var refusalDown atomic.Pointer[faultHold] // the down a server's refusal owes her row (Daemon.RefusalDown), cleared when it answers (RefusalUp)
 	stager := w.stager(dir)
 	// the machine's word, read off each beat's answer (friend.ParseMachine), and the
 	// stop-returns the lanes owe, carried on each beat (stop.go)
@@ -1609,6 +1610,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if h := faultDown.Load(); h != nil && w.now().Before(h.until) {
 				return down(ctx, h.until, h.reason)
 			}
+			// a server refused one of her verbs three times in a row: her beat says down
+			// with it until the server answers again (friend.Daemon.RefusalDown/Up)
+			if h := refusalDown.Load(); h != nil && w.now().Before(h.until) {
+				return down(ctx, h.until, h.reason)
+			}
 			if _, _, limited := fl.Limited(); limited && !perCard {
 				sc.Step(ctx)
 			}
@@ -1633,6 +1639,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		FaultDown: func(until time.Time, reason string) {
 			faultDown.Store(&faultHold{until: until, reason: reason}) // her next beat says her down with it
+		},
+		RefusalDown: func(until time.Time, reason string) {
+			refusalDown.Store(&faultHold{until: until, reason: reason}) // a server refused a verb: her beat says down with it
+		},
+		RefusalUp: func() {
+			refusalDown.Store(nil) // the server answered again: her beat says up
 		},
 		ReadSlots: func() int { return int(rowReadSlots.Load()) },
 		LaneCaps: func() map[string]time.Duration {
@@ -1715,6 +1727,27 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
+	}
+	if perCard {
+		// a claude lane proves its harness before it takes: claude -p "ok"
+		// --output-format json --max-turns 1 with the row's CLAUDE_CONFIG_DIR,
+		// run by the daemon itself, never through the lane's wall (the proof is
+		// the daemon's own read, not a card child; docs/SPEC-FRIEND.md, "A lane
+		// proves its harness")
+		d.Prove = func(ctx context.Context) string {
+			configDir := c.Str("config-dir")
+			if configDir == "" {
+				if rd := rowConfigDir.Load(); rd != nil && *rd != "" {
+					configDir = *rd
+				} else {
+					configDir = w.getenv("CLAUDE_CONFIG_DIR")
+				}
+			}
+			if configDir == "" {
+				configDir = dir
+			}
+			return friend.ClaudeProofWhy(ctx, w.exec, dir, configDir, "claude")
+		}
 	}
 	if c.Str("harness") == "opencode" {
 		db := c.Str("db")
@@ -2236,6 +2269,24 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	if s.InboxError != "" {
 		o.Note("the inbox: " + s.InboxError)
+	}
+	if len(s.Refused) > 0 {
+		verbs := make([]string, 0, len(s.Refused))
+		for v := range s.Refused {
+			verbs = append(verbs, v)
+		}
+		slices.Sort(verbs)
+		var parts []string
+		for _, v := range verbs {
+			parts = append(parts, fmt.Sprintf("%s=%d", v, s.Refused[v]))
+		}
+		o.Fact("refused", tool.Text(strings.Join(parts, " ")))
+	}
+	if s.LastRefusal != "" {
+		o.Fact("last_refusal", tool.Text(s.LastRefusal))
+	}
+	if s.Proof != "" {
+		o.Fact("proof", tool.Text(s.Proof)).Fact("proof_at", stamp(s.ProofAt))
 	}
 	if s.HeldKnown && s.HeldFrom == friend.FromView {
 		o.Note("the inbox: her row is read from " + friend.FromView + ": " + friend.ViewWhy + "; a missing card's BRIEF.md is friend sync's to write")

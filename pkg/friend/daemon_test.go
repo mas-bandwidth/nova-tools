@@ -652,10 +652,12 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 		name    string
 		restart bool // a second Run: the memory is gone, the receipt stands
 		noStamp bool // the acted stamp is refused: the memory stands
+		rewrite bool // the refused acted stamp is written again once the store answers
 	}{
 		{name: "the memory"},
 		{name: "the receipt, across a restart", restart: true},
 		{name: "the memory, with no acted stamp", noStamp: true},
+		{name: "the receipt, written again after a failed stamp, across a restart", restart: true, noStamp: true, rewrite: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -665,6 +667,16 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 			m := r.send(t, "ada", "hello", "once")
 			if tc.noStamp {
 				r.at[1] = func() { r.store.FailForward = errors.New("NOPERM receipts") } // after the delivered stamp, before the turn ends
+			}
+			if tc.rewrite {
+				// the store answers again after the turn's failed acted stamp is on the record
+				r.at[2] = func() {
+					r.mu.Lock()
+					seen := strings.Contains(strings.Join(r.records, "\n"), "receipt=acted-not-written")
+					r.mu.Unlock()
+					require.True(t, seen, "the failed acted stamp is on the record before the store answers again: %v", r.records)
+					r.store.FailForward = nil
+				}
 			}
 			if !tc.restart {
 				r.at[4] = func() { r.store.Advance(bus.ClaimAfter) }
@@ -691,7 +703,7 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 			got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
 			require.NoError(t, err)
 			want := bus.Acted
-			if tc.noStamp {
+			if tc.noStamp && !tc.rewrite {
 				want = bus.Delivered
 			}
 			assert.Equal(t, want, got[0].State)
@@ -1027,4 +1039,68 @@ func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
 			assert.NotEqual(t, Quiet, r.d.m.Challenge, "a daemon send proves nothing even when its id is released")
 		})
 	}
+}
+
+// A server that refuses her verbs (friend beat and friend cards) with a
+// non-zero code and the text "refused" is counted per verb; the third
+// consecutive refusal of each is raised once — a down beat naming the reason
+// and one word to the coordinator — and a server that answers again clears it
+// (one up beat, one recovery line; docs/SPEC-FRIEND.md, "A refused verb").
+func TestARefusedVerbIsRaisedOnTheThirdAndClearedWhenItAnswers(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Coordinator = "ada"
+	var downs []string
+	var ups int
+	r.d.RefusalDown = func(_ time.Time, reason string) { downs = append(downs, reason) }
+	r.d.RefusalUp = func() { ups++ }
+	askErr := &Refused{Why: "friend cards refused: You must hook in first"}
+	r.d.Held = HeldVia("bob", func(context.Context, []string) (string, error) {
+		if askErr == nil {
+			return `{"friend":"bob","cards":[]}`, nil
+		}
+		return "", askErr
+	}, nil, func() time.Time {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.now
+	})
+	r.beatErr = &Refused{Why: "friend beat refused: You must hook in first"}
+
+	steps := int(3*ServedEvery/BeatEvery) + 2
+	var cardsAtOne, beatAtOne int
+	r.at[int(ServedEvery/BeatEvery/2)] = func() {
+		cardsAtOne = r.d.status.Refused[FriendCardsVerb]
+		beatAtOne = r.d.status.Refused[FriendBeatVerb]
+	}
+	var cardsAtRaise, beatAtRaise int
+	// the server answers again after three ServedEvery periods; capture the counts first
+	r.at[int(3*ServedEvery/BeatEvery)] = func() {
+		cardsAtRaise = r.d.status.Refused[FriendCardsVerb]
+		beatAtRaise = r.d.status.Refused[FriendBeatVerb]
+		askErr, r.beatErr = nil, nil
+	}
+	r.run(t, steps)
+
+	assert.Less(t, beatAtOne, RefusalRepeats, "a refusal is counted once a ServedEvery, never once a beat: after half a ServedEvery the beat has %d, not one per second", beatAtOne)
+	assert.LessOrEqual(t, cardsAtOne, 1, "friend cards is asked once a ServedEvery")
+	assert.GreaterOrEqual(t, cardsAtRaise, RefusalRepeats, "friend cards refused, counted per verb")
+	assert.GreaterOrEqual(t, beatAtRaise, RefusalRepeats, "friend beat refused, counted per verb")
+	assert.Contains(t, r.last().LastRefusal, "You must hook in first")
+	require.Len(t, downs, 2, "raised once per verb, not once per refusal: %v", downs)
+	assert.Contains(t, strings.Join(downs, " "), "refused")
+	got := r.adaGot(t)
+	require.Len(t, got, 2, "one word to the coordinator per verb, through tellBroken: %v", got)
+	assert.Contains(t, strings.Join(got, " "), "the server refused friend cards")
+	assert.Contains(t, strings.Join(got, " "), "the server refused friend beat")
+	assert.Contains(t, strings.Join(got, " "), "You must hook in first")
+	assert.GreaterOrEqual(t, ups, 1, "the down is lifted once the server answers again")
+	assert.Empty(t, r.last().Refused, "the counts clear on recovery")
+	var recoveredLines int
+	for _, l := range r.records {
+		if strings.Contains(l, "recovered:") {
+			recoveredLines++
+		}
+	}
+	assert.GreaterOrEqual(t, recoveredLines, 1, "one recovery line")
 }

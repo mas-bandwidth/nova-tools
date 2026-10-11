@@ -1021,6 +1021,7 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		var wall time.Duration
 		nativeHasSpend := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			carry = cardcontract.ParseCarryLine(b)
@@ -1054,6 +1055,7 @@ func (c *nativeChild) Result() member.Result {
 					u = cardcost.ParseSpend(string(s[1]))
 				}
 				u.Wall, u.Budget = string(m[1]), string(m[2])
+				wall, _ = time.ParseDuration(string(m[1])) // ignored: a wall that does not parse leaves 0, Judge's unknown
 				usage = u.String()
 			}
 			if s := nativeSpend.FindSubmatch(b); s != nil {
@@ -1146,7 +1148,7 @@ func (c *nativeChild) Result() member.Result {
 			// their rerun passed: the work is done as far as its gate says; the readers read it
 			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall}
 	})
 	return c.result
 }

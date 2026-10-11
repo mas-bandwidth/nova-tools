@@ -1580,6 +1580,25 @@ naming that card (`inbox: the sprint server does not serve friend cards (card
 daemon-writes-every-taken-card3 adds it) ...`), never once a loop; with no worker view to
 fall back on (`friend.NotServed`) it writes and retires nothing.
 
+**A refused verb.** A refusal the server answered (a non-zero exit, `friend.Refused`) is a
+fault the daemon raises, never only logs: it counts refusals per verb (friend cards, friend
+beat), and the third consecutive one is one down beat naming the reason
+(`friend.RefusalDown`, her beat says down with it) and one word to the coordinator, tried
+once each; a server that answers again clears the count and the down with one recovery
+line. On 2026-10-11 the coordinator's friend daemon was refused "You must hook in first"
+on friend cards and friend beat for eleven hours and only logged it: its row read down,
+no judgment reached the seat, nothing exited.
+
+**A lane proves its harness.** A claude lane runs `claude -p` on each card at once; a lane
+whose `--config-dir` was never signed in ends every run `terminal_reason api_error` in
+about a second, and the daemon finished each card FAILED and took the next, ~35 attempts
+in 6 minutes. A daemon whose harness cannot answer must take nothing: it runs the
+harness's cheapest no-tool turn at the start and after the second instant failure, before
+any take (`claude -p ok --output-format json --max-turns 1` with the lane's `CLAUDE_CONFIG_DIR`,
+run by the daemon itself, never a card child; dsh and
+gemini their equivalent one-turn invocation), reads its terminal reason, and while it
+cannot answer beats down with `harness <h> cannot answer: <terminal_reason> (config dir <dir>)`, tells the coordinator once, and re-proves every `ServedEvery` until it passes.
+
 ## The daemon stages every job it writes (pkg/friend/stage.go)
 
 On 2026-10-05 the first lanes of the rocketnet audit held with "no worktree, no remote" and the
@@ -1721,9 +1740,14 @@ a permission the harness refused, a turn stopped silent, the provider's
 refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
 (or beyond the live cap a rate limit lowered, below) finishes the turn under
-way and takes no other; a card it holds between turns goes back to the queue
-for a lane within the width. The silence watch, the provider's
-refusal streak and the broken session are the batch turn's, across every
+way and takes no other; a card it holds between turns waits on that lane. With
+server lanes the lane keeps what the server says it holds (`lane_take.go`): a
+hand-back to another lane is owed a server verb this daemon has not, and the
+server gives a working card only to the lane that holds it, so the card stays
+working on her row until the cap lets its lane run it. In a world with no
+server the card goes back to the queue for a lane within the width. The
+silence watch, the provider's refusal streak and the broken session are the
+batch turn's, across every
 lane. The friend daemon stamps progress on the sprint for each card whose
 one-shot turn printed since that card's last stamp (`stampProgress`, at most
 every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
@@ -1915,8 +1939,12 @@ pauses every new turn and open for a backoff, 30 s doubling to 10 minutes,
 and lowers the live lane cap by a quarter (at least one lane, never below
 one): 24, 18, 14, 11 ... Lanes whose turns started before that lowering met
 the same episode and change nothing. When the pause ends the lanes resume at
-the cap; a lane beyond it takes nothing and hands back a card it holds
-between turns. Every lane resume after a rate limit is jittered by +/-20% of
+the cap; a lane beyond it takes nothing. A card it holds between turns waits
+on that lane: with server lanes (`lane_take.go`) the lane keeps what the server
+says it holds, and a hand-back to another lane is owed a server verb this
+daemon has not, so the card stays working on her row until the cap lets its
+lane run it; in a world with no server it hands the card back to the queue.
+Every lane resume after a rate limit is jittered by +/-20% of
 the computed pause, drawn from an injectable random source (default `math/rand/v2`),
 so two lanes or friends on the same provider do not wake at the exact same instant
 to re-hit the rate limit in lockstep. A reported usage-limit reset (`PauseUntil`)
@@ -1990,7 +2018,9 @@ live until its reset, or, with none said, for one span (5 hours, 7 days)
 after the report; when it resets the width is the row's again with no word
 from anyone. The paced width sits under the rate-limit governor's cap (the
 lower of the two holds), never above the row; a lane beyond it takes nothing
-new and hands back a card it holds between turns, as beyond the cap.
+new and starts no turn, and a card it holds between turns is kept by a server
+lane as beyond the cap (above), handed back to the queue only in a world with
+no server.
 
 Each change of the paced width is one line on the record (`pacing: width
 <a> -> <b> of <w>, five_hour at <u>% of 80%, resets <t>`, and back up, `no

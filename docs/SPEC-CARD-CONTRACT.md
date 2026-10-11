@@ -271,6 +271,10 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
   (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
+  that ends under two minutes having written only its first RESULT.md — verdict `not-done`,
+  nothing committed and no gate — is the same kind, with the reason
+  `no result: the run ended at its first RESULT.md (verdict not-done, nothing committed, after <wall>)`.
+  A run
   its budget or its deadline ended with no result is failed work, the end said first, and
   for a budget which budget and at what count, from native's `NATIVE BUDGET` line, the cost
   the harness reported to the cent and rounded up
@@ -353,7 +357,11 @@ from an interrupted push, so a commit on any branch the child made, in the
 checkout or in a clone the shim linked to it, is found. The head must be on one of those
 fetched refs (the push repository keeps every launch's objects, so a commit being there is no
 evidence it is this launch's) and must descend from the staged commit, else the push is
-refused. A result head on none of those refs is replaced by the checkout's own head when the
+refused. The refusal tells three cases apart: a staged commit no branch or HEAD of the checkout
+holds (the child cut its branch again or reset it) is refused saying so; a head that parted from
+a staged commit the checkout does hold is refused naming their merge base (`none` for unrelated
+histories); and a git failure in the push repository is refused with git's own line. The first
+two say to put the commits on top of the staged commit and finish again. A result head on none of those refs is replaced by the checkout's own head when the
 child made exactly one line of work: exactly one fetched tip descends from the staged commit
 with a commit of its own; it is pushed, never forced, and the member's output says
 `NOTE push <card> head: the result named <claimed>, which is no commit of the checkout; the

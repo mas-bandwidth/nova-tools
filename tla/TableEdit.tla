@@ -1,8 +1,9 @@
 ---------------------------- MODULE TableEdit ----------------------------
-\* The edit verbs of nova-table (table.lua as composed in nova-tools#4457):
-\* set (footer, rename, columns), row add (many), row hide/show (many),
-\* row set (text), column hide/show, beside cell add/move which place the
-\* members the edits must keep. One table; Taken are the names other
+\* The edit verbs of today's nova-table (pkg/nsprint/fn/lua/table.lua):
+\* ns_table_set (:1354; footer, rename, columns), ns_table_rows_add (:1213),
+\* ns_table_rows_hide (:1222), ns_table_row_set (:1236), and the reshape
+\* T.reshape (:1263-1300) that a columns edit runs; beside cell add/move which
+\* place the members the edits must keep. One table; Taken are the names other
 \* tables hold.
 \*
 \* Staged = TRUE is the kernel of #4457: every check, the stored key types

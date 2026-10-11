@@ -45,7 +45,7 @@ func TestSopsCoverAgeKeygenVersionParsesProbeOutput(t *testing.T) {
 	}{
 		{"the minimum version is accepted", "1.3.2", "1.3.2", ""},
 		{"a v-prefixed newer version is accepted", "v1.4.0", "1.4.0", ""},
-		{"an older version is refused with the remedy", "1.2.9", "1.2.9", "too old; minimum required is 1.3.2; run: brew upgrade age"},
+		{"an older version is refused with the remedy", "1.2.9", "1.2.9", "too old; minimum required is 1.3.2; run: " + toolRemedy("age", true, runtime.GOOS)},
 		{"unparseable output is refused", "age-keygen fake", "", "unable to parse age-keygen version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,7 +87,56 @@ func TestSopsCoverAgeKeygenVersionRefusesABinaryItCannotExecute(t *testing.T) {
 			t.Parallel()
 			_, err := CheckAgeKeygenVersion(realExecCommand, tc.path)
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "is absent or not executable; run: brew install age")
+			assert.Contains(t, err.Error(), "is absent or not executable; run: "+toolRemedy("age", false, runtime.GOOS))
+		})
+	}
+}
+
+// sopsCoverFakeSops writes a fake sops whose --version probe prints output.
+func sopsCoverFakeSops(t *testing.T, output string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "sops")
+	require.NoError(t, testbin.WriteExecutable(path, []byte("#!/bin/sh\necho '"+output+"'\n"), 0o755))
+	return path
+}
+
+// TestSopsCoverRemediesNameThePlatformsInstall pins the remedy each of the four
+// version refusals carries for darwin and linux, read through the goos-named
+// twins: the command the platform actually has, copied from internal/up/layout.go's
+// tools table -- brew on darwin, go install for sops elsewhere, apt for age on
+// linux -- and never Homebrew off darwin.
+func TestSopsCoverRemediesNameThePlatformsInstall(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell-script fakes are unavailable on Windows; the probe runs the binary at the path it is handed")
+	}
+	absent := filepath.Join(t.TempDir(), "no-such-tool")
+	oldSops := sopsCoverFakeSops(t, "sops 3.9.0")
+	oldAge := sopsCoverFakeAgeKeygen(t, "1.2.9")
+
+	for _, tc := range []struct {
+		name string
+		goos string
+		run  func() (string, error)
+		want string
+	}{
+		{"sops absent on darwin", "darwin", func() (string, error) { return checkSopsVersion(realExecCommand, absent, "darwin") }, "is absent or not executable; run: brew install sops"},
+		{"sops absent on linux", "linux", func() (string, error) { return checkSopsVersion(realExecCommand, absent, "linux") }, "is absent or not executable; run: go install github.com/getsops/sops/v3/cmd/sops@latest"},
+		{"sops too old on darwin", "darwin", func() (string, error) { return checkSopsVersion(realExecCommand, oldSops, "darwin") }, "is too old; minimum required is 3.13.3; run: brew upgrade sops"},
+		{"sops too old on linux", "linux", func() (string, error) { return checkSopsVersion(realExecCommand, oldSops, "linux") }, "is too old; minimum required is 3.13.3; run: go install github.com/getsops/sops/v3/cmd/sops@latest"},
+		{"age-keygen absent on darwin", "darwin", func() (string, error) { return checkAgeKeygenVersion(realExecCommand, absent, "darwin") }, "is absent or not executable; run: brew install age"},
+		{"age-keygen absent on linux", "linux", func() (string, error) { return checkAgeKeygenVersion(realExecCommand, absent, "linux") }, "is absent or not executable; run: sudo apt-get install -y age"},
+		{"age-keygen too old on darwin", "darwin", func() (string, error) { return checkAgeKeygenVersion(realExecCommand, oldAge, "darwin") }, "is too old; minimum required is 1.3.2; run: brew upgrade age"},
+		{"age-keygen too old on linux", "linux", func() (string, error) { return checkAgeKeygenVersion(realExecCommand, oldAge, "linux") }, "is too old; minimum required is 1.3.2; run: sudo apt-get install -y age"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := tc.run()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			if tc.goos != "darwin" {
+				assert.NotContains(t, err.Error(), "brew")
+			}
 		})
 	}
 }

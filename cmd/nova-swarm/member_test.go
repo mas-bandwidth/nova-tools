@@ -288,6 +288,21 @@ func TestNativeChildPrintedIsItsLogModTime(t *testing.T) {
 	require.True(t, c.Printed().IsZero(), "Printed of a log that is not there = %v, want the zero time", c.Printed())
 }
 
+// TestNativeChildResultCarriesTheNativeWall pins that the wall the NATIVE line
+// states reaches Result.Wall, the run's clock Judge reads to tell a first
+// RESULT.md from a finish (cmd/nova-swarm/member.go, nativeSpent; a wall that
+// does not parse leaves 0).
+func TestNativeChildResultCarriesTheNativeWall(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "c1.native.log")
+	write(t, logPath, "NATIVE OK label=c1 job=/j rc=0 wall=62.0s harness=opencode budget=unmetered\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: logPath, done: done}
+	require.Equal(t, 62*time.Second, c.Result().Wall)
+}
+
 // memberFull is every flag of `member` the verb requires, valid.
 func memberFull(root string) []string {
 	return []string{"member", "--as", "m1", "--server", "sprint.test:6390", "--width", "2", "--harness", "/bin/true", "--model", "p/m",
