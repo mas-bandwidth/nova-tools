@@ -867,6 +867,8 @@
     contract, and posts its exit code and output for the pass goroutine's collect to apply; a launch being reported
     is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
     reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
-    its reports, so it is still one step. The lander's diffcheck now holds a package's tests always inside PATHS
-    (cardgen.AlwaysInPathsRule), so the tests this changes beside the member source are in scope."
-   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w8")))
+    its reports, so it is still one step. A report whose claim moved while it ran is collected as reaped, never
+    applied: its post is applied only once the collecting pass has read the queue, so the moved re-check consults
+    the queue that pass just read, never the previous pass's. The lander's diffcheck now holds a package's tests
+    always inside PATHS (cardgen.AlwaysInPathsRule), so the tests this changes beside the member source are in scope."
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")))
