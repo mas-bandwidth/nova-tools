@@ -1488,6 +1488,7 @@ type MemberCreateOp struct {
 }
 
 // MemberMoveOp moves an existing member to row, column, with optional new score.
+// tla/MemberTable.tla MemberMove
 type MemberMoveOp struct {
 	Row   string   `json:"row"`
 	Col   string   `json:"col"`

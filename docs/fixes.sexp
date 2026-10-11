@@ -491,6 +491,20 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-table-layer-headers-name-table-lua" :release "v1.2.12" :status "planned"
+   :title "The table layer's headers name the table.lua they model"
+   :text "EpochMemberTable and MemberTable no longer say PROPOSED: the epoch composition and member
+    placement they model are what pkg/nsprint/fn/lua/table.lua implements today (STALE and EPOCHAHEAD
+    :1159-1164, MEMBEREPOCH :665 and :687, the per-table place:<name> :700, OWNEDALIAS :891, OCCUPIED
+    :917 and :921, PLACED :1636, DRIFT :939). MemberMove keeps its row/col shape: the batch member move
+    names a destination row and column (MemberMoveOp, store.go:1491; table.lua:2806, :2816), and only
+    the separate cell move verb is row-only (table.lua:1619). TableMachine says it is the baseline of
+    table-pinned.lua, whose six findings hold only there (tlacheck witnesses); TableEdit cites the
+    current ns_table_set :1354, ns_table_rows_add :1213, ns_table_rows_hide :1222, ns_table_row_set
+    :1236 and T.reshape :1263-1300. TABLE-MODEL.md and MEMBER-TABLE-MODEL.md say the same where they
+    said proposed. Tests and models only, no product change."
+   :origin "the card tla-table-layer-headers-name-table-lua.w1 (stream v1212), from the v1.2.12 inventory item T35 (the table layer)")
+
   (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
    :title "Unit tests pin how nova-friend run, serve and the dispatcher answer faults"
    :text "cmd/nova-friend/run_serve_faults_test.go drives the wall and hook dispatch, the coordinator's
