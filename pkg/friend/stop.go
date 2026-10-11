@@ -134,7 +134,6 @@ func (s LaneState) owed() int {
 // once each, records what it owes, and sends what it owes whose run has ended; it returns
 // whether the machine is STOPPED, so the step starts nothing. The word RUNNING lifts the
 // hold, said once, and what is still owed (a restart's) is sent all the same.
-// tla/StopCancels.tla Stop
 func (l *loop) stopStep(now time.Time) bool {
 	d, s := l.d, l.lanes
 	at := now.UTC().Format(time.RFC3339)
@@ -188,7 +187,6 @@ func (l *loop) oweStopReturn(r StopReturn) {
 // stopDone is a lane's turn ending after the stop cancelled it: the card leaves the lane's
 // hand, never finished, its lane mark released, and its stop-return is sent now that the run
 // has ended.
-// tla/StopCancels.tla End
 func (l *loop) stopDone(ln *lane, t *turn, r laneResult, now time.Time) {
 	d, s := l.d, l.lanes
 	at := now.UTC().Format(time.RFC3339)
@@ -217,7 +215,6 @@ func (l *loop) stopDone(ln *lane, t *turn, r laneResult, now time.Time) {
 // daemon's StopReturn (else its Sprint); the server's answer is recorded on the record,
 // which is kept (StopReturnsKept) as the ack's evidence, and a refusal is tried again
 // next step.
-// tla/StopCancels.tla Return
 func (l *loop) returnOwed(now time.Time) {
 	d, s := l.d, l.lanes
 	at := now.UTC().Format(time.RFC3339)
@@ -294,7 +291,6 @@ func (d *Daemon) OwedStopReturns() int { return int(d.owed.Load()) }
 
 // stopReads cancels every read under way, once each, and owes its stop-return as the
 // reader row's.
-// tla/StopCancels.tla Read
 func (l *loop) stopReads(now time.Time) {
 	d, s := l.d, l.reads
 	at := now.UTC().Format(time.RFC3339)
@@ -331,7 +327,6 @@ func (l *loop) stopReads(now time.Time) {
 
 // stopReadDone is a read ending after the stop cancelled it: no verdict and no return are
 // recorded; its stop-return is sent now that the run has ended.
-// tla/StopCancels.tla ReadEnd
 func (l *loop) stopReadDone(r readResult, now time.Time) {
 	d, s := l.d, l.lanes
 	exit := r.turn.Exit
@@ -351,7 +346,6 @@ func (l *loop) stopReadDone(r readResult, now time.Time) {
 // releaseHeld is a lane holding a card it has not launched when the word is STOPPED (the
 // window between the claim and the start): the card is given up as a cancelled one is,
 // with no run to end: owed with Ended set, out of Started, its lane mark removed.
-// tla/StopCancels.tla GiveUpHeld
 func (l *loop) releaseHeld(ln *lane, now time.Time) {
 	d := l.d
 	at := now.UTC().Format(time.RFC3339)

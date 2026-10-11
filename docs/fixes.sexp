@@ -677,7 +677,7 @@
     launches through the stop, breaking NoLaunchAfterStop). NoLaunchAfterStop still holds. Only lanes
     and reads are cancelled: a batch turn already running goes on (a dealt-card turn started by
     startDealt, daemon.go), a v1.2.14 candidate."
-   :origin "card tla-stopcancels-held-cards-and-reads.w6 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+   :origin "card tla-stopcancels-held-cards-and-reads.w7 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
