@@ -144,17 +144,25 @@ func (p *ProviderProxy) takeBudget(ctx context.Context, holder string) bool {
 
 // limitRefusal says an upstream answer is the provider's rate or concurrency limit: a 429,
 // or a 4xx or 5xx whose body says so (DeepSeek's "Your current concurrency is 9/12, which
-// exceeds your concurrency limit"). body is what was read of it.
+// exceeds your concurrency limit"). body is what was read of it. A refusal whose body says
+// the credit or quota is spent is NEVER one, whatever its status, a 429 included (OpenAI's
+// insufficient_quota, "exceeded your current quota"): the provider classifier's own words
+// for credit (causeCreditRE, ClassifyProvider's CauseCredit) decide it, so the take ends as
+// before and the sprint writes the provider's credit rest.
 func limitRefusal(status int, body []byte) bool {
-	if status == http.StatusTooManyRequests {
-		return true
-	}
 	if status < 400 {
 		return false
 	}
-	low := strings.ToLower(string(body))
-	if strings.Contains(low, "insufficient") || strings.Contains(low, "balance") || strings.Contains(low, "credit") || strings.Contains(low, "quota") {
+	text := string(body)
+	if causeCreditRE.MatchString(text) {
+		return false
+	}
+	low := strings.ToLower(text)
+	if strings.Contains(low, "balance") || strings.Contains(low, "credit") {
 		return false // out of funds is never a rate limit: it ends the take as before
+	}
+	if status == http.StatusTooManyRequests {
+		return true
 	}
 	return strings.Contains(low, "too many requests") || strings.Contains(low, "rate limit") ||
 		strings.Contains(low, "concurrency") && strings.Contains(low, "exceed")

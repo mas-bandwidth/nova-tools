@@ -189,6 +189,19 @@ func TestOutOfFundsIsNotRetried(t *testing.T) {
 	}
 }
 
+// A 429 that says the quota is spent is out of credit, not a rate limit: handed to the
+// harness once, so the take ends and the sprint rests the provider for its credit.
+func TestAQuota429IsNotRetried(t *testing.T) {
+	t.Parallel()
+	srv, n := upstreamSays(t, [2]string{"429", `{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}`})
+	b := &budgetProbe{answer: func(int) (bool, time.Duration, error) { return true, 0, nil }}
+	p := proxyWith(t, srv.URL, b)
+	code, body := harnessPost(t, p)
+	if code != 429 || !strings.Contains(body, "insufficient_quota") || n.Load() != 1 || len(b.sleeps) != 0 {
+		t.Fatalf("got %d %q after %d requests and backoffs %v: a quota 429 must reach the harness once", code, body, n.Load(), b.sleeps)
+	}
+}
+
 // With no budget the proxy is as it was: a 429 reaches the harness.
 func TestAnUnlimitedRouteIsUnchanged(t *testing.T) {
 	t.Parallel()
@@ -255,6 +268,9 @@ func TestLimitRefusal(t *testing.T) {
 		{503, "Too Many Requests", true},
 		{402, "Insufficient Balance", false},
 		{429, "", true},
+		{429, `{"error":{"type":"insufficient_quota"}}`, false},
+		{429, `{"error":{"message":"You exceeded your current quota, please check your plan and billing details."}}`, false},
+		{429, `{"error":{"message":"Rate limit reached for requests"}}`, true},
 		{400, "rate limit: insufficient quota", false},
 		{401, "bad key", false},
 		{500, "internal", false},
