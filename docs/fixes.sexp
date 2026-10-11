@@ -478,6 +478,18 @@
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
+  (fix "tla-loopredial-names-what-the-code-cites" :release "v1.2.12" :status "planned"
+   :title "The LoopRedial model names what sprintredial.go cites"
+   :text "Tests and models only, no product change. LoopRedial now holds the actions and properties
+    sprintredial.go cites: the dial is Redial (a verb on a fresh connection whose error is how a
+    restart is noticed), the backoff doubles one second to MaxBackoff and is bounded by the new
+    invariant BackoffBounded, and the reversed witness nobound doubles a failed verb's backoff past
+    the bound and fails BackoffBounded. NoParkOnDropped (the dead connection the code avoids) and
+    BeatsAgain stay, MCLoopRedialBrokenNoRedial keeps its NoParkOnDropped failure, and the comments
+    in sprintredial.go name the actions and properties the module has; DeadConnection and Backoff
+    had no counterpart and left. pkg/member/member.go still does not cite the module."
+   :origin "the card tla-loopredial-names-what-the-code-cites.w4 (stream v1212)")
+
   (fix "tla-reach-from-a-step-and-early-proof" :release "v1.2.12" :status "planned"
    :title "Reach models --from, an early proof and a refused window"
    :text "Reach.tla drifted from cmd/nova-friend/reach.go: the model started at bus and left a step
