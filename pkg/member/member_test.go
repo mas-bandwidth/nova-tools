@@ -594,10 +594,10 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
 }
 
-// TestBeatCarriesNoLoadOfItsOwn pins the beat as `fleet beat <member>` alone, however
-// many cards are running: the load is the machine's CPU use, which nova-sprint fleet beat
-// measures and keeps the ten-second peak of (docs/SPEC-SPRINT.md, the fleet), never the
-// member's running over its width.
+// TestBeatCarriesNoLoadOfItsOwn pins the beat as `fleet beat <member> --load <pct>`,
+// the member's own running never in it: with no meter the load is 0, and the machine's
+// CPU use is what nova-sprint keeps the ten-second peak of (docs/SPEC-SPRINT.md, the
+// fleet), never the member's running over its width.
 func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ running, width int }{{0, 4}, {1, 3}, {2, 2}} {
@@ -615,7 +615,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
-			require.Equal(t, []string{"fleet beat m --stop-returns 0"}, g.s.lines("beat"))
+			require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"))
 		})
 	}
 }
@@ -1462,12 +1462,12 @@ func secondsOfLoad(pcts ...float64) (s *hostload.Sampler, feed func(...float64))
 // TestBeatCarriesTheHighestSecondSinceTheLastBeat: the beat names the highest of the
 // one-second samples taken since the last beat that was written (so nova-sprint's own
 // ten-second highest over the beats is the highest of the last ten seconds, not of
-// twenty); with no sample it names none and the beat measures; a beat the store did not
-// answer leaves its samples for the next.
+// twenty); with no sample it names the last sample it had, else 0, so it never beats
+// without --load; a beat the store did not answer leaves its samples for the next.
 func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	t.Parallel()
 	meter, feed := secondsOfLoad()
-	g := newRig(Config{As: "m", Width: 1, Meter: meter})
+	g := newRig(Config{As: "m", Width: 1, Meter: meter, LoadUnmeasured: func() bool { return false }})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	beat := func() string {
 		t.Helper()
@@ -1475,10 +1475,10 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 		require.NoError(t, g.m.Beat())
 		return strings.Join(g.s.lines("beat"), "|")
 	}
-	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample yet: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 0.0", beat(), "no sample yet: the beat names 0")
 	feed(10, 70, 20)
 	require.Equal(t, "fleet beat m --stop-returns 0 --load 70.0", beat(), "10, 70, 20 beat 70")
-	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample since: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 70.0", beat(), "no sample since: the last one rides again")
 	feed(5, 5, 5)
 	g.s.set("beat", 2, "no store")
 	g.s.reset()

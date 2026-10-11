@@ -546,6 +546,16 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "a-member-beat-always-carries-its-load" :release "v1.2.12" :status "planned"
+   :title "A member's beat always carries its load"
+   :text "The member's beat sent `fleet beat <member> --stop-returns N` and added `--load` only when
+    its meter had a sample; nova-sprint's fleet beat refuses a beat without --load because the server
+    cannot measure the worker's machine, so on darwin/amd64, where the meter had no sample, every beat
+    was refused and the member read down (batman and superman, 17,881 refusals). The beat now always
+    names a load: the meter's highest sample since the last written beat, else the last sample it had,
+    else 0, with --load-unmeasured when the installed `fleet beat -h` lists that flag."
+   :origin "card a-member-beat-always-carries-its-load.w2 (the seat, 2026-10-11 ~18:35Z: the fleet adopt of v1.2.11 took batman and superman down within four minutes)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
