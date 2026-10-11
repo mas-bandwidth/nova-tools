@@ -458,6 +458,20 @@
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
+  (fix "tla-table-layer-headers-name-table-lua" :release "v1.2.12" :status "planned"
+   :title "The table layer's headers name the table.lua they model"
+   :text "EpochMemberTable and MemberTable no longer say PROPOSED: the epoch composition and member
+    placement they model are what pkg/nsprint/fn/lua/table.lua implements today (STALE and EPOCHAHEAD
+    :1159-1164, MEMBEREPOCH :665 and :687, the per-table place:<name> :700, OWNEDALIAS :891, OCCUPIED
+    :917 and :921, PLACED :1636, DRIFT :939). MemberNext is restricted to a move within the row, as the
+    code's move is (table.lua:1619), with the new action property SameRowMove and the reversed witness
+    MCMemberBrokenCrossRow, which fails SameRowMove. TableMachine says it is the baseline of
+    table-pinned.lua, whose six findings hold only there (tlacheck witnesses); TableEdit cites the
+    current ns_table_set :1354, ns_table_rows_add :1213, ns_table_rows_hide :1222, ns_table_row_set
+    :1236 and T.reshape :1263-1300. TABLE-MODEL.md and MEMBER-TABLE-MODEL.md say the same where they
+    said proposed. Tests and models only, no product change."
+   :origin "the card tla-table-layer-headers-name-table-lua.w1 (stream v1212), from the v1.2.12 inventory item T35 (the table layer)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
