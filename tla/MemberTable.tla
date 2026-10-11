@@ -1,7 +1,13 @@
 -------------------------- MODULE MemberTable --------------------------
-\* PROPOSED protocol, not today's Lua: one record location per table,
-\* updated atomically with the owned cell. Extends the pinned baseline's
-\* concrete state so every extra guard and record write is visible here.
+\* The member placement protocol table.lua implements today
+\* (pkg/nsprint/fn/lua/table.lua): one record location per table, written
+\* atomically with the owned cell. OWNEDALIAS (:891) and OCCUPIED (:917, :921)
+\* refuse a shape that would drop or alias an occupied cell, PLACED (:1636)
+\* refuses a second placement, and DRIFT (:939) refuses a record whose
+\* place:<table> disagrees with its set. Move carries a member to any owned
+\* cell of the same table, across rows included (MemberMoveOp, store.go:1491;
+\* table.lua:2806, :2816). Extends the pinned baseline's concrete state so
+\* every extra guard and record write is visible here.
 EXTENDS TableMachine
 VARIABLE place
 mvars == <<vars,place>>
@@ -37,7 +43,7 @@ MemberMove(w,c,d,m) ==
  IF Writable(c) /\ Writable(d) /\ place[m][c[1]]=c
  THEN Move(w,c,d,m) /\ place'=[place EXCEPT ![m][c[1]]=d]
  ELSE MemberRefuse(w,"move-refused")
-\* Proposed lossless reshape: every currently owned entry remains owned
+\* Lossless reshape: every currently owned entry remains owned
 \* and visible in the new shape. Deleting an occupied row or rebinding an
 \* occupied cell must first use the explicit member move/remove verb.
 ShapeKeepsOwned(t,rs,bs) ==

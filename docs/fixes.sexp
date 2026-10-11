@@ -491,6 +491,20 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-table-layer-headers-name-table-lua" :release "v1.2.12" :status "planned"
+   :title "The table layer's headers name the table.lua they model"
+   :text "EpochMemberTable and MemberTable no longer say PROPOSED: the epoch composition and member
+    placement they model are what pkg/nsprint/fn/lua/table.lua implements today (STALE and EPOCHAHEAD
+    :1159-1164, MEMBEREPOCH :665 and :687, the per-table place:<name> :700, OWNEDALIAS :891, OCCUPIED
+    :917 and :921, PLACED :1636, DRIFT :939). MemberMove keeps its row/col shape: the batch member move
+    names a destination row and column (MemberMoveOp, store.go:1491; table.lua:2806, :2816), and only
+    the separate cell move verb is row-only (table.lua:1619). TableMachine says it is the baseline of
+    table-pinned.lua, whose six findings hold only there (tlacheck witnesses); TableEdit cites the
+    current ns_table_set :1354, ns_table_rows_add :1213, ns_table_rows_hide :1222, ns_table_row_set
+    :1236 and T.reshape :1263-1300. TABLE-MODEL.md and MEMBER-TABLE-MODEL.md say the same where they
+    said proposed. Tests and models only, no product change."
+   :origin "the card tla-table-layer-headers-name-table-lua.w1 (stream v1212), from the v1.2.12 inventory item T35 (the table layer)")
+
   (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
    :title "Unit tests pin how nova-friend run, serve and the dispatcher answer faults"
    :text "cmd/nova-friend/run_serve_faults_test.go drives the wall and hook dispatch, the coordinator's
@@ -555,6 +569,19 @@
     names a load: the meter's highest sample since the last written beat, else the last sample it had,
     else 0, with --load-unmeasured when the installed `fleet beat -h` lists that flag."
    :origin "card a-member-beat-always-carries-its-load.w2 (the seat, 2026-10-11 ~18:35Z: the fleet adopt of v1.2.11 took batman and superman down within four minutes)")
+  (fix "tla-cardcontract-retire-the-sprint-actions" :release "v1.2.12" :status "planned"
+   :title "CardContract retires the sprint's redeal, retire, restage, staging bound and level"
+   :text "CardContract.tla's Redeal, Retire, Restage, StagingAll and Level modelled internal/sprint's side
+    (the redeal after a provider finish, the retire at the redeal bound, the restage after a staging
+    refusal, the staging bound and the level), which moved to nova-sprint in v1.2.3 and nothing in
+    nova-tools runs. Those actions, the sprint-side variables (rt, tried, rds, fw, bj, mem, refused, sj,
+    lvd) and constants (Routes, MaxRedeals, Members), and the invariants they alone reached
+    (NeverOnARefuser, StagingBoundJudgedOnce, RedealBound, BoundJudgedOnce, RedealAvoidsFailedRoute,
+    RedealRestagesTheSameBase) are removed, with their reversed witnesses (sameroute, unbounded,
+    levelrefuser) and their CASES.tsv and RUNS.tsv rows. The member's push and the one judgment stay; a
+    provider finish and a staging refusal are now terminal finishes, and EveryLaunchEnds is restated over
+    them. Tests and models only, no product change."
+   :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
