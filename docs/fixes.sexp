@@ -654,6 +654,17 @@
     the module does not model. Tests and models only, no product change."
    :origin "card tla-delivery-note-from-the-seat.w10 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-benchrun-an-interrupted-exec-ran" :release "v1.2.12" :status "planned"
+   :title "BenchRun's exec interrupt kills the command, never refuses a run that ran"
+   :text "BenchRun.tla's header names pkg/bench, not internal/bench. The Interrupt action is split into
+    InterruptCopy (an interrupt during the copy refuses the run, as before) and InterruptExec (an
+    interrupt during the exec sets ranCmd and exits Killed, the code's sshLine ExitCode -1, stored as
+    Code by runIn and the verb's exit); the new InterruptedExecRan invariant holds that a run whose
+    command ran is never refused. The reversed witness MCBenchRunBrokenInterruptRefused.cfg (an exec
+    interrupt that refuses a run whose command ran) fails it. cmd/nova-ci/bench.go cites the module from
+    its exit mapping. Tests and models only, no product change."
+   :origin "card tla-benchrun-an-interrupted-exec-ran.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
