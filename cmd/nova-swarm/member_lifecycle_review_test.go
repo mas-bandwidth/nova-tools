@@ -88,16 +88,9 @@ func (lcrShaPusher) Push(member.Packet, member.Result) member.Push {
 	return member.Push{Sha: "0123456789abcdef0123456789abcdef01234567"}
 }
 
-// DEFECT: the cleaner removes the directory of a running launch that reuses an ended launch's
-// name. A launch's name is <card>.g<gen>.e<epoch>, so a card run again at the same claim reuses
-// it: here an ok finish the sprint refuses (exit 1: "its primary is not working on it") is
-// forgotten (member.go, Tick: `m.forget(id, ...)` "refused (1) too") and Ended tags the name
-// for the cleaner, and the next pass recovers the still-working card at the same gen and epoch
-// and starts it again under the same name. The cleaner works its queue apart from the pass, up
-// to cleanQueue behind, each removal a whole staged clone; when it reaches the tag,
-// clean (slotclean.go, `if !e.failed { r.removeLaunch(e.name) }`) removes the directory by name
-// without asking whether a launch of that name is live again: the new child's checkout is
-// removed under it. (prune checks r.live; clean does not.)
+// A delayed cleanup tag must not remove a new live launch's directory when the launch name
+// is reused. Drive the runner lifecycle directly: a refused finish of a pushed generation
+// retries the finish, never the run, so it cannot arrange this cleaner interleaving.
 func TestReviewTheCleanerKeepsTheDirectoryOfANewLaunchOfTheSameName(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -105,17 +98,14 @@ func TestReviewTheCleanerKeepsTheDirectoryOfANewLaunchOfTheSameName(t *testing.T
 	require.NoError(t, os.MkdirAll(slots, 0o755))
 	nr := &nativeRunner{root: root, slots: slots, stderr: io.Discard, tagged: make(chan ended, cleanQueue)} // the cleaner is behind: its queue is worked by the test
 	rn := &lcrDirRunner{nr: nr}
-	sp := &lcrSprint{finishCode: 1}
-	m := member.New(member.Config{As: "m1", Width: 1}, sp, rn, lcrShaPusher{}, &bytes.Buffer{})
+	p := lcrPacket()
 
-	_, err := m.Tick(time.Unix(0, 0)) // recovers c1: launch c1.g1.e1
+	_, err := rn.Start(p)
 	require.NoError(t, err)
 	require.Len(t, rn.children, 1)
 	rn.children[0].end()
-	_, err = m.Tick(time.Unix(0, 0)) // pushed, finish refused (exit 1): forgotten, Ended, tagged
-	require.NoError(t, err)
-	require.Equal(t, 1, sp.finishes)
-	_, err = m.Tick(time.Unix(0, 0)) // the card is still working: recovered under the same name
+	rn.Ended(p, false) // the old launch is tagged, but the cleaner has not reached it
+	_, err = rn.Start(p)
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1.g1.e1", "c1.g1.e1"}, rn.names, "the same launch name, started again")
 	require.False(t, rn.children[1].Done(), "the new launch is running")
