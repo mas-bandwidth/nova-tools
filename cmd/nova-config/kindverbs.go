@@ -677,7 +677,10 @@ func laterKind(k *config.Kind) bool {
 
 // runKindLint is <kind> lint: it validates every stored row of the kind against
 // its field validators and prints one LINT line per failing field with the value
-// and a fix hint. All rows pass: LINT OK rows=<n>.
+// and a fix hint. Every stored value goes through the field's write-time
+// validator, so an empty value is never skipped; an empty value the write path
+// refuses is a LINT line like any other (docs/SPEC-CONFIG.md, the friend kind's
+// fields and their required column). All rows pass: LINT OK rows=<n>.
 func runKindLint(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " lint"
 	fs := verbflag.New(verb)
@@ -707,21 +710,21 @@ func runKindLint(ctx context.Context, k *config.Kind, args []string, stdout, std
 	var issues []string
 	for _, row := range rows {
 		for _, f := range k.Fields {
-			if row.Fields[f.Name] == "" {
+			value := row.Fields[f.Name]
+			if !lintField(f, value) {
 				continue
 			}
-			_, err := f.Canonical(row.Fields[f.Name])
-			if err != nil {
-				issues = append(issues, fmt.Sprintf("LINT %s %s: %s: %s; run: "+toolName+" %s set %s --%s <value>", k.Name, row.Name, f.Name, row.Fields[f.Name], k.Name, row.Name, f.Name))
+			fix := fmt.Sprintf("run: "+toolName+" %s set %s --%s <value>", k.Name, row.Name, f.Name)
+			if len(f.Enum) > 0 {
+				fix = fmt.Sprintf("run: "+toolName+" %s set %s --%s %s", k.Name, row.Name, f.Name, strings.Join(f.Enum, ","))
 			}
+			issues = append(issues, fmt.Sprintf("LINT %s %s: %s: %s; %s", k.Name, row.Name, f.Name, value, fix))
 		}
 	}
 
 	if *asJSON {
 		o := tool.Done().Fact("kind", k.Name).Fact("rows", len(rows)).Fact("issues", len(issues))
-		for _, issue := range issues {
-			o.Notes = append(o.Notes, issue)
-		}
+		o.Notes = append(o.Notes, issues...)
 		o.Verb = verb
 		return emit(stdout, o)
 	}
@@ -735,4 +738,19 @@ func runKindLint(ctx context.Context, k *config.Kind, args []string, stdout, std
 	}
 	fmt.Fprintf(stdout, "LINT found=%d rows=%d\n", len(issues), len(rows))
 	return 1
+}
+
+// lintField reports whether a stored field value would fail the write path:
+// the field's validator refuses the value, or an empty value names nothing
+// where the write path means a value -- a required field, or a constrained
+// list like a friend's roles, whose empty form names no role at all
+// (docs/SPEC-CONFIG.md, the friend kind's fields and their required column).
+// The value always goes through Canonical, so an empty value is never
+// skipped, and a field the write path leaves empty on purpose (a friend's
+// config_dir, streams or kinds) is not flagged.
+func lintField(f config.Field, value string) bool {
+	if _, err := f.Canonical(value); err != nil {
+		return true
+	}
+	return value == "" && (f.Required || (f.Type == config.TypeList && len(f.Enum) > 0))
 }

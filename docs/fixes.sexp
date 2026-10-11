@@ -732,4 +732,9 @@
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
-   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")))
+   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+
+  (fix "nova-config-lints-every-stored-friend-row" :release "v1.2.14" :status "planned"
+   :title "nova-config lints every stored friend row"
+   :text "nova-config friend lint reads every stored friend row and runs each field's write-time validator over it: a value the write refuses -- the retired batch mode, an out-of-range int -- is a LINT line naming the field, the value and the fix command, and so is an empty value the write path means to fill, a required field or a constrained list like roles. A store whose rows all pass prints LINT OK rows=<n> at exit 0, and a hand-edited or old row is caught before a daemon reads a value the write would have refused."
+   :origin "card nova-config-lints-every-stored-friend-row.w3, attempt 3; the owner, 2026-10-11: the coordinator's friend row read mode=batch roles=reader for a day, the daemon ran it as one-shot and the deal never handed it work, a value the write refuses and the read never said so")))

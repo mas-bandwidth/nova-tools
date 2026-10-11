@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -22,8 +23,8 @@ func TestFriendLintValidatesStoredRows(t *testing.T) {
 	code, _, errs := h.run(t, "migrate", "--file", fileName)
 	require.Equal(t, 0, code, "migrate should succeed: %s", errs)
 
-	// Add a valid friend row (slots must be >= default width 8)
-	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--file", fileName, "--as", "test")
+	// Add a valid friend row (slots must be >= default width 8; roles must name one)
+	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--roles", "builder", "--file", fileName, "--as", "test")
 	require.Equal(t, 0, code, "friend add should succeed: %s", errs)
 
 	code, out, errs := h.run(t, "friend", "lint", "--file", fileName)
@@ -33,7 +34,7 @@ func TestFriendLintValidatesStoredRows(t *testing.T) {
 }
 
 // TestFriendLintReportsBatchMode tests that friend lint catches stored rows
-// with the retired batch mode and reports them as lint issues.
+// with arbitrary invalid values, but a row the write path would accept is OK.
 func TestFriendLintReportsBatchMode(t *testing.T) {
 	t.Parallel()
 
@@ -46,7 +47,7 @@ func TestFriendLintReportsBatchMode(t *testing.T) {
 	require.Equal(t, 0, code, "migrate should succeed: %s", errs)
 
 	// Add a valid friend row (batch mode is not allowed via add/set)
-	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--file", fileName, "--as", "test")
+	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--roles", "builder", "--file", fileName, "--as", "test")
 	require.Equal(t, 0, code, "friend add should succeed: %s", errs)
 
 	// lint should report LINT OK since no invalid rows exist
@@ -73,26 +74,42 @@ func TestFriendLintEmptyStore(t *testing.T) {
 	require.Contains(t, out, "rows=0")
 }
 
-// TestFriendLintCatchesBatchMode tests that lint detects stored rows with
-// the retired batch mode and reports them as lint issues.
+// TestFriendLintCatchesBatchMode tests that lint detects a stored row whose
+// value the write path refuses, whatever the field: the retired batch mode,
+// and an empty list (roles) that names no role at all. Both are written by
+// hand to bypass the write-time refusal the way an old or edited store would.
 func TestFriendLintCatchesBatchMode(t *testing.T) {
 	t.Parallel()
 
-	h := newHarness()
-	h.dir = t.TempDir()
+	for _, tc := range []struct {
+		name  string
+		mode  string
+		roles string
+		// field and fix are the field and the fix command the LINT line must carry.
+		field string
+		fix   string
+	}{
+		{name: "batch mode", mode: "batch", roles: "builder", field: "mode", fix: "--mode one-shot"},
+		{name: "empty roles", mode: "one-shot", roles: "", field: "roles", fix: "--roles builder,may-hold,reader"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Create file store with a row that has mode=batch (bypassing write validation)
-	fileName := "batch.json"
-	filePath := h.dir + "/" + fileName
-	// Create the file with a friend row that has mode=batch
-	// This simulates a row written before batch was retired
-	data := `{"schema":1,"rows":{"friend":{"batchy":{"name":"batchy","Fields":{"slots":"8","tiers":"flash","roles":"","width":"8","mode":"batch","config_dir":"","token_cap":"6000000","streams":"","kinds":""}}}},"history":[]}`
-	err := os.WriteFile(filePath, []byte(data), 0644)
-	require.NoError(t, err)
+			h := newHarness()
+			h.dir = t.TempDir()
 
-	// lint should report LINT issue for batch mode
-	code, out, errs := h.run(t, "friend", "lint", "--file", fileName)
-	require.Equal(t, 1, code, "lint should fail when batch mode is found: %s %s", out, errs)
-	require.Contains(t, out, "LINT")
-	require.Contains(t, out, "mode")
+			// One file store with the row written by hand: this simulates a row
+			// stored before a write-time refusal, or edited outside the tool.
+			fileName := "stored.json"
+			data := fmt.Sprintf(`{"schema":1,"rows":{"friend":{"batchy":{"name":"batchy","Fields":{"slots":"8","tiers":"flash","roles":%q,"width":"8","mode":%q,"config_dir":"","token_cap":"6000000","streams":"","kinds":""}}}},"history":[]}`, tc.roles, tc.mode)
+			err := os.WriteFile(h.dir+"/"+fileName, []byte(data), 0644)
+			require.NoError(t, err)
+
+			code, out, errs := h.run(t, "friend", "lint", "--file", fileName)
+			require.Equal(t, 1, code, "lint should fail when %s is stored: %s %s", tc.field, out, errs)
+			require.Contains(t, out, "LINT")
+			require.Contains(t, out, " "+tc.field+": ")
+			require.Contains(t, out, tc.fix, "the LINT line names the fix")
+		})
+	}
 }
