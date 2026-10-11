@@ -117,8 +117,7 @@ func BatchTakeArgv(friend string, n int, epoch uint64) []string {
 // laneAsk is a free lane asking the server what it holds: the card the answer names, when the
 // lane can run it now (its brief in her inbox, its job staged, no report of a run before it in
 // her outbox); false when the lane runs nothing this pass and asks again later. A refusal is
-// said once while it stands; "took" is said only when the server's line names the card. A work
-// card runs with no begin (tla/FriendLane.tla Run); only a read sends a begin.
+// said once while it stands; "took" is said only when the server's line names the card.
 func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 	d, s := l.d, l.lanes
 	if now.Before(ln.askAt) || (ln.asked && now.Before(s.noneUntil)) {
@@ -286,7 +285,6 @@ func (l *loop) serverLanes() bool { return l.d.Take != nil }
 // laneCheck is each lane holding a card checked against her row as the server last said it:
 // a card no longer working on her row, or held there by another lane, is dropped
 // (OneRequestApart: the lane and the server disagree for no longer than one ask).
-// tla/FriendLane.tla RowDrop
 func (l *loop) laneCheck(now time.Time) {
 	d := l.d
 	if d.Held == nil || !d.status.HeldKnown {

@@ -510,7 +510,7 @@
     LocalEpoch witness's live behaviour wherever the server named none) is named. A seventh reversed
     witness, keeponmismatch, lets a lane keep running its card after a row read disagrees and fails
     WorkingOnlyOnTheServersSay. Tests and models only, no product change."
-   :origin "card tla-friendlane-every-hand-back-is-a-request.w5 (stream v1212)")
+   :origin "card tla-friendlane-every-hand-back-is-a-request.w6 (stream v1212)")
 
   (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "planned"
    :title "The CardMachine copy is retired; nova-sprint's is the one copy"

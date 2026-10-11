@@ -135,7 +135,6 @@ func ReadQueueArgv(friend string) []string {
 }
 
 // ReadBeginArgv begins an asked read.
-// tla/FriendLane.tla Begin
 func ReadBeginArgv(friend string, r AskedRead) []string {
 	return []string{"read", "--as", ReaderOf(friend), "--begin", r.ID, "--epoch", r.Epoch}
 }
