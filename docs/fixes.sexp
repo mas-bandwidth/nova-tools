@@ -133,4 +133,10 @@
     lane starts a fresh session itself, seeded from the friend's own files, its card continues in it
     (once per card; after that the refusal is the card's business again), and the seat is told once
     per renewal."
-   :origin "the owner 2026-10-10: what else is manual that should be automatic from the machine")))
+   :origin "the owner 2026-10-10: what else is manual that should be automatic from the machine")
+  (fix "worker-brief-never-rewrites-history" :release "v1.2.6" :status "planned"
+   :title "The worker brief says never amend, rebase or reset onto origin"
+   :text "The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds
+    (its add refuses a held rules file that differs), stops children rewriting history, which caused the
+    does-not-descend refusals. A test pins the file's digest in both repositories."
+   :origin "v1.2.5 candidate list")))
