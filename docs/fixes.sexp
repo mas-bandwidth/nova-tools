@@ -337,6 +337,18 @@
     slow tier."
    :origin "card cover-member-push-with-a-scripted-git.w2, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C10")
 
+  (fix "cover-member-end-and-script-read" :release "v1.2.12" :status "planned"
+   :title "Unit coverage for the launch's end and the script read"
+   :text "Two member steps had branches no test reached: (m *Member) endEnded, the end of a launch
+    (a read posts its report alone; a work card pushes, at most pushWidth at once, or records why not)
+    at member.go:1913, and ScriptVerifier.Verify, the script read (it checks out the start commit, runs
+    the class's program under its deadline, and compares the diff with the head's byte for byte) at
+    member.go:2418. Two new test files drive both through Member.Tick and Verify over the package's
+    fakes and real git on temporary repositories: end_ended_behaviour_test.go and
+    script_verify_behaviour_test.go. With -cover at dev 58d2867, endEnded 27.3% to 93.9% and Verify
+    79.2% to 87.5%. No product change."
+   :origin "the card cover-member-end-and-script-read.w2 (tmp/v1.2.12-inventory-2026-10-11.md section 8 item C12)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
