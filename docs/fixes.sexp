@@ -705,6 +705,30 @@
     models only, no product change."
    :origin "card tla-friendpresence-daemon-evidence.w11 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-updateapply-newer-and-delivery-scopes" :release "v1.2.12" :status "planned"
+   :title "UpdateApply reads NEWER for a greater release and delivers per recipient scope"
+   :text "UpdateApply.tla's verdict read any installed version greater than the latest as AHEAD; the code
+    reads NEWER for a greater release version and AHEAD only for the vX.Y.Z-0 pseudo-version. The module
+    now reads NEWER and never AHEAD (its versions are numbers, never pseudo-versions), records a delivery
+    per recipient scope instead of one delivered boolean, and corrects the header's `confirmed` and
+    `writeSnapshot` names to `sendOK` and `writeSnapshotWith`. A new reversed witness aheadisnewer reads
+    AHEAD for a greater release version and fails a new VerdictMatchesVersion invariant, and report.go
+    and cli.go cite the module from report and verdict. Tests and models only, no product change."
+   :origin "the card tla-updateapply-newer-and-delivery-scopes.w5 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35)")
+
+  (fix "tla-bus2-names-pkg-bus-and-the-idle-claim" :release "v1.2.12" :status "planned"
+   :title "Bus2 names pkg/bus and models the idle claim"
+   :text "Bus2's header named internal/bus2/bus2.go and docs/SPEC-BUS2.md, both gone; it now names
+    pkg/bus/bus.go and redis.go and docs/SPEC-BUS.md. The model told a dead holder only by a crash; the
+    code tells one by the entry's idle time past ClaimAfter, with one consumer name for every reader, so
+    Bus2 gains a Stall action (a live holder idle past ClaimAfter becomes claimable by any reader, its
+    holder NoOne) and HeldStaysHeld is restated as held while under ClaimAfter. A message's cc is folded
+    into its recipients. A sixth reversed witness, claimfresh, claims a holder before ClaimAfter and
+    fails HeldStaysHeld; the five existing witnesses and Bus2Receipts' cases keep their results. A
+    message's kind and RecvKinds' release of a skipped kind stay below the module's grain. Tests and
+    models only, no product change."
+   :origin "card tla-bus2-names-pkg-bus-and-the-idle-claim.w9 (v1.2.12 inventory item T32; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
@@ -810,4 +834,18 @@
   (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
    :title "The claude harness runs the newest model of each tier's class"
    :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
-   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")))
+   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")
+
+  (fix "a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop" :release "v1.2.15" :status "planned"
+   :title "A friend step drains every ended result and finishes off the loop"
+   :text "Each daemon step took at most one ended result from the batch, lane and read channels, so k
+    lanes that ended together were seen over k beats and their lanes stayed held that long; the step now
+    drains all of them (capped at maxStepResults), applying each in the loop goroutine so the daemon's
+    state stays single-writer. outboxStep no longer sends each finished job's tip check and finish
+    serially in the loop, blocking the step's lane take behind every other card's finish: each due job's
+    tip check and finish now runs in a goroutine, at most pushWidth at once, marked in flight so the
+    next step neither sends it again nor counts it finished, and its answer (finished, refused with the
+    reason, tip moved) is posted on a channel the step drains and applied by the loop. On shutdown the
+    daemon waits for in-flight finishes up to FinishWait and leaves any unanswered to be sent again
+    next run."
+   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")))

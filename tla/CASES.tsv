@@ -96,6 +96,7 @@ MCBus2.cfg	MCBus2.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPartial.cfg	MCBus2.tla	invariant	OnEveryStreamOrNone	ignore-terminal	bus2	required	-
 MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2	required	-
 MCBus2BrokenSteal.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
+MCBus2BrokenClaimFresh.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
 MCBus2BrokenAckUndelivered.cfg	MCBus2.tla	action	AckOnlyDelivered	ignore-terminal	bus2	required	-
 MCBus2BrokenAckReopens.cfg	MCBus2.tla	action	AckedStaysAcked	ignore-terminal	bus2	required	-
 MCFriend.cfg	MCFriend.tla	pass	-	ignore-terminal	friend	required	-
@@ -108,6 +109,7 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenAheadIsNewer.cfg	MCUpdateApply.tla	invariant	VerdictMatchesVersion	ignore-terminal	updateapply	required	-
 MCConfigApply.cfg	MCConfigApply.tla	pass	-	ignore-terminal	configapply	required	-
 MCConfigApplyBrokenStampFirst.cfg	MCConfigApply.tla	invariant	StampOnlyWhenComplete	ignore-terminal	configapply	required	-
 MCConfigApplyBrokenFriendBeforeCeiling.cfg	MCConfigApply.tla	invariant	ApplyOrder	ignore-terminal	configapply	required	-
