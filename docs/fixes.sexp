@@ -307,6 +307,19 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-member-push-with-a-scripted-git" :release "v1.2.12" :status "planned"
+   :title "Cover the member's push with a scripted git"
+   :text "The unit tier's cmd/nova-swarm/memberpush_behaviour_test.go pins
+    (g *gitPusher) Push (memberpush.go:88) with a scripted git that answers by argv and
+    records every call's directory and environment, a sleep that records the waits, and a
+    gh name not on PATH: the head-not-a-sha and branch-name refusals before any git, the
+    no-repository and no-checkout refusals, the first-use init --bare and config of
+    push.git, the fetch retried after 1s, 2s and 4s, the head judged against the staged
+    commit, the remote rejection retried and the commit refusal sent once, the exact push
+    argv with GIT_TERMINAL_PROMPT=0, and a pull request asked for with no gh. It raises
+    Push's unit statement coverage from 0.0% to 94.2%."
+   :origin "the card cover-member-push-with-a-scripted-git.w1 (stream v1212, 2026-10-11): tmp/v1.2.12-inventory-2026-10-11.md section 8 item C10")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
