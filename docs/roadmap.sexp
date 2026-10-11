@@ -1168,13 +1168,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #2732")
-  (item "ci-cancelled-under-load" :group "ops"
-   :title "CI runs on card PRs are not cancelled under load"
-   :text "CI runs at the head of card PRs are cancelled mid-job when many PRs open together; the
-    concurrency rule is fixed so each head gets one full run."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #2795")
   (item "route-provider-pinning-and-logging" :group "measure"
    :title "Pin the upstream provider per route and log it in usage rows"
    :text "Routes through an aggregator pin the provider order and forbid fallbacks, so the same model does
