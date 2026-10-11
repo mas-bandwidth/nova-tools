@@ -535,4 +535,9 @@
     starts no child, the launch is posted as cancelled by the stop and collect drops it, leaving
     the card working under this row with no child of ours for machineStop to hand back with
     stop-return, never finished."
-   :origin "the audit defect \"a background start after STOP launches a child\" (nova-tools pkg/member staggerStart / scriptOrStart), confirmed by reading nova-tools dev 2314d43 on 2026-10-11; card a-start-scheduled-before-stop-launches-no-child.w2")))
+    :origin "the audit defect \"a background start after STOP launches a child\" (nova-tools pkg/member staggerStart / scriptOrStart), confirmed by reading nova-tools dev 2314d43 on 2026-10-11; card a-start-scheduled-before-stop-launches-no-child.w2")
+
+  (fix "nova-friend-install-reads-the-seat-and-refuses-a-self-holding-dir" :release "v1.2.14" :status "planned"
+   :title "nova-friend install reads the seat and refuses a self-holding --dir"
+   :text "install copied --coordinator literally into the agent and never read the server's seat holder, so the Studio plist carried the previous seat two days after the seat moved; the lane wall then refused every write and burned ~35 card attempts in six minutes. install now reads the seat holder and refuses a --coordinator that names another seat (exit 1, naming both) unless --force-coordinator pins it, and writes no --coordinator when none is given; run refuses a --dir equal to, inside or holding a deny-self path (explicit, env, or the default), symlinks resolved, at the start (exit 2, naming both paths and the fix); width has one source, the friend row, and the daemon says once when the row differs from the argv --width."
+   :origin "the owner, 2026-10-11: the coordinator's own friend daemon on the Studio ran 11 hours taking nothing, then burned ~35 card attempts in 6 minutes, every cause configuration the machine could have read; card nova-friend-install-reads-the-seat-and-refuses-a-self-holding-dir")))
