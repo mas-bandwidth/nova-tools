@@ -23,7 +23,7 @@ import (
 // keep-alive connection. After the server restarts, the next verb can be written
 // to that dead socket, and Go does not replay a POST once its bytes are on the
 // wire: the verb has no answer and the loop waits on a connection the server
-// dropped (tla/LoopRedial.tla, DeadConnection). The dialer holds a client whose
+// dropped (tla/LoopRedial.tla, NoParkOnDropped). The dialer holds a client whose
 // transport opens a fresh connection per verb (DisableKeepAlives) and replaces
 // it after any error, so a dead connection is never reused.
 const (
@@ -41,9 +41,9 @@ const (
 // without a socket.
 type sprintDialer struct {
 	addr string
-	// dial sends one batch on the client given (tla/LoopRedial.tla, Dial).
+	// dial sends one batch on the client given (tla/LoopRedial.tla, Redial).
 	dial func(ctx context.Context, addr string, hc *http.Client, verbs ...[]string) ([]sprintwire.Result, error)
-	// wait blocks d or until ctx ends; false says ctx ended (tla/LoopRedial.tla, Backoff).
+	// wait blocks d or until ctx ends; false says ctx ended.
 	wait func(ctx context.Context, d time.Duration) bool
 
 	mu      sync.Mutex
