@@ -1,20 +1,19 @@
------------------------------- MODULE LoopRedial ------------------------------
+----------------------------- MODULE LoopRedial ------------------------------
 \* A reader loop (nova-swarm member as reader-<m>) and the sprint server's
 \* connection, as state. nova-tools pkg/member/member.go (BeatLoop, Tick) and
-\* cmd/nova-swarm/sprintredial.go, 2026-10-11: the reader dials the server once,
-\* beats and takes its asked reads while the server holds the connection; the
-\* server's restart (an adopt, nova-sprint run --listen stopped and started)
-\* drops every connection it holds, and the reader must notice, back off one
-\* backoff and re-dial, so its beat and tick go on. A reader that does not
-\* re-dial parks on the dropped connection: it holds no connection the server
+\* cmd/nova-swarm/sprintredial.go, 2026-10-11: every verb the reader sends opens
+\* a fresh connection; a verb the server did not answer is an error, and the
+\* reader notices the error on that verb, backs off one second doubling to
+\* MaxBackoff and re-dials with a rebuilt client, so it never parks on a
+\* connection the server dropped and its beat and tick go on. A reader that does
+\* not re-dial parks on the dropped connection: it holds no connection the server
 \* answers on, it stops beating, and the sprint asks it nothing.
 \*
-\* The state the code owns: serverUp (the server is answering), conn (the
-\* reader believes it holds a connection; it sent a verb and is owed an
-\* answer), held (the server holds that connection), backoff (the wait owed
-\* before the next dial), beating (the readers whose beat landed since the
-\* server last came up). The outside event: ServerRestart, which drops every
-\* connection the server holds.
+\* The state the code owns: serverUp (the server is answering), conn (the reader
+\* holds a connection it sent a verb on), held (the server holds that
+\* connection), backoff (the wait owed before the next dial), beating (the
+\* readers whose beat landed since the server last came up). The outside event:
+\* ServerRestart, which drops every connection the server holds.
 \*
 \* Broken = "none" is the design. Every other value is a reversed witness, a
 \* misimplementation one invariant or property must catch:
@@ -22,15 +21,16 @@
 \*               conn true, the code's client is not rebuilt on error): it holds
 \*               a connection the server dropped, NoParkOnDropped fails at once
 \*               and BeatsAgain never holds again.
+\*   "nobound"   a failed verb doubles the backoff without the cap: it grows past
+\*               MaxBackoff, and BackoffBounded fails.
 \*
-\* Not here: the bytes of the wire, the backoff's doubling (MaxBackoff is one
-\* bound in the range of the wait owed), the asks themselves, and the server's
-\* own state beyond the connections it holds. Those are sprintredial_test.go.
+\* Not here: the bytes of the wire, the asks themselves, and the server's own
+\* state beyond the connections it holds. Those are sprintredial_test.go.
 EXTENDS Naturals
 
 CONSTANTS Readers, MaxBackoff, Broken
 ASSUME MaxBackoff \in Nat /\ MaxBackoff > 0
-ASSUME Broken \in {"none", "noredial"}
+ASSUME Broken \in {"none", "noredial", "nobound"}
 
 VARIABLES serverUp, conn, held, backoff, beating
 
@@ -40,7 +40,7 @@ TypeOK ==
   /\ serverUp \in BOOLEAN
   /\ conn \in [Readers -> BOOLEAN]
   /\ held \in [Readers -> BOOLEAN]
-  /\ backoff \in [Readers -> 0..MaxBackoff]
+  /\ backoff \in [Readers -> Nat]
   /\ beating \in SUBSET Readers
 
 Init ==
@@ -50,9 +50,20 @@ Init ==
   /\ backoff = [r \in Readers |-> 0]
   /\ beating = {}
 
-\* The server restarts and drops every connection it holds. The design's reader
-\* notices (conn false) and will re-dial; the broken reader keeps believing it
-\* holds the connection.
+\* The wait a reader owes after a failed verb: one the first time, then twice
+\* the last, capped at MaxBackoff. The nobound reader never caps, so a failed
+\* verb grows the wait past the bound.
+NextBackoff(r) ==
+  IF backoff[r] = 0
+  THEN 1
+  ELSE IF Broken = "nobound"
+       THEN 2 * backoff[r]
+       ELSE IF 2 * backoff[r] <= MaxBackoff THEN 2 * backoff[r] ELSE MaxBackoff
+
+\* The server restarts and drops every connection it holds. The reader notices
+\* on its next verb's error (Redial), not here: the connection is gone, but the
+\* reader's backoff is unchanged until that verb fails. The noredial reader keeps
+\* believing it holds the connection.
 ServerRestart ==
   /\ serverUp
   /\ serverUp' = FALSE
@@ -66,30 +77,22 @@ ServerBack ==
   /\ serverUp' = TRUE
   /\ UNCHANGED <<conn, held, backoff, beating>>
 
-\* A reader holds no connection and owes no backoff: it dials. When the server
-\* answers the connection is held and the reader beats; when the server is down
-\* the reader waits one backoff and dials again after it. The dial of a reader
-\* that believes it holds a connection (the broken design) never happens, which
-\* is the park.
-Dial(r) ==
+\* A reader that holds no connection sends its next verb on a fresh connection:
+\* when the server answers the reader is connected and held and its beat lands;
+\* when the server is down the verb fails and the reader backs off one more step,
+\* so the next verb's error notices the restart. A successful verb clears the
+\* wait; a failed verb doubles it, capped at MaxBackoff.
+Redial(r) ==
   /\ r \in Readers
   /\ conn[r] = FALSE
-  /\ backoff[r] = 0
   /\ serverUp' = serverUp
   /\ IF serverUp
      THEN /\ conn' = [conn EXCEPT ![r] = TRUE]
           /\ held' = [held EXCEPT ![r] = TRUE]
           /\ beating' = beating \cup {r}
-          /\ backoff' = backoff
+          /\ backoff' = [backoff EXCEPT ![r] = 0]
      ELSE /\ UNCHANGED <<conn, held, beating>>
-          /\ backoff' = [backoff EXCEPT ![r] = MaxBackoff]
-
-\* The backoff is waited out: the reader is ready to dial again.
-WaitOut(r) ==
-  /\ r \in Readers
-  /\ backoff[r] > 0
-  /\ backoff' = [backoff EXCEPT ![r] = 0]
-  /\ UNCHANGED <<serverUp, conn, held, beating>>
+          /\ backoff' = [backoff EXCEPT ![r] = NextBackoff(r)]
 
 \* A reader whose connection the server still holds goes on beating.
 Beat(r) ==
@@ -101,12 +104,12 @@ Beat(r) ==
 Next ==
   \/ ServerRestart
   \/ ServerBack
-  \/ \E r \in Readers: Dial(r) \/ WaitOut(r) \/ Beat(r)
+  \/ \E r \in Readers: Redial(r) \/ Beat(r)
 
 \* No reader waits on a connection the server no longer holds: a reader that
-\* believes it holds a connection (conn) is held by the server (held). A reader
-\* that just waits a backoff has conn false, so it is never parked on the
-\* dropped connection (the card's invariant, one backoff apart).
+\* holds a connection (conn) is held by the server (held). A reader that just
+\* waits a backoff has conn false, so it is never parked on the dropped
+\* connection (the card's invariant, one backoff apart).
 NoParkOnDropped ==
   \A r \in Readers: conn[r] => held[r]
 
@@ -116,8 +119,12 @@ NoParkOnDropped ==
 BeatsAgain ==
   (<>[](serverUp)) => <>(\A r \in Readers: r \in beating)
 
+\* The wait a reader owes never passes MaxBackoff.
+BackoffBounded ==
+  \A r \in Readers: backoff[r] <= MaxBackoff
+
 Spec ==
   Init /\ [][Next]_vars
        /\ WF_vars(ServerBack)
-       /\ \A r \in Readers: WF_vars(Dial(r)) /\ WF_vars(WaitOut(r)) /\ WF_vars(Beat(r))
+       /\ \A r \in Readers: WF_vars(Redial(r)) /\ WF_vars(Beat(r))
 =============================================================================
