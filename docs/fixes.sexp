@@ -239,4 +239,14 @@
    :title "nova-swarm doctor checks the running executable, not only PATH"
    :text "The launch preflight refuses a new binary found on PATH but passes the same binary by absolute
     path. It checks the executable that is actually running."
-   :origin "issue #3469")))
+   :origin "issue #3469")
+  (fix "inception-behind-the-limiter-proxy" :release "v1.2.9" :status "shipped"
+   :title "A limited inception route takes the global rate budget on every request"
+   :text "A fleet member launches with --model only, so the job's generated opencode config named no
+    baseURL for inception and the budget proxy never opened: a limited route's requests took no
+    per-request budget. When a budget server is named, inception's entry is now given its API base
+    from the providers table (https://api.inceptionlabs.ai/v1), the proxy opens in front of it and
+    the harness is pointed at the proxy; the harness's own header and request timeouts are turned off
+    on that route so a request waiting on its budget stalls and is never aborted. A route with no limit
+    is unchanged; deepseek is not seeded."
+   :origin "the card tmp/next-sprint-cards/inception-behind-the-limiter-proxy.md (the seat, 2026-10-11 ~02:55Z: the first Mercury 3 take on a limited route logged that inception had no http baseURL and the rpm bucket stayed at in_use=0)")))

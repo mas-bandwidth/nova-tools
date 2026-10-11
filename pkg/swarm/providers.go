@@ -82,6 +82,20 @@ func LaunchRow(provider string) string {
 	return DefaultLaunchRow
 }
 
+// ProviderTableBaseURL is the providers table's base_url for provider: the provider's own
+// HTTP API base, read from the catalog the pinned harness itself ships for that provider
+// (inception: https://api.inceptionlabs.ai/v1, the "api" of models.dev's inception entry
+// the harness carries). Empty when the table names no base for it, or names no such row.
+// It is read only for a limited route, so the global rate budget's proxy has an endpoint to
+// stand in front of (providerbudget.go, THE GLOBAL RATE BUDGET; nova-sprint tla/RateBudget.tla).
+func ProviderTableBaseURL(provider string) string {
+	table, err := readProvidersTable()
+	if err != nil {
+		return ""
+	}
+	return table[provider].BaseURL
+}
+
 // LaunchRequest is what one run hands the one launcher beyond the table. Every field is
 // optional: an empty one takes the table's value (Harness: the row's column for goos;
 // Model: the row's model; Title: the provider name; Prompt: the literal "PROMPT.md").
