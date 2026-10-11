@@ -1,5 +1,5 @@
 -------------------------------- MODULE FriendStage --------------------------------
-\* The daemon stages every job it writes (internal/friend/stage.go, docs/SPEC-FRIEND.md
+\* The daemon stages every job it writes (pkg/friend/stage.go, docs/SPEC-FRIEND.md
 \* "The daemon stages every job it writes"; card daemon-stages-every-job2, 2026-10-06).
 \* For each held work card whose brief is in her inbox, the daemon stages its job: the
 \* repository's mirror fetched (cloned the first time), a clone at the base on the card's
@@ -20,14 +20,18 @@
 \*   EndOK        = Stager.Stage succeeds; stageStep clears the judgments of the repo and card
 \*   EndUnreach   = Stager.mirror's clone or fetch fails: NotStageable with no card (key repo)
 \*   EndNoBase    = Stager.base finds no such ref: NotStageable with the card (key card)
+\*   EndGeneric   = Stager.Stage fails for any other reason: stageStep's default case, said
+\*                  once under a "job" key no success clears (stage.go:645-650)
 \*   Stop         = the daemon stops while a stage runs (stageResult.stopped): nothing said
 \*   Retry        = StageRetryEvery passes
-\*   Hand         = nextCard hands the card to a lane, guarded by stageOwed
+\*   Hand         = a lane is handed the card, guarded in three places: nextCard (inbox.go:435)
+\*                  and laneAsk only when heldOf finds the card (lane_take.go:158, :177)
 \*   Grant/Revoke = her account given or losing access to a repository (outside)
 \*   PushBase     = the base pushed to the repository (outside, the per-card remedy)
 \*
 \* Broken names a reversed witness:
-\*   "handunstaged" -- nextCard without the stageOwed guard: HandedOnlyStaged fails
+\*   "handunstaged" -- the Hand guard removed (nextCard inbox.go:435, laneAsk lane_take.go:177):
+\*                     HandedOnlyStaged fails
 \*   "sayeach"      -- a judgment said for every failed stage, not once while it stands:
 \*                     OneJudgmentWhileItStands fails
 \*   "noretry"      -- a failed job is never staged again: EveryCardIsHanded fails once the
@@ -42,6 +46,7 @@ ASSUME Broken \in {"none", "handunstaged", "sayeach", "noretry"}
 
 States == {"unstaged", "staging", "waiting", "staged"}
 Keys   == {<<"repo", r>> : r \in Repos} \cup {<<"card", c>> : c \in Cards}
+          \cup {<<"job", c>> : c \in Cards}
 
 VARIABLES
   brief,    \* inbox/<job>/BRIEF.md is written
@@ -123,7 +128,18 @@ EndNoBase(c) ==
   /\ Judge(<<"card", c>>)
   /\ UNCHANGED <<brief, handed, reach, baseOK, outside>>
 
-End(c) == EndOK(c) \/ EndUnreach(c) \/ EndNoBase(c)
+\* A stage that fails for no reason the model names (the code's default case, stage.go:645-650):
+\* said once under a "job" key no success clears, and tried again after StageRetryEvery. Bounded
+\* like the other outside events, so the stage settles once the outside is done.
+EndGeneric(c) ==
+  /\ st[c] = "staging"
+  /\ outside < MaxOutside
+  /\ st' = [st EXCEPT ![c] = "waiting"]
+  /\ Judge(<<"job", c>>)
+  /\ outside' = outside + 1
+  /\ UNCHANGED <<brief, handed, reach, baseOK, mirror>>
+
+End(c) == EndOK(c) \/ EndUnreach(c) \/ EndNoBase(c) \/ EndGeneric(c)
 
 Stop(c) ==
   /\ st[c] = "staging"
@@ -184,6 +200,12 @@ OneJudgmentWhileItStands == \A k \in Keys : told[k] <= 1
 
 \* A judgment stands only where it was told.
 SaidIsTold == \A k \in Keys : said[k] <=> told[k] > 0
+
+\* A generic failure stands on a "job" key no success clears: what a stale entry leaves is a
+\* stale failure line (said[<<"job", c>>] while the job is staged), never a stale stage -- a
+\* staged card holds no judgment of its own (EndOK cleared it). The repository's judgment is
+\* shared, so another card's failure may set it again; the card's own never stands while staged.
+NoStaleStage == \A c \in Cards : st[c] = "staged" => ~said[<<"card", c>>]
 
 \* Once the outside is done and the card can be staged, its lane is handed it.
 EveryCardIsHanded ==
