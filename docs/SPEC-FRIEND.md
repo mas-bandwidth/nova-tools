@@ -1920,8 +1920,12 @@ pauses every new turn and open for a backoff, 30 s doubling to 10 minutes,
 and lowers the live lane cap by a quarter (at least one lane, never below
 one): 24, 18, 14, 11 ... Lanes whose turns started before that lowering met
 the same episode and change nothing. When the pause ends the lanes resume at
-the cap; a lane beyond it takes nothing and hands back a card it holds
-between turns. Every lane resume after a rate limit is jittered by +/-20% of
+the cap; a lane beyond it takes nothing. A card it holds between turns waits
+on that lane: with server lanes (`lane_take.go`) the lane keeps what the server
+says it holds, and a hand-back to another lane is owed a server verb this
+daemon has not, so the card stays working on her row until the cap lets its
+lane run it; in a world with no server it hands the card back to the queue.
+Every lane resume after a rate limit is jittered by +/-20% of
 the computed pause, drawn from an injectable random source (default `math/rand/v2`),
 so two lanes or friends on the same provider do not wake at the exact same instant
 to re-hit the rate limit in lockstep. A reported usage-limit reset (`PauseUntil`)
