@@ -225,6 +225,24 @@
      the platform, copying internal/up/layout.go's tools table: brew on darwin, go install for sops
      elsewhere, apt for age-keygen on linux."
     :origin "issue #5016; the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11")
+   (fix "a-member-runs-again-a-read-whose-stage-failed" :release "v1.2.14" :status "planned"
+    :title "nova-swarm member runs a read whose stage failed again, never holds it as a ghost"
+    :text "Blocker. On the live v1.2.13 sprint about 20 of 42 cards in review each held one read card
+     working for up to an hour with no member process running it (schema-c-t04-versions.r8.b2 since
+     21:53Z). b2's member log: \"the reader's environment ended it (the wall refused a write outside the
+     job); no verdict recorded; run again in 15s\", then nothing until \"reaped ... no longer in the
+     queue\" at the server's 60-minute read deadline. pkg/member's reportOne ran the retry only from the
+     queue's packet (if qPacket == nil return false), but a member's queue sends no packet for a card it
+     names in --have (queueArgs), so the retry never ran, the launch kept its result with no child, and
+     the member named the read held in every queue. Tick now hands reportOne the launch's own packet
+     when the queue lists the card working at the launch's claim and sends none, so the read runs again
+     after ReadStageRetry and a second failure is returned. Work cards have no such retry: a work
+     card's stage failure is finished --failed at once. The nova-sprint server half (a read its
+     member's beat does not name goes back to the read deal within LiveGrace) is nova-sprint #112.
+     Tests, red first: TestAReadWhoseStageFailedIsRunAgainNotHeldAsAGhost (pkg/member) and the
+     functional TestARealMemberRunsAReadWhoseStageFailedAgainNeverHoldsItAsAGhost (cmd/nova-swarm, a
+     real member process over a sprint server)."
+    :origin "the read-deal diagnosis, 2026-10-11 ~23:00Z, on the live v1.2.13 sprint; ported from mas-bandwidth/nova-sprint#112 (a-member-hands-back-a-read-it-is-not-running)")
    (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
     :title "A friend's lanes are thin clients of the sprint server"
     :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
