@@ -711,7 +711,18 @@ A tag is a claim about source, and a release must not make that claim about a co
 vouched for. `cut` reads the check runs on the commit and refuses unless every one has completed
 green — a check that has not finished is as unvouched-for as one that failed, and a commit no run
 has judged is refused too, because "nobody looked" is not "nobody objected". The refusal names the
-checks:
+checks. A cancelled publication of an older tag is excluded only when the forge identifies
+its check suite on this exact commit as a push run of `.github/workflows/release.yml`, that
+workflow at the same commit restricts pushes to tags, its ref is an existing repository
+version tag, and that tag sorts strictly before the requested version by semantic version
+order. This applies to every older tag on the commit. Job names
+alone never establish the exception. A version-shaped branch name is insufficient: the
+workflow must define a nonempty `on.push.tags` string list with no `branches`,
+`branches-ignore`, or `tags-ignore`. Only completed, cancelled checks qualify: failed or
+unfinished publication checks still block, as do CI and certification checks. Missing or
+conflicting provenance leaves the check in the gate; an unreadable forge response refuses
+the cut. If exclusion leaves no checks, the commit remains unjudged. The waiver records only
+the checks retained by this same gate.
 
 ```
 RELEASE CUT REFUSED: CI is not green on this commit: ci=failure; fix the red and cut again; a tag cannot be amended
@@ -734,7 +745,7 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 `adopt`'s, and a waived CI says nothing about a machine's certificate. **An empty value refuses**
 (`--waive-ci ""` is not a waiver), and **a green CI refuses a waiver** with `cut without it; nothing here needs waiving`, because a waiver of nothing is a lie in the release's permanent record.
 
-*Tests: `TestACutWithAWaiverRecordsItInTheTag`.*
+*Tests: `TestACutWithAWaiverRecordsItInTheTag`, `TestACutIgnoresThePreviousTagsCancelledReleaseRun`.*
 
 ## What this file does not cover
 
