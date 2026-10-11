@@ -146,4 +146,9 @@
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
      holding its slot to the deadline."
-   :origin "issue #2548")))
+   :origin "issue #2548")
+  (fix "adopt-window-and-dry-run-fixes" :release "v1.2.9" :status "shipped"
+   :title "Adopt waits only for agents it stopped and dry-runs honestly"
+   :text "The adopt window waits only for the agents the adopt itself stopped, and its dry run reports
+    what each step would do instead of saying would for every step."
+   :origin "card from the sprint store (2026-10-10)")))
