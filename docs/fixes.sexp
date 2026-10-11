@@ -148,7 +148,7 @@
      its harness first (claude -p ok --output-format json --max-turns 1 with the row's config_dir as
      CLAUDE_CONFIG_DIR), re-proved after two instant failures, before any take; a
      harness that cannot answer takes no card, beats down with the reason, and re-proves every minute."
-    :origin "nova-friend-raises-a-refused-verb-and-proves-its-harness-first.w5, 2026-10-11: the coordinator's friend daemon ran 11 hours refused \"You must hook in first\", and a lane's unsigned --config-dir burned ~35 card attempts in 6 minutes")
+    :origin "nova-friend-raises-a-refused-verb-and-proves-its-harness-first.w6, 2026-10-11: the coordinator's friend daemon ran 11 hours refused \"You must hook in first\", and a lane's unsigned --config-dir burned ~35 card attempts in 6 minutes")
   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
