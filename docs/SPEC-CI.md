@@ -2874,7 +2874,9 @@ or `missing`). A row that is not current names the card in `owed_by` that owes t
 model; a current row has `owed_by` as `-` and its module must have at least one
 reversed witness (expected-fail case) in `tla/CASES.tsv` and current run records
 in `tla/RUNS.tsv`. A row marked missing, partial or stale reports a skip naming the
-card that owes it, never a pass.
+card that owes it, never a pass. It also holds every `tla/<X>.tla` whose name does
+not start with `MC` to being named by exactly one row's `module` column, so a
+module no row names is never measured and a module two rows name is refused.
 
 
 The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix

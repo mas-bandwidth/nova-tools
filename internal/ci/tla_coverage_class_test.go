@@ -98,6 +98,39 @@ func tlaCoverageProblems(root string, rows []tlaCoverageRow) []string {
 	return problems
 }
 
+// tlaCoverageModuleProblems holds every tla/<X>.tla whose name does not start
+// with MC to exactly one row's module column: a module named by no row is never
+// measured, and a module named by two rows is two stories of one machine.
+func tlaCoverageModuleProblems(root string, rows []tlaCoverageRow) []string {
+	var problems []string
+	named := map[string][]string{}
+	for _, r := range rows {
+		for _, m := range r.modules() {
+			named[m] = append(named[m], r.machine)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "tla"))
+	if err != nil {
+		return problems
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".tla") || strings.HasPrefix(name, "MC") {
+			continue
+		}
+		module := strings.TrimSuffix(name, ".tla")
+		machines := named[module]
+		switch len(machines) {
+		case 0:
+			problems = append(problems, fmt.Sprintf("tla/%s is named by no row of tla/COVERAGE.tsv; add one (status partial, stale or missing names the card that owes it)", name))
+		case 1:
+		default:
+			problems = append(problems, fmt.Sprintf("tla/%s is named by %d rows of tla/COVERAGE.tsv (%s); name it by exactly one row", name, len(machines), strings.Join(machines, ", ")))
+		}
+	}
+	return problems
+}
+
 // requireModelCurrent holds a machine to the verdict. A current row passes only
 // if every module it names has, in tla/CASES.tsv, at least one expected-fail
 // (a reversed witness: the plan's expected column is not pass, so TLC is
@@ -189,6 +222,9 @@ func TestEveryStateMachineHasACurrentModel(t *testing.T) {
 	for _, problem := range tlaCoverageProblems(root, rows) {
 		assert.Fail(t, problem)
 	}
+	for _, problem := range tlaCoverageModuleProblems(root, rows) {
+		assert.Fail(t, problem)
+	}
 	for _, r := range rows {
 		t.Run(r.machine, func(t *testing.T) { requireModelCurrent(t, r.machine) })
 	}
@@ -211,4 +247,39 @@ func TestTLACoverageRefusesAnOwedRowWithNoCard(t *testing.T) {
 	} {
 		assert.NotEmptyf(t, tlaCoverageProblems(root, []tlaCoverageRow{bad}), "%+v", bad)
 	}
+}
+
+func writeTLACoverageFixture(t *testing.T, coverage string) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "tla"), 0o755))
+	for _, name := range []string{"A.tla", "B.tla", "MCA.tla"} {
+		body := "---- MODULE " + strings.TrimSuffix(name, ".tla") + " ----\n====\n"
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tla", name), []byte(body), 0o644))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "COVERAGE.tsv"), []byte(strings.Join(tlaCoverageHeader, "\t")+"\n"+coverage), 0o644))
+	return root
+}
+
+func TestTLACoverageNamesEveryModule(t *testing.T) {
+	t.Parallel()
+	t.Run("a module named by no row is reported and an MC file is not", func(t *testing.T) {
+		t.Parallel()
+		root := writeTLACoverageFixture(t, "a\t-\tA\tpartial\tsome-card\tnote\n")
+		rows, err := readTLACoverage(root)
+		require.NoError(t, err)
+		problems := tlaCoverageModuleProblems(root, rows)
+		require.Len(t, problems, 1)
+		assert.Equal(t, "tla/B.tla is named by no row of tla/COVERAGE.tsv; add one (status partial, stale or missing names the card that owes it)", problems[0])
+	})
+	t.Run("a module named by two rows reports both rows", func(t *testing.T) {
+		t.Parallel()
+		root := writeTLACoverageFixture(t, "a\t-\tA\tpartial\tsome-card\tnote\nb\t-\tA\tpartial\tsome-card\tnote\nc\t-\tB\tpartial\tsome-card\tnote\n")
+		rows, err := readTLACoverage(root)
+		require.NoError(t, err)
+		problems := tlaCoverageModuleProblems(root, rows)
+		require.Len(t, problems, 1)
+		assert.Contains(t, problems[0], "a")
+		assert.Contains(t, problems[0], "b")
+	})
 }
