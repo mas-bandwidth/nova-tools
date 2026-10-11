@@ -17,6 +17,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - **Tier defaults on direct providers** (2026-10-09). flash is Mercury 2.5, pro is DeepSeek 4.1 Flash and heavy is DeepSeek v4 Pro, each called on its own provider's API. Mercury 3 becomes heavy when v1.3's global per-model rate limit lands. Direct providers come first; OpenRouter and OpenCode are spillover only. Clean results start at 2026-10-09 22:01Z.
 - **nova-sprint split out of nova-tools** (2026-10-10). nova-sprint, nova-card and nova-work, with their models and docs, live in mas-bandwidth/nova-sprint from v1.2.3; CI here refuses their paths.
+- **nova-bus wait has no stale git lock or lane file to recover** (2026-10-10). Closed as obsolete, not fixed: issue #2627 was measured on the git message bus, whose checkout held an index.lock and a dirty from-<name> lane file. That bus was removed on 2026-10-04 and nova-bus is Redis only (docs/SPEC-BUS.md), so wait never runs git and has no checkout to leave locked. A recovery for a friend's old message-bus checkout belongs to the consumer that ticks it, not here.
 
 ## Contents
 
@@ -742,14 +743,6 @@ nova-bus inbox must report a bounded walk and open items, nova-bus check --full 
 Target: v1.3
 
 From: issue #2568; issue #2574; issue #2573; issue #2308
-
-### nova-bus wait recovers a stale index lock and a dirty lane file
-
-When a checkout holds a stale git lock or a dirty lane file, nova-bus wait recovers or names the exact remedy once instead of failing every tick.
-
-Target: v1.3
-
-From: issue #2627
 
 ### Hygiene checks share one source with the harvest lists
 
