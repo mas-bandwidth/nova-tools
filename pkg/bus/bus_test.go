@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +15,17 @@ import (
 var start = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 
 // rig is a bus over a fresh fake with a fixed random source, so ids are
-// reproducible and no test shares a store.
+// reproducible and no test shares a store. The source is under a lock: a Bus
+// is shared by concurrent senders (TestRacingRetriesMakeOneMessage), and each
+// Send draws from Rand.
 func rig(t *testing.T, names ...string) (*Bus, *Fake) {
 	t.Helper()
 	f := NewFake(start, names...)
+	var mu sync.Mutex
 	n := byte(0)
 	return &Bus{Store: f, Rand: func(b []byte) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
 		for i := range b {
 			n++
 			b[i] = n
