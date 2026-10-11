@@ -48,6 +48,7 @@
   environment: "{{ seat_env }}"
   register: seat_acceptance
   changed_when: false
+  # ignored: a failed_when: false accepts the real exit of the acceptance run; the assert below checks rc and fails the play with the friend's name and exit code
   failed_when: false
 
 - name: "friends: {{ seat_friend.friend }}'s acceptance: the probe card ran"
