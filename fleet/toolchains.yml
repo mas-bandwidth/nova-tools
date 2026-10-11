@@ -262,7 +262,7 @@
     - name: the dotnet CLI home, seeded once and made read-only
       ansible.builtin.shell:
         cmd: >-
-          set -e; home="{{ sdk_dotnet_home }}"; chmod -R u+w "$home" 2>/dev/null || true; mkdir -p "$home";
+          set -e; home="{{ sdk_dotnet_home }}"; if [ -d "$home" ]; then chmod -R u+w "$home"; fi; mkdir -p "$home";
           HOME="$home" DOTNET_CLI_HOME="$home" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
           NUGET_PACKAGES="$home/.nuget/packages" "{{ sdk_dotnet_dir }}/dotnet" help >/dev/null;
           rm -rf "$home/.nuget/packages" "$home/.local" "$home/.cache"; chmod -R a-w "$home"
@@ -290,11 +290,11 @@
     - name: the OTP launchers fall back to their own tree
       ansible.builtin.shell:
         cmd: >-
-          set -e; d="{{ sdk_otp_dir }}"; ls -d "$d"/erts-* >/dev/null 2>&1 || exit 0;
+          set -e; d="{{ sdk_otp_dir }}"; set -- "$d"/erts-*; if [ ! -d "$1" ]; then exit 0; fi;
           for f in "$d"/bin/* "$d"/erts-*/bin/*; do
           [ -f "$f" ] || continue; grep -qI 'find_rootdir "$0" "' "$f" || continue;
           fb=$(sed -n 's/.*find_rootdir "$0" "\([^"]*\)".*/\1/p' "$f" | head -1);
-          if [ "$fb" != "$d" ] && ! ls -d "$fb"/erts-* >/dev/null 2>&1; then
+          set -- "$fb"/erts-*; if [ "$fb" != "$d" ] && [ ! -d "$1" ]; then
           sed -i.fleet-bak "s|find_rootdir \"\$0\" \"$fb\"|find_rootdir \"\$0\" \"$d\"|" "$f"; rm -f "$f.fleet-bak"; echo "PATCHED $f"; fi;
           done
       register: sdk_otp_root
@@ -458,6 +458,7 @@
       ansible.builtin.command: sudo -n true
       register: tla_sudo
       changed_when: false
+      # ignored: the probe's rc is its answer; the two tasks below read it and the refusal names it
       failed_when: false
       check_mode: false
       when: not tla_ok and (not tla_dir.stat.exists or not tla_dir.stat.writeable)
@@ -516,23 +517,23 @@
       ansible.builtin.shell:
         executable: /bin/sh
         cmd: |
-          . "{{ nova_sdk_dir }}/env.sh" 2>/dev/null || true
+          if [ -f "{{ nova_sdk_dir }}/env.sh" ]; then . "{{ nova_sdk_dir }}/env.sh"; fi
           missing=""; versions=""
           v() { if [ -n "$2" ]; then versions="$versions $1=$2"; else missing="$missing $1"; fi; }
           have() { command -v "$1" >/dev/null 2>&1; }
-          have go     && v go     "$(go version 2>/dev/null | awk '{print $3}')"       || v go ""
+          have go     && v go     "$(go version 2>/dev/null | awk '{print $3}')"       || v go ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
           have python3 && v python3 "$(python3 --version 2>&1 | awk '{print $2}')"   || v python3 ""
-          have rustc  && v rustc  "$(rustc --version 2>/dev/null | awk '{print $2}')"  || v rustc ""
-          have cargo  && v cargo  "$(cargo --version 2>/dev/null | awk '{print $2}')"  || v cargo ""
+          have rustc  && v rustc  "$(rustc --version 2>/dev/null | awk '{print $2}')"  || v rustc ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
+          have cargo  && v cargo  "$(cargo --version 2>/dev/null | awk '{print $2}')"  || v cargo ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
           have dart   && v dart   "$(dart --version 2>&1 | awk '{print $4}')"         || v dart ""
-          have sbcl   && v sbcl   "$(sbcl --noinform --non-interactive --no-userinit --no-sysinit --eval '(progn (princ (lisp-implementation-version)) (terpri))' 2>/dev/null | tail -1)" || v sbcl ""
+          have sbcl   && v sbcl   "$(sbcl --noinform --non-interactive --no-userinit --no-sysinit --eval '(progn (princ (lisp-implementation-version)) (terpri))' 2>/dev/null | tail -1)" || v sbcl ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
           have java   && v java   "$(java -version 2>&1 | sed -n 's/.*version "\([^"]*\)".*/\1/p' | head -1)" || v java ""
           have javac  && v javac  "$(javac -version 2>&1 | awk '{print $2}')"         || v javac ""
-          have node   && v node   "$(node --version 2>/dev/null)"                     || v node ""
-          have dotnet && v dotnet "$(dotnet --version 2>/dev/null)"                   || v dotnet ""
-          have erl    && v erl    "$(erl -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]), halt().' 2>/dev/null)" || v erl ""
-          have elixir && v elixir "$(elixir --version 2>/dev/null | sed -n 's/^Elixir \([^ ]*\).*/\1/p')" || v elixir ""
-          have mix    && v mix    "$(mix --version 2>/dev/null | sed -n 's/^Mix \([^ ]*\).*/\1/p')"       || v mix ""
+          have node   && v node   "$(node --version 2>/dev/null)"                     || v node ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
+          have dotnet && v dotnet "$(dotnet --version 2>/dev/null)"                   || v dotnet ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
+          have erl    && v erl    "$(erl -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]), halt().' 2>/dev/null)" || v erl ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
+          have elixir && v elixir "$(elixir --version 2>/dev/null | sed -n 's/^Elixir \([^ ]*\).*/\1/p')" || v elixir ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
+          have mix    && v mix    "$(mix --version 2>/dev/null | sed -n 's/^Mix \([^ ]*\).*/\1/p')"       || v mix ""  # ignored: a probe that fails leaves its value empty, and the host is refused naming the tool
           if [ -f "{{ nova_tla_jar }}" ]; then versions="$versions tla2tools.jar=present"; else missing="$missing tla2tools.jar"; fi
           if [ -n "$missing" ]; then echo "TOOLCHAINS REFUSED host={{ inventory_hostname }} missing=$(echo $missing | tr ' ' ',')$versions"; exit 3; fi
           echo "TOOLCHAINS OK host={{ inventory_hostname }}$versions"
