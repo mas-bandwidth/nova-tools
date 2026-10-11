@@ -636,4 +636,9 @@
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
-   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")))
+   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+
+  (fix "nova-friend-install-reads-the-seat-and-refuses-a-self-holding-dir" :release "v1.2.14" :status "planned"
+   :title "nova-friend install reads the seat and refuses a self-holding --dir"
+   :text "install copied --coordinator literally into the agent and never read the server's seat holder, so the coordinator's machine plist carried the previous seat two days after the seat moved; the lane wall then refused every write and burned ~35 card attempts in six minutes. install now reads the seat holder and refuses a --coordinator that names another seat (exit 1, naming both) unless --force-coordinator pins it, and writes no --coordinator when none is given; run refuses a --dir equal to, inside or holding a deny-self path (explicit, env, or the default), symlinks resolved, at the start (exit 2, naming both paths and the fix); width has one source, the friend row, and the daemon says once when the row differs from the argv --width."
+   :origin "the owner, 2026-10-11: the coordinator's own friend daemon on the coordinator's machine ran 11 hours taking nothing, then burned ~35 card attempts in 6 minutes, every cause configuration the machine could have read; card nova-friend-install-reads-the-seat-and-refuses-a-self-holding-dir")))
