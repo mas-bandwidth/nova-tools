@@ -51,3 +51,4 @@ A worker card whose last turn is a question ends as asked instead of holding its
 
 - **End a card as asked when its last turn is a question** (planned). A headless card whose last turn asks the user a question ends at once as asked instead of holding its slot to the deadline. From: issue #2548.
 - **Adopt waits only for agents it stopped and dry-runs honestly** (shipped). The adopt window waits only for the agents the adopt itself stopped, and its dry run reports what each step would do instead of saying would for every step. From: card from the sprint store (2026-10-10).
+- **A HOLD report with zero findings is malformed** (planned). A verdict of HOLD cannot have no findings, so the result check classes it as malformed. From: PR #4635.

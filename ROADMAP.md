@@ -27,7 +27,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
-- [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (37)
+- [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -1858,14 +1858,6 @@ Config, table, swarm and secrets list verbs get a max flag (default 20, 0 for un
 Target: after v1.4
 
 From: PR #4628; PR #4630; PR #4631; PR #4633; PR #4638
-
-### A HOLD report with zero findings is malformed
-
-A verdict of HOLD cannot have no findings, so the result check classes it as malformed.
-
-Target: v1.3
-
-From: PR #4635
 
 ### Cairn open works on a bench store and an append is one critical section
 

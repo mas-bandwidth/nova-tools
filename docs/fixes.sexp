@@ -151,4 +151,8 @@
    :title "Adopt waits only for agents it stopped and dry-runs honestly"
    :text "The adopt window waits only for the agents the adopt itself stopped, and its dry run reports
     what each step would do instead of saying would for every step."
-   :origin "card from the sprint store (2026-10-10)")))
+   :origin "card from the sprint store (2026-10-10)")
+  (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
+   :title "A HOLD report with zero findings is malformed"
+   :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
+   :origin "PR #4635")))
