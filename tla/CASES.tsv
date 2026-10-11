@@ -118,7 +118,8 @@ MCFriendPresenceLive.cfg	MCFriendPresence.tla	pass	-	check	friendpresence	requir
 MCFriendPresenceClosed.cfg	MCFriendPresence.tla	pass	-	check	friendpresence	required	-
 MCFriendPresenceFindingRunningNow.cfg	MCFriendPresence.tla	invariant	UpHasRunningHarnessNow	check	friendpresence	required	-
 MCFriendPresenceBrokenBeatUp.cfg	MCFriendPresence.tla	invariant	BeatAloneNeverUp	check	friendpresence	required	-
-MCFriendPresenceBrokenNoExpiry.cfg	MCFriendPresence.tla	invariant	UpHasFreshAnswer	check	friendpresence	required	-
+MCFriendPresenceBrokenNoExpiry.cfg	MCFriendPresence.tla	invariant	UpHasFreshEvidence	check	friendpresence	required	-
+MCFriendPresenceBrokenFinishForever.cfg	MCFriendPresence.tla	invariant	UpHasFreshEvidence	check	friendpresence	required	-
 MCFriendPresenceBrokenNoExpiryBound.cfg	MCFriendPresence.tla	invariant	ClosedDownWithinBound	check	friendpresence	required	-
 MCFriendPresenceBrokenNoExpiryLive.cfg	MCFriendPresence.tla	temporal	ClosedShownDown	check	friendpresence	required	-
 MCFriendPresenceBrokenClosedAnswers.cfg	MCFriendPresence.tla	invariant	UpHasRunningHarness	check	friendpresence	required	-
