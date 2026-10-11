@@ -307,6 +307,19 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-native-prepare-refusals-and-report" :release "v1.2.12" :status "planned"
+   :title "Unit coverage for native's prepare refusals and functional coverage for its report"
+   :text "cmd/nova-swarm/native.go's prepare (407) and report (1426) were the least-covered
+    behaviour in the package: the unit tier exercised only prepare's binary step. The new tests
+    drive nativeRun with a nativeRunConfig and assert what a caller sees: each refusal before
+    staging (a model with no provider prefix, a worker pinning another model, a worker secret
+    naming an unset variable, a slot outside the root, a walking label, a results root inside
+    the job directory, a held job or slot lease, an unlisted public-card repo, and a loose auth
+    file whose leases are released, and onPhase prepare first), and the report's outcomes (a
+    non-zero harness is end=failed, an exit 0 that wrote no RESULT.md is harness-silent, and a
+    last turn that asked a question gets the asked result written)."
+   :origin "card cover-native-prepare-refusals-and-report.w1, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C11")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
