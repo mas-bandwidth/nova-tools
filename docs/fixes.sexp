@@ -458,6 +458,16 @@
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
+  (fix "tla-friendlane-every-hand-back-is-a-request" :release "v1.2.12" :status "planned"
+   :title "FriendLane models a work card's no-begin run and the row-read drop"
+   :text "The FriendLane model now does what lane_take.go does: a work card goes from taken to running
+    with no begin (a read keeps its begin, read_lanes.go), a row read that disagrees drops the card
+    locally and the lane asks again (laneCheck), and Card.Epoch's directory-epoch fallback (the
+    LocalEpoch witness's live behaviour wherever the server named none) is named. A seventh reversed
+    witness, keeponmismatch, lets a lane keep running its card after a row read disagrees and fails
+    WorkingOnlyOnTheServersSay. Tests and models only, no product change."
+   :origin "card tla-friendlane-every-hand-back-is-a-request.w2 (stream v1212)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
