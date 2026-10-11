@@ -30,6 +30,23 @@ func TestTheCardTellsTheChildItsWall(t *testing.T) {
 	assert.Contains(t, WallText(30), "by minute 1")
 }
 
+// The read brief says where a reader's scratch is: $JOB/tmp, a writable directory inside
+// its job, made before the child starts and removed with the job. A reader that honored
+// only /tmp was refused by the wall and returned no verdict, spending a reader (the
+// a-reader-writes-scratch-inside-its-job fault, 2026-10-11). A work card's brief says no
+// such thing: its scratch text is its own.
+func TestTheReadBriefNamesTheScratchInsideItsJob(t *testing.T) {
+	t.Parallel()
+	// a count of seconds, as Packet.Deadline carries it, not a test bound
+	wallSeconds := 10 * 60
+	read := CardText(Packet{Card: "c.r1", Kind: "read", Brief: "x", Deadline: wallSeconds})
+	assert.Contains(t, read, "$JOB/tmp inside your job", "the read brief names the scratch inside the job")
+	assert.Contains(t, read, "removed with the job")
+	assert.Contains(t, read, "never to /tmp")
+	work := CardText(Packet{Card: "c.w1", Kind: "work", Brief: "x", Deadline: wallSeconds})
+	assert.NotContains(t, work, "$JOB/tmp inside your job", "a work card is told its own scratch, not a reader's")
+}
+
 // The finish minute is WallFinishShare of the wall, floored to whole minutes and never zero;
 // each row sits on a boundary of that floor.
 func TestWallTextFinishMinuteAtTheMarginBoundary(t *testing.T) {

@@ -203,6 +203,13 @@ const (
 	// (the source is this machine's), finished staging refused, and the member rests
 	// (UsageRest).
 	EndUnverifiable = "budget-unverifiable"
+	// EndEnvironment is a READ the reader's own environment ended, never the work's: the
+	// wall refused a write outside the job (a reader that wrote /tmp, fault 1's shape on
+	// the read side), so the reader never reached a verdict. It is not a finding and not
+	// the reader's fault: the read is run again once on the same reader, and only a second
+	// environment end hands it back, so the sprint is never told a reader was spent on it
+	// (the a-reader-writes-scratch-inside-its-job fault, 2026-10-11).
+	EndEnvironment = "environment"
 )
 
 // Finish is how a work launch ended, as the member judges it (tla/CardContract.tla).
@@ -449,8 +456,8 @@ type launch struct {
 	push       *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
 	decided    *decided  // the take's attempt decision, once asked (Config.Attempt): reported with the finish, never asked again
 	spent      bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
-	retryAt    time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
-	retried    bool      // a read run again after a stage failure: a second one is returned
+	retryAt    time.Time // a read whose stage or environment failed: when this reader runs it again; zero before the failure is seen
+	retried    bool      // a read run again once after a stage or environment failure: a second one is returned
 	claimMoved bool      // a prior queue answer showed the claim moved while still running
 	dropped    bool      // a prior queue answer showed the card left the queue while still running
 	stamped    time.Time // when the member last stamped progress on the card (stampProgress); zero: never
@@ -486,16 +493,16 @@ type Member struct {
 	// asked of it again is not begun before ReadStageRetry has passed, so a reader that
 	// cannot launch does not take and return the same read every pass
 	returnedAt map[string]time.Time
-	// stageRetried is the reads run again once after a stage failure, by card id: a second
-	// stage failure of the card is returned, whichever path launches it
-	stageRetried map[string]bool
-	epoch        uint64
-	width        int  // the width this tick runs to: the override, else the fleet row's
-	saidNoWidth  bool // the NOTE that no row names a width has been said
-	drain        bool
-	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
-	beaten       uint64 // the Meter's samples the last written beat has carried
-	noRoom       bool   // Room said no on the last tick it was asked
+	// readRetried is the reads run again once after a stage or environment failure, by card
+	// id: a second such failure of the card is returned, whichever path launches it
+	readRetried map[string]bool
+	epoch       uint64
+	width       int  // the width this tick runs to: the override, else the fleet row's
+	saidNoWidth bool // the NOTE that no row names a width has been said
+	drain       bool
+	noRow       bool   // a reader whose queue said it is no row of the readers table, said once
+	beaten      uint64 // the Meter's samples the last written beat has carried
+	noRoom      bool   // Room said no on the last tick it was asked
 	// usageStopped is when a launch of this member last ended because its usage source
 	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
 	usageStopped time.Time
@@ -563,7 +570,7 @@ type decided struct {
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
+	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
 		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}}
 	m.advanced() // a member begins with its pass going on
 	return m
@@ -1051,15 +1058,23 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 	var args []string
 	ok := r.OK // as reported: a work card whose push was refused is reported failed
 	if m.reads(l) {
-		if r.End == EndStaging && !l.retried && !m.drain {
-			// (a draining reader starts nothing: its stage failure is handed back below)
-			// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure is never a
-			// verdict. The stage is tried once more here after ReadStageRetry; a second
-			// failure falls to the return below, which hands the read to another reader.
+		// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure and a read the
+		// reader's OWN ENVIRONMENT ended -- the wall refused a write outside the job, so
+		// the reader never reached a verdict -- are never a verdict, and neither is the
+		// reader's fault. Either is run once more here after ReadStageRetry; a second end
+		// falls to the return below. An environment end is NAMED AS THE READER'S
+		// ENVIRONMENT, never a missing verdict, so the sprint does not spend the reader on
+		// it (the a-reader-writes-scratch-inside-its-job fault, 2026-10-11).
+		if (r.End == EndStaging || r.End == EndEnvironment) && !l.retried && !m.drain {
+			// (a draining reader starts nothing: its end is handed back below)
 			if l.retryAt.IsZero() {
 				l.retryAt = now.Add(ReadStageRetry)
 				m.running[id] = l
-				fmt.Fprintf(m.out, "read %s: stage failed (%s); no verdict recorded; run again in %s\n", id, oneLine(r.Staging), ReadStageRetry)
+				if r.End == EndEnvironment {
+					fmt.Fprintf(m.out, "read %s: the reader's environment ended it (the wall refused a write outside the job); no verdict recorded; run again in %s\n", id, ReadStageRetry)
+				} else {
+					fmt.Fprintf(m.out, "read %s: stage failed (%s); no verdict recorded; run again in %s\n", id, oneLine(r.Staging), ReadStageRetry)
+				}
 				return false
 			}
 			if now.Before(l.retryAt) {
@@ -1071,7 +1086,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 			// the retry is owed once per card: it is remembered across a start that fails and
 			// across a launch the recovery path makes (start gives it to the launch)
 			delete(m.running, id)
-			m.stageRetried[id] = true
+			m.readRetried[id] = true
 			p := l.packet
 			if qPacket != nil {
 				p = *qPacket
@@ -1098,6 +1113,10 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 			switch {
 			case r.End == EndStaging:
 				why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
+			case r.End == EndEnvironment:
+				// the reader's own environment, never the work's: the wall refused a write
+				// outside the job, so the read is re-askable without spending the reader
+				why = EndEnvironment + ": the wall refused a write outside the job; " + oneLine(r.Report)
 			case r.End == EndProvider && r.Provider != "":
 				why = EndProvider + ": " + oneLine(r.Provider) // the provider's cause, as Judge names it
 			}
@@ -1345,7 +1364,7 @@ func (m *Member) start(p Packet) bool {
 	}
 	// the launch holds its lane from here; its start is long (a stagger, a slot made, a
 	// process begun) and is done apart from the pass, one start after another
-	m.running[p.Card] = launch{busy: true, busyAt: m.clock(), gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
+	m.running[p.Card] = launch{busy: true, busyAt: m.clock(), gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.readRetried[p.Card]}
 	m.long(func() {
 		m.startMu.Lock()
 		m.staggerStart()
@@ -1456,7 +1475,7 @@ func (m *Member) forget(id string, failed bool) {
 		}
 	}
 	delete(m.running, id)
-	delete(m.stageRetried, id)
+	delete(m.readRetried, id)
 }
 
 // The machine's stop cancels jobs (docs/SPEC-SPRINT.md section 14; the owner, 2026-10-08:
@@ -2226,6 +2245,9 @@ func CardText(p Packet) string {
 		b.WriteString(cardtree.Guide(cardtree.Parse(p.Brief)))
 	}
 	b.WriteString(WallText(p.Deadline))
+	if p.Kind == "read" {
+		b.WriteString(ReadScratchText)
+	}
 	if strings.TrimSpace(p.Fix) != "" {
 		fmt.Fprintf(&b, "Fix, this attempt:\n\n%s\n\n", strings.TrimSpace(p.Fix))
 	}
@@ -2268,6 +2290,14 @@ func WallText(deadlineSeconds int) string {
 // directories it was handed, and /tmp is not one of them: a child that wrote /tmp/gate1.log
 // had its run refused for the denial (fault 1, 2026-10-10). $TMPDIR is its own, writable.
 const TmpText = "Temp files go under $TMPDIR, which is yours and writable; never write to /tmp or /var/tmp directly: the sandbox denies it and the run is refused.\n\n"
+
+// ReadScratchText tells a READER where its scratch is, so the read brief says so (the
+// a-reader-writes-scratch-inside-its-job fault, 2026-10-11): the reader's child is given
+// $JOB/tmp, a writable scratch directory inside its job, made before the child starts and
+// removed with the job, exactly where a work card's scratch lives under its job. A reader
+// that wrote /tmp instead was refused by the wall and returned no verdict, which spent the
+// reader without a finding.
+const ReadScratchText = "Your scratch is $TMPDIR, which is $JOB/tmp inside your job: it is made for you before you start and removed with the job. Write your scratch files there, and never to /tmp or /var/tmp, which the wall refuses.\n\n"
 
 // routeWords is a work card's route as the member's start and finish lines name
 // it: " route=<r> model=<m>", "" when the packet names none (the member's

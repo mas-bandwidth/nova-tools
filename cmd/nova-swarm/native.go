@@ -392,6 +392,18 @@ type nativeRunState struct {
 // prepare validates configurations, resolves absolute paths, establishes leases,
 // prepares data and cache directories, shell shims, provider configuration, staging,
 // and frame setup.
+// nativeTmpDir is the scratch directory the child's TMPDIR, TMP and TEMP name: a reader's
+// is <job>/tmp, inside its own job (and outside the job's repo), made before the child
+// starts and removed with the job; a work card's (and a frame-less unit test's) is the
+// slot's tmp/<label>, outside the git-inited job directory (issue #460). Both are within
+// the wall's write set (nativeSandboxArgv passes tmpDir as --write and --tmp).
+func nativeTmpDir(cfg nativeRunConfig, jobDir string) string {
+	if cfg.frame != nil && cfg.frame.Kind == "read" {
+		return filepath.Join(jobDir, "tmp")
+	}
+	return filepath.Join(cfg.slotDir, "tmp", cfg.label)
+}
+
 func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunResult, int) {
 	if cfg.onPhase != nil {
 		cfg.onPhase("prepare")
@@ -628,12 +640,16 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		refuseNative(errOut, fmt.Sprintf("the data directory %s could not be made: %s", oneline.Field(dataHome), oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
-	// TMPDIR is the slot's own tmp/<label>, never the job directory (which admission git-inits
-	// into a repo): a card's temp dir inside a repo makes tests checking for a non-bus directory
-	// fail for a reason the card did not cause. The slot
-	// directory is never a repo, so a temp file made here sits outside every repository the
-	// card's work could touch. It is made here so the child's TMPDIR exists before it starts.
-	tmpDir := filepath.Join(cfg.slotDir, "tmp", cfg.label)
+	// TMPDIR is a scratch directory of the child's own. A READER's is <job>/tmp, inside its
+	// job and outside the job's own repo: a reader that writes /tmp is refused by the wall
+	// and returns no verdict, and the card then spends the reader without a finding (the
+	// a-reader-writes-scratch-inside-its-job fault, 2026-10-11). A work card keeps the
+	// slot's tmp/<label>, which is never a repo either (admission git-inits the job
+	// directory): a card's temp dir inside a repo makes tests checking for a non-bus
+	// directory fail for a reason the card did not cause. Both sit outside every repository
+	// the card's work could touch, and both are made here so the child's TMPDIR exists
+	// before it starts. TMP and TEMP name the same directory beside it (nativeChildEnvFrom).
+	tmpDir := nativeTmpDir(cfg, jobDir)
 	if !within(cfg.root, tmpDir) || !strictlyWithin(cfg.slotDir, tmpDir) {
 		releaseSlot()
 		releaseLease()
@@ -1961,9 +1977,10 @@ func benchOS(cfg nativeRunConfig) string {
 // allowlist survives the caller's own environment (PATH, LANG, TERM, the XDG_ and
 // NOVA_SWARM_ families, and any provider credential whose name carries KEY, TOKEN or
 // SECRET), and the names this run owns are then set exactly once. HOME and XDG_DATA_HOME
-// point at the data home, NOVA_SWARM_JOB names the job directory, and TMPDIR is the slot's
-// own tmp/<label> (never the job directory, which admission git-inits into a repo) instead
-// of the caller's own, which the wall denies.
+// point at the data home, NOVA_SWARM_JOB names the job directory, and TMPDIR, TMP and TEMP
+// name one scratch directory (a reader's is <job>/tmp, a work card's the slot's own
+// tmp/<label>, never the job directory, which admission git-inits into a repo) instead of
+// the caller's own, which the wall denies.
 // XDG_CONFIG_HOME and XDG_CACHE_HOME are dropped, never inherited, so the harness defaults
 // them under HOME and never follows them outside the wall.
 //
@@ -2004,7 +2021,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		}
 	}
 	remove := []string{
-		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR",
+		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR", "TMP", "TEMP",
 		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "ASDF_OUTPUT_TRANSLATIONS",
 	}
 	if shimShell != "" {
@@ -2025,7 +2042,12 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
+		// TMP, TEMP and TMPDIR are the ONE scratch directory: a harness or a library that
+		// reads any of the three by name gets the same writable directory inside the wall,
+		// never the caller's own (which the wall denies).
 		"TMPDIR="+tmpDir,
+		"TMP="+tmpDir,
+		"TEMP="+tmpDir,
 		// the harness prints its ERROR lines into the capture, so a start it refuses names
 		// why (`error="ProviderModelNotFoundError: ..."`), not only its UnknownError envelope
 		"OPENCODE_PRINT_LOGS=1",

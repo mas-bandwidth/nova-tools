@@ -554,7 +554,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
 		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read"}
 		go func() {
 			for processAlive(pid) {
 				time.Sleep(time.Second)
@@ -660,7 +660,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read"}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -782,10 +782,13 @@ func processAlive(pid int) bool {
 
 type nativeChild struct {
 	card, logPath, results, job string
-	done                        chan struct{}
-	err                         error
-	once                        sync.Once
-	result                      member.Result
+	// read is whether this launch is a READ (member.Packet.Kind): a wall refusal on a read
+	// is the reader's own environment, never the work's (member.EndEnvironment).
+	read   bool
+	done   chan struct{}
+	err    error
+	once   sync.Once
+	result member.Result
 	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
 	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
 	proc *os.Process
@@ -1000,6 +1003,11 @@ var (
 	nativeIdleReap = regexp.MustCompile(`\breason=idle-reap\b`)
 	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
 	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeWall is native's WALL line: the harness's own fence or the OS wall refused a
+	// write outside the job, so the run ended the card for it (swarm.WallLine's `WALL
+	// task=` and swarm.WallRefusedLine's `WALL REFUSED`). On a read it is the reader's own
+	// environment, never the work's (member.EndEnvironment).
+	nativeWall = regexp.MustCompile(`(?m)^WALL (task=|REFUSED )`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
@@ -1053,6 +1061,11 @@ func (c *nativeChild) Result() member.Result {
 				nativeSpendLine = string(s[1])
 			}
 			end = nativeEnd(b)
+			if c.read && nativeWall.Match(b) {
+				// the wall refused a write outside the job: on a read that is the reader's
+				// own environment, not the work's verdict (member.EndEnvironment)
+				end = member.EndEnvironment
+			}
 			provider = providerReason(b)
 			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && (end == member.EndBudget || end == member.EndUnverifiable) {
 				budget = strings.TrimSpace(string(m[1]))

@@ -1309,6 +1309,84 @@ func TestAReadWhoseStageFailedTwiceIsReturned(t *testing.T) {
 	assert.Equal(t, []string{"r1", "r1"}, g.r.started(), "not run a third time")
 }
 
+// TestAReadTheReadersEnvironmentEndedIsRunAgainOnce pins the rule of the
+// a-reader-writes-scratch-inside-its-job fix (2026-10-11): a read the wall refused (the
+// reader wrote outside its job) ended in the reader's own ENVIRONMENT, never the work's
+// verdict. The reader keeps its place and runs the same read again once, named as the
+// environment, so the reader is not spent and the card does not go to cannot ask. Treating
+// it like any no-verdict end fails this: the read is returned at the first refusal.
+func TestAReadTheReadersEnvironmentEndedIsRunAgainOnce(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1"}, g.r.started())
+	g.r.child("r1").end(Result{End: EndEnvironment, Report: "the child ended without a result (see log)"})
+	g.s.reset()
+
+	acted, err := g.tickAt(t, 1)
+	require.NoError(t, err)
+	assert.Zero(t, acted)
+	assert.Empty(t, g.s.lines("report"), "an environment end records no verdict")
+	assert.Empty(t, g.s.lines("return"), "the reader keeps its place; the read is not handed back")
+	assert.Equal(t, 1, g.m.Running(), "the reader keeps its place while the read waits to run again")
+	assert.Contains(t, g.out.String(), "the reader's environment ended it")
+
+	acted, err = g.tickAt(t, int64(ReadStageRetry/time.Second)-1)
+	require.NoError(t, err)
+	assert.Zero(t, acted, "before ReadStageRetry the read is not run again")
+	assert.Equal(t, []string{"r1"}, g.r.started())
+
+	acted, err = g.tickAt(t, int64(ReadStageRetry/time.Second)+1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, acted)
+	assert.Equal(t, []string{"r1", "r1"}, g.r.started(), "the same read, run again by the same reader")
+	assert.Empty(t, g.s.lines("report"))
+	assert.Empty(t, g.s.lines("begin"), "no other read is begun ahead of the retry")
+
+	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
+	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second)+2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --ok r1 --finding clean --epoch 7"}, g.s.lines("report"))
+}
+
+// TestAReadTwiceEndedByTheReadersEnvironmentIsReturnedAsEnvironment pins that the retry is
+// once: a second environment end hands the read back with the cause `environment: ...`,
+// naming the reader's own environment and never a missing verdict, so the sprint re-asks it
+// of another reader without counting the first reader as spent.
+func TestAReadTwiceEndedByTheReadersEnvironmentIsReturnedAsEnvironment(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	fail := Result{End: EndEnvironment, Report: "the child ended without a result (see log)"}
+	retry := int64(ReadStageRetry/time.Second) + 1
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	g.r.child("r1").end(fail)
+	_, err = g.tickAt(t, 1)
+	require.NoError(t, err)
+	_, err = g.tickAt(t, retry+1)
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1", "r1"}, g.r.started())
+	g.s.reset()
+	g.r.child("r1").end(fail)
+
+	acted, err := g.tickAt(t, retry+2)
+	require.NoError(t, err)
+	assert.Equal(t, 1, acted)
+	assert.Empty(t, g.s.lines("report"), "no verdict is reported")
+	got := g.s.lines("return")
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "read --as r --return r1 --reason ")
+	assert.Contains(t, got[0], "environment: the wall refused a write outside the job")
+	assert.Contains(t, got[0], "--epoch 7")
+	assert.Zero(t, g.m.Running())
+	assert.Equal(t, []string{"r1", "r1"}, g.r.started(), "not run a third time")
+}
+
 // TestTheStageRetryIsRememberedAcrossAStartThatFails pins that the once is once: when the start
 // of the retry fails and the recovery path later launches the read, that launch is the retry,
 // and its stage failure is returned. Forgetting the retry at the failed start fails it: the

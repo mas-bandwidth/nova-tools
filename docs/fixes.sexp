@@ -42,6 +42,14 @@
    :text "The worker card tells the child its deadline, and the native wall passes the slot temporary
     directory so TMPDIR is the slot one."
    :origin "nova-tools PR #5575, head 4725d7d7d; landed in dev as 7dc8304560 via PR #5594")
+  (fix "a-reader-writes-scratch-inside-its-job" :release "v1.2.6" :status "in-progress"
+   :title "A reader writes its scratch inside its job"
+   :text "A reader's child is given a writable scratch directory inside its job: TMPDIR, TMP and TEMP
+    name $JOB/tmp, made before the child starts and removed with the job, and the read brief says so.
+    A write the wall refuses outside the job ends the read in the reader's own environment, not as a
+    missing verdict, and the read is run once more on the same reader instead of spending it and
+    sending the card to cannot ask."
+   :origin "measured 2026-10-11 by the seat's inbox pass: reads returned no verdict because the reader wrote under /tmp and the card wall refused it")
   (fix "walled-lane-tokens-read" :release "v1.2.6" :status "shipped"
    :title "A walled lane tokens are read where its harness writes them"
    :text "Walled sessions live under the wall home, tokens are read from there first, and a session in no
