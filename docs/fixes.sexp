@@ -115,8 +115,16 @@
    :title "The release changelog lists merge-queue merges"
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
-   :origin "v1.2.4 cut note")
-  (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
+    :origin "v1.2.4 cut note")
+   (fix "tla-friend-batch-delivery-turns" :release "v1.2.12" :status "in-progress"
+    :title "Friend models the present, dealt and idle-wake turns, the idle watch, and a kept turn's retry"
+    :text "tla/Friend.tla now models the batch session's turns as kinds (a message batch, a wake check, the
+     present owed on a start, the dealt briefs and the idle watch's one wake), the idle watch's awake,
+     woken and noted states, and a turn the session could not take kept in hand and retried every
+     Recheck on a timer rather than the moment the friend is up again. The reversed witness droptturn
+     drops the kept turn and its messages, caught by the new liveness KeptTurnRetried."
+    :origin "tla-friend-batch-delivery-turns card, 2026-10-11")
+   (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
    :title "A child ended at its deadline with a commit and no result gets a report"
    :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
     to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the

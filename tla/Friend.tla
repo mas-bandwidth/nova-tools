@@ -70,6 +70,17 @@
 \* waits for every turn to end, is not modelled, nor the deferral of a batch
 \* turn by the pacing, the lane sessions' opening, or the reads.
 \*
+\* A turn is a kind: "batch" (the messages in the hand), "wake" (the pong
+\* line for a wake check), "present" (her live queue and the newest
+\* coordinator note, owed on a session start and after a gap, present.go),
+\* "dealt" (the briefs the daemon wrote for her inbox, inbox.go startDealt)
+\* and "idlewake" (the idle watch's one wake). A turn the session could not
+\* take (SessionRefused) is kept in hand and retried every Recheck on a
+\* timer (retry), as a deferral is, never the moment the friend is up again.
+\* The idle watch (machine.go IdleStep) is awake, woken or noted: a friend
+\* holding cards whose session writes nothing for IdleAfter gets one wake
+\* turn, and IdleAfter more with no newer write one note to the coordinator.
+\*
 \* Broken = "none" is the design. Every other value is a reversed witness,
 \* each caught by one property below:
 \*   "upwithoutpong"  the daemon's own beat makes the friend up: UpOnlyAfterPong
@@ -100,23 +111,29 @@
 \*                    RESULT.md and no cap: SetAsideAfterCardTurns
 \*   "faultcounts"    a harness fault counts toward the card's tries:
 \*                    SetAsideAfterCardTurns
+\*   "droptturn"      a turn the session could not take is dropped instead of
+\*                    kept and retried: KeptTurnRetried
 
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Window, MaxTime, MaxPings, Broken,
-          Msgs, Lanes, Cards, K, MaxDeliveries, SilentStop, Refusals, Modes
+          Msgs, Lanes, Cards, K, MaxDeliveries, SilentStop, Refusals, Modes,
+          Recheck, IdleAfter
 
 VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered,
           daemonPongs, turns, owed, proven, lim, limUntil,
           mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, pingIn,
-          streak, reason, broken, lcard, lrun, lquiet, cst, tries
+          streak, reason, broken, lcard, lrun, lquiet, cst, tries,
+          kind, retry, presentDue, dealt, idle, idleSince, wokenAt, active, cards, retried
 linkvars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered,
               daemonPongs, owed, proven>>
 limvars == <<lim, limUntil>>
 msgvars == <<pel, acked, hand, inHand, carry, failed, readm, pingIn>>
 sessvars == <<streak, reason, broken>>
 lanevars == <<lcard, lrun, lquiet, cst, tries>>
-vars == <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
+turnvars == <<kind, retry, presentDue, dealt, retried>>
+idlevars == <<idle, idleSince, wokenAt, active, cards>>
+vars == <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, turnvars, idlevars>>
 
 NoNonce == 0
 M == 1..Msgs
@@ -162,10 +179,25 @@ TypeOK ==
   /\ lcard \in [L -> 0..Cards]
   /\ lrun \in [L -> 0..2]
   /\ lquiet \in [L -> 0..SilentStop]
-  /\ cst \in [C -> {"queued", "lane", "done", "aside", "capped"}]
-  /\ tries \in [C -> 0..CardTurns]
+   /\ cst \in [C -> {"queued", "lane", "done", "aside", "capped"}]
+   /\ tries \in [C -> 0..CardTurns]
+   /\ kind \in {"none", "batch", "wake", "present", "dealt", "idlewake"}
+   /\ retry \in 0..MaxTime
+   /\ presentDue \in BOOLEAN
+   /\ dealt \in 0..Cards
+   /\ idle \in {"awake", "woken", "noted"}
+   /\ idleSince \in 0..MaxTime
+   /\ wokenAt \in 0..MaxTime
+   /\ active \in 0..MaxTime
+   /\ cards \in 0..Cards
+   /\ retried \in BOOLEAN
 
 Busy == turns > 0
+
+\* The retry timer: a turn kept in hand (deferred or refused) is due again once
+\* the clock reaches retry (RecheckEvery in the code), never the moment the
+\* friend is up (daemon.go l.retry).
+Due == now >= retry
 
 \* Up is what the daemon reports: the session answered the current challenge
 \* and has answered at least once (machine.go Up). The witness lets the
@@ -183,9 +215,11 @@ Init ==
   /\ mode \in Modes /\ held = FALSE /\ quiet = 0 /\ lastStop = "none"
   /\ pel = M /\ acked = {} /\ hand = {} /\ inHand = {} /\ readm = {}
   /\ carry = [m \in M |-> NoTurn] /\ failed = [m \in M |-> 0] /\ pingIn = "none"
-  /\ streak = 0 /\ reason = 0 /\ broken = FALSE
-  /\ lcard = [l \in L |-> 0] /\ lrun = [l \in L |-> 0] /\ lquiet = [l \in L |-> 0]
-  /\ cst = [c \in C |-> "queued"] /\ tries = [c \in C |-> 0]
+   /\ streak = 0 /\ reason = 0 /\ broken = FALSE
+   /\ lcard = [l \in L |-> 0] /\ lrun = [l \in L |-> 0] /\ lquiet = [l \in L |-> 0]
+   /\ cst = [c \in C |-> "queued"] /\ tries = [c \in C |-> 0]
+   /\ kind = "none" /\ retry = 0 /\ presentDue = TRUE /\ dealt = 0
+   /\ idle = "awake" /\ idleSince = 0 /\ wokenAt = 0 /\ active = 0 /\ cards = 0 /\ retried = FALSE
 
 \* The clock (machine.go Tick): a window without a ping makes the
 \* coordinator silent, said once at that moment; a window challenged with
@@ -205,7 +239,7 @@ Tick ==
   /\ quiet' = Quieter(quiet, Busy)
   /\ lquiet' = [l \in L |-> Quieter(lquiet[l], lrun[l] > 0)]
   /\ UNCHANGED <<lastPing, nonce, asked, pongs, answered, daemonPongs, owed, proven, turns, limvars>>
-  /\ UNCHANGED <<mode, held, lastStop, msgvars, sessvars, lcard, lrun, cst, tries>>
+  /\ UNCHANGED <<mode, held, lastStop, msgvars, sessvars, lcard, lrun, cst, tries, turnvars, idlevars>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping;
 \* daemon.go loop.ping), read or peeked off the stream whatever the session
@@ -232,7 +266,7 @@ Ping(wake, stale) ==
             /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
             /\ pingIn' = IF Broken = "pinghanded" /\ pingIn = "none" /\ ~broken THEN "hand" ELSE pingIn
   /\ UNCHANGED <<now, silentFrom, pongs, silentSaid, outages, answered, proven, turns, limvars>>
-  /\ UNCHANGED <<mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, sessvars, lanevars>>
+  /\ UNCHANGED <<mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, sessvars, lanevars, turnvars, idlevars>>
 
 \* The step's read of the stream (daemon.go read): every pending message not
 \* already in hand or in a turn goes into the hand in one read, when the
@@ -250,7 +284,7 @@ Read ==
                /\ UNCHANGED <<hand, inHand>>
           ELSE /\ hand' = hand \cup fresh /\ inHand' = inHand \cup fresh
                /\ UNCHANGED <<pel, acked>>
-     /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, carry, failed, readm, pingIn, sessvars, lanevars>>
+     /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, carry, failed, readm, pingIn, sessvars, lanevars, turnvars, idlevars>>
 
 \* What heads a turn while a challenge is open (loop.head): the pong line for
 \* the current nonce, which pays an owed wake check.
@@ -277,14 +311,14 @@ StartBatch ==
   /\ mode = "batch" /\ SessionFree /\ ~held
   /\ hand # {} \/ pingIn = "hand" \/ Msgs = 0
   /\ Deliverable
-  /\ turns' = turns + 1 /\ quiet' = 0
+  /\ turns' = turns + 1 /\ quiet' = 0 /\ kind' = "batch"
   /\ carry' = [m \in M |-> IF m \in hand THEN Batch ELSE carry[m]]
   /\ readm' = readm \cup hand
   /\ hand' = {}
   /\ pingIn' = IF pingIn = "hand" THEN "turn" ELSE pingIn
   /\ owed' = HeadOwed
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, proven>>
-  /\ UNCHANGED <<limvars, mode, held, lastStop, pel, acked, inHand, failed, sessvars, lanevars>>
+  /\ UNCHANGED <<limvars, mode, held, lastStop, pel, acked, inHand, failed, sessvars, lanevars, retry, presentDue, dealt, retried, idlevars>>
 
 \* A wake check owed to a free session with no message waiting is pushed
 \* in as its own turn holding only the pong line (daemon.go startWake). The
@@ -294,17 +328,25 @@ WakeTurn ==
   /\ mode = "batch" /\ SessionFree /\ ~held /\ owed /\ chal # "quiet"
   /\ hand = {}
   /\ Deliverable
-  /\ turns' = turns + 1 /\ quiet' = 0 /\ owed' = FALSE
+  /\ turns' = turns + 1 /\ quiet' = 0 /\ owed' = FALSE /\ kind' = "wake"
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, proven>>
-  /\ UNCHANGED <<limvars, mode, held, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<limvars, mode, held, lastStop, msgvars, sessvars, lanevars, retry, presentDue, dealt, retried, idlevars>>
 
-\* The turn held by a deferral is tried again once the harness is up
-\* (daemon.go Run, l.retry), the same text and the same messages.
+\* The turn held by a deferral or a refusal is tried again once its retry
+\* timer is due (daemon.go Run, l.retry; RecheckEvery after the turn was
+\* kept), the same text, kind and messages; the witness drops it instead.
 Retry ==
-  /\ mode = "batch" /\ held /\ SessionFree
-  /\ Deliverable
-  /\ turns' = turns + 1 /\ quiet' = 0 /\ held' = FALSE
-  /\ UNCHANGED <<linkvars, limvars, mode, lastStop, msgvars, sessvars, lanevars>>
+  /\ mode = "batch" /\ held /\ SessionFree /\ Due /\ Deliverable
+  /\ IF Broken = "droptturn"
+       THEN /\ held' = FALSE /\ kind' = "none" /\ retry' = 0 /\ retried' = FALSE
+            /\ UNCHANGED <<turns, quiet, hand, failed, readm, pingIn>>
+            /\ carry' = [m \in M |-> IF m \in InBatch THEN NoTurn ELSE carry[m]]
+            /\ inHand' = inHand \ InBatch
+            /\ acked' = acked \cup InBatch
+            /\ pel' = pel \ InBatch
+       ELSE /\ turns' = turns + 1 /\ quiet' = 0 /\ held' = FALSE /\ retry' = 0 /\ retried' = TRUE
+            /\ UNCHANGED <<msgvars, kind>>
+  /\ UNCHANGED <<linkvars, limvars, mode, lastStop, sessvars, lanevars, presentDue, dealt, idlevars>>
 
 \* settle (daemon.go): what a turn's end o does to the messages S it carried
 \* and to the refusal streak. Every one leaves the turn (inHand and carry);
@@ -330,12 +372,16 @@ Settle(S, o) ==
 \* The messages the batch session's turn carries.
 InBatch == {m \in M : carry[m] = Batch}
 
-\* The batch turn ends by itself with o (batchDone).
+\* The batch turn ends by itself with o (batchDone); a present turn that did
+\* not end at exit 0 is owed again (presentEnded).
 BatchEnds(o) ==
   /\ Busy
   /\ turns' = turns - 1
   /\ Settle(InBatch, o)
+  /\ kind' = IF turns = 1 THEN "none" ELSE kind
+  /\ presentDue' = IF kind = "present" /\ o # "ok" THEN TRUE ELSE presentDue
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
+  /\ UNCHANGED <<retry, dealt, retried, idlevars>>
   /\ UNCHANGED <<linkvars, limvars, mode, held, quiet, lastStop, hand, readm, lanevars>>
 
 \* The silence rule (loop.watch): a turn that has printed nothing for
@@ -349,14 +395,17 @@ Stop ==
   /\ turns' = turns - 1
   /\ lastStop' = StopSaid(quiet)
   /\ Settle(InBatch, "failed")
+  /\ kind' = IF turns = 1 THEN "none" ELSE kind
+  /\ presentDue' = IF kind = "present" THEN TRUE ELSE presentDue
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
+  /\ UNCHANGED <<retry, dealt, retried, idlevars>>
   /\ UNCHANGED <<linkvars, limvars, mode, held, quiet, hand, readm, lanevars>>
 
 \* A running turn prints (the adapter's output watch, WithOutputSeen).
 Print ==
   /\ Busy /\ quiet > 0
   /\ quiet' = 0
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, lastStop, msgvars, sessvars, lanevars, turnvars, idlevars>>
 
 \* The batch turn hits the harness's usage limit or empty balance
 \* (limit.go Limits.see, Gate): it ends at once, Deferred, kept in the
@@ -367,7 +416,8 @@ HitLimit ==
   /\ turns' = turns - 1 /\ held' = TRUE
   /\ lim' = "limited"
   /\ \E u \in (now + 1)..MaxTime : limUntil' = u
-  /\ UNCHANGED <<linkvars, mode, quiet, lastStop, msgvars, sessvars, lanevars>>
+  /\ retry' = IF now + Recheck > MaxTime THEN MaxTime ELSE now + Recheck
+  /\ UNCHANGED <<linkvars, mode, quiet, lastStop, msgvars, sessvars, lanevars, kind, presentDue, dealt, retried, idlevars>>
 
 \* After the reset one wake turn is tried (limit.go Limits.Gate, a nonce the
 \* session must answer): answered, the friend is up again; still limited, the
@@ -377,7 +427,7 @@ Wake ==
   /\ lim = "limited" /\ ~Busy /\ now >= limUntil /\ Broken # "neverwake"
   /\ \/ lim' = "up" /\ UNCHANGED limUntil
      \/ /\ now < MaxTime /\ lim' = "limited" /\ \E u \in (now + 1)..MaxTime : limUntil' = u
-  /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, turnvars, idlevars>>
 
 \* The session writes a line after the ping (machine.go Pong; daemon.go
 \* sessionProof): it ends the challenge and proves the push, so any session
@@ -388,7 +438,7 @@ Pong(n) ==
   /\ (n = nonce \/ Broken = "stalepong")
   /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE /\ proven' = TRUE
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, silentSaid, outages, daemonPongs>>
-  /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, turnvars, idlevars>>
 
 \* ---------------------------------------------------------------- one-shot lanes
 
@@ -413,7 +463,7 @@ LaneStart(l) ==
   /\ pingIn' = IF pingIn = "hand" THEN "turn" ELSE pingIn
   /\ owed' = HeadOwed
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, proven>>
-  /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, pel, acked, inHand, failed, sessvars, tries>>
+   /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, pel, acked, inHand, failed, sessvars, tries, turnvars, idlevars>>
 
 \* What a lane's turn end does to its card (laneDone): RESULT.md there, the
 \* card is done and the lane free; a harness fault (exit 0, no report) keeps
@@ -453,7 +503,7 @@ LaneEnds(l, o, e) ==
   /\ Settle(InLane(l), o)
   /\ CardAfter(l, e)
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, hand, readm, lquiet>>
+   /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, hand, readm, lquiet, turnvars, idlevars>>
 
 \* The silence rule on a lane's turn: stopped, a failure, its card handed
 \* again or set aside as any turn without a RESULT.md (or done, when the
@@ -465,13 +515,13 @@ LaneStop(l, result) ==
   /\ lastStop' = StopSaid(lquiet[l])
   /\ Settle(InLane(l), "failed")
   /\ CardAfter(l, IF result THEN "done" ELSE "failed")
-  /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, hand, readm, lquiet>>
+   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
+   /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, hand, readm, lquiet, turnvars, idlevars>>
 
 LanePrint(l) ==
-  /\ lrun[l] > 0 /\ lquiet[l] > 0
-  /\ lquiet' = [lquiet EXCEPT ![l] = 0]
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lcard, lrun, cst, tries>>
+   /\ lrun[l] > 0 /\ lquiet[l] > 0
+   /\ lquiet' = [lquiet EXCEPT ![l] = 0]
+   /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lcard, lrun, cst, tries, turnvars, idlevars>>
 
 \* Lane l's turn is rate-limited or refused out of funds (limitedTurn): the
 \* card stays in the lane, counted toward nothing; the messages leave the turn
@@ -484,8 +534,77 @@ LaneLimited(l) ==
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
   /\ lim' = "limited"
   /\ IF lim = "up" THEN \E u \in (now + 1)..MaxTime : limUntil' = u ELSE UNCHANGED limUntil
-  /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, pel, acked, hand, failed, readm, sessvars>>
-  /\ UNCHANGED <<lcard, lquiet, cst, tries>>
+   /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, pel, acked, hand, failed, readm, sessvars, turnvars, idlevars>>
+   /\ UNCHANGED <<lcard, lquiet, cst, tries>>
+
+\* ------------------------------------------------------------ the other turns
+
+\* The present is owed on a session start and after a gap (present.go
+\* presentOwed, startPresent): one turn of kind "present" carrying her live
+\* queue and the newest coordinator note; it comes first, before a message,
+\* a dealt brief or a wake. A present that fails is owed again (BatchEnds).
+PresentTurn ==
+  /\ mode = "batch" /\ SessionFree /\ ~held /\ presentDue
+  /\ Deliverable
+  /\ turns' = turns + 1 /\ quiet' = 0 /\ kind' = "present" /\ presentDue' = FALSE
+  /\ UNCHANGED <<linkvars, limvars, mode, held, lastStop, msgvars, sessvars, lanevars, retry, dealt, retried, idlevars>>
+
+\* The dealt turn names the briefs the daemon wrote for her inbox
+\* (inbox.go startDealt): one turn of kind "dealt", after the present.
+DealtTurn ==
+  /\ mode = "batch" /\ SessionFree /\ ~held /\ ~presentDue /\ dealt > 0
+  /\ Deliverable
+  /\ turns' = turns + 1 /\ quiet' = 0 /\ kind' = "dealt" /\ dealt' = 0
+  /\ UNCHANGED <<linkvars, limvars, mode, held, lastStop, msgvars, sessvars, lanevars, retry, presentDue, retried, idlevars>>
+
+\* The idle watch (machine.go IdleStep; daemon.go loop.idle): a friend holding
+\* cards whose session writes nothing is awake, then woken (one wake turn),
+\* then noted (one note to the coordinator); a newer write or no card is awake
+\* again. The wake is a turn of kind "idlewake"; the note is no turn.
+IdleAgo(since) == now - since >= IdleAfter
+
+IdleWake ==
+  /\ mode = "batch" /\ SessionFree /\ ~held /\ idle = "awake" /\ cards > 0
+  /\ active <= idleSince /\ IdleAgo(idleSince)
+  /\ Deliverable
+  /\ idle' = "woken" /\ wokenAt' = now /\ idleSince' = now
+  /\ turns' = turns + 1 /\ quiet' = 0 /\ kind' = "idlewake"
+  /\ UNCHANGED <<linkvars, limvars, mode, held, lastStop, msgvars, sessvars, lanevars, retry, presentDue, dealt, retried, active, cards>>
+
+IdleNote ==
+  /\ idle = "woken" /\ active <= wokenAt /\ IdleAgo(wokenAt)
+  /\ idle' = "noted" /\ idleSince' = now
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, turnvars, wokenAt, active, cards>>
+
+IdleAwake ==
+  /\ idle # "awake" /\ (active > wokenAt \/ cards = 0)
+  /\ idle' = "awake" /\ idleSince' = now
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, turnvars, wokenAt, active, cards>>
+
+\* The session writes a line (the idle watch's newest write): a write newer
+\* than the wake answers it, and the measure starts again.
+SessionWrite ==
+  /\ active' = now /\ idleSince' = now
+  /\ idle' = IF idle # "awake" /\ now > wokenAt THEN "awake" ELSE idle
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, turnvars, wokenAt, cards>>
+
+\* The cards the friend holds change (her row, read each idle walk): holding no
+\* card is awake, and the measure starts again when one is first held.
+CardsChange ==
+  /\ cards' \in 0..Cards
+  /\ idle' = IF cards' = 0 THEN "awake" ELSE idle
+  /\ idleSince' = IF cards' = 0 \/ (cards' > 0 /\ cards = 0) THEN now ELSE idleSince
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, turnvars, wokenAt, active>>
+
+\* A turn the session could not take (SessionRefused; daemon.go refusedTurn):
+\* a failed delivery, never a delivered one. The turn stays in hand, tried
+\* again every Recheck, counted toward nothing and acked never, so every
+\* message stays pending; the witness drops it instead (Retry).
+SessionRefuse ==
+  /\ Busy /\ kind = "batch"
+  /\ turns' = turns - 1 /\ held' = TRUE /\ kind' = "batch"
+  /\ retry' = IF now + Recheck > MaxTime THEN MaxTime ELSE now + Recheck
+  /\ UNCHANGED <<linkvars, limvars, mode, quiet, lastStop, msgvars, sessvars, lanevars, presentDue, dealt, retried, idlevars>>
 
 Next ==
   \/ Tick
@@ -493,7 +612,15 @@ Next ==
   \/ Read
   \/ StartBatch
   \/ WakeTurn
+  \/ PresentTurn
+  \/ DealtTurn
+  \/ IdleWake
+  \/ IdleNote
+  \/ IdleAwake
+  \/ SessionWrite
+  \/ CardsChange
   \/ Retry
+  \/ SessionRefuse
   \/ \E o \in EndOutcomes : BatchEnds(o)
   \/ Stop
   \/ Print
@@ -507,7 +634,7 @@ Next ==
        \/ LanePrint(l)
        \/ LaneLimited(l)
 
-Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Wake)
+Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Wake) /\ WF_vars(Retry)
 
 \* ---------------------------------------------------------------- the rules
 
@@ -557,6 +684,11 @@ NoTurnBeforeProof == [][TurnStarts => proven]_vars
 \* reset answered); WF(Wake) and the finite clock (a reset is always after
 \* now, and no later than MaxTime) make it so.
 LimitedEnds == (lim = "limited") ~> (lim = "up")
+
+\* A turn kept in hand (a deferral, or a turn the session could not take) is
+\* retried, never dropped: WF(Retry) and the retry timer make it so. The
+\* "droptturn" witness drops the kept turn and its messages instead.
+KeptTurnRetried == held ~> retried
 
 \* No message is lost: every message is pending or acked, never both, and
 \* one pending is in the hand, in exactly one turn, or free on the stream for

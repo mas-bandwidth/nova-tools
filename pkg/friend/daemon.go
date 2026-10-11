@@ -917,6 +917,7 @@ func (d *Daemon) held() []string {
 // one blocker to the coordinator naming her and them. In one-shot mode the
 // lanes hand each card themselves, and a passive harness takes no turn: its
 // wake is said on the record, and its note goes as any other.
+// tla/Friend.tla IdleWake, IdleNote
 func (l *loop) idle(now time.Time) {
 	d := l.d
 	after := DefaultIdleAfter
@@ -1627,6 +1628,7 @@ func (l *loop) remember(t *turn) {
 // (SessionRefused) breaks the session at once and keeps the turn in hand, as
 // a deferral does, tried again; anything else settles its messages, and a
 // turn that succeeds clears that break.
+// tla/Friend.tla Retry
 func (l *loop) batchDone(r result, now time.Time) {
 	d := l.d
 	r.t.running = false
@@ -1677,6 +1679,7 @@ func (l *loop) batchDone(r result, now time.Time) {
 // the friend reads down with it; the turn stays in hand, tried again every
 // RecheckEvery, counted toward nothing and acked never, so every message
 // stays pending (docs/SPEC-FRIEND.md, "A turn the session cannot take").
+// tla/Friend.tla SessionRefuse
 func (l *loop) refusedTurn(t *turn, u SessionRefused, now time.Time) {
 	d := l.d
 	l.retry = now.Add(RecheckEvery)

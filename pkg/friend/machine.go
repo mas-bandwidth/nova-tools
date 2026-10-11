@@ -137,6 +137,7 @@ func (m *Machine) Tick(now time.Time) []Push {
 // on is awake again; awake with no write for after is one wake turn; woken for
 // after with no write is one note to the coordinator; noted says nothing more
 // until a write or no card ends it.
+// tla/Friend.tla IdleWake, IdleNote
 func (m *Machine) IdleStep(now, active time.Time, cards int, after time.Duration) (wake, note bool) {
 	if cards == 0 {
 		m.Idle, m.IdleSince = Awake, now
