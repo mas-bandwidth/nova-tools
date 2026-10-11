@@ -86,6 +86,9 @@ type rateLimitEvent struct {
 // whether the output said anything of the limit at all. A provider's
 // transient rate_limit_error is no limit (ProviderRefusal passes it).
 func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
+	// the CLI colours its limit line between the words, so every match is on
+	// the text with the codes stripped
+	out = stripANSI(out)
 	if strings.Contains(out, `"rate_limit_event"`) {
 		for _, line := range strings.Split(out, "\n") {
 			var ev rateLimitEvent
@@ -94,10 +97,10 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 			}
 			lim, found = claudeLimit(ev, now), true
 		}
-		if found {
-			return lim, true
-		}
 	}
+	// the run's own text is read whether or not it printed a rate_limit_event:
+	// an event that only measured the windows is not a limit, and must not
+	// shadow the limit the harness printed as a line
 	tail := out
 	if len(tail) > LimitTail {
 		tail = tail[len(tail)-LimitTail:]
@@ -106,10 +109,15 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 		if !limitWords.MatchString(line) {
 			continue
 		}
-		if until, ok := resetOfText(stripANSI(line), now); ok {
-			lim = Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
-			found = true
+		until, ok := resetOfText(line, now)
+		if !ok {
+			continue
 		}
+		text := Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
+		if found {
+			text.Usage, text.Overage = lim.Usage, lim.Overage
+		}
+		lim, found = text, true
 	}
 	return lim, found
 }

@@ -62,7 +62,9 @@
      lines per repository and package, product against test, from a baseline taken before the first
      pass.")
    (release "v1.2.14" :status "planned" :date "2026-10-11"
-    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find."))
+     :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
+    (release "v1.2.15" :status "planned"
+     :text "The next small product fixes, one concern each."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -744,4 +746,9 @@
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
-   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")))
+   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+
+  (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.15" :status "planned"
+   :title "A harness limit in any wording pauses the lanes"
+   :text "A limit a harness prints as text is read whether or not the run also printed a rate_limit_event that only measured its windows, and the line is matched with the ANSI colour codes stripped: before, an event beside 'You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)' shadowed the line, so each lane run was recorded as a failed attempt of the card and healthy cards were pushed toward their bound. ReadLimit strips the codes, reads the whole output for a rate_limit_event, and always reads the run's text tail for a limit line with its reset, so a limit pauses the lanes until the reset and hands the card back without counting an attempt."
+   :origin "the seat, 2026-10-11 20:16Z: claude -p printed 'You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)' for every model and the daemon recorded each as a failed attempt; card a-harness-limit-in-any-wording-pauses-the-lanes.w1")))

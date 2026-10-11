@@ -175,6 +175,39 @@ func TestALimitLineIsReadOnlyWithItsResetAndNeverFromTheBodyOfAReply(t *testing.
 	assert.True(t, errors.As(Deferred{Reason: "x"}, new(Deferred)))
 }
 
+// A weekly-limit line is a limit in any of the colours the CLI prints it,
+// and it is still the limit when the run also printed a rate_limit_event that
+// only measured its windows: before, the event shadowed the text line and the
+// lane run was recorded as a failed attempt of the card
+// (a-harness-limit-in-any-wording-pauses-the-lanes.w1; the finding of
+// 2026-10-11: "You've hit your weekly limit · resets Oct 16 at 3am
+// (America/New_York)" for every model, the lane giving up in seconds).
+func TestTheWeeklyLimitLineIsReadInItsColourAndBesideItsEvent(t *testing.T) {
+	t.Parallel()
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 11, 20, 16, 0, 0, ny)
+	want := time.Date(2026, 10, 16, 3, 0, 0, 0, ny)
+	// the colour codes the CLI adds between the words: a match on the raw line
+	// sees "hit your \x1b[1mweekly\x1b[0m limit" and names no limit
+	line := "\x1b[38;5;203mYou've hit your " + "\x1b[1mweekly\x1b[0m" +
+		" \x1b[38;5;203mlimit\x1b[0m \x1b[2m·\x1b[0m resets Oct 16 at 3am (America/New_York)"
+	// a rate_limit_event that is not a rejection: it measured the windows, it
+	// is not the limit the text names
+	ev := claudeEvent("allowed", false, 0.92, 0.96, now.Add(time.Hour), now.Add(5*24*time.Hour))
+	for _, tc := range []struct{ name, out string }{
+		{"plain", "You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\n"},
+		{"ansi", line + "\n"},
+		{"ansi beside its event", ev + "\n" + line + "\n"},
+	} {
+		lim, found := ReadLimit(tc.out, now)
+		require.True(t, found, tc.name)
+		require.True(t, lim.Limited, "%s: the weekly limit is a limit", tc.name)
+		assert.True(t, want.Equal(lim.Until), "%s: until %s, want %s", tc.name, lim.Until.Format(time.RFC3339), want.Format(time.RFC3339))
+		assert.Contains(t, strings.ToLower(lim.Reason), "weekly", "%s: the reason names the weekly window", tc.name)
+	}
+}
+
 func ftoa(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 func itoa(n int64) string   { return strconv.FormatInt(n, 10) }
 
