@@ -24,7 +24,7 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 	if len(args) > 0 {
 		verbflag.HelpIfAsked(args[:1], k.Name)
 	}
-	want := "add, set, remove, list, show or history"
+	want := "add, set, remove, list, show, history or lint"
 	switch {
 	case k.Singleton:
 		want = "set, show or history"
@@ -37,6 +37,9 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 	}
 	if len(args) == 0 {
 		return refuse(stderr, k.Name, "want "+want)
+	}
+	if k.Name == config.KindFriend && args[0] == "lint" {
+		return runKindLint(ctx, k, args[1:], stdout, stderr, d)
 	}
 	if k.Name == config.KindMachine {
 		switch args[0] {
@@ -670,4 +673,67 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 // than this binary's migrations (behindSchema), which does not have it.
 func laterKind(k *config.Kind) bool {
 	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine
+}
+
+// runKindLint is <kind> lint: it validates every stored row of the kind against
+// its field validators and prints one LINT line per failing field with the value
+// and a fix hint. All rows pass: LINT OK rows=<n>.
+func runKindLint(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
+	verb := k.Name + " lint"
+	fs := verbflag.New(verb)
+	c := seatStoreFlags(fs)
+	asJSON := jsonFlag(fs)
+	if code, ok := parse(fs, args, stderr, verb); !ok {
+		return code
+	}
+	if fs.NArg() > 0 {
+		return refuse(stderr, verb, "lint takes no name; want "+verb)
+	}
+	dsn, err := c.dsn(d.getenv)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	st, err := d.openStore(ctx, dsn)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	defer func() { _ = st.Close() }()
+
+	rows, err := st.List(ctx, k.Name)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+
+	var issues []string
+	for _, row := range rows {
+		for _, f := range k.Fields {
+			val := row.Fields[f.Name]
+			// For required fields with Enum, empty value is invalid.
+			if f.Required && (f.Type == config.TypeList || f.Type == config.TypeNames || f.Type == config.TypeSeq) && len(f.Enum) > 0 && val == "" {
+				issues = append(issues, fmt.Sprintf("LINT %s %s: %s: %s; run: "+toolName+" %s set %s --%s <value>", k.Name, row.Name, f.Name, val, k.Name, row.Name, f.Name))
+				continue
+			}
+			_, err := f.Canonical(val)
+			if err != nil {
+				issues = append(issues, fmt.Sprintf("LINT %s %s: %s: %s; run: "+toolName+" %s set %s --%s <value>", k.Name, row.Name, f.Name, val, k.Name, row.Name, f.Name))
+			}
+		}
+	}
+
+	if *asJSON {
+		o := tool.Done().Fact("kind", k.Name).Fact("rows", len(rows)).Fact("issues", len(issues))
+		o.Notes = append(o.Notes, issues...)
+		o.Verb = verb
+		return emit(stdout, o)
+	}
+
+	for _, issue := range issues {
+		fmt.Fprintln(stdout, issue)
+	}
+	if len(issues) == 0 {
+		fmt.Fprintf(stdout, "LINT OK rows=%d\n", len(rows))
+		return 0
+	}
+	fmt.Fprintf(stdout, "LINT found=%d rows=%d\n", len(issues), len(rows))
+	return 1
 }
