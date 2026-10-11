@@ -535,6 +535,18 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-benchrun-an-interrupted-exec-ran" :release "v1.2.12" :status "planned"
+   :title "BenchRun models an exec interrupt as Killed, not Refused"
+   :text "BenchRun.tla's header named internal/bench/bench.go (the package is pkg/bench: bench.go and
+     exec.go), and its Interrupt set exit = Refused for an interrupt at the exec step, where the code's
+     sshLine returns ssh's ExitCode (-1) with no error and the verb exits with that code, so the command
+     did run. Interrupt is now InterruptCopy (the command never ran, exit Refused) and InterruptExec
+     (the command ran, exit Killed), held by the new InterruptedExecRan invariant, with the reversed
+     witness MCBenchRunBrokenInterruptRefused (an exec interrupt reported Refused while ranCmd is TRUE).
+     The failed-copy witness keeps its result, and cmd/nova-ci/bench.go cites the module at its exit
+     mapping. Tests and models only, no product change."
+   :origin "the card tla-benchrun-an-interrupted-exec-ran.w2 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
