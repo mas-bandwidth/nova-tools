@@ -1,8 +1,9 @@
 ----------------------------- MODULE FirstConn -----------------------------
 \* The connection redisconn.Open dials, as state. nova-tools
-\* internal/redisconn/open.go at f6ec9e2b8: firstConn (Read :255, Write
-\* :280, disarm :291), firstDial (dialer :194, done :209), the probe :180;
-\* firstconn_test.go, whose seven events and three rules are this module's.
+\* pkg/redisconn/open.go: firstConn (Read :343-364, Write :368-376, disarm
+\* :379-382), firstDial (dialer :223-255, done :265-270), the probe
+\* :203-207; firstconn_test.go, whose seven events and three rules are this
+\* module's.
 \*
 \* Why it exists. go-redis shakes hands inside the first command on a
 \* connection and offers no way to ask for the handshake alone, so Open sends
@@ -64,6 +65,11 @@
 \* :244). Over arbitrary orders, as here and in the test, the answer comes
 \* first and comes alone, before any of the store's bytes still unread;
 \* AnswerStandsInPlace states that.
+\*
+\* Every connection dialed while Open runs becomes a firstConn (open.go
+\* :243-249), but done() disarms only the last one stored (:267-268). The
+\* model's one firstConn is that last connection; a second connection dialed
+\* before Open returns is not modelled.
 \*
 \* Not here: a Read racing a Write (they alternate in go-redis; the code
 \* uses compare-and-swap so a lost race is a travelled probe, never a wrong

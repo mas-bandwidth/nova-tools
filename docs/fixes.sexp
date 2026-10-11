@@ -581,6 +581,21 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-nova-tools-matching-models-cite-their-code" :release "v1.2.12" :status "planned"
+   :title "Nine models name today's code and are cited by it"
+   :text "BenchStage, FileLock, FirstConn, FuseBox, RedisFn, TableSession, TableFirstContact,
+    TableOrder and WakeCursor match their code; only their headers' paths and line numbers, and
+    the code's citations of them, were stale. Each header now names today's path and lines
+    (pkg/release/install.go, pkg/filelock, pkg/redisconn/open.go, cmd/nova-fuse/check.go,
+    pkg/redisfn/store.go, cmd/nova-table, cmd/nova-bus, pkg/nsprint/fn/lua/table.lua) and states
+    the one difference where there is one: BenchStage's seed guard is the stage's SHA256SUMS being
+    absent, not any file; FirstConn disarms only the last dial; TableFirstContact's Skipped sets
+    done with no resend; WakeCursor does not tell a first arm from a re-arm. install.go cites
+    tla/BenchStage.tla at its verify, check.go cites tla/FuseBox.tla on cmdCheck, pkg/filelock's
+    caller list adds pkg/friend and cmd/nova-config, and tla/README.md says six FuseBox witnesses.
+    The nine groups rerun and merge clean (tla/RUNS.tsv). Tests and models only, no product change."
+   :origin "card tla-nova-tools-matching-models-cite-their-code.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "tla-cardcontract-retire-the-sprint-actions" :release "v1.2.12" :status "planned"
    :title "CardContract retires the sprint's redeal, retire, restage, staging bound and level"
    :text "CardContract.tla's Redeal, Retire, Restage, StagingAll and Level modelled internal/sprint's side

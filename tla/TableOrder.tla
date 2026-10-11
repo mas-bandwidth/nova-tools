@@ -1,7 +1,7 @@
 ---------------------------- MODULE TableOrder ----------------------------
 \* The order of a nova-table's rows and columns as state (2026-09-27:
 \* "take column y and put it after column z", "friends on top, machines on
-\* bottom"). table.lua at nova-tools#4457 47bbca675: T.reorder, T.sorted,
+\* bottom"). pkg/nsprint/fn/lua/table.lua: T.reorder, T.sorted,
 \* T.rank, the standing-sort step of T.finish, ns_table_bind, and the
 \* col_add, col_del, col_move, row_move, row_order and row_sort keys of
 \* ns_table_set, alone and combined.
@@ -31,8 +31,8 @@
 \*
 \* Not here: labels and sorting by a column's value (modelled as sorting by
 \* name: the key differs, the properties do not), epochs, receipts, rename,
-\* bound cells. Those are functional tests: order_functional_test.go and the
-\* regression tests of #4457.
+\* bound cells. Those are functional tests: pkg/ntable/order_functional_test.go
+\* and the regression tests of #4457.
 EXTENDS Naturals, Sequences, FiniteSets
 CONSTANTS NRows, Cols, InitCols, Broken, MaxSteps
 Rows == 1..NRows

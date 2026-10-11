@@ -1,11 +1,11 @@
 ----------------------------- MODULE FileLock -----------------------------
 \* A lock on a file, across processes: one holder at a time, and a refusal
-\* that tells the truth. The design of the shared module internal/filelock, written
+\* that tells the truth. The design of the shared module pkg/filelock, written
 \* from the locks nova-tools already has (internal/bus, merge, tokens, swarm,
 \* wake and update each carry a copy) and against the first candidate,
 \* nova-tools#4473 at d653eb53e (internal/filelock/filelock_unix.go).
 \*
-\* The rule the design stands on is internal/merge/lock.go's: THE KERNEL
+\* The rule the design stands on is pkg/filelock's: THE KERNEL
 \* RELEASES THE LOCK WHEN ITS HOLDER DIES, so there is nothing to break and
 \* no age to compute. The lock is the kernel's lock on the file (flock,
 \* LockFileEx) and nothing else. What is written in the file is a note, read
