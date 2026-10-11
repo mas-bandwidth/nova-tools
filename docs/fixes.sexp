@@ -118,7 +118,14 @@
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
-  (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
+   (fix "the-adopt-starts-with-one-canary-member" :release "v1.2.14" :status "planned"
+    :title "The adopt starts with one canary member"
+    :text "The build no longer lands on every fleet host at once: the install play runs one canary host first and
+     every other fleet host after it, stops on the canary's failure, waits on the canary's own member log for one
+     finish ok line, and rolls the canary back alone to the version its build fact held. A canary whose build fact
+     held no version is not rolled back, and nova_adopt_canary=none installs every host in one batch as before."
+    :origin "tmp/next-sprint-cards/TOOLING-FROM-THE-SEAT-2026-10-11.md item 12 (the owner, 2026-10-11)")
+   (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
    :title "A child ended at its deadline with a commit and no result gets a report"
    :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
     to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the

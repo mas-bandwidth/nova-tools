@@ -818,3 +818,123 @@ func TestAdoptionDiskFreeReadsThroughCheck(t *testing.T) {
 	assert.Contains(t, msg, "| first", "the disk_free_kb column does not take the first match")
 	assert.Contains(t, msg, "default('?')", "the disk_free_kb column has no default for an empty or skipped df")
 }
+
+// TestInstallPlayStartsWithOneCanaryBatch pins the staged rollout
+// (docs/SPEC-RELEASE.md, "Adopting a build"): the install play runs the canary
+// alone first and every other fleet host after it, and it stops on the canary's
+// failure so the other hosts are never touched. nova_adopt_canary=none runs the
+// play in one batch, as before. The canary and its wait bound are group vars.
+func TestInstallPlayStartsWithOneCanaryBatch(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	serial := asText(install["serial"])
+	assert.Contains(t, serial, "[1,", "the install play's first batch is not one host (the canary)")
+	assert.Contains(t, serial, "nova_adopt_canary", "the batch split is not keyed on nova_adopt_canary")
+	assert.Contains(t, serial, "100%", "the second batch is not every other fleet host")
+	assert.Contains(t, serial, "else '100%'", "nova_adopt_canary=none does not run the play in one batch")
+	assert.Equal(t, 0, install["max_fail_percentage"], "the play does not stop on the canary's failure (max_fail_percentage is not 0)")
+
+	all := readGroupVars(t)
+	assert.Contains(t, asText(all["nova_adopt_canary"]), "group", "nova_adopt_canary has no default host from the fleet group")
+	_, ok := all["nova_adopt_canary"]
+	assert.True(t, ok, "nova_adopt_canary is not a group var")
+	_, ok = all["nova_adopt_canary_wait"]
+	assert.True(t, ok, "nova_adopt_canary_wait is not a group var")
+}
+
+// TestInstallPlayCanaryWaitsOnItsMemberLog pins the wait (docs/SPEC-RELEASE.md,
+// "Adopting a build"): after the loops step the canary reads its own member's
+// loop log for one "finish ... ok=true exit=0" line, bounded by
+// nova_adopt_canary_wait and polled every 30 s, and prints CANARY OK with the
+// host and the card.
+func TestInstallPlayCanaryWaitsOnItsMemberLog(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	tasks := flattenTasks(t, tasksOf(t, install))
+
+	wait := taskContaining(t, tasks, "the member's log since the restart")
+	raw := fmt.Sprint(wait)
+	assert.Contains(t, raw, "finish .*ok=true exit=0", "the wait does not read the log for an ok finish")
+	assert.Contains(t, raw, "exit=1", "the wait does not stop on a refused finish")
+	assert.Contains(t, raw, "nova-loop-", "the wait does not read the member's own loop log")
+	assert.Contains(t, raw, "nova_adopt_canary_wait", "the wait is not bounded by nova_adopt_canary_wait")
+	assert.Equal(t, 30, wait["delay"], "the wait does not poll every 30 s")
+
+	ok := taskNamed(t, tasks, "canary: the member finished ok")
+	assert.Contains(t, debugMsg(ok), "CANARY OK host=", "the wait prints no CANARY OK host line")
+	assert.Contains(t, debugMsg(ok), "card=", "the CANARY OK line names no card")
+}
+
+// TestInstallPlayCanaryRollsBackTheBuildFactVersion pins the rollback
+// (docs/SPEC-RELEASE.md, "Adopting a build"): a canary that fails installs the
+// version the build fact held before, from the same release directory, then
+// restarts the loops; a host whose build fact held no version is not rolled
+// back. The rescue is on the canary block, so only the canary is touched.
+func TestInstallPlayCanaryRollsBackTheBuildFactVersion(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+
+	block := taskNamed(t, tasksOf(t, install), "canary: the first host's member finishes, or the fleet waits")
+	_, hasRescue := block["rescue"]
+	require.True(t, hasRescue, "the canary block has no rescue: a failed wait does not roll back")
+
+	var rollback map[string]any
+	var restarts bool
+	walkTasks(block["rescue"], func(task map[string]any) {
+		if cmd, ok := task["ansible.builtin.command"].(map[string]any); ok {
+			argv := strings.Join(stringList(cmd["argv"]), " ")
+			if strings.Contains(argv, "release install") && strings.Contains(argv, "--version") && strings.Contains(argv, "tools_was_version") {
+				rollback = task
+			}
+		}
+		if _, ok := task["ansible.builtin.systemd_service"].(map[string]any); ok {
+			restarts = true
+		}
+		if _, ok := task["ansible.builtin.command"].(map[string]any); ok {
+			if strings.Contains(fmt.Sprint(task["name"]), "boot out each replaced member and reader") {
+				restarts = true
+			}
+		}
+	})
+	require.NotNil(t, rollback, "the canary's failure installs no build fact version: nothing is rolled back")
+	assert.Contains(t, fmt.Sprint(rollback["when"]), "tools_was_version != ''", "a host with no build fact is rolled back anyway")
+	assert.True(t, restarts, "the rollback does not restart the loops on either platform")
+
+	var refusal bool
+	walkTasks(block["rescue"], func(task map[string]any) {
+		if f, ok := task["ansible.builtin.fail"].(map[string]any); ok {
+			if msg, _ := f["msg"].(string); strings.Contains(msg, "ADOPT REFUSED step=canary") {
+				refusal = true
+			}
+		}
+	})
+	assert.True(t, refusal, "the canary's failure ends with no ADOPT REFUSED step=canary line")
+}
+
+// TestInstallPlayCanaryNoneSkipsTheWait pins nova_adopt_canary=none: the wait
+// runs only when a canary is named and only on that host, and none says the
+// play installs every host in one batch (docs/SPEC-RELEASE.md, "Adopting a
+// build").
+func TestInstallPlayCanaryNoneSkipsTheWait(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	block := taskNamed(t, tasksOf(t, install), "canary: the first host's member finishes, or the fleet waits")
+	when := asText(block["when"])
+	assert.Contains(t, when, "nova_adopt_canary != 'none'", "the wait runs with no canary named")
+	assert.Contains(t, when, "inventory_hostname == nova_adopt_canary", "the wait does not run on the canary alone")
+
+	var none, wouldWait bool
+	walkTasks(install["tasks"], func(task map[string]any) {
+		if debugMsg(task) == "" {
+			return
+		}
+		if strings.Contains(debugMsg(task), "CANARY none") {
+			none = true
+		}
+		if strings.Contains(debugMsg(task), "WOULD-WAIT") {
+			wouldWait = true
+		}
+	})
+	assert.True(t, none, "nova_adopt_canary=none does not say the play runs in one batch")
+	assert.True(t, wouldWait, "--check does not name the canary and the wait it would do")
+}
