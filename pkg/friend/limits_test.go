@@ -169,10 +169,18 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		}
 		r.run(t, 400)
 
-		require.Len(t, h.asked, 3, "the turn that hit the limit, one wake turn after the reset, then the message")
-		assert.Equal(t, Text(hello), h.asked[0])
-		assert.Contains(t, h.asked[1], "w4k3up", "the wake turn")
-		assert.Equal(t, Text(hello), h.asked[2], "the message goes in after the wake answered, once")
+		// What was asked, as a set: the message, the wake turn, the message
+		// again. The one order the product promises is Gate's (limit.go): "the
+		// first after the reset is a wake turn (WakeText) whose output must
+		// carry its nonce ... before the message goes in", so the wake turn
+		// stands before the message it lets in.
+		assert.ElementsMatch(t, []string{Text(hello), WakeText("w4k3up"), Text(hello)}, h.asked,
+			"what was asked, whatever the schedule: %v", h.asked)
+		wake := slices.IndexFunc(h.asked, func(a string) bool { return strings.Contains(a, "w4k3up") })
+		if assert.NotEqual(t, -1, wake, "the wake turn is among the asks: %v", h.asked) &&
+			assert.Less(t, wake, len(h.asked)-1, "the wake turn is not the last ask: %v", h.asked) {
+			assert.Equal(t, Text(hello), h.asked[wake+1], "the message goes in after the wake answered, once: %v", h.asked)
+		}
 
 		var limited []Status
 		for _, s := range r.status {
@@ -197,8 +205,20 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		r.mu.Lock()
 		sent := slices.Compact(slices.Clone(beats))
 		r.mu.Unlock()
-		assert.Equal(t, []string{"up", "down until=2026-10-04T03:03:00Z reason=harness limit: ERROR: You've hit your usage limit. Try again at 3:03 AM.", "up"}, sent,
-			"the beat says up, then down with the until and the reason while limited, then up after the wake")
+		// The beat says up before the limit and again after the wake, and down
+		// with the until and the reason while limited. The first beat and the
+		// delivery that hits the limit are two ready goroutines in one synctest
+		// instant, so the sequence may open with up or with down; what it never
+		// does is say up between the limit and the reset.
+		wantDown := "down until=2026-10-04T03:03:00Z reason=harness limit: ERROR: You've hit your usage limit. Try again at 3:03 AM."
+		if len(sent) > 0 && sent[0] == "up" {
+			sent = sent[1:]
+		}
+		require.NotEmpty(t, sent, "the beat says down with the until and the reason while limited: %v", beats)
+		assert.Equal(t, "up", sent[len(sent)-1], "the beat says up again after the wake: %v", beats)
+		for _, b := range sent[:len(sent)-1] {
+			assert.Equal(t, wantDown, b, "the beat says down until the reset, never up between the limit and the reset: %v", beats)
+		}
 
 		assert.Equal(t, []string{reset.UTC().Format(time.RFC3339)}, downs, "the coordinator is told once of the limit")
 		assert.Equal(t, []string{"up"}, ups, "and once of the wake")
