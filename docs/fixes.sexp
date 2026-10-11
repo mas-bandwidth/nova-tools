@@ -174,6 +174,13 @@
     :text "Fleet plays run only from the checkout of the adopted release, and refuse when the
      checkout's version differs from the release installed on the host."
     :origin "dogfood 2026-10-10 evening: fleet-only restart")
+   (fix "a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it" :release "v1.2.14" :status "planned"
+    :title "A lane beyond the cap keeps the card the server gave it"
+    :text "With server lanes a lane past the live cap a rate limit lowered keeps the card it holds
+     between turns, counting its turns, and says so once; it no longer logs a hand-back to another
+     lane that never reaches the server, resets the card's turns, or leaves a machine STOP with no
+     stop-return for the card. A world with no server keeps the local hand-back."
+    :origin "card a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it.w1; the coordinator's 2026-10-11 audit of pkg/friend v1.2.14")
    (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
     :title "A friend's lanes are thin clients of the sprint server"
     :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the

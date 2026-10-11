@@ -400,9 +400,15 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 // laneStep starts what the lanes owe: a session for a lane that has none,
 // and a card's turn for a lane that is free, the waiting messages riding
 // along. A lane beyond width, or beyond the live cap a rate limit lowered,
-// takes nothing new and hands back a card it holds between turns; while the
-// lanes back off from a rate limit, or are held out of funds, no lane starts
-// a turn or an open (ratelimit.go).
+// takes nothing new and starts no turn; a card it holds between turns waits on
+// its lane. With server lanes the lane keeps what the server says it holds
+// (lane_take.go), since a hand-back to another lane is owed a server verb this
+// daemon has not: the server gives a working card only to the lane that holds
+// it, so a local hand-back would drop the card from the lane while her row
+// still shows it working. A world with no server keeps the local hand-back,
+// which another lane there picks up. While the lanes back off from a rate
+// limit, or are held out of funds, no lane starts a turn or an open
+// (ratelimit.go).
 func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
@@ -507,9 +513,18 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.n > limit {
-			if ln.card != nil { // between turns: the card goes back to the queue for a lane within the cap
-				d.Record(fmt.Sprintf("%s lane %d: beyond the cap (%d of %d); card %s handed back for another lane", now.UTC().Format(time.RFC3339), ln.n, limit, width, ln.card.ID))
-				ln.card, ln.attempts = nil, 0
+			if ln.card != nil { // between turns: the card waits on this lane while it is over the cap
+				if l.serverLanes() {
+					// the server says this lane holds the card (lane_take.go): keep it, carry its
+					// count, and wait rather than hand it back to a lane the server will not give it to
+					// (docs/SPEC-FRIEND.md, one-shot lanes)
+					l.laneSay(ln, fmt.Sprintf("%s lane %d: beyond the cap (%d of %d); card %s waits on this lane, which the server says holds it, until the cap lets it run", now.UTC().Format(time.RFC3339), ln.n, limit, width, ln.card.ID))
+				} else {
+					// no server: the card goes back to the queue for a lane within the cap, which there
+					// picks it up (one_lane.go)
+					d.Record(fmt.Sprintf("%s lane %d: beyond the cap (%d of %d); card %s handed back for another lane", now.UTC().Format(time.RFC3339), ln.n, limit, width, ln.card.ID))
+					ln.card, ln.attempts = nil, 0
+				}
 			}
 			continue
 		}
