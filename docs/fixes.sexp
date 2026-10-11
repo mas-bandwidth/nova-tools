@@ -546,6 +546,17 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-delivery-note-from-the-seat" :release "v1.2.12" :status "planned"
+   :title "Delivery models the note from the seat, the one-shot supersede and the retried failed present"
+   :text "Delivery (pkg/friend/present.go) took any note as the newest and always delivered it in the
+    present, with a gap rule that always applied. It now holds a seat variable and takes the note only
+    from the seat (NoteFromSeat), supersedes the note when the seat is unknown and in one-shot mode, owes
+    a failed present again after Retry carrying the same note, and applies the gap rule only in batch
+    mode, never for a passive harness, and not before the first beat. A new reversed witness anysender
+    carries a note not from the seat and violates NoteFromSeat. adapter_tmux.go no longer cites Delivery
+    for the tmux pane being idle, which the module does not model. Tests and models only, no product change."
+   :origin "card tla-delivery-note-from-the-seat.w6 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
