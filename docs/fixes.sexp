@@ -162,6 +162,14 @@
     own (opencode run with no --session), so a session that is full (past the model's context) or
     missing is never the reason she is down."
    :origin "the seat ledger v1.2.4-held-2026-10-10.md, two friends down after the adopt: one past the 260000-token context refused every turn, one with no opencode session in its directory")
+  (fix "a-reader-loop-redials-after-a-server-restart" :release "v1.2.6" :status "in-progress"
+   :title "A reader loop re-dials the sprint server after its restart"
+   :text "The sprint connection a reader beats and takes through is rebuilt after any error and backed
+    off one second doubling to thirty (cmd/nova-swarm/sprintredial.go, tla/LoopRedial.tla), so a
+    server restart drops the connection and the reader re-dials and keeps beating, instead of parking
+    on the dead socket; fleet/loops.yml takes nova_loop_restart=<records> to restart a hung loop
+    through the play, never by hand."
+   :origin "measured 2026-10-11 01:05-01:20Z: after the v1.2.6 adopt every Linux reader loop stopped at its last connection-refused line while the member loops on the same hosts recovered, 24 reads waited with 0 reading and the server raised cannot ask (0 free readers) until each reader unit was restarted by hand")
   (fix "worker-question-ending-asked" :release "v1.2.9" :status "planned"
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
