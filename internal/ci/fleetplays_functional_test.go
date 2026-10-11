@@ -582,3 +582,43 @@ func TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer(t *testing.T) {
 		})
 	}
 }
+
+// TestToolchainsPlayChecksOnTheFixture runs fleet/toolchains.yml --check on the
+// check fixture, the machine running the test, against a home that holds no
+// toolchain: the play says every toolchain is missing, names each download it
+// would fetch and the jar it would place, prints the table, fails no host and
+// writes nothing. The packages list is empty and the only brew is a stand-in
+// in the test's own directory, so the run reads nothing of the machine's own
+// packages or Homebrew; the jar's directory is the test's, so no sudo is asked.
+func TestToolchainsPlayChecksOnTheFixture(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	tla := filepath.Join(r.dir, "tla")
+	require.NoError(t, os.MkdirAll(tla, 0o755))
+	brew := filepath.Join(r.dir, "brew")
+	require.NoError(t, os.WriteFile(brew, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	extra, err := json.Marshal(map[string]any{
+		"nova_home":                r.home,
+		"nova_tla_dir":             tla,
+		"nova_tla_jar":             filepath.Join(tla, "tla2tools.jar"),
+		"nova_sdk_linux_packages":  []string{},
+		"nova_sdk_brew_candidates": []string{brew},
+	})
+	require.NoError(t, err)
+	out := r.play(t, "toolchains.yml", "--check", "--diff", "-e", string(extra))
+
+	assert.Contains(t, out, "TOOLCHAINS host=localhost platform=")
+	assert.Contains(t, out, "sdk="+filepath.Join(r.home, "sdk")+" installed=none missing=go,rust,dart,node,jdk,dotnet,otp,elixir,sbcl")
+	assert.Contains(t, out, "WOULD-FETCH host=localhost go")
+	for _, f := range []string{"rust-", "dotnet-sdk-", "elixir-otp-29.zip", "sbcl-"} {
+		assert.Contains(t, out, f, "the would-be downloads name %s", f)
+	}
+	assert.Contains(t, out, "WOULD-PLACE host=localhost "+filepath.Join(tla, "tla2tools.jar")+" sha256=")
+	assert.Contains(t, out, "host | go | python3 | rustc | cargo | dart | sbcl | java | javac | node | dotnet | erl | elixir | mix | tla2tools.jar | result")
+	assert.NotContains(t, out, "TOOLCHAINS FAILED")
+	assert.NotContains(t, out, "TOOLCHAINS REFUSED host=localhost: ")
+	for _, p := range []string{filepath.Join(r.home, "sdk"), filepath.Join(r.home, ".bashrc"), filepath.Join(r.home, ".zshenv"), filepath.Join(r.home, ".zprofile"), filepath.Join(tla, "tla2tools.jar")} {
+		_, err := os.Stat(p)
+		assert.True(t, os.IsNotExist(err), "--check wrote %s", p)
+	}
+}

@@ -19,12 +19,15 @@ import (
 
 // fleetplays_class_test.go is the fleet-plays rule (docs/SPEC-CI.md,
 // `fleet-plays`): the plays that put a fleet in its configured state
-// (fleet/tools.yml, fleet/redis.yml, fleet/loops.yml) read their values from
-// the inventory `nova-config inventory` prints and from fleet/group_vars, and
-// do their work through the Go tools, never a shell:
+// (fleet/tools.yml, fleet/redis.yml, fleet/loops.yml, fleet/toolchains.yml)
+// read their values from the inventory `nova-config inventory` prints and from
+// fleet/group_vars, and do their work through the Go tools, never a shell:
 //
-//   - no task uses ansible's shell, script or raw module;
-//   - every play's hosts is a group the inventory prints, or localhost;
+//   - no task uses ansible's shell, script or raw module, except in a play
+//     fleetShellPlays names with its reason, and there every shell task says
+//     how its change is read (creates or changed_when);
+//   - every play's hosts is a group the inventory prints, or localhost, or a
+//     pattern of them (all:!coordinator: each group of the pattern printed);
 //   - every command task says how its change is read (changed_when);
 //   - every template a task names exists;
 //   - every nova_* a play or template reads is defined: by group_vars, by the
@@ -40,10 +43,16 @@ import (
 // groups and the typed loop records the plays read.
 
 // fleetPlays are the plays the rule holds.
-var fleetPlays = []string{"tools.yml", "redis.yml", "loops.yml"}
+var fleetPlays = []string{"tools.yml", "redis.yml", "loops.yml", "toolchains.yml"}
+
+// fleetShellPlays are the plays that may run ansible's shell module, each with
+// why no Go tool does that work. Nothing else in a play of the fleet is shell.
+var fleetShellPlays = map[string]string{
+	"toolchains.yml": "it unpacks the pinned upstream archives and runs their own installers (tar, unzip, install.sh, make.sh, OTP's Install), which no tool of this repository does",
+}
 
 // fleetFacts are the gathered facts the plays and templates may read.
-var fleetFacts = map[string]bool{"ansible_system": true, "ansible_architecture": true, "ansible_user_id": true, "ansible_user_uid": true, "ansible_env": true, "ansible_check_mode": true}
+var fleetFacts = map[string]bool{"ansible_system": true, "ansible_architecture": true, "ansible_user_id": true, "ansible_user_uid": true, "ansible_env": true, "ansible_check_mode": true, "ansible_facts": true}
 
 // fleetSource is the text the rule reads: each play's YAML and each
 // template's text, by file name.
@@ -84,7 +93,7 @@ func fleetPlayProblems(src fleetSource, groups map[string]bool) []string {
 			defined[m[1]] = true
 		}
 		for _, p := range plays {
-			for _, t := range fleetList(p["tasks"]) {
+			for _, t := range fleetTasks(p["tasks"]) {
 				if sf, ok := t["ansible.builtin.set_fact"].(map[string]any); ok {
 					for k := range sf {
 						defined[k] = true
@@ -99,23 +108,35 @@ func fleetPlayProblems(src fleetSource, groups map[string]bool) []string {
 		}
 		for _, p := range plays {
 			hosts, _ := p["hosts"].(string)
-			if !groups[hosts] && hosts != "localhost" {
-				out = append(out, fmt.Sprintf("%s: play %q runs on %q, a group the inventory does not print", name, p["name"], hosts))
+			for _, g := range hostPatternGroups(hosts) {
+				if !groups[g] && g != "localhost" {
+					out = append(out, fmt.Sprintf("%s: play %q runs on %q, a group the inventory does not print", name, p["name"], g))
+				}
 			}
 			playVars := map[string]bool{}
 			for k := range fleetMap(p["vars"]) {
 				playVars[k] = true
 			}
-			for _, t := range fleetList(p["tasks"]) {
+			for _, t := range fleetTasks(p["tasks"]) {
 				for k := range fleetMap(t["ansible.builtin.set_fact"]) {
 					playVars[k] = true
 				}
 			}
-			for _, t := range fleetList(p["tasks"]) {
+			for _, t := range fleetTasks(p["tasks"]) {
 				task := fmt.Sprint(t["name"])
 				for _, bad := range []string{"ansible.builtin.shell", "ansible.builtin.script", "ansible.builtin.raw", "shell", "script", "raw"} {
-					if _, ok := t[bad]; ok {
+					v, ok := t[bad]
+					if !ok {
+						continue
+					}
+					if _, allowed := fleetShellPlays[name]; !allowed || bad != "ansible.builtin.shell" {
 						out = append(out, fmt.Sprintf("%s: task %q runs %s; do the work in a Go tool", name, task, bad))
+						continue
+					}
+					_, creates := fleetMap(v)["creates"]
+					_, changed := t["changed_when"]
+					if !creates && !changed {
+						out = append(out, fmt.Sprintf("%s: shell task %q says neither creates nor changed_when", name, task))
 					}
 				}
 				if _, ok := t["ansible.builtin.command"]; ok {
@@ -205,6 +226,29 @@ func fleetList(v any) []map[string]any {
 	return out
 }
 
+// fleetTasks is a play's tasks with every block's block, rescue and always
+// tasks in their place, so a task inside a block is held to the rule too.
+func fleetTasks(v any) []map[string]any {
+	var out []map[string]any
+	for _, t := range fleetList(v) {
+		out = append(out, t)
+		for _, part := range []string{"block", "rescue", "always"} {
+			out = append(out, fleetTasks(t[part])...)
+		}
+	}
+	return out
+}
+
+// hostPatternGroups are the groups of an ansible host pattern: its parts
+// split at ':' and ',', each without a leading '!' or '&'.
+func hostPatternGroups(pattern string) []string {
+	var out []string
+	for _, part := range strings.FieldsFunc(pattern, func(r rune) bool { return r == ':' || r == ',' }) {
+		out = append(out, strings.TrimLeft(strings.TrimSpace(part), "!&"))
+	}
+	return out
+}
+
 func fleetMap(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	return m
@@ -244,9 +288,9 @@ func readFleetSource(t *testing.T, root string, invs map[string]*config.AnsibleI
 		require.NoError(t, err)
 		src.plays[p] = b
 	}
-	tmpls, err := filepath.Glob(filepath.Join(root, "fleet", "templates", "nova-loop.*.j2"))
+	tmpls, err := filepath.Glob(filepath.Join(root, "fleet", "templates", "*.j2"))
 	require.NoError(t, err)
-	require.Len(t, tmpls, 3, "launchd's plist, systemd's service and its timer")
+	require.Len(t, tmpls, 4, "launchd's plist, systemd's service and its timer, and the toolchains' env.sh")
 	for _, f := range tmpls {
 		b, err := os.ReadFile(f)
 		require.NoError(t, err)
@@ -381,6 +425,13 @@ func TestFleetPlaysRuleReadsTheShapes(t *testing.T) {
 			s.plays["redis.yml"] = []byte(strings.Replace(string(s.plays["redis.yml"]), "hosts: store_deployer", "hosts: deployers", 1))
 		}, `runs on "deployers"`},
 		{"missing template", func(s *fleetSource) { delete(s.templates, "nova-loop.plist.j2") }, "templates/nova-loop.plist.j2, which does not exist"},
+		{"unknown group in a pattern", func(s *fleetSource) {
+			s.plays["toolchains.yml"] = []byte(strings.Replace(string(s.plays["toolchains.yml"]), "hosts: all:!coordinator", "hosts: all:!keepers", 1))
+		}, `runs on "keepers"`},
+		{"shell in a play no reason allows", appendTask("redis.yml", "    - name: by hand\n      ansible.builtin.shell:\n        cmd: true\n        creates: /x\n"), `redis.yml: task "by hand" runs ansible.builtin.shell`},
+		{"shell whose change is unread", appendTask("toolchains.yml", "    - name: unguarded\n      ansible.builtin.shell: tar -xf x\n"), `shell task "unguarded" says neither creates nor changed_when`},
+		{"script even where shell is allowed", appendTask("toolchains.yml", "    - name: a script\n      ansible.builtin.script: x.sh\n"), `task "a script" runs ansible.builtin.script`},
+		{"command in a block without changed_when", appendTask("toolchains.yml", "    - name: wrapper\n      block:\n        - name: inner\n          ansible.builtin.command: true\n"), `command task "inner" has no changed_when`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -172,9 +172,9 @@ nova_friend_wall_reads: ""
 # standard of 2026-09-20 (the five machines of that day were made
 # by hand then; the play converges the rest to the same layout). Each lives
 # under nova_sdk_dir as <tool>-<version>/ with its executables linked into
-# nova_sdk_dir/bin, and nova_sdk_dir/env.sh puts that directory first on PATH;
-# ~/.bashrc (Linux, its first line) and ~/.zshenv (Darwin) source it, so a card
-# or a make recipe in a non-login shell sees every tool. The downloads land in
+# nova_sdk_dir/bin, which the member puts first on every card's PATH, and
+# nova_sdk_dir/env.sh does the same for a shell: ~/.bashrc (Linux, its first
+# line), ~/.zshenv and ~/.zprofile (Darwin) source it. The downloads land in
 # nova_sdk_dir/dl, each checked against the SHA-256 recorded here before it is
 # unpacked (a changed file refuses the play: update the pin on purpose). The
 # versions are the bench standard's; change them here and nowhere else.
@@ -193,6 +193,13 @@ nova_sdk_dotnet_version: 10.0.401
 nova_sdk_otp_version: 29.0.5
 nova_sdk_elixir_version: 1.20.4
 nova_sdk_sbcl_version: 2.5.8
+# The Linux packages the installs and the cards need: the C toolchain (cargo
+# links with cc), and the archive tools for .zip, .tar.xz and .tar.bz2. These
+# are Debian and Ubuntu names; the play reads them with dpkg-query and refuses
+# a Linux machine without it by name.
+nova_sdk_linux_packages: [build-essential, unzip, xz-utils, bzip2]
+# Where the play looks for Homebrew, on a platform whose host lisp comes from it.
+nova_sdk_brew_candidates: [/opt/homebrew/bin/brew, /usr/local/bin/brew]
 # The TLC jar every member holds for the TLA cards (nova_tla_jar, pinned by
 # tla/tla2tools.sha256): the TLA+ project's v1.7.4 release, whose jar has that
 # SHA-256 (measured 2026-10-11 against the jar the record machines hold).
@@ -204,14 +211,6 @@ nova_sdk_common_downloads:
     url: "https://github.com/elixir-lang/elixir/releases/download/v{{ nova_sdk_elixir_version }}/elixir-otp-29.zip"
     file: elixir-otp-29.zip
     sha256: 7863c546cda13fecc949e562e326042451dacf8fd8698a36783cb71eeb223b46
-  # Microsoft's installer script; it downloads the pinned SDK for the machine's
-  # platform itself. The script is republished in place, so this pin is of the
-  # text the fleet was made with (2026-09-20); a changed script refuses the
-  # play until the pin is re-read on purpose.
-  dotnet_install:
-    url: https://dot.net/v1/dotnet-install.sh
-    file: dotnet-install.sh
-    sha256: 082f7685e156738a1b2e2ed8381a621870d4ce8e8c59278034556f05c186eb2e
   # SBCL's source, built on Darwin where sbcl.org publishes no binary of this
   # version (the bootstrap host lisp is the platform's sbcl_boot below).
   sbcl_source:
@@ -223,6 +222,16 @@ nova_sdk_common_downloads:
 # the directory the archive unpacks to ('' when it unpacks flat).
 nova_sdk_downloads:
   linux-amd64:
+    # The .NET SDK's own archive (it unpacks flat), not Microsoft's installer
+    # script, which is republished in place and fetches an unpinned archive
+    # itself. Each SHA-256 was measured on 2026-10-11 from an archive whose
+    # SHA-512 equals the one Microsoft's release metadata lists for it
+    # (builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json).
+    dotnet:
+      url: "https://builds.dotnet.microsoft.com/dotnet/Sdk/{{ nova_sdk_dotnet_version }}/dotnet-sdk-{{ nova_sdk_dotnet_version }}-linux-x64.tar.gz"
+      file: "dotnet-sdk-{{ nova_sdk_dotnet_version }}-linux-x64.tar.gz"
+      sha256: 137268c8ad939c064ff1ee2a6fdf0899d8725377114ea012fbd1ad5fa2550418
+      top: ""
     go:
       url: "https://go.dev/dl/go{{ nova_sdk_go_version }}.linux-amd64.tar.gz"
       file: "go{{ nova_sdk_go_version }}.linux-amd64.tar.gz"
@@ -264,6 +273,11 @@ nova_sdk_downloads:
       sha256: 103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
       top: "sbcl-{{ nova_sdk_sbcl_version }}-x86-64-linux"
   darwin-arm64:
+    dotnet:
+      url: "https://builds.dotnet.microsoft.com/dotnet/Sdk/{{ nova_sdk_dotnet_version }}/dotnet-sdk-{{ nova_sdk_dotnet_version }}-osx-arm64.tar.gz"
+      file: "dotnet-sdk-{{ nova_sdk_dotnet_version }}-osx-arm64.tar.gz"
+      sha256: d143ccec4474dce17d7b778854598137a2599b81828bce51e809897fe8bdf035
+      top: ""
     go:
       url: "https://go.dev/dl/go{{ nova_sdk_go_version }}.darwin-arm64.tar.gz"
       file: "go{{ nova_sdk_go_version }}.darwin-arm64.tar.gz"
@@ -315,6 +329,11 @@ nova_sdk_downloads:
       file: sbcl-2.6.9-source.tar.bz2
       sha256: c6fd1d735570eb4ff34caf9609988ca77ed0bd12b55d09a4fed075be890da513
   darwin-amd64:
+    dotnet:
+      url: "https://builds.dotnet.microsoft.com/dotnet/Sdk/{{ nova_sdk_dotnet_version }}/dotnet-sdk-{{ nova_sdk_dotnet_version }}-osx-x64.tar.gz"
+      file: "dotnet-sdk-{{ nova_sdk_dotnet_version }}-osx-x64.tar.gz"
+      sha256: 0616332aa0b5edfa19443a9d217d14d086d2e9605d7c72979cf8ebbb494ac792
+      top: ""
     go:
       url: "https://go.dev/dl/go{{ nova_sdk_go_version }}.darwin-amd64.tar.gz"
       file: "go{{ nova_sdk_go_version }}.darwin-amd64.tar.gz"

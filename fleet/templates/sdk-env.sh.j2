@@ -1,21 +1,55 @@
-# {{ nova_sdk_dir }}/env.sh -- THE fleet bench toolchain environment. Written by fleet-toolchains 2026-09-20.
-# {{ nova_sdk_dir }} is the ONE home root internal/swarm/toolchain.go grants EXECUTE inside the card
-# sandbox on linux, so every toolchain the bench standard owns resolves from here and nowhere
-# else. Sourced from the FIRST line of ~/.bashrc on Linux and from ~/.zshenv on macOS: those
-# are what a NON-LOGIN shell reads, and cards and make recipes never get a login shell.
-case ":$PATH:" in
-  *":{{ nova_sdk_dir }}/bin:"*) ;;
-  *) PATH="{{ nova_sdk_dir }}/bin:{{ nova_home }}/go/bin:{{ nova_home }}/.local/bin:$PATH" ;;
-esac
+# {{ nova_sdk_dir }}/env.sh -- the fleet bench toolchain environment, written by fleet/toolchains.yml.
+# A card does not read this file: the member puts {{ nova_sdk_dir }}/bin first on every card's PATH
+# itself (BenchPath, pkg/swarm/toolchain.go), and {{ nova_sdk_dir }} is the one home root the card
+# sandbox executes on linux. This file is for the shells a person or a make recipe gets: sourced
+# from the first line of ~/.bashrc on Linux, and on macOS from ~/.zshenv (every zsh) and again from
+# ~/.zprofile (a login zsh, after /etc/zprofile's path_helper has moved the system's directories
+# ahead of these).
+#
+# The bench's directories are taken out of PATH wherever they are and put back first, so the
+# order is right however many times this is sourced and whatever ran before it. Parameter
+# expansion only: the same in sh, bash and zsh (zsh does not split $PATH on IFS), and no fork.
+_nova_rest="$PATH:"; _nova_path=""
+while [ -n "$_nova_rest" ]; do
+  _nova_dir=${_nova_rest%%:*}; _nova_rest=${_nova_rest#*:}
+  case "$_nova_dir" in
+    ""|"{{ nova_sdk_dir }}/bin"|"{{ nova_home }}/go/bin"|"{{ nova_home }}/.local/bin") ;;
+    *) _nova_path="${_nova_path:+$_nova_path:}$_nova_dir" ;;
+  esac
+done
+PATH="{{ nova_sdk_dir }}/bin:{{ nova_home }}/go/bin:{{ nova_home }}/.local/bin${_nova_path:+:$_nova_path}"
 export PATH
+unset _nova_rest _nova_path _nova_dir
 
-# .NET. The read-only CLI home seeded under {{ nova_sdk_dir }} skips the first-run configurer, whose
-# NuGet MigrationRunner takes a named mutex; the package dir follows the JOB's HOME, which is
-# inside a --write. See fleet-toolchains/seed-dotnet.sh for the measurement.
+# .NET. The read-only CLI home seeded under {{ nova_sdk_dir }} by the play skips the first-run
+# configurer, whose NuGet MigrationRunner takes a named mutex; the package dir follows the JOB's
+# HOME, which is inside a --write.
 export DOTNET_CLI_HOME="{{ nova_sdk_dir }}/dotnet-home"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export DOTNET_NOLOGO=1
 export NUGET_PACKAGES="$HOME/.nuget/packages"
+# A job that wants its own CLI home sets DOTNET_CLI_HOME itself; that is the job's.
+#
+# No dotnet build server outlives the build. Each one is a process that inherits the build's open
+# file descriptors and stays up after `make` returns, so it went on holding a gate lane's flock
+# lock on a bench (2026-10-11). Each switch, and where it is documented:
+#   the MSBuild server: on by default for the CLI, off with DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER=1
+#     (github.com/dotnet/msbuild documentation/MSBuild-Server.md); DOTNET_CLI_USE_MSBUILD_SERVER=0
+#     is the CLI's older opt-in switch, set off as well;
+#   MSBuild's worker nodes: "Nodes remain after the build finishes" by default (-nodeReuse,
+#     learn.microsoft.com/visualstudio/msbuild/msbuild-command-line-reference); MSBUILDDISABLENODEREUSE=1
+#     "Set this to not leave MSBuild processes behind" (github.com/dotnet/msbuild
+#     documentation/wiki/MSBuild-Environment-Variables.md);
+#   the C#/VB compiler server (VBCSCompiler): the SDK's targets default UseSharedCompilation to true
+#     only when it is empty and hand it to the Csc and Vbc tasks (Microsoft.NET.Sdk.targets,
+#     Microsoft.CSharp.CurrentVersion.targets), and every environment variable that is a valid
+#     property name is a property (learn.microsoft.com/visualstudio/msbuild/how-to-use-environment-
+#     variables-in-a-build), so UseSharedCompilation=false turns it off unless a project sets the
+#     property itself.
+export DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER=1
+export DOTNET_CLI_USE_MSBUILD_SERVER=0
+export MSBUILDDISABLENODEREUSE=1
+export UseSharedCompilation=false
 
 # Erlang/Elixir keep their per-user state beside the job, not beside the bench.
 export MIX_HOME="$HOME/.mix"
