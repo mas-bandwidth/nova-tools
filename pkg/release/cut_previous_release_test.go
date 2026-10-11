@@ -23,7 +23,7 @@ func TestACutIgnoresThePreviousTagsCancelledReleaseRun(t *testing.T) {
 	type evidence struct {
 		Name, Status, Conclusion        string
 		WorkflowPath, HeadBranch, Event string
-		TagPush                        bool
+		TagPush                         bool
 	}
 	const releasePath = ".github/workflows/release.yml"
 	ci := evidence{Name: "ci", Status: "completed", Conclusion: "success", WorkflowPath: ".github/workflows/ci.yml", HeadBranch: "main", Event: "push"}
