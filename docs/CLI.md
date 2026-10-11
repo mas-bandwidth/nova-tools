@@ -1463,7 +1463,7 @@ usage:
   nova-friend hook --harness claude
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
@@ -1486,7 +1486,7 @@ Every verb but run, serve takes --json: the same result as one JSON object on st
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 
 example:
-  nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+  nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
   nova-friend uninstall --as bob --dry-run
   nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
   nova-friend ping --as ada --to bob --nonce abc123
@@ -1573,8 +1573,8 @@ effect: delivery: sends beyond this machine: one beat to the sprint server, the 
 ```
 usage: nova-friend install [flags]
 from `nova-friend help`:
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
-  nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
   --as <string>  your name, a nova-config friend row (required)
@@ -1589,7 +1589,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --launchd-log <string>  launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
-  --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
+  --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)
   --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
@@ -1638,7 +1638,7 @@ flags:
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in (delivery check): opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp
   --json  print the result as one JSON object instead of lines
-  --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
+  --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --session <string>  the session to deliver into (delivery check); for grok the wake file (--settings)
   --settings  compare the harness's settings with what install would write; nothing is delivered or written
@@ -1843,7 +1843,7 @@ A Redis whose nova-config rows name ada and bob, its address in `--redis` or
 `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-friend)):
 
 ```sh
-nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 nova-friend uninstall --as bob --dry-run
 nova-friend ping --as ada --to bob --nonce abc123
 nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
@@ -1891,7 +1891,7 @@ kickstart` keeps what launchd loaded): run `install` again.
 ### The daemon
 
 ```sh
-nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n>
+nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n> --model <provider/model>
 nova-friend install --as <me> --harness dsh --dir <d> --width <n> --secrets DEEPSEEK_API_KEY --seat <seat>
 nova-friend status --as <me> --dir <my working directory>
 ```
@@ -1958,9 +1958,11 @@ nova-friend check --settings --as <me> --harness <h> --dir <d>            # CHEC
 
 These are codex's writable root, the DeepSeek Harness agent preset
 (`standard`), grok's wake file (`--session`, else `~/.nova-friend/<me>/<me>.wake`),
-claude's config directory, and opencode's directory allow-list and model.
-A friend's directory, writable root, wake directory or config directory that
-is a symlink is refused, and nothing is written or loaded.
+claude's config directory, and opencode's directory allow-list and its model
+(install requires `--model` for opencode, so a friend moved to a new machine
+runs the provider/model the owner names, not a stored provider whose key the
+provider refuses). A friend's directory, writable root, wake directory or
+config directory that is a symlink is refused, and nothing is written or loaded.
 
 ### Hosting a terminal harness in tmux
 
