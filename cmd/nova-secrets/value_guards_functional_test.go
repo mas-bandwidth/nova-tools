@@ -166,12 +166,16 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(storeDir, "rowan.yaml"), []byte("GH_TOKEN: ghp_123\n"), 0644)
 	commitAndPush(t, storeDir)
 
-	// 1. Version 3.9.0 is refused naming brew upgrade
+	// 1. Version 3.9.0 is refused naming the platform's sops upgrade remedy
 	oldSops := filepath.Join(td, "old-sops")
 	_ = testbin.WriteExecutable(oldSops, []byte("#!/bin/sh\necho 'sops 3.9.0'\n"), 0755)
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", oldSops)
-	assert.Equal(t, 2, code, "expected brew upgrade refusal, got %d: %s", code, errOut)
-	assert.Contains(t, errOut, "brew upgrade sops", "expected brew upgrade refusal, got %d: %s", code, errOut)
+	assert.Equal(t, 2, code, "expected sops upgrade refusal, got %d: %s", code, errOut)
+	sopsUpgradeRemedy := "go install github.com/getsops/sops/v3/cmd/sops@latest"
+	if runtime.GOOS == "darwin" {
+		sopsUpgradeRemedy = "brew upgrade sops"
+	}
+	assert.Contains(t, errOut, sopsUpgradeRemedy, "expected sops upgrade refusal, got %d: %s", code, errOut)
 
 	// 2. banana is refused as unparseable
 	bananaSops := filepath.Join(td, "banana-sops")

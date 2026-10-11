@@ -165,6 +165,14 @@
     :text "Fleet plays run only from the checkout of the adopted release, and refuse when the
      checkout's version differs from the release installed on the host."
     :origin "dogfood 2026-10-10 evening: fleet-only restart")
+   (fix "secrets-remedy-names-the-platforms-install" :release "v1.2.14" :status "planned"
+    :title "The secrets tool remedies name the platform's install, not always Homebrew"
+    :text "CheckSopsVersion and CheckAgeKeygenVersion hard-coded brew in all four of their remedies,
+     so a Linux reader short of sops or age-keygen was told to run a command the platform does not
+     have (nova-tools issue #5016). One helper builds each remedy from the tool, absent-or-old, and
+     the platform, copying internal/up/layout.go's tools table: brew on darwin, go install for sops
+     elsewhere, apt for age-keygen on linux."
+    :origin "issue #5016; the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11")
    (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
     :title "A friend's lanes are thin clients of the sprint server"
     :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
