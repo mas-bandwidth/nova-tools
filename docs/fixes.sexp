@@ -123,6 +123,15 @@
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
    :origin "fault 9, 2026-10-10")
+  (fix "push-gate-names-the-staged-commit-it-wants" :release "v1.2.14" :status "planned"
+   :title "The push gate names the staged commit and what to do, not git's error"
+   :text "The member's push refusal said 'the result's head H does not descend from the staged
+    commit S: fatal: Not a valid commit name S', which reads as the gate's own fault. The gate now
+    tells its three cases apart: when no branch or HEAD of the checkout holds S (the branch was cut
+    again or reset), when S is there but the head does not descend from it (naming their merge base,
+    or none for unrelated histories), and any other git failure. Each descent refusal names H and S
+    and says to put the commits on top of S and finish again."
+   :origin "the card push-gate-names-the-staged-commit-it-wants.w1, 2026-10-11: 32 push refusals in an hour read the git error as the gate's")
   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
