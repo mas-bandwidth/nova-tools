@@ -1721,9 +1721,14 @@ a permission the harness refused, a turn stopped silent, the provider's
 refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
 (or beyond the live cap a rate limit lowered, below) finishes the turn under
-way and takes no other; a card it holds between turns goes back to the queue
-for a lane within the width. The silence watch, the provider's
-refusal streak and the broken session are the batch turn's, across every
+way and takes no other; a card it holds between turns waits on that lane. With
+server lanes the lane keeps what the server says it holds (`lane_take.go`): a
+hand-back to another lane is owed a server verb this daemon has not, and the
+server gives a working card only to the lane that holds it, so the card stays
+working on her row until the cap lets its lane run it. In a world with no
+server the card goes back to the queue for a lane within the width. The
+silence watch, the provider's refusal streak and the broken session are the
+batch turn's, across every
 lane. The friend daemon stamps progress on the sprint for each card whose
 one-shot turn printed since that card's last stamp (`stampProgress`, at most
 every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
@@ -1990,7 +1995,9 @@ live until its reset, or, with none said, for one span (5 hours, 7 days)
 after the report; when it resets the width is the row's again with no word
 from anyone. The paced width sits under the rate-limit governor's cap (the
 lower of the two holds), never above the row; a lane beyond it takes nothing
-new and hands back a card it holds between turns, as beyond the cap.
+new and starts no turn, and a card it holds between turns is kept by a server
+lane as beyond the cap (above), handed back to the queue only in a world with
+no server.
 
 Each change of the paced width is one line on the record (`pacing: width
 <a> -> <b> of <w>, five_hour at <u>% of 80%, resets <t>`, and back up, `no
