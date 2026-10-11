@@ -271,6 +271,11 @@ jobs:
         shell: bash
         run: make fmt
 
+      - name: mod-tidy
+        # go mod tidy -diff: refuses an untidy go.mod or go.sum (issue #5497)
+        shell: bash
+        run: make mod-tidy
+
       - name: build
         run: make build
 
