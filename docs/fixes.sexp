@@ -502,6 +502,16 @@
     product change."
    :origin "the card tla-reach-from-a-step-and-early-proof.w1 (stream v1212)")
 
+  (fix "tla-friendlane-every-hand-back-is-a-request" :release "v1.2.12" :status "planned"
+   :title "FriendLane models a work card's no-begin run and the row-read drop"
+   :text "The FriendLane model now does what lane_take.go does: a work card goes from taken to running
+    with no begin (a read keeps its begin, read_lanes.go), a row read that disagrees drops the card
+    locally and the lane asks again (laneCheck), and Card.Epoch's directory-epoch fallback (the
+    LocalEpoch witness's live behaviour wherever the server named none) is named. A seventh reversed
+    witness, keeponmismatch, lets a lane keep running its card after a row read disagrees and fails
+    WorkingOnlyOnTheServersSay. Tests and models only, no product change."
+   :origin "card tla-friendlane-every-hand-back-is-a-request.w5 (stream v1212)")
+
   (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "planned"
    :title "The CardMachine copy is retired; nova-sprint's is the one copy"
    :text "tla/CardMachine.tla modelled 02_card_move.lua, which neither repository carries any more, and

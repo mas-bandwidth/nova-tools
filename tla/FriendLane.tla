@@ -17,11 +17,14 @@
 (*               read) and answers TAKEN card epoch, or the card the lane *)
 (*               already holds (HOLDS), or NONE, or a refusal.            *)
 (*   Held(l)     what do I hold: a lane after a crash, restart or clear.  *)
-(*   Begin(l)    the run begins (a read's begin, a work card's start).    *)
+(*   Begin(l)    a read's begin (the run begins); a work card runs with   *)
+(*               no begin (Run(l), taken to running with no request).     *)
 (*   Progress(l) the run is alive.                                        *)
 (*   Finish(l)   the run ended: done; TakenFinish(l), a card it holds and  *)
 (*               cannot run (a report of a run before) finished failed.   *)
 (*   Return(l)   the lane gives the card back (it drops it).              *)
+(*   RowDrop(l)  a row read that disagrees drops the card locally, no     *)
+(*               request; the lane asks again.                             *)
 (* Begin, Progress, Finish and Return carry the card and the epoch the    *)
 (* server gave; the server applies them only when its record for this    *)
 (* (friend, lane) holds that card at that epoch and the epoch is current. *)
@@ -47,11 +50,13 @@
 (*               NoStaleStep fails.                                        *)
 (*   NoGone      the server never bounces a silent lane's card back: a    *)
 (*               lane that died stays holding it, WorkingResolves fails.  *)
+(*   KeepOnMismatch  a lane keeps running its card after a row read       *)
+(*               disagrees: WorkingOnlyOnTheServersSay fails.              *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Cards, Lanes, Steady, MaxClears, MaxCrashes, MaxGones, MaxReturns,
-          RunOnNone, LocalEpoch, KeepOnRefusal, CardOnly, NoGone
+CONSTANTS Cards, Lanes, Reads, Steady, MaxClears, MaxCrashes, MaxGones, MaxReturns,
+          RunOnNone, LocalEpoch, KeepOnRefusal, CardOnly, NoGone, KeepOnMismatch
 
 None == "none"
 Nobody == [card |-> None, ep |-> 0]
@@ -87,7 +92,9 @@ LaneSays(l) == IF Holding(l) THEN <<lc[l].card, lc[l].ep>> ELSE <<None, 0>>
 ServerSays(l) == <<srv[l].card, srv[l].ep>>
 HeldBySome == {srv[l].card : l \in Lanes} \ {None}
 
-\* The epoch the lane names: the server's, or (LocalEpoch) the directory's guess, 0.
+\* The epoch the lane names: the server's, or (the code's Card.Epoch, lanes.go) the job
+\* directory's epoch (0 for a job with none) when the server named none -- the LocalEpoch
+\* witness's behaviour, still live wherever the server gave no epoch.
 Named(l) == IF LocalEpoch THEN 0 ELSE lc[l].ep
 
 \* The server's check of a worker verb from lane l naming card c at epoch e.
@@ -157,8 +164,10 @@ Drop(l) == lc' = [lc EXCEPT ![l] = IF KeepOnRefusal THEN lc[l] ELSE Idle]
 \* The step a verb takes on the server, with the ghost of a stale epoch.
 Applied(l, e) == staleStep' = (staleStep \/ e # epoch)
 
+\* A read's begin: the run begins with a request the server checks (read_lanes.go
+\* ReadBeginArgv). A work card has no begin.
 Begin(l) ==
-    /\ alive[l] /\ lc[l].st = "taken"
+    /\ alive[l] /\ lc[l].st = "taken" /\ lc[l].card \in Reads
     /\ LET c == lc[l].card IN
        IF Owns(l, c, Named(l))
        THEN /\ lc' = [lc EXCEPT ![l].st = "running"]
@@ -166,6 +175,13 @@ Begin(l) ==
        ELSE /\ Drop(l) /\ UNCHANGED staleStep
     /\ Exchanged(l)
     /\ UNCHANGED <<epoch, col, srv, alive, granted, clears, crashes, gones, returns>>
+
+\* A work card's start: taken to running with no request (lane_take.go laneAsk runs exactly
+\* what the take's answer named; no begin is sent).
+Run(l) ==
+    /\ alive[l] /\ lc[l].st = "taken" /\ lc[l].card \notin Reads
+    /\ lc' = [lc EXCEPT ![l].st = "running"]
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns>>
 
 Progress(l) ==
     /\ alive[l] /\ lc[l].st = "running"
@@ -216,6 +232,19 @@ Return(l) ==
     /\ Exchanged(l)
     /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones>>
 
+\* A row read that disagrees with the lane (the card left her row, is not working there, or
+\* another lane holds it: lane_take.go laneCheck) revokes the grant and the lane drops the
+\* card locally and asks again: no request is sent, the lane's next ask re-syncs it. Broken
+\* "keeponmismatch" lets the lane keep running its card after the grant is revoked.
+RowDrop(l) ==
+    /\ alive[l] /\ Holding(l)
+    /\ lc[l].card # srv[l].card
+    /\ granted' = [granted EXCEPT ![l] = @ \ {LaneSays(l)}]
+    /\ IF KeepOnMismatch
+       THEN UNCHANGED lc
+       ELSE lc' = [lc EXCEPT ![l] = Idle]
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, staleStep, clears, crashes, gones, returns>>
+
 -----------------------------------------------------------------------------
 \* The lane's process dies (a crash, the daemon stopped); what it held is the server's.
 Crash(l) ==
@@ -259,13 +288,13 @@ Clear ==
 
 Next ==
     \/ \E l \in Lanes :
-          Take(l) \/ Held(l) \/ Begin(l) \/ Progress(l) \/ Finish(l) \/ TakenFinish(l) \/ Return(l)
-          \/ Crash(l) \/ Restart(l) \/ Gone(l)
+          Take(l) \/ Held(l) \/ Begin(l) \/ Run(l) \/ Progress(l) \/ Finish(l) \/ TakenFinish(l) \/ Return(l)
+          \/ RowDrop(l) \/ Crash(l) \/ Restart(l) \/ Gone(l)
     \/ Clear
 
 Fairness ==
     /\ \A l \in Lanes : WF_vars(TakeHolds(l)) /\ WF_vars(\E c \in Cards : TakeGrant(l, c))
-    /\ \A l \in Lanes : WF_vars(Held(l)) /\ WF_vars(Begin(l)) /\ WF_vars(Finish(l))
+    /\ \A l \in Lanes : WF_vars(Held(l)) /\ WF_vars(Begin(l)) /\ WF_vars(Run(l)) /\ WF_vars(Finish(l))
     \* the bound passes for a lane that is down: its card bounces back
     /\ \A l \in Lanes : WF_vars(~alive[l] /\ Gone(l))
 
