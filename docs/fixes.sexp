@@ -526,6 +526,17 @@
     from adapter_codex.go. Tests and models only, no product change."
    :origin "card tla-friendnotifications-withdraw-and-coalesce.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friendpresence-daemon-evidence" :release "v1.2.12" :status "planned"
+   :title "FriendPresence models the daemon's presence evidence and the server's finish"
+   :text "FriendPresence.tla's up is now fresh evidence, not a nonce answer alone: any session line (a
+    Speak action for Heard, pkg/friend/presence.go:91-95) is evidence exactly as an answer is, the push
+    proof Proven is the answered flag, and a Finish action stands for the server's recent finish
+    (nova-sprint FriendStatus); UpHasFreshAnswer becomes UpHasFreshEvidence, and the reversed witness
+    MCFriendPresenceBrokenFinishForever (a finish that never ages) fails UpHasFreshEvidence. The header
+    names the table half (Hold, TakeBack, Deal, Take) as nova-sprint code to move beside SeatHealth.tla.
+    Tests and models only, no product change."
+   :origin "card tla-friendpresence-daemon-evidence.w7 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "tla-friend-link-and-challenge" :release "v1.2.12" :status "planned"
    :title "Friend's link and challenge model brought level with the daemon"
    :text "Friend.tla's header names pkg/friend, not internal/friend; a ping read past the challenge
