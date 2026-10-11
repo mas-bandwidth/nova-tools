@@ -82,9 +82,15 @@ type rateLimitEvent struct {
 // last rate_limit_event anywhere in it (Claude Code), else a limit line in
 // its tail with the reset beside it (a clock time, today or else tomorrow
 // in now's zone or the zone it names, on the date it names; "in N hours";
-// an epoch after "limit reached|"; resetOfText). found is
-// whether the output said anything of the limit at all. A provider's
-// transient rate_limit_error is no limit (ProviderRefusal passes it).
+// an epoch after "limit reached|"; resetOfText). A rejected event is a
+// limit until its spent window resets; an allowed one is only measured
+// usage, and the harness's own wording of a limit beside it is still read,
+// the CLI's colour codes stripped before the line is matched (the finding
+// of 2026-10-11: claude -p printed "You've hit your weekly limit · resets
+// Oct 16 at 3am (America/New_York)" beside an allowed event, each lane run
+// exited 1, and the daemon recorded a failed attempt). found is whether the
+// output said anything of the limit at all. A provider's transient
+// rate_limit_error is no limit (ProviderRefusal passes it).
 func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 	if strings.Contains(out, `"rate_limit_event"`) {
 		for _, line := range strings.Split(out, "\n") {
@@ -94,7 +100,7 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 			}
 			lim, found = claudeLimit(ev, now), true
 		}
-		if found {
+		if found && lim.Limited {
 			return lim, true
 		}
 	}
@@ -103,11 +109,12 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 		tail = tail[len(tail)-LimitTail:]
 	}
 	for _, line := range strings.Split(tail, "\n") {
+		line = stripANSI(line)
 		if !limitWords.MatchString(line) {
 			continue
 		}
-		if until, ok := resetOfText(stripANSI(line), now); ok {
-			lim = Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
+		if until, ok := resetOfText(line, now); ok {
+			lim.Limited, lim.Until, lim.Reason = true, until, oneLine(line, 200)
 			found = true
 		}
 	}

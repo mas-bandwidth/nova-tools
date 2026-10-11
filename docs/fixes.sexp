@@ -62,7 +62,9 @@
      lines per repository and package, product against test, from a baseline taken before the first
      pass.")
    (release "v1.2.14" :status "planned" :date "2026-10-11"
-    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find."))
+    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
+   (release "v1.2.15" :status "planned"
+    :text "The next small product fixes, one concern each."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -749,4 +751,8 @@
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
-   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")))
+   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+  (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.15" :status "planned"
+   :title "A harness limit in any wording pauses the lanes, never a failed attempt"
+   :text "A provider or harness limit in any wording the harness prints pauses the friend's lanes until its reset and is never a failed attempt of the card. ReadLimit strips the CLI's colour codes before it matches and reads the harness's own weekly-limit line beside a non-rejecting rate_limit_event, so claude -p's \"You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\" is a limit until its named reset instead of a run the daemon records as a failed attempt."
+   :origin "card a-harness-limit-in-any-wording-pauses-the-lanes.w3")))
