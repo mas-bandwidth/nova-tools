@@ -175,4 +175,8 @@
   (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
    :title "A HOLD report with zero findings is malformed"
    :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
-   :origin "PR #4635")))
+   :origin "PR #4635")
+  (fix "swarm-slot-lease-release-by-id" :release "v1.2.9" :status "planned"
+   :title "The dispatcher releases a slot lease by its own id"
+   :text "Release removes every lease with the same owner and label. It releases only the one lease it took."
+   :origin "issue #1582")))

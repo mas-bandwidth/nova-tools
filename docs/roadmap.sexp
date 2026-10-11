@@ -870,13 +870,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #1844; issue #1611; issue #163")
-  (item "swarm-slot-lease-release-by-id" :group "ops"
-   :title "The dispatcher releases a slot lease by its own id"
-   :text "Release removes every lease with the same owner and label. It releases only the one lease it
-    took."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #1582")
   (item "swarm-native-capture-spoofing" :group "ops"
    :title "A card cannot spoof the native result or the idle watch"
    :text "A card can rewrite the harness capture file to turn a denial into an OK, and write files the
