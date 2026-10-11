@@ -536,6 +536,15 @@
     (MCFriendBrokenNoProof.cfg). Tests and models only, no product change."
    :origin "card tla-friend-link-and-challenge.w4 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35; the first of three Friend cards, chained)")
 
+  (fix "tla-friend-batch-delivery-turns" :release "v1.2.12" :status "planned"
+   :title "Friend models the present, dealt and idle-wake turns, the idle watch and a kept-and-retried refused turn"
+   :text "Friend.tla gains the present, dealt and idle-wake kinds of a batch turn (kind), the Awake/Woken/Noted
+    idle watch (IdleStep, IdleWake; machine.go IdleStep), and a turn the session cannot take kept in hand and
+    retried every Recheck on a retryAt timer (SessionRefused, daemon.go refusedTurn), with the deferral's retry
+    moved to the same timer. A new reversed witness droptturn drops such a turn and fails the new liveness
+    KeptTurnRetried. Tests and models only, no product change."
+   :origin "card tla-friend-batch-delivery-turns.w4 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35; the second of three Friend cards, chained)")
+
   (fix "tla-moved-sprint-models-leave-nova-tools" :release "v1.2.12" :status "planned"
    :title "FriendReadyTake, FriendRedealLate and StopReturn retire; nova-sprint's are the ones"
    :text "FriendReadyTake, FriendRedealLate and StopReturn model nova-sprint code (the server-side take,
