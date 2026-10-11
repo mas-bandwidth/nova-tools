@@ -123,6 +123,14 @@
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
    :origin "fault 9, 2026-10-10")
+  (fix "swarm-lint-reads-quoted-code-as-quoted" :release "v1.2.14" :status "planned"
+   :title "nova-swarm lint stops refusing a card for the text it quotes"
+   :text "The no-parent-path check read the `>` of a Go module's `=>` as a shell redirect, and
+    the scratch-absolute check read a bare `scratch` variable in a pasted program as a
+    relative scratch path. A redirect is now a `>` of its own, and scratch-absolute reads only
+    the lines outside a fenced block, so the code a card quotes is never a path it walks; a
+    relative scratch in the card's prose is still refused (issues #1994, #2302, #3470)."
+   :origin "card swarm-lint-reads-quoted-code-as-quoted.w1; the point-release plan, 2026-10-11")
   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
