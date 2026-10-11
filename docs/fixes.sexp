@@ -307,6 +307,15 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "tla-coverage-names-every-module-in-nova-tools" :release "v1.2.12" :status "planned"
+   :title "Every TLA+ module is named by a tla/COVERAGE.tsv row"
+   :text "TestEveryStateMachineHasACurrentModel reads tla/ and reports every module whose name does not start
+    with MC that no row of tla/COVERAGE.tsv names, and every module two rows name. The nine modules no row
+    named (BusSendOnce, Delivery, FriendNotifications, FriendNotificationsCapacity, FriendPresence,
+    LoopRedial, Reach, StopCancels, StopReturn) gain rows, and the drifted rows are marked partial or stale
+    with the card that owes the model."
+   :origin "the coordinator, 2026-10-11: a card that makes TestEveryStateMachineHasACurrentModel catch a module with no COVERAGE row; card tla-coverage-names-every-module-in-nova-tools.w2")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
