@@ -166,4 +166,9 @@
    :title "Adopt waits only for agents it stopped and dry-runs honestly"
    :text "The adopt window waits only for the agents the adopt itself stopped, and its dry run reports
     what each step would do instead of saying would for every step."
-   :origin "card from the sprint store (2026-10-10)")))
+   :origin "card from the sprint store (2026-10-10)")
+  (fix "swarm-idle-reap-verdict" :release "v1.2.9" :status "planned"
+   :title "Idle-reaped cards report their real cause and are not wrongly reaped"
+   :text "A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced
+    working cards. The verdict states idle reaping and the idle watch accounts for the shell cap."
+   :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")))

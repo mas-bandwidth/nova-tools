@@ -1016,13 +1016,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "issue #2048")
-  (item "swarm-idle-reap-verdict" :group "friends"
-   :title "Idle-reaped cards report their real cause and are not wrongly reaped"
-   :text "A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced
-    working cards. The verdict states idle reaping and the idle watch accounts for the shell cap."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")
   (item "launcher-base-staging-darwin" :group "ops"
    :title "Pinned base staging works on darwin launchers"
    :text "The pre-model base clone exists only in Linux launchers, so a pinned base is silently absent on

@@ -22,7 +22,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (28)
+- [Friends](#friends) (27)
 - [Setup, release and operations](#setup-release-and-operations) (105)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
@@ -288,14 +288,6 @@ A provider server error ends a card with no result after in-place retries. The v
 Target: v1.3
 
 From: issue #2001; issue #2011
-
-### Idle-reaped cards report their real cause and are not wrongly reaped
-
-A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced working cards. The verdict states idle reaping and the idle watch accounts for the shell cap.
-
-Target: v1.3
-
-From: issue #2157; issue #2158; issue #2577; issue #2579; issue #2585
 
 ### Fix darwin cards that go silent under the wall and are idle-killed
 

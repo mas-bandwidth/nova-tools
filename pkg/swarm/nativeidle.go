@@ -18,6 +18,7 @@ package swarm
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -89,6 +90,19 @@ type IdleEnd struct {
 	Refused bool
 }
 
+// WallRefusal is this end's refusal as a wall death, and whether it is one: it is one
+// only when the refusal NAMES a path (docs/roadmap.sexp, swarm-idle-reap-verdict). A
+// refusal that names nothing -- a `SANDBOX REFUSED` line with no path in it -- is no
+// cause a reader can act on, and a report that said `path=-` would send its reader
+// looking at a wall it cannot find; the end's cause there is the idle reaping itself,
+// which the report states. A card that carried no refusal at all is no wall death.
+func (e IdleEnd) WallRefusal() (WallRefusal, bool) {
+	if !e.Refused || strings.TrimSpace(e.Path) == "" {
+		return WallRefusal{}, false
+	}
+	return WallRefusal{Path: e.Path, Step: e.Step}, true
+}
+
 // CardIdleLine is the typed line a card ended for idleness is reported on when NO refusal
 // stopped it -- a provider turn that never answered, a tool call that never returned:
 //
@@ -111,6 +125,18 @@ type IdleWatch struct {
 	Pid    int    // the child's process group leader
 	Idle   time.Duration
 	Reader *WallReader // may be nil: the watch then reports no refusal
+
+	// Spend, when not nil, is the card's own accounting asked at every poll: what the
+	// job has spent so far and whether any read of it has answered. The harness caps
+	// what a shell tool prints, so a working card's log can stay under the dribble
+	// floor while its turns complete, and its tree waits on the model under the CPU
+	// bar exactly as a stalled one's does (docs/roadmap.sexp, swarm-idle-reap-verdict);
+	// the spend is the one reading that cap cannot silence, and a rising spend is a
+	// turn that completed, which is work whatever the log says. A nil Spend reads
+	// nothing, and the watch is what it was before this field existed. It is wired to
+	// the run's live sampler in cmd/nova-swarm, which reads the harness's own database
+	// the budget already reads (docs/SPEC-SWARM.md, native).
+	Spend func() (int, bool)
 
 	now      func() time.Time
 	ticker   func(time.Duration) (<-chan time.Time, func())
@@ -155,6 +181,10 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		var lastSample time.Time
 		var cpu uint64
 		var haveCPU bool
+		// lastSpend is the accounting the watch last saw, with haveSpend saying one has
+		// been seen: the base a rise is measured from, never a reset on its own.
+		var lastSpend int
+		var haveSpend bool
 		for {
 			select {
 			case <-stop:
@@ -198,6 +228,21 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 								continue
 							}
 						}
+					}
+				}
+				// THE SHELL CAP (docs/roadmap.sexp, swarm-idle-reap-verdict): the harness
+				// caps what a shell tool prints, so a working card's log can stay silent
+				// while its turns complete, and a turn that waits on the model spends under
+				// the CPU bar exactly as a stall does. What the cap cannot silence is the
+				// card's own accounting: turns that completed spent tokens. A rising spend
+				// is work, whatever the log and the tree say; a spend that has stopped
+				// rising keeps the clock running, so this never keeps a stalled card alive.
+				if w.Spend != nil {
+					if spent, ok := w.Spend(); ok {
+						if haveSpend && spent > lastSpend {
+							lastGrow = at
+						}
+						lastSpend, haveSpend = spent, true
 					}
 				}
 				if at.Sub(lastGrow) < w.Idle {

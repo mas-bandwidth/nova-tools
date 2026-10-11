@@ -938,10 +938,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// this field are independent: budget= and stopped= are carried by an INCOMPLETE line
 	// too, because every other field is byte-for-byte the same in every line, so a
 	// reader that parses fields still reads them all.
-	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s",
+	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
-		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped), idleSuffix(res.idled))
 	if res.survivors != "" {
 		// what the harness left in its group, ended before this line (nativeEndLeftovers)
 		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
@@ -987,8 +987,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// wall stopped says so; a card that simply went still says THAT, on a line that is
 	// deliberately not a WALL line -- `js-under-20-bytes` died in a provider stall and was
 	// reported as a wall death at a path it had already worked past sixteen steps earlier.
+	// A refusal the watch carried that names no path is reported as what it is -- the
+	// idle reaping -- and never as a WALL line that names nothing
+	// (docs/roadmap.sexp, swarm-idle-reap-verdict).
 	if res.idled {
-		if res.idleEnd.Refused {
+		if _, named := res.idleEnd.WallRefusal(); named {
 			fmt.Fprintln(stdout, swarm.WallRefusedLine(cfg.label, res.idleEnd.Kind, res.idleEnd.Path, res.idleEnd.Step))
 		} else {
 			fmt.Fprintln(stdout, swarm.CardIdleLine(cfg.label, res.idleEnd))
@@ -1146,6 +1149,18 @@ func stoppedSuffix(stopped string) string {
 func termSuffix(terminated bool) string {
 	if terminated {
 		return " reason=" + oneline.Field("terminated")
+	}
+	return ""
+}
+
+// idleSuffix is the mark the NATIVE line carries when the idle watch ended the card:
+// ` reason=idle-reap`, one safe token like termSuffix's. It is how the member's read of
+// the log tells a card the watch reaped from a card the deadline killed -- both are
+// rc=-1 -- so the finish states idle reaping and never a deadline that never fired
+// (docs/roadmap.sexp, swarm-idle-reap-verdict).
+func idleSuffix(idled bool) string {
+	if idled {
+		return " reason=" + oneline.Field("idle-reap")
 	}
 	return ""
 }

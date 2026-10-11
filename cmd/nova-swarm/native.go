@@ -1211,8 +1211,14 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	}
 	deadlineC, stopDeadline := deadline(s.prep.cfg.deadline)
 	stopWatch := make(chan struct{})
+	// THE WATCH'S SPEND READING is the job's live sampler: the harness's shell cap can
+	// silence a working card's log and its tree can sit under the CPU bar on a model
+	// turn, and turns that complete still spend (docs/roadmap.sexp,
+	// swarm-idle-reap-verdict). A sampler that reads nothing answers false, and the
+	// watch is what it was without the reading.
 	idleC := nativeWatchIdle(swarm.IdleWatch{
 		Log: s.outLog, Job: s.prep.jobDir, Pid: pgid, Idle: s.prep.cfg.idle, Reader: s.reader,
+		Spend: s.sampler.Spend,
 	}, stopWatch)
 
 	return &nativeStarted{
@@ -1436,12 +1442,25 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	if !s.res.lost && s.res.idled {
 		s.res.end = swarm.EndWall
 		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", s.res.idleEnd.Idle.Seconds())
-		if s.res.idleEnd.Refused {
-			s.res.wallRefusal = swarm.WallRefusal{Path: s.res.idleEnd.Path, Step: s.res.idleEnd.Step}
+		if wr, named := s.res.idleEnd.WallRefusal(); named {
+			s.res.wallRefusal = wr
 			reason = fmt.Sprintf("the wall refused %s %s and the card wrote nothing for %.0fs after it",
 				oneline.Field(s.res.idleEnd.Kind), oneline.Field(s.res.idleEnd.Path), s.res.idleEnd.Idle.Seconds())
+		} else {
+			// A REAPED CARD IS NOT GIVEN A WALL DEATH THAT NAMES NOTHING
+			// (docs/roadmap.sexp, swarm-idle-reap-verdict): a refusal with no path in it
+			// is no cause a reader can act on, and the cause this end reports is the
+			// idle reaping -- the reason above states it. The verdict keeps the wall
+			// death only for a refusal that names a path.
+			s.res.wallRefusal = swarm.WallRefusal{}
 		}
-		if path, wrote, err := swarm.WriteBlockedResult(s.prep.jobDir, s.prep.cfg.label, s.res.idleEnd.Kind, s.res.idleEnd.Path, s.res.idleEnd.Step, reason); err != nil {
+		kind := s.res.idleEnd.Kind
+		if (s.res.wallRefusal == swarm.WallRefusal{}) {
+			// the report of an idle reap is the idle reaping; WriteBlockedResult
+			// spells it on a CARD IDLE line when the kind is empty
+			kind = ""
+		}
+		if path, wrote, err := swarm.WriteBlockedResult(s.prep.jobDir, s.prep.cfg.label, kind, s.res.idleEnd.Path, s.res.idleEnd.Step, reason); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the blocked report could not be written: %s\n", oneline.Escape(err.Error()))
 		} else if wrote {
 			s.res.blockedPath = path
