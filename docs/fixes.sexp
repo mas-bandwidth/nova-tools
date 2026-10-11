@@ -122,8 +122,16 @@
     to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
-   :origin "fault 9, 2026-10-10")
-  (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
+    :origin "fault 9, 2026-10-10")
+   (fix "swarm-lint-reads-quoted-code-as-quoted" :release "v1.2.14" :status "planned"
+    :title "The card lint reads a Go module arrow as an arrow, and no fenced scratch"
+    :text "no-parent-path reads a `>` as a shell redirect only where it is not the second half of
+     `=>` or `->`, so the `> ` of a pasted Go module `replace tblfu1 => ../fu1` line is an arrow,
+     not a destination the worker writes to. scratch-absolute reads no text inside a fenced
+     block, for the word and for the line it names, so a bare variable named `scratch` in quoted
+     code is no longer refused as a relative scratch path (issues #1994, #2302, #3470)."
+    :origin "the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11: swarm-lint false refusals; code read at nova-tools dev 2314d43")
+   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
     replaced, fails each running process that does not report the installed version, prints a
