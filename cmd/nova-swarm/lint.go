@@ -326,10 +326,22 @@ func lintCard(raw []byte) []cardFinding {
 		add("files-named", 1, "no file or package named")
 	}
 
-	// 8. scratch is named absolutely, never as a bare relative path.
-	if strings.Contains(text, "scratch") && !cardScratchRE.MatchString(text) {
+	// 8. scratch is named absolutely, never as a bare relative path. The check reads only
+	// the text OUTSIDE fenced blocks, for the word and for the line it names: a fenced block
+	// is a quotation, and a `scratch` in it is code the card shows, not a path the worker
+	// writes (issue #2302; docs/SPEC-SWARM.md, Card lint). The fence rule is
+	// swarm.CardOutsideFences, the cardFenceRE the no-parent-path rule already reads.
+	outside := swarm.CardOutsideFences(lines)
+	var outsideLines []string
+	for i, l := range lines {
+		if outside[i] {
+			outsideLines = append(outsideLines, l)
+		}
+	}
+	outsideText := strings.Join(outsideLines, "\n")
+	if strings.Contains(outsideText, "scratch") && !cardScratchRE.MatchString(outsideText) {
 		for i, l := range lines {
-			if strings.Contains(l, "scratch") {
+			if outside[i] && strings.Contains(l, "scratch") {
 				add("scratch-absolute", i+1, l)
 				break
 			}

@@ -74,6 +74,47 @@ func TestLintNamesTheParentPathLine(t *testing.T) {
 	require.Contains(t, stdout, "../scratch/red.txt", "the finding quotes the offending line: %q", stdout)
 }
 
+// A Go module's `=>` is an arrow, not a shell redirect: a card that pastes a `replace` line
+// holds no destination the worker writes to, so it is not a no-parent-path drift (issue
+// #2302). The test is red against the tree before the fix: the `> ` of `=> ../fu1` reads as
+// a redirect.
+func TestLintDoesNotReadAGoModuleArrowAsARedirect(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Replace(lintGoodCard(), "STEP 6. Write RESULT.md: line 1 is the RESULT: line above.",
+		"STEP 6. Write RESULT.md: line 1 is the RESULT: line above.\n\n```\n+\tmod := \"replace tblfu1 => ../fu1\"\n```", 1)
+	card := writeLintCard(t, "arrow.card", body)
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
+	require.Equal(t, 0, exit, "a pasted go.mod replace line is not a redirect, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.NotContains(t, stdout, "no-parent-path", "an arrow is not a redirect: %q", stdout)
+}
+
+// A `scratch` named in a fenced block is code the card QUOTES, not a path the worker
+// writes: the scratch-absolute check reads no fenced text, for the word and for the line it
+// names (issue #2302; docs/SPEC-SWARM.md, Card lint). A bare `scratch` in the card's own
+// prose is still the relative path the wall refuses. The first case is red against the tree
+// before the fix: the fenced variable is read as a bare relative scratch path.
+func TestLintReadsNoScratchInsideAFence(t *testing.T) {
+	t.Parallel()
+
+	// lintGoodCard names scratch absolutely twice (`<working directory>/scratch/red.txt` and
+	// `$PWD/scratch`); spell both plainly so the only `scratch` left is the one the fence quotes.
+	body := strings.Replace(lintGoodCard(), "<working directory>/scratch/red.txt", "the working directory", 1)
+	body = strings.Replace(body, "$PWD/scratch", "$PWD", 1)
+	fenced := strings.Replace(body, "STEP 6. Write RESULT.md: line 1 is the RESULT: line above.",
+		"STEP 6. Write RESULT.md: line 1 is the RESULT: line above.\n\n```go\nscratch |= v << scratchBits;\n```", 1)
+	card := writeLintCard(t, "fenced-scratch.card", fenced)
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
+	require.Equal(t, 0, exit, "a bare scratch inside a fence is not a path the worker writes, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.NotContains(t, stdout, "scratch-absolute", "a fenced scratch is not read: %q", stdout)
+
+	prose := fenced + "Cache your clone in scratch/out.txt as you go.\n"
+	card = writeLintCard(t, "prose-scratch.card", prose)
+	exit, stdout, _ = runSwarm(t, "lint", "--card", card)
+	require.Equal(t, 1, exit, "a bare scratch in prose drifts at exit 1, got %d\nstdout: %s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=prose-scratch.card scratch-absolute:", "the prose scratch is named: %q", stdout)
+}
+
 // A card that names no red test is the defect the work order says to catch: the check name
 // itself is the answer, so the reader does not have to find the missing piece.
 func TestLintNamesTheMissingRedTest(t *testing.T) {

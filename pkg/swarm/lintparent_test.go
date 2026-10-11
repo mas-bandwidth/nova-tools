@@ -90,6 +90,33 @@ func TestAWalkInsideAFenceIsStillAFinding(t *testing.T) {
 	require.Equal(t, 4, got[0], "a `cd ..` inside a fenced command block is still the thing the wall refuses: %v", got)
 }
 
+// A Go module's `=>` is an arrow, not a shell redirect: a card that pastes a `replace`
+// line holds no destination the worker writes to (issue #2302). A `>` that is a redirect --
+// `echo x > ../out`, fence or no fence -- and a `--root ../queue` stay findings.
+func TestAGoModuleArrowIsNotARedirect(t *testing.T) {
+	t.Parallel()
+
+	for _, card := range [][]string{
+		lines("RESULT: c sha=0", "```", "+\tmod := \"replace tblfu1 => ../fu1\"", "```"),
+		lines("RESULT: c sha=0", "```", "\tmod := \"replace tblfu1 -> ../fu1\"", "```"),
+	} {
+		got := CardParentPaths(card)
+		assert.Empty(t, got, "an arrow is not a redirect: %v", got)
+	}
+
+	for _, tc := range []struct {
+		card []string
+		want int
+	}{
+		{lines("RESULT: c sha=0", "echo x > ../out"), 2},
+		{lines("RESULT: c sha=0", "```", "echo x > ../out", "```"), 3},
+		{lines("RESULT: c sha=0", "nova-swarm gather --root ../queue"), 2},
+	} {
+		got := CardParentPaths(tc.card)
+		assert.Equal(t, []int{tc.want}, got, "a redirect or --root parent path is still a finding: %v", tc.card)
+	}
+}
+
 // An ellipsis is three dots, not a parent path. `ok .../internal/pulse 1.813s` is what
 // `go test` prints and what a card pastes.
 func TestAnEllipsisIsNotAParentPath(t *testing.T) {

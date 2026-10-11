@@ -678,6 +678,12 @@ printed. `nova-swarm lint --rules` prints every token below with its remedy. A c
 for a bench worker under the shape rules carries none of the child rules and is linted without
 the flag exactly as before.
 
+`no-parent-path` reads a `>` as a shell redirect only where it is not the second half of `=>`
+or `->`, so the `> ` of a pasted Go module `replace tblfu1 => ../fu1` line is an arrow, not a
+destination the worker writes to. `scratch-absolute` reads no text inside a fenced block, for
+the word and for the line it names, so a bare variable named `scratch` in quoted code is not a
+relative scratch path.
+
 The instruction kind is a column of the one kinds list, `pkg/hygiene/kinds.txt`
 (docs/SPEC-ISA.md). The card lint resolves a card's `KIND:` through that column, and a
 declared KIND whose row names no instruction kind is `kind-declared`. There is no second

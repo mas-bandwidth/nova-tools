@@ -18,8 +18,11 @@ var cardWalkParentRE = regexp.MustCompile(
 	`(?:^|[^A-Za-z0-9_./-])(?:cd|pushd|mkdir|rmdir|cp|mv|rm|ln|touch|tar|unzip|rsync|git[ \t]+-C)[ \t]+(?:-[A-Za-z-]+[ \t]+)*["']?\.\./`)
 
 // cardWriteParentRE is a parent path named as a destination: a shell redirect, or the value
-// of a long flag such as `--root ../queue` or `--out=../notes`.
-var cardWriteParentRE = regexp.MustCompile(`(?:>>?[ \t]*|--[a-z][a-z-]*[= \t])["']?\.\./`)
+// of a long flag such as `--root ../queue` or `--out=../notes`. The `>` is a redirect only
+// where it is not the second half of `=>` or `->`: the `> ` of a pasted Go module `replace
+// tblfu1 => ../fu1` is an arrow, not a redirect, and reads as one no longer (issue #2302;
+// docs/SPEC-SWARM.md, Card lint).
+var cardWriteParentRE = regexp.MustCompile(`(?:(?:^|[^=-])>>?[ \t]*|--[a-z][a-z-]*[= \t])["']?\.\./`)
 
 // cardLinkTargetRE is a markdown link or image target, `](...)`.
 var cardLinkTargetRE = regexp.MustCompile(`\]\([^)]*\)`)
@@ -30,6 +33,23 @@ var cardEllipsisRE = regexp.MustCompile(`\.{3,}`)
 // cardFenceRE is a fenced-code-block delimiter: three or more backticks or tildes at the
 // start of the line, with an optional info string after them.
 var cardFenceRE = regexp.MustCompile("^[ \t]*(?:```+|~~~+)")
+
+// CardOutsideFences reports, for each line of a card, whether its text sits outside a
+// fenced code block. A fence is the cardFenceRE delimiter, so a check that reads no quoted
+// text agrees with CardParentPaths on what a fence is; the delimiter line itself is always
+// false (docs/SPEC-SWARM.md, Card lint).
+func CardOutsideFences(lines []string) []bool {
+	out := make([]bool, len(lines))
+	inFence := false
+	for i, l := range lines {
+		if cardFenceRE.MatchString(l) {
+			inFence = !inFence
+			continue
+		}
+		out[i] = !inFence
+	}
+	return out
+}
 
 // CardParentPaths returns the 1-based numbers of the card lines that reach above the job,
 // in line order, at most one per line. It reads the lines it is handed and nothing else.
