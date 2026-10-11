@@ -275,6 +275,86 @@ func PointProviderAtProxy(raw []byte, provider, proxyURL string) ([]byte, bool) 
 	return append(out, '\n'), true
 }
 
+// SeedProviderBaseURL returns the config with that provider's options.baseURL set to base
+// when the entry has none, so a limited route's proxy has an upstream to stand in front of
+// (providerbudget.go, THE GLOBAL RATE BUDGET; nova-sprint tla/RateBudget.tla: every request of a
+// limited route takes the budget). A baseURL already there is kept as it is, and every
+// other option (an apiKey, the read timeouts) stays. ok is false, and raw is returned
+// unchanged, when base is not an http endpoint, the config is not a JSON object, or the
+// provider entry is not an object: the caller then keeps the NATIVE NOTE it writes today.
+func SeedProviderBaseURL(raw []byte, provider, base string) ([]byte, bool) {
+	if provider == "" || !ProviderProxyEligible(base) {
+		return raw, false
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil || cfg == nil {
+		return raw, false
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	if providers == nil {
+		return raw, false
+	}
+	entry, _ := providers[provider].(map[string]any)
+	if entry == nil {
+		return raw, false
+	}
+	opts, _ := entry["options"].(map[string]any)
+	if opts == nil {
+		if _, other := entry["options"]; other {
+			return raw, false
+		}
+		opts = map[string]any{}
+	}
+	if cur, _ := opts["baseURL"].(string); strings.TrimSpace(cur) != "" {
+		return raw, true
+	}
+	opts["baseURL"] = strings.TrimSpace(base)
+	entry["options"] = opts
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return raw, false
+	}
+	return append(out, '\n'), true
+}
+
+// LetTheHarnessWaitOutAStall returns the config with that provider's harness-side request
+// clocks off (options.headerTimeout and options.timeout both false), for a limited route
+// whose requests stall inside the budget proxy before any header is written. The pinned
+// harness (OpenCode 1.18.20) arms an abort at headerTimeout from the moment it sends, and
+// another at timeout when one is set, so a request waiting out its budget or a refusal's
+// backoff past either would be aborted by the harness: an error, the thing a rate-limited
+// request must never be (the owner, 2026-10-11: "the rate limited should just stall out
+// delay, not fail"). The deadlines that remain are the proxy's own, which start only once
+// the request is sent upstream (ProviderHeaderTimeout, ProviderBodySilence), and the card's
+// deadline over the stall (providerbudget.go, THE GLOBAL RATE BUDGET; nova-sprint
+// tla/RateBudget.tla). chunkTimeout is left as it is: it runs only after headers arrive. ok
+// is false, and raw is returned unchanged, when there is no options object to write into.
+func LetTheHarnessWaitOutAStall(raw []byte, provider string) ([]byte, bool) {
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil || cfg == nil {
+		return raw, false
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, _ := providers[provider].(map[string]any)
+	if entry == nil {
+		return raw, false
+	}
+	opts, _ := entry["options"].(map[string]any)
+	if opts == nil {
+		return raw, false
+	}
+	opts["headerTimeout"] = false
+	opts["timeout"] = false
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return raw, false
+	}
+	return append(out, '\n'), true
+}
+
+// Upstream is the provider base the proxy forwards to.
+func (p *ProviderProxy) Upstream() string { return p.upstream.String() }
+
 func providerOptions(raw []byte, provider string) map[string]any {
 	var cfg map[string]any
 	if json.Unmarshal(raw, &cfg) != nil {

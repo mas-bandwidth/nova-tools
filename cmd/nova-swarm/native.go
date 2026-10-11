@@ -2901,6 +2901,17 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		// stall on them. The deadline is the proxy below, and only when the
 		// provider has an http baseURL the proxy can stand in front of.
 		body = swarm.ApplyProviderReadDeadline(body, provider)
+		// A LIMITED ROUTE'S EVERY REQUEST TAKES THE GLOBAL BUDGET (pkg/swarm/providerbudget.go;
+		// nova-sprint tla/RateBudget.tla), and the budget lives in the proxy, so
+		// a limited route whose generated config names no baseURL (a fleet member launches
+		// with --model only) is given its provider's base from the providers table: the proxy
+		// then opens in front of it and the harness is pointed at the proxy. A route with no
+		// limit (no --budget-server) takes no part of this, and its config is as it was.
+		if cfg.budgetServer != "" && swarm.ProviderBaseURL(body, provider) == "" {
+			if seeded, ok := swarm.SeedProviderBaseURL(body, provider, swarm.ProviderTableBaseURL(provider)); ok {
+				body = seeded
+			}
+		}
 		upstream := swarm.ProviderBaseURL(body, provider)
 		if swarm.ProviderProxyEligible(upstream) {
 			silence := cfg.bodySilence
@@ -2922,6 +2933,16 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			}
 			body = pointed
 			proxy = opened
+			// a limited route's request may wait inside the proxy before any header: the
+			// harness's own header and request clocks are turned off so that wait is a stall,
+			// never an abort (swarm.LetTheHarnessWaitOutAStall)
+			if cfg.budgetServer != "" {
+				if waited, ok := swarm.LetTheHarnessWaitOutAStall(body, provider); ok {
+					body = waited
+				} else if notes != nil {
+					fmt.Fprintf(notes, "NATIVE NOTE: the harness's header and request timeouts for %s could not be turned off; a request stalled on its budget past them may be ended by the harness\n", oneline.Field(provider))
+				}
+			}
 		}
 	}
 	if cfg.budgetServer != "" && proxy == nil && notes != nil {
