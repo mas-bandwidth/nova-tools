@@ -427,4 +427,16 @@
   (fix "go-mod-tidy-nightly-jobs" :release "v1.2.11" :status "in-progress"
    :title "Nightly and certification jobs fail on an untidy go.mod"
    :text "The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three."
-   :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")))
+   :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")
+
+  (fix "a-refused-finish-never-reruns-a-pushed-generation" :release "v1.2.11" :status "in-progress"
+   :title "A refused finish never reruns a pushed generation"
+   :text "A finish the store refuses after its push is no longer taken as the end of the work. The
+    member prints the refusal, and when the refused finish carried a pushed head it remembers the
+    generation with the finish's arguments exactly as sent; recoverWorking never runs a card whose
+    card@gen is held, and once a pass each due finish is sent again byte for byte with backoff
+    (FinishRefusedRetry, doubling to 8m). The same refusal FinishRefusedMax (3) times hands the
+    card back with stop-return instead of running it, and the memory goes when the queue no longer
+    lists the card at that generation on this row. A refused finish with nothing pushed is
+    forgotten as today."
+   :origin "the coordinator, 2026-10-11: the v1.2.10 nova-sprint server refused every ok finish, the member forgot each refused card and reran the generation, and the second push was rejected non-fast-forward; card a-refused-finish-never-reruns-a-pushed-generation.w1")))
