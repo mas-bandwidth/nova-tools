@@ -132,7 +132,7 @@
     own \"Not a valid commit name\", and the first two say to put the commits on top of the staged
     commit and finish again."
    :origin "seat inbox pass 2026-10-11 ~03:38Z, epoch 16: 32 push refusals in an hour read \"the result's head X does not descend from the staged commit S: fatal: Not a valid commit name S\"; re-scoped against nova-tools dev 2314d43 on 2026-10-11")
-   (fix "swarm-lint-reads-quoted-code-as-quoted" :release "v1.2.14" :status "planned"
+  (fix "swarm-lint-reads-quoted-code-as-quoted" :release "v1.2.14" :status "planned"
     :title "The card lint reads a Go module arrow as an arrow, and no fenced scratch"
     :text "no-parent-path reads a `>` as a shell redirect only where it is not the second half of
      `=>` or `->`, so the `> ` of a pasted Go module `replace tblfu1 => ../fu1` line is an arrow,
@@ -140,7 +140,7 @@
      block, for the word and for the line it names, so a bare variable named `scratch` in quoted
      code is no longer refused as a relative scratch path (issues #1994, #2302, #3470)."
     :origin "the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11: swarm-lint false refusals; code read at nova-tools dev 2314d43")
-   (fix "nova-friend-raises-a-refused-verb-and-proves-its-harness-first" :release "v1.2.14" :status "planned"
+  (fix "nova-friend-raises-a-refused-verb-and-proves-its-harness-first" :release "v1.2.14" :status "planned"
     :title "A refused verb is raised, and a lane proves its harness before it takes"
     :text "A sprint server that refuses a friend verb (friend cards, friend beat) is counted per verb; the
      third consecutive refusal raises it once — a down beat naming the reason and one word to the
@@ -186,19 +186,19 @@
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
    :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
-   (fix "fleet-loops-refuses-version-mismatch" :release "v1.2.14" :status "planned"
+  (fix "fleet-loops-refuses-version-mismatch" :release "v1.2.14" :status "planned"
     :title "A fleet loops play refuses when its checkout version differs from the adopted release"
     :text "Fleet plays run only from the checkout of the adopted release, and refuse when the
      checkout's version differs from the release installed on the host."
     :origin "dogfood 2026-10-10 evening: fleet-only restart")
-   (fix "a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it" :release "v1.2.14" :status "planned"
+  (fix "a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it" :release "v1.2.14" :status "planned"
     :title "A lane beyond the cap keeps the card the server gave it"
     :text "With server lanes a lane past the live cap a rate limit lowered keeps the card it holds
      between turns, counting its turns, and says so once; it no longer logs a hand-back to another
      lane that never reaches the server, resets the card's turns, or leaves a machine STOP with no
      stop-return for the card. A world with no server keeps the local hand-back."
     :origin "card a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it.w1; the coordinator's 2026-10-11 audit of pkg/friend v1.2.14")
-   (fix "a-failed-acted-receipt-is-written-again" :release "v1.2.14" :status "planned"
+  (fix "a-failed-acted-receipt-is-written-again" :release "v1.2.14" :status "planned"
     :title "An acted receipt a failed stamp owes is written again"
     :text "When a turn ends at exit 0 the daemon stamps its messages acted, then acks them. A stamp the
      store refused left the receipt at read or delivered, so a daemon restarted before its ack landed
@@ -208,7 +208,7 @@
      A failed read stamp is not owed: only acted keeps a message from a second turn. A restart while
      the store stays down still redelivers, at least once."
     :origin "card a-failed-acted-receipt-is-written-again.w2; the coordinator's 2026-10-11 audit of nova-tools pkg/friend v1.2.14 (possible double delivery on the bus after a failed stamp, pkg/friend/daemon.go near 1126 and near 1503)")
-   (fix "secrets-remedy-names-the-platforms-install" :release "v1.2.14" :status "planned"
+  (fix "secrets-remedy-names-the-platforms-install" :release "v1.2.14" :status "planned"
     :title "The secrets tool remedies name the platform's install, not always Homebrew"
     :text "CheckSopsVersion and CheckAgeKeygenVersion hard-coded brew in all four of their remedies,
      so a Linux reader short of sops or age-keygen was told to run a command the platform does not
@@ -216,14 +216,14 @@
      the platform, copying internal/up/layout.go's tools table: brew on darwin, go install for sops
      elsewhere, apt for age-keygen on linux."
     :origin "issue #5016; the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11")
-   (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
+  (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
     :title "A friend's lanes are thin clients of the sprint server"
     :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
      ids, epoch and lane the server gave; a refusal drops the job and the lane asks again. lanes.json
      keeps sessions and owed stop-returns only, never what a lane holds, and reads go through the
      same lane loop. The model is tla/FriendLane.tla."
     :origin "a one-shot friend host, 2026-10-10: took logged while the server showed the card ready, and progress sent at epoch 0")
-   (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
+  (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
    :title "A friend's lane wall reads the pinned harness it runs"
    :text "nova-friend install takes --wall-reads and writes it into the agent, and the seat play passes
     nova_friend_wall_reads to a reinstall whose plist records none, so a pinned harness whose shim
@@ -737,3 +737,4 @@
    :title "Judge rate-limited provider ends as provider failure"
    :text "A rate-limited provider end (class=rate-limited or status=429 with non out-of-credit class) with no pushed head is judged as provider failure, not failed work."
    :origin "card rate-limit-judge-in-the-running-member.w4; the owner, 2026-10-11"))
+)
