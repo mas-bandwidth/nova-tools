@@ -215,6 +215,7 @@ func (l *loop) presentOwed(now time.Time) bool {
 // any turn's message when it ends at exit 0). In one-shot mode there is no batch session to
 // tell: the backlog is superseded alone, and the lanes hand her cards. A store that does not
 // answer leaves the present due, tried again the next step.
+// tla/Friend.tla PresentTurn
 func (l *loop) startPresent(now time.Time, withTurn bool) {
 	d, b := l.d, l.b
 	var backlog []bus.Entry

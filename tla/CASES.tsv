@@ -147,6 +147,7 @@ MCFriendLaneBrokenKeepOnMismatch.cfg	MCFriendLane.tla	invariant	WorkingOnlyOnThe
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
 MCFriendBrokenNoProof.cfg	MCFriend.tla	action	NoTurnBeforeProof	ignore-terminal	friend	required	-
+MCFriendBrokenDroptTurn.cfg	MCFriend.tla	temporal	KeptTurnRetried	ignore-terminal	friend	required	-
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
