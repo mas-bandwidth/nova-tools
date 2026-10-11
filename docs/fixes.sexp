@@ -413,4 +413,9 @@
   (fix "fx-empty-fixes-file-after-the-clear" :release "v1.2.11" :status "in-progress"
    :title "The fixes ledger brought level with the code"
    :text "Fixes marked planned or in-progress that had already landed are marked shipped in the release that carried them (commit 53bc5748c). Landed on dev; ships with v1.2.11."
-   :origin "card fx-empty-fixes-file-after-the-clear, landed on dev as 7b6cccbc2")))
+   :origin "card fx-empty-fixes-file-after-the-clear, landed on dev as 7b6cccbc2")
+
+  (fix "a-run-that-ends-at-its-first-result-is-not-a-finish" :release "v1.2.14" :status "planned"
+   :title "A run that ends at its first RESULT.md is a no-result finish"
+   :text "A child whose harness stopped soon after it wrote the early RESULT.md its brief asks for (verdict not-done, nothing committed) was judged failed work, spending an attempt, while the same run with no RESULT.md was judged no result and dealt again. member.Judge now classes a shaped not-done run under FirstResultWall (two minutes), with nothing committed and no gate, as the same no-result kind, with a reason that keeps the \"no result:\" prefix so nova-sprint's IsNoResult routes it."
+   :origin "the seat, 2026-10-11: fx-hosted-tests-green-on-mainc attempt 10, ran 62s, wrote an early RESULT.md (starting: will run ...) and stopped; re-scoped against nova-tools dev 2314d43; card a-run-that-ends-at-its-first-result-is-not-a-finish")))
