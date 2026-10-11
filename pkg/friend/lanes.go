@@ -35,6 +35,18 @@ const CardTurns = 2
 // before it tries again.
 const LaneOpenRetry = time.Minute
 
+// InstantFail is how fast a card run that ends with no REPORT.md and no
+// RESULT.md marks a broken harness rather than the card's own failed attempt:
+// on 2026-10-11 an unsigned config directory ended every claude -p run
+// terminal_reason api_error in about a second. InstantFailRepeats such runs in
+// a row stop the lane's taking and re-prove the harness before any take,
+// instead of finishing a third card FAILED (docs/SPEC-FRIEND.md, "A lane
+// proves its harness").
+const (
+	InstantFail        = 5 * time.Second
+	InstantFailRepeats = 2
+)
+
 // LaneState is what the lanes keep across restarts, in the state directory
 // (lanes.json): each lane's session, so a lane is the same friend's session
 // for its life, the cards set aside after CardTurns, so a restart does
@@ -755,6 +767,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
+		l.instantFails = 0 // a card that finished breaks the run of instant failures
 		line += " card=done " + l.endCard(ln.n, card, end, now)
 		l.finishNote(ln, card, now.Sub(t.started), now)
 		ln.card, ln.attempts = nil, 0
@@ -780,6 +793,28 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	if first, fault := l.harnessFault(r, t, card); fault {
 		l.faultTurn(ln, line, HarnessFaultNoReport, first, now)
 		return
+	}
+	// a per-card (claude -p) run that ends with no report this fast is the
+	// harness broken, never the card's own failed attempt: InstantFailRepeats
+	// such runs in a row stop the lane's taking and re-prove the harness before
+	// the next take, instead of finishing a third card FAILED
+	// (docs/SPEC-FRIEND.md, "A lane proves its harness").
+	if _, perCard := d.Deliver.(CardRunner); perCard && d.Prove != nil {
+		if now.Sub(t.started) < InstantFail {
+			l.instantFails++
+			if l.instantFails >= InstantFailRepeats {
+				l.instantFails = 0
+				// stop the lane's taking now: the proof is re-run on the next loop
+				// (proofAt zeroed), and this loop's gate holds the lane off with a
+				// placeholder reason until it answers.
+				l.proofAt = time.Time{}
+				l.proofReason = "the harness is re-proved after two instant failures"
+				d.Record(line + fmt.Sprintf(" card=kept reason=%q", "two runs ended with no report within "+InstantFail.String()+": the harness is re-proved before any card is taken"))
+				return
+			}
+		} else {
+			l.instantFails = 0
+		}
 	}
 	ln.attempts++
 	why := "the turn ended with no RESULT.md"

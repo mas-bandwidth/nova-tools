@@ -1040,3 +1040,58 @@ func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
 		})
 	}
 }
+
+// A server that refuses her verbs (friend beat and friend cards) with a
+// non-zero code and the text "refused" is counted per verb; the third
+// consecutive refusal of each is raised once — a down beat naming the reason
+// and one word to the coordinator — and a server that answers again clears it
+// (one up beat, one recovery line; docs/SPEC-FRIEND.md, "A refused verb").
+func TestARefusedVerbIsRaisedOnTheThirdAndClearedWhenItAnswers(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Coordinator = "ada"
+	var downs []string
+	var ups int
+	r.d.RefusalDown = func(_ time.Time, reason string) { downs = append(downs, reason) }
+	r.d.RefusalUp = func() { ups++ }
+	askErr := &Refused{Why: "friend cards refused: You must hook in first"}
+	r.d.Held = HeldVia("bob", func(context.Context, []string) (string, error) {
+		if askErr == nil {
+			return `{"friend":"bob","cards":[]}`, nil
+		}
+		return "", askErr
+	}, nil, func() time.Time {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.now
+	})
+	r.beatErr = &Refused{Why: "friend beat refused: You must hook in first"}
+
+	steps := int(3*ServedEvery/BeatEvery) + 2
+	var cardsAtRaise, beatAtRaise int
+	// the server answers again after three ServedEvery periods; capture the counts first
+	r.at[int(3*ServedEvery/BeatEvery)] = func() {
+		cardsAtRaise = r.d.status.Refused[FriendCardsVerb]
+		beatAtRaise = r.d.status.Refused[FriendBeatVerb]
+		askErr, r.beatErr = nil, nil
+	}
+	r.run(t, steps)
+
+	assert.GreaterOrEqual(t, cardsAtRaise, RefusalRepeats, "friend cards refused, counted per verb")
+	assert.GreaterOrEqual(t, beatAtRaise, RefusalRepeats, "friend beat refused, counted per verb")
+	assert.Contains(t, r.last().LastRefusal, "You must hook in first")
+	require.Len(t, downs, 2, "raised once per verb, not once per refusal: %v", downs)
+	assert.Contains(t, strings.Join(downs, " "), "refused")
+	got := r.adaGot(t)
+	require.Len(t, got, 2, "one word to the coordinator per verb: %v", got)
+	assert.Contains(t, strings.Join(got, " "), "refused")
+	assert.GreaterOrEqual(t, ups, 1, "the down is lifted once the server answers again")
+	assert.Empty(t, r.last().Refused, "the counts clear on recovery")
+	var recoveredLines int
+	for _, l := range r.records {
+		if strings.Contains(l, "recovered:") {
+			recoveredLines++
+		}
+	}
+	assert.GreaterOrEqual(t, recoveredLines, 1, "one recovery line")
+}

@@ -140,6 +140,15 @@
      block, for the word and for the line it names, so a bare variable named `scratch` in quoted
      code is no longer refused as a relative scratch path (issues #1994, #2302, #3470)."
     :origin "the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11: swarm-lint false refusals; code read at nova-tools dev 2314d43")
+   (fix "nova-friend-raises-a-refused-verb-and-proves-its-harness-first" :release "v1.2.14" :status "planned"
+    :title "A refused verb is raised, and a lane proves its harness before it takes"
+    :text "A sprint server that refuses a friend verb (friend cards, friend beat) is counted per verb; the
+     third consecutive refusal raises it once — a down beat naming the reason and one word to the
+     coordinator — never only logs, and a server that answers again clears it. A claude lane proves
+     its harness first (claude -p ok --output-format json --max-turns 1 with the row's config_dir as
+     CLAUDE_CONFIG_DIR), re-proved after two instant failures, before any take; a
+     harness that cannot answer takes no card, beats down with the reason, and re-proves every minute."
+    :origin "nova-friend-raises-a-refused-verb-and-proves-its-harness-first.w5, 2026-10-11: the coordinator's friend daemon ran 11 hours refused \"You must hook in first\", and a lane's unsigned --config-dir burned ~35 card attempts in 6 minutes")
   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it

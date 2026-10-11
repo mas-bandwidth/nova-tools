@@ -120,6 +120,16 @@ type Status struct {
 	// HeldFrom is where the last answer came from: friend cards, or the worker view while the
 	// server does not serve it (no brief is written from the view).
 	HeldFrom string `json:"held_from,omitempty"`
+	// Refused is the server's refusals counted per verb: each verb's consecutive
+	// refusals, cleared when it answers again (docs/SPEC-FRIEND.md, "A refused verb").
+	Refused map[string]int `json:"refused,omitempty"`
+	// LastRefusal is the last refusal as "verb: why", and when, on the daemon's clock.
+	LastRefusal   string    `json:"last_refusal,omitempty"`
+	LastRefusalAt time.Time `json:"last_refusal_at,omitzero"`
+	// Proof is the harness proof's last result ("ok", or the terminal reason it
+	// cannot answer), and ProofAt when it ran.
+	Proof   string    `json:"proof,omitempty"`
+	ProofAt time.Time `json:"proof_at,omitzero"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside

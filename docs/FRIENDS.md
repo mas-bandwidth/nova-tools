@@ -110,7 +110,14 @@ nova-config apply --kind friend
 ```
 
 A claude row in one-shot mode without `config_dir` runs no lane: her daemon
-says so on its record with the `nova-config friend set` that fixes it.
+says so on its record with the `nova-config friend set` that fixes it. Before
+it takes any card, the daemon proves the harness with its cheapest no-tool
+turn, `claude -p ok --output-format json --max-turns 1` with the row's
+`config_dir` as `CLAUDE_CONFIG_DIR`; a config directory that is
+not signed in ends that run `terminal_reason api_error`, the daemon takes
+nothing and beats down with `harness claude cannot answer: <terminal_reason>
+(config dir <dir>)` until a person signs the account in (docs/SPEC-FRIEND.md,
+"A lane proves its harness").
 
 ## One-shot lanes at parity with the card runner
 
