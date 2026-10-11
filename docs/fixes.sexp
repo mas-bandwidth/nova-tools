@@ -197,4 +197,9 @@
   (fix "swarm-slot-lease-release-by-id" :release "v1.2.9" :status "planned"
    :title "The dispatcher releases a slot lease by its own id"
    :text "Release removes every lease with the same owner and label. It releases only the one lease it took."
-   :origin "issue #1582")))
+   :origin "issue #1582")
+  (fix "ci-cancelled-under-load" :release "v1.2.9" :status "planned"
+   :title "CI runs on card PRs are not cancelled under load"
+   :text "CI runs at the head of card PRs are cancelled mid-job when many PRs open together; the
+    concurrency rule is fixed so each head gets one full run."
+   :origin "issue #2795")))

@@ -64,3 +64,4 @@ A worker card whose last turn is a question ends as asked instead of holding its
 - **A HOLD report with zero findings is malformed** (planned). A verdict of HOLD cannot have no findings, so the result check classes it as malformed. From: PR #4635.
 - **Release adopt does not trust a partial release directory** (planned). A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt verifies completeness or uses a temporary dir renamed at the end. From: issue #1981.
 - **The dispatcher releases a slot lease by its own id** (planned). Release removes every lease with the same owner and label. It releases only the one lease it took. From: issue #1582.
+- **CI runs on card PRs are not cancelled under load** (planned). CI runs at the head of card PRs are cancelled mid-job when many PRs open together; the concurrency rule is fixed so each head gets one full run. From: issue #2795.
