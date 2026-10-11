@@ -1366,7 +1366,12 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 		if !ro.reads && ro.pushedHead != "" {
 			m.rememberFinish(id, l.gen, ro.pushedHead, ro.args, text, ro.now)
 		}
-		if ro.reads {
+		if ro.reads && ro.returnNoVerdict {
+			// a refused return of a read that reached no verdict leaves the launch spent
+			// (the read stays for the lateness rule, reportOne's read --return refusal); a
+			// refused read VERDICT is not spent: exactly as reportOne today, it falls to
+			// m.forget(id, false) below, the launch is dropped and the reading card is
+			// recovered on a later pass
 			l.spent = true
 			m.running[id] = l
 			return 0

@@ -162,6 +162,36 @@ func TestTakeRunsBeforeTheReportsReturn(t *testing.T) {
 	assert.Equal(t, 0, at, "the take ran before any of the %d finishes returned (done=%d)", done, done)
 }
 
+// TestARefusedReadVerdictIsForgottenNotSpent pins STEP (1)'s "the state changes reportOne
+// makes today ... applied by collect from the posted result", exactly as today: a read whose
+// verdict verb (read --ok / read --broken) exits 1 is refused, and reportOne today reached
+// m.forget(id, false) -- the launch is dropped and the reading card is recovered on a later
+// pass. The side-by-side applyReport must not keep it spent: spent is "a read whose child
+// ended with no verdict" (member.go), only the read --return refusal. Red at HEAD: applyReport
+// retained the refused read-verdict launch in m.running with l.spent set, so this member never
+// reports or recovers it again.
+func TestARefusedReadVerdictIsForgottenNotSpent(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 1})
+	a := Packet{Card: "p1.r1.m", Kind: "read", As: "m", Primary: "p1", Attempt: 1, Gen: 1, Epoch: 7, Head: fullSha}
+	g.s.set("queue", 0, queueJSON(t, 7, ready(a.Card)))
+	g.s.set("take", 0, takeJSON(t, a))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{a.Card}, g.r.started(), "the read runs")
+
+	g.r.child(a.Card).end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
+	g.s.set("queue", 0, queueJSON(t, 7, working(a.Card, 1, &a)))
+	g.s.set("report", 1, "REFUSED read: no such card")
+	g.s.reset()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Len(t, g.s.lines("report"), 1, "the read verdict is reported")
+	// the launch itself, not Running() (which skips a spent one): a spent launch is still
+	// held and never retried by this member
+	assert.Empty(t, g.m.running, "a refused read verdict is forgotten, not kept spent")
+}
+
 // TestARefusedFinishIsRetriedByteForByteNextPass pins that a refused finish of a pushed
 // generation is sent again, byte for byte, by a later pass, and the run is never repeated
 // (retryFinishes; launch.push).
