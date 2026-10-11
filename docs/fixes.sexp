@@ -456,7 +456,19 @@
     test exec'd them, so a parallel test's fork inherited the open write descriptor and the exec raced
     into ETXTBSY, \"text file busy\" (TestCycleStopsOnAFailedBench). The three executable stubs now use
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
-   :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
+    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
+
+  (fix "tla-reach-from-a-step-and-early-proof" :release "v1.2.12" :status "planned"
+   :title "Reach models --from, an early proof and a refused window"
+   :text "Reach.tla drifted from cmd/nova-friend/reach.go: the model started at bus and left a step
+    only at its bound, where the code starts at --from (reachSteps), leaves a push at once when the
+    daemon is down or the push fails, refuses (exit 2) a window without the accessibility permission,
+    and accepts a proof any time inside the bound. The module now has a From constant (the ladder's
+    suffix), an immediate climb on a failed push, a refused end, a proof inside the bound, and
+    FailedOnlyAfterAllThree restated as tried = StepsFrom; a new reversed witness (fromtriedall) claims
+    all three tried after a --from start and fails the restated invariant. Tests and models only, no
+    product change."
+   :origin "the card tla-reach-from-a-step-and-early-proof.w1 (stream v1212)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"

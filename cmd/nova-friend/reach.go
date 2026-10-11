@@ -349,6 +349,7 @@ func climb(ctx context.Context, fx reachFX, friendName string, timeout time.Dura
 	return reachWith(tool.Fail().Fact("friend", friendName).Fact("tried", strings.Join(tried, ",")), acc)
 }
 
+// tla/Reach.tla Prove
 func waitReach(ctx context.Context, fx reachFX, acc *tool.Out, step, nonce string, start time.Time, timeout time.Duration) (bool, error) {
 	for {
 		elapsed := fx.Now().Sub(start)
