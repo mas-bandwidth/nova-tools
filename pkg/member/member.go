@@ -169,6 +169,10 @@ type Result struct {
 	// passed their rerun), which the reader of the result takes as the verdict ok; "" for none.
 	Gate      string
 	GateTests string
+	// Wall is the run's wall clock as native's NATIVE line states it, 0 when
+	// unknown: Judge reads it to tell a run that ended at its first RESULT.md from
+	// a finish, under FirstResultWall (docs/SPEC-CARD-CONTRACT.md section 4).
+	Wall time.Duration
 	// Carry is where a rework was staged, as native's STAGE CARRY line says it
 	// (cardcontract.Carry.Words: the staged commit, the tip of its base branch, and whether
 	// the work before it carried); the finish's report carries it, so the card's timeline
@@ -182,6 +186,14 @@ const (
 	GatePreExisting = cardhdr.EndPreExisting
 	GateGreen       = "green"
 )
+
+// FirstResultWall is how soon a run that wrote only its first RESULT.md — its
+// harness read that much and then stopped — is the same no-result kind as a run
+// that wrote no RESULT.md at all: under it, with the verdict not-done, nothing
+// committed and no gate, no work came back either way
+// (a-run-that-ends-at-its-first-result-is-not-a-finish;
+// docs/SPEC-CARD-CONTRACT.md section 4, the finish).
+const FirstResultWall = 2 * time.Minute
 
 // The ends Judge names first in a failed finish.
 const (
@@ -288,6 +300,14 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the gate decision classed every failure that stayed red pre-existing: the base's
 		// or the member's, never the card's (sprint.FailureClass gives it no class)
 		return FinishFailed, cardhdr.EndPreExisting + ": " + r.GateTests
+	case r.Shaped && r.Verdict == "not-done" && r.End == "" && r.Gate == "" && pu.Sha == "" && pu.Refused == "" && 0 < r.Wall && r.Wall < FirstResultWall:
+		// the run wrote only its first RESULT.md (its harness read that much, the child's
+		// brief asks for it early, and then stopped), committed nothing and ran no gate:
+		// no work came back, so it is the same no-result kind as a run that wrote no
+		// RESULT.md at all, and the sprint deals the card again on a route it has not been
+		// drawn on (cardhdr.EndNoResult; docs/SPEC-CARD-CONTRACT.md section 4, the finish;
+		// tla/CardContract.tla, JudgeOf; a-run-that-ends-at-its-first-result-is-not-a-finish)
+		return FinishFailed, EndNoResult + ": the run ended at its first RESULT.md (verdict not-done, nothing committed, after " + r.Wall.Round(time.Second).String() + ")"
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":

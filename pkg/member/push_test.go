@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -268,6 +269,40 @@ func TestJudgeIsTheFinishRule(t *testing.T) {
 		{"push refused", shaped, Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},
 		{"nothing to do", Result{Shaped: true, Verdict: "nothing", Report: "nothing: the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
 		{"nothing to do, said plainly", Result{Shaped: true, Verdict: "nothing", Report: "the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
+	} {
+		fin, why := Judge(tc.r, tc.pu)
+		assert.Equal(t, tc.fin, fin, tc.name)
+		assert.Equal(t, tc.why, why, tc.name)
+	}
+}
+
+// A run that wrote its early RESULT.md (its harness read it, and it says the run
+// is starting) and then stopped, having committed nothing and with no gate, is the
+// same no-result kind as a run that wrote no RESULT.md at all: no work came back
+// either way, and only the second was classed that way before
+// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, JudgeOf).
+func TestJudgeTreatsAnEarlyFirstResultAsNoResult(t *testing.T) {
+	t.Parallel()
+	early := func(wall time.Duration) Result {
+		return Result{Ran: true, Shaped: true, Verdict: "not-done", Head: fullSha, Wall: wall, Report: "starting: will run the gate"}
+	}
+	const want = "no result: the run ended at its first RESULT.md (verdict not-done, nothing committed, after 1m2s)"
+	for _, tc := range []struct {
+		name string
+		r    Result
+		pu   Push
+		fin  Finish
+		why  string
+	}{
+		{"first result under the wall", early(62 * time.Second), Push{None: "the child committed nothing: nothing new"}, FinishFailed, want},
+		{"wall unknown", early(0), Push{None: "the child committed nothing: nothing new"}, FinishFailed, "verdict not-done"},
+		{"wall in minutes", early(3 * time.Minute), Push{None: "the child committed nothing: nothing new"}, FinishFailed, "verdict not-done"},
+		{"a gate decision ran", Result{Ran: true, Shaped: true, Verdict: "not-done", Head: fullSha, Wall: 62 * time.Second, Report: "starting: will run the gate", Gate: GateGreen}, Push{None: "the child committed nothing"}, FinishFailed, "verdict not-done"},
+		{"the deadline ended it", Result{Ran: true, Shaped: true, Verdict: "not-done", Head: fullSha, Wall: 62 * time.Second, Report: "starting: will run the gate", End: EndDeadline}, Push{None: "the child committed nothing"}, FinishFailed, "deadline: verdict not-done"},
+		{"a pushed sha", early(62 * time.Second), Push{Sha: fullSha}, FinishFailed, "verdict not-done"},
+		{"a refused push", early(62 * time.Second), Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},
+		{"verdict nothing", Result{Ran: true, Shaped: true, Verdict: "nothing", Head: fullSha, Wall: 62 * time.Second, Report: "nothing: the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
+		{"verdict ok", Result{Ran: true, Shaped: true, Verdict: "ok", Head: fullSha, Wall: 62 * time.Second, Report: "landed"}, Push{Sha: fullSha}, FinishOK, ""},
 	} {
 		fin, why := Judge(tc.r, tc.pu)
 		assert.Equal(t, tc.fin, fin, tc.name)
