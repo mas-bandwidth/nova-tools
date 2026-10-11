@@ -30,6 +30,8 @@
 \*   prov      the child's run ended on the provider's failure: the harness's
 \*             own log carries a provider error, or its transcript stops on a
 \*             tool result after a clean exit (cmd/nova-swarm nativeprovider.go)
+\*   rlim      the child's run ended on a rate limit (status=429, class=rate-limited
+\*             or class other than out-of-credit) (cmd/nova-swarm nativeprovider.go)
 \*   stg       the launch was refused at staging, before any child ran
 \*             (cmd/nova-swarm native's STAGE FAIL: no bench mirror, the pushed
 \*             head missing, the stage's timeout)
@@ -87,7 +89,7 @@ VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
           prov, stg
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, stg>>
+          prov, rlim, stg>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -102,8 +104,9 @@ Init ==
   /\ claim = [c \in Cards |-> "held"]
   /\ fin = [c \in Cards |-> "none"]
   /\ rep = [c \in Cards |-> "none"]
-  /\ prov = [c \in Cards |-> FALSE]
-  /\ stg = [c \in Cards |-> FALSE]
+   /\ prov = [c \in Cards |-> FALSE]
+   /\ rlim = [c \in Cards |-> FALSE]
+   /\ stg = [c \in Cards |-> FALSE]
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
 
@@ -147,8 +150,9 @@ ChildEnds(c) ==
        /\ commit' = [commit EXCEPT ![c] = k]
        /\ shape' = [shape EXCEPT ![c] = s]
        /\ verdict' = [verdict EXCEPT ![c] = v]
-       /\ prov' = [prov EXCEPT ![c] = f]
-  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, stg>>
+   /\ prov' = [prov EXCEPT ![c] = f]
+   /\ \E r \in BOOLEAN : rlim' = [rlim EXCEPT ![c] = r]
+   /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, stg>>
 
 \* The member's push (cmd/nova-swarm gitPusher.Push): a commit is pushed or
 \* refused; no commit is nothing to push.
@@ -166,11 +170,11 @@ JudgeOf(c) ==
     [] Broken = "pushignored" -> IF shape[c] /\ verdict[c] = "ok" /\ commit[c] THEN "ok" ELSE "failed"
     [] Broken = "providerfailed" ->
          IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok" ELSE "failed"
-    [] OTHER ->
-         IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
-         ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
-         ELSE IF push[c] # "refused" /\ prov[c] /\ ~shape[c] THEN "provider"
-         ELSE "failed"
+     [] OTHER ->
+          IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
+          ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
+          ELSE IF push[c] # "refused" /\ (prov[c] \/ rlim[c]) /\ ~shape[c] THEN "provider"
+          ELSE "failed"
 
 \* A finish `failed` opens the failed-work judgment; a finish `provider` opens
 \* none; a finish `staging` opens none.
