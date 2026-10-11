@@ -76,7 +76,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -93,6 +93,7 @@ help:
 	@echo "make vet-novadisk GOOS=darwin go vet -tags novadisk ./cmd/nova-sandbox (the one real-disk e2e test compiled on every change)"
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
+	@echo "make mod-tidy    go mod tidy -diff: refuses an untidy go.mod or go.sum"
 	@echo "make lint        fmt, vet, and the staticcheck and errcheck class tests"
 	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
 	@echo "make test        the unit tier: go test -p GOTEST_P PKGS plus the 2 s package / 1 s test slowtests budgets"
@@ -157,6 +158,9 @@ roadmap:
 
 build:
 	$(GO) build ./...
+
+mod-tidy:
+	@$(GO) mod tidy -diff
 
 fmt:
 	@$(GO) run ./tools/ci gofmt
@@ -230,7 +234,7 @@ vet-windows:
 # build them with the tree's own toolchain and hold each package's findings to
 # a shrink-only ledger (docs/SPEC-CI.md, `staticcheck` and `errcheck`). They
 # are functional-tier tests that start no redis-server.
-lint: fmt vet vet-functional vet-slow vet-laws
+lint: mod-tidy fmt vet vet-functional vet-slow vet-laws
 	$(GO) test -tags functional -count=1 -timeout 110s -run '^TestStaticcheckFindings$$' ./internal/ci/
 	$(GO) test -tags functional -count=1 -timeout 110s -run '^TestUncheckedErrors$$' ./internal/ci/
 

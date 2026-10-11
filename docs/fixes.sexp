@@ -361,6 +361,15 @@
     fix, 2026-10-11): TestUsageLimitMarksDownUntilReset ordering assumption; rechecked at dev 7b6cccbc2 on
     2026-10-11: still open")
 
+  (fix "nt-friend-token-cap-test-passes-repeated" :release "v1.2.12" :status "planned"
+   :title "A repeated run of the one-shot token-cap test passes"
+   :text "TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason failed under -count>1 in its opencode
+    over-cap case: the injected clock's ticks could reach the cap before the fake harness's run had
+    launched, so the lane cancelled a run that never started and the stopped child reported a zero
+    exit. The opencode case now pairs on a fifo the harness opens only once its run is up, so the
+    clock ticks after the child it must stop has started; the assertions are unchanged."
+   :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, \"From the nova-tools certification fix\", 2026-10-11); this card nt-friend-token-cap-test-passes-repeated.w1")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
@@ -414,6 +423,11 @@
    :title "The fixes ledger brought level with the code"
    :text "Fixes marked planned or in-progress that had already landed are marked shipped in the release that carried them (commit 53bc5748c). Landed on dev; ships with v1.2.11."
    :origin "card fx-empty-fixes-file-after-the-clear, landed on dev as 7b6cccbc2")
+
+  (fix "go-mod-tidy-nightly-jobs" :release "v1.2.11" :status "in-progress"
+   :title "Nightly and certification jobs fail on an untidy go.mod"
+   :text "The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three."
+   :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")
 
   (fix "a-run-that-ends-at-its-first-result-is-not-a-finish" :release "v1.2.14" :status "planned"
    :title "A run that ends at its first RESULT.md is a no-result finish"
