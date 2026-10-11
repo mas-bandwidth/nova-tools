@@ -149,6 +149,12 @@
    :text "nova-config refuses a friend width larger than her slots and names both values, so one-shot
     lanes cannot silently halve the friend's available capacity."
    :origin "dogfood 2026-10-10: one-shot friend at width 32 with 16 slots")
+  (fix "no-friend-runs-in-batch-mode" :release "v1.2.6" :status "in-progress"
+   :title "No friend runs in batch mode"
+   :text "A friend's delivery mode is one-shot always: nova-config refuses --mode batch, a stored batch row
+    reads as one-shot (config.FriendMode, the reader nova-sprint's friend sync writes onto her roster
+    row), and her daemon runs one card per lane."
+   :origin "dogfood 2026-10-10: a friend row still mode=batch")
   (fix "worker-question-ending-asked" :release "v1.2.9" :status "planned"
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of

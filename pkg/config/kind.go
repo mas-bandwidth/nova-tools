@@ -201,27 +201,32 @@ func FriendWidth(r Row) int {
 }
 
 // FriendModes are how a friend's daemon (nova-friend run) hands her work:
-// batch, every waiting message as one turn of her one session; one-shot,
-// width lanes, each its own session of her, handed one card per turn and
-// waiting for that card's RESULT.md before the next (docs/SPEC-FRIEND.md,
-// one-shot lanes; the owner, 2026-10-04: "so [she] can still be wide, it's
-// just 8 [of her]").
-var FriendModes = []string{FriendModeBatch, FriendModeOneShot}
+// one-shot only. One-shot is width lanes, each its own session of her, handed
+// one card per turn and waiting for that card's RESULT.md before the next
+// (docs/SPEC-FRIEND.md, one-shot lanes; the owner, 2026-10-04: "so [she] can
+// still be wide, it's just 8 [of her]"). Batch, where one session took many
+// cards in one turn (deaf for its length, context filling), is retired:
+// nova-config refuses the word, and a stored row that still says it reads as
+// one-shot (FriendMode).
+var FriendModes = []string{FriendModeOneShot}
 
-// The delivery modes, and the default a row without one has.
+// The delivery mode, the default a row without one has, and the retired word.
+// Every friend takes one card per lane; FriendModeBatch is kept only to read a
+// row written before the retirement.
 const (
 	FriendModeBatch   = "batch"
 	FriendModeOneShot = "one-shot"
-	DefaultFriendMode = FriendModeBatch
+	DefaultFriendMode = FriendModeOneShot
 )
 
-// FriendMode is a friend row's delivery mode: its mode field,
-// DefaultFriendMode when the row has none.
+// FriendMode is a friend row's delivery mode: one-shot when the row names it,
+// when the row has no mode, and when the row still names the retired batch
+// (docs/SPEC-FRIEND.md, one-shot lanes).
 func FriendMode(r Row) string {
-	if m := r.Fields["mode"]; m != "" {
+	if m := r.Fields["mode"]; m != "" && m != FriendModeBatch {
 		return m
 	}
-	return DefaultFriendMode
+	return FriendModeOneShot
 }
 
 // DefaultFriendTokenCap is a friend's per-card token cap when her row names
@@ -452,7 +457,7 @@ var Kinds = []*Kind{
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
-			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: one-shot (width lanes, each its own session, handed one card per turn); the retired batch (one session, many cards in one turn) is refused"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},

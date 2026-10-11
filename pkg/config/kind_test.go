@@ -549,13 +549,25 @@ func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
 	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
 }
 
-// A friend row's mode is batch unless it says one-shot: FriendMode reads a row
-// written before migration 0030 (no field) as the default.
-func TestAFriendRowsModeDefaultsToBatch(t *testing.T) {
+// A friend row's mode is one-shot: FriendMode reads a row written before
+// migration 0030 (no field) and a row that still says the retired batch as
+// one-shot.
+func TestAFriendRowsModeIsAlwaysOneShot(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, FriendModeBatch, FriendMode(Row{Name: "amy", Fields: map[string]string{}}))
+	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{}}))
 	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "one-shot"}}))
-	assert.Equal(t, []string{"batch", "one-shot"}, FriendModes)
+	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "batch"}}), "the retired batch reads as one-shot")
+	assert.Equal(t, []string{"one-shot"}, FriendModes)
+}
+
+// nova-config friend set --mode batch is refused: only one-shot is a mode.
+func TestAFriendRowRefusesTheRetiredBatchMode(t *testing.T) {
+	t.Parallel()
+	friend, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	_, err := friend.Changes(map[string]string{"mode": "batch"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--mode \"batch\": want one of one-shot")
 }
 
 func TestCheckFleetRefusesASpacePaddedPasswordKey(t *testing.T) {
