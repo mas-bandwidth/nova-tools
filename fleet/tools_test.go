@@ -247,3 +247,84 @@ func asText(v any) string {
 	}
 	return ""
 }
+
+// TestSeatWindowWaitsOnlyForTheAgentsItStopped pins the first half of the
+// adopt-window-and-dry-run-fixes rule (docs/SPEC-SPRINT.md, "Adopting a build";
+// fleet/tools.yml, the seat play): the window's live wait holds until the
+// agents the window itself stopped (seat_stopped_labels) no longer run, never
+// until every nova process on the host is gone.
+func TestSeatWindowWaitsOnlyForTheAgentsItStopped(t *testing.T) {
+	t.Parallel()
+	play := playNamed(t, readTools(t), "the seat adopts the build")
+	tasks := flattenTasks(t, tasksOf(t, play))
+
+	wait := taskNamed(t, tasks, "window: the agents the window stopped run no longer (through live)")
+	assert.Contains(t, asText(wait["until"]),
+		"selectattr('label', 'in', seat_stopped_labels) | selectattr('holds')",
+		"the window's wait reads the agents it stopped, not every process on the host")
+	assert.NotContains(t, asText(wait["until"]), ".processes",
+		"the window's wait reads every nova process on the host, not only the agents it stopped")
+
+	refused := taskNamed(t, tasks, "window: nothing the window stopped runs")
+	runs := taskVar(t, refused, "seat_runs")
+	assert.Contains(t, runs, "selectattr('label', 'in', seat_stopped_labels)",
+		"the refusal names the agents the window stopped")
+	assert.NotContains(t, runs, ".processes",
+		"the refusal reads every nova process on the host, not only the agents it stopped")
+}
+
+// TestSeatWindowDryRunNamesEachStep pins the second half: under --check each
+// step of the window says what it would do (stop, migrate, load, install,
+// restart), instead of one would for the whole window.
+func TestSeatWindowDryRunNamesEachStep(t *testing.T) {
+	t.Parallel()
+	play := playNamed(t, readTools(t), "the seat adopts the build")
+	tasks := flattenTasks(t, tasksOf(t, play))
+
+	for _, step := range []struct{ name, want string }{
+		{"window: what --check would stop", "WOULD-STOP"},
+		{"window: what --check would migrate", "WOULD-MIGRATE"},
+		{"window: what --check would load", "WOULD-LOAD"},
+		{"window: what --check would install", "WOULD-INSTALL"},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			t.Parallel()
+			task := taskNamed(t, tasks, step.name)
+			assert.Contains(t, debugMsg(task), step.want, "the --check dry run names the %s step", step.want)
+			assert.Equal(t, "seat_window and ansible_check_mode", asText(task["when"]),
+				"%s reports only under --check", step.name)
+		})
+	}
+
+	restart := taskNamed(t, tasks, "server: each agent to start again and why")
+	assert.Contains(t, debugMsg(restart), "WOULD-RESTART", "the --check dry run names the restart step")
+}
+
+// debugMsg is a debug task's msg.
+func debugMsg(task map[string]any) string {
+	d, _ := task["ansible.builtin.debug"].(map[string]any)
+	return asText(d["msg"])
+}
+
+// taskNamed is the first task whose name is exactly name.
+func taskNamed(t *testing.T, tasks []map[string]any, name string) map[string]any {
+	t.Helper()
+	for _, task := range tasks {
+		if task["name"] == name {
+			return task
+		}
+	}
+	require.FailNow(t, "no task named "+name)
+	return nil
+}
+
+// taskVar is a task's own vars key, set on the task itself (not a play var).
+func taskVar(t *testing.T, task map[string]any, key string) string {
+	t.Helper()
+	vars, _ := task["vars"].(map[string]any)
+	if v, ok := vars[key]; ok {
+		return asText(v)
+	}
+	require.FailNow(t, "no task var "+key)
+	return ""
+}
