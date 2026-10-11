@@ -1,3 +1,5 @@
+//go:build functional
+
 package member
 
 import (
@@ -16,16 +18,27 @@ import (
 // n and a side-by-side one reaches it at once. The other verbs answer as the script.
 type barrierSprint struct {
 	*scriptSprint
-	n       int
-	mu      sync.Mutex
-	in      int
-	most    int
-	release chan struct{}
-	hit     bool
+	n         int
+	mu        sync.Mutex
+	in        int
+	most      int
+	release   chan struct{}
+	arrived   chan struct{}
+	takeEnter chan struct{}
+	takeGo    chan struct{}
+	hit       bool
 }
 
 func (b *barrierSprint) Run(args ...string) (int, []byte) {
-	if verbOf(args) != "finish" {
+	switch verbOf(args) {
+	case "take":
+		if b.takeEnter != nil {
+			b.takeEnter <- struct{}{}
+			<-b.takeGo
+		}
+		return b.scriptSprint.Run(args...)
+	case "finish":
+	default:
 		return b.scriptSprint.Run(args...)
 	}
 	b.mu.Lock()
@@ -38,6 +51,9 @@ func (b *barrierSprint) Run(args ...string) (int, []byte) {
 		close(b.release)
 	}
 	b.mu.Unlock()
+	if b.arrived != nil {
+		b.arrived <- struct{}{}
+	}
 	select {
 	case <-b.release:
 	case <-time.After(2 * time.Second):
@@ -55,7 +71,7 @@ func (b *barrierSprint) Run(args ...string) (int, []byte) {
 func TestReportsRunSideBySideInOnePass(t *testing.T) {
 	t.Parallel()
 	const n = 8
-	s := &barrierSprint{scriptSprint: newScript(), n: n, release: make(chan struct{})}
+	s := &barrierSprint{scriptSprint: newScript(), n: n, release: make(chan struct{}), arrived: make(chan struct{}, n)}
 	rn, out := newRunner(), &bytes.Buffer{}
 	m := New(Config{As: "m", Width: 2 * n}, s, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
@@ -75,6 +91,7 @@ func TestReportsRunSideBySideInOnePass(t *testing.T) {
 	s.reset()
 	acted, err := m.Tick(time.Unix(0, 0).Add(time.Second))
 	require.NoError(t, err)
+	t.Logf("spent.Report=%s spent.Fill=%s", m.spent.Report, m.spent.Fill)
 
 	s.mu.Lock()
 	most, hit := s.most, s.hit
@@ -218,15 +235,32 @@ func TestARefusedFinishIsRetriedByteForByteNextPass(t *testing.T) {
 func TestAStopWordStartsNoChildWhileAReportRuns(t *testing.T) {
 	t.Parallel()
 	g, p := pushRig(t, &fakePusher{def: Push{Sha: fullSha}}, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "0123456", Report: "landed"})
+	b := &barrierSprint{scriptSprint: g.s, n: 2, release: make(chan struct{}), arrived: make(chan struct{}, 2), takeEnter: make(chan struct{}, 1), takeGo: make(chan struct{})}
+	g.m.sprint = b
 	before := len(g.r.started())
-
-	g.m.stoppedWord.Store(true)
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c9")))
 	g.s.set("take", 0, takeJSON(t, pk("c9")))
 	g.s.reset()
 
-	_, err := g.m.Tick(time.Unix(0, 0).Add(time.Second))
-	require.NoError(t, err)
+	tick := make(chan error, 1)
+	go func() {
+		_, err := g.m.Tick(time.Unix(0, 0).Add(time.Second))
+		tick <- err
+	}()
+	select {
+	case <-b.arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("finish did not enter while the report pass was in flight")
+	}
+	select {
+	case <-b.takeEnter:
+	case <-time.After(2 * time.Second):
+		t.Fatal("take did not wait while the report was in flight")
+	}
+	g.m.stoppedWord.Store(true)
+	close(b.release)
+	close(b.takeGo)
+	require.NoError(t, <-tick)
 	assert.Len(t, g.s.lines("finish"), 1, "the report still runs its own card's words")
 	assert.Equal(t, before, len(g.r.started()), "no child is started under the stop word")
 }
