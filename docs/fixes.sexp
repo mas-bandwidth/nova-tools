@@ -307,6 +307,19 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
+   :title "Unit tests pin how nova-friend run, serve and the dispatcher answer faults"
+   :text "cmd/nova-friend/run_serve_faults_test.go drives the wall and hook dispatch, the coordinator's
+    ping loop and the daemon's fault paths through the package rig: a wall with no command or an unknown
+    flag is refused at sandbox.ExitRefused and wall -h exits 0; hook -h is the tool's help, never the
+    claude hook; serve notes a store that fails one tick then answers, notes the rows it cannot re-read
+    while its pings go on, and waits through a store that will not open; a limit with no seat and no
+    --coordinator is said on the record, a credit refusal with no down verb (and with one that errors) is
+    said and told once on the bus, and --refuse-go with an unbuildable shim runs no lane. Found defect:
+    serve refuses (exit 2) when the store opens but the first friend-rows read fails, where openUntil's
+    doc says a store down at the start is no reason to exit (v1.2.14)."
+   :origin "card cover-nova-friend-run-and-serve-faults (stream v1212)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
