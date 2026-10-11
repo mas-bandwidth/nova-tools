@@ -705,6 +705,17 @@
     its exit mapping. Tests and models only, no product change."
    :origin "card tla-benchrun-an-interrupted-exec-ran.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-updateapply-newer-and-delivery-scopes" :release "v1.2.12" :status "planned"
+   :title "UpdateApply reads NEWER for a greater release and delivers per recipient scope"
+   :text "UpdateApply.tla's verdict read any installed version greater than the latest as AHEAD; the code
+    reads NEWER for a greater release version and AHEAD only for the vX.Y.Z-0 pseudo-version. The module
+    now reads NEWER and never AHEAD (its versions are numbers, never pseudo-versions), records a delivery
+    per recipient scope instead of one delivered boolean, and corrects the header's `confirmed` and
+    `writeSnapshot` names to `sendOK` and `writeSnapshotWith`. A new reversed witness aheadisnewer reads
+    AHEAD for a greater release version and fails a new VerdictMatchesVersion invariant, and report.go
+    and cli.go cite the module from report and verdict. Tests and models only, no product change."
+   :origin "the card tla-updateapply-newer-and-delivery-scopes.w5 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
