@@ -112,6 +112,7 @@ func runBench(c *tool.Call, t bench.Transport, argv []string) *tool.Out {
 		}
 		return out
 	}
+	// tla/BenchRun.tla Interrupt
 	fmt.Fprintf(c.Stderr, "CI BENCH host=%s run=%s exit=%d removed=%s\n", res.Host, res.RunDir, res.Code, removedWord(res))
 	return tool.Exit(res.Code)
 }
