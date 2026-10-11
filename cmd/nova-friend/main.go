@@ -1105,6 +1105,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("lane path not absolute: %s: %v; the daemon does not start", dir, err))
 	}
 	dir = abs
+	// the lane wall refuses every write that is a denied path, lies inside one or holds one
+	// (friend.SelfHolding, docs/SPEC-FRIEND.md, the wall): a --dir that does any of the three
+	// named a self-holding directory the daemon could never write in, refused at start. The
+	// default self is her working root under home, <home>/<as>-working.
+	self := commaList(c.Str("deny-self"))
+	if len(self) == 0 && name != "" {
+		self = []string{filepath.Join(w.home, name+"-working")}
+	}
+	if held, ok := friend.SelfHolding(dir, self); ok {
+		return tool.Refuse(fmt.Sprintf("--dir %s and --deny-self %s: no write may be a denied path, lie inside one or hold one; move --dir to a sibling of the self", dir, held))
+	}
 	state, stateWhy := w.daemonStateDir(c)
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did

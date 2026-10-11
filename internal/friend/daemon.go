@@ -918,6 +918,45 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 	return mode, width
 }
 
+// SelfHolding reports whether dir equals, lies inside, or holds any denied
+// path (the coordinator's self), symlinks resolved, and names the first such
+// path. The lane wall refuses every write that is a denied path, lies inside
+// one or holds one (docs/SPEC-FRIEND.md, the wall), so a daemon whose --dir
+// does any of the three can never write: run refuses it at start, before the
+// store is opened.
+func SelfHolding(dir string, deny []string) (string, bool) {
+	d := resolveSelfPath(dir)
+	for _, raw := range deny {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		r := resolveSelfPath(raw)
+		if d == r || underPath(r, d) || underPath(d, r) {
+			return raw, true
+		}
+	}
+	return "", false
+}
+
+// resolveSelfPath follows symlinks where it can, then cleans: a path that does
+// not exist yet still compares by its cleaned name.
+func resolveSelfPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	return filepath.Clean(p)
+}
+
+// underPath reports whether p lies strictly inside root.
+func underPath(p, root string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // turns is every turn running now: the batch turn and the lanes'.
 func (l *loop) turns() []*turn {
 	var out []*turn

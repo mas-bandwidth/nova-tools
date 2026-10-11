@@ -1014,3 +1014,45 @@ func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
 		})
 	}
 }
+
+// A run whose --dir equals, lies inside, or holds a denied self can never
+// write: the lane wall refuses every write that is a denied path, lies inside
+// one or holds one (docs/SPEC-FRIEND.md, the wall and the self). SelfHolding
+// names the self it found, symlinks resolved.
+func TestSelfHoldingRefusesADirEqualToInsideOrHoldingTheSelf(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	self := filepath.Join(home, "ada-working")
+	require.NoError(t, os.MkdirAll(self, 0o755))
+	inside := filepath.Join(self, "job")
+	require.NoError(t, os.MkdirAll(inside, 0o755))
+	sibling := filepath.Join(home, "bob-working")
+	require.NoError(t, os.MkdirAll(sibling, 0o755))
+	link := filepath.Join(home, "link")
+	require.NoError(t, os.Symlink(self, link))
+
+	cases := []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{"equal", self, true},
+		{"inside", inside, true},
+		{"holds", filepath.Dir(self), true},
+		{"symlink resolved", link, true},
+		{"sibling", sibling, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := SelfHolding(tc.dir, []string{self})
+			assert.Equal(t, tc.want, ok, "SelfHolding(%q, %q)", tc.dir, self)
+			if tc.want {
+				assert.Equal(t, self, got)
+			}
+		})
+	}
+	_, ok := SelfHolding(sibling, nil)
+	assert.False(t, ok, "no self denies nothing")
+	_, ok = SelfHolding(sibling, []string{"", "  "})
+	assert.False(t, ok, "an empty self denies nothing")
+}
