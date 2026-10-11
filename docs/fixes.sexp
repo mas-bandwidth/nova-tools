@@ -354,6 +354,39 @@
     green."
    :origin "the card cover-native-prepare-refusals-and-report.w3 (stream v1212), from the v1.2.12 inventory's section 8 item C11 (tmp/v1.2.12-inventory-2026-10-11.md)")
 
+  (fix "nt-tokens-reentered-child-keeps-its-cover-dir" :release "v1.2.12" :status "planned"
+   :title "A re-entered test child keeps the parent's coverage directory"
+   :text "TestEveryPathIsAFlagAndNoEnvironmentIsConsulted builds bait under t.TempDir(), points
+    TMPDIR, HOME and XDG_DATA_HOME at it, and re-enters its own binary (reenterTest) so the
+    body owns the process. Under -cover the child, given no -test.gocoverdir, builds its own
+    coverage directory in TMPDIR at exit; by then the test's cleanup has removed the bait, so
+    the child exits non-zero with \"error setting GOCOVERDIR: bad os.MkdirTemp return\" and the
+    parent reads that as the tool's failure. reenterTest now passes the parent's own
+    -test.gocoverdir to the child when one is set, so the coverage teardown touches no path the
+    test took away, and the test still fails if the tool itself reads TMPDIR."
+   :origin "card nt-tokens-reentered-child-keeps-its-cover-dir, v1.2.12 inventory card A8 (tmp/v1.2.12-inventory-2026-10-11.md)")
+
+  (fix "nt-usage-limit-test-reads-beats-without-an-order" :release "v1.2.12" :status "planned"
+   :title "TestUsageLimitMarksDownUntilReset reads the beat and asked order the product promises"
+   :text "The beats seen are an optional leading up, then down with the until and the reason until the
+    reset, then up after the wake, and never up between the limit and the reset; the asked order asserts
+    the set (the message and one wake turn) and the one order the gate documents (the wake before the
+    message goes in). The old assertion assumed the daemon's first beat ran before the delivery that hits
+    the limit inside one synctest instant, which the scheduler does not fix. Test-side only; no product
+    change."
+   :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, the nova-tools certification
+    fix, 2026-10-11): TestUsageLimitMarksDownUntilReset ordering assumption; rechecked at dev 7b6cccbc2 on
+    2026-10-11: still open")
+
+  (fix "nt-friend-token-cap-test-passes-repeated" :release "v1.2.12" :status "planned"
+   :title "A repeated run of the one-shot token-cap test passes"
+   :text "TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason failed under -count>1 in its opencode
+    over-cap case: the injected clock's ticks could reach the cap before the fake harness's run had
+    launched, so the lane cancelled a run that never started and the stopped child reported a zero
+    exit. The opencode case now pairs on a fifo the harness opens only once its run is up, so the
+    clock ticks after the child it must stop has started; the assertions are unchanged."
+   :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, \"From the nova-tools certification fix\", 2026-10-11); this card nt-friend-token-cap-test-passes-repeated.w1")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
