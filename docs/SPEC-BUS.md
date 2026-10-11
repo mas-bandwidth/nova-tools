@@ -389,8 +389,13 @@ second delivery of one, or of any message whose receipt `recv` found
 `acted`, is dropped with one record line, `duplicate dropped id=<id>`, and
 acked, never pushed in twice. The receipt covers a restarted daemon, which
 remembers nothing; the memory covers an `acted` stamp the store did not
-write. Both lost at once (the stamp refused, then the daemon restarted
-before its ack landed) pushes the message in once more.
+write. An `acted` stamp the store refused is owed: the daemon keeps its ids
+(the newest `ActedKept`, 4096, oldest dropped first) and writes them acted
+again in one stamp before its next read once the store answers, a repeat
+being harmless because a receipt moves only forward. That closes the window
+everywhere but a restart while the store stays down, which still redelivers
+(at least once). A `read` stamp the store refused is not owed: only `acted`
+keeps a message from a second turn.
 
 The model is `tla/Bus2Receipts.tla`, `ReceiptSpec`, which extends
 `tla/Bus2.tla` (so Bus2's own cases read the machine unchanged): the receipt
