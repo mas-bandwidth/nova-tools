@@ -744,4 +744,4 @@
     is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
     reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
     its reports, so it is still one step."
-   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77; card a-member-reports-its-ended-cards-beside-the-fill.w1")))
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77; card a-member-reports-its-ended-cards-beside-the-fill.w2")))
