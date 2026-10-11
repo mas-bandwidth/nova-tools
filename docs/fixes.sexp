@@ -29,7 +29,10 @@
    (release "v1.2.8" :status "planned"
     :text "The fleet-install fixes found while dogfooding v1.2.5 and later.")
    (release "v1.2.9" :status "planned"
-    :text "A worker card whose last turn is a question ends as asked instead of holding its slot.")
+    :text "Worker, adopt and CI fixes: idle-reaped cards report their real cause, the adopt waits only for
+     agents it stopped and dry-runs honestly, CI runs are not cancelled under load and a cancelled run
+     counts as red, the doctor checks the running executable, and a limited inception route takes the
+     global rate budget.")
    (release "v1.2.11" :status "planned" :date "2026-10-11"
     :text "Small bug fixes, one concern each, and no model change. They run as cards on v1.2.10 once it is
      adopted, so the sprint dogfoods the release it just cut.")
@@ -46,7 +49,13 @@
      under it. Passes in this order, one writer per package: remove dead and stale code; adopt the Go
      standard library or established packages where they replace hand-rolled code; run go fix (and gopls
      modernize) over all Go code; pull code the tools share into modules, then code the modules share
-     into modules; make each test minimal, on test frameworks and shared helper modules. Measured as
+     into modules; make each test minimal, on test frameworks and shared helper modules. The module pass also covers
+     the copies across the two repositories: 59 same-named packages exist as separate copies in
+     nova-sprint and nova-tools (about 71,500 shared lines, measured 2026-10-11 at nova-sprint 15c779c
+     and nova-tools 2a648d8). Each gets one owner, nova-sprint as with nova-roadmap, and the other
+     repository imports it: the identical copies first, then the diverged ones (member, fleet, cardtree,
+     tool, and parts of friend and swarm), reconciled under v1.2.12's tests. The first named entries are
+     the nova-roadmap extraction and the brief boilerplate moving into the card contract. Measured as
      lines per repository and package, product against test, from a baseline taken before the first
      pass.")
    (release "v1.2.14" :status "planned" :date "2026-10-11"
