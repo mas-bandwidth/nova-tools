@@ -1047,6 +1047,7 @@ read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or
 				Name:   "acceptance",
 				Usage:  "acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]",
 				Effect: tool.Delivery + ": the acceptance run; one lane runs the friend's own program under the real lane wall, writes RESULT.md, and exits with the wall's real code",
+				DryRun: true,
 				Detail: `The acceptance run (docs/SPEC-FRIEND.md, the acceptance run): the same wall the daemon's lane
 children run inside, built from the same flags the plist records; the friend's own adapter runner runs
 its no-cost version flag inside it, writes RESULT.md, and the verb exits with the wall's real code (125

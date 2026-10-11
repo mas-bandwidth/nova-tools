@@ -1821,6 +1821,7 @@ flags:
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
+  --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
   --json  print the result as one JSON object instead of lines
   --launchd-log <string>  accepted and ignored: launchd's stdout and stderr file the daemon's plist records
