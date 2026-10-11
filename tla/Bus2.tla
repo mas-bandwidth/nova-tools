@@ -1,24 +1,35 @@
 -------------------------------- MODULE Bus2 --------------------------------
-\* nova-bus2's delivery machine (docs/SPEC-BUS2.md; internal/bus2/bus2.go:
-\* Send, Recv, AckEntry and Ack; the Redis commands behind them are XADD in
-\* one MULTI/EXEC, XGROUP CREATE, XAUTOCLAIM, XREADGROUP and XACK).
+\* nova-bus's delivery machine (docs/SPEC-BUS.md; pkg/bus/bus.go: Send, Recv,
+\* RecvKinds, AckEntry and Ack; pkg/bus/redis.go: the Redis commands behind
+\* them, XADD in one MULTI/EXEC, XGROUP CREATE, XAUTOCLAIM, XREADGROUP and
+\* XACK).
 \*
 \* The state the code owns, per message m and recipient r: st[m][r], what
 \* r's stream and group say of m ("none": not on the stream; "new": on the
-\* stream, never delivered; "pending": delivered to a consumer and not
-\* acked; "acked"); holder[m][r], the consumer that holds it pending; and
-\* log, the order the messages were sent in (the log stream, and each
-\* recipient's stream in the same order). The outside: to[m], who each
-\* message is for, chosen at the start; alive, the consumers that are up.
+\* stream, never delivered; "pending": delivered to a reader and not acked;
+\* "acked"); holder[m][r], who holds it pending; and log, the order the
+\* messages were sent in (the log stream, and each recipient's stream in the
+\* same order). The outside: to[m], who each message is for, chosen at the
+\* start (its to and cc, folded into one set, pkg/bus/bus.go:327); alive, the
+\* readers that are up.
+\*
+\* The code has one consumer name for every reader (pkg/bus/bus.go:51), so
+\* who holds an entry is told by its idle time, never by a name: a reader
+\* that died, or one that has been idle past ClaimAfter (pkg/bus/bus.go:45),
+\* is the same to the store. holder[m][r] = NoOne is that: no live reader
+\* holds the entry -- it is not pending, or its holder has been idle past
+\* ClaimAfter and any reader may claim it.
 \*
 \* The actions are the verbs and the outside events: Send (one message to
-\* every recipient's stream and the log at once), Recv (a consumer of r takes
-\* the oldest pending message whose holder is dead, else the oldest new one;
-\* a live holder keeps its message: the code tells a dead holder by the
-\* entry's idle time past ClaimAfter), Ack
-\* (by r, of a message it was handed; again is a no-op), Crash (a consumer
-\* dies holding what it holds), Restart. The rules about one step (what a
-\* recv found, what an ack moved) are action properties over st and st'.
+\* every recipient's stream and the log at once), Recv (a reader of r takes
+\* the oldest pending message whose holder is dead or has stalled, else the
+\* oldest new one; a recv that asks for some kinds releases the kinds it
+\* skips, neither acked nor held, so they are back as lost ones,
+\* pkg/bus/bus.go:417-474), Ack (by r, of a message it was handed; again is a
+\* no-op), Stall (a live holder idle past ClaimAfter becomes claimable by any
+\* reader: its holder is NoOne), Crash (a reader dies holding what it holds),
+\* Restart. The rules about one step (what a recv found, what an ack moved)
+\* are action properties over st and st'.
 \*
 \* Broken = "none" is the design. Every other value is a reversed witness,
 \* each caught by one property below:
@@ -30,6 +41,9 @@
 \*                     however briefly (XAUTOCLAIM with min-idle 0): a second
 \*                     reader takes a message a live one is delivering, so
 \*                     one message is delivered twice: HeldStaysHeld
+\*   "claimfresh"      recv claims a pending entry before its holder has been
+\*                     idle for ClaimAfter (the claim's min-idle is not
+\*                     respected): HeldStaysHeld
 \*   "ackundelivered"  ack takes any id on the stream, delivered or not:
 \*                     AckOnlyDelivered
 \*   "ackreopens"      a second ack puts the message back on the stream as
@@ -61,10 +75,11 @@ Oldest(r, s) ==
     /\ st[m][r] = s
     /\ \A n \in Messages : st[n][r] = s => Position(m) <= Position(n)
 Has(r, s) == \E m \in Messages : st[m][r] = s
-\* The pending messages a consumer c of r may claim: the ones whose holder
-\* is dead (idle past ClaimAfter, in the code).
+\* The pending messages a reader of r may claim: the ones whose holder is
+\* dead or has been idle past ClaimAfter (NoOne). The steal witness claims
+\* one whoever holds it, and claimfresh one before ClaimAfter.
 Claimable(r, c) ==
-  {m \in Messages : st[m][r] = "pending" /\ (holder[m][r] \notin alive \/ Broken = "steal")}
+  {m \in Messages : st[m][r] = "pending" /\ (holder[m][r] \notin alive \/ Broken = "steal" \/ Broken = "claimfresh")}
 OldestClaimable(r, c) ==
   CHOOSE m \in Claimable(r, c) : \A n \in Claimable(r, c) : Position(m) <= Position(n)
 
@@ -76,7 +91,7 @@ Init ==
   /\ alive = Consumers
   /\ crashes = 0
 
-\* nova-bus2 send: one entry on every recipient's stream and the log, in
+\* nova-bus send: one entry on every recipient's stream and the log, in
 \* one transaction. The partial witness writes some subset of the streams.
 Send(m) ==
   /\ m \notin Sent
@@ -86,8 +101,8 @@ Send(m) ==
   /\ log' = Append(log, m)
   /\ UNCHANGED <<holder, to, alive, crashes>>
 
-\* nova-bus2 recv for r by consumer c: the oldest claimable pending
-\* message, else the oldest new one.
+\* nova-bus recv for r by reader c: the oldest claimable pending message
+\* (a dead or stalled holder), else the oldest new one.
 RecvPending(r, c) ==
   /\ c \in alive
   /\ Claimable(r, c) # {}
@@ -105,7 +120,7 @@ RecvNew(r, c) ==
 
 Recv(r, c) == RecvPending(r, c) \/ RecvNew(r, c)
 
-\* nova-bus2 ack by r of m: pending becomes acked; acked again changes
+\* nova-bus ack by r of m: pending becomes acked; acked again changes
 \* nothing (XACK of an entry not in the PEL is 0).
 Ack(r, m) ==
   /\ \/ st[m][r] = "pending"
@@ -117,7 +132,16 @@ Ack(r, m) ==
   /\ holder' = [holder EXCEPT ![m][r] = NoOne]
   /\ UNCHANGED <<log, to, alive, crashes>>
 
-\* A consumer dies holding what it holds: the store keeps it pending.
+\* A live holder idle past ClaimAfter becomes claimable by any reader: the
+\* entry's holder is NoOne, and a reader that died or stalled is the same to
+\* the store (the code's XAUTOCLAIM with min-idle ClaimAfter).
+Stall(m, r) ==
+  /\ st[m][r] = "pending"
+  /\ holder[m][r] \in alive
+  /\ holder' = [holder EXCEPT ![m][r] = NoOne]
+  /\ UNCHANGED <<st, log, to, alive, crashes>>
+
+\* A reader dies holding what it holds: the store keeps it pending.
 Crash(c) ==
   /\ c \in alive /\ crashes < MaxCrashes
   /\ alive' = alive \ {c}
@@ -133,11 +157,12 @@ Next ==
   \/ \E m \in Messages : Send(m)
   \/ \E r \in Recipients, c \in Consumers : Recv(r, c)
   \/ \E r \in Recipients, m \in Messages : Ack(r, m)
+  \/ \E m \in Messages, r \in Recipients : Stall(m, r)
   \/ \E c \in Consumers : Crash(c) \/ Restart(c)
 
 \* Fairness, per action: every recipient keeps reading new messages and
-\* acking what it was handed, and a dead consumer comes back; a crash is
-\* never owed, and crashes are bounded.
+\* acking what it was handed, and a dead reader comes back; a crash and a
+\* stall are never owed, and crashes are bounded.
 Fairness ==
   /\ \A r \in Recipients, c \in Consumers : WF_vars(RecvNew(r, c))
   /\ \A r \in Recipients, m \in Messages : WF_vars(Ack(r, m))
@@ -166,19 +191,21 @@ NothingLost ==
     (m \in Sent /\ r \in to[m]) => st[m][r] \in {"new", "pending", "acked"}
 
 \* A recv that hands out a new message found nothing pending for that
-\* recipient that a dead consumer held: after a crash, what the dead
-\* consumer held comes first.
+\* recipient that a dead reader held, or that had stalled past ClaimAfter:
+\* after a crash or a stall, what that reader held comes first.
 PendingBeforeNew ==
   [][\A r \in Recipients :
        (\E m \in Messages : st[m][r] = "new" /\ st'[m][r] = "pending") =>
          (\A m \in Messages : st[m][r] = "pending" => holder[m][r] \in alive)]_vars
 
-\* A message held by a live consumer stays with it: it is delivered once
-\* while held, and only an ack or the holder's death moves it.
+\* A message held by a live reader stays with it while held under
+\* ClaimAfter: it is delivered once while held, and only an ack, a stall
+\* (the holder idle past ClaimAfter) or the holder's death moves it. The
+\* steal and claimfresh witnesses let a second reader take it.
 HeldStaysHeld ==
   [][\A m \in Messages, r \in Recipients :
        (st[m][r] = "pending" /\ holder[m][r] \in alive /\ st'[m][r] = "pending") =>
-         holder'[m][r] = holder[m][r]]_vars
+         holder'[m][r] \in {holder[m][r], NoOne}]_vars
 
 \* Only a delivered message is acked: nothing goes from new to acked.
 AckOnlyDelivered ==
@@ -189,7 +216,7 @@ AckedStaysAcked ==
   [][\A m \in Messages, r \in Recipients : st[m][r] = "acked" => st'[m][r] = "acked"]_vars
 
 \* Liveness: every sent message is acked by every recipient it names, once
-\* the crashes stop (they are bounded) and some consumer keeps reading.
+\* the crashes stop (they are bounded) and some reader keeps reading.
 EveryMessageIsAcked ==
   \A m \in Messages, r \in Recipients :
     (m \in Sent /\ r \in to[m]) ~> (st[m][r] = "acked")
