@@ -951,6 +951,7 @@ func (d *Daemon) held() []string {
 // one blocker to the coordinator naming her and them. In one-shot mode the
 // lanes hand each card themselves, and a passive harness takes no turn: its
 // wake is said on the record, and its note goes as any other.
+// tla/Friend.tla IdleWake IdleNote
 func (l *loop) idle(now time.Time) {
 	d := l.d
 	after := DefaultIdleAfter

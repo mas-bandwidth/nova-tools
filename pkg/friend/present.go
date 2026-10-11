@@ -194,6 +194,7 @@ func SupersededReason(at time.Time) string {
 // brief written, a deferred turn) and the session has taken no turn for StaleAfter. A passive
 // harness takes no turn and reads her stream itself: it is owed none. It waits for the first
 // beat when her row says her mode, and RecheckEvery after a present turn that failed.
+// tla/Friend.tla PresentOwed
 func (l *loop) presentOwed(now time.Time) bool {
 	if l.d.noPresent || l.passive || now.Before(l.presentRetry) {
 		return false
