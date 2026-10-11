@@ -503,6 +503,11 @@ type Member struct {
 	noRow       bool   // a reader whose queue said it is no row of the readers table, said once
 	beaten      uint64 // the Meter's samples the last written beat has carried
 	noRoom      bool   // Room said no on the last tick it was asked
+	// draining is drain for the beat, which goes on its own goroutine (BeatLoop): its beat
+	// says the member drains (fleet beat --draining, a reader's queue --draining), so the
+	// server holds it (the deal gives it nothing, and returns what it was dealt and has not
+	// taken; nova-sprint tla/NoRoom.tla, NeverDealtToDraining)
+	draining atomic.Bool
 	// usageStopped is when a launch of this member last ended because its usage source
 	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
 	usageStopped time.Time
@@ -580,7 +585,20 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // its queue and reports every child as it ends, and starts nothing (not a taken
 // card, not a recovered one). A member whose binary was replaced drains, and
 // stops when Running is 0.
-func (m *Member) Drain() { m.drain = true }
+//
+// From the next beat on the member says so to the server (drainArgs), which deals it nothing
+// more and returns what it was dealt and has not taken, so a drain strands no card behind
+// the member's longest running one (the owner, 2026-10-11: "Why are cards stuck in ready.").
+func (m *Member) Drain() { m.drain = true; m.draining.Store(true) }
+
+// drainArgs is the beat's --draining while the member drains (Drain), none before: the server
+// keeps the word while the beat is fresh, and a beat without it clears it.
+func (m *Member) drainArgs() []string {
+	if m.draining.Load() {
+		return []string{"--draining"}
+	}
+	return nil
+}
 
 // DrainMost is the longest a draining member waits for its children: two minutes.
 // A member that drains does no new work, so a restart that waits longer costs the
@@ -761,10 +779,12 @@ func (m *Member) Beat() error {
 		args = append(args, "--have", *have)
 	}
 	args = append(args, m.noRoomArgs()...)
+	args = append(args, m.drainArgs()...)
 	var total uint64
 	if !m.cfg.Reader {
 		args = []string{"fleet", "beat", m.cfg.As, "--stop-returns", strconv.Itoa(m.OwedStopReturns())}
 		args = append(args, m.noRoomArgs()...)
+		args = append(args, m.drainArgs()...)
 		if m.cfg.Meter != nil {
 			var pct float64
 			var ok bool
@@ -1765,8 +1785,9 @@ func (m *Member) queueArgs() []string {
 		args = append(args, "--have", words)
 	}
 	if m.cfg.Reader {
-		// a reader's queue is its beat too: it carries the refusal as the beat's does
+		// a reader's queue is its beat too: it carries the refusal and the drain as the beat's do
 		args = append(args, m.noRoomArgs()...)
+		args = append(args, m.drainArgs()...)
 	}
 	return args
 }

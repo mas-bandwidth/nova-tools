@@ -435,9 +435,32 @@ func TestADrainingMembersBeatCarriesThisTicksNoRoom(t *testing.T) {
 	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why}, beat(0))
 	m.Drain()
 	room = true
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, beat(10), "the disk freed while draining: the word is gone")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --draining"}, beat(10), "the disk freed while draining: the word is gone, the drain is said")
 	room = false
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why}, beat(20), "under the floor again while draining: the word is said")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why + " --draining"}, beat(20), "under the floor again while draining: the word is said")
+}
+
+// A member that drains (its binary was replaced) says so on every beat from the drain on
+// (--draining), so the server holds the state: the deal gives it nothing and returns what it
+// was dealt and has not taken (nova-sprint tla/NoRoom.tla, NeverDealtToDraining; the owner,
+// 2026-10-11: "Why are cards stuck in ready."). Before the drain its beat says nothing of it.
+func TestADrainingMembersBeatSaysItDrains(t *testing.T) {
+	t.Parallel()
+	m, s, _, _ := stopRig(Config{As: "m", Width: 2})
+	s.set("queue", 0, queueWith(t, "RUNNING", 7))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	s.reset()
+	require.NoError(t, m.Beat())
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"), "a member that takes says nothing of a drain")
+	m.Drain()
+	for at := int64(10); at <= 20; at += 10 {
+		_, err = m.Tick(time.Unix(at, 0))
+		require.NoError(t, err)
+		s.reset()
+		require.NoError(t, m.Beat())
+		assert.Equal(t, []string{"fleet beat m --stop-returns 0 --draining"}, s.lines("beat"), "every beat from the drain on says it")
+	}
 }
 
 // A reader member restarted mid-stop: every reading card under its row with no child of ours

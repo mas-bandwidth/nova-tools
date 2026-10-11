@@ -430,6 +430,26 @@ func TestAReadersBeatCarriesItsNoRoom(t *testing.T) {
 	assert.Equal(t, []string{"queue --as r --json --packets 0"}, s.queues(), "the word is gone once Room says yes")
 }
 
+// A reader that drains (its binary was replaced) says so on its beat and on its pass's queue,
+// which is its beat too (--draining), so the sprint asks it no read and takes back the reads
+// asked of it and not begun (nova-sprint tla/NoRoom.tla, NeverAskedOfHeldOrDraining).
+func TestADrainingReadersQueueSaysItDrains(t *testing.T) {
+	t.Parallel()
+	s := &packetServer{epoch: 7}
+	g := packetRig(Config{As: "r", Width: 2, Reader: true}, s)
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	assert.NotContains(t, s.queues()[0], "--draining", "a reader that reads says nothing of a drain")
+	g.m.Drain()
+	s.forget()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Contains(t, s.queues()[0], " --draining", "the pass's queue is its beat too")
+	s.forget()
+	require.NoError(t, g.m.Beat())
+	assert.Equal(t, []string{"queue --as r --json --packets 0 --draining"}, s.queues())
+}
+
 // The brief a card file begins with is the brief alone: the sprint's mechanics, a read's
 // worker's report among them, are cut off (the decide read asks over it, as its bars were
 // calibrated on the work card alone).
