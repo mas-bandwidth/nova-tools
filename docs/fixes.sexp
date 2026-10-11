@@ -307,6 +307,20 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "planned"
+   :title "Unit coverage of the provider proxy's global rate budget on the wire"
+   :text "The proxy's budgeted path had no unit test: takeBudget, serveBudgeted and forwardBudgeted
+    were run only by //go:build functional tests that listen on loopback. pkg/swarm/
+    providerbudget_behaviour_test.go builds the proxy in-process (an http.RoundTripper upstream, with
+    fakes for Take, Release, Renew, Log and Sleep) and drives (*ProviderProxy).ServeHTTP, pinning the
+    stall-then-grant with waits clamped to BudgetPollMax, the open grant on an unreadable budget, one
+    wait line per stall then the grant line, a limit refusal resent inside the same attempt with the
+    backoff doubling to its cap and hop-by-hop headers dropped, a credit refusal passed through whole
+    once, the run ending during a stall or a refusal's backoff, an unreadable request body, a transport
+    error, and slot renewal. Measured: takeBudget 0.0 to 92.6%, serveBudgeted 0.0 to 100%,
+    forwardBudgeted 0.0 to 75.9%."
+   :origin "the card tmp/next-sprint-cards/cover-provider-budget-proxy-unit.w1 (the seat, 2026-10-11: the v1.2.12 inventory, section 8 item C9)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
