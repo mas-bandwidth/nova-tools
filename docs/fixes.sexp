@@ -610,6 +610,11 @@
    :text "A child whose harness stopped soon after it wrote the early RESULT.md its brief asks for (verdict not-done, nothing committed) was judged failed work, spending an attempt, while the same run with no RESULT.md was judged no result and dealt again. member.Judge now classes a shaped not-done run under FirstResultWall (two minutes), with nothing committed and no gate, as the same no-result kind, with a reason that keeps the \"no result:\" prefix so nova-sprint's IsNoResult routes it."
    :origin "the seat, 2026-10-11: fx-hosted-tests-green-on-mainc attempt 10, ran 62s, wrote an early RESULT.md (starting: will run ...) and stopped; re-scoped against nova-tools dev 2314d43; card a-run-that-ends-at-its-first-result-is-not-a-finish")
 
+  (fix "rate-limit-judge-in-the-running-member" :release "v1.2.14" :status "planned"
+   :title "A provider rate-limited with no pushed head is a provider finish"
+   :text "A run the provider rate-limited (class=rate-limited or status=429 with class other than out-of-credit) was judged failed work when it had a shaped result, spending an attempt. member.Judge now classes such a run with no pushed head as a provider finish, so the sprint deals it again."
+   :origin "card rate-limit-judge-in-the-running-member.w2; the seat, 2026-10-11: PR #86 put member.Judge's rate-limited case into nova-sprint's fork but the running member uses nova-tools' pkg/member")
+
   (fix "a-refused-finish-never-reruns-a-pushed-generation" :release "v1.2.11" :status "in-progress"
    :title "A refused finish never reruns a pushed generation"
    :text "A finish the store refuses after its push is no longer taken as the end of the work. The
