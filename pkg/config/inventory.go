@@ -63,8 +63,13 @@ type AnsibleMeta struct {
 // tla=true, the TLC record machines the tools play's tla play installs the
 // pinned jar on.
 type AnsibleInventory struct {
-	Meta          AnsibleMeta  `json:"_meta"`
-	All           AnsibleGroup `json:"all"`
+	Meta AnsibleMeta  `json:"_meta"`
+	All  AnsibleGroup `json:"all"`
+	// Adopt is the fleet in the order the install play adopts it: the canary
+	// first, then every other host, so the play's serial first batch is the
+	// canary alone and the other hosts are never touched before it is judged
+	// (docs/SPEC-RELEASE.md, "Adopting a build").
+	Adopt         AnsibleGroup `json:"adopt"`
 	Benches       AnsibleGroup `json:"benches"`
 	Coordinator   AnsibleGroup `json:"coordinator"`
 	Store         AnsibleGroup `json:"store"`
@@ -178,6 +183,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	return &AnsibleInventory{
 		Meta:          AnsibleMeta{Hostvars: hostvars},
 		All:           AnsibleGroup{Hosts: append([]string{}, names...), Vars: vars},
+		Adopt:         AnsibleGroup{Hosts: adoptOrder(names, snap.Fleet["coordinator"])},
 		Benches:       AnsibleGroup{Hosts: append([]string{}, names...)},
 		Coordinator:   AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
 		Store:         AnsibleGroup{Hosts: one(snap.Fleet["store"])},
@@ -185,6 +191,31 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		Runners:       AnsibleGroup{Hosts: runnerHosts},
 		TLA:           AnsibleGroup{Hosts: tlaHosts},
 	}, nil
+}
+
+// adoptOrder is the fleet in the order the install play adopts it: the canary
+// (the first host of the fleet in inventory order that is not the coordinator)
+// first, then every other host, the coordinator among them. The install play
+// runs on this group, so its serial first batch is the canary alone
+// (docs/SPEC-RELEASE.md, "Adopting a build").
+func adoptOrder(names []string, coordinator string) []string {
+	canary := ""
+	for _, m := range names {
+		if m != coordinator {
+			canary = m
+			break
+		}
+	}
+	out := make([]string, 0, len(names))
+	if canary != "" {
+		out = append(out, canary)
+	}
+	for _, m := range names {
+		if m != canary {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func fleetRedisPort(fleet View) (int, error) {

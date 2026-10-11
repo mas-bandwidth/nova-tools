@@ -117,6 +117,19 @@ nova_release_gate_args: ["--cli", "{{ nova_source }}/docs/CLI.md", "--receipts",
 # --gate report --reason <why> (docs/SPEC-RELEASE.md rule 13).
 nova_release_build_args: []
 
+# The canary the install play adopts first (docs/SPEC-RELEASE.md, "Adopting a
+# build"): the first host of the inventory's adopt group, which the play runs
+# on and whose first host is the first host of the fleet in inventory order
+# that is not the coordinator, so the serial's first batch is that host alone
+# and never the coordinator. Its member's own log is read after the restart for
+# one finish ok line, for up to nova_adopt_canary_wait seconds (default 30
+# minutes, polled every 30 s), and a canary that fails is rolled back alone,
+# the other hosts never touched. nova_adopt_canary=none installs every host in
+# one batch, as before, and says so. The rollout is run by the coordinator,
+# never from a card.
+nova_adopt_canary: "{{ (groups['adopt'] | default([]) | first) | default('none') }}"
+nova_adopt_canary_wait: 1800
+
 # The TLC record machines (the inventory's tla group: the machine rows with
 # tla=true) hold the pinned TLC jar at nova_tla_jar, owned by the login. The
 # tools play's tla play checks its SHA-256 against the sum the repository

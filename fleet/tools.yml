@@ -89,9 +89,19 @@
       ansible.builtin.set_fact:
         tools_retired: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/retired-tools.txt').splitlines() | reject('match', '^\\s*(#|$)') | map('trim') | list }}"
 
+# The canary stage (docs/SPEC-RELEASE.md, "Adopting a build"): the install runs
+# in two batches, the canary alone first and every other fleet host after it,
+# and the play stops as soon as the canary's failure is seen, so the other hosts
+# are never touched. The play runs on the inventory's adopt group, whose first
+# host is the canary, so the serial's first batch is the canary itself and never
+# the coordinator (which the fleet's inventory order can put first).
+# nova_adopt_canary=none installs every host in one batch, as the play did
+# before.
 - name: the build in ~/.local/bin on every machine
-  hosts: all
+  hosts: adopt
   gather_facts: false
+  serial: "{{ [1, '100%'] if nova_adopt_canary != 'none' else '100%' }}"
+  max_fail_percentage: 0
   vars:
     tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
     tools_was_version: "{{ tools_was.content | default('') | b64decode | trim }}"
@@ -440,6 +450,27 @@
       # the coordinator installs inside the seat play's window, its old server and member stopped
       when: inventory_hostname not in (groups['coordinator'] | default([]))
 
+    # On darwin the loop log appends and its lines carry no timestamp (launchd
+    # StandardOutPath), so the whole file holds the finish ok lines of every
+    # earlier run. The wait must read only what the restarted member writes, so
+    # the log's length is snapshotted here, at the moment the restart begins,
+    # and the Darwin read skips those lines (docs/SPEC-RELEASE.md, "Adopting a
+    # build").
+    - name: "canary: the member's log length at the moment the restart begins"
+      ansible.builtin.command:
+        argv: [wc, -l, "{{ nova_home }}/Library/Logs/nova-loop-{{ tools_member_name }}.log"]
+      register: tools_canary_log_before
+      vars:
+        tools_member_name: >-
+          {{ (nova_loops | default([]) | selectattr('name', 'match', '^member') | map(attribute='name') | first) | default('') }}
+      changed_when: false
+      check_mode: false
+      # ignored: a member whose log does not yet exist has none, and the read starts at its first line
+      failed_when: false
+      when: >-
+        nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
+        and ansible_system == 'Darwin' and not ansible_check_mode
+
     # The install replaced a tool on this machine (a fleet host: the seat play
     # restarts the coordinator's own). Every loop member and reader whose binary
     # it replaced is restarted now, drained per loops.yml (bootout + bootstrap on
@@ -602,6 +633,173 @@
               {%- endfor -%}
               {{ out }}
           when: tools_replaced | length > 0
+
+    # The canary's wait reads its member's own log from the moment the loops
+    # step finished the restart, so the still-running member of before cannot
+    # print a finish that passes the wait (docs/SPEC-RELEASE.md, "Adopting a
+    # build").
+    - name: "canary: the restart's moment (the wait's lower bound)"
+      ansible.builtin.command: { argv: [date, -u, "+%s"] }
+      register: tools_canary_at
+      changed_when: false
+      check_mode: false
+      when: >-
+        nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
+        and not ansible_check_mode
+
+    # The canary's wait and rollback (docs/SPEC-RELEASE.md, "Adopting a
+    # build"): after the loops step the canary's own member's log must show one
+    # finish ok line since the restart. A canary whose member refused (a finish
+    # exit=1 before any ok) or finished nothing within nova_adopt_canary_wait is
+    # rolled back alone and ends the play, so the other hosts are never touched.
+    # A host whose build fact held no version is not rolled back, and the
+    # refusal says so. The wait reads only the host's own log.
+    - name: "canary: the first host's member finishes, or the fleet waits"
+      when: >-
+        nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
+        and not ansible_check_mode
+        and (tools_install.stdout | default('')) is search('RELEASE INSTALLED .*tools=[1-9]')
+      block:
+        - name: "canary: the member's log since the restart, until one finish ok or one exit=1"
+          ansible.builtin.command:
+            argv: >-
+              {{ ['journalctl', '--user', '-u', 'nova-loop-' ~ tools_member_name, '--since', '@' ~ (tools_canary_at.stdout | default('0')),
+                  '--no-pager']
+                 if ansible_system == 'Linux'
+                 else ['tail', '-n', '+' ~ ((((tools_canary_log_before.stdout | default('0')).split() | first | default('0')) | int) + 1),
+                       nova_home ~ '/Library/Logs/nova-loop-' ~ tools_member_name ~ '.log'] }}
+          register: tools_canary_log
+          vars:
+            tools_member_name: >-
+              {{ (nova_loops | default([]) | selectattr('name', 'match', '^member') | map(attribute='name') | first) | default('') }}
+          changed_when: false
+          check_mode: false
+          until: >-
+            (tools_canary_log.stdout_lines | select('search', 'finish .*ok=true exit=0') | list | length) > 0
+            or (tools_canary_log.stdout_lines | select('search', 'finish .*exit=1') | list | length) > 0
+          retries: "{{ ((nova_adopt_canary_wait | int) / 30) | round(0, 'ceil') | int }}"
+          delay: 30
+
+        - name: "canary: the member's earliest finish since the restart is an ok one"
+          ansible.builtin.assert:
+            that: >-
+              canary_finishes | length > 0
+              and (canary_finishes | first) is search('finish .*ok=true exit=0')
+            fail_msg: >-
+              ADOPT REFUSED step=canary host={{ inventory_hostname }}:
+              {{ (canary_finishes | first)
+                 | default('no finish in ' ~ (((nova_adopt_canary_wait | int) / 60) | round(0, 'ceil') | int) ~ 'm') }}
+            quiet: true
+          vars:
+            canary_lines: "{{ tools_canary_log.stdout_lines | default([]) }}"
+            # every finish line the read holds, in the log's own order: the
+            # earliest decides. A refusal (exit=1) before any ok finish ends
+            # the play, never merely the presence of an ok anywhere (Done 3).
+            canary_finishes: "{{ canary_lines | select('search', 'finish .*exit=') | list }}"
+
+        - name: "canary: the moment the member's finish was seen"
+          ansible.builtin.command: { argv: [date, -u, "+%s"] }
+          register: tools_canary_ok_at
+          changed_when: false
+          check_mode: false
+
+        - name: "canary: the member finished ok"
+          ansible.builtin.debug:
+            msg: >-
+              CANARY OK host={{ inventory_hostname }}
+              card={{ (tools_canary_log.stdout_lines | select('search', 'finish .*ok=true exit=0') | list | first)
+                     | regex_replace('.*finish ([^ ]+).*', '\\1') }}
+              after {{ ((tools_canary_ok_at.stdout | int) - (tools_canary_at.stdout | int)) // 60 }}m{{ ((tools_canary_ok_at.stdout | int) - (tools_canary_at.stdout | int)) % 60 }}s
+      rescue:
+        - name: "canary: the build fact's version is put back (the rollback install)"
+          ansible.builtin.command:
+            argv: ["{{ nova_bin_dir }}/nova-update", release, install, "--from", "{{ nova_release_dir }}",
+                   "--version", "{{ tools_was_version }}", "--bin", "{{ nova_bin_dir }}", "--platform", "{{ nova_platform }}"]
+          register: tools_canary_rollback
+          changed_when: "tools_canary_rollback.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
+          when: tools_was_version != ''
+
+        - name: "canary: a host never installed by this play has no version to roll back to"
+          ansible.builtin.debug:
+            msg: >-
+              ADOPT REFUSED host={{ inventory_hostname }}: the build fact held no version (never installed by this
+              play), so there is nothing to roll back to; this host is left as the install found it
+          when: tools_was_version == ''
+
+        - name: "canary: boot out each replaced member and reader (launchd, the rollback)"
+          ansible.builtin.command: { argv: ["{{ nova_launchctl }}", bootout, "{{ item.target }}"] }
+          loop: "{{ tools_replaced | default([]) }}"
+          loop_control: { label: "{{ item.label }}" }
+          register: tools_canary_bootout
+          changed_when: tools_canary_bootout.rc == 0
+          failed_when: tools_canary_bootout.rc not in [0, 3, 113]
+          become: "{{ item.target.startswith('system/') }}"
+          when: ansible_system == 'Darwin' and tools_was_version != ''
+
+        - name: "canary: bootstrap each from its plist (the rollback)"
+          ansible.builtin.command:
+            argv: ["{{ nova_launchctl }}", bootstrap, "{{ item.target | regex_replace('/[^/]*$', '') }}", "{{ item.plist }}"]
+          loop: "{{ tools_replaced | default([]) }}"
+          loop_control: { label: "{{ item.label }}" }
+          changed_when: true
+          become: "{{ item.target.startswith('system/') }}"
+          when: ansible_system == 'Darwin' and tools_was_version != ''
+
+        - name: "canary: restart each replaced member and reader (systemd, the rollback)"
+          ansible.builtin.systemd_service:
+            name: "{{ item.label }}"
+            scope: "{{ 'system' if item.target.startswith('system/') else 'user' }}"
+            state: restarted
+          loop: "{{ tools_replaced | default([]) }}"
+          loop_control: { label: "{{ item.label }}" }
+          environment: "{{ {} if item.target.startswith('system/') else { 'XDG_RUNTIME_DIR': '/run/user/' ~ ansible_user_uid } }}"
+          become: "{{ item.target.startswith('system/') }}"
+          when: ansible_system == 'Linux' and tools_was_version != ''
+
+        - name: "canary: the rolled-back member runs the old version, or the refusal says so"
+          ansible.builtin.command: { argv: "{{ tools_live }}" }
+          register: tools_canary_after
+          until: >-
+            tools_canary_after.rc == 0 and tools_canary_after.stdout is match('[{]') and
+            ((tools_canary_after.stdout | from_json).agents | selectattr('label', 'in', tools_replaced_labels)
+              | rejectattr('stale') | map(attribute='label') | list | sort) == (tools_replaced_labels | sort)
+          retries: "{{ (nova_seat_beat_within | int / 5) | round(0, 'ceil') | int }}"
+          delay: 5
+          changed_when: false
+          failed_when: false
+          when: tools_was_version != ''
+
+        - name: "canary: the member is missing, not loaded or still stale after the rollback"
+          ansible.builtin.assert:
+            that: tools_canary_late | length == 0
+            fail_msg: >-
+              ADOPT REFUSED step=canary host={{ inventory_hostname }}: after the rollback these members and readers are
+              missing, not loaded or still stale: {{ tools_canary_late | join(', ') }}; nova-sprint live says why
+            quiet: true
+          vars:
+            tools_canary_found: >-
+              {{ (tools_canary_after.stdout | from_json).agents if (tools_canary_after.stdout | default('')) is match('[{]') else [] }}
+            tools_canary_late: >-
+              {{ tools_replaced_labels | difference(tools_canary_found | selectattr('loaded') | rejectattr('stale') | map(attribute='label') | list) }}
+          when: tools_was_version != ''
+
+        - name: "canary: the refusal ends the play, the other hosts never touched"
+          ansible.builtin.fail:
+            msg: >-
+              ADOPT REFUSED step=canary host={{ inventory_hostname }}:
+              {{ (tools_canary_log.stdout_lines | default([]) | select('search', 'finish .*exit=') | list | first)
+                 | default('no finish in ' ~ (((nova_adopt_canary_wait | int) / 60) | round(0, 'ceil') | int) ~ 'm') }};
+              the canary is rolled back to {{ tools_was_version or 'nothing (no build fact)' }}
+
+    - name: "canary: --check names the canary and the wait it would do"
+      ansible.builtin.debug:
+        msg: "WOULD-WAIT canary={{ nova_adopt_canary }} up to {{ nova_adopt_canary_wait }}s on the canary's own member log"
+      when: ansible_check_mode and nova_adopt_canary != 'none'
+
+    - name: "canary: nova_adopt_canary=none installs every host in one batch"
+      ansible.builtin.debug:
+        msg: "CANARY none: nova_adopt_canary=none; the play installs every host in one batch and waits for none"
+      when: nova_adopt_canary == 'none'
 
     - name: the retired tools in the bin directory, by exact name (one listing)
       ansible.builtin.find: { paths: "{{ nova_bin_dir }}", patterns: "{{ hostvars['localhost'].tools_retired }}", file_type: any, hidden: true }
