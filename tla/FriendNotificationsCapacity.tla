@@ -1,11 +1,13 @@
 ------------------ MODULE FriendNotificationsCapacity ------------------
 EXTENDS Naturals, FiniteSets
-\* SPEC-FRIEND.md, Notifications: immutable full batches, one unread queue slot per
-\* category, and a deferred report journal which does not own urgent intake.
-\* The report category represents nonurgent report/notice input; both use the same
-\* deferred slot and independent capacity guard against urgent input.
-\* IDs stand for distinct bounded batches. Crash retains journals and bus sources;
-\* queue acceptance is separate from processing and source receipt settlement.
+\* SPEC-FRIEND.md, Notifications: the capacity is the Codex adapter's queue read
+\* (adapter_codex.go): one unread queue slot per category, and a deferred report
+\* journal which does not own urgent intake. The report category represents nonurgent
+\* report/notice input; both use the same deferred slot and independent capacity
+\* guard against urgent input. Backpressured nonurgent input is claimed but neither
+\* released nor acknowledged, so it returns after ClaimAfter. IDs stand for distinct
+\* bounded batches. Crash retains journals and bus sources; queue acceptance is
+\* separate from processing and source receipt settlement.
 CONSTANTS BadCapacity, BadHold
 Kinds == {"report", "urgent"}
 IDs == 1..2

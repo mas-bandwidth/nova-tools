@@ -159,6 +159,7 @@ MCFriendNotifications.cfg	MCFriendNotifications.tla	pass	-	ignore-terminal	frien
 MCFriendNotificationsBadAck.cfg	MCFriendNotifications.tla	invariant	NoLostReady	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsBadDuplicate.cfg	MCFriendNotifications.tla	invariant	ReadyQueueBounded	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsBadNative.cfg	MCFriendNotifications.tla	invariant	NativeUntouched	ignore-terminal	friend-notifications	required	-
+MCFriendNotificationsBrokenWithdrawHeld.cfg	MCFriendNotifications.tla	invariant	NoLostReady	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsCapacity.cfg	MCFriendNotificationsCapacity.tla	pass	-	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsCapacityBadQueue.cfg	MCFriendNotificationsCapacity.tla	invariant	QueueBounded	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsCapacityBadHold.cfg	MCFriendNotificationsCapacity.tla	invariant	UrgentEligible	ignore-terminal	friend-notifications	required	-
