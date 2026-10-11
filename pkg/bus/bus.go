@@ -272,7 +272,8 @@ func (b *Bus) Waiter() (Waiter, error) {
 // Bus is the rules over a Store.
 type Bus struct {
 	Store Store
-	// Rand fills a ULID's random half; crypto/rand when nil.
+	// Rand fills a ULID's random half; crypto/rand when nil. Every Send calls
+	// it, so a Bus shared by concurrent senders needs one safe for concurrent use.
 	Rand func([]byte) (int, error)
 	// TokenLife is how long a retry under a send's token answers the
 	// original message (DefaultTokenLife when zero); TokenCleanup is when the

@@ -131,6 +131,33 @@ func TestAcceptanceExitsTheWallsRealCode(t *testing.T) {
 	assert.Contains(t, mout.String()+merr.String(), wantNote)
 }
 
+// --dry-run plans the acceptance run from the same path and writes nothing: the
+// wall is assembled and the runner found, the plan names the command, and no
+// .acceptance directory or RESULT.md is made and no lane program runs.
+func TestAcceptanceDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
+	rig := newRig(t, "ada", "bob")
+	rig.onPath = map[string]string{"claude": "/usr/bin/claude"}
+	w := rig.world()
+	ran := false
+	w.wall = func(_ friend.Wall, _ friend.Exec) friend.Exec {
+		return func(context.Context, string, string, []string, string) (string, int, error) {
+			ran = true
+			return "claude 1.0.0\n", 0, nil
+		}
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"acceptance", "--as", "bob", "--harness", "claude", "--dir", dir, "--dry-run"},
+		strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, out.String()+errb.String())
+	assert.False(t, ran, "a dry run ran the lane program")
+	assert.Contains(t, out.String(), "claude --version", "the plan names the command the run would start")
+	assert.Contains(t, out.String(), "dry_run=true")
+	_, err := os.Stat(filepath.Join(dir, ".acceptance"))
+	assert.True(t, os.IsNotExist(err), "a dry run made the probe directory: %v", err)
+}
+
 // The antigravity lane starts the harness's own agentapi under the friend's
 // home, the path the adapter itself runs (friend.AntigravityRunner,
 // pkg/friend/adapter_antigravity.go), never a bare name on PATH: a healthy host

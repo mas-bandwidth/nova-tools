@@ -374,7 +374,13 @@ func doctorStubs(t *testing.T, pathScript, localScript, hung string) (env doctor
 // doctorStubsGrace is doctorStubs with the grace named.
 func doctorStubsGrace(t *testing.T, pathScript, localScript, hung string, grace time.Duration) (env doctorEnv, pathBin, localBin string) {
 	t.Helper()
-	dir := t.TempDir()
+	// The stubs live under the temporary directory's real path. The preflight evaluates
+	// symlinks on the running executable (resolveRunning) and the doctor verb reports PATH's
+	// name as found; on macOS t.TempDir() is under /var, a symlink to /private/var, so a
+	// fixture under the unresolved name would be one binary under two spellings, and the
+	// reader below, which picks a stub's deadline by its name, would miss it.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	home := filepath.Join(dir, "home")
 	pathBin = filepath.Join(dir, "bin", "nova-swarm")
 	localBin = filepath.Join(home, ".local", "bin", "nova-swarm")
