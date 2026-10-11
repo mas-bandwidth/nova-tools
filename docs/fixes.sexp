@@ -123,6 +123,15 @@
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
    :origin "fault 9, 2026-10-10")
+  (fix "push-gate-names-the-staged-commit-it-wants" :release "v1.2.14" :status "in-progress"
+   :title "The push gate names the staged commit it wants"
+   :text "A refusal that the result's head does not descend from the staged commit now tells three cases
+    apart: the staged commit held by no branch or HEAD of the checkout (the branch was cut again or
+    reset), a head that parted from a staged commit the checkout does hold (naming their merge base,
+    \"none\" for unrelated histories), and git failing in the push repository. It no longer quotes git's
+    own \"Not a valid commit name\", and the first two say to put the commits on top of the staged
+    commit and finish again."
+   :origin "seat inbox pass 2026-10-11 ~03:38Z, epoch 16: 32 push refusals in an hour read \"the result's head X does not descend from the staged commit S: fatal: Not a valid commit name S\"; re-scoped against nova-tools dev 2314d43 on 2026-10-11")
   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
@@ -328,6 +337,40 @@
     drifted current rows become partial with the cards that owe them. Tests and models only, no
     product change."
    :origin "the card tla-coverage-names-every-module-in-nova-tools.w3 (the coordinator, 2026-10-11)")
+
+  (fix "cover-member-push-with-a-scripted-git" :release "v1.2.12" :status "planned"
+   :title "The member's push pinned in the unit tier with a scripted git"
+   :text "cmd/nova-swarm/memberpush_behaviour_test.go drives (g *gitPusher) Push (memberpush.go:88) with a
+    git that answers by argv and records every call's directory and env, a sleep that records the waits,
+    and gh off PATH, so the head's push, the launch's refs, the waits and the pull-request note are
+    checked with no real git and no clock. Push's unit statement coverage moves from 0.0% to 94.2%. The
+    checkoutTip not-a-descendant branch reads a *exec.ExitError a fake cannot build, so it stays in the
+    slow tier."
+   :origin "card cover-member-push-with-a-scripted-git.w2, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C10")
+
+  (fix "nt-tokens-reentered-child-keeps-its-cover-dir" :release "v1.2.12" :status "planned"
+   :title "A re-entered test child keeps the parent's coverage directory"
+   :text "TestEveryPathIsAFlagAndNoEnvironmentIsConsulted builds bait under t.TempDir(), points
+    TMPDIR, HOME and XDG_DATA_HOME at it, and re-enters its own binary (reenterTest) so the
+    body owns the process. Under -cover the child, given no -test.gocoverdir, builds its own
+    coverage directory in TMPDIR at exit; by then the test's cleanup has removed the bait, so
+    the child exits non-zero with \"error setting GOCOVERDIR: bad os.MkdirTemp return\" and the
+    parent reads that as the tool's failure. reenterTest now passes the parent's own
+    -test.gocoverdir to the child when one is set, so the coverage teardown touches no path the
+    test took away, and the test still fails if the tool itself reads TMPDIR."
+   :origin "card nt-tokens-reentered-child-keeps-its-cover-dir, v1.2.12 inventory card A8 (tmp/v1.2.12-inventory-2026-10-11.md)")
+
+  (fix "nt-usage-limit-test-reads-beats-without-an-order" :release "v1.2.12" :status "planned"
+   :title "TestUsageLimitMarksDownUntilReset reads the beat and asked order the product promises"
+   :text "The beats seen are an optional leading up, then down with the until and the reason until the
+    reset, then up after the wake, and never up between the limit and the reset; the asked order asserts
+    the set (the message and one wake turn) and the one order the gate documents (the wake before the
+    message goes in). The old assertion assumed the daemon's first beat ran before the delivery that hits
+    the limit inside one synctest instant, which the scheduler does not fix. Test-side only; no product
+    change."
+   :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, the nova-tools certification
+    fix, 2026-10-11): TestUsageLimitMarksDownUntilReset ordering assumption; rechecked at dev 7b6cccbc2 on
+    2026-10-11: still open")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
