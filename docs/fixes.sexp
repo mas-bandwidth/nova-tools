@@ -307,6 +307,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "planned"
+   :title "Unit tests pin the provider proxy's budget on the wire"
+   :text "A request to the provider proxy with a budget set now has unit coverage: a new
+    pkg/swarm/providerbudget_behaviour_test.go drives (*ProviderProxy).ServeHTTP through
+    serveBudgeted, takeBudget and forwardBudgeted with an in-process RoundTripper and a fake
+    ProxyBudget, asserting on the recorder and on the calls the fakes saw. Read at dev, the three
+    functions ran zero unit statements; they now run 92.6%, 100% and 75.9%. One behaviour found a
+    product defect (a body-silence abort keeps its slot until the lease expires), filed v1.2.14;
+    its red test is not committed."
+   :origin "card cover-provider-budget-proxy-unit, tmp/v1.2.12-inventory-2026-10-11.md section 8 item C9")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
