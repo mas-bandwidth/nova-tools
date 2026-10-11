@@ -468,6 +468,17 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-cairnstore-no-gap-ledger-and-reopen" :release "v1.2.12" :status "planned"
+   :title "CairnStore models the code as it is: no gap ledger, no publish, a refused re-open, a healed open"
+   :text "The module's header cited stale line ranges, it held a gap ledger and a Liveness the code has no
+    counterpart for (Index builds rows from entries/*.json and Ledger holds only counts), and it modelled
+    Publish and RemoteDown over a package that implements no transport. Those are removed and the header
+    says so. Open now refuses a re-open naming another publish policy, and an open interrupted before
+    logging is healed on the next open, both as cairn.go does. A new OneOpenPolicy invariant holds, with
+    the reversed witness BrokenReopenOther (a re-open accepted under another policy); BrokenPublishedWithoutPersisted
+    left with PublishedImpliesPersisted. cairn.go now cites the module from Open and appendEntry."
+   :origin "card tla-cairnstore-no-gap-ledger-and-reopen.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

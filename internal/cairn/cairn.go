@@ -494,6 +494,8 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 // recorded policy (and the recorded source, when it names one) changes
 // nothing, and one naming another is a conflict. Concurrent records coexist:
 // opening a second session never touches the first.
+//
+// tla/CairnStore.tla Open
 func Open(store, session, source string, now time.Time, publish string) error {
 	_, err := open(store, session, source, now, publish, true)
 	return err
@@ -629,6 +631,7 @@ func PlanAppend(store, session, id, text, source string, now time.Time, publish 
 	return appendEntry(store, session, id, text, source, now, publish, false)
 }
 
+// tla/CairnStore.tla Append
 func appendEntry(store, session, id, text, source string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
 	if store == "" {

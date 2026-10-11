@@ -1,7 +1,7 @@
 ----------------------------- MODULE CairnStore -----------------------------
 \* The cairn store: session records, atomic entry files, append-only event log,
-\* index, coverage ledger, and publication states.
-\* Models internal/cairn/cairn.go (:1-31, :444-517, :551-668, :818-898)
+\* and the index and coverage count read back from them.
+\* Models internal/cairn/cairn.go (:1-31, :497-582, :632-733, :891-959)
 \* and docs/SPEC-CAIRN.md ("The four verbs", :24-124).
 \*
 \* THE STATE.
@@ -11,66 +11,61 @@
 \*   entries            the entries (entries/<session>/<id>.json, one file per
 \*                      entry, the source of truth)
 \*   log                the append-only log.jsonl event log
-\*   index              the index built over stored entries and log
-\*   coverage           the coverage ledger tracking session count, entry count,
-\*                      and unindexed or unlogged gaps
+\*   index              the index built over stored entries
+\*   coverage           the coverage ledger: the session and entry counts the
+\*                      index reports (Ledger holds counts only, no gaps)
 \*   written            per entry: written to storage
 \*   fsynced            per entry: fsynced to media
 \*   logged             per entry: recorded in log.jsonl
 \*   indexed            per entry: present in the index
-\*   published          per entry: published to remote
 \*   persisted          per entry: durability reported to caller
 \*   reported           per entry: append operation result returned
 \*   writtenText        ghost variable: initial prose text written per entry
-\*   crashedAfterEntry  ghost variable: crash occurred between entry fsync
-\*                      and log append
 \*
 \* THE ACTIONS.
-\*   Open                       starts or re-starts a session idempotently;
-\*                              never touches another session (cairn.go:444-447)
+\*   Open                       starts or re-starts a session idempotently; a
+\*                              re-open naming another publish policy is
+\*                              refused, and one whose initial open was
+\*                              interrupted before logging heals the open
+\*                              (cairn.go:497-582); never touches another
+\*                              session
+\*   OpenCrash                  crash after the session file is written, before
+\*                              the open record reaches the log
+\*                              (cairn.go:526-541)
 \*   Append                     stores exact prose under a stable id with a
 \*                              clock stamp; a retry of the same request is
 \*                              Duplicate=true and no second entry; the same id
 \*                              with different prose is a conflict, never an
 \*                              overwrite; persisted=true before success is
-\*                              reported, published separately (cairn.go:551-562)
-\*   IndexCoverage              bounded read over the log and store entries;
-\*                              builds entry index and updates coverage ledger
-\*                              (cairn.go:818-898)
-\*   CrashAfterEntryBeforeLog   crash after entry file is written and fsynced,
-\*                              before log.jsonl append (cairn.go:644-664)
-\*   CrashAfterLogBeforeIndex   crash after log.jsonl append, before indexing
-\*                              (cairn.go:664-668)
-\*   Publish                    remote publication succeeds for a persisted
-\*                              entry (cairn.go:8-10, :554-556)
-\*   RemoteDown                 remote publication fails; local persistence
-\*                              still reported (cairn.go:8-10, :554-556)
+\*                              reported (cairn.go:632-733)
+\*   IndexCoverage              bounded read over the store entries; builds the
+\*                              entry index and the coverage counts
+\*                              (cairn.go:891-959)
 \*
-\* THE INVARIANTS AND LIVENESS.
+\* The code implements no transport: an append reports published=false and the
+\* publish policy travels with the entry, so this module has no Publish or
+\* RemoteDown action and no publication invariant (cairn.go:51-54).
+\*
+\* THE INVARIANTS.
 \*   NoOverwrite: an entry's prose never changes once written; same id with
-\*     different text is refused (SPEC-CAIRN.md:87-88, cairn.go:647-652).
+\*     different text is refused (SPEC-CAIRN.md:87-88, cairn.go:764-766).
 \*   DuplicateIsOne: a retried append adds no entry
-\*     (SPEC-CAIRN.md:84-85, cairn.go:551-553).
+\*     (SPEC-CAIRN.md:84-85, cairn.go:680-683).
 \*   DurableBeforeReported: success is reported only after the entry file is
-\*     fsynced; persisted=true never precedes the write (cairn.go:8-9,
+\*     fsynced; persisted=true never precedes the write (cairn.go:128-131,
 \*     SPEC-CAIRN.md:89-90).
-\*   PublishedImpliesPersisted: remote publication requires local persistence,
-\*     and persistence never implies publication (cairn.go:9-10,
-\*     SPEC-CAIRN.md:89-92).
-\*   IndexCoversLog: every logged entry is in the index or the coverage ledger
-\*     names the gap (cairn.go:1-3, :19, :876-898).
-\*   OpenIdempotent: a second open changes nothing (cairn.go:444-447, :477-495,
+\*   OpenIdempotent: a second open changes nothing (cairn.go:493-500,
 \*     SPEC-CAIRN.md:39-42).
-\*   Liveness: after a crash between entry and log, the next index run reports
-\*     the gap rather than losing the entry silently (cairn.go:27-31, :876-898).
+\*   OneOpenPolicy: a session is opened with one publish policy; a re-open
+\*     naming another is refused (cairn.go:542-558).
 \*
 \* REVERSED WITNESSES.
 \*   BrokenOverwrite: same id with different prose replaces existing entry
 \*     (NoOverwrite fails).
 \*   BrokenReportBeforeFsync: success is reported before entry file is fsynced
 \*     (DurableBeforeReported fails).
-\*   BrokenPublishedWithoutPersisted: entry is published without local
-\*     persistence (PublishedImpliesPersisted fails).
+\*   BrokenReopenOther: a re-open naming another publish policy is accepted and
+\*     changes the session's policy (OneOpenPolicy fails).
 
 EXTENDS Naturals, FiniteSets
 
@@ -87,21 +82,19 @@ VARIABLES
   flatFiles,          \* flat markdown files (<store>/<session>.md)
   entries,            \* entries (entries/<session>/<id>.json)
   log,                \* append-only log.jsonl event sequence
-  index,              \* index built over entries and log
-  coverage,           \* coverage ledger [sessions, entries, gaps]
+  index,              \* index built over entries
+  coverage,           \* coverage ledger [sessions, entries]
   written,            \* written flag per entry
   fsynced,            \* fsynced flag per entry
   logged,             \* logged flag per entry
   indexed,            \* indexed flag per entry
-  published,          \* published flag per entry
   persisted,          \* persisted flag per entry
   reported,           \* reported flag per entry
-  writtenText,        \* initial prose text written per entry
-  crashedAfterEntry   \* crash occurred between entry fsync and log append
+  writtenText         \* initial prose text written per entry
 
 vars == <<sessions, flatFiles, entries, log, index, coverage,
-          written, fsynced, logged, indexed, published,
-          persisted, reported, writtenText, crashedAfterEntry>>
+          written, fsynced, logged, indexed, persisted,
+          reported, writtenText>>
 
 TypeOK ==
     /\ sessions \in [Sessions -> [open: BOOLEAN, pointers: SUBSET EntryIDs,
@@ -110,17 +103,14 @@ TypeOK ==
     /\ entries \in [Sessions \X EntryIDs -> Texts \cup {None}]
     /\ index \in SUBSET (Sessions \X EntryIDs)
     /\ coverage \in [sessions: SUBSET Sessions,
-                     entries: SUBSET (Sessions \X EntryIDs),
-                     gaps: SUBSET (Sessions \X EntryIDs)]
+                     entries: SUBSET (Sessions \X EntryIDs)]
     /\ written \in [Sessions \X EntryIDs -> BOOLEAN]
     /\ fsynced \in [Sessions \X EntryIDs -> BOOLEAN]
     /\ logged \in [Sessions \X EntryIDs -> BOOLEAN]
     /\ indexed \in [Sessions \X EntryIDs -> BOOLEAN]
-    /\ published \in [Sessions \X EntryIDs -> BOOLEAN]
     /\ persisted \in [Sessions \X EntryIDs -> BOOLEAN]
     /\ reported \in [Sessions \X EntryIDs -> BOOLEAN]
     /\ writtenText \in [Sessions \X EntryIDs -> Texts \cup {None}]
-    /\ crashedAfterEntry \in [Sessions \X EntryIDs -> BOOLEAN]
 
 Init ==
     /\ sessions = [s \in Sessions |-> [open |-> FALSE, pointers |-> {}, source |-> None, publish |-> None]]
@@ -128,31 +118,54 @@ Init ==
     /\ entries = [s \in Sessions, e \in EntryIDs |-> None]
     /\ log = << >>
     /\ index = {}
-    /\ coverage = [sessions |-> FlatSessions, entries |-> {}, gaps |-> {}]
+    /\ coverage = [sessions |-> FlatSessions, entries |-> {}]
     /\ written = [s \in Sessions, e \in EntryIDs |-> FALSE]
     /\ fsynced = [s \in Sessions, e \in EntryIDs |-> FALSE]
     /\ logged = [s \in Sessions, e \in EntryIDs |-> FALSE]
     /\ indexed = [s \in Sessions, e \in EntryIDs |-> FALSE]
-    /\ published = [s \in Sessions, e \in EntryIDs |-> FALSE]
     /\ persisted = [s \in Sessions, e \in EntryIDs |-> FALSE]
     /\ reported = [s \in Sessions, e \in EntryIDs |-> FALSE]
     /\ writtenText = [s \in Sessions, e \in EntryIDs |-> None]
-    /\ crashedAfterEntry = [s \in Sessions, e \in EntryIDs |-> FALSE]
 
-\* Open: starts or re-starts a session idempotently; never touches another session (cairn.go:444-517).
+\* openLogged: the session's open record reached log.jsonl.
+openLogged(s) == \E i \in DOMAIN log : log[i].event = "open" /\ log[i].session = s
+
+\* Open: starts a session, heals an interrupted open, or refuses a re-open that
+\* names another publish policy (cairn.go:497-582).
 Open(s, pub, src) ==
     IF s \in FlatSessions
     THEN UNCHANGED vars
-    ELSE IF sessions[s].open
-         THEN UNCHANGED vars
-         ELSE /\ sessions' = [sessions EXCEPT ![s] = [open |-> TRUE, pointers |-> {}, source |-> src, publish |-> pub]]
-              /\ log' = Seq!Append(log, [event |-> "open", session |-> s, entry |-> None, text |-> None])
+    ELSE IF ~sessions[s].open
+         THEN /\ sessions' = [sessions EXCEPT ![s] = [open |-> TRUE, pointers |-> {}, source |-> src, publish |-> pub]]
+              /\ log' = Seq!Append(log, [event |-> "open", session |-> s, entry |-> None, text |-> None, publish |-> pub])
               /\ coverage' = [coverage EXCEPT !.sessions = coverage.sessions \cup {s}]
               /\ UNCHANGED <<flatFiles, entries, index, written, fsynced, logged, indexed,
-                             published, persisted, reported, writtenText, crashedAfterEntry>>
+                             persisted, reported, writtenText>>
+         ELSE IF ~openLogged(s)
+              THEN \* heal: the file exists but the open record never logged
+                   /\ log' = Seq!Append(log, [event |-> "open", session |-> s, entry |-> None, text |-> None, publish |-> sessions[s].publish])
+                   /\ UNCHANGED <<sessions, flatFiles, entries, index, coverage, written, fsynced,
+                                  logged, indexed, persisted, reported, writtenText>>
+              ELSE IF pub /= sessions[s].publish
+                   THEN IF Broken = "reopenother"
+                        THEN /\ sessions' = [sessions EXCEPT ![s].publish = pub]
+                             /\ log' = Seq!Append(log, [event |-> "open", session |-> s, entry |-> None, text |-> None, publish |-> pub])
+                             /\ UNCHANGED <<flatFiles, entries, index, coverage, written, fsynced,
+                                            logged, indexed, persisted, reported, writtenText>>
+                        ELSE UNCHANGED vars
+                   ELSE UNCHANGED vars
+
+\* OpenCrash: the session file is written, then the crash precedes the open
+\* log record; a later Open heals it (cairn.go:526-541).
+OpenCrash(s, pub, src) ==
+    /\ s \notin FlatSessions
+    /\ ~sessions[s].open
+    /\ sessions' = [sessions EXCEPT ![s] = [open |-> TRUE, pointers |-> {}, source |-> src, publish |-> pub]]
+    /\ UNCHANGED <<flatFiles, entries, log, index, coverage, written, fsynced,
+                   logged, indexed, persisted, reported, writtenText>>
 
 \* Append: stores exact prose under stable id; retry is Duplicate=true; conflicting prose refused;
-\* persisted=true before success reported, published separately (cairn.go:551-668).
+\* persisted=true before success reported (cairn.go:632-733).
 Append(s, e, text) ==
     /\ \/ sessions[s].open
        \/ flatFiles[s].exists
@@ -162,13 +175,12 @@ Append(s, e, text) ==
                  THEN /\ persisted' = [persisted EXCEPT ![s, e] = TRUE]
                       /\ reported' = [reported EXCEPT ![s, e] = TRUE]
                       /\ UNCHANGED <<sessions, flatFiles, entries, log, index, coverage,
-                                     written, fsynced, logged, indexed, published,
-                                     writtenText, crashedAfterEntry>>
+                                     written, fsynced, logged, indexed, writtenText>>
                  ELSE IF Broken = "BrokenOverwrite"
                       THEN /\ flatFiles' = [flatFiles EXCEPT ![s].entries[e] = text]
                            /\ UNCHANGED <<sessions, entries, log, index, coverage,
-                                          written, fsynced, logged, indexed, published,
-                                          persisted, reported, writtenText, crashedAfterEntry>>
+                                          written, fsynced, logged, indexed,
+                                          persisted, reported, writtenText>>
                       ELSE UNCHANGED vars
             ELSE /\ flatFiles' = [flatFiles EXCEPT ![s].entries[e] = text]
                  /\ written' = [written EXCEPT ![s, e] = TRUE]
@@ -176,21 +188,19 @@ Append(s, e, text) ==
                  /\ persisted' = [persisted EXCEPT ![s, e] = TRUE]
                  /\ reported' = [reported EXCEPT ![s, e] = TRUE]
                  /\ writtenText' = [writtenText EXCEPT ![s, e] = text]
-                 /\ UNCHANGED <<sessions, entries, log, index, coverage, logged, indexed,
-                                published, crashedAfterEntry>>
+                 /\ UNCHANGED <<sessions, entries, log, index, coverage, logged, indexed>>
        ELSE IF entries[s, e] /= None
             THEN IF entries[s, e] = text
                  THEN /\ persisted' = [persisted EXCEPT ![s, e] = TRUE]
                       /\ reported' = [reported EXCEPT ![s, e] = TRUE]
                       /\ sessions' = [sessions EXCEPT ![s].pointers = sessions[s].pointers \cup {e}]
                       /\ UNCHANGED <<flatFiles, entries, log, index, coverage,
-                                     written, fsynced, logged, indexed, published,
-                                     writtenText, crashedAfterEntry>>
+                                     written, fsynced, logged, indexed, writtenText>>
                  ELSE IF Broken = "BrokenOverwrite"
                       THEN /\ entries' = [entries EXCEPT ![s, e] = text]
                            /\ UNCHANGED <<sessions, flatFiles, log, index, coverage,
-                                          written, fsynced, logged, indexed, published,
-                                          persisted, reported, writtenText, crashedAfterEntry>>
+                                          written, fsynced, logged, indexed,
+                                          persisted, reported, writtenText>>
                       ELSE UNCHANGED vars
             ELSE /\ entries' = [entries EXCEPT ![s, e] = text]
                  /\ writtenText' = [writtenText EXCEPT ![s, e] = text]
@@ -204,113 +214,59 @@ Append(s, e, text) ==
                  /\ sessions' = [sessions EXCEPT ![s].pointers = sessions[s].pointers \cup {e}]
                  /\ log' = Seq!Append(log, [event |-> "append", session |-> s, entry |-> e, text |-> text])
                  /\ logged' = [logged EXCEPT ![s, e] = TRUE]
-                 /\ coverage' = [coverage EXCEPT !.gaps = coverage.gaps \cup {<<s, e>>}]
-                 /\ UNCHANGED <<flatFiles, index, indexed, published, crashedAfterEntry>>
+                 /\ UNCHANGED <<flatFiles, index, indexed, coverage>>
 
-\* CrashAfterEntryBeforeLog: entry file is written and fsynced, but crash precedes log append.
-\* The caller never observes success (no Persisted/Reported); the crashedAfterEntry ghost
-\* variable marks the gap so IndexCoverage reports it (cairn.go:644-667).
-CrashAfterEntryBeforeLog(s, e, text) ==
-    /\ sessions[s].open
-    /\ entries[s, e] = None
-    /\ entries' = [entries EXCEPT ![s, e] = text]
-    /\ writtenText' = [writtenText EXCEPT ![s, e] = text]
-    /\ written' = [written EXCEPT ![s, e] = TRUE]
-    /\ fsynced' = [fsynced EXCEPT ![s, e] = TRUE]
-    /\ sessions' = [sessions EXCEPT ![s].pointers = sessions[s].pointers \cup {e}]
-    /\ crashedAfterEntry' = [crashedAfterEntry EXCEPT ![s, e] = TRUE]
-    /\ UNCHANGED <<flatFiles, log, index, coverage, logged, indexed, published,
-                   persisted, reported>>
-
-\* CrashAfterLogBeforeIndex: entry logged, but crash precedes index / coverage processing.
-CrashAfterLogBeforeIndex(s, e) ==
-    /\ logged[s, e]
-    /\ ~indexed[s, e]
-    /\ coverage' = [coverage EXCEPT !.gaps = coverage.gaps \cup {<<s, e>>}]
-    /\ UNCHANGED <<sessions, flatFiles, entries, log, index, written, fsynced,
-                   logged, indexed, published, persisted, reported,
-                   writtenText, crashedAfterEntry>>
-
-\* IndexCoverage: bounded read over log and store; builds entry index and coverage ledger (cairn.go:818-898).
+\* IndexCoverage: bounded read over the store entries; builds the entry index
+\* and the coverage counts (cairn.go:891-959).
 IndexCoverage ==
-    LET nestedEntries == {<<s, e>> \in Sessions \X EntryIDs : logged[s, e]}
+    LET nestedEntries == {<<s, e>> \in Sessions \X EntryIDs : entries[s, e] /= None}
         flatEntries == {<<s, e>> \in Sessions \X EntryIDs : flatFiles[s].entries[e] /= None}
-        newIndex == index \cup nestedEntries \cup flatEntries
-        crashedGaps == {<<s, e>> \in Sessions \X EntryIDs : fsynced[s, e] /\ ~logged[s, e]}
-        loggedGaps == {<<s, e>> \in Sessions \X EntryIDs : logged[s, e] /\ <<s, e>> \notin newIndex}
-        newGaps == (coverage.gaps \cup crashedGaps \cup loggedGaps) \ newIndex
+        newIndex == nestedEntries \cup flatEntries
     IN
         /\ index' = newIndex
         /\ indexed' = [s \in Sessions, e \in EntryIDs |-> <<s, e>> \in newIndex]
         /\ coverage' = [
                sessions |-> {s \in Sessions : sessions[s].open \/ flatFiles[s].exists},
-               entries  |-> newIndex,
-               gaps     |-> newGaps \cup crashedGaps
+               entries  |-> newIndex
            ]
         /\ UNCHANGED <<sessions, flatFiles, entries, log, written, fsynced, logged,
-                       published, persisted, reported, writtenText, crashedAfterEntry>>
-
-\* Publish: publishes a locally persisted entry to remote.
-Publish(s, e) ==
-    /\ IF Broken = "BrokenPublishedWithoutPersisted"
-       THEN ~published[s, e] /\ ~persisted[s, e]
-       ELSE ~published[s, e] /\ persisted[s, e]
-    /\ published' = [published EXCEPT ![s, e] = TRUE]
-    /\ UNCHANGED <<sessions, flatFiles, entries, log, index, coverage,
-                   written, fsynced, logged, indexed, persisted, reported,
-                   writtenText, crashedAfterEntry>>
-
-\* RemoteDown: publish fails; local persistence still reported (cairn.go:8-10, :554-556).
-RemoteDown(s, e) ==
-    /\ persisted[s, e]
-    /\ ~published[s, e]
-    /\ UNCHANGED vars
+                       persisted, reported, writtenText>>
 
 Next ==
     \/ \E s \in Sessions, pub \in Policies, src \in Sources : Open(s, pub, src)
+    \/ \E s \in Sessions, pub \in Policies, src \in Sources : OpenCrash(s, pub, src)
     \/ \E s \in Sessions, e \in EntryIDs, text \in Texts : Append(s, e, text)
-    \/ \E s \in Sessions, e \in EntryIDs, text \in Texts : CrashAfterEntryBeforeLog(s, e, text)
-    \/ \E s \in Sessions, e \in EntryIDs : CrashAfterLogBeforeIndex(s, e)
     \/ IndexCoverage
-    \/ \E s \in Sessions, e \in EntryIDs : Publish(s, e)
-    \/ \E s \in Sessions, e \in EntryIDs : RemoteDown(s, e)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(IndexCoverage)
 
-\* NoOverwrite: an entry's prose never changes once written (SPEC-CAIRN.md:87-88, cairn.go:647-652).
+\* NoOverwrite: an entry's prose never changes once written (SPEC-CAIRN.md:87-88, cairn.go:764-766).
 NoOverwrite ==
     \A s \in Sessions, e \in EntryIDs :
         /\ (entries[s, e] /= None => entries[s, e] = writtenText[s, e])
         /\ (flatFiles[s].entries[e] /= None => flatFiles[s].entries[e] = writtenText[s, e])
 
-\* DuplicateIsOne: a retried append adds no entry (SPEC-CAIRN.md:84-85, cairn.go:551-553).
+\* DuplicateIsOne: a retried append adds no entry (SPEC-CAIRN.md:84-85, cairn.go:680-683).
 DuplicateIsOne ==
     \A s \in Sessions, e \in EntryIDs :
         Cardinality({i \in DOMAIN log : log[i].event = "append" /\ log[i].session = s /\ log[i].entry = e}) <= 1
 
-\* DurableBeforeReported: success is reported only after the entry file is fsynced (cairn.go:8-9, SPEC-CAIRN.md:89-90).
+\* DurableBeforeReported: success is reported only after the entry file is fsynced (cairn.go:128-131, SPEC-CAIRN.md:89-90).
 DurableBeforeReported ==
     \A s \in Sessions, e \in EntryIDs :
         persisted[s, e] => fsynced[s, e]
 
-\* PublishedImpliesPersisted: remote publication requires local persistence (cairn.go:9-10, SPEC-CAIRN.md:89-92).
-PublishedImpliesPersisted ==
-    \A s \in Sessions, e \in EntryIDs :
-        published[s, e] => persisted[s, e]
-
-\* IndexCoversLog: every logged entry is in the index or coverage names the gap (cairn.go:1-3, :19, :876-898).
-IndexCoversLog ==
-    \A s \in Sessions, e \in EntryIDs :
-        logged[s, e] => (<<s, e>> \in index \/ <<s, e>> \in coverage.gaps)
-
-\* OpenIdempotent: a second open changes nothing (cairn.go:444-447, :477-495, SPEC-CAIRN.md:39-42).
+\* OpenIdempotent: a second open changes nothing (cairn.go:493-500, SPEC-CAIRN.md:39-42).
 OpenIdempotent ==
     \A s \in Sessions :
         Cardinality({i \in DOMAIN log : log[i].event = "open" /\ log[i].session = s}) <= 1
 
-\* Liveness: after a crash between entry and log, the next index run reports the gap rather than losing the entry silently (cairn.go:27-31, :876-898).
-Liveness ==
-    \A s \in Sessions, e \in EntryIDs :
-        (crashedAfterEntry[s, e] /\ ~logged[s, e]) ~> (<<s, e>> \in coverage.gaps)
+\* OneOpenPolicy: a session is opened with one publish policy; a re-open naming
+\* another is refused (cairn.go:542-558).
+OneOpenPolicy ==
+    \A s \in Sessions, i \in DOMAIN log, j \in DOMAIN log :
+        ((log[i].event = "open" /\ log[i].session = s)
+         /\ (log[j].event = "open" /\ log[j].session = s))
+        => log[i].publish = log[j].publish
 
 =============================================================================
