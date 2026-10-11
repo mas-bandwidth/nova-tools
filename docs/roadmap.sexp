@@ -912,13 +912,6 @@
    :date "2026-10-10"
    :release "v1.4"
    :origin "issue #1927")
-  (item "update-adopt-partial-release-dir" :group "ops"
-   :title "Release adopt does not trust a partial release directory"
-   :text "A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt
-    verifies completeness or uses a temporary dir renamed at the end."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #1981")
   (item "swarm-test-hang-capped-flags" :group "tests"
    :title "A swarm test hangs the whole package under the gate's capped flags"
    :text "One idle-watch test hangs for the full timeout under capped gate flags. It must finish fast and

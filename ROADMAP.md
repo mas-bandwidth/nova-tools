@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (27)
-- [Setup, release and operations](#setup-release-and-operations) (105)
+- [Setup, release and operations](#setup-release-and-operations) (104)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -606,14 +606,6 @@ Native windows is no longer supported, only WSL. The remaining hosted windows le
 Target: v1.4
 
 From: issue #1487
-
-### Release adopt does not trust a partial release directory
-
-A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt verifies completeness or uses a temporary dir renamed at the end.
-
-Target: v1.3
-
-From: issue #1981
 
 ### Release upload must respect the draft then publish sequence
 
