@@ -56,6 +56,12 @@ type rig struct {
 	alive        friend.Aliver
 	deaf         bool              // bob's opencode session takes a turn and never runs the pong line
 	fs           *friendtest.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	// mu guards now and answeredMu guards answered: the daemon reads its clock
+	// and runs its turns (bob's session, which answers checks) from its own
+	// goroutines as well as the run's. The clock takes mu and then, answering
+	// checks, answeredMu; nothing takes them the other way round.
+	mu         sync.Mutex
+	answeredMu sync.Mutex
 }
 
 type fakeAlive struct {
@@ -95,8 +101,18 @@ func (r *rig) world() world {
 			}
 			return "", nil
 		},
-		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
-		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
+		now: func() time.Time {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.answerChecks()
+			r.now = r.now.Add(time.Second)
+			return r.now
+		},
+		sleep: func(context.Context, time.Duration) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.now = r.now.Add(time.Second)
+		},
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
 		home:    r.home,
@@ -131,27 +147,37 @@ func (r *rig) opencode(_ context.Context, dir, _ string, args []string, _ string
 
 // answerChecks is bob's session, alive: each session check the daemon put
 // on his own stream (a passive harness reads it there) is answered once, from
-// bob, with its nonce, as the pong verb sends it.
+// bob, with its nonce, as the pong verb sends it. The clock calls it with r.mu held.
 func (r *rig) answerChecks() {
 	es, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
 	if err != nil {
 		return // ignored: a store that is down answers nothing; the test that wants it down says so
 	}
 	for _, e := range es {
-		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok && !r.answered[nonce] {
+		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok && !r.wasAnswered(nonce) {
 			r.answer(nonce)
 		}
 	}
 }
 
-// answer is bob's session sending its pong for nonce.
+// answer is bob's session sending its pong for nonce. It is called from the
+// daemon's turn goroutines and from the clock, so the record is under its lock.
 func (r *rig) answer(nonce string) {
+	r.answeredMu.Lock()
 	if r.answered == nil {
 		r.answered = map[string]bool{}
 	}
 	r.answered[nonce] = true
+	r.answeredMu.Unlock()
 	b := &bus.Bus{Store: r.store}
 	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
+}
+
+// wasAnswered reports whether bob's session has answered the check nonce.
+func (r *rig) wasAnswered(nonce string) bool {
+	r.answeredMu.Lock()
+	defer r.answeredMu.Unlock()
+	return r.answered[nonce]
 }
 
 // stopAfter cancels the run once the rig's clock is d past the start: an
@@ -826,10 +852,17 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			}
 			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
 		}
-		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		// The daemon writes its record from the run's goroutine and the lane's
+		// open (its price line) from the turn's, so stdout is under a lock.
+		var outMu sync.Mutex
+		out := &lockedBuilder{mu: &outMu}
+		var errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
-		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, out.String())
+		outMu.Lock()
+		said := out.String()
+		outMu.Unlock()
+		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, said)
 		assert.True(t, strings.HasPrefix(runs[0], "run You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
 		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
@@ -843,8 +876,8 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)
-		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
-		assert.Contains(t, out.String(), "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
+		assert.Contains(t, said, "lane=1 session=ses_lane1")
+		assert.Contains(t, said, "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
 	})
 }
 
