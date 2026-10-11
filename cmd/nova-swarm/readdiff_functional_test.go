@@ -39,6 +39,7 @@ func TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging(t *testing.T) {
 	require.NoError(t, err)
 	cmd := exec.Command(builtTool, "native", "--harness", builtHarness, "--model", "fake/fake-model", "--card", cardPath, "--frame", framePath,
 		"--slot", slot, "--root", root, "--deadline", "30s", "--tokens", "unmetered", "--label", "w.r1", "--no-wall")
+	cmd.Env = append(os.Environ(), launchHome(t))
 	cmd.Stdout, cmd.Stderr = logf, logf
 	runErr := cmd.Run()
 	require.NoError(t, logf.Close())

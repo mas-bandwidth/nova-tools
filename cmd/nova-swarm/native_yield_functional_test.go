@@ -74,7 +74,7 @@ func TestACardsLaunchRunsBehindCI(t *testing.T) {
 	r := &nativeRunner{
 		self: tool, harness: builtHarness, model: "fake/fake-model", root: dir, slots: slots,
 		resultsRoot: filepath.Join(dir, "results"), deadline: 30 * time.Second, tokens: "unmetered", stderr: &bytes.Buffer{},
-		env: []string{"PATH=" + path}, noWall: noWall,
+		env: []string{"PATH=" + path, launchHome(t)}, noWall: noWall,
 	}
 	p := member.Packet{Card: "nice1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 1, Brief: "FAKE-NICE\n"}
 	ch, err := r.Start(p)
