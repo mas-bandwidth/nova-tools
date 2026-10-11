@@ -1079,6 +1079,38 @@ func TestRunRefusesADirThatIsInsideOrHoldsTheDenySelf(t *testing.T) {
 	})
 }
 
+// A symlink in an ancestor is resolved even when the leaf itself does not yet exist: a --dir
+// whose nearest existing ancestor is a link into the denied self is refused, and so is a deny
+// path spelled through such a link (docs/SPEC-FRIEND.md, the wall: no write may be a denied
+// path, lie inside one or hold one).
+func TestDenySelfConflictResolvesSymlinksUnderANonexistentLeaf(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	self := filepath.Join(root, "ada-working")
+	require.NoError(t, os.MkdirAll(self, 0o755))
+	link := filepath.Join(root, "link-to-self")
+	require.NoError(t, os.Symlink(self, link))
+
+	t.Run("a new directory below a link into the self", func(t *testing.T) {
+		t.Parallel()
+		dir := filepath.Join(link, "newdir") // newdir does not exist
+		why := DenySelfConflict(dir, []string{self})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+
+	t.Run("a deny path spelled through a link with a missing leaf", func(t *testing.T) {
+		t.Parallel()
+		deny := filepath.Join(link, "newdir") // newdir does not exist
+		dir := filepath.Join(self, "newdir")
+		why := DenySelfConflict(dir, []string{deny})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+}
+
 // Proof ids live only until their line is scanned or a newer ping makes
 // them too old to prove life (docs/SPEC-FRIEND.md, the loop).
 func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {

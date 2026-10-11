@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -690,11 +691,29 @@ func DenySelfConflict(dir string, deny []string) string {
 	return ""
 }
 
-// evalDir cleans a path and resolves its symlinks; a path that does not exist keeps its clean
-// form.
+// evalDir cleans a path and resolves its symlinks. A path that does not exist still resolves
+// the longest existing ancestor and re-appends the missing suffix, so a --dir or deny path
+// that reaches the self through a link in an ancestor is caught even when its leaf is not
+// there yet (docs/SPEC-FRIEND.md, the wall: no write may be a denied path, lie inside one or
+// hold one).
 func evalDir(p string) string {
 	if real, err := filepath.EvalSymlinks(p); err == nil {
 		return filepath.Clean(real)
+	}
+	existing, suffix := p, ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		up := filepath.Dir(existing)
+		if up == existing {
+			break
+		}
+		suffix = filepath.Join(filepath.Base(existing), suffix)
+		existing = up
+	}
+	if real, err := filepath.EvalSymlinks(existing); err == nil {
+		return filepath.Clean(filepath.Join(real, suffix))
 	}
 	return filepath.Clean(p)
 }
