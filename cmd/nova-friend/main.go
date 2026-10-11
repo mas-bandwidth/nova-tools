@@ -1652,6 +1652,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	owedStopReturns = d.OwedStopReturns
+	if c.Str("harness") == "opencode" {
+		// a one-shot friend's presence is her lanes', never a growing session
+		// (docs/SPEC-FRIEND.md, presence): her check goes in as a fresh turn of its
+		// own, so a session that is full or missing is never the reason she is down.
+		// The mode is read from --mode (the config at start) first, then the row her
+		// beat delivered; "" (not yet read) is the presence check's own fallback.
+		sc.Mode = func() string { m, _ := d.Row(); return m }
+	}
 	if w.finish == nil || w.cards == nil {
 		d.Take = nil // a world that asks no server: its lanes run the cards on her row in order (a test's)
 	}

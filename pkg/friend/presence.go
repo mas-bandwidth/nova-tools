@@ -209,6 +209,14 @@ type SessionCheck struct {
 	// the push is proved, so the session's late answer to the check already queued
 	// in it proves the push, whatever restarts came between. "" starts fresh.
 	Keep string
+	// Mode is the friend's delivery mode as the daemon reads it (ModeBatch or
+	// ModeOneShot; "" while it has not read it: before the first up beat, or with
+	// no --mode): her check goes in as a fresh turn of its own (FreshTurn) in
+	// one-shot mode, never into a growing session, so a full or missing session
+	// is never the reason she is down. "" tries the session and falls back to a
+	// fresh turn when the session's deliver is refused full or missing, so a
+	// one-shot friend whose beat never comes still reads up. nil is a batch friend.
+	Mode func() string
 
 	mu         sync.Mutex
 	m          *Presence
@@ -263,6 +271,29 @@ func (*DSH) ReadOnReturn()         {}
 func (*Gemini) ReadOnReturn()      {}
 func (*OpenCode) ReadOnReturn()    {}
 func (*Antigravity) ReadOnReturn() {}
+
+// FreshTurn is a deliverer whose check goes in as a fresh turn of its own, a
+// session of its own that no listing is read for and none is grown: the
+// presence of a one-shot friend (docs/SPEC-FRIEND.md, presence: a tiny fresh
+// turn per check). A one-shot friend has no long-lived session by design, so
+// a session that is full or missing is never the reason she is down.
+type FreshTurn interface {
+	DeliverFresh(ctx context.Context, text string) (int, error)
+}
+
+// sessionUnusable says a session check's deliver was refused because the
+// session is full or missing, never because the turn itself failed: a
+// provider's context-window refusal (ContextFull), or no session in the
+// directory to deliver into. It is the fallback a one-shot friend's check
+// takes to a fresh turn (docs/SPEC-FRIEND.md, presence), so a session that is
+// full or missing is never the reason she is down.
+func sessionUnusable(err error) bool {
+	var refused ProviderRefused
+	if errors.As(err, &refused) && ContextFull(refused.Reason) {
+		return true
+	}
+	return strings.Contains(err.Error(), "no opencode session for")
+}
 
 // under calls f on d and each adapter under its gates until f says found.
 func under(d Deliverer, f func(Deliverer) bool) bool {
@@ -672,7 +703,30 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 		if locked {
 			defer s.turn.Unlock()
 		}
-		exit, err := s.deliverer().Deliver(cctx, s.Text(nonce))
+		text := s.Text(nonce)
+		var fresh FreshTurn
+		under(s.Deliver, func(a Deliverer) bool { fresh, _ = a.(FreshTurn); return fresh != nil })
+		mode := ""
+		if s.Mode != nil {
+			mode = s.Mode()
+		}
+		exit, err := 0, error(nil)
+		if mode == ModeOneShot && fresh != nil {
+			// a one-shot friend's check is a fresh turn of its own, never a growing
+			// session (docs/SPEC-FRIEND.md, presence: a tiny fresh turn per check;
+			// FriendPresence.tla, OneShotNeverDownBySession)
+			exit, err = fresh.DeliverFresh(cctx, text)
+		} else {
+			exit, err = s.deliverer().Deliver(cctx, text)
+			// the mode is not yet read (before the first up beat, or no --mode): a
+			// session that is full or missing is never the reason a one-shot friend
+			// is down, so a deliver refused for a full or missing session falls back
+			// to a fresh turn (docs/SPEC-FRIEND.md, presence; FriendPresence.tla,
+			// OneShotNeverDownBySession)
+			if err != nil && fresh != nil && mode == "" && sessionUnusable(err) {
+				exit, err = fresh.DeliverFresh(cctx, text)
+			}
+		}
 		cancel()
 		if err == nil && exit == 0 && under(s.Deliver, func(a Deliverer) bool { _, ok := a.(ReadOnReturn); return ok }) {
 			s.mu.Lock()

@@ -265,6 +265,23 @@ func (o *OpenCode) RunRead(ctx context.Context, model, prompt string) (LaneTurn,
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
 }
 
+// DeliverFresh is one fresh turn of the friend's opencode, a session of its
+// own that no listing is read for and none is grown: `opencode run <text>` in
+// Dir with no --session. It is the daemon's presence check for a one-shot
+// friend (docs/SPEC-FRIEND.md, presence: a tiny fresh turn per check;
+// FriendPresence.tla, OneShotNeverDownBySession), so a session that is full or
+// missing is never the reason she is down. Its output is read as a lane
+// turn's is.
+func (o *OpenCode) DeliverFresh(ctx context.Context, text string) (int, error) {
+	o.allow()
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), o.runVerb(text), "")
+	if o.Out != nil && out != "" {
+		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	exit, err = refused("(fresh)", out, exit, err)
+	return exit, err
+}
+
 // laneLimit is a lane turn's limit: a rate limit or out of funds
 // (ProviderLimit), else the harness's own limit with its reset beside it
 // ("Insufficient AI Credits ... will refresh in 3 hours", ReadLimit), which
