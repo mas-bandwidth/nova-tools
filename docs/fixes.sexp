@@ -458,6 +458,16 @@
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
+  (fix "tla-cardcontract-judge-against-pkg-member" :release "v1.2.12" :status "planned"
+   :title "CardContract's finish is pkg/member Judge's: three finishes with reason classes"
+   :text "The model made provider and staging finishes of their own, but the code has three finishes, ok,
+    failed and reaped, and provider, noresult and staging are a failed finish's reason prefix, never
+    finishes. Judge now returns ok, failed or reaped: a run that ended by itself with no result and a
+    provider failure with a reason are redeal classes, a budget-unverifiable end with no result is a
+    staging refusal, and a provider failure with no reason is failed work, held by the new
+    NoResultIsNotFailedWork invariant and its reversed witness noresultfailed."
+   :origin "this card tla-cardcontract-judge-against-pkg-member")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
