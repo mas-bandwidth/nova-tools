@@ -40,7 +40,10 @@ type ReadHarness interface {
 }
 
 // ReadModels is the model of each tier for a claude account's reads, the table the bud
-// runners carried.
+// runners carried. It is the one claude tier map: nova-friend's ReadModel hook reads it for
+// every claude lane. The owner's rule (2026-10-11): each tier runs the newest model of its
+// class, flash haiku, pro sonnet, heavy opus, frontier fable, and never a bigger class
+// (read_lanes_models_test.go pins both).
 var ReadModels = map[string]string{
 	"frontier": "claude-fable-5-1",
 	"heavy":    "claude-opus-5-5",
