@@ -23,7 +23,7 @@ func TestFriendLintValidatesStoredRows(t *testing.T) {
 	require.Equal(t, 0, code, "migrate should succeed: %s", errs)
 
 	// Add a valid friend row (slots must be >= default width 8)
-	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--file", fileName, "--as", "test")
+	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--roles", "reader", "--file", fileName, "--as", "test")
 	require.Equal(t, 0, code, "friend add should succeed: %s", errs)
 
 	code, out, errs := h.run(t, "friend", "lint", "--file", fileName)
@@ -46,7 +46,7 @@ func TestFriendLintReportsBatchMode(t *testing.T) {
 	require.Equal(t, 0, code, "migrate should succeed: %s", errs)
 
 	// Add a valid friend row (batch mode is not allowed via add/set)
-	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--file", fileName, "--as", "test")
+	code, _, errs = h.run(t, "friend", "add", "test", "--slots", "8", "--tiers", "flash", "--roles", "reader", "--file", fileName, "--as", "test")
 	require.Equal(t, 0, code, "friend add should succeed: %s", errs)
 
 	// lint should report LINT OK since no invalid rows exist
@@ -95,4 +95,28 @@ func TestFriendLintCatchesBatchMode(t *testing.T) {
 	require.Equal(t, 1, code, "lint should fail when batch mode is found: %s %s", out, errs)
 	require.Contains(t, out, "LINT")
 	require.Contains(t, out, "mode")
+}
+
+// TestFriendLintEmptyRoles reports that lint detects stored rows with empty required
+// fields (roles=) and reports them as lint issues.
+func TestFriendLintEmptyRoles(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.dir = t.TempDir()
+
+	// Create file store with a row that has empty roles=
+	fileName := "empty_roles.json"
+	filePath := h.dir + "/" + fileName
+	// Create the file with a friend row that has empty roles
+	// roles is not required but empty value is invalid for TypeList with Enum
+	data := `{"schema":1,"rows":{"friend":{"empties":{"name":"empties","Fields":{"slots":"8","tiers":"flash","roles":"","width":"8","mode":"one-shot","config_dir":"","token_cap":"6000000","streams":"","kinds":""}}}},"history":[]}`
+	err := os.WriteFile(filePath, []byte(data), 0644)
+	require.NoError(t, err)
+
+	// lint should report LINT issue for empty roles
+	code, out, errs := h.run(t, "friend", "lint", "--file", fileName)
+	require.Equal(t, 1, code, "lint should fail when empty roles is found: %s %s", out, errs)
+	require.Contains(t, out, "LINT")
+	require.Contains(t, out, "roles")
 }

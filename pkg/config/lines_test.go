@@ -50,7 +50,7 @@ func TestOpAndKindLines(t *testing.T) {
 	scopedGot66, scopedWant66 := OpLine("CHECK", "machine", Op{Op: OpRemove, Name: "mini"}), "CHECK REMOVE kind=machine name=mini"
 	assert.Equal(t, scopedWant66, scopedGot66, "remove\n got %s\nwant %s", scopedGot66, scopedWant66)
 	friend, _ := Lookup(KindFriend)
-	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds required=slots,tiers rows=many"
+	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds required=slots,tiers,roles rows=many"
 	assert.Equal(t, scopedWant71, scopedGot71, "kind\n got %s\nwant %s", scopedGot71, scopedWant71)
 	fleet, _ := Lookup(KindFleet)
 	scopedGot76, scopedWant76 := KindLine(fleet), "CONFIG KIND name=fleet table=config.fleet fields=store,coordinator,redis_port,pg_dsn,bus,loops_dir required=- rows=one"

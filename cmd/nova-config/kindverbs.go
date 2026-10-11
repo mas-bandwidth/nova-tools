@@ -707,21 +707,22 @@ func runKindLint(ctx context.Context, k *config.Kind, args []string, stdout, std
 	var issues []string
 	for _, row := range rows {
 		for _, f := range k.Fields {
-			if row.Fields[f.Name] == "" {
+			val := row.Fields[f.Name]
+			// For required fields with Enum, empty value is invalid.
+			if f.Required && (f.Type == config.TypeList || f.Type == config.TypeNames || f.Type == config.TypeSeq) && len(f.Enum) > 0 && val == "" {
+				issues = append(issues, fmt.Sprintf("LINT %s %s: %s: %s; run: "+toolName+" %s set %s --%s <value>", k.Name, row.Name, f.Name, val, k.Name, row.Name, f.Name))
 				continue
 			}
-			_, err := f.Canonical(row.Fields[f.Name])
+			_, err := f.Canonical(val)
 			if err != nil {
-				issues = append(issues, fmt.Sprintf("LINT %s %s: %s: %s; run: "+toolName+" %s set %s --%s <value>", k.Name, row.Name, f.Name, row.Fields[f.Name], k.Name, row.Name, f.Name))
+				issues = append(issues, fmt.Sprintf("LINT %s %s: %s: %s; run: "+toolName+" %s set %s --%s <value>", k.Name, row.Name, f.Name, val, k.Name, row.Name, f.Name))
 			}
 		}
 	}
 
 	if *asJSON {
 		o := tool.Done().Fact("kind", k.Name).Fact("rows", len(rows)).Fact("issues", len(issues))
-		for _, issue := range issues {
-			o.Notes = append(o.Notes, issue)
-		}
+		o.Notes = append(o.Notes, issues...)
 		o.Verb = verb
 		return emit(stdout, o)
 	}

@@ -114,7 +114,7 @@ func TestApplyOrder(t *testing.T) {
 	_, err = st.Insert(ctx, KindMachine, mrow, "actor")
 	require.NoError(t, err)
 	for _, name := range []string{"f1", "f2"} {
-		frow, err := friend.NewRow(name, map[string]string{"slots": "8", "tiers": "flash"})
+		frow, err := friend.NewRow(name, map[string]string{"slots": "8", "tiers": "flash", "roles": "builder"})
 		require.NoError(t, err)
 		_, err = st.Insert(ctx, KindFriend, frow, "actor")
 		require.NoError(t, err)
