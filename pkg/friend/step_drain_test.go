@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,23 +52,32 @@ func TestTwoOutboxFinishesRunSideBySide(t *testing.T) {
 	row.set(a, b)
 
 	var mu sync.Mutex
-	started := 0
+	started, done := 0, 0
 	both := make(chan struct{})
 	r.d.Finish = func(_ context.Context, _ []string) error {
 		mu.Lock()
 		started++
-		if started == 2 {
+		second := started == 2
+		mu.Unlock()
+		if second {
 			close(both)
 		}
+		select {
+		case <-both:
+		case <-time.After(2 * time.Second):
+			return errors.New("the other finish never started: the finishes ran one at a time")
+		}
+		mu.Lock()
+		done++
 		mu.Unlock()
-		<-both
 		return nil
 	}
 	r.run(t, 6)
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, 2, started, "both finishes started and neither waited for the other to end")
+	assert.Equal(t, 2, started, "both finishes started")
+	assert.Equal(t, 2, done, "both finishes saw the other start and ended: neither waited for the other to end")
 	assert.True(t, r.d.outbox.finished[a.Job] && r.d.outbox.finished[b.Job], "both finishes ended and were applied")
 }
 
@@ -100,7 +110,11 @@ func TestALaneIsTakenInTheStepWhileAFinishIsInFlight(t *testing.T) {
 	var mu sync.Mutex
 	finished := false
 	r.d.Finish = func(_ context.Context, _ []string) error {
-		<-delivered
+		select {
+		case <-delivered:
+		case <-time.After(2 * time.Second):
+			return errors.New("the lane was not taken while the finish was in flight")
+		}
 		mu.Lock()
 		finished = true
 		mu.Unlock()
