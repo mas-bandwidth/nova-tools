@@ -185,7 +185,7 @@ func (p *ProviderProxy) serveBudgeted(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "upstream", http.StatusBadGateway)
+		http.Error(w, "upstream: the request could not be read: "+oneLineErr(err), http.StatusBadGateway)
 		return
 	}
 	b := p.budget
@@ -215,7 +215,7 @@ func (p *ProviderProxy) serveBudgeted(w http.ResponseWriter, r *http.Request) {
 		err := b.sleep(ctx, backoff)
 		p.bstate.stalled.Add(-1)
 		if err != nil {
-			http.Error(w, "the run ended while its request waited out a refusal", http.StatusBadGateway)
+			http.Error(w, "the run ended while its request waited out a refusal: "+oneLineErr(err), http.StatusBadGateway)
 			return
 		}
 		backoff = min(2*backoff, capped)
@@ -281,7 +281,11 @@ func (p *ProviderProxy) forwardBudgeted(ctx context.Context, w http.ResponseWrit
 		http.Error(w, "upstream", http.StatusBadGateway)
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			b.log("RATE BUDGET NOTE %s: the provider's body did not close: %s", holder, oneLineErr(err))
+		}
+	}()
 	p.sawHeaders()
 	var head []byte
 	src := io.Reader(resp.Body)

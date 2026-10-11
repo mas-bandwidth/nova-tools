@@ -73,15 +73,19 @@ func nativeBudget(cfg nativeRunConfig, notes io.Writer) *swarm.ProxyBudget {
 		// the provider has a concurrency budget: each request's slot is renewed while it
 		// runs and freed when it ends; with none, no call is made for either
 		b.Renew = func(ctx context.Context, h string) {
-			// ignored: a renewal not written is a lease that runs out, never an error the
-			// request could fail on
-			_, _ = send(ctx, "renew", h)
+			// a renewal not written is a lease that runs out, never an error the request
+			// could fail on: it is said, and the request goes on
+			if _, err := send(ctx, "renew", h); err != nil {
+				logf("RATE BUDGET RENEW " + h + " not written (" + err.Error() + "): the slot's lease runs out by itself")
+			}
 		}
 		b.Release = func(h string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			// ignored: a slot not freed expires by itself (its lease)
-			_, _ = send(ctx, "release", h)
+			// a slot not freed expires by itself (its lease): said, never a failure
+			if _, err := send(ctx, "release", h); err != nil {
+				logf("RATE BUDGET RELEASE " + h + " not written (" + err.Error() + "): the slot's lease runs out by itself")
+			}
 		}
 	}
 	return b

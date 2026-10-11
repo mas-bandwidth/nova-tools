@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // An unlimited route (no --budget-server) has no budget on its proxy: the proxy is as it
@@ -13,40 +15,36 @@ import (
 // renews and releases nothing (no call is made for either).
 func TestNativeBudgetOnlyForALimitedRoute(t *testing.T) {
 	t.Parallel()
-	if b := nativeBudget(nativeRunConfig{model: "inception/mercury-3-preview-1002"}, nil); b != nil {
-		t.Fatal("an unlimited route has a budget")
-	}
+	assert.Nil(t, nativeBudget(nativeRunConfig{model: "inception/mercury-3-preview-1002"}, nil), "an unlimited route has no budget")
 	var notes bytes.Buffer
 	taken := 0
 	cfg := nativeRunConfig{model: "inception/mercury-3-preview-1002", budgetServer: "127.0.0.1:1", budgetAs: "hetzner", budgetHolder: "c1.g2",
 		budgetTake: func(context.Context, string) (bool, time.Duration, error) { taken++; return true, 0, nil }}
 	b := nativeBudget(cfg, &notes)
-	if b == nil || b.Holder != "c1.g2" {
-		t.Fatalf("budget %+v", b)
-	}
-	if ok, _, err := b.Take(context.Background(), "c1.g2.r1"); !ok || err != nil || taken != 1 {
-		t.Fatalf("take: %v %v (%d)", ok, err, taken)
-	}
-	if b.Renew != nil || b.Release != nil {
-		t.Fatal("an rpm-only route renews or releases slots it never took")
-	}
+	require.NotNil(t, b)
+	assert.Equal(t, "c1.g2", b.Holder)
+	ok, _, err := b.Take(context.Background(), "c1.g2.r1")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, 1, taken)
+	assert.Nil(t, b.Renew, "an rpm-only route renews no slot")
+	assert.Nil(t, b.Release, "an rpm-only route releases no slot")
 	cfg.budgetSlots = true
-	if b := nativeBudget(cfg, &notes); b.Renew == nil || b.Release == nil {
-		t.Fatal("a provider with a concurrency budget does not renew and release its slots")
-	}
+	slots := nativeBudget(cfg, &notes)
+	require.NotNil(t, slots)
+	assert.NotNil(t, slots.Renew, "a provider with a concurrency budget renews its slots")
+	assert.NotNil(t, slots.Release, "a provider with a concurrency budget releases its slots")
 	b.Log("RATE BUDGET WAIT c1.g2.r1: spent")
-	if !strings.Contains(notes.String(), "NATIVE NOTE: RATE BUDGET WAIT") {
-		t.Fatalf("notes %q", notes.String())
-	}
+	assert.Contains(t, notes.String(), "NATIVE NOTE: RATE BUDGET WAIT")
 }
 
 // The server cannot be reached: the take is an error, which the proxy grants open.
 func TestNativeBudgetServerDownIsAnError(t *testing.T) {
 	t.Parallel()
 	b := nativeBudget(nativeRunConfig{model: "inception/m", budgetServer: "127.0.0.1:1", budgetAs: "m1", budgetHolder: "h"}, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	require.NotNil(t, b)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, _, err := b.Take(ctx, "h.r1"); err == nil {
-		t.Fatal("an unreachable server answered a take")
-	}
+	_, _, err := b.Take(ctx, "h.r1")
+	assert.Error(t, err, "an unreachable server answered a take")
 }
