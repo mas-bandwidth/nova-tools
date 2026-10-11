@@ -303,10 +303,11 @@ func (g *gateSprint) Run(args ...string) (int, []byte) {
 // TestAMovedClaimWhileReportingIsReapedNotApplied pins STEP (4): a report whose claim moved
 // while it ran is collected as reaped, not applied (m.forget + the FinishReaped line), exactly
 // as the in-pass moved-claim reap does. In a Background member the report is launched by the
-// pass that still showed the old claim; a later pass reads the queue showing the claim moved
-// and skips the busy launch; only when the report posts is it collected, and it must be reaped
-// then, never applied with a finish for the old generation/epoch. Red at HEAD: collect applied
-// the posted report (applyReport), printing `finish c1 ok=true` and forgetting it as reported.
+// pass that still showed the old claim; the claim then moves and the report posts during the
+// inter-tick sleep, before any pass reads the moved queue. The pass that collects it must reap
+// it then, against the queue it just read, never apply a finish for the old generation/epoch.
+// Red at HEAD: the collecting pass's first collect (before its queue read) applied the posted
+// report against the previous pass's queue, printing `finish c1 ok=true` instead of reaping.
 func TestAMovedClaimWhileReportingIsReapedNotApplied(t *testing.T) {
 	t.Parallel()
 	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
@@ -332,12 +333,11 @@ func TestAMovedClaimWhileReportingIsReapedNotApplied(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
 
-	// the claim moves while the report runs: the queue shows gen 2
+	// the claim moves while the report runs: the queue shows gen 2, and the report
+	// posts before any pass has read that queue (no Tick in between)
 	moved := pk("c1")
 	moved.Gen = 2
 	gs.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
-	_, err = m.Tick(time.Unix(0, 0)) // the busy launch is skipped
-	require.NoError(t, err)
 
 	close(gs.release)
 	<-m.Wake()                       // the report posted
