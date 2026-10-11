@@ -307,6 +307,16 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "nt-release-cycle-stubs-written-under-the-fork-lock" :release "v1.2.12" :status "planned"
+   :title "The release cycle's test stubs are written under the fork lock"
+   :text "cycle_test.go wrote the fake nova-inventory with os.WriteFile(..., 0o755) and cycle execs it.
+    A parallel test's fork inherits the open write descriptor until its own exec, so the exec races
+    ETXTBSY, \"text file busy\". The three executable stubs now go through testbin.WriteExecutable,
+    which holds syscall.ForkLock for reading while the file is open, as release_test.go, security_test.go
+    and windows_test.go already do. The fleet/tools.yml stub (0o644) stays a plain WriteFile; no
+    assertions changed."
+   :origin "the v1.2.12 inventory (tmp/v1.2.12-inventory-2026-10-11.md), card A6 and section 10 note 5; the repeated ETXTBSY flake class nova-sprint closed in its own tests (#88: 3109efe, 27b5341)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
