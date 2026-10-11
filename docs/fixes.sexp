@@ -515,6 +515,17 @@
     left with PublishedImpliesPersisted. cairn.go now cites the module from Open and appendEntry."
    :origin "card tla-cairnstore-no-gap-ledger-and-reopen.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friendnotifications-withdraw-and-coalesce" :release "v1.2.12" :status "planned"
+   :title "FriendNotifications models the deal-notice withdrawal, coalescing and the wake ping"
+   :text "FriendNotifications.tla gains the deal notice's withdrawal (a Withdraw action guarded by an
+    allTaken ghost, acked with the ready bit cleared and nothing queued, which NoLostReady now allows),
+    per-friend coalescing (the newer notice replaces the older, the older acked) and the wake ping entering
+    the urgent batch with the pong line; the reversed witness MCFriendNotificationsBrokenWithdrawHeld
+    withdraws while a card is still held and fails NoLostReady. FriendNotificationsCapacity's header names
+    the Codex queue's read as the capacity and that held nonurgent input returns after ClaimAfter, cited
+    from adapter_codex.go. Tests and models only, no product change."
+   :origin "card tla-friendnotifications-withdraw-and-coalesce.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "tla-friend-link-and-challenge" :release "v1.2.12" :status "planned"
    :title "Friend's link and challenge model brought level with the daemon"
    :text "Friend.tla's header names pkg/friend, not internal/friend; a ping read past the challenge
