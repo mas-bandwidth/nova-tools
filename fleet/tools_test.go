@@ -402,6 +402,30 @@ func TestToolsPlayNeverCompilesATool(t *testing.T) {
 	}
 }
 
+// TestFriendHostInstallsAdoptedBuild: the friend host step of the friends play
+// installs the adopted build named in the config: it runs nova-friend install
+// from {{ nova_bin_dir }}/nova-friend.
+func TestFriendHostInstallsAdoptedBuild(t *testing.T) {
+	t.Parallel()
+	plays := readTools(t)
+	play := playNamed(t, plays, "the friends of the fleet hosts reinstalled onto the installed build")
+	tasks := flattenTasks(t, tasksOf(t, play))
+
+	// Find the reinstall task that runs nova-friend install from nova_bin_dir.
+	found := false
+	for _, task := range tasks {
+		if cmd, ok := task["ansible.builtin.command"].(map[string]any); ok {
+			if argv, ok := cmd["argv"].(string); ok {
+				if strings.Contains(argv, "nova_bin_dir") && strings.Contains(argv, "nova-friend") && strings.Contains(argv, "install") {
+					found = true
+					break
+				}
+			}
+		}
+	}
+	assert.True(t, found, "the friend host step does not plan to install the adopted build from nova_bin_dir")
+}
+
 // TestToolsPlayChecksEveryInstalledToolAgainstTheRelease: after the install and
 // the friends' reinstall, a play on every host lists the bin directory with the
 // sha256 of each file, compares it with the release's SHA256SUMS, and refuses
