@@ -504,6 +504,16 @@
     product change."
    :origin "the card tla-reach-from-a-step-and-early-proof.w1 (stream v1212)")
 
+  (fix "tla-friendlane-every-hand-back-is-a-request" :release "v1.2.12" :status "planned"
+   :title "FriendLane models a work card's no-begin run and the row-read drop"
+   :text "The FriendLane model now does what lane_take.go does: a work card goes from taken to running
+    with no begin (a read keeps its begin, read_lanes.go), a row read that disagrees drops the card
+    locally and the lane asks again (laneCheck), and Card.Epoch's directory-epoch fallback (the
+    LocalEpoch witness's live behaviour wherever the server named none) is named. A seventh reversed
+    witness, keeponmismatch, lets a lane keep running its card after a row read disagrees and fails
+    WorkingOnlyOnTheServersSay. Tests and models only, no product change."
+   :origin "card tla-friendlane-every-hand-back-is-a-request.w6 (stream v1212)")
+
   (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "planned"
    :title "The CardMachine copy is retired; nova-sprint's is the one copy"
    :text "tla/CardMachine.tla modelled 02_card_move.lua, which neither repository carries any more, and
@@ -656,6 +666,21 @@
     the module does not model. Tests and models only, no product change."
    :origin "card tla-delivery-note-from-the-seat.w10 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-stopcancels-held-cards-and-reads" :release "v1.2.12" :status "planned"
+   :title "The stop-cancels model holds the take, the held card and the reads"
+   :text "StopCancels.tla named its worker's functions internal/member machineStop and
+    internal/friend/stop.go, both gone (pkg/member/member.go, pkg/friend/stop.go); its Return
+    required the word STOPPED where the code sends every owed stop-return whatever the word; its
+    Start took and launched in one step where the code claims a card and holds it before it launches,
+    a held card given up with its return owed when the word turns (releaseHeld); and it had no reads,
+    where stopReads cancels every read under way and owes its return. The module now names pkg/member
+    and pkg/friend, splits Take from Start, gives the held card up on STOP, cancels reads with owed
+    returns, and sends Return in either word, with a reversed witness (heldthrough: a held card
+    launches through the stop, breaking NoLaunchAfterStop). NoLaunchAfterStop still holds. Only lanes
+    and reads are cancelled: a batch turn already running goes on (a dealt-card turn started by
+    startDealt, daemon.go), a v1.2.14 candidate."
+   :origin "card tla-stopcancels-held-cards-and-reads.w7 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
@@ -752,6 +777,10 @@
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
    :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+  (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
+   :title "The claude harness runs the newest model of each tier's class"
+   :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
+   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")
   (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.15" :status "planned"
    :title "A harness limit in any wording pauses the lanes, never a failed attempt"
    :text "A provider or harness limit in any wording the harness prints pauses the friend's lanes until its reset and is never a failed attempt of the card. ReadLimit strips the CLI's colour codes before it matches and reads the harness's own weekly-limit line beside a non-rejecting rate_limit_event, so claude -p's \"You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\" is a limit until its named reset instead of a run the daemon records as a failed attempt."
