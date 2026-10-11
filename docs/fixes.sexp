@@ -716,6 +716,21 @@
     models only, no product change."
    :origin "card tla-bus2-names-pkg-bus-and-the-idle-claim.w9 (v1.2.12 inventory item T32; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-bus2receipts-read-at-recv" :release "v1.2.12" :status "planned"
+   :title "Bus2Receipts reads the receipt at the recv and models the give-up, the present and the failed acted stamp"
+   :text "Tests and models only, no product change. The module's header named internal/bus/stages.go and
+    internal/friend/daemon.go (they are pkg/bus/stages.go, redis.go, pkg/friend/daemon.go, present.go).
+    It read the receipt at the take; the code reads it at the recv (Entry.Stage, bus.go:478-481,
+    daemon.go:1126), so a redelivered id the daemon remembers or whose receipt recv found acted is
+    dropped and acked there, never pushed in twice. It now acks a message given up at read
+    (daemon.go settle), stamps the present's backlog delivered and acks it superseded (present.go:256,
+    :311), and models the failed acted stamp (Broken = losestamp, daemon.go oweActed): the daemon
+    remembers the turn but the receipt stays read. A new witness MCBus2ReceiptsKnownGap checks the
+    known gap, a failed stamp, a lost ack and a crash together act a message twice (NoIdActedTwice);
+    the two existing witnesses keep their results. ReceiptNeverMovesBack, ActedImpliesDelivered and
+    NoIdActedTwice hold."
+   :origin "the card tla-bus2receipts-read-at-recv.w7 (stream v1212, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
