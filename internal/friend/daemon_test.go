@@ -638,10 +638,12 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 		name    string
 		restart bool // a second Run: the memory is gone, the receipt stands
 		noStamp bool // the acted stamp is refused: the memory stands
+		restamp bool // the acted stamp is refused, the store answers, the receipt is written again, then a restart
 	}{
 		{name: "the memory"},
 		{name: "the receipt, across a restart", restart: true},
 		{name: "the memory, with no acted stamp", noStamp: true},
+		{name: "the receipt, written again after a failed stamp, across a restart", restamp: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -649,16 +651,26 @@ func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
 			st := &lostAck{Fake: r.store, lose: 1}
 			r.d.Store = st
 			m := r.send(t, "ada", "hello", "once")
-			if tc.noStamp {
+			if tc.noStamp || tc.restamp {
 				r.at[1] = func() { r.store.FailForward = errors.New("NOPERM receipts") } // after the delivered stamp, before the turn ends
 			}
-			if !tc.restart {
-				r.at[4] = func() { r.store.Advance(bus.ClaimAfter) }
-				r.run(t, 8)
-			} else {
+			switch {
+			case tc.restamp:
+				// the turn ends at exit 0 with its acted stamp refused and its ack lost;
+				// the store answers again, the owed receipt is written again, then the
+				// daemon restarts and the claim hands the message in.
+				r.at[3] = func() { r.store.FailForward = nil }
+				r.run(t, 5)
+				r.store.FailForward = nil
+				r.store.Advance(bus.ClaimAfter)
+				r.run(t, r.beats+4)
+			case tc.restart:
 				r.run(t, 4)
 				r.store.Advance(bus.ClaimAfter)
 				r.run(t, r.beats+4)
+			default:
+				r.at[4] = func() { r.store.Advance(bus.ClaimAfter) }
+				r.run(t, 8)
 			}
 			require.Len(t, r.delivered, 1, "pushed in once: %v", r.records)
 			pending, fresh, err := r.bus.Peek(context.Background(), "bob")

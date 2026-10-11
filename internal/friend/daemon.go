@@ -66,7 +66,11 @@ const (
 // turn that ended acted: a second delivery of one (the claim hands a message
 // in again when its ack was lost) is dropped and acked, never pushed in twice.
 // Past the memory, the message's receipt says acted all the same (Entry.Stage;
-// docs/SPEC-BUS.md, message-receipts; tla/Bus2Receipts.tla, Take).
+// docs/SPEC-BUS.md, message-receipts; tla/Bus2Receipts.tla, Take). An acted
+// receipt the store did not write is owed (at most ActedKept too, oldest
+// dropped first) and written again when the store next answers, so a restart
+// with the store up no longer redelivers; only a restart while the store stays
+// down can still redeliver.
 const ActedKept = 4096
 
 // SeatCacheFor is how long the daemon keeps the seat holder it read from the
@@ -527,6 +531,8 @@ type loop struct {
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	acted        map[string]bool // message ids pushed into a turn that ended acted, at most ActedKept
 	actedOrder   []string        // the same ids, oldest first, for the bound
+	owedActed    []string        // ids whose acted receipt the store did not write: written again when it answers, oldest first, at most ActedKept
+	owedSaid     bool            // a standing owed-receipt failure is said once, never once a beat
 	now          time.Time       // the step's clock, for a line said beside a verb (OnStampError)
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
@@ -1073,6 +1079,7 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 func (l *loop) read(now time.Time) bool {
 	d, b := l.d, l.b
 	if l.busy == nil && !l.passive && !l.broken {
+		l.restampActed(now) // an acted receipt the store did not write is owed: write it again before the next Recv (message-receipts)
 		// in one-shot mode the lanes' turns run while the loop reads: it reads
 		// at once and pauses after, so a lane's result is never a block behind
 		block := BeatEvery
@@ -1450,9 +1457,44 @@ func (l *loop) stampTurn(t *turn, state string) string {
 		ids[i] = m.ID
 	}
 	if _, err := l.b.Stamp(l.ctx, l.d.Friend, state, ids...); err != nil {
+		if state == bus.Acted {
+			// an acted receipt keeps a message from a second turn: it is owed and
+			// written again when the store answers. A read receipt is not owed.
+			l.oweActed(ids)
+			l.owedSaid = true // said here, on the turn's line; never again while it stands
+		}
 		return fmt.Sprintf(" receipt=%s-not-written error=%q", state, oneLine(err.Error(), 200))
 	}
 	return ""
+}
+
+// oweActed keeps the ids whose acted receipt the store did not write, the
+// newest ActedKept of them, oldest dropped first (docs/SPEC-BUS.md,
+// message-receipts; tla/Bus2Receipts.tla, TurnEnd).
+func (l *loop) oweActed(ids []string) {
+	l.owedActed = append(l.owedActed, ids...)
+	for len(l.owedActed) > ActedKept {
+		l.owedActed = l.owedActed[1:]
+	}
+}
+
+// restampActed writes the owed acted receipts again once the store answers,
+// all in one stamp (Forward moves a receipt only forward, so a repeat is
+// harmless). A failure keeps them owed and is said once while it stands,
+// never once a beat (docs/SPEC-BUS.md, message-receipts;
+// tla/Bus2Receipts.tla, TurnEnd).
+func (l *loop) restampActed(now time.Time) {
+	if len(l.owedActed) == 0 {
+		return
+	}
+	if _, err := l.b.Stamp(l.ctx, l.d.Friend, bus.Acted, l.owedActed...); err != nil {
+		if !l.owedSaid {
+			l.d.Record(fmt.Sprintf("%s receipt=acted-not-written error=%q; written again when the store answers", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 200)))
+			l.owedSaid = true
+		}
+		return
+	}
+	l.owedActed, l.owedSaid = nil, false
 }
 
 // remember keeps the ids of the messages t carried, a turn that ended acted,
