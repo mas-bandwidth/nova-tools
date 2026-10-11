@@ -571,12 +571,14 @@
 # the new library:
 #   the candidate's checks pass (the install play, before anything changes);
 #   the window opens only when the install replaces a tool or the library is
-#   not the installed build's: every loaded nova agent but the friend
-#   daemons (and any agent whose process is a nova-sprint or a nova-swarm
-#   member) is booted out, a member draining on the SIGTERM, and launchd is
-#   waited on to hold none of them (nova_member_stop_timeout and 30 s more);
-#   ps then shows no nova-sprint and no nova-swarm member left, waited on
-#   for nova_seat_quiet seconds: nothing migrates while one runs;
+#   not the installed build's: the agents it stops (every loaded nova agent
+#   but the friend daemons, and any agent whose process is a nova-sprint or
+#   a nova-swarm member) are booted out, a member draining on the SIGTERM,
+#   and launchd is waited on to hold none of them (nova_member_stop_timeout
+#   and 30 s more); live then shows none of them running, waited on for
+#   nova_seat_quiet seconds: nothing migrates while one of them runs, and
+#   the window waits for the agents it stopped alone, never every nova agent
+#   on the host;
 #   the configuration store is migrated as its owner (the candidate's
 #   nova-config migrate --window --pg nova_pg_owner_dsn), the library loaded (its nova-redis fn load), the tools
 #   installed (its nova-update release install, fresh inodes);
@@ -681,6 +683,30 @@
               stops={{ seat_stopped_labels | join(',') or 'none' }}
           when: seat_window
 
+        # --check says what each window step would do: which agents it would
+        # stop, then the migrate, the library load and the install it would run.
+        - name: "window: what --check would stop"
+          ansible.builtin.debug:
+            msg: "WOULD-STOP {{ item.label }} on {{ inventory_hostname }}: booted out (a member drains on the SIGTERM)"
+          loop: "{{ seat_stopped }}"
+          loop_control: { label: "{{ item.label }}" }
+          when: seat_window and ansible_check_mode
+
+        - name: "window: what --check would migrate"
+          ansible.builtin.debug:
+            msg: "WOULD-MIGRATE {{ nova_pg_owner_dsn }} as {{ nova_pg_owner }} with {{ seat_stage }}/nova-config migrate --window"
+          when: seat_window and ansible_check_mode
+
+        - name: "window: what --check would load"
+          ansible.builtin.debug:
+            msg: "WOULD-LOAD {{ nova_redis_addr }} with {{ seat_stage }}/nova-redis fn load"
+          when: seat_window and ansible_check_mode
+
+        - name: "window: what --check would install"
+          ansible.builtin.debug:
+            msg: "WOULD-INSTALL {{ nova_version }} into {{ nova_bin_dir }} with {{ seat_stage }}/nova-update release install"
+          when: seat_window and ansible_check_mode
+
         - name: "window: stop the old server, member and every nova agent but the friends"
           when: seat_window and not ansible_check_mode
           block:
@@ -711,32 +737,30 @@
               # the non-zero exit is the answer it waits for, never a failure
               failed_when: seat_held.rc == 0
 
-            - name: "window: ps shows no nova-sprint and no nova-swarm member (through live)"
+            - name: "window: the agents the window stopped run no longer (through live)"
               ansible.builtin.command: { argv: "{{ seat_live }}" }
               environment: "{{ seat_env }}"
               register: seat_quiet
               until: >-
                 seat_quiet.stdout is match('[{]') and
-                ((seat_quiet.stdout | from_json).processes | selectattr('holds') | list | length) == 0
+                ((seat_quiet.stdout | from_json).agents | selectattr('label', 'in', seat_stopped_labels) | selectattr('holds') | list | length) == 0
               retries: "{{ (nova_seat_quiet | int / 2) | round(0, 'ceil') | int }}"
               delay: 2
               changed_when: false
               # ignored: read by the assert below, which names the step
               failed_when: false
 
-            - name: "window: nothing old runs"
+            - name: "window: nothing the window stopped runs"
               ansible.builtin.assert:
                 that: seat_quiet.stdout is match('[{]') and seat_runs | length == 0
                 fail_msg: >-
-                  ADOPT REFUSED step=window host={{ inventory_hostname }}: these still run after {{ nova_seat_quiet }} s, so nothing
+                  ADOPT REFUSED step=window host={{ inventory_hostname }}: these agents the window stopped still run after {{ nova_seat_quiet }} s, so nothing
                   was migrated: {{ seat_runs | join('; ') or 'the manifest was not read' }}
                 quiet: true
               vars:
                 seat_runs: >-
-                  {{ ((seat_quiet.stdout | from_json).processes if seat_quiet.stdout is match('[{]') else [])
-                     | selectattr('holds') | map(attribute='pid') | map('string')
-                     | zip(((seat_quiet.stdout | from_json).processes if seat_quiet.stdout is match('[{]') else [])
-                           | selectattr('holds') | map(attribute='args')) | map('join', ' ') | list }}
+                  {{ ((seat_quiet.stdout | from_json).agents if seat_quiet.stdout is match('[{]') else [])
+                     | selectattr('label', 'in', seat_stopped_labels) | selectattr('holds') | map(attribute='label') | list }}
 
             # As the owner (nova_pg_owner, its DSN and password key from group_vars),
             # inside the window: --window makes the candidate's nova-config refuse,

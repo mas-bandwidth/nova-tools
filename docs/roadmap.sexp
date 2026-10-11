@@ -1692,13 +1692,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "issue #855; issue #856")
-  (item "adopt-window-and-dry-run-fixes" :group "ops"
-   :title "Adopt waits only for agents it stopped and dry-runs honestly"
-   :text "The adopt window waits only for the agents the adopt itself stopped, and its dry run reports
-    what each step would do instead of saying would for every step."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "card from the sprint store (2026-10-10)")
   (item "friend-open-session-delivery" :group "friends"
    :title "Messages reach each harness's open session reliably"
    :text "Delivery into the open session of each harness is measured and reliable, and a message never
