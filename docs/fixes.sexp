@@ -535,6 +535,20 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-cardcontract-retire-the-sprint-actions" :release "v1.2.12" :status "planned"
+   :title "CardContract retires the sprint's redeal, retire, restage, staging bound and level"
+   :text "CardContract.tla's Redeal, Retire, Restage, StagingAll and Level modelled internal/sprint's side
+    (the redeal after a provider finish, the retire at the redeal bound, the restage after a staging
+    refusal, the staging bound and the level), which moved to nova-sprint in v1.2.3 and nothing in
+    nova-tools runs. Those actions, the sprint-side variables (rt, tried, rds, fw, bj, mem, refused, sj,
+    lvd) and constants (Routes, MaxRedeals, Members), and the invariants they alone reached
+    (NeverOnARefuser, StagingBoundJudgedOnce, RedealBound, BoundJudgedOnce, RedealAvoidsFailedRoute,
+    RedealRestagesTheSameBase) are removed, with their reversed witnesses (sameroute, unbounded,
+    levelrefuser) and their CASES.tsv and RUNS.tsv rows. The member's push and the one judgment stay; a
+    provider finish and a staging refusal are now terminal finishes, and EveryLaunchEnds is restated over
+    them. Tests and models only, no product change."
+   :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
