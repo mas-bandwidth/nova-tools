@@ -432,6 +432,24 @@
     clock ticks after the child it must stop has started; the assertions are unchanged."
    :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, \"From the nova-tools certification fix\", 2026-10-11); this card nt-friend-token-cap-test-passes-repeated.w1")
 
+  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "planned"
+   :title "The provider proxy's global rate budget pinned in the unit tier"
+   :text "takeBudget (providerbudget.go:107), serveBudgeted (:181) and forwardBudgeted (:228) were never run by
+    a unit test (0 statements each under -cover), only by the functional tier over loopback.
+    pkg/swarm/providerbudget_behaviour_test.go drives (*ProviderProxy).ServeHTTP (providerproxy.go:423) with a
+    budget set through an in-process RoundTripper, a ProxyBudget whose Take, Release, Renew, Log and Sleep are
+    recorded fakes, and an httptest recorder: a take told to wait stalls and then grants (waits clamped into
+    [10 ms, BudgetPollMax], the holder released once), an unreadable take goes open with one RATE BUDGET OPEN
+    line, a stall logs one RATE BUDGET WAIT then one RATE BUDGET GRANTED with the waits, a limit refusal is
+    sent again after a doubling backoff with the same method, path, query, body and ContentLength and hop
+    headers dropped, out of funds passes through whole even over 64 KiB, the run ending during a stall or a
+    refusal backoff is a 502, an unreadable body is a 502 before any take, a transport error is a 502 with the
+    slot still released, and a send renews its slot while it runs. Statement coverage: takeBudget 0% to 92.6%,
+    serveBudgeted 0% to 100.0%, forwardBudgeted 0% to 77.6%. A silent-body abort is a v1.2.14 candidate: the
+    doc says each send frees its slot after, but Release is called only after forwardBudgeted returns and a
+    body-silence abort panics http.ErrAbortHandler first, so the slot stays held until its lease expires."
+   :origin "card cover-provider-budget-proxy-unit.w6, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C9")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
