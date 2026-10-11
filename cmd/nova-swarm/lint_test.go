@@ -221,6 +221,30 @@ func TestLintNamesEveryNovaSandboxCommandLine(t *testing.T) {
 
 // `lint <file>` is `lint --card <file>`: every child tried the positional first (friction
 // 12). Two files, or both forms, are refused.
+// scratch-absolute reads only the lines the card INSTRUCTS, never the text it quotes in a
+// fenced block: a variable named `scratch` in a pasted program is not a relative scratch
+// path. The same relative path in the card's own prose is still refused (issue #2302).
+func TestLintPassesAScratchVariableInAQuotedFence(t *testing.T) {
+	t.Parallel()
+
+	// the good card names its scratch absolutely in two places; make the fence the only
+	// `scratch` in the card so the check hinges on the quoted line alone
+	base := strings.ReplaceAll(lintGoodCard(), "scratch", "out")
+	fence := strings.Join([]string{"```go", "scratch |= v << scratchBits;", "```"}, "\n")
+
+	quoted := strings.Replace(base, "STEP 4. Run:", fence+"\nSTEP 4. Run:", 1)
+	card := writeLintCard(t, "scratch-fence.card", quoted)
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
+	require.Equal(t, 0, exit, "a `scratch` variable in quoted code is not a path: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.NotContains(t, stdout, "scratch-absolute", "quoted code draws no scratch-absolute drift: %q", stdout)
+
+	prose := strings.Replace(base, "STEP 4. Run:", fence+"\nwrite it to scratch/out.txt\nSTEP 4. Run:", 1)
+	card = writeLintCard(t, "scratch-prose.card", prose)
+	exit, stdout, _ = runSwarm(t, "lint", "--card", card)
+	require.Equal(t, 1, exit, "a relative scratch in the prose is still refused: exit %d\nstdout: %s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=scratch-prose.card scratch-absolute:", "the prose path is named: %q", stdout)
+}
+
 func TestLintTakesTheCardFileAsAPositional(t *testing.T) {
 	t.Parallel()
 

@@ -104,6 +104,35 @@ func TestAnEllipsisIsNotAParentPath(t *testing.T) {
 	}
 }
 
+// A `>` is a redirect only where it is not part of `=>` or `->`. A Go module's `replace`
+// directive is written with `=>`, and a card that pastes the line as a quotation walks no
+// parent path. The redirect proper -- a `>` of its own -- is still a finding, fence or no
+// fence, the same as the `--root` write shape (issue #2302).
+func TestARedirectIsOnlyAStandaloneGreaterThan(t *testing.T) {
+	t.Parallel()
+
+	// a pasted diff line: `=>` is not a shell redirect
+	got := CardParentPaths(lines(
+		"RESULT: c sha=0",
+		"```",
+		"+\tmod := \"replace tblfu1 => ../fu1\"",
+		"```",
+	))
+	require.Empty(t, got, "`=>` is not a redirect: %v", got)
+
+	for _, c := range []struct {
+		name string
+		ls   []string
+	}{
+		{"outside a fence", lines("RESULT: c sha=0", "echo x > ../out")},
+		{"inside a fence", lines("RESULT: c sha=0", "```", "echo x > ../out", "```")},
+		{"a --root write", lines("RESULT: c sha=0", "nova-swarm gather --root ../queue")},
+	} {
+		got := CardParentPaths(c.ls)
+		assert.Len(t, got, 1, "%s: a redirect or --root write is still a finding: %v", c.name, got)
+	}
+}
+
 // Every finding is reported once per line, in line order, 1-based, so the DRIFT lines a
 // manager reads are in the order the card reads.
 func TestFindingsAreOneToALineInOrder(t *testing.T) {

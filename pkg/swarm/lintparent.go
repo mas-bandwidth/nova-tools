@@ -18,8 +18,10 @@ var cardWalkParentRE = regexp.MustCompile(
 	`(?:^|[^A-Za-z0-9_./-])(?:cd|pushd|mkdir|rmdir|cp|mv|rm|ln|touch|tar|unzip|rsync|git[ \t]+-C)[ \t]+(?:-[A-Za-z-]+[ \t]+)*["']?\.\./`)
 
 // cardWriteParentRE is a parent path named as a destination: a shell redirect, or the value
-// of a long flag such as `--root ../queue` or `--out=../notes`.
-var cardWriteParentRE = regexp.MustCompile(`(?:>>?[ \t]*|--[a-z][a-z-]*[= \t])["']?\.\./`)
+// of a long flag such as `--root ../queue` or `--out=../notes`. The redirect is a `>` of its
+// own, so `=>` (a Go module's `replace` directive) and `->` (a pointer, an arrow) are not
+// redirects and do not count (docs/SPEC-SWARM.md, Card lint).
+var cardWriteParentRE = regexp.MustCompile(`(?:(?:^|[^=-])>>?[ \t]*|--[a-z][a-z-]*[= \t])["']?\.\./`)
 
 // cardLinkTargetRE is a markdown link or image target, `](...)`.
 var cardLinkTargetRE = regexp.MustCompile(`\]\([^)]*\)`)
@@ -52,6 +54,28 @@ func CardParentPaths(lines []string) []int {
 		if strings.Contains(cardInstructionText(l), "../") {
 			out = append(out, i+1)
 		}
+	}
+	return out
+}
+
+// CardOutsideFences returns the 1-based numbers of the card lines that sit OUTSIDE a fenced
+// code block, in line order. A rule that reads only what the card instructs -- scratch-absolute
+// -- reads these lines and no others, so a variable named `scratch` in a pasted program is
+// quoted code, not a relative path the worker walks. The fence rule is cardFenceRE, the one
+// CardParentPaths uses, so the two checks cannot disagree about what a fence is
+// (docs/SPEC-SWARM.md, Card lint).
+func CardOutsideFences(lines []string) []int {
+	var out []int
+	inFence := false
+	for i, l := range lines {
+		if cardFenceRE.MatchString(l) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		out = append(out, i+1)
 	}
 	return out
 }

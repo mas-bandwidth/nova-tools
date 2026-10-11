@@ -669,7 +669,10 @@ Every rule here is normative. Only living verbs are retained.
 `nova-swarm lint --card <file>` (or `nova-swarm lint <file>`, the bare file being the card)
 checks a card's shape before any spend; its `no-sandbox` rule is a command line that
 invokes nova-sandbox (first on a step, after a shell separator, after an imperative run),
-never the name in a sentence, a path or a possessive. `--child-rules` also
+never the name in a sentence, a path or a possessive. `no-parent-path` reads a `>` as a
+redirect only where it stands alone, so the `=>` of a Go module's `replace` directive is not
+a walked parent path. `scratch-absolute` reads no fenced text, so a `scratch` variable in
+quoted code is not a relative scratch path. `--child-rules` also
 holds the card to the rules the coordinator gives a child, and `nova-sprint add` holds every
 brief (`--brief` and `--brief-file`) to them before it writes anything, exit 2; a card with
 no brief (a `--count` card, an id card) and a sentinel carry none to check. `nova-swarm
