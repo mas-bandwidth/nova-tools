@@ -116,6 +116,16 @@ func readTools(t *testing.T) []map[string]any {
 	return plays
 }
 
+// readGroupVars reads fleet/group_vars/all.yml as its key/value mapping.
+func readGroupVars(t *testing.T) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile("group_vars/all.yml")
+	require.NoError(t, err)
+	var vars map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &vars))
+	return vars
+}
+
 // playNamed is the play whose name is exactly name.
 func playNamed(t *testing.T, plays []map[string]any, name string) map[string]any {
 	t.Helper()
@@ -563,12 +573,13 @@ func TestInstallPlayRestartsReplacedMembersAndReaders(t *testing.T) {
 	raw := fmt.Sprint(task)
 
 	assert.Contains(t, raw, "selectattr('role', 'equalto', 'agent')", "the restart names the manifest's member and reader role (agent)")
-	assert.Contains(t, raw, "tools_replaced | length > 0", "the play fails the host when the manifest lists no replaced member or reader")
+	assert.Contains(t, raw, "tools_agents | length > 0", "the play fails the host when the manifest lists no member or reader")
 	assert.Contains(t, raw, "selectattr('stale')", "the restart names the agents whose binary was replaced")
 	assert.Contains(t, raw, "bootout", "the restart drains through launchd bootout")
 	assert.Contains(t, raw, "bootstrap", "the restart loads through launchd bootstrap")
 	assert.Contains(t, raw, "systemd_service", "the restart drains through systemd on linux")
-	assert.Contains(t, raw, "nova_systemd_scope", "the linux restart runs in the fleet's systemd scope, never a hardcoded user")
+	assert.Contains(t, raw, "item.target", "the linux restart's scope comes from each agent's target, never one fleet-wide scope")
+	assert.NotContains(t, raw, "nova_systemd_scope", "the linux restart runs in one fleet-wide scope, never the agent's own")
 	assert.Contains(t, raw, "restarted", "the restart is a drain-restart, never a kill")
 	assert.Contains(t, raw, "rejectattr('stale')", "the check reads the running process, not the binary on disk")
 	assert.NotContains(t, raw, "item.binary", "the check never runs the binary file's version verb")
@@ -633,7 +644,8 @@ func TestAdoptionEndsWithOneTable(t *testing.T) {
 	for _, col := range []string{"host=", "version=", "members_readers_up=", "harness=", "disk_free_kb="} {
 		assert.Contains(t, table, col, "the table has no %s column", col)
 	}
-	assert.Contains(t, table, "', '\\\\1'", "the disk_free_kb column does not name the capture group, so regex_search returns the whole df row")
+	assert.Contains(t, table, "regex_findall", "the disk_free_kb column does not findall, so an empty df crashes the row")
+	assert.Contains(t, table, "default('?')", "the disk_free_kb column has no default, so an empty or skipped df crashes the row")
 }
 
 // TestRefusalCausesAreNotTruncated pins the card's rule that a refusal's cause
@@ -702,4 +714,107 @@ func TestSeatFriendAcceptanceRunFailsOnNonZeroExit(t *testing.T) {
 	assert.Contains(t, failMsg, "seat_acceptance.rc", "acceptance fail_msg does not name the exit code")
 	assert.Contains(t, failMsg, "stdout", "acceptance fail_msg does not name the output line")
 	assert.Contains(t, failMsg, "stderr", "acceptance fail_msg does not name the output line")
+}
+
+// TestLiveManifestFlagsArePerPlatform pins the one live manifest command per
+// platform (docs/SPEC-RELEASE.md, "Adopting a build"): on Darwin live reads the
+// launchd agents directory and the system-domain daemons directory; on Linux it
+// reads the systemd units directly, so neither directory is named. The flags are
+// defined once (fleet/group_vars/all.yml, nova_seat_live_flags) and every play
+// that reads live uses them.
+func TestLiveManifestFlagsArePerPlatform(t *testing.T) {
+	t.Parallel()
+	all := readGroupVars(t)
+	darwin := stringList(all["nova_seat_live_flags_darwin"])
+	linux := stringList(all["nova_seat_live_flags_linux"])
+	require.NotEmpty(t, darwin, "no Darwin live flags")
+	require.NotEmpty(t, linux, "no Linux live flags")
+	assert.Contains(t, darwin, "--agents-dir", "the Darwin live read does not name the launchd agents directory")
+	assert.Contains(t, darwin, "--daemons-dir", "the Darwin live read does not name the system-domain daemons directory")
+	assert.NotContains(t, linux, "--agents-dir", "the Linux live read names an agents directory; live reads systemd units")
+	assert.NotContains(t, linux, "--daemons-dir", "the Linux live read names a daemons directory; live reads systemd units")
+
+	plays := readTools(t)
+	for _, read := range []struct{ play, key string }{
+		{"the build in ~/.local/bin on every machine", "tools_live"},
+		{"the friends of the fleet hosts reinstalled onto the installed build", "seat_live"},
+		{"the adoption table", "seat_live"},
+	} {
+		t.Run(read.play, func(t *testing.T) {
+			t.Parallel()
+			play := playNamed(t, plays, read.play)
+			assert.Contains(t, varOf(t, play, flattenTasks(t, tasksOf(t, play)), read.key), "nova_seat_live_flags",
+				"%s does not use the one per-platform live flags", read.play)
+		})
+	}
+}
+
+// TestInstallPlayLoopsStepAcceptsAlreadyOnTheBuild pins the loops step's success
+// case (docs/SPEC-RELEASE.md, "Adopting a build"): when the manifest lists a
+// member or reader and none is stale, the step prints LOOPS OK and restarts
+// nothing; it refuses only when no member or reader is listed at all, naming the
+// manager.
+func TestInstallPlayLoopsStepAcceptsAlreadyOnTheBuild(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	task := taskContaining(t, flattenTasks(t, tasksOf(t, install)), "each member and reader whose binary the install replaced")
+	raw := fmt.Sprint(task)
+
+	assert.Contains(t, raw, "LOOPS OK host=", "the loops step has no success line for a host already on the build")
+	assert.Contains(t, raw, "already on the installed build", "the LOOPS OK line does not say the host is already on the build")
+	assert.Contains(t, raw, "tools_agents | length > 0", "the refusal is not on a manifest with no member or reader")
+	assert.Contains(t, raw, "manager", "the no-agent refusal does not name the manager")
+
+	// The old assert (tools_replaced | length > 0) is gone: a host already on
+	// the build has an empty replaced set and must not refuse.
+	for _, t2 := range flattenTasks(t, tasksOf(t, install)) {
+		if a, ok := t2["ansible.builtin.assert"].(map[string]any); ok {
+			assert.NotEqual(t, "tools_replaced | length > 0", asText(a["that"]),
+				"an assert still refuses a host whose members are already on the build")
+		}
+	}
+}
+
+// TestLoopsRestartFollowsEachTarget pins the restart (docs/SPEC-RELEASE.md,
+// "Adopting a build"): a launchd agent in the system domain is booted out and
+// bootstrapped with become; a systemd agent's scope comes from its target's
+// prefix (user/ or system/), never one fleet-wide scope.
+func TestLoopsRestartFollowsEachTarget(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	tasks := flattenTasks(t, tasksOf(t, install))
+
+	for _, name := range []string{
+		"loops: boot out each replaced member and reader (launchd)",
+		"loops: bootstrap each from its plist",
+	} {
+		task := taskNamed(t, tasks, name)
+		assert.Contains(t, fmt.Sprint(task["become"]), "system/",
+			"%s does not run with become keyed on the target's system domain", name)
+	}
+
+	restart := taskNamed(t, tasks, "loops: restart each replaced member and reader (systemd)")
+	raw := fmt.Sprint(restart)
+	assert.Contains(t, raw, "item.target", "the linux restart does not read the scope from each agent's target")
+	assert.NotContains(t, raw, "nova_systemd_scope", "the linux restart uses one fleet-wide scope, not the agent's own")
+	assert.Contains(t, raw, "become", "the linux restart never becomes root for a system unit")
+}
+
+// TestAdoptionDiskFreeReadsThroughCheck pins the check run's disk read
+// (docs/SPEC-RELEASE.md, "Adopting a build"): "table: the disk free under the
+// home" is a read and runs in check mode, and the row's regex_findall with a
+// default prints ? for an empty or skipped df instead of crashing.
+func TestAdoptionDiskFreeReadsThroughCheck(t *testing.T) {
+	t.Parallel()
+	table := playNamed(t, readTools(t), "the adoption table")
+	tasks := flattenTasks(t, tasksOf(t, table))
+
+	df := taskNamed(t, tasks, "table: the disk free under the home")
+	assert.Equal(t, false, df["check_mode"], "the disk free read is skipped in check mode, so the row crashes")
+
+	row := taskNamed(t, tasks, "table: one row")
+	msg := debugMsg(row)
+	assert.Contains(t, msg, "regex_findall", "the disk_free_kb column does not findall, so an empty df crashes")
+	assert.Contains(t, msg, "| first", "the disk_free_kb column does not take the first match")
+	assert.Contains(t, msg, "default('?')", "the disk_free_kb column has no default for an empty or skipped df")
 }
