@@ -307,6 +307,15 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-member-end-and-script-read" :release "v1.2.12" :status "planned"
+   :title "Cover the end of a launch and the script read"
+   :text "Behaviour tests for two member steps no test reached. The end of a launch is driven
+    through Member.Tick on a member built with New and the package's fakes: eight tests pin
+    the finish verbs the fake sprint saw, the fake pusher's calls and what Tick printed. The
+    script read calls ScriptVerifier.Verify directly with its Run seam and real git on temp
+    repositories: five tests pin (ok, why), what Run saw and what is left under Temp."
+   :origin "tmp/v1.2.12-inventory-2026-10-11.md section 8 item C12, measured at dev 2a648d8; this card")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
