@@ -1142,6 +1142,33 @@ func laneWall(c *tool.Call, w world, dir string, deny func() []string, rowConfig
 	return wall
 }
 
+// selfHoldingDir names the first deny path dir is, holds or lies inside, symlinks
+// resolved, as the lane wall judges it (sandbox.Inside): a wall whose friend directory is
+// the coordinator's own self refuses every write, so run refuses it at once
+// (docs/SPEC-FRIEND.md, install and the wall). "" false when none.
+func selfHoldingDir(dir string, deny []string) (string, bool) {
+	dir = resolvedLink(dir)
+	for _, d := range deny {
+		if d == "" {
+			continue
+		}
+		d = resolvedLink(d)
+		if sandbox.Inside(dir, d) || sandbox.Inside(d, dir) {
+			return d, true
+		}
+	}
+	return "", false
+}
+
+// resolvedLink resolves a path's symlinks where it is there, else returns it clean: the
+// wall compares the paths a reader would write, not the names an alias carried.
+func resolvedLink(p string) string {
+	if got, err := filepath.EvalSymlinks(p); err == nil {
+		return got
+	}
+	return filepath.Clean(p)
+}
+
 func (w world) run(c *tool.Call) *tool.Out {
 	if c.Bool("notifications-only") {
 		return w.runNotifications(c)
@@ -1192,6 +1219,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 		denySeatName, denySeatAt = s, w.now()
 		denySeatMu.Unlock()
 		return s
+	}
+	// a --dir that is, holds or lies inside any deny-self path is the wall's own
+	// denied_write read before the daemon starts: every lane write would be refused (the
+	// profile's deny list), so run refuses at once, naming both paths and the fix
+	// (docs/SPEC-FRIEND.md, install and the wall). The default deny is the seat's working
+	// root; when the friend is the seat herself, her working root is her deny root.
+	deny := commaList(c.Str("deny-self"))
+	if len(deny) == 0 {
+		deny = friend.DefaultDenySelf(w.home, denySeat(context.Background()))
+	}
+	if d, held := selfHoldingDir(dir, deny); held {
+		return tool.Refuse(fmt.Sprintf("--dir %s is the self the lane wall denies (%s); every write is refused: move --dir to a sibling of the self", dir, d))
 	}
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {

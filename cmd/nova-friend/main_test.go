@@ -1437,3 +1437,31 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		assert.Fail(t, "the help example differs", p.Message)
 	}
 }
+
+// TestRunRefusesADirThatHoldsOrIsTheSelfTheWallDenies pins the lane wall's own rule read
+// before the daemon starts: a --dir equal to, inside or holding any --deny-self path (the
+// wall's default is the seat's working root) gives a wall where every lane write is refused,
+// so run refuses at once, exit 2, naming both paths and the fix (docs/SPEC-FRIEND.md,
+// install and the wall).
+func TestRunRefusesADirThatHoldsOrIsTheSelfTheWallDenies(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	self := filepath.Join(r.home, "ada-working")
+	cases := []struct{ name, dir string }{
+		{"equal", self},
+		{"inside", filepath.Join(self, "sub")},
+		{"holds", r.home},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r.cli().Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", c.dir, "--deny-self", self, "--redis", "store.test:6379").
+				Exit(2).Err(c.dir, self, "move --dir to a sibling of the self")
+		})
+	}
+	// the seat's working root is the default deny and the friend's own directory when she is
+	// the seat: the daemon must not start
+	r.env["NOVA_FRIEND_DENY_SELF"] = filepath.Join(self, "env")
+	r.cli().Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", filepath.Join(self, "env", "x"), "--redis", "store.test:6379").
+		Exit(2).Err("move --dir to a sibling of the self")
+}
