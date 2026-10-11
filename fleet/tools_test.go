@@ -835,7 +835,11 @@ func TestInstallPlayStartsWithOneCanaryBatch(t *testing.T) {
 	assert.Equal(t, 0, install["max_fail_percentage"], "the play does not stop on the canary's failure (max_fail_percentage is not 0)")
 
 	all := readGroupVars(t)
-	assert.Contains(t, asText(all["nova_adopt_canary"]), "group", "nova_adopt_canary has no default host from the fleet group")
+	canary := asText(all["nova_adopt_canary"])
+	assert.Contains(t, canary, "group", "nova_adopt_canary has no default host from the fleet group")
+	assert.Contains(t, canary, "reject('in'", "the canary default does not skip the coordinator where it stands")
+	assert.NotContains(t, canary, "difference", "a set difference does not keep the inventory's order")
+	assert.Contains(t, canary, "| first", "the canary default does not take the first host of the fleet in inventory order")
 	_, ok := all["nova_adopt_canary"]
 	assert.True(t, ok, "nova_adopt_canary is not a group var")
 	_, ok = all["nova_adopt_canary_wait"]

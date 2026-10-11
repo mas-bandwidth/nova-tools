@@ -125,7 +125,7 @@ nova_release_build_args: []
 # canary that fails is rolled back alone, the other hosts never touched.
 # nova_adopt_canary=none installs every host in one batch, as before, and says
 # so. The rollout is run by the coordinator, never from a card.
-nova_adopt_canary: "{{ ((groups['all'] | difference(groups['coordinator'] | default([]))) | first) | default('none') }}"
+nova_adopt_canary: "{{ (groups['all'] | reject('in', groups['coordinator'] | default([])) | first) | default('none') }}"
 nova_adopt_canary_wait: 1800
 
 # The TLC record machines (the inventory's tla group: the machine rows with
