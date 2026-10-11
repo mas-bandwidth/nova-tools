@@ -41,6 +41,23 @@
       ({{ ((seat_reinstalled.stderr | default('')) or (seat_reinstalled.stdout | default('')) or (seat_reinstalled.msg | default(''))) | default('') }})
     quiet: true
 
+- name: "friends: {{ seat_friend.friend }}'s acceptance: the lane takes a probe card from the server and runs it under the real lane wall"
+  ansible.builtin.command:
+    argv: >-
+      {{ [nova_bin_dir ~ '/nova-friend', 'acceptance', '--as', seat_friend.friend, '--dir', seat_friend.working_dir] }}
+  environment: "{{ seat_env }}"
+  register: seat_acceptance
+  changed_when: false
+  failed_when: false
+
+- name: "friends: {{ seat_friend.friend }}'s acceptance: the probe card ran"
+  ansible.builtin.assert:
+    that: seat_acceptance.rc == 0
+    fail_msg: >-
+      ADOPT REFUSED step=friends host={{ inventory_hostname }}: {{ seat_friend.friend }}'s acceptance failed with exit code {{ seat_acceptance.rc }}
+      ({{ (seat_acceptance.stderr | default('')) or (seat_acceptance.stdout | default('')) or 'acceptance failed' }})
+    quiet: true
+
 - name: "friends: the host's clock after {{ seat_friend.friend }}'s reinstall (its cutoff)"
   ansible.builtin.command: { argv: "{{ seat_live }}" }
   environment: "{{ seat_env }}"
