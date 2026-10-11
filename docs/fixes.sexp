@@ -506,4 +506,15 @@
     card back with stop-return instead of running it, and the memory goes when the queue no longer
     lists the card at that generation on this row. A refused finish with nothing pushed is
     forgotten as today."
-   :origin "the coordinator, 2026-10-11: the v1.2.10 nova-sprint server refused every ok finish, the member forgot each refused card and reran the generation, and the second push was rejected non-fast-forward; card a-refused-finish-never-reruns-a-pushed-generation.w1")))
+   :origin "the coordinator, 2026-10-11: the v1.2.10 nova-sprint server refused every ok finish, the member forgot each refused card and reran the generation, and the second push was rejected non-fast-forward; card a-refused-finish-never-reruns-a-pushed-generation.w1")
+
+  (fix "a-start-scheduled-before-stop-launches-no-child" :release "v1.2.14" :status "planned"
+   :title "A start scheduled before STOP launches no child"
+   :text "The member read the machine's word (queueOut.Machine) only at the head of the pass, so a
+    start already queued behind startMu when STOP arrived still launched its child after the stop.
+    The word is now kept in an atomic (stoppedWord) the launch's long work can read, and a start
+    reads it again after staggerStart and before scriptOrStart, with startMu held: a STOPPED word
+    starts no child, the launch is posted as cancelled by the stop and collect drops it, leaving
+    the card working under this row with no child of ours for machineStop to hand back with
+    stop-return, never finished."
+   :origin "the audit defect \"a background start after STOP launches a child\" (nova-tools pkg/member staggerStart / scriptOrStart), confirmed by reading nova-tools dev 2314d43 on 2026-10-11; card a-start-scheduled-before-stop-launches-no-child.w2")))
