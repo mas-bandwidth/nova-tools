@@ -515,6 +515,16 @@
     left with PublishedImpliesPersisted. cairn.go now cites the module from Open and appendEntry."
    :origin "card tla-cairnstore-no-gap-ledger-and-reopen.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friend-link-and-challenge" :release "v1.2.12" :status "planned"
+   :title "Friend's link and challenge model brought level with the daemon"
+   :text "Friend.tla's header names pkg/friend, not internal/friend; a ping read past the challenge
+    window is dropped, never answered, instead of every ping being answered; any line the session
+    writes after a ping ends the challenge and proves the push, where the model's Pong needed a seen
+    nonce; and a proven flag gates delivery, so nothing is delivered until the session is proven, held
+    by the new NoTurnBeforeProof invariant and its reversed witness noproof
+    (MCFriendBrokenNoProof.cfg). Tests and models only, no product change."
+   :origin "card tla-friend-link-and-challenge.w4 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35; the first of three Friend cards, chained)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

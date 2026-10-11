@@ -1,10 +1,10 @@
 ------------------------------- MODULE Friend -------------------------------
-\* nova-friend's daemon machine (docs/SPEC-FRIEND.md; internal/friend/machine.go:
+\* nova-friend's daemon machine (docs/SPEC-FRIEND.md; pkg/friend/machine.go:
 \* Start, Ping, Pong, Tick, Up). One friend's daemon, as it sees the
 \* coordinator and its own session: the connection (a ping from the
 \* coordinator within the window, else silent) and the challenge (a ping
-\* pushed into the session carries a nonce; the session's own pong with
-\* that nonce ends it; a window with no pong is deaf).
+\* pushed into the session carries a nonce; any line the session writes
+\* after the ping ends it, and proves the push; a window with none is deaf).
 \*
 \* The state the code owns: conn, lastPing, silentFrom; chal, nonce, asked,
 \* pongs; daemonPongs, the daemon's own answers; turns, the turns running in
@@ -13,12 +13,13 @@
 \* outside: the coordinator pinging (Ping, each ping a fresh nonce, plain or a
 \* wake check), the session's turns (StartBatch, one carrying messages, with
 \* the pong line at its head while a challenge is open; WakeTurn, the pong line
-\* alone, pushed into a free session for a wake check; BatchEnds), the session
-\* having seen every nonce a turn put in front of it (seen), and the session
-\* answering (Pong, with any nonce it has seen, so a stale or replayed pong is
-\* possible). The pushes the session is owed are counted: silentSaid
-\* (the "coordinator silent" pushes) beside outages (the times the
-\* connection went silent).
+\* alone, pushed into a free session for a wake check; BatchEnds), and the
+\* session answering (Pong, with the current nonce, so a stale or replayed
+\* pong is possible). Any line the session writes after a ping ends the
+\* challenge and proves the push (proven). A ping read past the challenge
+\* window is dropped, never answered. The pushes the session is owed are
+\* counted: silentSaid (the "coordinator silent" pushes) beside outages (the
+\* times the connection went silent).
 \*
 \* A harness at its usage limit or out of credits is down until the reset
 \* (limits-mean-down-w-r.w1~15; internal/friend/limits.go, limit.go Limits.Gate):
@@ -82,6 +83,8 @@
 \*                    AckedOnlyRead
 \*   "twoturns"       a wake check or a card turn is pushed into a session whose
 \*                    turn is still running: OneTurnPerSession
+\*   "noproof"        a turn starts before the session has proved its push:
+\*                    NoTurnBeforeProof
 \*   "deliverbroken"  a broken session is still delivered into: NoDeliveryWhenBroken
 \*   "pinghanded"     a ping read off the stream goes into the hand as a
 \*                    message: PingNeverDelivered
@@ -95,12 +98,12 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS Window, MaxTime, MaxPings, Broken,
           Msgs, Lanes, Cards, K, MaxDeliveries, SilentStop, Refusals, Modes
 
-VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, turns, owed, lim, limUntil,
+VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered,
+          daemonPongs, turns, owed, proven, lim, limUntil,
           mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, pingIn,
           streak, reason, broken, lcard, lrun, lquiet, cst, tries
-linkvars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-              daemonPongs, owed>>
+linkvars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered,
+              daemonPongs, owed, proven>>
 limvars == <<lim, limUntil>>
 msgvars == <<pel, acked, hand, inHand, carry, failed, readm, pingIn>>
 sessvars == <<streak, reason, broken>>
@@ -128,13 +131,13 @@ TypeOK ==
   /\ nonce \in 0..MaxPings
   /\ asked \in 0..MaxTime
   /\ pongs \in 0..MaxPings
-  /\ seen \subseteq 1..MaxPings
   /\ silentSaid \in 0..MaxTime
   /\ outages \in 0..MaxTime
   /\ answered \in 0..MaxPings
   /\ daemonPongs \in 0..MaxPings
   /\ turns \in 0..2
   /\ owed \in BOOLEAN
+  /\ proven \in BOOLEAN
   /\ lim \in {"up", "limited"}
   /\ limUntil \in 0..MaxTime
   /\ mode \in Modes
@@ -165,10 +168,9 @@ Init ==
   /\ now = 0
   /\ conn = "connected" /\ lastPing = 0 /\ silentFrom = 0
   /\ chal = "quiet" /\ nonce = NoNonce /\ asked = 0 /\ pongs = 0
-  /\ seen = {}
   /\ silentSaid = 0 /\ outages = 0
   /\ answered = NoNonce
-  /\ daemonPongs = 0 /\ turns = 0 /\ owed = FALSE
+  /\ daemonPongs = 0 /\ turns = 0 /\ owed = FALSE /\ proven = FALSE
   /\ lim = "up" /\ limUntil = 0
   /\ mode \in Modes /\ held = FALSE /\ quiet = 0 /\ lastStop = "none"
   /\ pel = M /\ acked = {} /\ hand = {} /\ inHand = {} /\ readm = {}
@@ -194,7 +196,7 @@ Tick ==
   /\ chal' = IF chal = "challenged" /\ now + 1 - asked >= Window /\ Broken # "neverdeaf" THEN "deaf" ELSE chal
   /\ quiet' = Quieter(quiet, Busy)
   /\ lquiet' = [l \in L |-> Quieter(lquiet[l], lrun[l] > 0)]
-  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, owed, turns, limvars>>
+  /\ UNCHANGED <<lastPing, nonce, asked, pongs, answered, daemonPongs, owed, proven, turns, limvars>>
   /\ UNCHANGED <<mode, held, lastStop, msgvars, sessvars, lcard, lrun, cst, tries>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping;
@@ -205,19 +207,23 @@ Tick ==
 \* before, deaf staying deaf until a pong; a wake check (wake) owes the
 \* session a wake turn. The ping itself is never a turn and never in the
 \* hand: the session sees the nonce only when a turn carries the pong line.
-\* The witnesses let the daemon's pong to a wake check end the challenge, and
-\* put the ping into the hand.
-Ping(wake) ==
+\* A ping read past the challenge window (stale) is dropped, never answered,
+\* the challenge and the connection unchanged (daemon.go loop.read). The
+\* witnesses let the daemon's pong to a wake check end the challenge, and put
+\* the ping into the hand.
+Ping(wake, stale) ==
   /\ nonce < MaxPings
-  /\ nonce' = nonce + 1
-  /\ daemonPongs' = daemonPongs + 1
-  /\ conn' = "connected" /\ lastPing' = now
-  /\ chal' = IF wake /\ Broken = "daemonpongends" THEN "quiet"
-            ELSE IF chal = "deaf" THEN "deaf" ELSE "challenged"
-  /\ asked' = now
-  /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
-  /\ pingIn' = IF Broken = "pinghanded" /\ pingIn = "none" /\ ~broken THEN "hand" ELSE pingIn
-  /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, turns, limvars>>
+  /\ IF stale
+       THEN UNCHANGED <<nonce, daemonPongs, conn, lastPing, chal, asked, owed, pingIn>>
+       ELSE /\ nonce' = nonce + 1
+            /\ daemonPongs' = daemonPongs + 1
+            /\ conn' = "connected" /\ lastPing' = now
+            /\ chal' = IF wake /\ Broken = "daemonpongends" THEN "quiet"
+                       ELSE IF chal = "deaf" THEN "deaf" ELSE "challenged"
+            /\ asked' = now
+            /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
+            /\ pingIn' = IF Broken = "pinghanded" /\ pingIn = "none" /\ ~broken THEN "hand" ELSE pingIn
+  /\ UNCHANGED <<now, silentFrom, pongs, silentSaid, outages, answered, proven, turns, limvars>>
   /\ UNCHANGED <<mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, sessvars, lanevars>>
 
 \* The step's read of the stream (daemon.go read): every pending message not
@@ -240,12 +246,11 @@ Read ==
 
 \* What heads a turn while a challenge is open (loop.head): the pong line for
 \* the current nonce, which pays an owed wake check.
-HeadSeen == IF chal # "quiet" THEN seen \cup {nonce} ELSE seen
 HeadOwed == IF chal # "quiet" THEN FALSE ELSE owed
 
-\* A delivery may start: the session is not broken and the harness is up
-\* (each witness lets one through).
-Deliverable == (~broken \/ Broken = "deliverbroken") /\ (lim = "up" \/ Broken = "deliverlimited")
+\* A delivery may start: the session has proved its push, is not broken and
+\* the harness is up (each witness lets one through).
+Deliverable == (proven \/ Broken = "noproof") /\ (~broken \/ Broken = "deliverbroken") /\ (lim = "up" \/ Broken = "deliverlimited")
 SessionFree == turns = 0 \/ (Broken = "twoturns" /\ turns < 2)
 
 \* A turn carrying every message in the hand starts in the free batch session
@@ -261,8 +266,8 @@ StartBatch ==
   /\ readm' = readm \cup hand
   /\ hand' = {}
   /\ pingIn' = IF pingIn = "hand" THEN "turn" ELSE pingIn
-  /\ seen' = HeadSeen /\ owed' = HeadOwed
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ owed' = HeadOwed
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, proven>>
   /\ UNCHANGED <<limvars, mode, held, lastStop, pel, acked, inHand, failed, sessvars, lanevars>>
 
 \* A wake check owed to a free session with no message waiting is pushed
@@ -274,8 +279,7 @@ WakeTurn ==
   /\ hand = {}
   /\ Deliverable
   /\ turns' = turns + 1 /\ quiet' = 0 /\ owed' = FALSE
-  /\ seen' = seen \cup {nonce}
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, proven>>
   /\ UNCHANGED <<limvars, mode, held, lastStop, msgvars, sessvars, lanevars>>
 
 \* The turn held by a deferral is tried again once the harness is up
@@ -359,15 +363,15 @@ Wake ==
      \/ /\ now < MaxTime /\ lim' = "limited" /\ \E u \in (now + 1)..MaxTime : limUntil' = u
   /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
 
-\* The session answers with a nonce it has seen (machine.go Pong): the
-\* current one ends the challenge; any other changes nothing. The witness
-\* takes any seen nonce; answered records which one did.
+\* The session writes a line after the ping (machine.go Pong; daemon.go
+\* sessionProof): it ends the challenge and proves the push, so any session
+\* line counts, and only the current nonce ends it. The witness takes a stale
+\* nonce; answered records which nonce did.
 Pong(n) ==
-  /\ n \in seen
   /\ chal # "quiet"
   /\ (n = nonce \/ Broken = "stalepong")
-  /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs>>
+  /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE /\ proven' = TRUE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, silentSaid, outages, daemonPongs>>
   /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
 
 \* ---------------------------------------------------------------- one-shot lanes
@@ -391,8 +395,8 @@ LaneStart(l) ==
   /\ readm' = readm \cup hand
   /\ hand' = {}
   /\ pingIn' = IF pingIn = "hand" THEN "turn" ELSE pingIn
-  /\ seen' = HeadSeen /\ owed' = HeadOwed
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ owed' = HeadOwed
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, proven>>
   /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, pel, acked, inHand, failed, sessvars, tries>>
 
 \* What a lane's turn end does to its card (laneDone): RESULT.md there, the
@@ -451,7 +455,7 @@ LaneLimited(l) ==
 
 Next ==
   \/ Tick
-  \/ \E wake \in BOOLEAN : Ping(wake)
+  \/ \E wake, stale \in BOOLEAN : Ping(wake, stale)
   \/ Read
   \/ StartBatch
   \/ WakeTurn
@@ -508,6 +512,10 @@ TurnStarts == turns' > turns \/ \E l \in L : lrun'[l] > lrun[l]
 \* a message or a wake check never goes into a session that cannot answer, so
 \* every message stays pending, counted toward nothing. Pings are no turn.
 NoTurnWhileLimited == [][TurnStarts => lim = "up"]_vars
+
+\* No turn starts until the session has proved its push (daemon.go proof, the
+\* push-proof gate): nothing goes into a session that has not answered.
+NoTurnBeforeProof == [][TurnStarts => proven]_vars
 
 \* Limited ends: once limited, the friend is up again (one wake turn after the
 \* reset answered); WF(Wake) and the finite clock (a reset is always after
