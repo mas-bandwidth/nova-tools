@@ -307,6 +307,15 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "nt-friend-token-cap-test-passes-repeated" :release "v1.2.12" :status "planned"
+   :title "The one-shot token-cap test passes repeated runs"
+   :text "The test's injected opencode clock delivered ticks in an unbounded loop, so the
+    fake session's growth under the cap raced the fast harness: repeated and -race runs
+    accumulated reads past the cap and held a card that finished. The fake clock now
+    delivers a few ticks and holds, so a turn under the cap cannot accumulate reads past
+    it. The assertions are unchanged; pkg/friend product code is unchanged."
+   :origin "card nt-friend-token-cap-test-passes-repeated.w1, 2026-10-11")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
