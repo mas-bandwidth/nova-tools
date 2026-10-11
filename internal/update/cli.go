@@ -622,6 +622,7 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 	sort.SliceStable(rs, func(i, j int) bool { return rs[i].Entry.Kind == "pin" && rs[j].Entry.Kind != "pin" })
 	return rs
 }
+
 // tla/UpdateApply.tla Verdict
 func verdict(r entryRead) (string, string) {
 	if !r.Installed.Known() || !r.Latest.Known() {
