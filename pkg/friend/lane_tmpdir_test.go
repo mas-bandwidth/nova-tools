@@ -113,7 +113,10 @@ func TestALaneHarnessWritesItsOwnTmpdirAndNothingOutsideIt(t *testing.T) {
 	}
 	bin, err := os.Executable()
 	require.NoError(t, err)
-	root := t.TempDir()
+	// the wall hands the harness the job's resolved path (on macOS $TMPDIR is under /var, a link to
+	// /private/var), so the paths the test expects are built from the resolved root.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	home := filepath.Join(root, "home")
 	self := filepath.Join(home, "rowan-working", "rowan-new")
 	friendDir := filepath.Join(root, "friend")
