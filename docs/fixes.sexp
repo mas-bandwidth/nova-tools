@@ -692,6 +692,18 @@
     its exit mapping. Tests and models only, no product change."
    :origin "card tla-benchrun-an-interrupted-exec-ran.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friend-batch-delivery-turns" :release "v1.2.12" :status "planned"
+   :title "Friend models the present, dealt and idle-wake turns, the idle watch and a kept turn retried on a timer"
+   :text "Friend.tla had no present, dealt or idle-wake turn, no awake/woken/noted idle watch, and its Retry
+    started the held turn when the harness was up where the code retries on a timer (RecheckEvery). The batch
+    session's turn now has a kind (batch, present, dealt, wake or idle) and a kept turn (deferred or refused) is
+    retried on a timer, so a session that cannot take a turn keeps it and tries again; the idle watch steps awake,
+    woken and noted, one wake turn and one note per idle stretch, reset by a write or no card. KeptTurnRetried holds
+    that a kept turn runs again, with a reversed witness droptturn (MCFriendBrokenDroptTurn.cfg) that drops the kept
+    turn and fails it. daemon.go, present.go, inbox.go and machine.go cite the module. Tests and models only, no
+    product change."
+   :origin "card tla-friend-batch-delivery-turns.w10 (nova-tools drift read at dev 2314d437f, 2026-10-11; the second of three Friend cards)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

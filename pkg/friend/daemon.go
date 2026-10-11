@@ -1627,6 +1627,7 @@ func (l *loop) remember(t *turn) {
 // (SessionRefused) breaks the session at once and keeps the turn in hand, as
 // a deferral does, tried again; anything else settles its messages, and a
 // turn that succeeds clears that break.
+// tla/Friend.tla Defer
 func (l *loop) batchDone(r result, now time.Time) {
 	d := l.d
 	r.t.running = false
@@ -1677,6 +1678,7 @@ func (l *loop) batchDone(r result, now time.Time) {
 // the friend reads down with it; the turn stays in hand, tried again every
 // RecheckEvery, counted toward nothing and acked never, so every message
 // stays pending (docs/SPEC-FRIEND.md, "A turn the session cannot take").
+// tla/Friend.tla Cannot
 func (l *loop) refusedTurn(t *turn, u SessionRefused, now time.Time) {
 	d := l.d
 	l.retry = now.Add(RecheckEvery)

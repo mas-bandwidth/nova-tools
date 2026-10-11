@@ -443,6 +443,7 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 // startDealt is the batch session's turn naming the briefs the daemon wrote for her (the
 // message friend sync sends when it writes one; wakeFriend in nova-sprint): a passive
 // harness takes no turn, and its line is said on the record.
+// tla/Friend.tla DealtTurn
 func (l *loop) startDealt(now time.Time) {
 	d := l.d
 	lines := l.dealt
