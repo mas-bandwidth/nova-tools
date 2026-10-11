@@ -307,6 +307,15 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
+   :title "Unit tests for nova-friend run and serve faults"
+   :text "Tests of how the daemon (world.run, the dispatcher func run) and the coordinator's ping loop
+    (world.serve) answer faults, driven as a command line through the package's rig: run wall with no
+    command and its unknown flag, hook help, serve's store fault and later friend-rows re-read, an
+    unopenable store, the dry-run refusal, and the daemon's RUN FAIL, no-seat limit, credit refusal and
+    refuse-go shims."
+   :origin "the card cover-nova-friend-run-and-serve-faults.w2 (stream v1212); tmp/v1.2.12-inventory-2026-10-11.md section 8 item C13")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
