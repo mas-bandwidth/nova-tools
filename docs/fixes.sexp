@@ -307,6 +307,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "planned"
+   :title "Unit tests pin the provider proxy's rate budget on the wire"
+   :text "A new pkg/swarm/providerbudget_behaviour_test.go drives (*ProviderProxy).ServeHTTP with a
+    budget set and asserts on the recorder's status, headers and body, what reached an in-process
+    RoundTripper, and the calls the budget's fakes saw, covering takeBudget, serveBudgeted and
+    forwardBudgeted (92.6, 100 and 77.6 percent of statements). One behaviour stays out of the
+    commit: a send that aborts with http.ErrAbortHandler on a silent body does not free its slot,
+    against the doc's \"frees its slot after\" (providerbudget.go:207-208, not deferred), a v1.2.14
+    card."
+   :origin "card cover-provider-budget-proxy-unit (v1.2.12, tests and models only)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
