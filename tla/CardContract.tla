@@ -30,6 +30,8 @@
 \*   prov      the child's run ended on the provider's failure: the harness's
 \*             own log carries a provider error, or its transcript stops on a
 \*             tool result after a clean exit (cmd/nova-swarm nativeprovider.go)
+\*   rateLimited the provider failure was specifically a rate limit (class=rate-limited
+\*             or status=429 with class other than out-of-credit)
 \*   rt        the route the take runs on; tried the routes a take of the card
 \*             failed on (the card records the route that failed)
 \*   rds       the work card's redeals (internal/sprint steps_tick.go, MaxRedeals)
@@ -117,14 +119,14 @@ VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
           prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
+          prov, rateLimited, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
 
 \* The variables the staging refusal adds, for the actions that leave them.
 svars == <<stg, mem, refused, sj, lvd>>
 
 \* The variables the provider failure and the staging refusal add, for the actions that
 \* leave them.
-pvars == <<prov, rt, tried, rds, fw, bj, svars>>
+pvars == <<prov, rateLimited, rt, tried, rds, fw, bj, svars>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -140,6 +142,7 @@ Init ==
   /\ fin = [c \in Cards |-> "none"]
   /\ rep = [c \in Cards |-> "none"]
   /\ prov = [c \in Cards |-> FALSE]
+  /\ rateLimited = [c \in Cards |-> FALSE]
   /\ rt \in [Cards -> Routes]
   /\ tried = [c \in Cards |-> {}]
   /\ rds = [c \in Cards |-> 0]
@@ -186,15 +189,16 @@ StageRefused(c) ==
                  prov, rt, tried, rds, fw, bj, mem, refused, sj, lvd>>
 
 \* The child ends: any commit, any result, any verdict, and the provider's
-\* failure or not.
+\* failure or not. rateLimited is set only when prov is set.
 ChildEnds(c) ==
   /\ ph[c] = "running"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
-  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"}, f \in BOOLEAN :
+  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"}, f \in BOOLEAN, rl \in BOOLEAN :
        /\ commit' = [commit EXCEPT ![c] = k]
        /\ shape' = [shape EXCEPT ![c] = s]
        /\ verdict' = [verdict EXCEPT ![c] = v]
        /\ prov' = [prov EXCEPT ![c] = f]
+       /\ rateLimited' = [rateLimited EXCEPT ![c] = IF f THEN rl ELSE FALSE]
   /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, rt, tried, rds, fw, bj, svars>>
 
 \* The member's push (cmd/nova-swarm gitPusher.Push): a commit is pushed or
@@ -216,6 +220,7 @@ JudgeOf(c) ==
     [] OTHER ->
          IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
          ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
+         ELSE IF push[c] # "refused" /\ prov[c] /\ rateLimited[c] /\ push[c] = "nocommit" THEN "provider"
          ELSE IF push[c] # "refused" /\ prov[c] /\ ~shape[c] THEN "provider"
          ELSE "failed"
 
@@ -268,6 +273,7 @@ Redeal(c) ==
   /\ fin' = [fin EXCEPT ![c] = "none"]
   /\ rep' = [rep EXCEPT ![c] = "none"]
   /\ prov' = [prov EXCEPT ![c] = FALSE]
+  /\ rateLimited' = [rateLimited EXCEPT ![c] = FALSE]
   /\ rds' = [rds EXCEPT ![c] = @ + 1]
   /\ \E r \in RedealRoutes(c) : rt' = [rt EXCEPT ![c] = r]
   /\ \E m \in Members \ refused[c] : mem' = [mem EXCEPT ![c] = m]
@@ -382,7 +388,8 @@ ReworkStagedAtTheTip == \A c \in Cards :
 \* A provider failure never opens a failed-work judgment: a run the provider failed
 \* that left no result, its push not refused, is never finished `failed`.
 ProviderIsNotFailedWork ==
-  \A c \in Cards : fin[c] = "failed" => ~(prov[c] /\ ~shape[c] /\ push[c] # "refused")
+  \A c \in Cards : fin[c] = "failed" => ~(prov[c] /\ push[c] # "refused" /\ 
+       (~shape[c] \/ (rateLimited[c] /\ push[c] = "nocommit")))
 
 \* A staging refusal never opens a failed-work judgment: a launch refused at staging ran no
 \* child, and is never finished `failed`.

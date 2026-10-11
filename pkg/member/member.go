@@ -233,6 +233,20 @@ const (
 	FinishReaped Finish = "reaped" // never reported: the claim moved, or the card left the queue
 )
 
+// isRateLimitedProvider returns true when the provider's reason is a rate limit:
+// class=rate-limited, or status=429 with a class other than out-of-credit.
+// (docs/SPEC-CARD-CONTRACT.md section 4, the finish)
+func isRateLimitedProvider(reason string) bool {
+	if strings.Contains(reason, "class=rate-limited") {
+		return true
+	}
+	// status=429 with class other than out-of-credit is rate-limited
+	if strings.Contains(reason, "status=429") && !strings.Contains(reason, "class=out-of-credit") {
+		return true
+	}
+	return false
+}
+
 // Judge is a work card's finish from its result and its push, in one place
 // (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, Judge): ok only
 // when the result has the shape, its verdict is ok, and the member pushed a
@@ -242,9 +256,11 @@ const (
 // provider failed that left no result, its push not refused, is failed with the kind
 // `provider failure` and the provider's reason, and only that one: the sprint deals that
 // card again and never judges it; a refused push or a result with the shape is failed work
-// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure). A launch
-// refused at staging ran no child: failed with the kind `staging refused` and the stage's
-// reason, the member's failure and never the card's (StageRefused).
+// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure). A run the
+// provider rate-limited with no pushed head is also failed with the kind `provider failure`
+// and the provider's reason, whatever the shape: the sprint deals that card again.
+// A launch refused at staging ran no child: failed with the kind `staging refused` and the
+// stage's reason, the member's failure and never the card's (StageRefused).
 func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
 		// a budget or a deadline names how the run ended first; the provider's kind is
@@ -280,6 +296,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the provider failed the run and it left no result: the kind and the
 		// provider's reason, never the shape's; the sprint deals the card again. A refused
 		// push above, and a shaped result below (nothing, not done), are the card's own
+		return FinishFailed, EndProvider + ": " + r.Provider
+	case r.End == EndProvider && r.Provider != "" && pu.Sha == "" && isRateLimitedProvider(r.Provider):
+		// the provider rate-limited the run with no pushed head: the kind and the
+		// provider's reason, whatever the shape; the sprint deals the card again.
+		// (docs/SPEC-CARD-CONTRACT.md section 4, the finish; tla/CardContract.tla, JudgeOf)
 		return FinishFailed, EndProvider + ": " + r.Provider
 	case !r.Shaped && r.End == "":
 		// the child ended by itself and left no result: no work came back, and the sprint
