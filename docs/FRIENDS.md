@@ -50,6 +50,16 @@ daemon this machine loads and fails with the one fix line for any setup fault
 beat, a `--dir` inside the lane wall's deny-self, an unsigned claude config dir,
 a plist `plutil` refuses). It changes nothing.
 
+`install` never pins the seat unless forced: it reads the server's seat holder
+and refuses a `--coordinator` that names another seat (exit 1, naming both);
+`--force-coordinator` pins it unchecked, and an install with no `--coordinator`
+writes none, so the daemon reads the seat at run time. `--dir` is a sibling of
+the self, never the coordinator's self nor a path that holds it: `run` refuses a
+`--dir` equal to, inside, or holding a deny-self path (exit 2, naming both and
+the fix, "move `--dir` to a sibling of the self"). Width has one source, the
+friend row (`row_width=` on each beat): the argv `--width` is a stale pin the
+daemon ignores.
+
 ## Her inbox pushes to her: the push proof
 
 `nova-friend install` and `run` refuse a harness nothing pushes into: one
