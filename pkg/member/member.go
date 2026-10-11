@@ -2154,23 +2154,12 @@ func (m *Member) haveWords() string {
 	return words
 }
 
-// lanes is how many cards this pass may start: the lanes free now, and one for every
-// launch the pass will report (its end collected or posted, or its child exited), so a
-// read begun in the lane a report frees has its packet in the same pass.
+// lanes is how many cards this pass may start: the lanes free now. A launch the pass
+// reports still holds its lane while its report runs (reportRun), and the take runs
+// before the reports are collected, so a lane a report frees is filled by the next pass
+// and its packet is asked for then, never this pass (reportOne, step 5).
 func (m *Member) lanes() int {
-	m.postMu.Lock()
-	ended := map[string]bool{}
-	for id, po := range m.posted {
-		ended[id] = po.child == nil // a start posted frees nothing; its failure, or an end, does
-	}
-	m.postMu.Unlock()
-	n := m.width - m.Running()
-	for id, l := range m.running {
-		if !l.spent && (l.res != nil || ended[id] || (l.child != nil && l.child.Done())) {
-			n++
-		}
-	}
-	return max(n, 0)
+	return max(m.width-m.Running(), 0)
 }
 
 // queueOf runs a queue that asks for its packets (--packets), and, when the server is one
