@@ -757,10 +757,12 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 
 The install play adopts one build onto every fleet host, and it stages the rollout so a bad build reaches one host
 before it reaches the fleet. The install runs in two batches: the canary alone first, then every other fleet host.
-The canary is `nova_adopt_canary`, a group var that defaults to the first host of the fleet group in inventory
-order that is not the coordinator; the first batch holds one host, and the play stops on the canary's failure
-(`max_fail_percentage 0`), so the other hosts are never touched. `nova_adopt_canary=none` runs the play in one
-batch, as it did before, and the play says so.
+The play runs over the inventory's adopt group, whose first host is the canary, so the serial's first batch is the
+canary itself and never the coordinator, which the fleet's own inventory order can put first. The canary is
+`nova_adopt_canary`, a group var that defaults to the first host of the adopt group (the first host of the fleet in
+inventory order that is not the coordinator); the first batch holds one host, and the play stops on the canary's
+failure (`max_fail_percentage 0`), so the other hosts are never touched. `nova_adopt_canary=none` runs the play in
+one batch, as it did before, and the play says so.
 
 After the canary's loops step the play waits on the canary alone. It reads only the canary's own log, the unit's
 journal (`nova-loop-<name>`) on Linux and `~/Library/Logs/nova-loop-<name>.log` on Darwin, for one `finish <id>

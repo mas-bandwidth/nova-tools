@@ -92,10 +92,13 @@
 # The canary stage (docs/SPEC-RELEASE.md, "Adopting a build"): the install runs
 # in two batches, the canary alone first and every other fleet host after it,
 # and the play stops as soon as the canary's failure is seen, so the other hosts
-# are never touched. nova_adopt_canary=none installs every host in one batch, as
-# the play did before.
+# are never touched. The play runs on the inventory's adopt group, whose first
+# host is the canary, so the serial's first batch is the canary itself and never
+# the coordinator (which the fleet's inventory order can put first).
+# nova_adopt_canary=none installs every host in one batch, as the play did
+# before.
 - name: the build in ~/.local/bin on every machine
-  hosts: all
+  hosts: adopt
   gather_facts: false
   serial: "{{ [1, '100%'] if nova_adopt_canary != 'none' else '100%' }}"
   max_fail_percentage: 0
@@ -447,17 +450,6 @@
       # the coordinator installs inside the seat play's window, its old server and member stopped
       when: inventory_hostname not in (groups['coordinator'] | default([]))
 
-    # The canary's wait reads its member's own log from the moment the restart
-    # begins (docs/SPEC-RELEASE.md, "Adopting a build").
-    - name: "canary: the moment the restart begins"
-      ansible.builtin.command: { argv: [date, -u, "+%s"] }
-      register: tools_canary_at
-      changed_when: false
-      check_mode: false
-      when: >-
-        nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
-        and not ansible_check_mode
-
     # On darwin the loop log appends and its lines carry no timestamp (launchd
     # StandardOutPath), so the whole file holds the finish ok lines of every
     # earlier run. The wait must read only what the restarted member writes, so
@@ -642,6 +634,19 @@
               {{ out }}
           when: tools_replaced | length > 0
 
+    # The canary's wait reads its member's own log from the moment the loops
+    # step finished the restart, so the still-running member of before cannot
+    # print a finish that passes the wait (docs/SPEC-RELEASE.md, "Adopting a
+    # build").
+    - name: "canary: the restart's moment (the wait's lower bound)"
+      ansible.builtin.command: { argv: [date, -u, "+%s"] }
+      register: tools_canary_at
+      changed_when: false
+      check_mode: false
+      when: >-
+        nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
+        and not ansible_check_mode
+
     # The canary's wait and rollback (docs/SPEC-RELEASE.md, "Adopting a
     # build"): after the loops step the canary's own member's log must show one
     # finish ok line since the restart. A canary whose member refused (a finish
@@ -675,15 +680,22 @@
           retries: "{{ ((nova_adopt_canary_wait | int) / 30) | round(0, 'ceil') | int }}"
           delay: 30
 
-        - name: "canary: the member finished ok since the restart"
+        - name: "canary: the member's earliest finish since the restart is an ok one"
           ansible.builtin.assert:
             that: >-
-              (tools_canary_log.stdout_lines | select('search', 'finish .*ok=true exit=0') | list | length) > 0
+              canary_finishes | length > 0
+              and (canary_finishes | first) is search('finish .*ok=true exit=0')
             fail_msg: >-
               ADOPT REFUSED step=canary host={{ inventory_hostname }}:
-              {{ (tools_canary_log.stdout_lines | select('search', 'finish') | list | last)
+              {{ (canary_finishes | first)
                  | default('no finish in ' ~ (((nova_adopt_canary_wait | int) / 60) | round(0, 'ceil') | int) ~ 'm') }}
             quiet: true
+          vars:
+            canary_lines: "{{ tools_canary_log.stdout_lines | default([]) }}"
+            # every finish line the read holds, in the log's own order: the
+            # earliest decides. A refusal (exit=1) before any ok finish ends
+            # the play, never merely the presence of an ok anywhere (Done 3).
+            canary_finishes: "{{ canary_lines | select('search', 'finish .*exit=') | list }}"
 
         - name: "canary: the moment the member's finish was seen"
           ansible.builtin.command: { argv: [date, -u, "+%s"] }
@@ -775,7 +787,7 @@
           ansible.builtin.fail:
             msg: >-
               ADOPT REFUSED step=canary host={{ inventory_hostname }}:
-              {{ (tools_canary_log.stdout_lines | default([]) | select('search', 'finish') | list | last)
+              {{ (tools_canary_log.stdout_lines | default([]) | select('search', 'finish .*exit=') | list | first)
                  | default('no finish in ' ~ (((nova_adopt_canary_wait | int) / 60) | round(0, 'ceil') | int) ~ 'm') }};
               the canary is rolled back to {{ tools_was_version or 'nothing (no build fact)' }}
 

@@ -3,12 +3,15 @@ package fleet
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 )
 
 // tools_test.go pins the friend step of fleet/tools.yml (docs/FLEET.md, the
@@ -826,7 +829,8 @@ func TestAdoptionDiskFreeReadsThroughCheck(t *testing.T) {
 // play in one batch, as before. The canary and its wait bound are group vars.
 func TestInstallPlayStartsWithOneCanaryBatch(t *testing.T) {
 	t.Parallel()
-	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	plays := readTools(t)
+	install := playNamed(t, plays, "the build in ~/.local/bin on every machine")
 	serial := asText(install["serial"])
 	assert.Contains(t, serial, "[1,", "the install play's first batch is not one host (the canary)")
 	assert.Contains(t, serial, "nova_adopt_canary", "the batch split is not keyed on nova_adopt_canary")
@@ -834,16 +838,31 @@ func TestInstallPlayStartsWithOneCanaryBatch(t *testing.T) {
 	assert.Contains(t, serial, "else '100%'", "nova_adopt_canary=none does not run the play in one batch")
 	assert.Equal(t, 0, install["max_fail_percentage"], "the play does not stop on the canary's failure (max_fail_percentage is not 0)")
 
+	// The play runs over the inventory's adopt group, whose first host is the
+	// canary: the serial's first batch is the canary itself, never the first
+	// host of all (the coordinator, in the fixture).
+	assert.Equal(t, "adopt", asText(install["hosts"]), "the install play does not run over the adopt order")
+
 	all := readGroupVars(t)
 	canary := asText(all["nova_adopt_canary"])
-	assert.Contains(t, canary, "group", "nova_adopt_canary has no default host from the fleet group")
-	assert.Contains(t, canary, "reject('in'", "the canary default does not skip the coordinator where it stands")
-	assert.NotContains(t, canary, "difference", "a set difference does not keep the inventory's order")
-	assert.Contains(t, canary, "| first", "the canary default does not take the first host of the fleet in inventory order")
+	assert.Contains(t, canary, "groups['adopt']", "the canary default is not the adopt order's first host")
+	assert.Contains(t, canary, "| first", "the canary default does not take the first host of the adopt order")
 	_, ok := all["nova_adopt_canary"]
 	assert.True(t, ok, "nova_adopt_canary is not a group var")
 	_, ok = all["nova_adopt_canary_wait"]
 	assert.True(t, ok, "nova_adopt_canary_wait is not a group var")
+
+	// The fixture's all order is [bench-a, bench-b] with bench-a the
+	// coordinator, so the first host of all is the coordinator; the adopt
+	// order leads with the canary bench-b, which the serial's first batch takes.
+	snap, err := config.LoadFixture(filepath.Join("testdata", "inventory-fixture.yml"))
+	require.NoError(t, err)
+	inv, err := config.BuildInventory(snap, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, inv.Adopt.Hosts, "the adopt order is empty")
+	assert.Equal(t, "bench-a", inv.All.Hosts[0], "the fixture no longer sorts the coordinator first")
+	assert.Equal(t, "bench-b", inv.Adopt.Hosts[0], "the adopt order's first host is not the canary")
+	assert.ElementsMatch(t, inv.All.Hosts, inv.Adopt.Hosts, "the adopt order drops or adds a host")
 }
 
 // TestInstallPlayCanaryWaitsOnItsMemberLog pins the wait (docs/SPEC-RELEASE.md,
@@ -867,6 +886,65 @@ func TestInstallPlayCanaryWaitsOnItsMemberLog(t *testing.T) {
 	ok := taskNamed(t, tasks, "canary: the member finished ok")
 	assert.Contains(t, debugMsg(ok), "CANARY OK host=", "the wait prints no CANARY OK host line")
 	assert.Contains(t, debugMsg(ok), "card=", "the CANARY OK line names no card")
+}
+
+// TestInstallPlayCanaryEarliestFinishDecides pins the two-finish case
+// (docs/SPEC-RELEASE.md, "Adopting a build"; Done 3): a log that holds both a
+// `finish ... exit=1` line and an `ok=true exit=0` line is refused when the
+// exit=1 is the earliest finish, never passed because an ok is present
+// somewhere. The check decides on the first finish line, not on the last or on
+// a count.
+func TestInstallPlayCanaryEarliestFinishDecides(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	tasks := flattenTasks(t, tasksOf(t, install))
+
+	check := taskContaining(t, tasks, "the member's earliest finish since the restart is an ok one")
+	assertMap, ok := check["ansible.builtin.assert"].(map[string]any)
+	require.True(t, ok, "the earliest-finish check is not an assert")
+	that := asText(assertMap["that"])
+	assert.Contains(t, that, "canary_finishes | first", "the check does not decide on the earliest finish line")
+	assert.Contains(t, that, "is search('finish .*ok=true exit=0')", "the earliest finish line is not required to be an ok one")
+	assert.NotContains(t, that, "| list | last", "the check reads the last finish line, so a later ok hides an earlier refusal")
+
+	lines := taskVar(t, check, "canary_lines")
+	assert.Contains(t, lines, "stdout_lines", "the finishes are not read from the member's log")
+	finishes := taskVar(t, check, "canary_finishes")
+	assert.Contains(t, finishes, "select('search', 'finish .*exit=')", "the finishes do not name every finish line")
+
+	assert.Contains(t, asText(assertMap["fail_msg"]), "canary_finishes | first",
+		"the refusal does not name the earliest finish line, the one that failed")
+}
+
+// TestInstallPlayCanaryLowerBoundIsAfterTheRestart pins the Linux lower bound
+// (docs/SPEC-RELEASE.md, "Adopting a build"; Done 2): the journal is read since
+// the restart's moment, taken after the loops step restarted the member, never
+// at the install, whose window would include the still-running old member's
+// output and let an old finish ok line pass the wait.
+func TestInstallPlayCanaryLowerBoundIsAfterTheRestart(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	tasks := tasksOf(t, install)
+
+	at := -1
+	loops := -1
+	for i, task := range tasks {
+		name := asText(task["name"])
+		if strings.Contains(name, "the restart's moment (the wait's lower bound)") {
+			at = i
+			assert.Contains(t, fmt.Sprint(task), "date", "the lower bound is not the clock")
+		}
+		if strings.Contains(name, "each member and reader whose binary the install replaced") {
+			loops = i
+		}
+	}
+	require.GreaterOrEqual(t, loops, 0, "no loops step: nothing restarts the member")
+	require.GreaterOrEqual(t, at, 0, "no task takes the restart's moment as the wait's lower bound")
+	assert.Greater(t, at, loops, "the wait's lower bound is taken before the restarted member runs, so the old member's finish can pass it")
+
+	wait := taskContaining(t, flattenTasks(t, tasks), "the member's log since the restart")
+	assert.Contains(t, fmt.Sprint(wait), "tools_canary_at", "the Linux read is not bounded by the restart's moment")
+	assert.Contains(t, fmt.Sprint(wait), "--since", "the Linux read is not a journal since a moment")
 }
 
 // TestInstallPlayCanaryRollsBackTheBuildFactVersion pins the rollback
