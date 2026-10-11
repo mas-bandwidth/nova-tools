@@ -200,9 +200,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	// the sprint's verbs go to its server, which runs them beside the store (pkg/sprintwire)
+	// the sprint's verbs go to its server, which runs them beside the store (pkg/sprintwire).
+	// The dialer re-dials it after a restart, rebuilding the client and backing off
+	// (tla/LoopRedial.tla, ServerRestart), so a member and a reader never park on a
+	// connection the server dropped.
 	if send == nil {
-		send = sprintwire.Client{Addr: *server}.Do
+		send = newSprintDialer(*server).do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
 	// a member hands native the decide key when its environment holds it, or when

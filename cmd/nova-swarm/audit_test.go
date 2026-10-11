@@ -295,6 +295,13 @@ var swarmAudit = audit.Config{
 		// can write past the escape: url.Parse reads the baseURL string and net.SplitHostPort
 		// / net.JoinHostPort / net.ParseIP split, join and classify a host, holding no writer.
 		`"net"`, `"net/url"`,
+		// sprintredial.go (member.go's --server, the reader re-dial) holds the one
+		// *http.Client a member or a reader sends its sprint verbs through and rebuilds
+		// it after any error (a fresh transport, a fresh connection). It writes no
+		// stream of this binary: pkg/sprintwire.Client.Do takes the client and returns
+		// the server's answer as values, and a failed verb's words reach the member's
+		// writer only through sprintFailureOutput, which escapes and bounds them.
+		`"net/http"`,
 		// publish.go (slice 7) needs bytes and it writes to no stream. bytes.Buffer only
 		// holds the trimmed stdout/stderr of the git and gh children it samples, and every
 		// one of those strings is put through oneline.Field or oneline.Err before this
