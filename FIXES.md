@@ -46,6 +46,12 @@ The fixes held during the split, the point-release candidates found on 2026-10-1
 - **The worker brief says never amend, rebase or reset onto origin** (planned). The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds (its add refuses a held rules file that differs), stops children rewriting history, which caused the does-not-descend refusals. A test pins the file's digest in both repositories. From: v1.2.5 candidate list.
 - **A friend's width fits within her slots** (planned). nova-config refuses a friend width larger than her slots and names both values, so one-shot lanes cannot silently halve the friend's available capacity. From: dogfood 2026-10-10: one-shot friend at width 32 with 16 slots.
 
+## v1.2.8 (planned)
+
+The fleet-install fixes found while dogfooding v1.2.5 and later.
+
+- **Every installed tool is checked against the release's bytes** (in-progress). After the install and the friends' reinstall, tools.yml lists each machine's bin directory with the sha256 of every file and compares it with the platform's SHA256SUMS; a tool built or copied on the machine, which prints the release's version and holds another toolchain's bytes, refuses the play (TOOLS REFUSED step=identity) and is named. --check says WOULD-REPLACE and refuses nothing. fleet/tools_test.go pins the check and that no task compiles a tool. From: dogfood 2026-10-10: after the v1.2.5 adopt one machine's nova-friend reported go1.27.1 while every other tool reported go1.26.6.
+
 ## v1.2.9 (planned)
 
 A worker card whose last turn is a question ends as asked instead of holding its slot.

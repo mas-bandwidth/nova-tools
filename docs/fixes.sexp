@@ -19,6 +19,8 @@
     :text "The fixes held during the split, the point-release candidates found on 2026-10-10, the owed
      tests, and the sprint store cards that are point-release work. Each is re-applied or written in
      this repository, then cut as one release.")
+   (release "v1.2.8" :status "planned"
+    :text "The fleet-install fixes found while dogfooding v1.2.5 and later.")
    (release "v1.2.9" :status "planned"
     :text "A worker card whose last turn is a question ends as asked instead of holding its slot."))
  :items
@@ -152,6 +154,14 @@
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
      holding its slot to the deadline."
    :origin "issue #2548")
+  (fix "fleet-built-from-release-not-source" :release "v1.2.8" :status "in-progress"
+   :title "Every installed tool is checked against the release's bytes"
+   :text "After the install and the friends' reinstall, tools.yml lists each machine's bin directory with
+    the sha256 of every file and compares it with the platform's SHA256SUMS; a tool built or copied on
+    the machine, which prints the release's version and holds another toolchain's bytes, refuses the
+    play (TOOLS REFUSED step=identity) and is named. --check says WOULD-REPLACE and refuses nothing.
+    fleet/tools_test.go pins the check and that no task compiles a tool."
+   :origin "dogfood 2026-10-10: after the v1.2.5 adopt one machine's nova-friend reported go1.27.1 while every other tool reported go1.26.6")
   (fix "adopt-window-and-dry-run-fixes" :release "v1.2.9" :status "shipped"
    :title "Adopt waits only for agents it stopped and dry-runs honestly"
    :text "The adopt window waits only for the agents the adopt itself stopped, and its dry run reports
