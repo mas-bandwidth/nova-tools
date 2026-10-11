@@ -94,7 +94,11 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 			}
 			lim, found = claudeLimit(ev, now), true
 		}
-		if found {
+		// a rejection is the limit and nothing beside it can undo it; an event
+		// that only measured the windows (allowed, allowed_warning) does not
+		// hide the harness's own limit line printed beside it: Claude Code
+		// prints "You've hit your weekly limit ..." with a non-rejecting event.
+		if found && lim.Limited {
 			return lim, true
 		}
 	}
@@ -103,10 +107,11 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 		tail = tail[len(tail)-LimitTail:]
 	}
 	for _, line := range strings.Split(tail, "\n") {
+		line = stripANSI(line) // the CLI colours the wording: match the words, not the codes
 		if !limitWords.MatchString(line) {
 			continue
 		}
-		if until, ok := resetOfText(stripANSI(line), now); ok {
+		if until, ok := resetOfText(line, now); ok {
 			lim = Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
 			found = true
 		}

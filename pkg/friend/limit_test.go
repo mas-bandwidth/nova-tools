@@ -175,6 +175,89 @@ func TestALimitLineIsReadOnlyWithItsResetAndNeverFromTheBodyOfAReply(t *testing.
 	assert.True(t, errors.As(Deferred{Reason: "x"}, new(Deferred)))
 }
 
+// A provider or harness limit, in any wording the harness prints, is a limit
+// until its reset; the exact weekly-limit line Claude Code prints, with the
+// middle dot and the ANSI colour codes the CLI adds, names its reset in the
+// zone it names, and a rate_limit_event that is not a rejection beside it does
+// not hide it (docs/SPEC-FRIEND.md, a harness at its limit).
+func TestTheWeeklyLimitLineIsReadBesideANonRejectingEvent(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	ny := mustZone(t, "America/New_York")
+	line := "\x1b[91mYou've hit your weekly limit \u00b7 resets Oct 16 at 3am (America/New_York)\x1b[0m"
+	event := claudeEvent("allowed", false, 0.4, 0.55, now.Add(time.Hour), now.Add(50*time.Hour))
+	out := `{"type":"system"}` + "\n" + event + "\n" + line + "\n"
+
+	lim, found := ReadLimit(out, now)
+	require.True(t, found)
+	require.True(t, lim.Limited, "the weekly-limit line, not the non-rejecting event, is the limit")
+	assert.True(t, lim.Until.Equal(time.Date(2026, 10, 16, 3, 0, 0, 0, ny)),
+		"the reset the line names, in the zone it names: got %s", lim.Until)
+	assert.Contains(t, lim.Reason, "weekly limit")
+
+	// the same line with no event at all, and the ANSI codes inside the words
+	lim, found = ReadLimit("\x1b[1mYou've hit your \x1b[91mweekly limit\x1b[0m \u00b7 resets Oct 16 at 3am (America/New_York)\n", now)
+	require.True(t, found, "ANSI codes inside the wording do not hide it")
+	require.True(t, lim.Limited)
+	assert.True(t, lim.Until.Equal(time.Date(2026, 10, 16, 3, 0, 0, 0, ny)))
+}
+
+// Every limit wording the repository has seen, each read and classified: the
+// texts in pkg/friend/testdata/limits.tsv (grep of the logs and docs) that
+// name a reset, read whole with the ANSI stripped (item 2 of the card).
+func TestEveryLimitWordingTheRepoHasSeenIsRead(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC)
+	utc := time.UTC
+	ny := mustZone(t, "America/New_York")
+	for _, tc := range []struct {
+		name  string
+		out   string
+		until time.Time
+	}{
+		{"claude weekly limit line",
+			"You've hit your weekly limit \u00b7 resets Oct 16 at 3am (America/New_York)",
+			time.Date(2026, 10, 16, 3, 0, 0, 0, ny)},
+		{"claude weekly limit line, coloured",
+			"\x1b[91mYou've hit your weekly limit \u00b7 resets Oct 16 at 3am (America/New_York)\x1b[0m",
+			time.Date(2026, 10, 16, 3, 0, 0, 0, ny)},
+		{"claude hit your limit, clock and zone",
+			"You've hit your limit \u00b7 resets 3pm (UTC)",
+			time.Date(2026, 10, 5, 15, 0, 0, 0, utc)},
+		{"claude usage limit reached, epoch",
+			"Claude AI usage limit reached|1791205200",
+			time.Unix(1791205200, 0).In(utc)},
+		{"claude hit your usage limit, duration",
+			"You've hit your usage limit. Try again in 2 hours.",
+			now.Add(2 * time.Hour)},
+		{"claude 5-hour limit reached, no reset",
+			"5-hour limit reached",
+			time.Time{}},
+		{"claude insufficient credits",
+			"Insufficient AI Credits. Your credits will refresh 6:52 PM.",
+			time.Date(2026, 10, 5, 18, 52, 0, 0, utc)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lim, found := ReadLimit("some work\n"+tc.out+"\n", now)
+			if tc.until.IsZero() {
+				assert.False(t, lim.Limited, "a wording with no reset this reads is no limit here: %s", tc.out)
+				return
+			}
+			require.True(t, found, tc.out)
+			require.True(t, lim.Limited, tc.out)
+			assert.True(t, lim.Until.Equal(tc.until), "%s: got %s", tc.out, lim.Until)
+		})
+	}
+}
+
+func mustZone(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	require.NoError(t, err)
+	return loc
+}
+
 func ftoa(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 func itoa(n int64) string   { return strconv.FormatInt(n, 10) }
 
