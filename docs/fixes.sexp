@@ -484,4 +484,16 @@
   (fix "a-run-that-ends-at-its-first-result-is-not-a-finish" :release "v1.2.14" :status "planned"
    :title "A run that ends at its first RESULT.md is a no-result finish"
    :text "A child whose harness stopped soon after it wrote the early RESULT.md its brief asks for (verdict not-done, nothing committed) was judged failed work, spending an attempt, while the same run with no RESULT.md was judged no result and dealt again. member.Judge now classes a shaped not-done run under FirstResultWall (two minutes), with nothing committed and no gate, as the same no-result kind, with a reason that keeps the \"no result:\" prefix so nova-sprint's IsNoResult routes it."
-   :origin "the seat, 2026-10-11: fx-hosted-tests-green-on-mainc attempt 10, ran 62s, wrote an early RESULT.md (starting: will run ...) and stopped; re-scoped against nova-tools dev 2314d43; card a-run-that-ends-at-its-first-result-is-not-a-finish")))
+   :origin "the seat, 2026-10-11: fx-hosted-tests-green-on-mainc attempt 10, ran 62s, wrote an early RESULT.md (starting: will run ...) and stopped; re-scoped against nova-tools dev 2314d43; card a-run-that-ends-at-its-first-result-is-not-a-finish")
+
+  (fix "a-refused-finish-never-reruns-a-pushed-generation" :release "v1.2.11" :status "in-progress"
+   :title "A refused finish never reruns a pushed generation"
+   :text "A finish the store refuses after its push is no longer taken as the end of the work. The
+    member prints the refusal, and when the refused finish carried a pushed head it remembers the
+    generation with the finish's arguments exactly as sent; recoverWorking never runs a card whose
+    card@gen is held, and once a pass each due finish is sent again byte for byte with backoff
+    (FinishRefusedRetry, doubling to 8m). The same refusal FinishRefusedMax (3) times hands the
+    card back with stop-return instead of running it, and the memory goes when the queue no longer
+    lists the card at that generation on this row. A refused finish with nothing pushed is
+    forgotten as today."
+   :origin "the coordinator, 2026-10-11: the v1.2.10 nova-sprint server refused every ok finish, the member forgot each refused card and reran the generation, and the second push was rejected non-fast-forward; card a-refused-finish-never-reruns-a-pushed-generation.w1")))
