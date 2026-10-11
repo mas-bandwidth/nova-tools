@@ -535,4 +535,17 @@
     starts no child, the launch is posted as cancelled by the stop and collect drops it, leaving
     the card working under this row with no child of ours for machineStop to hand back with
     stop-return, never finished."
-   :origin "the audit defect \"a background start after STOP launches a child\" (nova-tools pkg/member staggerStart / scriptOrStart), confirmed by reading nova-tools dev 2314d43 on 2026-10-11; card a-start-scheduled-before-stop-launches-no-child.w2")))
+   :origin "the audit defect \"a background start after STOP launches a child\" (nova-tools pkg/member staggerStart / scriptOrStart), confirmed by reading nova-tools dev 2314d43 on 2026-10-11; card a-start-scheduled-before-stop-launches-no-child.w2")
+   (fix "nova-friend-raises-a-refused-verb-and-proves-its-harness-first" :release "v1.2.14" :status "in-progress"
+    :title "A refused verb is a fault the friend daemon raises, and a lane proves its harness first"
+    :text "The inbox loop treated every server refusal as NotServed, re-asked once a ServedEvery and only
+     recorded it, and the beat loop kept a failed beat in b.err shown only by nova-friend status: on
+     2026-10-11 the coordinator's friend daemon took nothing for eleven hours under a server refusal.
+     A refusal is now counted per verb in the daemon's status, and the third consecutive one is a
+     tellBroken plus a down beat naming it, with the recovery announced once. A lane also proves its
+     harness before it takes: harness_proof.go runs the harness's cheapest no-tool turn (claude -p ok
+     --output-format json --max-turns 1 with the lane's CLAUDE_CONFIG_DIR; dsh and gemini their
+     equivalent one-turn call), reads its terminal reason, and a daemon whose proof fails takes no
+     card and beats down with the reason; a lane whose claude -p writes no REPORT.md or RESULT.md
+     twice in a row re-proves instead of finishing a third card FAILED."
+    :origin "the owner, 2026-10-11 ~10:30-10:55 AM ET; card nova-friend-raises-a-refused-verb-and-proves-its-harness-first.w2")))
