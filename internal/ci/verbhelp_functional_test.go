@@ -24,7 +24,7 @@ import (
 // listing tools: `<tool> <verb> -h` prints that verb's help on stdout, exits
 // 0, writes nothing on stderr and creates nothing. Go's flag package answers
 // -h with `flag: help requested` at exit 2 unless a verb parses through the
-// one seam, internal/nsprint/verbflag, and an AI reads that exit 2 as a
+// one seam, pkg/nsprint/verbflag, and an AI reads that exit 2 as a
 // syntax error rather than as the help it asked for (2026-09-27 verb audit,
 // 14 of 16 tools). It runs inside TestEveryCommandMeetsTheOnboardingStandard,
 // on the binary that test has already built and the banner it has already
@@ -94,7 +94,7 @@ func helpStatesExitCodes(tool, help string) bool {
 func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[string]string, bool) {
 	t.Helper()
 	if !loadLiveTree(t, root).Package("cmd/" + tool) {
-		return nil, false // deprecated: never tested (internal/pkgselect/DEPRECATED)
+		return nil, false // deprecated: never tested (pkg/pkgselect/DEPRECATED)
 	}
 	helps := map[string]string{}
 	verbs, err := bannerVerbs(tool, banner)
@@ -132,7 +132,7 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 			continue
 		}
 		if code != 0 || strings.TrimSpace(out.String()) == "" || errb.Len() != 0 {
-			assert.Failf(t, fmt.Sprintf("`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String()), "")
+			assert.Failf(t, fmt.Sprintf("`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through pkg/nsprint/verbflag)", line, code, out.Len(), errb.String()), "")
 		} else {
 			helps[verb] = out.String()
 		}
@@ -140,7 +140,7 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 		// tool's verb help: the banner states the tool's codes (no exemption),
 		// and a verb's -h states codes, never only the `see help` pointer: the
 		// banner's paragraph, or the verb's own (Verb.ExitTable on
-		// internal/tool, an `exit codes:` line of RecoverWith's extra or Print's
+		// pkg/tool, an `exit codes:` line of RecoverWith's extra or Print's
 		// exit lines on verbflag), which need not repeat the banner's words.
 		// One verb per tool is enough: every verb's help is assembled by one
 		// seam or one table.

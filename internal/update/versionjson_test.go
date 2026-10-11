@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// envelope is internal/tool's Out as its JSON reads back: the shape every
+// envelope is pkg/tool's Out as its JSON reads back: the shape every
 // skeleton tool's version verb prints.
 type envelope struct {
 	Result struct {
@@ -25,7 +25,7 @@ type envelope struct {
 }
 
 // The banner promises --json on every verb but watch and release, version
-// included: one JSON object at exit 0 in internal/tool's envelope, the version
+// included: one JSON object at exit 0 in pkg/tool's envelope, the version
 // line its payload, the same answer nova-version's skeleton verb gives.
 func TestVersionJSONIsTheSkeletonsEnvelope(t *testing.T) {
 	t.Parallel()

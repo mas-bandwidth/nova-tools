@@ -19,28 +19,28 @@ marked, so the coordinator can dedupe rather than re-report them.
 
 ## Findings
 
-## 1. The bus test rig's random source is raced, so `go test -race ./internal/bus/` is red for the whole package — URGENT
+## 1. The bus test rig's random source is raced, so `go test -race ./pkg/bus/` is red for the whole package — URGENT
 
-`internal/bus/bus_test.go:20-28` (the `Rand` closure written at `:24`);
-`internal/bus/token_test.go:193-209` (`TestRacingRetriesMakeOneMessage`).
+`pkg/bus/bus_test.go:20-28` (the `Rand` closure written at `:24`);
+`pkg/bus/token_test.go:193-209` (`TestRacingRetriesMakeOneMessage`).
 
 **What is wrong:** `rig` hands every `Bus` a `Rand` closure that reads and
 writes a captured `byte` counter (`n++`) with no lock, and
 `TestRacingRetriesMakeOneMessage` calls `b.Send` from eight goroutines through
 that one `Bus`, so the counter is a data race.
 
-**Evidence:** `go test -race -count=1 ./internal/bus/` fails:
+**Evidence:** `go test -race -count=1 ./pkg/bus/` fails:
 
     WARNING: DATA RACE
     Read at 0x00c00058e00f by goroutine 133:
-      bus.rig.func1()  internal/bus/bus_test.go:24
-      internal/bus.(*Bus).ulid()  internal/bus/bus.go:708
-      internal/bus.(*Bus).Send()  internal/bus/bus.go:328
-      internal/bus.TestRacingRetriesMakeOneMessage.func1()  internal/bus/token_test.go:203
+      bus.rig.func1()  pkg/bus/bus_test.go:24
+      pkg/bus.(*Bus).ulid()  pkg/bus/bus.go:708
+      pkg/bus.(*Bus).Send()  pkg/bus/bus.go:328
+      pkg/bus.TestRacingRetriesMakeOneMessage.func1()  pkg/bus/token_test.go:203
     Previous write at 0x00c00058e00f by goroutine 130:
-      bus.rig.func1()  internal/bus/bus_test.go:24
+      bus.rig.func1()  pkg/bus/bus_test.go:24
     --- FAIL: TestRacingRetriesMakeOneMessage
-    FAIL  github.com/mas-bandwidth/nova-tools/internal/bus
+    FAIL  github.com/mas-bandwidth/nova-tools/pkg/bus
 
 The certification workflow's race step (`.github/workflows/certification.yml`,
 `Makefile:380 test-race`) runs the whole tree under the race detector, so this
@@ -56,7 +56,7 @@ give the racing goroutines their own `Bus` over the one `Fake`.
 
 **What is wrong:** the rig's `now` closure writes `r.now` (and the state
 `r.answerChecks` touches) and is called both from the daemon goroutine
-(`internal/friend/daemon.go` -> `d.Now()`) and from the test's `stopAfter`
+(`pkg/friend/daemon.go` -> `d.Now()`) and from the test's `stopAfter`
 callback with no synchronization, so the two race.
 
 **Evidence:** `go test -race -count=1 ./cmd/nova-friend/` fails with ten
@@ -65,8 +65,8 @@ callback with no synchronization, so the two race.
     Read at ... by goroutine 50:
       cmd/nova-friend.(*rig).world.func4()  cmd/nova-friend/main_test.go:95
       cmd/nova-friend.TestRunWithNoSessionAnsweringBeatsDown.stopAfter.func6()  main_test.go:160
-      internal/friend.(*SessionCheck).BeatOr.1()  internal/friend/presence.go:404
-      internal/friend.(*Limits).BeatOrDown.9()  internal/friend/limit.go:383
+      pkg/friend.(*SessionCheck).BeatOr.1()  pkg/friend/presence.go:404
+      pkg/friend.(*Limits).BeatOrDown.9()  pkg/friend/limit.go:383
     Previous write at ... by goroutine 212:
       cmd/nova-friend.(*rig).world.func4()  cmd/nova-friend/main_test.go:95
     FAIL  github.com/mas-bandwidth/nova-tools/cmd/nova-friend
@@ -108,7 +108,7 @@ bare `<tool>` to print one `<TOOL> REFUSED: ...; run: <tool> help` line on
 stderr at exit 2. `Main` replaces the empty argument list with `run` before
 the skeleton sees it, so the tool runs its checks, writes each result to
 stdout, and exits 2 with nothing on stderr. The skeleton's own `Default`
-handling already refuses a bare invocation (`internal/tool/tool.go:166-176`),
+handling already refuses a bare invocation (`pkg/tool/tool.go:166-176`),
 so the pre-default is the bug.
 
 **Evidence:** on the bench,
@@ -170,7 +170,7 @@ spelling of each).
 ## 7. `nova-doctor help`'s `example:` block is one command, not the three a first run needs — NEXT
 
 `internal/doctor/doctor.go:219` (`Example: "--local"`), block rendered at
-`internal/tool/tool.go:524-529`.
+`pkg/tool/tool.go:524-529`.
 
 **What is wrong:** Onboarding point 6 requires three to six command lines a
 stranger runs in order; the block holds one.

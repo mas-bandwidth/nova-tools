@@ -11,9 +11,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // snapshotChildTimeout is the default deadline one binary's `version` gets, and
@@ -78,7 +78,7 @@ type snapRow struct {
 }
 
 // sourceString is the one line a Source reads as on a refusal: every field
-// named, in the order internal/buildinfo writes them, so the reader of the
+// named, in the order pkg/buildinfo writes them, so the reader of the
 // refusal can match it against a build's manifest without holding the
 // goroutine open.
 func sourceString(s buildinfo.Source) string {
@@ -102,7 +102,7 @@ func revisionOf(stamp string) string {
 
 // parseVersionLine takes apart the Conventions line a binary's `version` prints
 // -- <tool> <stamp> <goos>/<goarch> <go version>, and then any named extras --
-// through internal/buildinfo, the one place in this tree that both WRITES that
+// through pkg/buildinfo, the one place in this tree that both WRITES that
 // line and reads it.
 //
 // A line may carry more than four tokens: nova-merge prints a fifth

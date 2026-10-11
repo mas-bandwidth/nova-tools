@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/gocache"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/gocache"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // THE CLEANER'S LAZY WORK (docs/SPEC-SWARM.md, `member`).
@@ -36,7 +36,7 @@ import (
 //     link, and anything of a launch that is running or claimed is left alone, always.
 //   - the build cache: the Go build cache this loop's launches share (GOCACHE, nativeChildEnv)
 //     is held under --gocache-limit (gocache.Limit, 20 GiB), least recently used entries removed
-//     first down to 80% of it, never one used in the last two hours (internal/gocache).
+//     first down to 80% of it, never one used in the last two hours (pkg/gocache).
 
 // keepEpochs is how many epochs, the current one included, keep their slot entries and
 // results: the current one, which is running, and the one before it, whose logs are read
@@ -54,7 +54,7 @@ const lazyRound = 32
 // directory listing.
 const lazyEvery = 2 * time.Second
 
-// The build cache's trim (internal/gocache): held under the member's --gocache-limit, then
+// The build cache's trim (pkg/gocache): held under the member's --gocache-limit, then
 // down to the low-water mark a fifth under it (gocache.SlackOf). cacheDirsPerRound is how
 // many of the cache's 256 subdirectories a round reads (measures, and trims when over): the
 // size is never measured by walking the whole cache at once, but as a running sum, each

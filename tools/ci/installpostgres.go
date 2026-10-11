@@ -28,7 +28,7 @@ func init() {
 		help: `usage: go run ./tools/ci install-postgres
 
 Puts initdb, pg_ctl and postgres on PATH, for the tests that start a private
-Postgres on loopback under the test's directory (internal/nsprint/testutil/pg);
+Postgres on loopback under the test's directory (pkg/nsprint/testutil/pg);
 they do not dial any store. A runner that already has the binaries is unchanged.
 Linux uses apt-get (postgresql-16 where the archive has it, else postgresql; then
 sudo -n), macOS uses Homebrew's postgresql@16. Debian and Ubuntu install the

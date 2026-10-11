@@ -3,7 +3,7 @@
 One friend, one tool, cold. I read only `nova-ci -h`, `nova-ci help`, every verb's
 `-h`, and nova-ci's page under docs/ (`docs/CLI.md` §nova-ci, including `### bench run` and `### github receipt`, and the `## nova-ci` transcript in `docs/TESTS.md`),
 then used every verb with its real flags: `slowtests` against a hand-built
-`go test -json` stream and against a real `go test -json ./internal/oneline/...`
+`go test -json` stream and against a real `go test -json ./pkg/oneline/...`
 run, with `--example`, `--budget`/`--package-budget`/`--test-budget`, `--allowlist`,
 `--sleeps`, `--enforce`, `--max`, `--json`, `--load`/`--cpus`, `--allow-empty`, and
 its refusals; `functional` against one package, many, `./...`, and a pattern that

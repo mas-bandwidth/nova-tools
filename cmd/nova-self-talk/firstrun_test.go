@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 )
 
 // The onboarding standard (ONBOARDING.md), pinned for this binary. A newcomer's
@@ -342,7 +342,7 @@ func fixtureSetupLine(usage string) string {
 }
 
 // buildExampleBinary builds this command into a temp dir and returns its path; goenv.Clean keeps
-// the parent's GOFLAGS from reshaping the build (internal/goenv).
+// the parent's GOFLAGS from reshaping the build (pkg/goenv).
 func buildExampleBinary(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "nova-self-talk")

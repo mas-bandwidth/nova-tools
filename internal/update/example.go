@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // exampleManifest is the manifest the `example` verb prints or writes: one tool,

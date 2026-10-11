@@ -396,7 +396,7 @@ func TestFunctionalImageRunsAsTheTierExpects(t *testing.T) {
 }
 
 // execNames is every program name a Go file under cmd, internal or tools gives
-// to exec.Command, exec.CommandContext, exec.LookPath or internal/subproc's Command,
+// to exec.Command, exec.CommandContext, exec.LookPath or pkg/subproc's Command,
 // CommandFor, Context and Long as a string literal or
 // as a package-level constant or variable initialised with one. The value is
 // the base name, and the sites that give it, as file:line.
@@ -404,8 +404,8 @@ func execNames(t *testing.T) map[string][]string {
 	t.Helper()
 	tree := repoTree(t)
 	strs := map[string]string{} // dir|name -> literal
-	files := tree.GoFilesUnder(false, "cmd", "internal", "tools")
-	files = append(files, tree.GoFilesUnder(true, "cmd", "internal", "tools")...)
+	files := tree.GoFilesUnder(false, "cmd", "internal", "pkg", "tools")
+	files = append(files, tree.GoFilesUnder(true, "cmd", "internal", "pkg", "tools")...)
 	var use []*treeFile
 	for _, f := range files {
 		if f.AST == nil || f.HasDirNamed("testdata") {
@@ -456,7 +456,7 @@ func execNames(t *testing.T) map[string][]string {
 				arg = 0
 			case pkg.Name == "exec" && sel.Sel.Name == "CommandContext":
 				arg = 1
-			// internal/subproc is the door every child now goes through: Command and
+			// pkg/subproc is the door every child now goes through: Command and
 			// CommandFor take (ctx, kind-or-budget, name, ...), Context and Long take
 			// (ctx, name, ...).
 			case pkg.Name == "subproc" && (sel.Sel.Name == "Command" || sel.Sel.Name == "CommandFor"):

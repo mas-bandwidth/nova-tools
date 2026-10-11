@@ -2,7 +2,7 @@
 
 Base: `sprint/mechanical-2026-10-02` at `4f35234af1f406d5f5722d66eedf2849f98e4cee`.
 Scope: `cmd/nova-sprint`, `internal/sprint` and `internal/sprint/store`,
-`internal/sprintdash`, `internal/sprintwire`, `docs/SPEC-SPRINT.md`,
+`internal/sprintdash`, `pkg/sprintwire`, `docs/SPEC-SPRINT.md`,
 `docs/SPEC-CARD-CONTRACT.md`, and the sprint models under `tla/` (ServerLanes,
 the tick, the fence, FriendPresence). The code was read as a stranger with the
 spec beside it; nothing was run against the live store or server, and no
@@ -45,7 +45,7 @@ back as an away reader's.
 
 ## 2. URGENT — `member.PathsProposed` drops every proposed path after an item with prose
 
-`internal/member/member.go:1751-1769` (the `break` at `:1767`). What is wrong:
+`pkg/member/member.go:1751-1769` (the `break` at `:1767`). What is wrong:
 after an item whose first word is followed by more words the loop breaks the
 whole line, so every later comma-separated path is lost, while the contract
 says the reader takes *each* item's path up to its first whitespace, dash or
@@ -116,7 +116,7 @@ the read-modify-write of the beat record.
 
 ## 5. NEXT — `progress` and `queue` are retried without the operation id the spec promises
 
-`internal/sprintwire/worker.go:47`: the id is appended only for `take`,
+`pkg/sprintwire/worker.go:47`: the id is appended only for `take`,
 `finish` and `read`. `docs/SPEC-SPRINT.md:6488-6490` promises it for every
 write whose answer was lost, and the `Worker` comment says "A write carries one
 operation id through them" (`worker.go:33-35`). The server runs `progress` and
@@ -129,7 +129,7 @@ the spec line and the comment to the three verbs that take an id.
 
 ## 6. NEXT — `Worker.Run` panics on an empty answer and on a nil error
 
-`internal/sprintwire/worker.go:62` (`r := res[0]`) and `:68`
+`pkg/sprintwire/worker.go:62` (`r := res[0]`) and `:68`
 (`err.Error()`). The loop indexes the answer before checking it is there, and
 the exhausted path dereferences `err` without checking it; a `Send` that
 returns `(nil, nil)` panics on `res[0]`, and a budget already expired before
@@ -170,7 +170,7 @@ that one value (`:214`, `:221`). The rule's `WidenBrief`/`PathsWidened`
 `internal/sprint/rules_read.go:130-150`) instead widens each line from its own
 globs, so the two wideners of a multi-line header disagree. A repeated typed
 `PATHS:` key is refused at admission
-(`internal/swarm/lintheader.go:352-354`), so no admitted card reaches it; the
+(`pkg/swarm/lintheader.go:352-354`), so no admitted card reaches it; the
 overclaim is on a stored brief edited by hand.
 
 Evidence — a scratch probe, removed after it printed:

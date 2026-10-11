@@ -10,13 +10,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 )
 
 // lockSnapshot takes the snapshot's lock, waiting until ctx ends.
 //
 // A stable sibling inode is required because the JSON itself is replaced by rename. The
-// lock is internal/filelock's (tla/FileLock.tla): the same flock on the same sibling file
+// lock is pkg/filelock's (tla/FileLock.tla): the same flock on the same sibling file
 // the earlier binaries took, so an old and a new nova-update still exclude each other
 // during an upgrade (snapshot_compat_unix_test.go). Only the kernel lock means
 // ownership; the file survives, and while held it carries the holder's stamp, which

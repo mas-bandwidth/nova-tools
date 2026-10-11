@@ -19,11 +19,11 @@ const flagUsageLedgerPath = "testdata/flagusage"
 
 // flagUsageRemedy is what a tool's author does to clear a site and its row.
 const flagUsageRemedy = "a flag registered with no description; give it a usage string that says what it wants " +
-	"(its unit, its role, an example value), as `f.String(\"store\", \"\", \"the store directory\")`; on internal/tool, " +
+	"(its unit, its role, an example value), as `f.String(\"store\", \"\", \"the store directory\")`; on pkg/tool, " +
 	"tool.Problems names every such flag (a row's count only falls)"
 
 // flagRegisters is each flag-registering method of package flag (and of a
-// *flag.FlagSet, and of internal/tool's Flags, which embeds one): its
+// *flag.FlagSet, and of pkg/tool's Flags, which embeds one): its
 // arity, and the positions of its name and its usage.
 var flagRegisters = map[string]struct{ arity, name, usage int }{
 	"String": {3, 0, 2}, "Bool": {3, 0, 2}, "Int": {3, 0, 2}, "Int64": {3, 0, 2}, "Uint": {3, 0, 2},
@@ -146,7 +146,7 @@ func TestEveryFlagSaysWhatItWants(t *testing.T) {
 	tree := repoTree(t)
 	ledger := newSiteLedger(t, flagUsageLedgerPath)
 	files := 0
-	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
+	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "pkg") {
 		if f.HasDirNamed("testdata") {
 			continue
 		}

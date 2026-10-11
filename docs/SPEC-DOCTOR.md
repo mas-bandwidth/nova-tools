@@ -59,7 +59,7 @@ DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]
 
 Dependency: the nova tools on PATH. Finds every executable `nova-*` on PATH (the first of
 a name wins, as the shell resolves it), runs `<tool> version`, and reads the version line
-(`internal/buildinfo`). `ok` when every tool reports the same version. `fail` when a
+(`pkg/buildinfo`). `ok` when every tool reports the same version. `fail` when a
 tool does not answer with a version line (named), when none is on PATH, or when the
 versions differ: the evidence names every tool that differs from the version most of the
 tools report, and the fix is `nova-update apply --file <manifest> <tool> --version <release>`.

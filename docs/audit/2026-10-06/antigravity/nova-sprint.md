@@ -4,14 +4,14 @@ Read as a stranger with the spec beside it, at the tip of
 `sprint/mechanical-2026-10-02` = `1b559077e0cb9ee9e14efe2910743cc4cff45ab9`: the sprint
 command package (`cmd/nova-sprint`), its engine and store (`internal/sprint`,
 `internal/sprint/store`), the dashboard and wire packages (`internal/sprintdash`,
-`internal/sprintwire`), the sprint and card-contract specs under `docs/`, and the sprint
+`pkg/sprintwire`), the sprint and card-contract specs under `docs/`, and the sprint
 models under `tla/` (`ServerLanes`, the tick and the fence, `FriendPresence`). Nothing was
 run against a live store or server; no product code was changed. Every command below ran on
 a bench copy with `NOVA_TEST_NO_HOST=1`, on an in-memory world or a scratch file, and each
 scratch test was removed before this report was committed. On a clean bench the tree's own
 suites pass: `go test -count=1 -timeout 600s ./internal/docs ./internal/ci` ends
 `ok ... internal/docs 2.428s` and `ok ... internal/ci 13.776s`, and
-`go test -count=1 -timeout 900s ./cmd/nova-sprint/... ./internal/sprint/... ./internal/sprintdash/... ./internal/sprintwire/...`
+`go test -count=1 -timeout 900s ./cmd/nova-sprint/... ./internal/sprint/... ./internal/sprintdash/... ./pkg/sprintwire/...`
 is `ok` on every package (172s, 11s, 18s and under a second), so nothing here is a red test.
 
 1. **URGENT — a reader on a drained machine panics the tick with an integer divide by
@@ -90,30 +90,30 @@ is `ok` on every package (172s, 11s, 18s and under a second), so nothing here is
 
 5. **URGENT — `member.PathsProposed` drops every proposed path after the first item that
    carries prose, so the sprint's `paths` rule widens from a truncated list.**
-   `internal/member/member.go:1751-1771`, the `break` at `:1767`; the sprint rule reads the
+   `pkg/member/member.go:1751-1771`, the `break` at `:1767`; the sprint rule reads the
    line through it at `internal/sprint/paths_proposed.go:94` (`heldProposal`). The loop
    appends an item's first word and then stops the whole line on `len(words) > 1`, so
    `PATHS-PROPOSED: a.go reason, b.go, c.go` reads as `[a.go]` and `b.go` never reaches the
    twin's brief (`WidenBrief`, `paths_proposed.go:142`) or `member.CarryProposed`
-   (`internal/member/member.go:1777-1787`), while the contract says the reader takes each
+   (`pkg/member/member.go:1777-1787`), while the contract says the reader takes each
    comma-separated item's path up to its first whitespace, dash or semicolon and reads the
    rest as prose (`docs/SPEC-CARD-CONTRACT.md:394-398`). The command's own sibling reader
    (`cmd/nova-sprint/recut_widen.go:115-143`) does not stop, so the same line answers
    differently depending on which path parsed it.
    Evidence — a scratch test on the bench ran
-   `go test -count=1 -timeout 120s -run TestAuditPathsProposedTruncates -v ./internal/member/`
+   `go test -count=1 -timeout 120s -run TestAuditPathsProposedTruncates -v ./pkg/member/`
    and printed `"PATHS-PROPOSED: a.go reason, b.go, c.go" => [a.go] ok=true` and
    `"PATHS-PROPOSED: a.go, b.go reason, c.go" => [a.go b.go] ok=true`.
    Fix: read each comma-separated item's path independently (the `proposedPath` rule in
    `recut_widen.go`) and never break the whole line on prose; give both callers one reader.
 
 6. **NEXT — `sprintwire.Worker.Run` panics on an answer with no result or a nil error.**
-   `internal/sprintwire/worker.go:57-68`: the loop `for try := 0; try < Tries && ctx.Err() == nil` can be left unentered (a non-positive `Budget` makes `context.WithTimeout` already
+   `pkg/sprintwire/worker.go:57-68`: the loop `for try := 0; try < Tries && ctx.Err() == nil` can be left unentered (a non-positive `Budget` makes `context.WithTimeout` already
    done), so `err` stays `nil` and `:68` calls `err.Error()`; and `:62` (`r := res[0]`)
    indexes the answer before checking it is there, so a `Send` returning `(nil, nil)` or an
    empty slice panics. `Send` is a public field with no stated length contract and tests pass
-   their own functions (`internal/sprintwire/worker_test.go`); production is safe only
-   because `Client.Do` enforces the length (`internal/sprintwire/wire.go:95-104`).
+   their own functions (`pkg/sprintwire/worker_test.go`); production is safe only
+   because `Client.Do` enforces the length (`pkg/sprintwire/wire.go:95-104`).
    Evidence: the two lines and the loop guard; no `Budget` setter in the tree passes a
    negative value (`cmd/nova-swarm/member.go:207` leaves it zero, which is `Timeout`).
    Fix: check `len(res) > 0` before `res[0]` and set `if err == nil { err = ctx.Err() }`
@@ -124,11 +124,11 @@ is `ok` on every package (172s, 11s, 18s and under a second), so nothing here is
    them and no reader reads them: the `friend beat` verb has no `--paced`/`--window` flag
    (`cmd/nova-sprint/friends.go:360-374`), `FriendBeatProof`'s two report guards never test
    them (`internal/sprint/store/friends.go:305-310`), and the only `.Paced` assignment in
-   the tree is a different struct (`internal/friend/lanes.go:703`, `internal/friend.Status`).
+   the tree is a different struct (`pkg/friend/lanes.go:703`, `pkg/friend.Status`).
    So a beat can never carry a paced width, and the fields exist only on paper (perhaps to
    read records a former build wrote).
-   Evidence: `grep -rn "\.Paced"` returns only `internal/friend/lanes.go:703`, and
-   `grep -rn '"--paced"\|--paced' cmd/nova-sprint internal/friend internal/sprint` returns
+   Evidence: `grep -rn "\.Paced"` returns only `pkg/friend/lanes.go:703`, and
+   `grep -rn '"--paced"\|--paced' cmd/nova-sprint pkg/friend internal/sprint` returns
    nothing.
    Fix: remove the two fields (and the comment) or add the `--paced`/`--window` flags and
    carry them into `FriendReport`, so the declaration and the live path agree.

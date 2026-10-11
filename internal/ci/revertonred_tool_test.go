@@ -62,3 +62,25 @@ func TestRevertOnRedRunsAToolBuiltFromDevNotFromTheRedTree(t *testing.T) {
 	require.True(t, goSetup, "revert-on-red.yml: tool checkout %q, Go set up %t, tool built from it %t; all three are required", toolDir, goSetup, built)
 	require.True(t, built, "revert-on-red.yml: tool checkout %q, Go set up %t, tool built from it %t; all three are required", toolDir, goSetup, built)
 }
+
+// TestRevertOnRedTreatsCancelledAsRed holds revert-on-red.yml to one rule: a
+// cancelled ci run on a push to main counts as red, so a cold-cache cancellation
+// that never ran the tests does not leave an unverified main. The workflow_run
+// trigger fires on every completed ci run on main, and the job's `if` names the
+// conclusions it proceeds on; cancellation must stand beside failure there, or a
+// cancelled run completes with nobody in the room and a bad main is left
+// standing (docs/fixes.sexp: update-revert-on-red-cancelled-run).
+func TestRevertOnRedTreatsCancelledAsRed(t *testing.T) {
+	t.Parallel()
+	var wf struct {
+		Jobs map[string]struct {
+			If string `yaml:"if"`
+		} `yaml:"jobs"`
+	}
+	raw := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "revert-on-red.yml"))
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &wf), "revert-on-red.yml")
+	ifCond := wf.Jobs["revert-on-red"].If
+	require.NotEmpty(t, ifCond, "revert-on-red.yml: the revert-on-red job has no trigger condition")
+	assert.Contains(t, ifCond, "conclusion == 'failure'", "revert-on-red.yml: the trigger must proceed on a failed run")
+	assert.Contains(t, ifCond, "conclusion == 'cancelled'", "revert-on-red.yml: the trigger must proceed on a cancelled run; a cancelled run is red, not a pass")
+}

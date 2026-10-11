@@ -5,7 +5,7 @@
 // acked and a reader that died before acking is handed it again. The verbs
 // are wait, send, peek, recv, ack, receipts, overdue, log and names; the dispatch, the banner,
 // the help, the version verb, the refusals and the output envelope are
-// internal/tool's, and the rules are internal/bus's.
+// pkg/tool's, and the rules are pkg/bus's.
 package main
 
 import (
@@ -27,12 +27,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -42,7 +42,7 @@ var version string
 // the fleet row's bus field as nova-config apply wrote it (FleetBusKey) into
 // the sprint store at SprintRedisEnv, so no friend types the address
 // (SPEC-BUS.md, the config). The key is spelled here, as the roster's are in
-// internal/bus, so this command depends on no config code.
+// pkg/bus, so this command depends on no config code.
 const (
 	RedisEnv       = "NOVA_BUS_REDIS"
 	SprintRedisEnv = "NOVA_SPRINT_REDIS"
@@ -67,7 +67,7 @@ const ForeverBlock = 30 * time.Second
 // world is what the tool reaches outside itself: the environment, the store
 // it opens for an address, the command --exec runs, the signals a loop
 // stops on, the clock a wait reads and the wake file it watches. main passes
-// the real one; a test passes its own over internal/bus's Fake, so no test
+// the real one; a test passes its own over pkg/bus's Fake, so no test
 // opens a socket or waits real time.
 type world struct {
 	getenv func(string) string
@@ -113,7 +113,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 // NOVA_SPRINT_REDIS_PASSWORD_ENV the variable that holds its password
 // (NOVA_REDIS_BENCH_PASSWORD when it names none); no user is the default
 // user with no password. The password is never on the line and never
-// printed (internal/redisconn).
+// printed (pkg/redisconn).
 // sprintOptions is the fleet's login for a store at addr (the convention above).
 func (w world) sprintOptions(addr string) redisconn.Options {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
@@ -154,7 +154,7 @@ func (w world) openRedis(ctx context.Context, addr string) (bus.Store, string, f
 }
 
 // runShell runs --exec's command through the shell with the message on its
-// stdin, under ExecBudget (internal/subproc: WaitDelay and the bound).
+// stdin, under ExecBudget (pkg/subproc: WaitDelay and the bound).
 func runShell(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (int, error) {
 	cmd, cancel := subproc.CommandFor(ctx, ExecBudget, "/bin/sh", "-c", command)
 	defer cancel()

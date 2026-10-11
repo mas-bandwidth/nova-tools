@@ -980,9 +980,9 @@ func emitTimeline() {
 	spans := [][2]string{
 		{"NOVA-TIMELINE TURN BEGIN", "NOVA-TIMELINE TURN END in=1200 out=340"},
 		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=git clone https://github.com/mas-bandwidth/nova-tools", "NOVA-TIMELINE TOOL END name=bash rc=0"},
-		{"NOVA-TIMELINE TOOL BEGIN name=read cmd=cat internal/swarm/usage.go", "NOVA-TIMELINE TOOL END name=read rc=0"},
-		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=go test ./internal/swarm/", "NOVA-TIMELINE TOOL END name=bash rc=1"},
-		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=go test ./internal/swarm/", "NOVA-TIMELINE TOOL END name=bash rc=0"},
+		{"NOVA-TIMELINE TOOL BEGIN name=read cmd=cat pkg/swarm/usage.go", "NOVA-TIMELINE TOOL END name=read rc=0"},
+		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=go test ./pkg/swarm/", "NOVA-TIMELINE TOOL END name=bash rc=1"},
+		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=go test ./pkg/swarm/", "NOVA-TIMELINE TOOL END name=bash rc=0"},
 		{"NOVA-TIMELINE TOOL BEGIN name=edit cmd=Write RESULT.md", "NOVA-TIMELINE TOOL END name=edit rc=0"},
 	}
 	for _, s := range spans {

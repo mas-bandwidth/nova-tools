@@ -21,24 +21,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/gocache"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/log"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
+	"github.com/mas-bandwidth/nova-tools/pkg/binstamp"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/gocache"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
+	"github.com/mas-bandwidth/nova-tools/pkg/log"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -46,7 +46,7 @@ import (
 // from the sprint, pushes the commit of every work card whose child ended and
 // reports it, takes up to its width and starts each card taken as one child
 // through `nova-swarm native`. The fleet table is the dispatcher; the loop is
-// internal/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
+// pkg/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
 // run --listen`), the one writer; this machine opens no store. send delivers them: nil is
 // the server's client (sprintwire.Client.Do), a test's is the server's own step.
 func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Context, ...[]string) ([]sprintwire.Result, error)) int {
@@ -200,9 +200,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	// the sprint's verbs go to its server, which runs them beside the store (internal/sprintwire)
+	// the sprint's verbs go to its server, which runs them beside the store (pkg/sprintwire).
+	// The dialer re-dials it after a restart, rebuilding the client and backing off
+	// (tla/LoopRedial.tla, ServerRestart), so a member and a reader never park on a
+	// connection the server dropped.
 	if send == nil {
-		send = sprintwire.Client{Addr: *server}.Do
+		send = newSprintDialer(*server).do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
 	// a member hands native the decide key when its environment holds it, or when
@@ -214,6 +217,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, held: held, identity: *identity,
+		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
@@ -360,7 +364,7 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 	if lr.stamp != nil {
 		began = lr.stamp()
 	}
-	// the beat goes on its own clock, apart from the work pass (internal/member BeatLoop): one
+	// the beat goes on its own clock, apart from the work pass (pkg/member BeatLoop): one
 	// now, so the member is up before its first pass, then one every interval while the pass
 	// goes on, ending with this loop
 	if err := m.Beat(); err != nil {
@@ -472,14 +476,17 @@ type nativeRunner struct {
 	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
 	noWall                                         bool
-	stderr                                         io.Writer
-	env                                            []string                     // added to this process's environment: none in production, a test's
-	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
-	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
-	held                                           map[string]secrets.Secret    // secrets read in this process; nil when the environment already held every name
-	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
-	load                                           hostload.Source
-	maxLoad, warnLoad                              float64
+	// server and as are the sprint's server and this worker's name: a limited route's
+	// child takes its global rate budget there (--budget-server, nativebudget.go)
+	server, as        string
+	stderr            io.Writer
+	env               []string                     // added to this process's environment: none in production, a test's
+	lookPath          func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
+	pass              []string                     // the secret names handed to native (--pass, the worker's secret)
+	held              map[string]secrets.Secret    // secrets read in this process; nil when the environment already held every name
+	benchHome         string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
+	load              hostload.Source
+	maxLoad, warnLoad float64
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -547,7 +554,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
 		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read"}
 		go func() {
 			for processAlive(pid) {
 				time.Sleep(time.Second)
@@ -575,16 +582,20 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		return nil, err
 	}
+	model, tokens, deadline, err := r.route(p)
+	if err != nil {
+		return nil, err
+	}
+	// the card tells the child the wall it runs under, the one --deadline below ends it at
+	// (member.CardText): a brief's own DEADLINE line is planning text, and a child that
+	// planned on 120 minutes was ended at 40 with no RESULT.md (fault 9, 2026-10-10)
+	p.Deadline = int(deadline / time.Second)
 	card, err := childCard(p)
 	if err != nil {
 		return nil, err
 	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
 	if err := os.WriteFile(cardPath, []byte(swarm.PointCardAtMirrors(card, r.benchHome)), 0o644); err != nil {
-		return nil, err
-	}
-	model, tokens, deadline, err := r.route(p)
-	if err != nil {
 		return nil, err
 	}
 	bin, err := r.harnessFor(p)
@@ -618,6 +629,14 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if r.identity != "" {
 		args = append(args, "--identity", r.identity)
 	}
+	if (p.RateRPM > 0 || p.RateConcurrent > 0) && r.server != "" {
+		// a limited route (nova-sprint routes limit): every model request of the child takes
+		// the global budget from the sprint's server first, and stalls while it is spent
+		args = append(args, "--budget-server", r.server, "--budget-as", r.as, "--budget-holder", name)
+		if p.RateConcurrent > 0 {
+			args = append(args, "--budget-slots")
+		}
+	}
 	// A long-lived child: its own cancellable context and no deadline (its own --deadline
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
@@ -641,7 +660,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read"}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -674,7 +693,7 @@ func childCard(p member.Packet) (string, error) {
 // route is what one launch runs on: the packet's route (the card's model, budget and
 // deadline, as the deal or the ask drew them), each part it leaves empty from the
 // member's override; a launch with no model, budget or deadline from either is
-// refused. A read's route is drawn from the reader tier (internal/sprint/route.go,
+// refused. A read's route is drawn from the reader tier (nova-sprint's
 // readRouteOf), so a reader needs no --model; a reader started with --model,
 // --tokens or --deadline runs its reads on what it names over the read's route.
 func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline time.Duration, err error) {
@@ -710,7 +729,7 @@ func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline ti
 }
 
 // harnessFor is the binary a packet's child runs under: the member's --harness, or for a
-// route naming a headless harness (internal/harness; docs/SPEC-SWARM.md, the headless
+// route naming a headless harness (pkg/harness; docs/SPEC-SWARM.md, the headless
 // harnesses) that program on this member's PATH. A headless program this machine has not
 // got refuses the launch, so the sprint deals the card to a member that has.
 func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
@@ -763,10 +782,13 @@ func processAlive(pid int) bool {
 
 type nativeChild struct {
 	card, logPath, results, job string
-	done                        chan struct{}
-	err                         error
-	once                        sync.Once
-	result                      member.Result
+	// read is whether this launch is a READ (member.Packet.Kind): a wall refusal on a read
+	// is the reader's own environment, never the work's (member.EndEnvironment).
+	read   bool
+	done   chan struct{}
+	err    error
+	once   sync.Once
+	result member.Result
 	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
 	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
 	proc *os.Process
@@ -906,8 +928,9 @@ var nativeSpent = regexp.MustCompile(`\bNATIVE \S+ .*\bwall=([0-9.]+s)\b.*\bbudg
 var nativeSpend = regexp.MustCompile(`\bNATIVE \S+ .*\bspend=(\S+)`)
 
 // nativeEnd is how a launch that did not finish ended, from its log: the provider's
-// failure (a NATIVE PROVIDER- line), the budget (stopped=), the deadline (rc=-1 with
-// neither, and no TERM from outside), else "".
+// failure (a NATIVE PROVIDER- line), the budget (stopped=), the idle reap
+// (reason=idle-reap, the watch's own mark), the deadline (rc=-1 with none of those, and
+// no TERM from outside), else "".
 func nativeEnd(log []byte) string {
 	switch {
 	case nativeProvider.Match(log):
@@ -916,6 +939,8 @@ func nativeEnd(log []byte) string {
 		return member.EndUnverifiable
 	case nativeStopped.Match(log):
 		return member.EndBudget
+	case nativeIdleReap.Match(log):
+		return member.EndIdleReap
 	case nativeKilled.Match(log) && !nativeTermed.Match(log):
 		return member.EndDeadline
 	}
@@ -972,8 +997,17 @@ var (
 	// nativeBudgetWhy is the NATIVE BUDGET line's words: which budget ended the run and at
 	// what count (nativeBudgetWords)
 	nativeBudgetWhy = regexp.MustCompile(`(?m)^NATIVE BUDGET \S+ budget: (.+)$`)
-	nativeKilled    = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed    = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeIdleReap is native's mark for a card its idle watch ended: the verdict
+	// states idle reaping, and the finish names the reaping and never the deadline,
+	// which never fired for it (docs/roadmap.sexp, swarm-idle-reap-verdict)
+	nativeIdleReap = regexp.MustCompile(`\breason=idle-reap\b`)
+	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeWall is native's WALL line: the harness's own fence or the OS wall refused a
+	// write outside the job, so the run ended the card for it (swarm.WallLine's `WALL
+	// task=` and swarm.WallRefusedLine's `WALL REFUSED`). On a read it is the reader's own
+	// environment, never the work's (member.EndEnvironment).
+	nativeWall = regexp.MustCompile(`(?m)^WALL (task=|REFUSED )`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
@@ -1013,7 +1047,7 @@ func (c *nativeChild) Result() member.Result {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 			if m := nativeSpent.FindSubmatch(b); m != nil {
-				// the launch's cost record (internal/cardcost): the wall and the budget word,
+				// the launch's cost record (pkg/cardcost): the wall and the budget word,
 				// and what the job spent by token class with the harness's cost (spend=)
 				u := cardcost.NoUsage()
 				if s := nativeSpend.FindSubmatch(b); s != nil {
@@ -1027,6 +1061,11 @@ func (c *nativeChild) Result() member.Result {
 				nativeSpendLine = string(s[1])
 			}
 			end = nativeEnd(b)
+			if c.read && nativeWall.Match(b) {
+				// the wall refused a write outside the job: on a read that is the reader's
+				// own environment, not the work's verdict (member.EndEnvironment)
+				end = member.EndEnvironment
+			}
 			provider = providerReason(b)
 			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && (end == member.EndBudget || end == member.EndUnverifiable) {
 				budget = strings.TrimSpace(string(m[1]))

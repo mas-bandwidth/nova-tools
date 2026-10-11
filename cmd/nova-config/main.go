@@ -8,7 +8,7 @@
 //
 // Every kind (machine, fleet, friend, sprint, loop, route) has the same six verbs -- add, remove,
 // set, list, show, history -- generated from its descriptor in
-// internal/config, so every kind has identical flags, help and refusals; a
+// pkg/config, so every kind has identical flags, help and refusals; a
 // singleton kind (fleet: one row the migration creates) has set, show and
 // history without a name. apply diffs Postgres
 // against Redis per kind and writes the difference through the runtime's own
@@ -35,13 +35,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 var version string
@@ -514,7 +514,7 @@ func storeErr(stderr io.Writer, verb string, err error, next string) int {
 	return refuse(stderr, verb, err.Error())
 }
 
-// emit writes a verb's --json result: one object, internal/tool's shape
+// emit writes a verb's --json result: one object, pkg/tool's shape
 // ({"result":{"verb","status","exit"},"facts":{},"items":[...],"notes":[]}).
 func emit(stdout io.Writer, o *tool.Out) int {
 	o.Render(stdout, true)
@@ -670,7 +670,7 @@ func actorAliasNote(fs *stdflag.FlagSet) string {
 
 // jsonFlag adds --json.
 func jsonFlag(fs *stdflag.FlagSet) *bool {
-	return fs.Bool("json", false, "print one JSON object (internal/tool's result shape) instead of the lines")
+	return fs.Bool("json", false, "print one JSON object (pkg/tool's result shape) instead of the lines")
 }
 
 // redisAddress resolves --redis: the flag, else NOVA_SPRINT_REDIS, else

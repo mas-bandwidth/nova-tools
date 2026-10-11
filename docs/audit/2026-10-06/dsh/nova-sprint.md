@@ -7,17 +7,17 @@ and the two specs, and findings 3 and 7 were revised after a cold read of the fi
 revision: 3 is now scoped to malformed stored data, and 7 is recorded as a policy
 question rather than a defect. Scope: `cmd/nova-sprint`,
 `internal/sprint` and `internal/sprint/store`, `internal/sprintdash`,
-`internal/sprintwire`, `docs/SPEC-SPRINT.md`, `docs/SPEC-CARD-CONTRACT.md`, and
+`pkg/sprintwire`, `docs/SPEC-SPRINT.md`, `docs/SPEC-CARD-CONTRACT.md`, and
 the sprint models under `tla/` (ServerLanes, DirtyTick and the fence,
 FriendPresence). Read with the spec beside the code. No live store or server
 was touched; every command below ran on a scratch clone on the build bench,
 with `NOVA_TEST_NO_HOST=1`. The unit suites of every package above ran clean on
-the first revision's bench (`go test -count=1 -timeout 600s ./cmd/nova-sprint/... ./internal/sprint/... ./internal/sprintdash/... ./internal/sprintwire/...`), so nothing here is a
+the first revision's bench (`go test -count=1 -timeout 600s ./cmd/nova-sprint/... ./internal/sprint/... ./internal/sprintdash/... ./pkg/sprintwire/...`), so nothing here is a
 red test.
 
 ## 1. URGENT — `member.PathsProposed` drops every proposal after the first item that carries prose
 
-`internal/member/member.go:1758-1768` (the loop that ends with `break` at
+`pkg/member/member.go:1758-1768` (the loop that ends with `break` at
 1766). `docs/SPEC-CARD-CONTRACT.md:393-398` says the reader takes *each*
 comma-separated item's path up to its first whitespace, dash or semicolon and
 reads the rest as prose. The code takes the first whitespace-separated word of
@@ -81,9 +81,9 @@ disagree.
 
 Reachability — this is a hardening gap, not a defect on an admitted card. A
 repeated typed `PATHS:` key is refused at admission
-(`internal/swarm/lintheader.go:352-354`: "is declared twice ... a card with two
+(`pkg/swarm/lintheader.go:352-354`: "is declared twice ... a card with two
 of this line has no one value for it"), and the gate reads only the first line
-(`internal/decide/gate.go:205-219`), so no card admission accepts carries a
+(`pkg/decide/gate.go:205-219`), so no card admission accepts carries a
 second `PATHS:` line and no accepted card loses a glob here. What remains is that
 `widenBrief`'s plural loop and doc overclaim: they promise a shape the rest of
 the contract refuses, so a stored brief edited by hand (or a future relaxation
@@ -138,7 +138,7 @@ windows), or remove those paths from the code.
 
 ## 6. NEXT — `Worker.Run` can panic on a nil error or an empty answer
 
-`internal/sprintwire/worker.go:57-68`. If the loop body never runs — `Budget`
+`pkg/sprintwire/worker.go:57-68`. If the loop body never runs — `Budget`
 is negative, so `context.WithTimeout` is already done at entry — `err` stays
 `nil` and `err.Error()` at line 68 dereferences nil. If a `Send` returns an
 empty result slice with a nil error, line 62 (`res[0]`) panics. The comment on

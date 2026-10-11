@@ -1,5 +1,0 @@
-# The unit-sockets ledger (docs/SPEC-CI.md, `unit-sockets`): the unit-tier
-# test files that still open a socket, one row per file with its count, seeded
-# once at the rule's landing. It only shrinks.
-# ceiling: 1
-internal/readregular/readregular_test.go:socket 1 the test gives Read a live unix socket path

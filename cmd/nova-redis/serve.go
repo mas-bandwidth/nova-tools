@@ -43,10 +43,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // redisServerProgram is the instance program, found on PATH.
@@ -271,7 +271,7 @@ func servePasswordProblem() string {
 
 // servePassword is the instance's password, read in this process: from the login
 // the flags name (--secrets, --as, --key, --sops, --secret: one name in one seat of a
-// secrets store, read through internal/secrets.ReadLogin, the path nova-secrets exec
+// secrets store, read through pkg/secrets.ReadLogin, the path nova-secrets exec
 // takes), else from PasswordEnv, which nova-secrets exec fills. The login is how a
 // unit written by install store or install bus runs serve with no wrapper and no
 // password in the unit; the value is handed to redis-server on stdin only.

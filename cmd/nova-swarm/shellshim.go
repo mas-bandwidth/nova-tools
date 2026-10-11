@@ -8,9 +8,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/nogh"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // THE CARD'S SHELL NEVER SEES A SECRET (issue #1814).
@@ -47,7 +47,7 @@ import (
 // it too. The layer that closes those is handing the key to the harness by file descriptor
 // instead of by environment, which is a design question in issue #1814 layer 2,
 // not this file. This is the cheap layer that closes the channel a card actually has, and
-// the harvest's key-shape scan (internal/keyshape) is the backstop behind it.
+// the harvest's key-shape scan (pkg/keyshape) is the backstop behind it.
 //
 // POSIX ONLY. The wrapper is a /bin/sh script, so it is written on unix benches only. On
 // windows no shim is written, nothing is prepended to PATH, and the child's environment is

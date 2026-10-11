@@ -1,7 +1,7 @@
 // Package check implements seven of the ten record-layer checks behind
 // nova-check; the other three live elsewhere because none is about one self
-// repo. dogfood is internal/dogfood, because its records are receipts about
-// the family's tools; hygiene is internal/hygiene, because its subject is a
+// repo. dogfood is pkg/dogfood, because its records are receipts about
+// the family's tools; hygiene is pkg/hygiene, because its subject is a
 // branch's range and the accept gate and the merge lane run the same function
 // over it; convergence is internal/converge, because its records are readings
 // of the work itself rather than of a self repo.

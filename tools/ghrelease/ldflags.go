@@ -26,7 +26,7 @@ A stamp is refused when it is empty, when it carries whitespace (the linker
 flag would split and stamp the first word), when it carries % (the stamp
 reaches a printf format further down the release, where % reads a directive
 that is not there and fails the job with no message), and when it carries =
-(the stamp assertion reads = as a token separator and internal/oneline escapes
+(the stamp assertion reads = as a token separator and pkg/oneline escapes
 = when a binary prints it, so no stamped tool could report the tag as the token
 it was built from).
 `,
@@ -76,7 +76,7 @@ func composeLdflags(stamp string) (string, []string) {
 	if strings.Contains(stamp, "=") {
 		return "", []string{
 			fmt.Sprintf("refusing: the release stamp <%s> contains =, which the stamp assertion reads as", stamp),
-			"  a token separator and internal/oneline escapes when a binary prints it; no",
+			"  a token separator and pkg/oneline escapes when a binary prints it; no",
 			"  stamped tool could report this tag as the token it was built from",
 		}
 	}

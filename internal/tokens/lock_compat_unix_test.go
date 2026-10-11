@@ -14,7 +14,7 @@ import (
 )
 
 // Compatibility witnesses for the unix fold lock across an upgrade. Before
-// internal/filelock, a fold took a bare flock on fold.lock, wrote its bare pid, and never
+// pkg/filelock, a fold took a bare flock on fold.lock, wrote its bare pid, and never
 // cleared it. An old binary is staged as that, on a second descriptor of the same file.
 
 func stageOldFold(t *testing.T, path string) *os.File {

@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/release"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/release"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // Environment supplies deterministic clock/network seams. Nil values use the
@@ -324,9 +324,9 @@ func interspersed(f *flag.FlagSet, args []string) []string {
 	return flags
 }
 
-// versionVerb prints the version line, or with --json internal/tool's Out with the
+// versionVerb prints the version line, or with --json pkg/tool's Out with the
 // line as its payload: the one shape every skeleton tool's version verb answers
-// (internal/tool's verbs), refusals worded as the skeleton words them.
+// (pkg/tool's verbs), refusals worded as the skeleton words them.
 func versionVerb(name, stamp string, args []string, out, errs io.Writer) int {
 	f := verbflag.New("version")
 	asJSON := f.Bool("json", false, "print the result as one JSON object instead of lines")
@@ -374,7 +374,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	// `release` is the last mile -- cut, build, install, adopt -- and it is a
 	// verb of nova-update rather than a tool of its own because it is the same
 	// question this binary already answers (what is installed here, and is it
-	// what it should be) asked from the other end. internal/release holds it.
+	// what it should be) asked from the other end. pkg/release holds it.
 	if verb == "release" {
 		// The stamp goes down with it: `release adopt` compares what THIS
 		// binary is against the release it is fanning out, because the
@@ -772,7 +772,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	timeout, budget := c.Dur("timeout"), c.Dur("budget")
 	// One deadline per child and one for the run: every git, every go build
 	// and every help hangs off both, through the same bounded process
-	// machinery -- internal/bounded's capture -- the rest of this package
+	// machinery -- pkg/bounded's capture -- the rest of this package
 	// already runs its children through.
 	run, cancelRun := context.WithTimeout(context.Background(), budget)
 	defer cancelRun()
@@ -952,7 +952,7 @@ type movedInv map[string]map[string]map[string]bool
 
 // parseMovedHelp reads one built tool's `help` into verbs and flags. Only lines
 // that begin with the tool's own name count, after any indent (a tool on
-// internal/tool indents its usage lines): a help that prints another tool's
+// pkg/tool indents its usage lines): a help that prints another tool's
 // usage line (SPEC-VERSION's block names nova-update's in nova-version's help)
 // cannot add that tool to THIS revision's inventory, and a line that is not a
 // usage line -- the defaults, the notes, the examples -- contributes nothing.

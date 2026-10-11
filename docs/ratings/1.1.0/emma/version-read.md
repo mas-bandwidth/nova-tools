@@ -24,7 +24,7 @@ A score of 10 would require moving nova-version into its own internal package, e
 | 7 | internal/update/versiontool.go:79 | snapshot bundles two completely distinct operational modes behind complex flag validation | separate manifest checking and directory inventory into distinct verbs | M |
 
 ## Good, keep
-Binary version inspection using internal/buildinfo guarantees exact provenance from compiled executables rather than file names or guessed paths.
+Binary version inspection using pkg/buildinfo guarantees exact provenance from compiled executables rather than file names or guessed paths.
 Deterministic diffing between snapshot inventories highlights additions, deletions, and modifications without executing target binaries.
 Strict multi-problem refusal grammar that validates required paths, flags, and positive durations simultaneously with actionable next-step hints.
 
