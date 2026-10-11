@@ -1014,6 +1014,124 @@ func TestAnsweringManyPingsKeepsNoProofIDs(t *testing.T) {
 	assert.Empty(t, r.d.own)
 }
 
+// A beat whose row_width differs from the argv --width logs one line naming both and the daemon
+// runs at the row's width: the friend row is the one source, the argv --width a stale pin
+// (docs/SPEC-FRIEND.md, width has one source).
+func TestABeatWhoseRowWidthDiffersFromArgvWidthLogsAndRunsAtTheRowWidth(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Width = 4                                          // the argv --width, a stale pin
+	r.d.Row = func() (string, int) { return ModeBatch, 1 } // the friend row's width
+	r.send(t, "ada", "hello", "x")
+	r.run(t, 4)
+	assert.Equal(t, 1, r.last().Width, "the row's width is the one source")
+	var found bool
+	for _, line := range r.records {
+		if strings.Contains(line, "width: the friend row says 1, not --width 4") {
+			found = true
+		}
+	}
+	assert.True(t, found, "one line names both the row width and the argv --width: %v", r.records)
+}
+
+// run refuses a --dir that is equal to, lies inside, or holds a deny-self path, symlinks
+// resolved, naming both paths and the fix (docs/SPEC-FRIEND.md, the wall: no write may be a
+// denied path, lie inside one or hold one).
+func TestRunRefusesADirThatIsInsideOrHoldsTheDenySelf(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, dir string
+		deny      []string
+		want      string // empty: no refusal
+	}{
+		{"equal", "/home/u/ada-working", []string{"/home/u/ada-working"}, "/home/u/ada-working"},
+		{"inside", "/home/u/ada-working/sub", []string{"/home/u/ada-working"}, "/home/u/ada-working"},
+		{"holding", "/home/u", []string{"/home/u/ada-working"}, "/home/u/ada-working"},
+		{"a sibling is fine", "/home/u/bob-working", []string{"/home/u/ada-working"}, ""},
+		{"an empty deny refuses nothing", "/home/u/bob-working", []string{""}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			why := DenySelfConflict(c.dir, c.deny)
+			if c.want == "" {
+				assert.Empty(t, why)
+				return
+			}
+			assert.NotEmpty(t, why)
+			assert.Contains(t, why, c.dir)
+			assert.Contains(t, why, c.want)
+			assert.Contains(t, why, "move --dir to a sibling of the self")
+		})
+	}
+
+	t.Run("symlinks are resolved", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		self := filepath.Join(root, "ada-working")
+		require.NoError(t, os.MkdirAll(self, 0o755))
+		link := filepath.Join(root, "link-to-self")
+		require.NoError(t, os.Symlink(self, link))
+		why := DenySelfConflict(link, []string{self})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+}
+
+// A symlink in an ancestor is resolved even when the leaf itself does not yet exist: a --dir
+// whose nearest existing ancestor is a link into the denied self is refused, and so is a deny
+// path spelled through such a link (docs/SPEC-FRIEND.md, the wall: no write may be a denied
+// path, lie inside one or hold one).
+func TestDenySelfConflictResolvesSymlinksUnderANonexistentLeaf(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	self := filepath.Join(root, "ada-working")
+	require.NoError(t, os.MkdirAll(self, 0o755))
+	link := filepath.Join(root, "link-to-self")
+	require.NoError(t, os.Symlink(self, link))
+
+	t.Run("a new directory below a link into the self", func(t *testing.T) {
+		t.Parallel()
+		dir := filepath.Join(link, "newdir") // newdir does not exist
+		why := DenySelfConflict(dir, []string{self})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+
+	t.Run("a deny path spelled through a link with a missing leaf", func(t *testing.T) {
+		t.Parallel()
+		deny := filepath.Join(link, "newdir") // newdir does not exist
+		dir := filepath.Join(self, "newdir")
+		why := DenySelfConflict(dir, []string{deny})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+
+	t.Run("a link whose target is not there yet, pointing into the self", func(t *testing.T) {
+		t.Parallel()
+		dir := filepath.Join(root, "dangling-link")
+		require.NoError(t, os.Symlink(filepath.Join(self, "newdir"), dir)) // the target does not exist yet
+		why := DenySelfConflict(dir, []string{self})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+
+	t.Run("a deny path that is a link into the self with no target", func(t *testing.T) {
+		t.Parallel()
+		deny := filepath.Join(root, "dangling-deny")
+		require.NoError(t, os.Symlink(filepath.Join(self, "newdir"), deny)) // the target does not exist yet
+		dir := filepath.Join(self, "newdir")
+		why := DenySelfConflict(dir, []string{deny})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+}
+
 // Proof ids live only until their line is scanned or a newer ping makes
 // them too old to prove life (docs/SPEC-FRIEND.md, the loop).
 func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
