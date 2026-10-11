@@ -68,6 +68,7 @@ type Card struct {
 
 // Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md): the
 // server's, when its answer named one, else the job directory's.
+// tla/FriendLane.tla Named
 func (c Card) Epoch() string {
 	if c.ServerEpoch != "" {
 		return c.ServerEpoch
