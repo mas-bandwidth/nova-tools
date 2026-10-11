@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -206,6 +207,88 @@ func TestAPassiveSessionIsCheckedOnItsOwnStream(t *testing.T) {
 	r.step(t, BeatEvery)
 	up, _ = r.present(t)
 	assert.True(t, up)
+}
+
+// oneShotApp is a one-shot friend's adapter: its session path (Deliver, into a
+// growing session) is broken the way a one-shot friend's is -- no session in
+// the directory, or a session past its context length that refuses every turn
+// -- while its fresh turn (DeliverFresh) runs and answers.
+type oneShotApp struct {
+	mu         sync.Mutex
+	freshText  []string
+	sessionErr error
+}
+
+func (o *oneShotApp) Deliver(_ context.Context, _ string) (int, error) {
+	return 1, o.sessionErr
+}
+
+func (o *oneShotApp) DeliverFresh(_ context.Context, text string) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.freshText = append(o.freshText, text)
+	return 0, nil
+}
+
+// oneShotPresenceRig is one SessionCheck over bus's Fake with a one-shot
+// adapter whose session path is broken, and a clock the test moves by hand.
+// mode is the delivery mode the daemon reads (ModeOneShot, or "" before its
+// first up beat): the check must go in as a fresh turn either way.
+func oneShotPresenceRig(t *testing.T, sessionErr error, mode string) (*presenceRig, *oneShotApp) {
+	t.Helper()
+	r := &presenceRig{store: bustest.NewFake(t0, "ada", "bob"), now: t0}
+	app := &oneShotApp{sessionErr: sessionErr}
+	r.sc = &SessionCheck{
+		Friend: "bob", Store: r.store, Now: func() time.Time { return r.now },
+		Nonce: func() string { r.nonces++; return "n" + string(rune('0'+r.nonces)) },
+		Text: func(nonce string) string {
+			return SessionCheckPrefix + nonce + "\nanswer: nova-friend pong --as bob --nonce " + nonce
+		},
+		Go:   func(f func()) { f() },
+		Mode: func() string { return mode },
+	}
+	r.sc.Deliver = r.sc.Gate(app)
+	r.daemon, r.direct = &bus.Bus{Store: r.sc.DaemonStore()}, &bus.Bus{Store: r.store}
+	r.beat = r.sc.Beat(func(context.Context) error { r.beats++; return nil })
+	return r, app
+}
+
+// TestAOneShotFriendNeedsNoSessionAndReadsUpWhenALaneAnswered: the session
+// check of a one-shot friend is a fresh turn of its own (DeliverFresh), never a
+// growing session, so a session that is missing (no opencode session in the
+// directory) or full (past the model's context, every turn refused) is never
+// the reason she is down; a lane's answer to the fresh turn brings her up
+// (docs/SPEC-FRIEND.md, presence: a tiny fresh turn per check). Whether her
+// mode is already read (ModeOneShot) or not yet ("" before the first up beat),
+// the check goes in as a fresh turn and never the broken session.
+func TestAOneShotFriendNeedsNoSessionAndReadsUpWhenALaneAnswered(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, mode string
+		sessionErr error
+	}{
+		{"no session in the directory", ModeOneShot, fmt.Errorf("no opencode session for <dir>; start one there, or name one with --session")},
+		{"session past the model's context", ModeOneShot, ProviderRefused{Session: "ses_1", Reason: "the context window is full"}},
+		{"no session in the directory, mode not yet read", "", fmt.Errorf("no opencode session for <dir>; start one there, or name one with --session")},
+		{"session past the model's context, mode not yet read", "", ProviderRefused{Session: "ses_1", Reason: "the context window is full"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, app := oneShotPresenceRig(t, tc.sessionErr, tc.mode)
+			r.step(t, BeatEvery)
+			up, reason := r.present(t)
+			assert.False(t, up, "a daemon that started proves nothing")
+			assert.Equal(t, NotYetAnswered, reason)
+			require.Len(t, app.freshText, 1, "the check went in as a fresh turn, not into the broken session")
+			assert.True(t, strings.HasPrefix(app.freshText[0], SessionCheckPrefix+"n1"), "the fresh turn carries the nonce: %q", app.freshText[0])
+			// the lane ran the pong line and answered the fresh turn's nonce
+			r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 0)+"\n")
+			r.step(t, BeatEvery)
+			up, reason = r.present(t)
+			assert.True(t, up, "a lane ran and answered: the friend is up, whatever the session is")
+			assert.Empty(t, reason)
+		})
+	}
 }
 
 type heldApp struct {

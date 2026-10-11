@@ -848,6 +848,77 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 	})
 }
 
+// A one-shot opencode friend's presence needs no session: her check goes in as
+// a fresh turn of its own (opencode run with no --session), never into a
+// growing session, so a session that is missing (no opencode session in the
+// directory) or full (past the model's context, every turn refused) is never
+// the reason she is down; the fresh turn's answer brings her up. This drives
+// the real world.run wiring: --mode one-shot reads the row, not a closure a
+// test sets by hand (docs/SPEC-FRIEND.md, presence: a tiny fresh turn per
+// check).
+func TestRunAOneShotFriendReadsUpWithNoSessionInTheDirectory(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, "ada", "bob")
+		w := r.world()
+		var cancel context.CancelFunc
+		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel = context.WithCancel(ctx)
+			return ctx, cancel
+		}
+		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+		dir := t.TempDir()
+		var mu sync.Mutex
+		viaSession, viaFresh := 0, 0
+		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if args[0] == "sysctl" {
+				return "{ 0.00 0.00 0.00 }\n", 0, nil // the daemon's load read where there is no /proc/loadavg: not a harness run
+			}
+			if args[0] == "--version" || len(args) > 1 && args[1] == "--help" {
+				return "", 0, nil // the daemon's read of the installed opencode (CheckRun)
+			}
+			if args[0] == "session" {
+				return "[]", 0, nil // no session in the directory: the check must not depend on one
+			}
+			text := args[len(args)-1]
+			if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
+				if len(args) > 1 && args[1] == "--session" {
+					viaSession++
+					return "the context window is full", 1, nil // the full session refuses every turn
+				}
+				viaFresh++
+				r.answer(nonce)
+				return "answered\n", 0, nil
+			}
+			return "", 0, nil // a lane seed or card, none queued: nothing to answer
+		}
+		beats := 0
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+			beats++
+			if beats == 12 {
+				cancel()
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+		}
+		w.beatDown = func(context.Context, string, string, time.Time, time.Time, string, friend.BeatWords) error {
+			return nil
+		}
+		var out, errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada", "--mode", "one-shot"}, strings.NewReader(""), &out, &errb, w)
+		require.Equal(t, 0, code, errb.String())
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Zero(t, viaSession, "the check never went into the broken session")
+		assert.GreaterOrEqual(t, viaFresh, 1, "the check went in as a fresh turn of its own")
+		st, _, err := friend.ReadStatus(friend.StateDirIn(dir))
+		require.NoError(t, err)
+		assert.Equal(t, "one-shot", st.Mode)
+		assert.Contains(t, out.String(), "presence: up: the session answered", "the fresh turn's answer brought her up")
+	})
+}
+
 // A closed app is a friend down, however well its daemon runs: the verb wires
 // the session check, beats up only while the session answers, each beat
 // carrying its proof, says down with the check's nonce once it stops, and

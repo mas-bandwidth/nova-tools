@@ -2866,9 +2866,12 @@ Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
 code is not yet held to it where the two differ. A session check waits for the
 turn under way, so a session in a turn longer than ten minutes that sends
 nothing on the bus is checked only once that turn ends, and keeps its word
-until then. A one-shot friend with no session in its directory at all has
-nowhere for the check to go until a lane opens one, and its lanes wait on the
-row, which comes with a beat; it stays down until a session exists.
+until then. A one-shot friend's check goes in as a fresh turn of its own
+(`DeliverFresh`, `opencode run` with no `--session`), never a growing session,
+so a session that is full or missing is never the reason she is down; the mode
+is read from `--mode` or the row her beat delivers, and before either a deliver
+refused for a full or missing session falls back to the fresh turn, so she
+never waits for a session to exist.
 
 The harness check (pkg/friend/alive.go) is wired in `cmd/nova-friend/main.go`
 before `d.Run` (`TestRunKeepsTheHarnessWatchAdvisory`), advisory: the model
