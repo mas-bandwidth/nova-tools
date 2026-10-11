@@ -266,6 +266,11 @@ jobs:
         shell: bash
         run: make fmt
 
+      - name: mod-tidy
+        # issue #5497: go.mod tidy check on the CL path
+        shell: bash
+        run: make mod-tidy
+
       - name: build
         run: make build
 

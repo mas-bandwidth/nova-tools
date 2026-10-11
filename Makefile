@@ -76,9 +76,10 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc
 
 help:
+	@echo "make mod-tidy    go mod tidy -diff: refuses an untidy go.mod or go.sum"
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
 	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
 	@echo "make tlc-groups  JSON list of required model groups"
@@ -153,6 +154,9 @@ clidoc:
 build:
 	$(GO) build ./...
 
+mod-tidy:
+	@$(GO) mod tidy -diff
+
 fmt:
 	@$(GO) run ./tools/ci gofmt
 
@@ -225,7 +229,7 @@ vet-windows:
 # build them with the tree's own toolchain and hold each package's findings to
 # a shrink-only ledger (docs/SPEC-CI.md, `staticcheck` and `errcheck`). They
 # are functional-tier tests that start no redis-server.
-lint: fmt vet vet-functional vet-slow vet-laws
+lint: mod-tidy fmt vet vet-functional vet-slow vet-laws
 	$(GO) test -tags functional -count=1 -timeout 110s -run '^TestStaticcheckFindings$$' ./internal/ci/
 	$(GO) test -tags functional -count=1 -timeout 110s -run '^TestUncheckedErrors$$' ./internal/ci/
 

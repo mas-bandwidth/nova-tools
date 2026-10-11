@@ -1127,12 +1127,38 @@ diagnostic build).
 **Its remedy line.** `ci.yml:<n>: build/test/lint command is not a make
 invocation: <cmd>`, and `ci.yml names no make invocation; the Makefile is not the
 one entry for the CL tier`.
-**Its narrowings.** Both files are read as text — go.mod carries no YAML library
-and these tests must answer identically on every platform in the matrix — so a
-command assembled in a variable or hidden in a composite action is not seen, and
-the allowlist is matched by prefix.
+ **Its narrowings.** Both files are read as text — go.mod carries no YAML library
+ and these tests must answer identically on every platform in the matrix — so a
+ command assembled in a variable or hidden in a composite action is not seen, and
+ the allowlist is matched by prefix.
 
-### `cache` — no cache step on a self-hosted runner
+ ### `mod-tidy` — go.mod tidy check on the CL path
+
+ **The rule.** The lint job runs `make mod-tidy` before other checks. The
+ Makefile has a phony `mod-tidy` target that runs `go mod tidy -diff` and exits
+ non-zero with a diff when go.mod or go.sum is not tidy. The Makefile's `lint`
+ target lists `mod-tidy` as a prerequisite. The ci.yml lint job has a step named
+ `mod-tidy` that runs `make mod-tidy`.
+
+ **The mistake it prevents.** An untidy go.mod (a module imported directly but
+ listed as indirect, or a require nothing imports) makes every job under
+ GOFLAGS=-mod=readonly exit at "go: updates to go.mod needed" before tests run.
+ This is how main's nightly-slow and certification went red (#5497: testify
+ imported by a test helper, never tidied).
+
+ **The test.** `TestAnUntidyModuleIsRefusedOnTheCLPath` (`internal/ci/modtidy_class_test.go`),
+ which parses the Makefile and ci.yml as text and refuses when the mod-tidy gate
+ is missing.
+
+ **Its remedy line.** `Makefile has no mod-tidy target; add a phony target with
+ recipe that runs $(GO) mod tidy -diff`, `Makefile lint target does not have
+ mod-tidy as a prerequisite`, and `ci.yml lint job has no step named mod-tidy;
+ add a step after gofmt that runs make mod-tidy`.
+
+ **Its narrowings.** Both files are read as text: a mod-tidy target hidden in an
+ include or a step named differently is not seen.
+
+ ### `cache` — no cache step on a self-hosted runner
 
 **The rule.** Every `actions/cache` step in `ci.yml` (including its `restore` and
 `save` halves) carries
