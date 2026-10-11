@@ -642,6 +642,20 @@
     check."
    :origin "card tla-coverage-names-every-module-in-nova-tools-after-the-retire.w4 (stream v1212, 2026-10-11; the module walk the retired CardMachine copy left)")
 
+  (fix "tla-delivery-note-from-the-seat" :release "v1.2.12" :status "planned"
+   :title "Delivery models the seat, the modes, the failed present and the gap's conditions"
+   :text "Tests and models only, no product change. Delivery.tla's present took any note as the newest
+    and always delivered it, and its gap rule always applied. It now carries the newest note from the
+    seat only, with the seat unknown superseding every message; one-shot mode supersedes the note too;
+    a present turn that does not end at exit 0 is owed again after RecheckEvery with the same note
+    still pending; and a gap turns into the present only in batch mode, never for a passive harness
+    and never before the first beat. The new invariant NoteFromSeat holds, and the reversed witness
+    anysender (MCDeliveryBrokenAnySender.cfg) carries a note that is not from the seat and fails it;
+    nopresent, reclaim and answerstale keep their results. adapter_tmux.go's Deliver comment drops the
+    Delivery.tla citation for the pane being idle, which the module does not model. The pod's no java:
+    the TLC records for the changed and new cases are owed on a bench."
+   :origin "card tla-delivery-note-from-the-seat.w9 (nova-tools drift read at dev 2314d437f, 2026-10-11; inventory item T35)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
