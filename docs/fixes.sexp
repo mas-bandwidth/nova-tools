@@ -652,7 +652,7 @@
     new reversed witness anysender that picks a note not from the seat; the three existing witnesses keep
     their results. adapter_tmux.go's Deliver comment no longer cites Delivery for the idle pane, which
     the module does not model. Tests and models only, no product change."
-   :origin "card tla-delivery-note-from-the-seat.w9 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
+   :origin "card tla-delivery-note-from-the-seat.w10 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
