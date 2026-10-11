@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 )
 
@@ -1150,7 +1151,7 @@ func (w Wall) Exec(run Exec) Exec {
 		if err := os.MkdirAll(w.Tmp, 0o700); err != nil {
 			return "", 0, fmt.Errorf("a lane's %s cannot run: its temp directory %s cannot be made: %w", name, w.Tmp, err)
 		}
-		defer func() { _ = os.RemoveAll(w.Tmp) }() // ignored: the run is over; a temp left behind is not the card's
+		defer func() { _ = safepath.RemoveUnder(filepath.Dir(w.Tmp), w.Tmp) }() // ignored: the run is over; a temp left behind is not the card's
 		argv := append(append(append([]string{}, w.Self[1:]...), w.Args()...), name)
 		return run(ctx, dir, w.Self[0], append(argv, args...), stdin)
 	}

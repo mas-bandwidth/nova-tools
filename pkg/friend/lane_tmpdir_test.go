@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,48 +14,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 )
-
-// A lane's command environment names the lane's own temp directory: TMPDIR, TMP, TEMP and
-// CLAUDE_CODE_TMPDIR point at <lane dir>/tmp, made 0700 before the run and removed after it,
-// and two lanes get two directories, so no harness run reaches the shared /tmp (the seat,
-// 2026-10-11: every claude run in a friend lane died EEXIST mkdir '/tmp/claude-501').
-func TestALaneCommandEnvironmentNamesItsOwnTmpdir(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	lane1, lane2 := filepath.Join(root, "card-1"), filepath.Join(root, "card-2")
-	base := []string{"PATH=/bin", "HOME=/home/x", "TMPDIR=/tmp", "CLAUDE_CODE_TMPDIR=/tmp"}
-
-	env, cleanup, err := LaneTmpEnv(lane1, base)
-	require.NoError(t, err)
-	defer cleanup()
-
-	tmp1 := LaneTmpDir(lane1)
-	for _, name := range []string{"TMPDIR", "TMP", "TEMP", "CLAUDE_CODE_TMPDIR"} {
-		assert.Contains(t, env, name+"="+tmp1, name)
-	}
-	assert.NotContains(t, env, "TMPDIR=/tmp", "the shared /tmp is never named")
-	tmps := 0
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "TMPDIR=") {
-			tmps++
-		}
-	}
-	assert.Equal(t, 1, tmps, "one TMPDIR, not two")
-	assert.Contains(t, env, "HOME=/home/x", "every other variable passes through")
-
-	fi, err := os.Stat(tmp1)
-	require.NoError(t, err)
-	assert.True(t, fi.IsDir())
-	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), "the lane's temp is private")
-
-	_, cleanup2, err := LaneTmpEnv(lane2, base)
-	require.NoError(t, err)
-	defer cleanup2()
-	assert.NotEqual(t, tmp1, LaneTmpDir(lane2), "two lanes, two directories")
-
-	cleanup()
-	assert.NoDirExists(t, tmp1, "the lane's temp is removed after the run")
-}
 
 // The wall carries the lane's temp as --tmp and nothing new outside the lane: the flag is
 // the only addition, and it is the lane's own directory.
@@ -102,9 +61,45 @@ func TestAFilesystemErrorOutsideTheLaneIsAnEnvironmentFault(t *testing.T) {
 	assert.Empty(t, LaneFilesystemError("all is well\n", lane))
 }
 
+// Requirement (3) at the loop: a run that ends within InstantFail with no REPORT.md and no
+// RESULT.md and whose output names a filesystem error outside its lane reaches laneDone and
+// ends as the friend's ENVIRONMENT fault: the card stays in the lane's hand, its attempt is
+// not counted, her lanes pause at once, and one judgment naming the error line is pushed to
+// the seat (lanes.go laneDone, lane_tmpdir.go environmentFault). Remove the environment-fault
+// branch from laneDone and this test sees a counted attempt and no pause; remove the pause
+// from environmentFault and it sees no pause.
+func TestALaneFastFilesystemErrorPausesTheFriendAndKeepsTheCard(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.m = Start(t0)
+	r.d.Coordinator = "ada"
+	now := t0.Add(2 * time.Minute)
+	jobDir := r.d.Dir
+	card := Card{ID: "c1", Brief: "brief", Outbox: filepath.Join(jobDir, "outbox")}
+	ln := &lane{n: 1, card: &card, job: LaneJob{Dir: jobDir, Card: card}}
+	ls := &laneSet{}
+	tail := &outputTail{}
+	tail.add([]byte("starting\nEEXIST: file already exists, mkdir '/tmp/claude-501'\n"))
+	turn := &turn{subjects: `"card c1"`, started: now.Add(-time.Second), tail: tail}
+	l := &loop{d: r.d, b: r.bus, ctx: context.Background(), lanes: ls, inHand: map[string]bool{}}
+
+	l.laneDone(laneResult{ln: ln, turn: LaneTurn{Exit: 1}, t: turn}, now)
+
+	require.NotNil(t, ln.card, "the card stays in the lane's hand")
+	assert.Same(t, &card, ln.card)
+	assert.Equal(t, 0, ln.attempts, "an environment fault is not the card's failed attempt")
+	assert.True(t, ls.gov.Paused(now), "her lanes pause at once on an environment fault")
+	assert.Empty(t, ls.given, "the card is not set aside")
+	assert.NoFileExists(t, card.Report(), "nothing was finished")
+	judged := strings.Join(r.adaGot(t), "\n")
+	assert.Contains(t, judged, "EEXIST", "the judgment names the error line")
+	assert.Contains(t, judged, "/tmp/claude-501")
+}
+
 // The functional proof: a fake harness that writes to $TMPDIR and fails if $TMPDIR is unset or
 // /tmp, run through a lane, succeeds; a write outside the lane is refused. The wall makes the
-// lane's temp and points TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR at it.
+// lane's temp, points TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR at it, and two lanes get two
+// directories.
 func TestALaneHarnessWritesItsOwnTmpdirAndNothingOutsideIt(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
@@ -122,26 +117,33 @@ func TestALaneHarnessWritesItsOwnTmpdirAndNothingOutsideIt(t *testing.T) {
 	home := filepath.Join(root, "home")
 	self := filepath.Join(home, "rowan-working", "rowan-new")
 	friendDir := filepath.Join(root, "friend")
-	job := filepath.Join(friendDir, "jobs", "card~1")
 	config := filepath.Join(root, "config")
-	for _, d := range []string{filepath.Join(self, "memory"), job, config} {
+	job1, job2 := filepath.Join(friendDir, "jobs", "card~1"), filepath.Join(friendDir, "jobs", "card~2")
+	for _, d := range []string{filepath.Join(self, "memory"), job1, job2, config} {
 		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	run := envExec(laneWallChild+"=1", "HOME="+home)
 	wall := Wall{Self: []string{bin}, Dir: friendDir, ConfigDir: config, Deny: []string{"~/rowan-working/rowan-new"}}
 
-	// the fake harness: it writes its scratch under $TMPDIR, fails when $TMPDIR is unset or
-	// /tmp, and its attempt at an outside write must be refused by the wall.
+	// the fake harness: it writes its scratch under $TMPDIR, fails when $TMPDIR is unset, /tmp
+	// or not named by all four variables, and its attempt at an outside write must be refused
+	// by the wall.
 	script := `test -n "$TMPDIR" || { echo "TMPDIR unset"; exit 3; }; ` +
 		`test "$TMPDIR" != /tmp || { echo "TMPDIR is /tmp"; exit 4; }; ` +
+		`test "$TMPDIR" = "$TMP" && test "$TMPDIR" = "$TEMP" && test "$TMPDIR" = "$CLAUDE_CODE_TMPDIR" || { echo "TMPDIR=$TMPDIR TMP=$TMP TEMP=$TEMP CLAUDE=$CLAUDE_CODE_TMPDIR"; exit 7; }; ` +
 		`printf x > "$TMPDIR/probe" || exit 5; ` +
 		`if printf x > /tmp/lane-probe-$$ 2>/dev/null; then echo "outside write allowed"; exit 6; fi; ` +
 		`echo "HARNESS TMPDIR=$TMPDIR CLAUDE_CODE_TMPDIR=$CLAUDE_CODE_TMPDIR"`
 	exec := wall.Exec(run)
-	out, exit, err := exec(LaneContext(t.Context()), job, "/bin/sh", []string{"-c", script}, "")
-	require.NoError(t, err, out)
-	assert.Equal(t, 0, exit, out)
-	assert.Contains(t, out, "HARNESS TMPDIR="+LaneTmpDir(job))
-	assert.Contains(t, out, "CLAUDE_CODE_TMPDIR="+LaneTmpDir(job))
-	assert.NoDirExists(t, LaneTmpDir(job), "the lane's temp is removed after the run")
+	var tmps []string
+	for _, job := range []string{job1, job2} {
+		out, exit, err := exec(LaneContext(t.Context()), job, "/bin/sh", []string{"-c", script}, "")
+		require.NoError(t, err, out)
+		require.Equal(t, 0, exit, out)
+		assert.Contains(t, out, "HARNESS TMPDIR="+LaneTmpDir(job))
+		assert.Contains(t, out, "CLAUDE_CODE_TMPDIR="+LaneTmpDir(job))
+		assert.NoDirExists(t, LaneTmpDir(job), "the lane's temp is removed after the run")
+		tmps = append(tmps, LaneTmpDir(job))
+	}
+	assert.NotEqual(t, tmps[0], tmps[1], "two lanes, two directories")
 }

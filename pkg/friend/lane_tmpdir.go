@@ -2,10 +2,8 @@ package friend
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,46 +20,11 @@ import (
 // LaneTmpName is the temporary directory inside a lane's own job directory.
 const LaneTmpName = "tmp"
 
-// laneTmpVars are the environment variables a harness reads for its scratch
-// directory: the standard pair, the Windows spelling, and CLAUDE_CODE_TMPDIR.
-// The repository's own docs name no separate variable for the claude harness
-// (checked: docs/SPEC-FRIEND.md and docs/CLI.md name no CLAUDE_CODE_TMPDIR), so
-// the harness's own /tmp/claude-<uid> directory is pointed at the lane by
-// setting CLAUDE_CODE_TMPDIR beside TMPDIR, TMP and TEMP.
-var laneTmpVars = []string{"TMPDIR", "TMP", "TEMP", "CLAUDE_CODE_TMPDIR"}
-
 // LaneTmpDir is the private temporary directory of the lane whose job directory
-// is dir: <lane dir>/tmp.
+// is dir: <lane dir>/tmp. Wall.Exec makes it 0700 before the run and removes it
+// after; RunWall names it at TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR, so two
+// lanes get two directories and no harness run reaches the shared /tmp.
 func LaneTmpDir(dir string) string { return filepath.Join(dir, LaneTmpName) }
-
-// LaneTmpEnv is the environment a lane's harness runs with: <lane dir>/tmp is
-// made 0700 before the run and TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR all name
-// it, so no harness run reaches the shared /tmp. The returned cleanup removes
-// the directory when the run ends. Two lanes running in two directories get two
-// different directories.
-func LaneTmpEnv(dir string, env []string) ([]string, func(), error) {
-	tmp := LaneTmpDir(dir)
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		return nil, func() {}, err
-	}
-	return laneTmpEnv(env, tmp), func() { _ = os.RemoveAll(tmp) }, nil
-}
-
-// laneTmpEnv is env with every temp variable dropped and named at tmp.
-func laneTmpEnv(env []string, tmp string) []string {
-	out := make([]string, 0, len(env)+len(laneTmpVars))
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		if slices.Contains(laneTmpVars, name) {
-			continue
-		}
-		out = append(out, kv)
-	}
-	for _, name := range laneTmpVars {
-		out = append(out, name+"="+tmp)
-	}
-	return out
-}
 
 // HarnessFaultEnvironment is the fault of a lane run the friend's environment
 // broke, never the card's: it ended within InstantFail with no REPORT.md and no
