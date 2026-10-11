@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
 // Model changes require new measured evidence, independent of checkout mtimes.
@@ -52,7 +52,7 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 			continue
 		}
 		got, files, err := built.Fingerprint(row[0])
-		assert.Truef(t, err == nil && got == want && files == wantFiles, "TLC %s: internal/tlc computes fingerprint %s over %d files (%v), this class test computes %s over %d: the runner and the class disagree on the inputs", row[0], got, files, err, want, wantFiles)
+		assert.Truef(t, err == nil && got == want && files == wantFiles, "TLC %s: pkg/tlc computes fingerprint %s over %d files (%v), this class test computes %s over %d: the runner and the class disagree on the inputs", row[0], got, files, err, want, wantFiles)
 	}
 	// A case reads its own models and the ones they extend, and no others: the
 	// point of a per-case fingerprint, held on the real tree.
@@ -62,7 +62,7 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 	for _, in := range inputs {
 		paths = append(paths, in.Path)
 	}
-	for _, need := range []string{"tla/MCEpochMemberFixedPoint.cfg", "tla/MCEpochMemberTable.tla", "tla/EpochMemberTable.tla", "tla/MemberTable.tla", "tla/TableMachine.tla", "tla/CASES.tsv#MCEpochMemberFixedPoint.cfg", "internal/tlc/run.go", "internal/tlc/outcome.go", "internal/tlc/suite.go"} {
+	for _, need := range []string{"tla/MCEpochMemberFixedPoint.cfg", "tla/MCEpochMemberTable.tla", "tla/EpochMemberTable.tla", "tla/MemberTable.tla", "tla/TableMachine.tla", "tla/CASES.tsv#MCEpochMemberFixedPoint.cfg", "pkg/tlc/run.go", "pkg/tlc/outcome.go", "pkg/tlc/suite.go"} {
 		assert.Truef(t, slices.Contains(paths, need), "MCEpochMemberFixedPoint.cfg does not read %s; it reads %v", need, paths)
 	}
 	for _, p := range paths {
@@ -318,12 +318,12 @@ func newTLCFixture(t *testing.T) tlcFixture {
 		f.write("tla/"+name+".cfg", "SPECIFICATION Spec\n")
 	}
 	for _, name := range tlc.ResultFiles {
-		f.write("internal/tlc/"+name, "sample "+name+"\n")
+		f.write("pkg/tlc/"+name, "sample "+name+"\n")
 	}
 	for _, name := range tlc.BookkeepingFiles {
-		f.write("internal/tlc/"+name, "bookkeeping "+name+"\n")
+		f.write("pkg/tlc/"+name, "bookkeeping "+name+"\n")
 	}
-	f.write("internal/tlc/run_test.go", "the runner's tests are not an input\n")
+	f.write("pkg/tlc/run_test.go", "the runner's tests are not an input\n")
 	f.write("tla/README.md", "not an input\n")
 	f.write("tla/CASES.tsv", tlcFixturePlanHeader+
 		"MCA.cfg\tMCA.tla\tpass\t-\tcheck\talpha\trequired\t-\n"+
@@ -433,9 +433,9 @@ func TestTLCPerCaseFingerprintStalesOnlyTheCasesThatReadWhatChanged(t *testing.T
 		{"one row of the plan edited", func(f tlcFixture) {
 			f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "check\tbeta", "ignore-terminal\tbeta", 1))
 		}, []string{"MCB.cfg"}},
-		{"the runner edited", func(f tlcFixture) { f.write("internal/tlc/run.go", "changed interpretation\n") }, []string{"MCA.cfg", "MCB.cfg", "MCLone.cfg"}},
-		{"a bookkeeping file of the runner edited", func(f tlcFixture) { f.write("internal/tlc/inputs.go", "the list of standard modules grew\n") }, nil},
-		{"the runner's tests edited", func(f tlcFixture) { f.write("internal/tlc/run_test.go", "edited\n") }, nil},
+		{"the runner edited", func(f tlcFixture) { f.write("pkg/tlc/run.go", "changed interpretation\n") }, []string{"MCA.cfg", "MCB.cfg", "MCLone.cfg"}},
+		{"a bookkeeping file of the runner edited", func(f tlcFixture) { f.write("pkg/tlc/inputs.go", "the list of standard modules grew\n") }, nil},
+		{"the runner's tests edited", func(f tlcFixture) { f.write("pkg/tlc/run_test.go", "edited\n") }, nil},
 		{"a file that is not an input edited", func(f tlcFixture) { f.write("tla/README.md", "edited\n") }, nil},
 		{"a module nobody extends added", func(f tlcFixture) { f.write("tla/Unused.tla", "---- MODULE Unused ----\n====\n") }, nil},
 		{"a module named only in a comment added", func(f tlcFixture) {
@@ -541,7 +541,7 @@ func TestTLCRecordsAndCasesMustMatchOneToOne(t *testing.T) {
 // is changed on its own, and each change makes the case stale: nothing the case
 // reads is left out of the fingerprint. The list of what it reads is written
 // here by hand and the fingerprint is worked out here from it, so neither
-// drifts with internal/tlc.
+// drifts with pkg/tlc.
 func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 	t.Parallel()
 	f := newTLCFixture(t)
@@ -553,7 +553,7 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 	for _, in := range inputs {
 		got = append(got, in.Path)
 	}
-	want := []string{"internal/tlc/outcome.go", "internal/tlc/plan.go", "internal/tlc/run.go", "internal/tlc/suite.go", "tla/CASES.tsv#MCA.cfg", "tla/MCA.cfg", "tla/MCA.tla", "tla/Shared.tla"}
+	want := []string{"pkg/tlc/outcome.go", "pkg/tlc/plan.go", "pkg/tlc/run.go", "pkg/tlc/suite.go", "tla/CASES.tsv#MCA.cfg", "tla/MCA.cfg", "tla/MCA.tla", "tla/Shared.tla"}
 	require.Equalf(t, strings.Join(want, ","), strings.Join(got, ","), "MCA.cfg reads %v, want %v", got, want)
 	var hand strings.Builder
 	for _, p := range want {
@@ -584,7 +584,7 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 			require.Truef(t, slices.Contains(stale, "MCA.cfg"), "changing %s left MCA.cfg's record current", path)
 			// And nothing else: MCLone.cfg reads the runner and no other file
 			// here, so only the runner stales it too.
-			require.Equalf(t, strings.HasPrefix(path, "internal/tlc/"), slices.Contains(stale, "MCLone.cfg"), "changing %s left MCLone.cfg's record wrong: stale %v", path, stale)
+			require.Equalf(t, strings.HasPrefix(path, "pkg/tlc/"), slices.Contains(stale, "MCLone.cfg"), "changing %s left MCLone.cfg's record wrong: stale %v", path, stale)
 		})
 	}
 }

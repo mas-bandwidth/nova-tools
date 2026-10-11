@@ -33,10 +33,10 @@ to the forge.
   (cmd/nova-bus/README.md); `nova-bus help` and the `-h` of send, recv, ack,
   peek, wait, log and names; `nova-redis help`, `serve -h` and `acl -h`;
   `nova-config help`; `nova-friend help` and `run -h`. Read only after a
-  stumble: internal/nsprint/redisauth/redisauth.go for the login variable names
+  stumble: pkg/nsprint/redisauth/redisauth.go for the login variable names
   (stumble 1), docs/stranger/friend-fake-harness.md after stumble 1 and
   docs/stranger/three-card-sprint.md after stumble 2, and
-  internal/friend/adapter.go and adapter_opencode_lanes.go for the opencode
+  pkg/friend/adapter.go and adapter_opencode_lanes.go for the opencode
   deliver command (stumble 5). The two earlier records name the same login and
   names walls this run hit.
 - Time: the container started at 01:06 UTC; the two messages were sent, read
@@ -320,7 +320,7 @@ directory (no `--dir`: the adapter's own comment records that opencode's `run`
 rejects it); it runs the pong line a SESSION CHECK carries (adding `--to` when
 the line lacks it, stumble 6) and otherwise exits 0. Nothing in the help says
 what a deliver command is called with; the shape was found by reading
-internal/friend/adapter.go after the stumble.
+pkg/friend/adapter.go after the stumble.
 
 ## Stumbles
 
@@ -338,7 +338,7 @@ card.
   the variable that names that variable. `NOVA_REDIS_PASSWORD` (what serve
   reads), `NOVA_SPRINT_REDIS_PASSWORD` and `NOVA_BUS_REDIS_PASSWORD` all did
   nothing. Only `NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=<password>` worked, and the name `NOVA_SPRINT_REDIS_PASSWORD_ENV` is in
-  internal/nsprint/redisauth/redisauth.go, not in the README or the help.
+  pkg/nsprint/redisauth/redisauth.go, not in the README or the help.
 
 card: bus-noauth-refusal-names-the-password-variable
 paths: cmd/nova-bus/main.go,docs/SPEC-BUS.md
@@ -397,7 +397,7 @@ task: say in the nova-bus first run that each name needs a proven push, give the
 
 ### 5. A stand-in harness must be written from the source, not the help
 
-- Read: `nova-friend help`, `nova-friend run -h`, internal/friend/adapter.go and
+- Read: `nova-friend help`, `nova-friend run -h`, pkg/friend/adapter.go and
   adapter_opencode_lanes.go (after the daemon would not deliver without a
   harness binary the container did not have).
 - Expected: for a harness, what the daemon runs for one delivery: the command,
@@ -433,7 +433,7 @@ could a stranger do it: no, not from README.md and the help alone. It took
 about two minutes of bench time from the container's first command to the acked
 reply (01:06 to 01:08:33 UTC), after the README and the help had been read, and
 four things had to be read or done outside them: the login variable names in
-internal/nsprint/redisauth/redisauth.go (stumble 1), the five-step nova-config
+pkg/nsprint/redisauth/redisauth.go (stumble 1), the five-step nova-config
 detour (stumble 2), `redis-cli ACL SETUSER` (stumble 3) and a stand-in harness
 plus two friend daemons (stumbles 4, 5 and 6). With the two pushes proven, the
 exchange itself is clean: `send`, `peek`, `recv`, `ack` and `log` print exactly

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // A card is the one artefact whose defects are paid for in tokens before a test runs: a
@@ -41,7 +41,7 @@ const cardMaxBytes = cardlimits.BriefAdvisoryBytes
 
 // A card that is a sprint brief has one bound above the advice: `nova-sprint add` refuses a
 // brief over cardRefusedBytes, because a brief is a child's whole brief and the advice leaves
-// room for it. Both numbers are internal/cardlimits' (BriefAdvisoryBytes, MaxBriefBytes), which
+// room for it. Both numbers are pkg/cardlimits' (BriefAdvisoryBytes, MaxBriefBytes), which
 // the store reads too, and are never typed here, so the lint and the refusal cannot disagree.
 // The lint says so on the note, so a writer at cardMaxBytes knows how much room is left.
 
@@ -68,21 +68,21 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // It counts the twelve shape rules of WORKER-CARDS.md:23-36, the six typed-header
 // tokens add -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused`, with the brief grammar's `start-named` and `stop-named` -- whose rules
-// live in internal/swarm/lintheader.go, beside a note on the
+// live in pkg/swarm/lintheader.go, beside a note on the
 // gate parser they have to agree with,
 // and `depends-on`, which fires only under `--typed`, and the base checks of
-// internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
+// pkg/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
 // `deadline-p95` -- with `donewhen-test-name`, which fire only under
 // `--base-check`.
 //
-// The child rules of internal/swarm/lintchild.go -- one `rule-<name>` per sentence of the
+// The child rules of pkg/swarm/lintchild.go -- one `rule-<name>` per sentence of the
 // brief the coordinator gives every child and one `step-<what>` per forbidden command --
 // join the same set, so `--rules` prints them and this count includes them. They are
 // checked under `--child-rules`, and always by `nova-sprint add` over every brief.
 //
 // And `placeholder`: a line of the card template left with its <...> fill-ins.
 //
-// And the three rules of a tree card (internal/cardtree): steps-nested, tree-step and
+// And the three rules of a tree card (pkg/cardtree): steps-nested, tree-step and
 // script-step, which fire only on a card with a dotted step or a work step.
 var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
 
@@ -125,7 +125,7 @@ var cardLintRemedies = map[string]string{
 	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
 	"depends-on":       swarm.CardDependsRemedy,
 	"placeholder":      "fill it in before the card is handed out: the line is the card template's own, its <...> not filled in; replace each <...> with the card's value (the label, the sha, the repository, the base, the minutes, the task, the worktree, the package)",
-	// The brief grammar's two reading lines carry their remedies from internal/swarm,
+	// The brief grammar's two reading lines carry their remedies from pkg/swarm,
 	// beside the tokens themselves; they are not in CardHeaderRemedies because that map
 	// is the four tokens of §5 rule 1 that CardHeaderChecks publishes.
 	swarm.StartNamedCheck: swarm.StartNamedRemedy,
@@ -144,7 +144,7 @@ func cardPlaceholders(raw []byte) []cardFinding {
 }
 
 // Typed-header tokens join the same table.
-// They are defined in internal/swarm beside the header rules themselves, because that is
+// They are defined in pkg/swarm beside the header rules themselves, because that is
 // where the grammar the gate parses is restated; they are merged here so `--rules` prints
 // one listing and cardLintChecks counts one set. A token defined in both places is a
 // collision this init refuses to paper over.
@@ -340,7 +340,7 @@ func lintCard(raw []byte) []cardFinding {
 	// rule is what the card WALKS, not every `../` in its text; a `../` the card quotes --
 	// a fenced block, a backtick span, a markdown link target, a `go test` ellipsis -- is
 	// not a path the worker takes. The exempted shapes, measured on representative
-	// cards, and what is given up by exempting them, are in internal/swarm/lintparent.go.
+	// cards, and what is given up by exempting them, are in pkg/swarm/lintparent.go.
 	for _, n := range swarm.CardParentPaths(lines) {
 		add("no-parent-path", n, lines[n-1])
 	}
@@ -380,7 +380,7 @@ func lintCard(raw []byte) []cardFinding {
 
 	// 13. a tree card's steps: dotted numbers under their parents, each work step's own
 	// PATHS, COMMIT and VERDICT lines, each script step's program and post-condition
-	// (internal/cardtree; docs/SPEC-SPRINT.md, a card is a tree of steps). A flat card has
+	// (pkg/cardtree; docs/SPEC-SPRINT.md, a card is a tree of steps). A flat card has
 	// none of these findings.
 	for _, f := range cardtree.Lint(text) {
 		add(f.Check, f.Line, f.Excerpt)
@@ -969,7 +969,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 		}
 	}
 	// THE CHILD RULES ARE THE COORDINATOR'S: the general defaults, or the sentences of the
-	// rules file the flag names (internal/swarm/lintchild.go). A rule of a file has its own
+	// rules file the flag names (pkg/swarm/lintchild.go). A rule of a file has its own
 	// token, so its remedy is built here and read back where the drift prints.
 	var ruleRemedies map[string]string
 	if *childRulesFile != "" || *memberInjects {

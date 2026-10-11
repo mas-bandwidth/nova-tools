@@ -1,0 +1,3 @@
+# no-hand-printing: hand printing in a tool package; each row's count only falls
+# ceiling: 1
+pkg/release:flagset 1 one flag set Run builds by hand (cli.go): the package dispatches nova-update's release verbs and does not build a tool.Tool, so the verbs parse their own flags until the port

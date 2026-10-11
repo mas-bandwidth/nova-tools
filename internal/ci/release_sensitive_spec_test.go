@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/mas-bandwidth/nova-tools/pkg/release"
 )
 
 // sensitiveMarker is the HTML comment docs/SPEC-RELEASE.md puts immediately
@@ -21,7 +21,7 @@ const sensitiveMarker = "<!-- release-sensitive-paths -->"
 //
 // Johnny's decision 1 on SPEC-RELEASE (#1337) is that a cut whose range touched
 // certain paths cannot be tagged without his read, and that the list of those
-// paths lives in ONE place in code -- internal/release/sensitive.go -- and is
+// paths lives in ONE place in code -- pkg/release/sensitive.go -- and is
 // written out in the spec so a person can read what the gate covers without
 // reading Go. Two copies of a security list drift, and the copy that drifts is
 // always the one nobody is running. So they are held together here, in the
@@ -39,14 +39,14 @@ func TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec(t *testing.T) {
 		assert.Equalf(t, inCode[i], inSpec[i], "entry %d differs: the spec says %q, the code says %q", i+1, inSpec[i], inCode[i])
 	}
 	// Every entry is a directory prefix. A list entry that is not one is a
-	// list entry that classifies by accident: `internal/secrets` without the
-	// slash would also catch `internal/secrets<sibling>/`.
+	// list entry that classifies by accident: `pkg/secrets` without the
+	// slash would also catch `pkg/secrets<sibling>/`.
 	for _, p := range inCode {
 		assert.Truef(t, strings.HasSuffix(p, "/") && !strings.HasPrefix(p, "/") && !strings.Contains(p, ".."), "%q is not a directory prefix", p)
 	}
 	// And the spec says what the gate DOES, not merely what it covers: the
 	// refusal, the flag that gets past it, and the receipt line.
-	for _, want := range []string{"--security-read", "RELEASE CUT SENSITIVE", "internal/release/sensitive.go"} {
+	for _, want := range []string{"--security-read", "RELEASE CUT SENSITIVE", "pkg/release/sensitive.go"} {
 		assert.Containsf(t, spec, want, "docs/SPEC-RELEASE.md does not carry %q", want)
 	}
 }

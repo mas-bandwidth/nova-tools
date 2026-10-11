@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // psNice is the nice of pid as ps reads it, the same reading the fake harness makes.
@@ -74,7 +74,7 @@ func TestACardsLaunchRunsBehindCI(t *testing.T) {
 	r := &nativeRunner{
 		self: tool, harness: builtHarness, model: "fake/fake-model", root: dir, slots: slots,
 		resultsRoot: filepath.Join(dir, "results"), deadline: 30 * time.Second, tokens: "unmetered", stderr: &bytes.Buffer{},
-		env: []string{"PATH=" + path}, noWall: noWall,
+		env: []string{"PATH=" + path, launchHome(t)}, noWall: noWall,
 	}
 	p := member.Packet{Card: "nice1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 1, Brief: "FAKE-NICE\n"}
 	ch, err := r.Start(p)

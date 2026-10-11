@@ -45,7 +45,7 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     is an unreadable box that only a person can clear, by hand, live. Rename
     within one directory is atomic, so a reader sees the old box or the new one
     and never a fragment. A box mutation (MutateBox) holds the lock file beside
-    the box -- <box>.lock, internal/filelock -- across its read, its change and
+    the box -- <box>.lock, pkg/filelock -- across its read, its change and
     its publish, so two copies of the tool blowing fuses at once land BOTH
     writes, and neither can produce a corrupt box. The one deliberate exception
     is a lockdown whose lock cannot be taken: it blows unserialized rather than
@@ -75,7 +75,7 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     event line beneath a real one -- a `FUSE OK lockdown=clear` under a `FUSE
     FAIL`, which a caller scanning the grammar reads as permission -- and an ESC
     sequence does the same to an operator's terminal. cmd/nova-fuse prints every
-    such string through internal/oneline's Escape, which escapes every control
+    such string through pkg/oneline's Escape, which escapes every control
     character as the text is printed and so holds for a box this tool never
     wrote; Fold only tidies what this tool writes itself, and is never a
     refusal, because a fuse you cannot blow is not a fuse. Constraining writes
@@ -100,8 +100,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -386,7 +386,7 @@ func WriteBox(path string, b Box) error {
 
 // BoxLockUntaken reports whether a box mutation failed because the box's LOCK
 // could not be taken -- another writer holds it, the wait timed out, or only
-// askers stood in the way (internal/filelock's ErrHeld, ErrTimeout and ErrBusy;
+// askers stood in the way (pkg/filelock's ErrHeld, ErrTimeout and ErrBusy;
 // MutateBox returns that failure verbatim). It tells "the box is being mutated
 // elsewhere right now" from "this box cannot be written here at all", and the
 // difference is a policy, not a detail: a lockdown answers the first by blowing
@@ -466,7 +466,7 @@ func PreserveUnreadable(path string) (string, error) {
 	if fi, err := os.Lstat(cleanDst); err == nil && fi.Mode().IsRegular() {
 		mode = fi.Mode().Perm()
 	}
-	// Atomic write per internal/atomicfile model: writes dst atomically, preserving
+	// Atomic write per pkg/atomicfile model: writes dst atomically, preserving
 	// any existing destination permissions (or using the regular source's mode)
 	// via temporary file and rename so preserved unreadable box evidence is never
 	// left torn or mode-widened.

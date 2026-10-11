@@ -55,11 +55,11 @@ it reads as a first open; and the "no such session" remedy chooses
 | 4 | internal/cairn/cairn.go:212 | `append` to a session nothing holds names `open first: nova-cairn open ... --publish manual`; the tool chose a policy the caller never gave, and the paste records it | leave `--publish <never|manual|deferred|immediate>` as the one placeholder, or carry the append's own `--publish` when given | S |
 | 5 | cmd/nova-cairn/main.go:104 | the usage block still has a line beginning `nova-cairn NOTE:`, which reads as a verb to a reader enumerating the usage | move the note below the usage lines without the tool prefix | S |
 | 6 | cmd/nova-cairn/main.go:92 | every verb's `-h` quotes the whole tool's exit table (all four verbs, nine lines), so `version -h` lists append's conflict code | give each verb its own `Verb.ExitTable` line | S |
-| 7 | internal/nsprint/verbflag/verbflag.go:140 | `open ... --bogus 1 --json` and `open ... stray --json` print the refusal as a prose line, not JSON; `--json` after an unknown flag or a positional is lost | scan the whole argument list for `--json` before choosing the refusal's rendering | S |
-| 8 | internal/tool/out.go:102 | the `MORE` line ends `--max <n> raises the ceiling, --max 0 lists all`, a placeholder and not a command to paste | print the caller's own command with `--max 0` | S |
+| 7 | pkg/nsprint/verbflag/verbflag.go:140 | `open ... --bogus 1 --json` and `open ... stray --json` print the refusal as a prose line, not JSON; `--json` after an unknown flag or a positional is lost | scan the whole argument list for `--json` before choosing the refusal's rendering | S |
+| 8 | pkg/tool/out.go:102 | the `MORE` line ends `--max <n> raises the ceiling, --max 0 lists all`, a placeholder and not a command to paste | print the caller's own command with `--max 0` | S |
 | 9 | internal/cairn/read_existing.go:19 | `index` or `receipt` on a missing store refuses with remedy `nova-cairn help`, which does not tell the reader what to do next | name `open` as the verb that makes a store, or check the path and say whether a parent exists | S |
 | 10 | cmd/nova-cairn/main.go:214 | `--now 2026-01-01T00:00:00+02:00` is accepted and stored as `2025-12-31T22:00:00Z`, while the flag and the refusal both say RFC 3339 UTC | say "RFC 3339, converted to UTC" in the help, or refuse a non-Z offset | S |
-| 11 | internal/tool/tool.go:222 | the unknown-verb refusal lists `open, append, index, receipt, version` and omits `help`, which the usage block lists | include help in the list | S |
+| 11 | pkg/tool/tool.go:222 | the unknown-verb refusal lists `open, append, index, receipt, version` and omits `help`, which the usage block lists | include help in the list | S |
 | 12 | docs/CLI.md:2451 | the nova-cairn section has no `### First run` subsection, which onboarding point 3 asks for | add the block from the executed transcript in docs/TESTS.md | S |
 
 ## Good, keep

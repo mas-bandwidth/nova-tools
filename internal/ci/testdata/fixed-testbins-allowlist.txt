@@ -6,4 +6,4 @@
 # its row in the same change, and a new row parks nothing.
 #
 # There are no rows today: every copied built binary on the CI path places by
-# link through internal/testbin.Place.
+# link through pkg/testbin.Place.

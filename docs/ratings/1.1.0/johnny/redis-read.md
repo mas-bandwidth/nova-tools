@@ -27,7 +27,7 @@ A 10 is the same verbs in the spec, the banner and the code; help cut to the fiv
 | 5 | docs/CLI.md:2026 | The section has no First run heading. Neighbor tools open with one. The only transcript is three refusals in docs/TESTS.md:769, so a success line is not where the standard says to show it. | Open with First run: version, spill --dry-run and acl render, and the lines those print. | M |
 | 6 | cmd/nova-redis/acl.go:306 | When several new users lack a password variable, missing= lists every one and the remedy command names only the first. The next paste still refuses. | Repeat --password-env-for once per missing user in that single remedy. | S |
 | 7 | cmd/nova-redis/main.go:17 | The entry comment says the dialing verbs are spill, recall, fn load and fn check. acl check and acl apply dial too. The same file is dispatch, login checks, spill, recall and shell quoting (690 lines). report.go:19 only borrows the JSON value. | Name every dialing verb. Move spill and recall out so main is dispatch. Take flags and refusals from the shared runner. | L |
-| 8 | internal/redisfn/redisfn.go:72 | The package doc tells a past incident, issue 3620, inside the LoadMissing rule. docs/CLI.md:2086 repeats the ticket. The rule is clear without the story, and the story is not present tense. | State only the rule: LoadMissing loads when the name is absent and never replaces. | S |
+| 8 | pkg/redisfn/redisfn.go:72 | The package doc tells a past incident, issue 3620, inside the LoadMissing rule. docs/CLI.md:2086 repeats the ticket. The rule is clear without the story, and the story is not present tense. | State only the rule: LoadMissing loads when the name is absent and never replaces. | S |
 
 ## Good, keep
 
@@ -38,7 +38,7 @@ A spill with no owner, or a TTL that is missing, zero or negative, is refused be
 |---|---|---|
 | a hand-rolled skeleton | STILL THERE | cmd/nova-redis/main.go:204 still dispatches, parses and refuses on its own. report.go:19 only borrows the JSON value type. |
 | a 50-line prose wall in help | STILL THERE | cmd/nova-redis/main.go:70 opens the banner and the example is cmd/nova-redis/main.go:151. |
-| ticket numbers in the package doc | STILL THERE | internal/redisfn/redisfn.go:72 still names issue 3620, and docs/CLI.md:2086 repeats it. |
+| ticket numbers in the package doc | STILL THERE | pkg/redisfn/redisfn.go:72 still names issue 3620, and docs/CLI.md:2086 repeats it. |
 | three line grammars | STILL THERE | cmd/nova-redis/fn.go:142 leads with OK, cmd/nova-redis/main.go:392 leads with RECALL MISSING, and cmd/nova-redis/acl.go:304 is ACL APPLY REFUSED at exit 1. |
 | onboarding and output grammar still have rough edges | STILL THERE | docs/CLI.md:2026 still has no First run heading, and docs/TESTS.md:769 shows refusals only. |
 | README scored 6.5 to 7 and 8.4 | STILL THERE | README.md:27 is still a live spill, so this read scores the README 6.5. |

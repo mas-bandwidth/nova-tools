@@ -29,7 +29,7 @@ import (
 // templates `nova-swarm template` prints, and the card fixtures the swarm's own tests
 // lint. Each glob must match at least one file.
 var briefSources = []string{
-	"internal/swarm/templates.go",
+	"pkg/swarm/templates.go",
 	"cmd/nova-swarm/testdata/cards/*.md",
 }
 

@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 )
 
-// takeFold takes internal/filelock's lock on path, waiting up to wait, and reports held
+// takeFold takes pkg/filelock's lock on path, waiting up to wait, and reports held
 // when another fold keeps it. A fresh lock file is created here first, exclusively and
 // 0644 as this tool always made it (filelock alone creates 0666 less the umask); O_EXCL
 // and O_NOFOLLOW refuse whatever already stands at the path, a dangling symlink included,

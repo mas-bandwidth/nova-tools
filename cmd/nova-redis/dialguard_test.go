@@ -47,9 +47,9 @@ var dialers = map[string][]string{
 	"net/http/httptest":                {"NewServer", "NewTLSServer", "NewUnstartedServer"},
 	"github.com/alicebob/miniredis/v2": {"Run", "RunT", "RunTLS", "NewMiniRedis"},
 	"github.com/redis/go-redis/v9":     {"Dial"},
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn":     {"Open"},
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn":          {"Open"},
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store": {"Open"},
-	"github.com/mas-bandwidth/nova-tools/internal/testredis":     {"Far", "FarLink", "CommandCounter"},
+	"github.com/mas-bandwidth/nova-tools/pkg/testredis":          {"Far", "FarLink", "CommandCounter"},
 }
 
 var majorVersion = regexp.MustCompile(`^v[0-9]+$`)
@@ -157,7 +157,7 @@ func TestUnitTierDialsNoSocketReadsWhatItRefuses(t *testing.T) {
 		{"a dial in the unit tier", "package p\nimport \"net\"\nfunc f() { net.Dial(\"tcp\", \"x\") }\n", []string{"a_test.go:3: net.Dial"}},
 		{"a listener in the unit tier", "package p\nimport \"net\"\nfunc f() { net.Listen(\"tcp\", \"x\") }\n", []string{"a_test.go:3: net.Listen"}},
 		{"an httptest server", "package p\nimport \"net/http/httptest\"\nfunc f() { httptest.NewServer(nil) }\n", []string{"a_test.go:3: httptest.NewServer"}},
-		{"a store opener", "package p\nimport \"github.com/mas-bandwidth/nova-tools/internal/redisconn\"\nfunc f() { redisconn.Open(nil, redisconn.Options{}, nil) }\n", []string{"a_test.go:3: redisconn.Open"}},
+		{"a store opener", "package p\nimport \"github.com/mas-bandwidth/nova-tools/pkg/redisconn\"\nfunc f() { redisconn.Open(nil, redisconn.Options{}, nil) }\n", []string{"a_test.go:3: redisconn.Open"}},
 		{"a renamed import", "package p\nimport n \"net\"\nvar d n.Dialer\n", []string{"a_test.go:3: n.Dialer"}},
 		{"a miniredis outside a trap", "package p\nimport \"github.com/alicebob/miniredis/v2\"\nfunc f() { miniredis.RunT(nil) }\n", []string{"a_test.go:3: miniredis.RunT"}},
 		{"a miniredis inside a trap", "package p\nimport \"github.com/alicebob/miniredis/v2\"\nfunc pipeStore() { miniredis.RunT(nil) }\n", nil},

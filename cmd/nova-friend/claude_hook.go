@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 )
 
 // runClaudeHook is the opt-in Claude PreToolUse protocol (docs/CLAUDE-ASYNC-BASH-CANDIDATE.md).

@@ -36,7 +36,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 )
 
 // fakeDiskutil stands in for /usr/sbin/diskutil. It answers the three commands Create
@@ -428,7 +428,7 @@ func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
 }
 
 // The compatibility witness for the other direction: during an upgrade an OLD nova-sandbox
-// (before internal/filelock) can hold the create lock while a new one asks. The old binary
+// (before pkg/filelock) can hold the create lock while a new one asks. The old binary
 // took a bare `flock(LOCK_EX)` on the same file, so that is what is staged here, on a
 // second descriptor. While it is held the new lock must refuse as held -- never take it
 // beside the old holder -- and once the old one lets go the new lock must take it. The
@@ -456,7 +456,7 @@ func TestAnOldBinarysCreateLockKeepsTheNewOneOut(t *testing.T) {
 	require.NoError(t, l.Unlock())
 }
 
-// The fresh-file witness. Before internal/filelock this tool created volume-create.lock
+// The fresh-file witness. Before pkg/filelock this tool created volume-create.lock
 // 0600 (volumes_darwin.go:265 at 4bb0a044e); filelock alone creates 0666 less the umask.
 // With no lock file present, the create lock must make it 0600 still, under a umask that
 // would make a 0666 create something else -- and a caller that takes filelock with no

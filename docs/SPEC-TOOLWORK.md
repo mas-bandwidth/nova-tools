@@ -15,7 +15,7 @@ line per finding, then `HYGIENE OK` or `HYGIENE NO` with the base, head, paths a
 finding count. It exits 0 clean, 1 with findings, 2 when it could not run. It decides
 nothing.
 
-1. **One package, one entry point.** The checks are `internal/hygiene.Check`, and
+1. **One package, one entry point.** The checks are `pkg/hygiene.Check`, and
    `nova-check hygiene` is its command. A second copy of these rules would be a second
    definition of clean. A check that could not run is exit 2, never a clean answer.
 2. **`identity`.** Every commit in the range has author **and** committer in the
@@ -28,24 +28,24 @@ nothing.
    `git diff --name-only <base>..<head>` matches one, and a rename counts on both
    sides. Without `--paths` the diff is not bounded: the check is skipped and the
    output says so with `paths=-`.
-4. **`stray-file`.** No added file matches the stray list (`internal/hygiene/stray.txt`:
+4. **`stray-file`.** No added file matches the stray list (`pkg/hygiene/stray.txt`:
    `RESULT.md`, `PROMPT.md`, `scratch/**`, `*.log`, `*.orig`, `*.rej`, `*.test`,
    `*.out`, `.DS_Store`, editor swap files and the rest); no added file is over 1 MiB;
    no changed file has a mode other than `100644` or `100755`, is a symlink or a
    submodule; and no changed file holds a conflict marker. The list is one embedded
    data file, and an exception in it names the kind it is for.
 5. **`secret`.** Every added line is matched against key SHAPES held as one embedded
-   data file (`internal/hygiene/keyshapes.txt`: PEM private-key headers,
+   data file (`pkg/hygiene/keyshapes.txt`: PEM private-key headers,
    `AGE-SECRET-KEY-1`, the forge's token prefixes, the provider key prefixes), never
    against a key's value: the check holds no key and reads none. A match is
    reason `secret` at `<path>:<line>`, and the matched text is never printed, only its path,
    line and shape name.
 6. **A kind is declared by the tool.** The kinds are the name set in
-   `internal/hygiene/kinds.txt`. `--kind` names one of them or is refused with the
+   `pkg/hygiene/kinds.txt`. `--kind` names one of them or is refused with the
    list; there is no default kind. A kind unlocks only the stray exceptions that name
    it, and nothing a branch contains widens it.
 
-**Tests:** `internal/hygiene` and `cmd/nova-check` hold each check red on a fixture
+**Tests:** `pkg/hygiene` and `cmd/nova-check` hold each check red on a fixture
 repository: a foreign committer, a merge commit, a rename on both sides, `RESULT.md`
 in the diff, a conflict marker, mode `100600`, a file over one mebibyte, a symlink and
 a submodule, a secret shape whose text never appears in the output, a `--paths` list
@@ -88,7 +88,7 @@ Every command carries a `### First run` transcript in its `## <tool>` section of
    listed in `internal/ci/testdata/unexecuted_examples.txt` with its reason. A new
    unexecuted example fails the class test on the change that adds it.
 
-**Tests:** `internal/onboarding` (a dropped line, a moved line, an altered value, a
+**Tests:** `pkg/onboarding` (a dropped line, a moved line, an altered value, a
 volatile field outside the table), `internal/ci` (every transcript executed line for
 line, the platform line names a CI leg, the unexecuted examples only shrink) and
 `internal/docs` (every transcript section executed).

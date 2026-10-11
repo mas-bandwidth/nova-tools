@@ -167,17 +167,30 @@ func TestScanAllocatesAFewTimesTheInputNotOneIntPerByte(t *testing.T) {
 	}
 	text := b.String()
 
-	runtime.GC()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	claims := Scan(text)
-	installations := ScanInstallation(text)
-	runtime.ReadMemStats(&after)
-
-	require.Empty(t, claims, "plain text must not be a claim: %#v", claims)
-	require.Empty(t, installations, "plain text must not be an installation: %#v", installations)
-	delta := after.TotalAlloc - before.TotalAlloc
+	// TotalAlloc counts the whole process, and this package's tests run in parallel, so a
+	// sibling's allocations land in any window they overlap. They only ever add, so the least of
+	// a few windows is the scan's own cost; a scan that really allocates over the bound fails
+	// every window. (While the scan took over a minute under -race it outlived its siblings and
+	// one window was enough.)
 	limit := uint64(len(text) * 8)
+	var delta uint64
+	for window := 0; window < 8; window++ {
+		runtime.GC()
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		claims := Scan(text)
+		installations := ScanInstallation(text)
+		runtime.ReadMemStats(&after)
+
+		require.Empty(t, claims, "plain text must not be a claim: %#v", claims)
+		require.Empty(t, installations, "plain text must not be an installation: %#v", installations)
+		if d := after.TotalAlloc - before.TotalAlloc; window == 0 || d < delta {
+			delta = d
+		}
+		if delta < limit {
+			break
+		}
+	}
 	assert.Less(t, delta, limit,
 		"scan allocated %d bytes for %d of input (%.1fx), want under 8x; one int per byte, twice, is about 16x before the copies",
 		delta, len(text), float64(delta)/float64(len(text)))

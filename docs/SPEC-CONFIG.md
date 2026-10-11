@@ -54,7 +54,7 @@ Where each field of this cut sits:
 | tier (decided per tier) | `routes` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
-(`internal/config/kind.go`: `Kind`), one migration, one Redis writer. The
+(`pkg/config/kind.go`: `Kind`), one migration, one Redis writer. The
 grammar is one for every kind:
 
 ```
@@ -171,7 +171,7 @@ held stays. It is a static share, the same on every read of the same row:
 the CI legs running on the machine and every other child are taken off at the
 take, by a lease from the machine's one slot store, never in the width.
 `nova-config machine width <name>` prints it (`Widths`,
-`internal/config/width.go`), and `nova-sprint fleet sync` moves it to the
+`pkg/config/width.go`), and `nova-sprint fleet sync` moves it to the
 fleet table. Until migration 0012 the width was derived (the machine's `slots`
 less the `slots` of the friends charged to it: the machine a friend's beat
 named, else the fleet row's coordinator machine); 0012 filled `width` with
@@ -186,7 +186,7 @@ tailnet when a tailnet is running (asked of `tailscale status --json`, only
 when the program is installed), else the first label of the hostname, always
 lower-case. It opens no store. `--check` reads the machine rows and exits 2
 when the name is none of them, 3 when the name or the rows cannot be read
-(`SelfName`, `internal/config/self.go`).
+(`SelfName`, `pkg/config/self.go`).
 
 **`fleet`** (`config.fleet`, singleton): the one row of fleet-wide facts.
 The coordinator machine is one machine; which friend drives it is the sprint
@@ -223,7 +223,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `tiers` | list: flash, frontier, heavy, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
 | `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
-| `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
+| `mode` | enum: one-shot; one-shot by default | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Batch, one session taking many cards in one turn, is retired: nova-config refuses it and every row reads as one-shot, so Migration 0030's rows too | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
 | `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
@@ -293,7 +293,7 @@ the machine's loops (`loops=<a,b>`, `-` for none).
 **`loop run`**: `nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]`
 is a loop's single-instance wrapper, the Go verb in place of the bash `nova-loop` a coordinator's
 own `fleet/loops.yml` installed (docs/COORDINATOR-TOOLS.md). It takes `<run-dir>/<name>.lock`
-(default `~/nova-bench/run`) with internal/filelock, the kernel's lock (tla/FileLock.tla): a second
+(default `~/nova-bench/run`) with pkg/filelock, the kernel's lock (tla/FileLock.tla): a second
 copy is refused with exit 3 and runs nothing, and a lock whose holder died is free, since the kernel
 released it. Under the lock it counts the start in `<run-dir>/<name>.starts` and, with `--metrics`,
 writes `nova_loop_<name>.prom` there (`nova_loop_starts_total` and `nova_loop_last_start_seconds`,
@@ -310,7 +310,7 @@ refused with exit 1, a name with no row too. `--dry-run` resolves the command th
 row is read when no command follows `--`) and the start count, prints the `LOOP RUN` line the run
 would print with `dry_run=true`, and takes no lock, writes nothing and runs nothing; a row the run
 refuses it refuses the same. The pieces are `config.LoopRunArgv`,
-`config.NextLoopStarts` and `config.LoopMetrics` (internal/config/looprun.go).
+`config.NextLoopStarts` and `config.LoopMetrics` (pkg/config/looprun.go).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
@@ -350,7 +350,7 @@ class, never a model name". Every value is data in the row: the code names no pr
 The price sheet is optional: the owner, 2026-10-01, "the pricing
 configuration saved per-tuple, so it is known and easily look upable". A
 decimal is digits with an optional fraction after one point, no sign and
-no exponent, kept as text in its one spelling (`internal/cardcost`,
+no exponent, kept as text in its one spelling (`pkg/cardcost`,
 `Canonical`: `0.30` is `0.3`), never a float; empty is not set, never 0.
 
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
@@ -367,7 +367,7 @@ dashboard showing under half the real spend for days.
 reads the list and sets each enabled route's `price_input`, `price_cache_read`,
 `price_cache_write`, `price_output` and `price_request` from it, with
 `price_as_of` today (UTC) and `price_source` the list's URL
-(`internal/config/prices.go`, `PlanPriceRefresh`).
+(`pkg/config/prices.go`, `PlanPriceRefresh`).
 
 - The lists: `openrouter` rows read OpenRouter's public models endpoint
   (`GET https://openrouter.ai/api/v1/models`, no key; USD per token, written per
@@ -405,7 +405,7 @@ reads the list and sets each enabled route's `price_input`, `price_cache_read`,
   refreshed them; a reader found it 2026-10-06).
 - Follow-up cards, outside this verb: the run before `nova-sprint funded <provider>`
   (`cmd/nova-sprint/verbs.go`, `cmdFunded`) should refresh the provider's list
-  first, and `nova-sprint routes` (`cmd/nova-sprint/reads.go`, `cmdRoutes`, and
+  first, and `nova-sprint routes` (in mas-bandwidth/nova-sprint, `cmdRoutes`, and
   `internal/sprint/route.go`, `RouteStats`) should mark a route whose price differs
   from the list by more than 10 percent as stale.
 
@@ -467,7 +467,7 @@ is set is skipped by the deal. `tier list` prints the arrays.
 ## The schema
 
 Migrations are numbered SQL files compiled into the binary
-(`internal/config/migrations/NNNN_<what>.sql`), applied in order, each in its
+(`pkg/config/migrations/NNNN_<what>.sql`), applied in order, each in its
 own transaction with its row in `config.schema_migrations`. A version applied
 is never applied again, so `nova-config migrate` on a migrated database
 applies nothing and says so (`applied=0`). `0001_schema.sql` makes the
@@ -731,7 +731,7 @@ refusal line, since nothing was attempted); 2 usage (a flag, a value, a name on 
 singleton, a store that did not answer). A refusal is
 one stderr line, `nova-config <verb> REFUSED: <why>; run: <next step>`; a
 usage refusal's next step is the verb's own `-h`. `--json` prints the same
-result as one object in `internal/tool`'s shape (`result`, `facts`, `items`,
+result as one object in `pkg/tool`'s shape (`result`, `facts`, `items`,
 `notes`). `--file <path>` stands in for `--pg`: the same store, kept in a
 local JSON file (`config.FileStore`), for trying the tool with no database.
 
@@ -812,7 +812,7 @@ Every verb after it opens PostgreSQL as follows. The DSN is `--pg`, else
 when the address is the recorded DSN; else, when the DSN is `--pg` or
 `NOVA_PG_DSN`, the variable `NOVA_PG_PASSWORD` when that is set, and the
 recorded secret is not read; else the recorded secret, read in the verb's own
-process through `secrets.ReadLogin` (internal/secrets/login.go), the path
+process through `secrets.ReadLogin` (pkg/secrets/login.go), the path
 `nova-secrets exec` takes (`OpenSeatFile`), and put into the connection in
 memory. It is never printed, never written, and never in the process's
 environment, so no child of the verb inherits it. `--as`, else `NOVA_FRIEND`,

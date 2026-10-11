@@ -1,6 +1,6 @@
 # SPEC-FRIEND: what a friend runs to be part of the team
 
-The tool is `nova-friend`; the rules are `internal/friend`; the machine is
+The tool is `nova-friend`; the rules are `pkg/friend`; the machine is
 `tla/Friend.tla`. The contract was settled on 2026-10-04 between the owner and
 the coordinator: "everything that a friend needs in any harness, to be a part
 of the team", "it must be this way when they start up next time, not just now,
@@ -109,7 +109,7 @@ below): the daemon answering is never the session.
   (no home directory off `/Volumes`, or the copy fails) is refused: no plist
   is written and the agent is not loaded. A binary already off `/Volumes` is
   named as it is. The log path is a separate rule and stays under the home
-  directory.
+  directory. A `/Volumes` source is always copied onto InstalledBinary (copy=true).
 
 ## The protocol
 
@@ -175,7 +175,7 @@ only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
 
-## Presence (internal/friend/presence.go)
+## Presence (pkg/friend/presence.go)
 
 The finding of 2026-10-04: three friends read up with eight cards each while
 their harness apps were not running at all. The daemon answered every ping
@@ -331,13 +331,13 @@ bound after a close the friend is still shown up (the finding case
 `MCFriendPresenceFindingRunningNow`). The bound is the promise.
 
 Where the code today differs: a card stays with a friend who goes down
-(internal/sprint/friend_deal.go: "a friend who goes quiet keeps her card");
+(nova-sprint's friend_deal.go: "a friend who goes quiet keeps her card");
 the hold takes back only the cards not yet started
-(internal/sprint/friend_take.go), where the model has no started card; and
+(nova-sprint's friend_take.go), where the model has no started card; and
 a card the hold took back may be dealt to the same friend again (only
 `friend take` keeps it off them, `taken_from`). The provider's limit only
 stops answers in the model; limit.go's `Down` until the reset is not in it.
-## A friend's status, from evidence (internal/friend/status.go)
+## A friend's status, from evidence (pkg/friend/status.go)
 
 The owner, 2026-10-04: "Once again I look at friends and I wonder, are
 friends actually doing work?" The daemon's beat says only that its loop runs.
@@ -390,7 +390,7 @@ coordinator's daemon sending this verdict through `friend health`, and the
 table showing `why` and the evidence beside the status, are the next change,
 in `internal/sprint` and `cmd/nova-sprint`.
 
-## The loop (internal/friend/daemon.go)
+## The loop (pkg/friend/daemon.go)
 
 Push, not poll (docs/SPEC-SPRINT.md, section 8, "Push, not poll", audited 2026-10-06): the daemon's read blocks on the stream (`XREADGROUP BLOCK`, one `BeatEvery`) only while the session is free; while a turn runs, in one-shot mode, and for a passive harness it reads without blocking or peeks and then pauses a `BeatEvery`, which is a timer poll, and card friend-bus-read-blocks makes it block in every mode. Her cards (`InboxEvery`) and her reader row (`ReadAskEvery`, 10 s) are asked of the server on the daemon's step, timer polls too, until friend-cards-pushed-on-the-bus and friend-reads-pushed-on-the-bus put them on her stream. The beat is a beat, and a delivery is a turn in her session. The class test `TestEveryTimerLoopIsNamedInThePushTable` holds every timer loop of the tree to that table.
 
@@ -554,7 +554,7 @@ messages can still hold up.
 
 A harness at its usage limit or out of credits is down until its reset,
 woken after it, and its measured usage rides on its beat
-(`internal/friend/limit.go`; the finding of 2026-10-04: a friend's harness
+(`pkg/friend/limit.go`; the finding of 2026-10-04: a friend's harness
 stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while her row
 read up with six working cards, and four Claude accounts ran out of their
 weekly usage unseen). `Limits.Watch` reads every command an adapter runs:
@@ -585,7 +585,7 @@ no usage flag yet (the Claude lanes, below).
 
 ### limits-mean-down-w-r.w1~15: each harness's limit and credits texts, down until the reset
 
-The decision of 2026-10-04: "out of credits = down". `internal/friend/limits.go` has one
+The decision of 2026-10-04: "out of credits = down". `pkg/friend/limits.go` has one
 parser per harness (claude, codex, opencode, grok, antigravity, dsh, gemini):
 `ParseLimit(harness, out, now, rest)` reads the last 2 KiB of a **failed** turn
 (a reply that succeeded and only talks of a limit is none) for that harness's
@@ -594,7 +594,7 @@ kind, `limit` or `credits` (credits first: a line that says both is the
 balance), and the reset when the line names one (an epoch or `resets_in_seconds`
 in a 429 body, a stamp, a date and time in UTC, a duration like `after 3h12m5s`
 or `in 2 days 3 hours`, a clock time), else now plus `--limit-rest` (1h, `Limits.Rest`).
-The texts are `internal/friend/testdata/limits.tsv`, one line each with the kind
+The texts are `pkg/friend/testdata/limits.tsv`, one line each with the kind
 and reset they parse to (`TestEachHarnessUsageLimitAndCreditsTextParsesWithItsReset`);
 a text not in a harness's words, a transient `rate_limit_error` among them,
 stays an ordinary failed turn. They are the harnesses' documented wordings, not
@@ -627,7 +627,7 @@ The finding of 2026-10-05: four Claude accounts hit their weekly limits, and
 "You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)" named no
 reset the parser read, so each friend was down for the one-hour rest and would
 have woken into the same wall; the coordinator set each reset by hand.
-`resetOfText` (`internal/friend/limits.go`, `clockReset`) now reads a clock time
+`resetOfText` (`pkg/friend/limits.go`, `clockReset`) now reads a clock time
 with the month and day and the zone the provider names beside it: `resets 8pm
 (America/New_York)`, `resets Oct 10 at 5am (America/New_York)`, `resets Oct 8, 1am
 (...)`, after `resets`, `refresh`, `try again` or `available again`. The time is in
@@ -672,13 +672,13 @@ beats sent: plain, then down with the reset and the reason, then plain again; `T
 (cmd/nova-sprint) the row.
 
 The sprint server's beat lane takes the down beat: `friendBeatFlags`
-(`cmd/nova-sprint/serve.go`) names `--until` (an RFC3339 time) and `--reason` (not
+(nova-sprint's serve.go) names `--until` (an RFC3339 time) and `--reason` (not
 empty, one line, no control character) beside `--running --working --queue --width
 --load --active --pong --check --run`, each once with its value; any other shape is refused, exit 2,
 nothing changed (`TestTheServerTakesAFriendsDownBeat`). Before this (r7.w1) the lane
 refused the down beat and her row read down only by the lapse.
 The table's status cell shows reason and until for a hold and an observation only
-(`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
+(nova-sprint's store, `friendRows`); a down beat's pair is on her
 report and in why she is down.
 
 ### Every harness's credit and quota refusal (cmd/nova-friend/limit.go)
@@ -689,7 +689,7 @@ On a match the daemon sends `nova-sprint friend down <friend> --reason 'no credi
 
 A refusal the table does not know is never silently retried: three lanes in a row that end with the same first error line surface to the seat as one judgment, `lanes failing alike: <line>` (`RefusalWatch`, `AlikeLanes`, `friend.LimitAlikeText`), and a different line starts the count again. `TestEveryHarnessCreditRefusalMarksTheFriendDown`, `TestALaneErrorThatIsNotARefusalChangesNothing` and `TestThreeAlikeLanesSurfaceOneJudgmentAndNoDown` pin the table, a non-refusal and the judgment.
 
-### The harness check (internal/friend/alive.go)
+### The harness check (pkg/friend/alive.go)
 
 Presence is the session's check (above); this one says whether the harness
 is alive, for a person reading the status, and decides nothing. Every
@@ -807,7 +807,7 @@ answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
 
-### daemon-delivers-the-present-on-start-b.w1: the present comes first, the backlog never does (internal/friend/present.go)
+### daemon-delivers-the-present-on-start-b.w1: the present comes first, the backlog never does (pkg/friend/present.go)
 
 The finding of 2026-10-06 (the owner: "when somebody starts up, you need to tell them to skip to
 present... this should be automatic"): a session that started (a new chat, a restart, a
@@ -876,7 +876,7 @@ and no superseded message; `NoSupersededDelivered`; `NoStaleNonceAnswered`. Its 
 witnesses, each caught by one invariant: `nopresent` (a start delivers the backlog as a batch),
 `reclaim` (a superseded message the claim hands in again is delivered), `answerstale` (a ping
 past the window is answered). The tests are `TestAStartedSessionGetsThePresentAndNeverTheBacklog`
-and the other tests of internal/friend/present_test.go.
+and the other tests of pkg/friend/present_test.go.
 
 ### friend-idle-wake-r.w2: idle wake
 
@@ -989,8 +989,9 @@ queued request of the same kind:
   (`TestAFailedCodexQueueLeavesTheOldRequestStanding`).
 - A withdrawal the app refuses is one line, marked superseded. One the
   session took first is one line saying so.
-- A queued message that carries anything else (a bus message, a card dealt)
-  is never withdrawn.
+- A queued message that carries anything else (a bus message) is never
+  withdrawn; a card dealt is a deal notice and coalesces in the daemon
+  (notifications, below).
 
 `CodexCheckRequeue` is the session check's re-ask age (`ReaskAfter`, an hour) less one
 recheck (`RecheckEvery`). The re-ask at the hour therefore always finds the
@@ -1018,7 +1019,7 @@ carry the daemon's pong command line, which no one types by hand.
 
 A terminal harness (OpenCode, Grok, Aider, any TUI) started by `nova-friend host` runs in a detached
 tmux session `friend-<name>`; the friend's session is the TUI in that pane, and `--harness tmux` is
-its adapter (internal/friend/adapter_tmux.go). Hosting is opt-in: a TUI a person launched outside
+its adapter (pkg/friend/adapter_tmux.go). Hosting is opt-in: a TUI a person launched outside
 tmux keeps its own harness adapter.
 
 - **Host.** `nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] -- <launch command...>`
@@ -1210,7 +1211,7 @@ ack proves the turn ran; neither proves the session read the message. So
 every message to a friend is owed her session's receipt (SPEC-BUS.md,
 fr-delivery-receipts.w1): her session runs `nova-bus ack --as <f> --id
 <ids>` once it has read them, or answers one (`re`); `ReceiptLine`
-(internal/friend/deliver.go) is that exact line for a turn's text, from its
+(pkg/friend/deliver.go) is that exact line for a turn's text, from its
 `RECV OK id=` lines. The daemon's own ack at exit 0 is unchanged and is no
 receipt.
 
@@ -1219,7 +1220,7 @@ The friends table's two columns per friend are `DeliveryCells` over
 owed message's age (`Age`: `45s`, `12m`, `1h20m`, `3d`; `-` when none).
 
 The sprint server sends its notes through a `Courier`
-(internal/friend/deliver.go): the bus, or a dial per note (`Open`), with a
+(pkg/friend/deliver.go): the bus, or a dial per note (`Open`), with a
 `bus.Watch` on each result, so a login refused or a store not reached is
 one alarm to the coordinator naming the store and the user, raised at the
 first failure and cleared at the next success.
@@ -1257,11 +1258,18 @@ Plain transport acknowledgments and routine status retain bus/audit handling and
 produce no model wake; `--notify-kinds` opts other kinds in. Requests and blockers
 cannot be filtered out. Genuine ping/wake controls remain separate from card noise.
 
-The server's `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies
-set one global ready-queue bit across all cards. Each receive pass reads at most
-32 entries. `--notify-window` (30 seconds) coalesces a burst across passes; one
-constant ready-queue wake asks the coordinator to read the canonical queue. It
-claims or executes nothing. Child-finish refill belongs to the existing dispatcher.
+The server's deal notices—both per-card `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies and batch `cards dealt: N (...)` notices—are state, not
+events, keyed per friend. One pending deal notice stands per friend: a newer notice replaces
+the older, which is acknowledged as coalesced. Each receive pass reads at most 32 entries.
+`--notify-window` (30 seconds) coalesces a burst across passes. When delivery is due, a
+notice whose named cards have all left her row (taken back, finished or returned, as the
+daemon's card state `held` answers) is withdrawn without a turn; otherwise one turn is
+delivered, carrying the newest notice alongside the canonical ready-queue wake. A batch
+list is cut at ten with a trailing `and N more`, so its named cards are only a subset of the
+deal and are never the whole of it: such a notice is not withdrawn on that subset, because a
+card it omits may still be held. It claims or executes nothing; child-finish refill belongs
+to the existing dispatcher. `TestDealNoticesCoalescePerFriend` pins the coalescing, the
+withdrawal, and the truncated batch that is never withdrawn on its visible subset.
 
 The file-synced atomic journal holds one active immutable batch, at most one deferred
 nonurgent report or notice batch, and one ready bit. The app queue permits one unread notification batch
@@ -1311,7 +1319,7 @@ beat loops are retired, with no replacement"). The beat itself proves the daemon
 nothing more: it is recorded and shown, and it never makes her up (below); the
 session's answer it carries (`--pong`) is her session's evidence.
 
-## Presence is her session's evidence (internal/sprint/presence.go)
+## Presence is her session's evidence (nova-sprint's presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things
 that are answered just by the daemon"; "The daemon stays up even while the
@@ -1343,7 +1351,7 @@ own session, within its window:
   evidence; when her beats stop, her proof stops with them
   (`TestABareTimeOrAnUnaskedNonceNeverProves`). The beat verb trusts its
   caller's actor (a worker verb runs as the friend it names,
-  cmd/nova-sprint/coordinator.go `orActor`), so a caller that beats as her can
+  nova-sprint's coordinator.go `orActor`), so a caller that beats as her can
   ask a check and answer it in one beat, and that proves her
   (`TestTheBeatTrustsItsCallersActor`): the nonce rule keeps a bare time and an
   answer to nothing asked out, never a caller who speaks as her. For
@@ -1380,9 +1388,9 @@ after the window without another; a finish the same for its window),
 `TestAFinishFromHerReportIsHerSessionsEvidence`. The roster and her cards are moved by the
 friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
-loop"; cmd/nova-sprint/friend_loop.go).
+loop"; nova-sprint's friend_loop.go).
 
-## The push proof (internal/friend/pushproof_start.go)
+## The push proof (pkg/friend/pushproof_start.go)
 
 A friend nothing pushes into is deaf, and the bus waits on her unread (the
 owner, 2026-10-05: "Your inbox MUST push to you."; "It must be mandatory and
@@ -1398,11 +1406,11 @@ state (SPEC-BUS.md, bus-requires-inbox-push-proof).
   or delivered, a harness whose adapter has no deliver command (a `Stub`:
   every surveyed harness; not claude, which runs each card as a process of its
   own, below, and owes no refusal: its check goes in by the folder), exit 2, with the remedy `the adapter
-  card: give internal/friend a deliver command for <harness> (NewDeliverer),
+  card: give pkg/friend a deliver command for <harness> (NewDeliverer),
   or run the friend under a harness that has one: <the harnesses with one>`.
   `--dry-run` refuses it too.
 - A claude friend proves by the folder (`friend.FolderCheck`,
-  internal/friend/adapter_claude_folder.go; the owner, 2026-10-08: "why not,
+  pkg/friend/adapter_claude_folder.go; the owner, 2026-10-08: "why not,
   can we fix the harness to do this?"). Claude Code has no command that puts
   a turn into a running session, and her cards run as processes of their
   own, so the daemon's SESSION CHECK is written as one file,
@@ -1426,7 +1434,7 @@ state (SPEC-BUS.md, bus-requires-inbox-push-proof).
   check's nonce, and her cards' finishes stand for her at the server, as the
   one-shot lanes have it below; nothing refuses a message to her on it
   (SPEC-BUS.md, bus-requires-inbox-push-proof). Tests:
-  `TestAClaudeFriendsCheckGoesInByTheFolder` (internal/friend),
+  `TestAClaudeFriendsCheckGoesInByTheFolder` (pkg/friend),
   `TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong`
   (cmd/nova-friend).
 - `run` never waits on the proof and never exits for want of it: the start
@@ -1468,7 +1476,7 @@ state (SPEC-BUS.md, bus-requires-inbox-push-proof).
   check asked, `Beat.Proof`), her session's evidence for `FriendProofLive`
   while her beats go on ("Presence is her session's evidence" below). The
   coordinator's pass raises one `friend deaf` judgment when the proof is older
-  than that (internal/sprint/coordinator_pass.go).
+  than that (nova-sprint's coordinator_pass.go).
 - The deploy order: the sprint server first, then every daemon within
   `LegacyPongGrace` (an hour) of the server's start. A daemon of this build
   against an older server fails every beat (that server refuses `--check` and
@@ -1481,7 +1489,7 @@ The proof is the presence model's Ask then Answer within the bound
 (tla/FriendPresence.tla); `install` alone asks it before anything runs, and
 `run`'s proof is the daemon's own first check.
 
-## The daemon writes every card she holds (internal/friend/inbox.go)
+## The daemon writes every card she holds (pkg/friend/inbox.go)
 
 On 2026-10-05 from about 18:59 the daemons of two friends held cards on
 their rows, taken by the deal in batch mode or by the coordinator's `friend take`, and no
@@ -1505,7 +1513,7 @@ second), both ways:
   job (`friendJobOf`: `sprint.StoredID` and `.g<gen>`; a read's card id), its packet, and
   its brief as friend sync renders it (`friendBrief`; a read's `friendReadText`). A card
   taken back from her (withdrawn) is not listed. The server's side is
-  cmd/nova-sprint/friendcards_verb.go; `TestFriendCardsServesEveryHeldCardWithItsPacket`
+  nova-sprint's friendcards_verb.go; `TestFriendCardsServesEveryHeldCardWithItsPacket`
   pins it on a twin store end to end: the daemon's write from the answer alone is byte for
   byte friend sync's file, and a card taken from her and dealt to another friend is
   retired from her inbox and written to the other's as its `.g3` job).
@@ -1517,7 +1525,7 @@ second), both ways:
   a ready card she is told of is one behind her lanes, taken by her next finish;
   a card ready in front of a free lane for ten minutes is the coordinator's
   judgment. The daemon's own `progress` names her row (`--as friend.<friend>`,
-  internal/friend/lanes.go `ProgressArgv`, as `FinishArgv` does): sent bare, the
+  pkg/friend/lanes.go `ProgressArgv`, as `FinishArgv` does): sent bare, the
   server refused it for a card on `friend.<name>` (held by friend.<name>, not <name>).
 - A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
   (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
@@ -1539,7 +1547,7 @@ second), both ways:
   fairness on its answer); with `AskGuard = FALSE`, the retire that ignores when the brief
   was written, TLC finds `HeldNeverRetired` broken in five states: ask, deal, friend sync
   writes, reconcile retires it. The module sits in this card's report until its path is
-  given (internal/friend/tla is outside the card's paths).
+  given (pkg/friend/tla is outside the card's paths).
 - A job that is no single path element, a symlinked job and a card sent with no brief are
   not written and counted missing, each said in one line (`inbox: refused ...`, `inbox:
   missing inbox/<job>/BRIEF.md (card <c>, <col> on her row): <why>`) once while it stands,
@@ -1572,7 +1580,7 @@ naming that card (`inbox: the sprint server does not serve friend cards (card
 daemon-writes-every-taken-card3 adds it) ...`), never once a loop; with no worker view to
 fall back on (`friend.NotServed`) it writes and retires nothing.
 
-## The daemon stages every job it writes (internal/friend/stage.go)
+## The daemon stages every job it writes (pkg/friend/stage.go)
 
 On 2026-10-05 the first lanes of the rocketnet audit held with "no worktree, no remote" and the
 schema cards with "JOB.md missing: card not staged": the daemon wrote the brief and nothing
@@ -1660,7 +1668,7 @@ push from one is read by `PushedHead`; a fetch that fails is a judgment named on
 leaves nothing of it; a finished job is pruned past the cap and its branch and commit stay; a
 job in her inbox or live is never pruned; a pruned job staged again takes its branch back.
 `TestAMirrorOfTheCloneLayoutIsConverted` and `TestTheInboxCleanupPrunesFinishedJobs` pin the
-rest. The worktrees and their pruning are modelled in `internal/friend/tla/JobWorktrees.tla`
+rest. The worktrees and their pruning are modelled in `pkg/friend/tla/JobWorktrees.tla`
 (TLC on a Linux bench, three jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states,
 no error; `NoLaneLosesItsCheckout`, `WorkKept`, `CapKept`, `HeldKept`), with three reversed
 witnesses: `MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut of this change)
@@ -1671,7 +1679,7 @@ Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
 
-## One-shot lanes (internal/friend/lanes.go)
+## One-shot lanes (pkg/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
 `batch` (the default, and what every row before migration 0030 has) or
@@ -1790,7 +1798,7 @@ A claude session that holds the sprint's coordinator seat is reached the
 same way without a friend's daemon: nova-sprint's folder adapter writes each
 push check and judgment as a file into the folder the session watches with a
 Monitor, and the session answers the check with `nova-sprint seat pong`
-([SPEC-SPRINT.md, "The push proof"](SPEC-SPRINT.md#the-push-proof)). A friend
+([SPEC-SPRINT.md, "The push proof"](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#the-push-proof)). A friend
 on a harness with no deliver command whose session watches a folder in place
 of the bus may use the same folder through her route defer; nova-friend
 itself is unchanged.
@@ -1808,7 +1816,7 @@ OpenCode's documented permission map; it is not yet measured on a live lane.
 A refusal the turn's output still shows is the lane's `rejected=` on the
 record and the card's reason.
 
-### Claude lanes: a headless account runs one-shot lanes (internal/friend/adapter_claude.go)
+### Claude lanes: a headless account runs one-shot lanes (pkg/friend/adapter_claude.go)
 
 On 2026-10-04 four Claude Code accounts ran sprint cards through hand-written
 zsh runners and readers (`runner.zsh`, `reader.zsh`) that wrote PAUSED files
@@ -1847,7 +1855,7 @@ sprint server's `friend beat` carries no cost field yet.
 `TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir` (cmd/nova-friend).
 
 The OpenCode lane is priced and stopped the same way
-(`internal/friend/adapter_opencode_lanes.go`). The daemon wraps an OpenCode
+(`pkg/friend/adapter_opencode_lanes.go`). The daemon wraps an OpenCode
 friend in `OpenCodePriced`: after every lane run it reads opencode's own
 session record, `opencode export <session>` (the JSON from the first `{`, any
 line before it skipped), and the run's cost is what the session's assistant
@@ -1865,7 +1873,7 @@ and the daemon's wiring in
 
 Not here, owed: (1) cost and utilization on her beat and row: the sprint
 server's `friend beat` accepts only `--running --working --queue --width
---load --active --pong --check --run --until --reason` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+--load --active --pong --check --run --until --reason` (`friendBeatFlags`, nova-sprint's `serve.go`) and
 refuses any other flag, so a cost or a utilization flag sent from here would
 fail every beat; until the server takes them they are on the daemon's record
 only. (2) No live `claude` or `opencode` run checks these shapes: the tests use
@@ -1890,7 +1898,7 @@ A rate limit passes in a minute; out of funds does not (the finding of
 rate limit, the runner held him down as if out of funds and returned 20
 cards, and the coordinator cleared the pause by hand and lowered him to 12).
 The OpenCode lanes read the last 2 KiB of each turn's output, whatever its
-exit, and of a failed session open (`ProviderLimit`, `internal/friend/ratelimit.go`),
+exit, and of a failed session open (`ProviderLimit`, `pkg/friend/ratelimit.go`),
 before a provider's refusal of the session: a line saying out of funds or
 credit (a `402`, `payment required`, `insufficient balance`, `insufficient
 ... credits`, `out of funds`) is `OutOfFunds`, unless its reset is beside it
@@ -1908,7 +1916,12 @@ and lowers the live lane cap by a quarter (at least one lane, never below
 one): 24, 18, 14, 11 ... Lanes whose turns started before that lowering met
 the same episode and change nothing. When the pause ends the lanes resume at
 the cap; a lane beyond it takes nothing and hands back a card it holds
-between turns. A clean ten minutes, measured (no rate limit, and a lane turn
+between turns. Every lane resume after a rate limit is jittered by +/-20% of
+the computed pause, drawn from an injectable random source (default `math/rand/v2`),
+so two lanes or friends on the same provider do not wake at the exact same instant
+to re-hit the rate limit in lockstep. A reported usage-limit reset (`PauseUntil`)
+is jittered only by adding up to 20% of the remaining wait, never earlier than
+the reset itself. A clean ten minutes, measured (no rate limit, and a lane turn
 ended clean in it), raises the cap one lane, up to the row's width; back at
 the width the backoff starts over at 30 s. There is no hold and no person in
 it: the beat goes on, her status stays her session's evidence, the cards stay hers. Each change
@@ -1927,6 +1940,7 @@ the record (`out of funds: lanes held until the daemon restarts`) and once
 to the coordinator as a blocker, `friend <name>: out of funds: <reason>`,
 with the `nova-sprint friend down` line that shows it on her row and the
 restart once paid. It lowers no cap.
+`TestALaneResumeAfterARateLimitIsJittered`,
 `TestARateLimitBacksOffAndResumesWithoutAHold`,
 `TestOutOfFundsHoldsTheLanesWithOneJudgment`,
 `TestTheLaneGovernorBacksOffAndRaisesByMeasurement`. Not here: the batch
@@ -1942,7 +1956,7 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
-### subscription-pacing-is-a-setting.w1 — a subscription friend is paced by measurement (internal/friend/pacing.go)
+### subscription-pacing-is-a-setting.w1 — a subscription friend is paced by measurement (pkg/friend/pacing.go)
 
 The owner, 2026-10-05 ~10:45 PM: "Please try to go easy on <friend> (<machine>)
 and this session until 11PM, or you will run out of credits. Reserve for
@@ -2058,7 +2072,7 @@ the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, b
 job, as a set-aside card is) so it is not handed again. A daemon stopping leaves its running cards marked, for the next
 one to finish.
 
-The model is `internal/friend/tla/LaneEnd.tla` (TLC on a Linux bench, two cards:
+The model is `pkg/friend/tla/LaneEnd.tla` (TLC on a Linux bench, two cards:
 288 distinct states, `NoOrphan`, `HersStands` and `Finished` hold); its
 reversed witness `MCLaneEndBrokenNoWrite.cfg`, a lane that writes nothing at a
 run's end as before this card, breaks `NoOrphan` in 6 states.
@@ -2070,7 +2084,7 @@ internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
 
-### a-lane-is-capped-by-its-tier.w1 — a lane's wall time is capped by its card's tier (internal/friend/lane_cap.go)
+### a-lane-is-capped-by-its-tier.w1 — a lane's wall time is capped by its card's tier (pkg/friend/lane_cap.go)
 
 On 2026-10-05 night seven one-shot Mercury lanes ran 24 to 73 minutes each and
 produced nothing, and several Sonnet lanes ran past an hour on cards whose fix
@@ -2105,7 +2119,7 @@ budget (speed through width), so each card a lane takes is capped by its tier:
   (docs/SPEC-SPRINT.md, a capped lane); the cap and the overrun are on the
   take's cost record.
 
-The model is `internal/friend/tla/LaneEnd.tla`, extended: `CapEnds` ends a run
+The model is `pkg/friend/tla/LaneEnd.tla`, extended: `CapEnds` ends a run
 at the cap with the lane's report, and `Redeal` is the sprint taking a capped
 finish back once. TLC on a Linux bench, two cards: 1568 distinct
 states, `TypeOK`, `NoOrphan`, `RedealOnce`, `HersStands` and `Finished` (every
@@ -2121,7 +2135,7 @@ friend row and `friend beat` printing it as `row_lane_caps=` (cmd/nova-sprint);
 until they are, every lane runs on `DefaultLaneCaps`. The batch turn is not
 capped (it carries messages, not a card).
 
-### the-daemon-reads-every-outbox-job.w1 — the daemon finishes every report on her row (internal/friend/outbox.go)
+### the-daemon-reads-every-outbox-job.w1 — the daemon finishes every report on her row (pkg/friend/outbox.go)
 
 The night of 2026-10-05, a friend held eight working cards whose
 `outbox/<job>/REPORT.md` said `Verdict: LAND` with a `Head:`, unread from
@@ -2158,9 +2172,9 @@ whoever wrote the brief:
 - A report on a card that is no longer hers (taken back, dealt to another) is
   refused at finish, never sent, with the line naming who holds it now:
   `refused: card <c> is not on her row, no longer hers; <friend> holds it now`
-  when the beat's running list names the friend whose lane runs it, else `...; no row the daemon reads says who holds it now (nova-sprint view coordinator does)` (`NotHers`, internal/friend/outbox.go).
+  when the beat's running list names the friend whose lane runs it, else `...; no row the daemon reads says who holds it now (nova-sprint view coordinator does)` (`NotHers`, pkg/friend/outbox.go).
 
-The model is `internal/friend/tla/OutboxFinish.tla` (TLC on a Linux bench, two
+The model is `pkg/friend/tla/OutboxFinish.tla` (TLC on a Linux bench, two
 cards, one of them staged by another hand: 324 distinct states,
 `FinishOnlyWorking`, `FinishOnlyVerdict` and `Finished` hold); its reversed
 witness `MCOutboxFinishBrokenOwnOnly.cfg`, a daemon that finishes only the cards
@@ -2168,7 +2182,7 @@ it staged, breaks `Finished` in 5 states: the other hand's card is dealt, she
 writes a verdict, the daemon asks, and nothing finishes it. The test is
 `TestTheDaemonFinishesAReportItDidNotStage`.
 
-### collect-is-a-verb-and-the-daemons-duty.w1 — the daemon's collect: origin's tip and dead lanes (internal/friend/outbox.go)
+### collect-is-a-verb-and-the-daemons-duty.w1 — the daemon's collect: origin's tip and dead lanes (pkg/friend/outbox.go)
 
 The coordinator's stopgap `finish-loop.py` (92 finishes on the night of 2026-10-05)
 became `nova-sprint collect` (docs/SPEC-SPRINT.md section 1, collect), and the daemon's
@@ -2189,7 +2203,7 @@ outbox pass keeps the same rule for her own tree on every sync:
   and the END line, never over a file there), said on the record (`outbox: dead lane
   <job>: ...`), and the same pass finishes it `--failed`, so the card is dealt again.
 
-The model is `internal/friend/tla/Collect.tla`, both hands (the coordinator's verb over
+The model is `pkg/friend/tla/Collect.tla`, both hands (the coordinator's verb over
 every tree, the daemon over hers) finishing from their snapshots against a server that
 takes a finish only while the card is working (TLC on a Linux bench, two cards: 53,651
 distinct states; `FinishedOnce`, `LandOnTip`, `DeadOnlyEnded` and `Collected` hold). Its
@@ -2199,11 +2213,11 @@ friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at
 Head unread, breaks `LandOnTip` in 6 states. The test is
 `TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
 
-### the-fix-is-the-first-line-of-the-next-brief.w1 — a reworked brief opens with the fix (internal/friend/rework.go)
+### the-fix-is-the-first-line-of-the-next-brief.w1 — a reworked brief opens with the fix (pkg/friend/rework.go)
 
 The night of 2026-10-05, lint-pkg-tlc-tbb came back five times, sec-rocketnet-server-dos-zhi
 four and presence-from-session-only five, each with the same finding. A rework puts its fix on
-the packet (`rework --fix`, or the broken reads' finding: internal/sprint/steps_review.go), and
+the packet (`rework --fix`, or the broken reads' finding: nova-sprint's steps_review.go), and
 the server's brief says it as a `The coordinator asks:` line under the start, over a long card
 whose own STOP is the whole card's; the next lane read the card and never reached the fix.
 
@@ -2236,7 +2250,7 @@ whose own STOP is the whole card's; the next lane read the card and never reache
   the daemon has to win. `friendCollect` is that finish for friend sync and for the run loop's
   reconcile.
 
-The model is `internal/friend/tla/OutboxFinish.tla`, extended: a reworked card's report
+The model is `pkg/friend/tla/OutboxFinish.tla`, extended: a reworked card's report
 addresses its fix or not, and `NoUnaddressedLand` (a reworked card lands only from a report
 that addresses its fix) holds with `Finished`. Friend sync is in it as a second writer of the
 brief (`Deliver`, whichever hand comes first, never over one there) and a second finisher
@@ -2253,7 +2267,7 @@ tests are `TestAReworkedBriefOpensWithTheFix`, `TestFixAddressedReadsTheKeyWords
 card: the brief's form and the HOLD) and
 `TestFriendFinishHoldsAnUnaddressedLandAndLandsAnAddressedOne`.
 
-### one-lane-per-card.w1 — one live lane per card (internal/friend/one_lane.go)
+### one-lane-per-card.w1 — one live lane per card (pkg/friend/one_lane.go)
 
 On the night of 2026-10-05 the same card ran in two lanes at once more than once:
 a WHO-pinned audit dealt to one friend while another worked the same slot from
@@ -2295,7 +2309,7 @@ for nothing. A card now has one live lane:
   the other lane. The messages the turn carried go back to pending, counted
   toward nothing.
 
-The model is `internal/friend/tla/OneLane.tla` (TLC on a Linux bench, three lanes:
+The model is `pkg/friend/tla/OneLane.tla` (TLC on a Linux bench, three lanes:
 48 distinct states, `OneLive` and `NoneLeft` hold). Its reversed witness is
 `MCOneLaneBrokenNoClaim.cfg`, lanes that start without the mark as before this card
 (each daemon checking only its own lanes and the outbox). It breaks `OneLive` in 7
@@ -2311,7 +2325,7 @@ friends' rows at once is ended on her side only when it leaves her row. The lane
 marks still hold for every daemon on one working directory. The daemon still
 sends no `--running` on its beat.
 
-### opencode-lanes-parity-b.w1 — the lanes do what the runner scripts did (internal/friend/lane_parity.go)
+### opencode-lanes-parity-b.w1 — the lanes do what the runner scripts did (pkg/friend/lane_parity.go)
 
 The owner, 2026-10-05: "can you please create cards to remove any shell scripts you use while coordinating with
 real golang nova-tool or nova-sprint verbs and flags", "We need to get away from these one shot shell scripts".
@@ -2337,7 +2351,7 @@ a 429 as on a 402, and that finding stands unless the row says `pause_on=any`. T
 a daemon that starts and finds `PAUSED` holds its lanes at once, and one that finds it cleared lifts the hold it
 made; `nova-friend resume` removes it and does not bring the friend up on the sprint (`nova-sprint friend up`).
 
-The pause is modelled in `internal/friend/tla/LanePause.tla`: two lanes, two cards, a provider that fails twice, a
+The pause is modelled in `pkg/friend/tla/LanePause.tla`: two lanes, two cards, a provider that fails twice, a
 marker write that may fail, a person who pays, resumes or restarts. TLC on a Linux bench (`MCLanePause.cfg`): 411
 distinct states; `NoSpendWhileHeld` (no turn runs while the lanes are held), `ResumeOnlyByPerson`, `OneHand` and
 `Finished` (every card ends with its report) hold. Its reversed witnesses: `MCLanePauseBrokenNoStop.cfg`, lanes that
@@ -2355,7 +2369,7 @@ coordinator acts on the request (a served `friend give <friend> <card> --reason`
 (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
 ported; the invoice-effective price beside the card price is not ported.
 
-### the-lane-hands-the-brief-by-absolute-path-bb — the lane's paths are absolute; a no-report exit is a harness fault (internal/friend/lane_parity.go)
+### the-lane-hands-the-brief-by-absolute-path-bb — the lane's paths are absolute; a no-report exit is a harness fault (pkg/friend/lane_parity.go)
 
 On 2026-10-07, between 10:32 and 10:41 PM, five cards on a flash friend's row (opencode,
 `inception/mercury-2.5`) ended `exit 0 ... and wrote no report; first error: File not found:
@@ -2400,7 +2414,7 @@ needs to be mechanical and just work."
   the down stands adds nothing; once it has passed the count starts again. The cards stay in the
   lanes' hands and run again after it.
 
-Tests: `internal/friend/lane_path_test.go` (`TestARelativeBriefPathBecomesAbsoluteInTheCommandAndThePrompt`,
+Tests: `pkg/friend/lane_path_test.go` (`TestARelativeBriefPathBecomesAbsoluteInTheCommandAndThePrompt`,
 `TestANoReportExitIsAHarnessFaultAndThreeMarkTheRowDownOnce`,
 `TestThreeFaultsInTenMinutesMarkTheRowDownOnceWithUntil`). Not done here: the sprint server has no rule
 of its own named harness-fault; the daemon's fault never reaches it as an attempt, and the down is
@@ -2411,7 +2425,7 @@ again, then set aside). No TLA+ module models the fault watch yet.
 
 The per-card token cap is the friend row's `token_cap` (`nova-config friend set <f> --token_cap <n>`, migration 0035), 6000000 by default and 0 none. Friend sync writes it on her roster and her beat answers `row_token_cap=<n>` always, including 0 (a missing word is the default, not none). Every one-shot lane counts the card's tokens as it runs, from the harness's own usage record behind `CardUsage` (a test hands a fake): a claude run's stream-json assistant usage, one count per message id (input, cache creation, cache read, output, and reasoning when the line carries it), and an opencode turn's session export, the session's growth since the read before the turn, polled every `TokenPoll` (15s) on an injected clock in the test. Input, cache read, cache write, output and reasoning are summed, across every run the lane gives the card. When the sum reaches the cap the lane cancels that run's own context, which signals that run's process group and no other, and holds the card with the reason `token cap <cap> reached at <n> tokens` plus the usage so far. A report already in the outbox is left as it stands. The card's end is a finish, and the friend's next card proceeds. An export with no token shape runs uncapped and its price is unchanged. The loop's `capStep` remains the opencode sqlite watch (`TokenCapReport` in lane_parity.go); a claude lane has no sqlite totals, so this count is the one that holds it. Once the beat prints a positive `row_token_cap`, both watches can stop an opencode card; the lane's own report is the one this card's test holds.
 
-### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
+### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (pkg/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
 be happening continually, not in bursts", and "Reads are in extra slots per-friend! Read slots
@@ -2460,7 +2474,7 @@ retired by simp-retire-bud-runners-r and simp-retire-opencode-runners-r.
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
 
 A lane's child (the harness run that opens its session and each card's turn)
-runs inside the wall of a profile (`internal/sandbox/profile.go`,
+runs inside the wall of a profile (`pkg/sandbox/profile.go`,
 `LaneProfile`; docs/SPEC-SANDBOX.md, the subsection of the same name). The
 profile is the friend row's, read off the beat as `row_profile=<name>` beside
 `row_mode=` and `row_width=`, else `run --profile`, whose default is `friend`,
@@ -2485,15 +2499,45 @@ denies nothing is refused, so a one-shot daemon with none runs no lane),
 `--wall-jobs` and `--wall-reads` (comma-separated).
 
 Not yet: nova-sprint's beat does not print `row_profile=` and the friend row
-has no `profile` column (internal/sprint and internal/config are outside this
+has no `profile` column (internal/sprint and pkg/config are outside this
 card), so today the profile is `run --profile`. A cancelled turn signals the
 wall's group, and the wall passes SIGTERM to the harness's own group; the
 SIGKILL after `KillDelay` reaches the wall only.
 
+### adopt-done-only-when-each-friend-lane-runs-a-card.w1 — the acceptance run (cmd/nova-friend/acceptance.go)
+
+`nova-friend acceptance` is the run the friend step of the seat play makes once
+per friend placed on the host, after its reinstall, so an adopt is called done
+only when one real lane child has run on the host. It is not a copy of the
+wall: `run` and `acceptance` assemble the lane wall through one function
+(`laneWall`, cmd/nova-friend/main.go), from the same flags and the friend's
+row, so the acceptance wall is the daemon's own (buds-in-the-wall-r.w5). The
+play calls it with the flags the plist records (`seat_friend.install`, the list
+the reinstall step passes, without its own install verb, plus the `--deny-self`
+and `--wall-reads` the reinstall adds); `acceptance` accepts every flag `run`
+accepts that the wall reads and ignores the rest.
+
+Inside that wall, as a lane child (`friend.LaneContext`), it runs the program
+the friend's lanes start — the adapter's runner, found the way
+`pkg/friend/alive.go` `runnerAlive` looks it up — with a no-cost argument that
+does not call a model, its version flag, one per adapter: `opencode --version`,
+`codex --version`, `claude --version`, `grok --version`, `gemini --version`,
+`dsh --version`, and for antigravity the harness's own `agentapi` under the
+friend's home (`$HOME/.gemini/antigravity/bin/agentapi`, the path the adapter
+runs; `friend.AntigravityRunner`). It then writes `RESULT.md` under a probe
+job directory inside the friend's working directory and exits with the wall's
+real code: 125 when the profile will not build, 126 when the program cannot
+execute. No model is called and no server card is taken.
+
+The play fails the host when the run exits non-zero, naming the friend, the
+exit code and the probe's output line. Out of scope here, and next sprint's
+card: a probe card dealt by the sprint server and taken by a lane (the take
+race).
+
 ### delivery-conformance-r.w1 — one delivery check every adapter passes
 
 Every harness adapter makes one promise, and `friend.Conformance`
-(internal/friend/conformance.go) checks it end to end: a session check
+(pkg/friend/conformance.go) checks it end to end: a session check
 carrying a fresh nonce (`SessionCheckText`, the daemon's own) goes in through
 the adapter's `Deliver`, the session runs the exact `nova-friend pong` line it
 carries, and a pong with that nonce, from the friend (the message's from,
@@ -2532,8 +2576,8 @@ daemon, whose `Recv` as herself is refused the same way, never parked on her
 stream.
 
 friend sync's deal now names her on the bus before it tells her
-(`enrollBus`, cmd/nova-sprint/friendcards.go): her name is the friend row
-friend sync already holds, and `bus.Enroll` (internal/bus/names.go) adds it to
+(`enrollBus`, nova-sprint's friendcards.go): her name is the friend row
+friend sync already holds, and `bus.Enroll` (pkg/bus/names.go) adds it to
 the bus store's `friends` (SADD, one trip after the roster's, only when it is
 missing), said once as `FRIEND-CARD BUS-NAMES added=<name>`. The note then
 reaches her stream, her daemon's `Recv` (daemon.go, the loop's read) parks on
@@ -2544,7 +2588,7 @@ that is no `bus.Enroller` (a test's fake) is told nothing. A failed enrollment
 is one `FRIEND-CARD NOTE friend=<f>: her name could not be put on the bus
 store's roster (<why>)`, and the send after it says the rest. Test:
 `TestADealToABudIsDeliveredOnTheBus` (cmd/nova-sprint), and on a real
-redis-server `TestRedisEnrollMakesAFriendRowAKnownName` (internal/bus,
+redis-server `TestRedisEnrollMakesAFriendRowAKnownName` (pkg/bus,
 functional). A bud is enrolled at her first deal, so her daemon's read is
 refused until then.
 
@@ -2600,9 +2644,9 @@ The summary is `CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=
 when every verdict is ok, 1 when any is not, 2 when the check could not run. With `--json` the same
 facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `work` and `verdict`, and
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
-internal/friend/check.go; each cites this section.
+pkg/friend/check.go; each cites this section.
 
-## Harness settings (internal/friend/settings.go)
+## Harness settings (pkg/friend/settings.go)
 
 The finding of 2026-10-05: each friend's harness was set up by hand-editing
 its config, and each hand edit failed once. One friend's Codex writable root
@@ -2622,7 +2666,7 @@ through one list, so check reports exactly what install writes.
 | dsh | `$DSH_HOME/profiles/desktop/cordis.patch.yml` (else `~/.dsh`) | the patch entry `agent-preset-registry`, `config.default` and `config.selectedDefault` = `standard`; the desktop profile must exist (the app makes it); edited as a YAML node tree |
 | grok | the wake file, `--session`, else `~/.nova-friend/<me>/<me>.wake` | its directory a real directory (made), the file a file (made empty); the agent's `--session` names it, and the NOTE's monitor line names it |
 | claude | `--config-dir` (default `CLAUDE_CONFIG_DIR`) | a real directory, made private; the agent's `run --config-dir` names it; install refuses claude without one |
-| opencode | `<dir>/opencode.json` | `permission.external_directory["<dir>/**"] = allow` (as `AllowDirs` writes before each turn), and `model` when `--model` names one |
+| opencode | `<dir>/opencode.json` | `permission.external_directory["<dir>/**"] = allow` (as `AllowDirs` writes before each turn), and `model` (required: `--model` names it, provider/model, so a friend moved to another machine keeps the provider key that worked) |
 
 **Rules.** Every path is read first. A symlink where a directory belongs, a
 directory that is a file, a missing directory install does not make (the friend's
@@ -2655,7 +2699,7 @@ opens a new session after install. The Codex key is the documented
 (`check` with no `--harness`) does not yet carry settings drift: run
 `--settings` per friend.
 
-## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
+## The coordinator's ping (cmd/nova-friend serve; pkg/friend/keepalive.go)
 
 The server side of the connection, as the owner designed it: the coordinator
 is the server, both sides ping each second, and a friend is down after ten
@@ -2690,7 +2734,7 @@ answer is still the session check's (Presence, above). Each `PING` reopens the
 daemon's challenge, so the challenge's `deaf` is not reached while this loop
 runs (Chaos, below); presence is what says a silent session.
 
-## The wake ping loop (cmd/nova-friend ping --wake --to-friends; internal/friend/wakeping.go)
+## The wake ping loop (cmd/nova-friend ping --wake --to-friends; pkg/friend/wakeping.go)
 
 The owner, 2026-10-05: "there is no value in things that are answered just by
 the daemon", and "We need to get away from these one shot shell scripts." The
@@ -2750,7 +2794,7 @@ The hand plists are retired (the finding of 2026-10-04): a friend-beat
 agent copied in by hand, for a friend whose harness is the ChatGPT app,
 failed to bootstrap — launchd answered Input/output error on a plist that
 lints fine — where the daemon's own `install` already retries that
-bootstrap (`BootstrapTries`, internal/friend/launchd.go). No hand plist is
+bootstrap (`BootstrapTries`, pkg/friend/launchd.go). No hand plist is
 written or kept for the beat: `install` covers it.
 
 `install` waits for launchd to release the label before it bootstraps (three
@@ -2765,7 +2809,7 @@ rolled back. A label still held past the timeout is refused: `launchd still
 holds <gui/uid/label> <n>s after its bootout`, and nothing is bootstrapped
 (`TestInstallWaitsForLaunchdToReleaseTheLabelAfterTheBootout`).
 
-## Watch (cmd/nova-friend watch; internal/friend/state.go)
+## Watch (cmd/nova-friend watch; pkg/friend/state.go)
 
 The coordinator of friends wakes on what is addressed to it. `nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` is that wake as one run of a verb, with nothing to remember between
 runs: it is the coordinator's use of the bus's wait (SPEC-BUS.md, the verbs:
@@ -2814,11 +2858,11 @@ server's tables and belong to the tool that serves them.
 
 The friend is `--to`. A verb other than the default takes no bare word, so the shape is the same as `ping`. This verb is `reach`. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder.
 
-Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof: a pong for the nonce that step carries, or any other message from the friend. A daemon-pong is the daemon's own answer and is not a proof. A pong for another nonce, or a malformed pong, is not an ordinary-message proof. The step arms at the bus log's tail and each proof poll reads forward from that cursor, advancing it as entries are consumed (`Bus.LogCursor`, `Bus.LogForward` in `internal/bus/bus.go`). A read of the log from its start is capped at the oldest 10,000 entries, so a poll that started there would miss a fresh pong once the log held more than that (`TestReachProofPastTheLogCap`). The result line is first, then one line per step in the order it happened.
+Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof: a pong for the nonce that step carries, or any other message from the friend. A daemon-pong is the daemon's own answer and is not a proof. A pong for another nonce, or a malformed pong, is not an ordinary-message proof. The step arms at the bus log's tail and each proof poll reads forward from that cursor, advancing it as entries are consumed (`Bus.LogCursor`, `Bus.LogForward` in `pkg/bus/bus.go`). A read of the log from its start is capped at the oldest 10,000 entries, so a poll that started there would miss a fresh pong once the log held more than that (`TestReachProofPastTheLogCap`). The result line is first, then one line per step in the order it happened.
 
 1. **bus.** A bus message to the friend, subject `reach <nonce>` (never a PING, which is the daemon's own), body the nonce and the exact pong command. The line is `REACH STEP step=bus sent=<id> nonce=<n>`.
 2. **push.** The daemon pushes a real message into the session as a turn, never a PING. The daemon is up when its status file, read when the push begins, is newer than the stale bound (`DaemonStale`), the same rule `status` uses. No status file is "no daemon has run (no status file)". Down skips the step: `REACH NONE step=push waited=0s: daemon down: <reason>`. Up is `REACH STEP` and then the push.
-3. **window.** A tmux-hosted session is typed with send-keys only while the pane is idle (`internal/friend/adapter_tmux.go`). A GUI harness is the app's window, found by the bundle id the step looks up (`internal/friend/window.go`, `AppBundles`; these are lookup ids, not a measured survey of installed apps), the message typed into the composer and submitted (`window_darwin.go` on the platform that can hold the permission, `window_other.go` elsewhere). That needs the accessibility permission a person grants to this binary. The check is `AXIsProcessTrusted` and never `AXIsProcessTrustedWithOptions`, so the tool does not ask. When the permission is absent the step is refused: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask. A harness with no bundle, and not tmux, has no window; that is a skipped step, not a permission refusal.
+3. **window.** A tmux-hosted session is typed with send-keys only while the pane is idle (`pkg/friend/adapter_tmux.go`). A GUI harness is the app's window, found by the bundle id the step looks up (`pkg/friend/window.go`, `AppBundles`; these are lookup ids, not a measured survey of installed apps), the message typed into the composer and submitted (`window_darwin.go` on the platform that can hold the permission, `window_other.go` elsewhere). That needs the accessibility permission a person grants to this binary. The check is `AXIsProcessTrusted` and never `AXIsProcessTrustedWithOptions`, so the tool does not ask. When the permission is absent the step is refused: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask. A harness with no bundle, and not tmux, has no window; that is a skipped step, not a permission refusal.
 
 A proof ends the ladder: `REACH PROOF step=<s> after=<duration> by=<pong|message>` and `REACH OK friend=<f> step=<s>`. Exit 0 on that proof. No proof prints `REACH NONE step=<s> waited=<d>` and the ladder climbs. No proof after the steps from `--from` prints `REACH FAILED friend=<f> tried=<steps>`, Exit 1, and one note of that line on the coordinator's own stream. A skipped push counts as tried. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without the accessibility permission); that refusal sends no failed note. `--from bus|push|window` starts partway up. `--dry-run` prints `REACH DRY-RUN` and one `REACH STEP` per planned step, and sends, pushes and types nothing. `--json` carries the same value: facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`; items `STEP` (`step`, `sent`, `nonce`), `PROOF` (`step`, `after`, `by`), `NONE` (`step`, `waited`, text when skipped).
 
@@ -2852,11 +2896,14 @@ Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
 code is not yet held to it where the two differ. A session check waits for the
 turn under way, so a session in a turn longer than ten minutes that sends
 nothing on the bus is checked only once that turn ends, and keeps its word
-until then. A one-shot friend with no session in its directory at all has
-nowhere for the check to go until a lane opens one, and its lanes wait on the
-row, which comes with a beat; it stays down until a session exists.
+until then. A one-shot friend's check goes in as a fresh turn of its own
+(`DeliverFresh`, `opencode run` with no `--session`), never a growing session,
+so a session that is full or missing is never the reason she is down; the mode
+is read from `--mode` or the row her beat delivers, and before either a deliver
+refused for a full or missing session falls back to the fresh turn, so she
+never waits for a session to exist.
 
-The harness check (internal/friend/alive.go) is wired in `cmd/nova-friend/main.go`
+The harness check (pkg/friend/alive.go) is wired in `cmd/nova-friend/main.go`
 before `d.Run` (`TestRunKeepsTheHarnessWatchAdvisory`), advisory: the model
 carries it as app, read by nothing (`SessionShownUp`, witnesses `appholds` and
 `appup`). `tla/FriendPresence.tla` does not yet carry the rule that any
@@ -2887,11 +2934,11 @@ records them for pacing. Claude has no deliver command, so its
 `Watch`. The state machine (up, down until a reset, waking on a nonce) wants
 its TLA+ module beside `tla/Friend.tla`.
 
-## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
+## Chaos: detection proved by breaking it (nova-sprint's friend_chaos_functional_test.go)
 
 The owner, 2026-10-04: "If your detection that they are down doesn't work
 WHEN THEY ARE DOWN, that seems like a bad design." One functional test,
-`TestEveryFriendFailureShowsWithinItsBound` (`go test -tags functional ./internal/friend`),
+`TestEveryFriendFailureShowsWithinItsBound` (`go test -tags functional ./internal/sprint`; friend against the sprint's store, so it lives with the sprint),
 breaks a friend each way he can fail and asserts the
 bound on the friends table and where his cards go. The friend runs the real
 daemon over a scratch bus (bus's Fake behind a store that blocks on an empty

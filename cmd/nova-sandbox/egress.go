@@ -1,7 +1,7 @@
 // The egress verbs are the card's OUTBOUND wall: `plan` renders one run's nftables ruleset
 // from the reviewed allowlist in git, `apply` hands it to nft, `check` reads a plan back and
 // asserts its invariants, and `drop` takes the wall away when the run is over. The rules
-// themselves live in internal/sandbox (egress.go); this file is the verb, the flags and the
+// themselves live in pkg/sandbox (egress.go); this file is the verb, the flags and the
 // three seams that touch the machine.
 //
 // The wall is on the BENCH, not in the card: a friend, 2026-09-18, "Not an env list the worker
@@ -26,9 +26,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // egressRemedy is the one remedy line every refusal of these verbs carries.
@@ -422,7 +422,7 @@ func noNftBody(goos string) (line, remedy string, refused bool) {
 		true
 }
 
-// okEgressRun is the shape a --run may take, and the check is internal/sandbox's own: the
+// okEgressRun is the shape a --run may take, and the check is pkg/sandbox's own: the
 // value becomes an nft table name, which is an identifier and not a string, and one tool
 // does not carry two opinions about what a run id looks like.
 func okEgressRun(s string) bool { return sandbox.OKEgressRun(s) }

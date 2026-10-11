@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // THE EXECUTE QUESTION IS ASKED OF THE PLATFORM, NOT OF THE UNIX BIT (windows leg, 2026-09-15).

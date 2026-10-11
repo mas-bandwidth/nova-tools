@@ -4,7 +4,6 @@ package ci
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,8 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 )
 
 // version_functional_test.go builds every cmd/nova-* and runs it: a build is the functional
@@ -33,7 +31,7 @@ import (
 // time.
 //
 // The class fix is that there is ONE grammar -- four tokens and then
-// `key=value` extras -- that internal/buildinfo both writes and reads, and this
+// `key=value` extras -- that pkg/buildinfo both writes and reads, and this
 // test runs the REAL binary of every cmd/nova-* through the REAL reader. It
 // walks cmd/ rather than holding a list, so a tool added tomorrow is held to
 // the grammar on the day it appears. No network: every binary is built from
@@ -44,7 +42,7 @@ func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
 	root := repoRoot(t)
 	tools := novaCommands(t, root)
 	require.NotEmpty(t, tools, "no nova-* command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
-	bin := buildAllTools(t, root)
+	bin := builtTools(t, root)
 
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
@@ -60,7 +58,7 @@ func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
 					continue
 				}
 				f, ok := buildinfo.Parse(stdout)
-				if !assert.Truef(t, ok, "`%s %s` printed a line internal/buildinfo.Parse refuses; the grammar is `<tool> <identity> <goos>/<goarch> <go version>` and then any number of key=value extras:\n%s", tool, verb, stdout) {
+				if !assert.Truef(t, ok, "`%s %s` printed a line pkg/buildinfo.Parse refuses; the grammar is `<tool> <identity> <goos>/<goarch> <go version>` and then any number of key=value extras:\n%s", tool, verb, stdout) {
 					continue
 				}
 				assert.Equalf(t, tool, f.Tool, "`%s %s` names itself %q in field one; a reader holding two pastes reads the tool out of field one", tool, verb, f.Tool)
@@ -85,20 +83,6 @@ func novaCommands(t *testing.T, root string) []string {
 		}
 	}
 	return tools
-}
-
-// buildAllTools builds the whole set in ONE `go build ./cmd/...`, because
-// twenty-one separate builds is twenty-one link steps for the same evidence and
-// this package is held to the fast suite.
-func buildAllTools(t *testing.T, root string) string {
-	t.Helper()
-	dir := t.TempDir()
-	build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), "./cmd/...")
-	build.Env = goenv.Clean(os.Environ())
-	build.Dir = root
-	out, err := build.CombinedOutput()
-	require.NoErrorf(t, err, "building ./cmd/...: %v\n%s", err, out)
-	return dir
 }
 
 func exeName(tool string) string {

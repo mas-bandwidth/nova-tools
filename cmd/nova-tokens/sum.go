@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
 )
 
 // cmdSum ASSERTS NOTHING and is never a gate. It exits 0 whenever it ran, including over a

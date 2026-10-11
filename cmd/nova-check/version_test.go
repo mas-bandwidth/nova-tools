@@ -23,7 +23,7 @@ func runVersion(ver string, args []string, out, errOut *bytes.Buffer) int {
 // what a person is asked to paste when two lines disagree about what they are running, so
 // a run of it has to be one line and four tokens -- and asserting only that the output
 // "contains" a version would pass over a line broken in two, which is the failure the
-// escaping in internal/buildinfo exists to prevent.
+// escaping in pkg/buildinfo exists to prevent.
 //
 // Before this verb existed the same invocation was:
 //

@@ -23,7 +23,7 @@
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest)
 # run only on push to main and on the nightly schedule, with the full suite.
 # There is ONE exception, for the one platform the self-hosted runners cannot
-# see: test-hosted-pr runs internal/sandbox on ubuntu-latest when the sandbox or
+# see: test-hosted-pr runs pkg/sandbox on ubuntu-latest when the sandbox or
 # a *_linux.go moves, because the sandbox is darwin-only in the self-hosted
 # matrix. Every self-hosted job is guarded by the head-repo check, so a
 # pull_request from a fork skips CI rather than running untrusted code on our
@@ -107,14 +107,19 @@ concurrency:
   # ever starts. So a push to an integration branch keys on the commit SHA: no
   # two of its runs share a group, so none can evict or cancel another, and the
   # mechanical red gate always has a completed run to read.
-  # A PR keys on its number so
-  # its newest head supersedes older runs; every other branch keys on its ref.
-  group: ci-${{ github.event.pull_request.number || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
+  # A PR keys on its head SHA so each head gets one full run (issue #2795):
+  # keyed on the number, one PR's heads shared a group and a newer head
+  # cancelled the older head's run mid-job — under a load of PRs opening
+  # together, every run at a head was cut short. Keyed on the head, a newer
+  # head opens a group of its own and the older head's run runs to completion.
+  # Every other branch keys on its ref.
+  group: ci-${{ github.event.pull_request.head.sha || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
   # `cancel-in-progress` is a CONSTANT: not the second copy of the branch list. The
   # sha-keyed group above is what protects an integration branch's verdict: its
   # group holds that one run and nothing else, so there is never a sibling for
-  # cancel-in-progress to cancel. Everywhere else — a PR's newest head, a
-  # branch push — only the newest run matters, which is what true means.
+  # cancel-in-progress to cancel. A PR's head likewise holds that one head and
+  # nothing else, so no run at a head is cancelled; a branch push still
+  # supersedes its older push, which is what true means.
   cancel-in-progress: true
 
 jobs:
@@ -265,6 +270,12 @@ jobs:
         # code is not the product here — the output is.
         shell: bash
         run: make fmt
+
+      - name: mod-tidy
+        # go mod tidy -diff: refuses an untidy go.mod or go.sum (issue #5497),
+        # pinned by TestAnUntidyModuleIsRefusedOnTheCLPath (card go-mod-tidy-nightly-jobs).
+        shell: bash
+        run: make mod-tidy
 
       - name: build
         run: make build
@@ -453,7 +464,7 @@ jobs:
 
       - id: list
         # The fan-out: the packages this event tests, dealt onto the runner
-        # groups (internal/pkgselect, `go run ./tools/ci help test-matrix`). A pull
+        # groups (pkg/pkgselect, `go run ./tools/ci help test-matrix`). A pull
         # request and a merge group carry the packages the change touched and their
         # dependents, read against the event's own base; a push and the nightly run
         # keep the whole tree. The macOS legs are dealt only where the target branch
@@ -707,7 +718,7 @@ jobs:
         # tests mock, functional tests carry the build tag). A directory FIRST
         # on PATH holds a redis-server that prints why and exits 86, so a
         # redis-backed test left untagged fails closed here under NOVA_CI=1
-        # (internal/nsprint/testutil.Start names this line) instead of
+        # (pkg/nsprint/testutil.Start names this line) instead of
         # starting a real server on a shared runner. The `functional` job
         # installs the real one. internal/ci: TestUnitTierRefusesRedisServer.
         shell: bash
@@ -766,7 +777,7 @@ jobs:
         # The budget is 60 s by the two-minute law, except on the Intel Mac
         # benches (about 3x slower per core than a macOS runner), where the
         # alert prints every CI-SLOW line and the budget is 300 s until
-        # cmd/nova-swarm and internal/swarm are fast. The first
+        # cmd/nova-swarm and pkg/swarm are fast. The first
         # night of this check found eight packages between 77 s and 272 s on
         # a macOS runner at load 60 and an Intel Mac at load 2. All of it
         # lives in the Makefile's `test` target: the Makefile is the
@@ -917,7 +928,7 @@ jobs:
         if: matrix.entry.packages != ''
         # nova-config's functional tests spawn a throwaway Postgres (initdb,
         # pg_ctl) on loopback under the test's directory
-        # (internal/nsprint/testutil/pg); a runner without the binaries
+        # (pkg/nsprint/testutil/pg); a runner without the binaries
         # FAILS them, never skips. It does not dial the fleet store.
         run: |
           "$RUNNER_TEMP/ci" install-postgres
@@ -946,7 +957,11 @@ jobs:
     # default feedback path is still the self-hosted matrix and costs nothing
     # here. ci-ok does not gate on it for a dispatch: the run is evidence to
     # read, not an automatic merge gate.
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Fault 20 (2026-10-10): a push to dev no longer spends hosted minutes (the
+    # private repo's CI is the fleet's, and the hosted legs failed there on
+    # fleet-shaped tests, TestWallCapsAForkBomb and TestJobsAreWorktreesOfOneMirror);
+    # a push to main keeps the full hosted suite.
+    if: (github.event_name == 'push' && github.ref_name == 'main') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     #
     # SHARDS PER OS (dev push run 36269122367 at f7aa36530): at four
     # shards per OS, ubuntu-latest's shards 1, 2 and 4 went green at 88-95 s and
@@ -1157,13 +1172,13 @@ jobs:
     # back on the PR and not on main. The sandbox is darwin-only in the
     # self-hosted matrix, so a Linux sandbox break would otherwise only surface
     # on main: that is this job's remaining reason to exist, gated by a path
-    # filter over the PR diff (internal/sandbox/**, any *_linux.go or
+    # filter over the PR diff (pkg/sandbox/**, any *_linux.go or
     # *_linux_test.go).
     #
     # THE WINDOWS ENTRY IS GONE, twice over. A pull request meets Windows once,
     # in the lint job's `make vet-windows` cross-vet, which type-checks the whole
     # tree for GOOS=windows on a Linux runner. The paths the retired leg watched
-    # (cmd/nova-bus/**, internal/bus/**, **/*_windows.go) no longer select a
+    # (cmd/nova-bus/**, pkg/bus/**, **/*_windows.go) no longer select a
     # runner of their own: a *_windows.go that stops compiling is caught by the
     # cross-vet, and what only a real Windows machine can answer is answered by
     # the certification tier.
@@ -1184,10 +1199,10 @@ jobs:
         leg:
           - name: linux
             os: ubuntu-latest
-            packages: ./internal/sandbox
+            packages: ./pkg/sandbox
             filters: |
               changed:
-                - 'internal/sandbox/**'
+                - 'pkg/sandbox/**'
                 - '**/*_linux.go'
                 - '**/*_linux_test.go'
     runs-on: ${{ matrix.leg.os }}
@@ -1706,7 +1721,7 @@ jobs:
       - name: build, one real package, write beside the repo
         if: steps.want.outputs.run == 'yes'
         run: |
-          go build ./... && go test -count=1 ./internal/oneline/
+          go build ./... && go test -count=1 ./pkg/oneline/
           t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
           echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
 
@@ -1887,13 +1902,17 @@ jobs:
         run: |
           echo "a fork's pull request: the self-hosted CL-tier jobs do not run on fork code, so ci-ok is red"
           exit 1
-      - name: every CL-tier job succeeded (push to main)
+      - name: every CL-tier job succeeded (push)
+        # test-hosted runs on a push to main only (its own `if:`), so it is part of the
+        # verdict there and absent from it on any other branch's push.
         if: always() && github.event_name == 'push'
         shell: bash
         run: |
+          hosted=""
+          if [ "${{ github.ref_name }}" = "main" ]; then hosted="test-hosted=${{ needs.test-hosted.result }}"; fi
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
             lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
-            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} $hosted
 
       # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind
       # a tailscale funnel kept off by design, so this job, on our own runner

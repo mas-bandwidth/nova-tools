@@ -29,5 +29,5 @@ The one-line shim that delegates to internal/update and guarantees the two binar
 |---|---|---|
 | a hand-built CLI beside the skeleton | CHANGED | cmd/nova-update/main.go:10 delegates to internal/update.Main |
 | banner walls | STILL THERE | internal/update/cli.go:129 composes seven help pieces |
-| a release pipeline larger than the tool | STILL THERE | internal/update/cli.go:119 and internal/release carry the release verbs |
+| a release pipeline larger than the tool | STILL THERE | internal/update/cli.go:119 and pkg/release carry the release verbs |
 | manifest arguments and oversized shared CLI code | STILL THERE | internal/update/cli.go is 1063 lines |

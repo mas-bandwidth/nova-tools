@@ -29,7 +29,7 @@ func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 	}
 	require.NotEmpty(t, module, "go.mod has no module directive")
 	imports := map[string][]string{}
-	for _, f := range repoTree(t).GoFilesUnder(false, "cmd", "internal") {
+	for _, f := range repoTree(t).GoFilesUnder(false, "cmd", "internal", "pkg") {
 		if f.HasDirNamed("testdata") {
 			continue
 		}

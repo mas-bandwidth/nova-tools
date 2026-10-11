@@ -32,8 +32,8 @@ A 10 needs:
 | 7 | cmd/nova-decide/main.go:240 | calibrate --bars defaults to 0.5,0.7,0.9 and findings --bar (main.go:317) to 0.5, but `-h` prints none of them | print each flag's default in the -h flag list | S |
 | 8 | cmd/nova-decide/main.go:174 | `nova-decide help --json` is refused as unknown verb "--json" (exit 2), and `nova-decide help ask --json` silently ignores the flag, while the top help says every verb takes --json | accept --json on help, or refuse an unknown flag after the verb | S |
 | 9 | nova-decide ask | missing flags, a bad --backend, --timeout 0 and missing files all end `run: nova-decide help`; only the unknown-flag refusal points at `nova-decide ask -h` | make every verb refusal's remedy `nova-decide <verb> -h` | S |
-| 10 | internal/decide/decide.go:111 | Problems is a switch, so one problem per question is reported: a question with no instructions and type "bogus" is refused only for the instructions | test each rule separately and append every problem | S |
-| 11 | internal/decide/import.go:136 | an import glob that matches no file is `IMPORT OK` with every count 0 and exit 0, so a mistyped --verdicts or --reports imports nothing silently | refuse a source glob that matches no file, or print matched=0 per source | S |
+| 10 | pkg/decide/decide.go:111 | Problems is a switch, so one problem per question is reported: a question with no instructions and type "bogus" is refused only for the instructions | test each rule separately and append every problem | S |
+| 11 | pkg/decide/import.go:136 | an import glob that matches no file is `IMPORT OK` with every count 0 and exit 0, so a mistyped --verdicts or --reports imports nothing silently | refuse a source glob that matches no file, or print matched=0 per source | S |
 | 12 | nova-decide outcome | a conflicting label is `OUTCOME FAILED ...: an outcome is attached once` at exit 1 with no `run:` remedy, the only result line without one | add a remedy: label another decision, or keep the recorded label | S |
 | 13 | cmd/nova-decide/main.go:137 | grade's top usage line omits `--examples`, `--held-out` and `--seed`, which `grade -h` documents | add them to the usage line | S |
 | 14 | docs/SPEC-NOVA-DECIDE.md:192 | the spec says a backend failure prints `<VERB> FAIL id=...`; the tool prints `ASK FAILED id=...` | say FAILED in the spec | S |
@@ -59,4 +59,4 @@ calibrate refusing a one-sided record and a misspelt option rather than printing
 | minutes' options named neither in help brief nor in the refusal (1.1.0 USE) | STILL THERE | cmd/nova-decide/main.go:191 |
 | a misfit answers remedy is `make --answers ...`, not a command (1.1.0 USE) | STILL THERE | cmd/nova-decide/main.go:778 and :739 |
 | calibrate's default bars and findings' default bar undocumented (1.1.0 USE) | STILL THERE | main.go:240 and :317 |
-| an import glob that matches no file is IMPORT OK with counts 0 (1.1.0 USE) | STILL THERE | internal/decide/import.go:136 |
+| an import glob that matches no file is IMPORT OK with counts 0 (1.1.0 USE) | STILL THERE | pkg/decide/import.go:136 |

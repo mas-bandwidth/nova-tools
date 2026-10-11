@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // wakeCursor is caller-owned read progress, not a receipt (SPEC-BUS, wait;
