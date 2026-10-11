@@ -307,6 +307,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "nt-usage-limit-test-reads-beats-without-an-order" :release "v1.2.12" :status "planned"
+   :title "The usage-limit beat test reads an order the daemon does not promise"
+   :text "TestUsageLimitMarksDownUntilReset pinned the beats and the asks to one goroutine
+    schedule inside a synctest instant: it required exactly [up, down ..., up], but the
+    daemon's first beat and the delivery that hits the limit are two ready goroutines whose
+    order is not fixed, so the sequence may open with down. The test now asserts the
+    behaviour: an optional leading up, then down until the reset with the reason, then up,
+    and never up between the limit and the reset; the asks are a set with the one order Gate
+    promises, the wake turn before the message it lets in. Test-side only; no product change."
+   :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, \"From the nova-tools certification fix\", 2026-10-11): \"TestUsageLimitMarksDownUntilReset ordering assumption\"; card nt-usage-limit-test-reads-beats-without-an-order.w1")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
