@@ -766,6 +766,7 @@
           retries: "{{ (nova_seat_beat_within | int / 5) | round(0, 'ceil') | int }}"
           delay: 5
           changed_when: false
+          # ignored: read by the assert below, which names the step
           failed_when: false
           when: tools_was_version != ''
 
