@@ -646,3 +646,60 @@ func TestRefusalCausesAreNotTruncated(t *testing.T) {
 		assert.NotContains(t, string(b), "truncate(", "%s cuts a refusal's cause", name)
 	}
 }
+
+// TestSeatFriendAcceptanceRunFailsOnNonZeroExit pins the acceptance step in
+// seat-friend.yml: each friend placed on the host has a command task that runs
+// a probe card, registered with failed_when: false, followed by a separate
+// ansible.builtin.assert whose fail_msg names the friend, the exit code and the
+// log line when the lane exits non-zero.
+func TestSeatFriendAcceptanceRunFailsOnNonZeroExit(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("seat-friend.yml")
+	require.NoError(t, err)
+	var tasks []map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &tasks))
+
+	// Find the acceptance task (one that runs a probe card under the lane wall)
+	acceptanceTask := taskContaining(t, tasks, "acceptance")
+	require.NotNil(t, acceptanceTask, "seat-friend.yml has no acceptance task for each friend")
+
+	// The acceptance task should be a command that registers its result
+	cmd, ok := acceptanceTask["ansible.builtin.command"].(map[string]any)
+	require.True(t, ok, "acceptance task is not a command")
+
+	// The argv appends the plist's recorded flags WITHOUT the install verb:
+	// seat_friend.install is the whole install command including its verb (the
+	// reinstall step runs [<bin>/nova-friend] + seat_friend.install), so the
+	// acceptance argv appends seat_friend.install[1:] and its element 2 is a flag
+	// (--as), never the install positional the tool refuses at exit 2
+	// (docs/SPEC-FRIEND.md, the acceptance run: the flags the daemon runs with).
+	argv, ok := cmd["argv"].(string)
+	require.True(t, ok, "acceptance task has no argv")
+	const tail = "'acceptance'] + "
+	i := strings.Index(argv, tail)
+	require.GreaterOrEqual(t, i, 0, "acceptance argv does not append the recorded flags after the acceptance verb: %q", argv)
+	rest := argv[i+len(tail):]
+	assert.True(t, strings.HasPrefix(rest, "seat_friend.install[1:]"),
+		"acceptance argv appends the recorded flags without dropping the install verb, so element 2 is the install positional: %q", rest)
+
+	// Should register the result to read rc later
+	assert.Contains(t, acceptanceTask, "register", "acceptance task does not register its result")
+
+	// The acceptance task should have failed_when: false so it doesn't immediately fail
+	assert.Contains(t, acceptanceTask, "failed_when", "acceptance task has no failed_when")
+	assert.Equal(t, false, acceptanceTask["failed_when"], "acceptance task should not fail immediately on non-zero exit")
+
+	// There should be a separate assert task that checks the acceptance
+	assertTask := taskContaining(t, tasks, "acceptance: the lane ran")
+	require.NotNil(t, assertTask, "seat-friend.yml has no separate assert for the acceptance run")
+
+	// The assert should have a fail_msg that names the friend, exit code and log line
+	assertMsg, ok := assertTask["ansible.builtin.assert"].(map[string]any)
+	require.True(t, ok, "acceptance assert is not an assert task")
+	failMsg, ok := assertMsg["fail_msg"].(string)
+	require.True(t, ok, "acceptance assert has no fail_msg")
+	assert.Contains(t, failMsg, "seat_friend.friend", "acceptance fail_msg does not name the friend")
+	assert.Contains(t, failMsg, "seat_acceptance.rc", "acceptance fail_msg does not name the exit code")
+	assert.Contains(t, failMsg, "stdout", "acceptance fail_msg does not name the output line")
+	assert.Contains(t, failMsg, "stderr", "acceptance fail_msg does not name the output line")
+}

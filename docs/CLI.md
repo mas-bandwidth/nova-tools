@@ -1478,6 +1478,7 @@ usage:
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
   nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
+  nova-friend acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]
   nova-friend version
   nova-friend help [<verb>]
 
@@ -1803,6 +1804,45 @@ flags:
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the coordinator's ping loop; a PING to every friend each second, until a signal
+```
+
+`nova-friend acceptance -h`:
+
+```
+usage: nova-friend acceptance [flags]
+from `nova-friend help`:
+  nova-friend acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]
+flags:
+  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
+  --as <string>  your name, a nova-config friend row (required)
+  --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
+  --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
+  --coordinator <string>  who is told of a broken session when no ping has named the seat
+  --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
+  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)
+  --dir <string>  the friend's working directory: the session's, and where the state files live (required)
+  --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
+  --json  print the result as one JSON object instead of lines
+  --launchd-log <string>  accepted and ignored: launchd's stdout and stderr file the daemon's plist records
+  --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
+  --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
+  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
+  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
+  --profile <string>  the wall profile every lane child runs inside when the friend row names none: friend
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --seat <string>  accepted and ignored: the machine's nova-secrets seat the daemon's plist records
+  --secrets <string>  accepted and ignored: the names of the secrets the daemon's plist records, comma-separated
+  --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
+  --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
+  --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
+  --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
+  --wall-jobs <string>  job directories outside --dir that are writable inside the lane's wall, comma-separated
+  --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
+  --width <int>  the friend's width, from the nova-config friend row; 0 is unknown
+  --within <duration>  accepted and ignored: the install's delivery-check window
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: delivery: sends beyond this machine: the acceptance run; one lane runs the friend's own program under the real lane wall, writes RESULT.md, and exits with the wall's real code
 ```
 
 `nova-friend version -h`:

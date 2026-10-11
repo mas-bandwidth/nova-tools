@@ -138,10 +138,25 @@ type AgentAPIRefusal string
 
 func (r AgentAPIRefusal) Error() string { return "agentapi: " + string(r) }
 
+// AntigravityRunner is the agentapi program the antigravity adapter's lanes
+// run, the wrapper the harness ships under the home
+// (Home/.gemini/antigravity/bin/agentapi). It is the one path the adapter's
+// agentapi runs and the acceptance run looks up, so the probe executes the
+// daemon's own program (docs/SPEC-FRIEND.md, the acceptance run: the lane's own
+// program). An empty home is the current user's.
+func AntigravityRunner(home string) string {
+	if home == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			home = h
+		}
+	}
+	return filepath.Join(home, AntigravityData, "bin", "agentapi")
+}
+
 // agentapi runs one agentapi command against the server at port, with the
 // token, answering the JSON's response (or its error).
 func (a *Antigravity) agentapi(ctx context.Context, port, token string, args ...string) (json.RawMessage, error) {
-	program := filepath.Join(a.home(), AntigravityData, "bin", "agentapi")
+	program := AntigravityRunner(a.home())
 	argv := append([]string{"ANTIGRAVITY_LS_ADDRESS=localhost:" + port, "ANTIGRAVITY_CSRF_TOKEN=" + token, program}, args...)
 	out, _, err := a.Run(ctx, a.Dir, "/usr/bin/env", argv, "")
 	if err != nil {
