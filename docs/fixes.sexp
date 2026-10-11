@@ -349,6 +349,18 @@
     test took away, and the test still fails if the tool itself reads TMPDIR."
    :origin "card nt-tokens-reentered-child-keeps-its-cover-dir, v1.2.12 inventory card A8 (tmp/v1.2.12-inventory-2026-10-11.md)")
 
+  (fix "nt-usage-limit-test-reads-beats-without-an-order" :release "v1.2.12" :status "planned"
+   :title "TestUsageLimitMarksDownUntilReset reads the beat and asked order the product promises"
+   :text "The beats seen are an optional leading up, then down with the until and the reason until the
+    reset, then up after the wake, and never up between the limit and the reset; the asked order asserts
+    the set (the message and one wake turn) and the one order the gate documents (the wake before the
+    message goes in). The old assertion assumed the daemon's first beat ran before the delivery that hits
+    the limit inside one synctest instant, which the scheduler does not fix. Test-side only; no product
+    change."
+   :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, the nova-tools certification
+    fix, 2026-10-11): TestUsageLimitMarksDownUntilReset ordering assumption; rechecked at dev 7b6cccbc2 on
+    2026-10-11: still open")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

@@ -169,9 +169,22 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		}
 		r.run(t, 400)
 
-		require.Len(t, h.asked, 3, "the turn that hit the limit, one wake turn after the reset, then the message")
-		assert.Equal(t, Text(hello), h.asked[0])
-		assert.Contains(t, h.asked[1], "w4k3up", "the wake turn")
+		// Gate's one promised order (limit.go; docs/SPEC-FRIEND.md
+		// limits-mean-down-w-r.w1~15): "the first delivery after the reset is a wake
+		// turn (WakeText) whose output must carry its nonce ... then Up with the
+		// nonce, and the message goes in". The set is the message and one wake turn;
+		// the order is the turn that hit the limit first, then the wake, then the
+		// message, never the message before its wake.
+		require.Len(t, h.asked, 3, "the turn that hit the limit, one wake turn after the reset, then the message: %v", h.asked)
+		woken := 0
+		for _, a := range h.asked {
+			if strings.Contains(a, "w4k3up") {
+				woken++
+			}
+		}
+		assert.Equal(t, 1, woken, "the set is the message and one wake turn: %v", h.asked)
+		assert.Equal(t, Text(hello), h.asked[0], "the first turn is the message that hits the limit")
+		assert.Contains(t, h.asked[1], "w4k3up", "the wake turn comes before the message goes in")
 		assert.Equal(t, Text(hello), h.asked[2], "the message goes in after the wake answered, once")
 
 		var limited []Status
@@ -197,8 +210,19 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		r.mu.Lock()
 		sent := slices.Compact(slices.Clone(beats))
 		r.mu.Unlock()
-		assert.Equal(t, []string{"up", "down until=2026-10-04T03:03:00Z reason=harness limit: ERROR: You've hit your usage limit. Try again at 3:03 AM.", "up"}, sent,
-			"the beat says up, then down with the until and the reason while limited, then up after the wake")
+		// BeatOrDown (limit.go) promises the state, not the scheduling: while the
+		// harness is at its limit the beat says down with the until and the reason,
+		// and plain once a wake after the reset is answered. Two ready goroutines in
+		// one synctest instant (the delivery that hits the limit and the first beat)
+		// may run in either order, so the beat may open up or down; the compacted
+		// beats are an optional leading "up", then one "down", then "up" after the
+		// wake, and never "up" between the limit and the reset.
+		lead := 0
+		if len(sent) > 0 && sent[0] == "up" {
+			lead = 1
+		}
+		assert.Equal(t, []string{"down until=2026-10-04T03:03:00Z reason=harness limit: ERROR: You've hit your usage limit. Try again at 3:03 AM.", "up"}, sent[lead:],
+			"the beat says down with the until and the reason while limited, then up after the wake; a leading up is the first beat beating before the delivery hit the limit: %v", sent)
 
 		assert.Equal(t, []string{reset.UTC().Format(time.RFC3339)}, downs, "the coordinator is told once of the limit")
 		assert.Equal(t, []string{"up"}, ups, "and once of the wake")
