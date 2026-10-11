@@ -298,7 +298,8 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 		return ExitNotExecuted, refuse("sandbox_failed", "%s could not be started inside the wall: %v", p.Command, err)
 	}
 	self := os.Getpid()
-	tree := &Tree{top: self, pgid: syscall.Getpgrp(), list: func() ([]procRow, error) { return procRows(self, cmd.Process.Pid) }}
+	shellpgid, _ := syscall.Getpgid(cmd.Process.Pid)
+	tree := &Tree{top: self, pgid: shellpgid, list: func() ([]procRow, error) { return procRows(self, cmd.Process.Pid) }}
 	stopWatch := p.Watch(p.Tick, tree.Usage, func() { tree.KillAndAwait() })
 
 	sigs := make(chan os.Signal, 4)
