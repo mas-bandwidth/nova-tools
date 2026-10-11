@@ -142,7 +142,9 @@ func jsonInt(s, key string) int {
 		return int(v)
 	case string:
 		var n int
-		fmt.Sscanf(v, "%d", &n)
+		if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
+			return 0
+		}
 		return n
 	}
 	return 0
