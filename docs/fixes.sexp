@@ -307,6 +307,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "nt-release-cycle-stubs-written-under-the-fork-lock" :release "v1.2.12" :status "planned"
+   :title "pkg/release's cycle stubs written under the fork lock"
+   :text "cycle_test.go's cycleRig and the two inventory stubs in TestCycleRefusesAnInventoryThatCannotList
+    wrote a fake nova-inventory script with os.WriteFile(..., 0o755) and let cycle exec it; a parallel
+    test's fork inherits the open write descriptor until its own exec, so the exec failed with ETXTBSY
+    (\"text file busy\"), reproduced at -count=200 under a forking load, including on
+    TestCycleStopsOnAFailedBench. The three stubs now use testbin.WriteExecutable, the tree helper that
+    holds syscall.ForkLock for reading while the file is open. Asserts unchanged; other packages' stubs
+    are their own cards."
+   :origin "the card nt-release-cycle-stubs-written-under-the-fork-lock.w1: the v1.2.12 inventory card A6 and section 10 note 5 (ETXTBSY is a repeated flake class); nova-sprint closed the same class in its own tests, #88 (3109efe, 27b5341)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
