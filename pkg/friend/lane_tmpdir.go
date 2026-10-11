@@ -13,7 +13,7 @@ import (
 // The lane's own temporary directory. Every harness run in a friend lane gets a
 // private, writable temp directory inside its own lane, so no harness ever
 // touches the shared /tmp (docs/SPEC-FRIEND.md, one-shot lanes). On 2026-10-11
-// every claude run in a friend lane on the Studio died in about a second with
+// every claude run in a friend lane on the seat's machine died in about a second with
 // EEXIST mkdir '/tmp/claude-501': the lane wall left /tmp/claude-<uid> visible
 // but not usable, and the harness writes its scratch there.
 
