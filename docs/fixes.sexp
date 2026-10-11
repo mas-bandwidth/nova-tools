@@ -39,28 +39,10 @@
    (release "v1.2.11" :status "planned" :date "2026-10-11"
     :text "Small bug fixes, one concern each, and no model change. They run as cards on v1.2.10 once it is
      adopted, so the sprint dogfoods the release it just cut.")
-   (release "v1.2.12" :status "planned" :date "2026-10-11"
-    :text "Tests and models only, no product change. More unit and functional tests, and every TLA+ model
-     checked against the code it claims to model (its state, actions and invariants) and run again with
-     TLC on a bench; owed models and stale or timed-out records are made real. The new tests are written
-     against behaviour (the verbs, the store's steps, the wire, the TLA+ invariants), not internals, so
-     the same tests run unchanged against v1.3 and say whether it keeps the behaviour. TLC runs where the
-     cards run first. A real defect a new test finds is written as a v1.2.14 card, never fixed inside a
-     test card.")
-   (release "v1.2.13" :status "planned" :date "2026-10-11"
-    :text "Contraction: fewer lines, no behaviour change, with v1.2.12's tests and checked models as the net
-     under it. Passes in this order, one writer per package: remove dead and stale code; adopt the Go
-     standard library or established packages where they replace hand-rolled code; run go fix (and gopls
-     modernize) over all Go code; pull code the tools share into modules, then code the modules share
-     into modules; make each test minimal, on test frameworks and shared helper modules. The module pass also covers
-     the copies across the two repositories: 59 same-named packages exist as separate copies in
-     nova-sprint and nova-tools (about 71,500 shared lines, measured 2026-10-11 at nova-sprint 15c779c
-     and nova-tools 2a648d8). Each gets one owner, nova-sprint as with nova-roadmap, and the other
-     repository imports it: the identical copies first, then the diverged ones (member, fleet, cardtree,
-     tool, and parts of friend and swarm), reconciled under v1.2.12's tests. The first named entries are
-     the nova-roadmap extraction and the brief boilerplate moving into the card contract. Measured as
-     lines per repository and package, product against test, from a baseline taken before the first
-     pass.")
+   (release "v1.2.12" :status "shipped" :date "2026-10-11"
+    :text "Cut from dev at 5cf20b2, paired with nova-sprint v1.2.12: the tests and models of the v1.2.12 inventory, no product change of its own. TLA+ models brought level with the code they cite (the friend envelope, lane, link and challenge, one-shot lanes and caps, notifications, delivery, the cairn store, reach, loop redial, the table layer and nine matching models), the sprint models that moved to nova-sprint retired here (CardMachine, FriendReadyTake, FriendRedealLate, StopReturn and CardContract's sprint actions), and COVERAGE naming every module; unit tests for the friend read lane, the member's push, end and script read, native prepare, the provider budget proxy and nova-friend's run and serve faults; and four unsteady tests made steady. The StopCancels and BenchRun model cards landed after the cut and moved to v1.2.15. Fixes ledgered under v1.2.11, v1.2.14 and v1.2.15 that landed before the cut are in it too, and keep their entries there.")
+   (release "v1.2.13" :status "shipped" :date "2026-10-11"
+    :text "The matching release for nova-sprint v1.2.13 (fleet reliability: needs before deal, ledgers at landing, done is every card, the hook race, the idle alarm), cut at dev d80c331f03 plus one test-only commit (PR 5620, the lane tmpdir test resolves its root): the friend lane's own harness tmpdir, a friend step that collects every ended lane, and the sprint's TLA+ models since v1.2.12.")
    (release "v1.2.14" :status "planned" :date "2026-10-11"
     :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
    (release "v1.2.15" :status "planned"
@@ -360,14 +342,14 @@
     is unchanged; deepseek is not seeded."
    :origin "the card tmp/next-sprint-cards/inception-behind-the-limiter-proxy.md (the seat, 2026-10-11 ~02:55Z: the first Mercury 3 take on a limited route logged that inception had no http baseURL and the rpm bucket stayed at in_use=0)")
 
-  (fix "v1-2-12-inventory" :release "v1.2.12" :status "planned"
+  (fix "v1-2-12-inventory" :release "v1.2.12" :status "shipped"
    :title "Inventory the tests and models before v1.2.12's first test card"
    :text "Coverage per package, the functional tier's state, each TLA+ model against the code it claims
     to model, and each RUNS.tsv record's age and result. The tests and model cards of v1.2.12 are cut
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
-  (fix "tla-friendenvelope-gives-up-and-acks" :release "v1.2.12" :status "planned"
+  (fix "tla-friendenvelope-gives-up-and-acks" :release "v1.2.12" :status "shipped"
    :title "FriendEnvelope models the give-up, the ack that can fail and the present's MaxBatch read cap"
    :text "The module's header named internal/friend/daemon.go (it is pkg/friend/daemon.go) and claimed the
     MaxBatch read cap was removed, and its Accept was atomic. It now gives up a failed message once it
@@ -378,7 +360,7 @@
     MaxDeliveries and violates GivenUpOnlyAtTheBound. Tests and models only, no product change."
    :origin "the card tla-friendenvelope-gives-up-and-acks.w1")
 
-  (fix "cover-friend-read-lane-step" :release "v1.2.12" :status "planned"
+  (fix "cover-friend-read-lane-step" :release "v1.2.12" :status "shipped"
    :title "Cover the read lane's step with unit tests"
    :text "readLaneStep (pkg/friend/read_lanes.go:444) had no unit test: 0 of 46 statements run under
     -cover, and every existing read test set Daemon.Sprint but not Daemon.Take, so all took the
@@ -389,7 +371,7 @@
     readLaneStep's statements now run. Tests and models only, no product change."
    :origin "the card cover-friend-read-lane-step.w1 (the coordinator, 2026-10-11: tmp/v1.2.12-inventory-2026-10-11.md section 8 item C8)")
 
-  (fix "cover-member-push-with-a-scripted-git" :release "v1.2.12" :status "planned"
+  (fix "cover-member-push-with-a-scripted-git" :release "v1.2.12" :status "shipped"
    :title "The member's push pinned in the unit tier with a scripted git"
    :text "cmd/nova-swarm/memberpush_behaviour_test.go drives (g *gitPusher) Push (memberpush.go:88) with a
     git that answers by argv and records every call's directory and env, a sleep that records the waits,
@@ -399,7 +381,7 @@
     slow tier."
    :origin "card cover-member-push-with-a-scripted-git.w2, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C10")
 
-  (fix "cover-native-prepare-refusals-and-report" :release "v1.2.12" :status "planned"
+  (fix "cover-native-prepare-refusals-and-report" :release "v1.2.12" :status "shipped"
    :title "Cover prepare's refusals and report's outcomes"
    :text "Tests and models only, no product change. Eleven unit tests in cmd/nova-swarm/
     native_prepare_behaviour_test.go pin the refusals nativeRun's prepare makes before it spends
@@ -416,7 +398,7 @@
     green."
    :origin "the card cover-native-prepare-refusals-and-report.w3 (stream v1212), from the v1.2.12 inventory's section 8 item C11 (tmp/v1.2.12-inventory-2026-10-11.md)")
 
-  (fix "cover-member-end-and-script-read" :release "v1.2.12" :status "planned"
+  (fix "cover-member-end-and-script-read" :release "v1.2.12" :status "shipped"
    :title "Unit coverage for the launch's end and the script read"
    :text "Two member steps had branches no test reached: (m *Member) endEnded, the end of a launch
     (a read posts its report alone; a work card pushes, at most pushWidth at once, or records why not)
@@ -428,7 +410,7 @@
     79.2% to 87.5%. No product change."
    :origin "the card cover-member-end-and-script-read.w2 (tmp/v1.2.12-inventory-2026-10-11.md section 8 item C12)")
 
-  (fix "nt-tokens-reentered-child-keeps-its-cover-dir" :release "v1.2.12" :status "planned"
+  (fix "nt-tokens-reentered-child-keeps-its-cover-dir" :release "v1.2.12" :status "shipped"
    :title "A re-entered test child keeps the parent's coverage directory"
    :text "TestEveryPathIsAFlagAndNoEnvironmentIsConsulted builds bait under t.TempDir(), points
     TMPDIR, HOME and XDG_DATA_HOME at it, and re-enters its own binary (reenterTest) so the
@@ -440,7 +422,7 @@
     test took away, and the test still fails if the tool itself reads TMPDIR."
    :origin "card nt-tokens-reentered-child-keeps-its-cover-dir, v1.2.12 inventory card A8 (tmp/v1.2.12-inventory-2026-10-11.md)")
 
-  (fix "nt-usage-limit-test-reads-beats-without-an-order" :release "v1.2.12" :status "planned"
+  (fix "nt-usage-limit-test-reads-beats-without-an-order" :release "v1.2.12" :status "shipped"
    :title "TestUsageLimitMarksDownUntilReset reads the beat and asked order the product promises"
    :text "The beats seen are an optional leading up, then down with the until and the reason until the
     reset, then up after the wake, and never up between the limit and the reset; the asked order asserts
@@ -452,7 +434,7 @@
     fix, 2026-10-11): TestUsageLimitMarksDownUntilReset ordering assumption; rechecked at dev 7b6cccbc2 on
     2026-10-11: still open")
 
-  (fix "nt-friend-token-cap-test-passes-repeated" :release "v1.2.12" :status "planned"
+  (fix "nt-friend-token-cap-test-passes-repeated" :release "v1.2.12" :status "shipped"
    :title "A repeated run of the one-shot token-cap test passes"
    :text "TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason failed under -count>1 in its opencode
     over-cap case: the injected clock's ticks could reach the cap before the fake harness's run had
@@ -461,7 +443,7 @@
     clock ticks after the child it must stop has started; the assertions are unchanged."
    :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, \"From the nova-tools certification fix\", 2026-10-11); this card nt-friend-token-cap-test-passes-repeated.w1")
 
-  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "planned"
+  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "shipped"
    :title "The provider proxy's global rate budget pinned in the unit tier"
    :text "takeBudget (providerbudget.go:107), serveBudgeted (:181) and forwardBudgeted (:228) were never run by
     a unit test (0 statements each under -cover), only by the functional tier over loopback.
@@ -479,7 +461,7 @@
     body-silence abort panics http.ErrAbortHandler first, so the slot stays held until its lease expires."
    :origin "card cover-provider-budget-proxy-unit.w6, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C9")
 
-  (fix "nt-release-cycle-stubs-written-under-the-fork-lock" :release "v1.2.12" :status "planned"
+  (fix "nt-release-cycle-stubs-written-under-the-fork-lock" :release "v1.2.12" :status "shipped"
    :title "pkg/release's cycle stubs are written under the fork lock"
    :text "cycle_test.go wrote its fake nova-inventory scripts with os.WriteFile before the code under
     test exec'd them, so a parallel test's fork inherited the open write descriptor and the exec raced
@@ -487,7 +469,7 @@
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
-  (fix "tla-loopredial-names-what-the-code-cites" :release "v1.2.12" :status "planned"
+  (fix "tla-loopredial-names-what-the-code-cites" :release "v1.2.12" :status "shipped"
    :title "The LoopRedial model names what sprintredial.go cites"
    :text "Tests and models only, no product change. LoopRedial now holds the actions and properties
     sprintredial.go cites: the dial is Redial (a verb on a fresh connection whose error is how a
@@ -499,7 +481,7 @@
     had no counterpart and left. pkg/member/member.go still does not cite the module."
    :origin "the card tla-loopredial-names-what-the-code-cites.w4 (stream v1212)")
 
-  (fix "tla-reach-from-a-step-and-early-proof" :release "v1.2.12" :status "planned"
+  (fix "tla-reach-from-a-step-and-early-proof" :release "v1.2.12" :status "shipped"
    :title "Reach models --from, an early proof and a refused window"
    :text "Reach.tla drifted from cmd/nova-friend/reach.go: the model started at bus and left a step
     only at its bound, where the code starts at --from (reachSteps), leaves a push at once when the
@@ -511,7 +493,7 @@
     product change."
    :origin "the card tla-reach-from-a-step-and-early-proof.w1 (stream v1212)")
 
-  (fix "tla-friendlane-every-hand-back-is-a-request" :release "v1.2.12" :status "planned"
+  (fix "tla-friendlane-every-hand-back-is-a-request" :release "v1.2.12" :status "shipped"
    :title "FriendLane models a work card's no-begin run and the row-read drop"
    :text "The FriendLane model now does what lane_take.go does: a work card goes from taken to running
     with no begin (a read keeps its begin, read_lanes.go), a row read that disagrees drops the card
@@ -521,7 +503,7 @@
     WorkingOnlyOnTheServersSay. Tests and models only, no product change."
    :origin "card tla-friendlane-every-hand-back-is-a-request.w6 (stream v1212)")
 
-  (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "planned"
+  (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "shipped"
    :title "The CardMachine copy is retired; nova-sprint's is the one copy"
    :text "tla/CardMachine.tla modelled 02_card_move.lua, which neither repository carries any more, and
     nothing here extended or cited it; its one case, MCCardMachine.cfg, had only a timed-out record
@@ -531,7 +513,7 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-table-layer-headers-name-table-lua" :release "v1.2.12" :status "planned"
+  (fix "tla-table-layer-headers-name-table-lua" :release "v1.2.12" :status "shipped"
    :title "The table layer's headers name the table.lua they model"
    :text "EpochMemberTable and MemberTable no longer say PROPOSED: the epoch composition and member
     placement they model are what pkg/nsprint/fn/lua/table.lua implements today (STALE and EPOCHAHEAD
@@ -545,7 +527,7 @@
     said proposed. Tests and models only, no product change."
    :origin "the card tla-table-layer-headers-name-table-lua.w1 (stream v1212), from the v1.2.12 inventory item T35 (the table layer)")
 
-  (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
+  (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "shipped"
    :title "Unit tests pin how nova-friend run, serve and the dispatcher answer faults"
    :text "cmd/nova-friend/run_serve_faults_test.go drives the wall and hook dispatch, the coordinator's
     ping loop and the daemon's fault paths through the package rig: a wall with no command or an unknown
@@ -558,7 +540,7 @@
     doc says a store down at the start is no reason to exit (v1.2.14)."
    :origin "card cover-nova-friend-run-and-serve-faults (stream v1212), tmp/v1.2.12-inventory-2026-10-11.md section 8 item C13")
 
-  (fix "tla-cairnstore-no-gap-ledger-and-reopen" :release "v1.2.12" :status "planned"
+  (fix "tla-cairnstore-no-gap-ledger-and-reopen" :release "v1.2.12" :status "shipped"
    :title "CairnStore models the code as it is: no gap ledger, no publish, a refused re-open, a healed open"
    :text "The module's header cited stale line ranges, it held a gap ledger and a Liveness the code has no
     counterpart for (Index builds rows from entries/*.json and Ledger holds only counts), and it modelled
@@ -569,7 +551,7 @@
     left with PublishedImpliesPersisted. cairn.go now cites the module from Open and appendEntry."
    :origin "card tla-cairnstore-no-gap-ledger-and-reopen.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-friendnotifications-withdraw-and-coalesce" :release "v1.2.12" :status "planned"
+  (fix "tla-friendnotifications-withdraw-and-coalesce" :release "v1.2.12" :status "shipped"
    :title "FriendNotifications models the deal-notice withdrawal, coalescing and the wake ping"
    :text "FriendNotifications.tla gains the deal notice's withdrawal (a Withdraw action guarded by an
     allTaken ghost, acked with the ready bit cleared and nothing queued, which NoLostReady now allows),
@@ -580,7 +562,7 @@
     from adapter_codex.go. Tests and models only, no product change."
    :origin "card tla-friendnotifications-withdraw-and-coalesce.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-friend-link-and-challenge" :release "v1.2.12" :status "planned"
+  (fix "tla-friend-link-and-challenge" :release "v1.2.12" :status "shipped"
    :title "Friend's link and challenge model brought level with the daemon"
    :text "Friend.tla's header names pkg/friend, not internal/friend; a ping read past the challenge
     window is dropped, never answered, instead of every ping being answered; any line the session
@@ -590,7 +572,7 @@
     (MCFriendBrokenNoProof.cfg). Tests and models only, no product change."
    :origin "card tla-friend-link-and-challenge.w4 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35; the first of three Friend cards, chained)")
 
-  (fix "tla-moved-sprint-models-leave-nova-tools" :release "v1.2.12" :status "planned"
+  (fix "tla-moved-sprint-models-leave-nova-tools" :release "v1.2.12" :status "shipped"
    :title "FriendReadyTake, FriendRedealLate and StopReturn retire; nova-sprint's are the ones"
    :text "FriendReadyTake, FriendRedealLate and StopReturn model nova-sprint code (the server-side take,
     deal and redeal, and the stop-return, now StopFence) that moved to mas-bandwidth/nova-sprint in
@@ -600,7 +582,7 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-nova-tools-matching-models-cite-their-code" :release "v1.2.12" :status "planned"
+  (fix "tla-nova-tools-matching-models-cite-their-code" :release "v1.2.12" :status "shipped"
    :title "Nine models name today's code and are cited by it"
    :text "BenchStage, FileLock, FirstConn, FuseBox, RedisFn, TableSession, TableFirstContact,
     TableOrder and WakeCursor match their code; only their headers' paths and line numbers, and
@@ -615,7 +597,7 @@
     The nine groups rerun and merge clean (tla/RUNS.tsv). Tests and models only, no product change."
    :origin "card tla-nova-tools-matching-models-cite-their-code.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-cardcontract-retire-the-sprint-actions" :release "v1.2.12" :status "planned"
+  (fix "tla-cardcontract-retire-the-sprint-actions" :release "v1.2.12" :status "shipped"
    :title "CardContract retires the sprint's redeal, retire, restage, staging bound and level"
    :text "CardContract.tla's Redeal, Retire, Restage, StagingAll and Level modelled internal/sprint's side
     (the redeal after a provider finish, the retire at the redeal bound, the restage after a staging
@@ -629,7 +611,7 @@
     them. Tests and models only, no product change."
    :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
 
-  (fix "tla-friend-one-shot-lanes-and-caps" :release "v1.2.12" :status "planned"
+  (fix "tla-friend-one-shot-lanes-and-caps" :release "v1.2.12" :status "shipped"
    :title "Friend's one-shot lanes and caps model the code: no limit gate, a fault kept, a cap set aside after one turn"
    :text "LaneStart no longer needs the harness up: the lanes bypass the limit gate (gatedLanes), so a lane's
     card turn starts while the harness is limited and a turn that hits a limit sends the friend down all the
@@ -641,7 +623,7 @@
     from Gate. Tests and models only, no product change."
    :origin "card tla-friend-one-shot-lanes-and-caps.w7 (nova-tools drift read at dev 2314d437f, 2026-10-11; the last of three Friend cards, chained)")
 
-  (fix "tla-coverage-names-every-module-in-nova-tools" :release "v1.2.12" :status "planned"
+  (fix "tla-coverage-names-every-module-in-nova-tools" :release "v1.2.12" :status "shipped"
    :title "Every TLA+ module is named by a COVERAGE row"
    :text "Tests and models only, no product change. TestEveryStateMachineHasACurrentModel walked the rows
     of tla/COVERAGE.tsv and never saw a module no row named; a check beside it, tlaCoverageModuleProblems,
@@ -661,7 +643,7 @@
     check."
    :origin "card tla-coverage-names-every-module-in-nova-tools-after-the-retire.w4 (stream v1212, 2026-10-11; the module walk the retired CardMachine copy left)")
 
-  (fix "tla-delivery-note-from-the-seat" :release "v1.2.12" :status "planned"
+  (fix "tla-delivery-note-from-the-seat" :release "v1.2.12" :status "shipped"
    :title "Delivery's present takes its note only from the seat"
    :text "The module took any note as the newest and always delivered it in the present step, with a gap
     rule that always applied. It now carries a seat variable: the note is the newest note from the seat
@@ -673,7 +655,7 @@
     the module does not model. Tests and models only, no product change."
    :origin "card tla-delivery-note-from-the-seat.w10 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-stopcancels-held-cards-and-reads" :release "v1.2.12" :status "planned"
+  (fix "tla-stopcancels-held-cards-and-reads" :release "v1.2.13" :status "shipped"
    :title "The stop-cancels model holds the take, the held card and the reads"
    :text "StopCancels.tla named its worker's functions internal/member machineStop and
     internal/friend/stop.go, both gone (pkg/member/member.go, pkg/friend/stop.go); its Return
@@ -688,7 +670,7 @@
     startDealt, daemon.go), a v1.2.14 candidate."
    :origin "card tla-stopcancels-held-cards-and-reads.w7 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-benchrun-an-interrupted-exec-ran" :release "v1.2.12" :status "planned"
+  (fix "tla-benchrun-an-interrupted-exec-ran" :release "v1.2.13" :status "shipped"
    :title "BenchRun's exec interrupt kills the command, never refuses a run that ran"
    :text "BenchRun.tla's header names pkg/bench, not internal/bench. The Interrupt action is split into
     InterruptCopy (an interrupt during the copy refuses the run, as before) and InterruptExec (an
@@ -699,7 +681,7 @@
     its exit mapping. Tests and models only, no product change."
    :origin "card tla-benchrun-an-interrupted-exec-ran.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-updateapply-newer-and-delivery-scopes" :release "v1.2.12" :status "planned"
+  (fix "tla-updateapply-newer-and-delivery-scopes" :release "v1.2.13" :status "shipped"
    :title "UpdateApply reads NEWER for a greater release and delivers per recipient scope"
    :text "UpdateApply.tla's verdict read any installed version greater than the latest as AHEAD; the code
     reads NEWER for a greater release version and AHEAD only for the vX.Y.Z-0 pseudo-version. The module
@@ -710,7 +692,7 @@
     and cli.go cite the module from report and verdict. Tests and models only, no product change."
    :origin "the card tla-updateapply-newer-and-delivery-scopes.w5 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35)")
 
-  (fix "tla-bus2-names-pkg-bus-and-the-idle-claim" :release "v1.2.12" :status "planned"
+  (fix "tla-bus2-names-pkg-bus-and-the-idle-claim" :release "v1.2.13" :status "shipped"
    :title "Bus2 names pkg/bus and models the idle claim"
    :text "Bus2's header named internal/bus2/bus2.go and docs/SPEC-BUS2.md, both gone; it now names
     pkg/bus/bus.go and redis.go and docs/SPEC-BUS.md. The model told a dead holder only by a crash; the
@@ -723,7 +705,7 @@
     models only, no product change."
    :origin "card tla-bus2-names-pkg-bus-and-the-idle-claim.w9 (v1.2.12 inventory item T32; drift read at dev 2314d437f, 2026-10-11)")
 
-  (fix "tla-bus2receipts-read-at-recv" :release "v1.2.12" :status "planned"
+  (fix "tla-bus2receipts-read-at-recv" :release "v1.2.13" :status "shipped"
    :title "Bus2Receipts reads the receipt at the recv and models the give-up, the present and the failed acted stamp"
    :text "Tests and models only, no product change. The module's header named internal/bus/stages.go and
     internal/friend/daemon.go (they are pkg/bus/stages.go, redis.go, pkg/friend/daemon.go, present.go).
@@ -738,7 +720,7 @@
     NoIdActedTwice hold."
    :origin "the card tla-bus2receipts-read-at-recv.w7 (stream v1212, 2026-10-11)")
 
-  (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
+  (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.14" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
     tools/roadmap (about 1,300 lines with their tests, about 930 without), and in nova-sprint as
@@ -751,7 +733,7 @@
     later as a node by nova-work; that import is a v1.3 item, not this one."
    :origin "the owner, 2026-10-11: v1.2.13 contraction, pass 4 (shared code into modules); nova-roadmap lives in nova-sprint")
 
-  (fix "brief-boilerplate-into-the-card-contract" :release "v1.2.13" :status "planned"
+  (fix "brief-boilerplate-into-the-card-contract" :release "v1.2.14" :status "planned"
    :title "Brief boilerplate moves into the card contract"
    :text "The RULES, LEDGERS, WALL AND TOOLS and BUDGET blocks, about 6 KB of every 10 to 11 KB brief, are
     referenced once from the card contract instead of repeated in each brief, and the card lint
