@@ -149,6 +149,13 @@
    :text "nova-config refuses a friend width larger than her slots and names both values, so one-shot
     lanes cannot silently halve the friend's available capacity."
    :origin "dogfood 2026-10-10: one-shot friend at width 32 with 16 slots")
+  (fix "one-shot-friend-presence-needs-no-session" :release "v1.2.6" :status "in-progress"
+   :title "A one-shot friend's presence needs no session"
+   :text "A one-shot opencode friend has no long-lived session by design: her presence comes from the
+    daemon and its lanes, never a growing session. Her session check goes in as a fresh turn of its
+    own (opencode run with no --session), so a session that is full (past the model's context) or
+    missing is never the reason she is down."
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md, two friends down after the adopt: one past the 260000-token context refused every turn, one with no opencode session in its directory")
   (fix "worker-question-ending-asked" :release "v1.2.9" :status "planned"
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
