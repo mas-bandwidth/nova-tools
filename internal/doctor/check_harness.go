@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
 )
 
 const harnessProbeTimeout = 10 * time.Second

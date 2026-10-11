@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"runtime"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 // selHTTP is the one method of *http.Client a verb uses.
@@ -35,7 +35,7 @@ func (h selHost) stream(dir string, env []string, stdout, stderr io.Writer, args
 	return h.r.Run(cmdLine(dir, env, stdout, stderr, args...))
 }
 
-// run is internal/pkgselect's Runner over the host's runner: what the command
+// run is pkg/pkgselect's Runner over the host's runner: what the command
 // printed on each stream is returned whole, not shown, because the selection
 // reads both (a go list failure is judged on its stderr).
 func (h selHost) run(dir string, env []string, args ...string) (pkgselect.Result, error) {

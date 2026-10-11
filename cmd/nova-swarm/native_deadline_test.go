@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // ISSUE #779: the deadline killed only the child the run spawned directly, never the tree,
@@ -187,6 +187,7 @@ func TestNativeTermFromOutsideWritesUsage(t *testing.T) {
 	cmd := exec.Command(tool, "native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "termed", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "60s", "--no-wall")
+	cmd.Env = append(os.Environ(), launchHome(t))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

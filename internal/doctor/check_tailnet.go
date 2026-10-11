@@ -28,7 +28,7 @@ func init() {
 // tailnetStatus is the part of `tailscale status --json` the check reads: the
 // backend state, this machine (Self) and the other machines (Peer), keyed by
 // address. A node's DNS name -- the first label of it -- is the nova machine
-// name (docs/SPEC-CONFIG.md, "The machine kind"; internal/config/self.go).
+// name (docs/SPEC-CONFIG.md, "The machine kind"; pkg/config/self.go).
 type tailnetStatus struct {
 	BackendState string                 `json:"BackendState"`
 	Self         tailnetNode            `json:"Self"`

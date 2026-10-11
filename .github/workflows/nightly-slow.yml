@@ -100,7 +100,7 @@ jobs:
       - name: install postgres
         if: matrix.tag == 'functional'
         # nova-config's functional tests spawn a throwaway Postgres
-        # (internal/nsprint/testutil/pg); a missing binary fails them.
+        # (pkg/nsprint/testutil/pg); a missing binary fails them.
         run: |
           "$RUNNER_TEMP/ci" install-postgres
 

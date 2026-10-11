@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 func init() {
@@ -14,7 +14,7 @@ func init() {
 		summary: "deal this shard's live packages to HOSTED_PKGS",
 		help: `ci deal --shards <n> --shard <i> [--heavy "<pkg> <pkg>..."]
 
-Deals the live packages of the module (go list ./..., less what internal/pkgselect/DEPRECATED
+Deals the live packages of the module (go list ./..., less what pkg/pkgselect/DEPRECATED
 names) over <n> shards and prints shard <i>'s share as one line of blank-separated
 packages, and appends HOSTED_PKGS=<that line> to $GITHUB_ENV for the steps after it.
 

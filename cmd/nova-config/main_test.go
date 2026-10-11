@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -431,9 +431,9 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	_, errs = step(1, "friend", "set", "nobody", "--slots", "1")
 	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- "), "friend show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=one-shot config_dir=- "), "friend show: %q", out)
 	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
 	_, errs = step(1, "friend", "show", "nobody")
 	require.Equal(t, "nova-config friend show REFUSED: friend nobody not found; run: nova-config friend list\n", errs, "show nobody: %q", errs)
@@ -508,8 +508,9 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 
 // A friend's width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to
 // setup width for friends? Start at 8 for each?") is 8 when add is not given
-// one, friend set --width changes it and show reads it back, and a width
-// below 1 is refused in one line with the row unchanged.
+// one, friend set --width changes it and show reads it back, a width above
+// slots is refused naming both values, and a width below 1 is refused in one
+// line with the row unchanged.
 func TestAFriendsWidthRoundTripsThroughSet(t *testing.T) {
 	t.Parallel()
 
@@ -522,19 +523,22 @@ func TestAFriendsWidthRoundTripsThroughSet(t *testing.T) {
 		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
 		return out, errs
 	}
-	step(0, "friend", "add", "amy", "--slots", "2", "--tiers", "flash")
+	step(0, "friend", "add", "amy", "--slots", "16", "--tiers", "flash")
 	out, _ := step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=8 "), "the default width: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=16 tiers=flash roles=- width=8 "), "the default width: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--width", "3")
 	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=width\n", out)
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=3 "), "the width set: %q", out)
-	_, errs := step(1, "friend", "set", "amy", "--width", "0")
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=16 tiers=flash roles=- width=3 "), "the width set: %q", out)
+	_, errs := step(1, "friend", "set", "amy", "--width", "32")
+	assert.Contains(t, errs, "width 32")
+	assert.Contains(t, errs, "slots 16")
+	_, errs = step(1, "friend", "set", "amy", "--width", "0")
 	assert.Equal(t, 1, strings.Count(strings.TrimSpace(errs), "\n")+1, "one refusal line: %q", errs)
 	assert.Contains(t, errs, "nova-config friend set REFUSED: ")
 	assert.Contains(t, errs, "at least 1")
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=3 "), "the refusal changed nothing: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=16 tiers=flash roles=- width=3 "), "the refusal changed nothing: %q", out)
 }
 
 func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
@@ -595,7 +599,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
 	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=- created="), "rowan's stored row: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- created="), "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
@@ -779,18 +783,18 @@ func TestAFriendsModeRoundTripsThroughSet(t *testing.T) {
 		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
 		return out, errs
 	}
-	step(0, "friend", "add", "amy", "--slots", "2", "--tiers", "flash")
+	step(0, "friend", "add", "amy", "--slots", "8", "--tiers", "flash")
 	out, _ := step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=8 mode=batch "), "the default mode: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=8 tiers=flash roles=- width=8 mode=one-shot "), "the default mode: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--mode", "one-shot", "--width", "1")
 	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=mode,width\n", out)
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=1 mode=one-shot "), "the mode set: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=8 tiers=flash roles=- width=1 mode=one-shot "), "the mode set: %q", out)
 	_, errs := step(2, "friend", "set", "amy", "--mode", "lanes")
 	assert.Equal(t, 1, strings.Count(strings.TrimSpace(errs), "\n")+1, "one refusal line: %q", errs)
-	assert.Contains(t, errs, "batch, one-shot")
+	assert.Contains(t, errs, "want one of one-shot")
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=1 mode=one-shot "), "the refusal changed nothing: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=8 tiers=flash roles=- width=1 mode=one-shot "), "the refusal changed nothing: %q", out)
 }
 
 // A friend's config_dir, the directory her claude one-shot lanes run with as
@@ -809,13 +813,13 @@ func TestAFriendsConfigDirRoundTripsThroughSet(t *testing.T) {
 		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
 		return out, errs
 	}
-	step(0, "friend", "add", "amy", "--slots", "2", "--tiers", "heavy", "--mode", "one-shot")
+	step(0, "friend", "add", "amy", "--slots", "8", "--tiers", "heavy", "--mode", "one-shot")
 	out, _ := step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=- "), "unset: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=8 tiers=heavy roles=- width=8 mode=one-shot config_dir=- "), "unset: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--config_dir", "/accounts/heavy-a")
 	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=config_dir\n", out)
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=/accounts/heavy-a "), "set: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=8 tiers=heavy roles=- width=8 mode=one-shot config_dir=/accounts/heavy-a "), "set: %q", out)
 	_, errs := step(1, "friend", "set", "amy", "--config_dir", "accounts/heavy-a")
 	assert.Contains(t, errs, "want --config_dir <an absolute path>")
 	out, _ = step(0, "friend", "show", "amy")

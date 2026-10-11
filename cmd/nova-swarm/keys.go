@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
 
 // swarmKeysEnv is a path to a JSON seat login of names (store, as, key, sops, names).

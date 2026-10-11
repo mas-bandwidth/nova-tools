@@ -27,11 +27,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // readRemedy is the one sentence that must live in the banner rather than in a NOTE: on

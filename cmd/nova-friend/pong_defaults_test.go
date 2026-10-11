@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

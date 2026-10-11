@@ -15,8 +15,8 @@ func dependsOnCard(t *testing.T, name, depends string) string {
 	t.Helper()
 	header := []string{
 		"KIND: fix-red",
-		"PATHS: internal/swarm/lintheader.go",
-		"TEST: internal/swarm TestCardHeaderFullHeaderDrawsNothing",
+		"PATHS: pkg/swarm/lintheader.go",
+		"TEST: pkg/swarm TestCardHeaderFullHeaderDrawsNothing",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#2636",
 	}

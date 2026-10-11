@@ -14,12 +14,12 @@ import (
 // NOVA_TOOLCHAIN_ROOTS BEGIN
 //
 // The toolchain roots the sandbox wall grants a card, under the bench user's
-// home. This list and internal/swarm/toolchain.go are ONE list: a class test in
+// home. This list and pkg/swarm/toolchain.go are ONE list: a class test in
 // internal/ci reads both and fails when they differ, because the same paths
 // named in two places are how a standard and a wall come to contradict each
 // other, and the contradiction is found by a card that dies. The KIND of each
 // grant (sdk is read and execute, go/pkg/mod is read without execute) is the
-// wall's decision and lives in internal/swarm/toolchain.go; a bench only has to
+// wall's decision and lives in pkg/swarm/toolchain.go; a bench only has to
 // HAVE the directories.
 var toolchainRoots = []string{"sdk", "go/pkg/mod"}
 
@@ -29,7 +29,7 @@ var toolchainRoots = []string{"sdk", "go/pkg/mod"}
 //
 // The wall's whole linux read table. Every entry is landlock's read subset,
 // which carries EXECUTE, so a tool under any of them can run inside the wall.
-// This list and linuxReadRoots in internal/sandbox/wrap_linux.go are ONE list,
+// This list and linuxReadRoots in pkg/sandbox/wrap_linux.go are ONE list,
 // in the same order: a class test in internal/ci reads both, because a subset
 // picked by hand reports a tool under /etc or /dev "under NO read root" while
 // the wall executes it.
@@ -376,7 +376,7 @@ func (w *witness) checkWallExecutable() {
 			}
 		}
 		if !granted {
-			w.drift("%s on PATH is %s -> %s, under NO read root the sandbox wall grants (the system roots of internal/sandbox/wrap_linux.go, the resolver directory, and $HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under %s/sdk/%s-<ver>/ and point the PATH entry there",
+			w.drift("%s on PATH is %s -> %s, under NO read root the sandbox wall grants (the system roots of pkg/sandbox/wrap_linux.go, the resolver directory, and $HOME/sdk from pkg/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under %s/sdk/%s-<ver>/ and point the PATH entry there",
 				tool, p, rp, w.home, tool)
 		}
 	}

@@ -1,5 +1,5 @@
 ---- MODULE BenchRun ----
-\* BenchRun is one `nova-ci bench run` (internal/bench: bench.go Run,
+\* BenchRun is one `nova-ci bench run` (pkg/bench: bench.go Run,
 \* exec.go sshLine): the hosts in order, the make, copy, exec and remove steps
 \* on the first host that answers, and an interrupt that may land at any step.
 \* Every host's answer and every step's outcome is chosen by TLC, so the model

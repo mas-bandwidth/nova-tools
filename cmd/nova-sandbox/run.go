@@ -39,10 +39,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // runRemedy is the one remedy line every refusal of this verb carries.
@@ -146,7 +146,7 @@ var (
 	// the run has no caps to watch.
 	runGroupUsage func(pgid int) (sandbox.Usage, error)
 	// runGOOS is the platform this verb believes it is on. It is a var for the same reason
-	// internal/sandbox's winDir is a function of the platform rather than of runtime.GOOS:
+	// pkg/sandbox's winDir is a function of the platform rather than of runtime.GOOS:
 	// the windows half of this verb cannot be run on a Mac, and a test that only ever walks
 	// the darwin path calls a windows bug green. The estate has no Windows bench
 	// (2026-09-18), so this seam is the only thing standing between "the windows rules are
@@ -452,7 +452,7 @@ var runGoEnv = readGoEnv
 // readGoEnv asks the go on the caller's PATH where it lives. The child's environment is
 // goenv.Clean's, because this reads a go command's OUTPUT: a GOFLAGS=-json inherited from
 // a Makefile would turn these two lines into a JSON document and the paths below into
-// nonsense (internal/goenv, and the class test that enforces it).
+// nonsense (pkg/goenv, and the class test that enforces it).
 func readGoEnv() (goDirs, error) {
 	bin, err := exec.LookPath("go")
 	if err != nil {
@@ -570,7 +570,7 @@ func remedyFor(goos string) string {
 // validateRun is every check on the argv that does not touch the machine, WITH THE PLATFORM
 // NAMED. The platform is a parameter and not runtime.GOOS because the windows rules cannot
 // be run on a Mac and the estate has no Windows bench: this is how a darwin `go test` asks
-// what the tool says on windows, the same way internal/sandbox's winpath_test.go does.
+// what the tool says on windows, the same way pkg/sandbox's winpath_test.go does.
 //
 // The contract does not change across the three (docs/SPEC-SANDBOX.md, W-preamble): the same
 // verb, the same receipt, the same exit codes. What differs is here and nowhere else.

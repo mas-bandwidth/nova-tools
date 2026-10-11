@@ -54,7 +54,7 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 	var violations []string
 	files := 0
 
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		for _, f := range tree.GoFilesUnder(false, dir) {
 			rel := f.Rel
 			files++

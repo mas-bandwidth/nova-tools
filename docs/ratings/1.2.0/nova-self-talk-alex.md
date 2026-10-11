@@ -27,7 +27,7 @@ A 10 would make per-verb help show real usage lines with their own exit tables, 
 | 3 | version -h, shapes -h, example -h | Each ends with the scan's exit table, which is not true of those verbs. | Give each verb its own exit line: 0 done; 2 could not run. | S |
 | 4 | scan -h | --rule-doc and --skip print <value> where the banner says <basename>. | Name the value basename in the flag usage text. | S |
 | 5 | shapes -h | The banner excerpt loses the indent of its continuation line. | Keep the continuation's indent, or excerpt the usage line alone. | S |
-| 6 | main.go: stream table | The stream table never names SELFTALK MORE, which goes to stderr (cmd/nova-self-talk/scan.go:383); the shared output puts MORE on stdout (internal/tool/out.go:134). | Say MORE prints on stderr after its findings in the table, or print MORE on stdout as the family does. | S |
+| 6 | main.go: stream table | The stream table never names SELFTALK MORE, which goes to stderr (cmd/nova-self-talk/scan.go:383); the shared output puts MORE on stdout (pkg/tool/out.go:134). | Say MORE prints on stderr after its findings in the table, or print MORE on stdout as the family does. | S |
 | 7 | --bogus --max abc | Only the unknown flag is named; the bad --max is never named. | Collect flag-parse errors into the same problems list before refusing. | S |
 | 8 | --max abc | Refuses with invalid value "abc" for flag -max: parse error, the flag library's words. | Say --max must be a whole number of zero or more (got "abc"). | S |
 | 9 | help frobnicate | Prints the whole banner, exit 0; a caller cannot tell a fallback from an answer. | Print frobnicate is not a verb; the verbs are scan, shapes, example, version, help, exit 2. | S |

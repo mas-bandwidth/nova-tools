@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 )
 
 func localBox() Box {

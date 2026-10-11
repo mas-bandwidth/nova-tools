@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 )
 
 // LockSuffix names the sibling lock file every box mutation holds: <box>.lock.
@@ -18,12 +18,12 @@ const LockSuffix = ".lock"
 func BoxLockPath(path string) string { return path + LockSuffix }
 
 // lockTimeout is how long a mutation waits for the box's lock before it refuses
-// and writes nothing. A refusal names the holder, which internal/filelock writes
+// and writes nothing. A refusal names the holder, which pkg/filelock writes
 // into the lock file.
 const lockTimeout = 10 * time.Second
 
 // MutateBox is the one way a box is changed: one cross-process read-modify-write.
-// It takes the box's lock (internal/filelock, whose design is tla/FileLock.tla),
+// It takes the box's lock (pkg/filelock, whose design is tla/FileLock.tla),
 // reads the box under it, hands the read to change and publishes what change
 // returns, so no writer publishes a snapshot older than the state it overwrote
 // (tla/FuseBox.tla: LostUpdate is the action this removes, and LockdownMonotone

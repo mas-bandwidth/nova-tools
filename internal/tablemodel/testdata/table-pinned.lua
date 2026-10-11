@@ -1,7 +1,7 @@
--- Atomic table operations and read-only snapshots for internal/ntable.
+-- Atomic table operations and read-only snapshots for pkg/ntable.
 -- Every public table operation is one exchange after connection setup.
 --
--- Keys (internal/ntable/ntable.go):
+-- Keys (pkg/ntable/ntable.go):
 --   table:<t>               HASH order, footer, created_at, col:<name>
 --   table:<t>:rows          ZSET row key -> rank
 --   table:<t>:row:<r>       HASH label, exclude, owner, key:<col> (a bound cell)

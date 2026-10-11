@@ -16,7 +16,7 @@ expected, and a grade.
    printed: nothing at all; `timeout` killed the tool (exit 124). The same with
    `timeout 5 nova-self-talk /dev/zero`. With a writer on the FIFO the tool read
    it and flagged the sentence, so it is reading the FIFO, not refusing it.
-   expected: `internal/readregular` is the tree's one reader of a file a tool did
+   expected: `pkg/readregular` is the tree's one reader of a file a tool did
    not write — regular files only (links followed, a 16 MiB cap), with FIFOs,
    devices and sockets refused by name at exit 2 and a remedy. A FIFO in a shell
    glob hangs the tool with no deadline and no output; a device can stream

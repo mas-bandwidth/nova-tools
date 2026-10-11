@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // THE RED TESTS FOR `nova-swarm doctor` (2026-09-17 shadowed-binary incident).
@@ -49,10 +49,10 @@ func doctorFake(lines map[string]string, lookPath func(string) (string, error), 
 func doctorFakeGlobal(t *testing.T, lines map[string]string, lookPath func(string) (string, error), home string) {
 	t.Helper()
 	env := doctorFake(lines, lookPath, home)
-	savedLookPath, savedHome, savedRead := doctorLookPath, doctorHomeDir, doctorReadVersion
-	doctorLookPath, doctorHomeDir, doctorReadVersion = env.lookPath, env.homeDir, env.read
+	savedLookPath, savedHome, savedRead, savedSelf := doctorLookPath, doctorHomeDir, doctorReadVersion, doctorRunningExe
+	doctorLookPath, doctorHomeDir, doctorReadVersion, doctorRunningExe = env.lookPath, env.homeDir, env.read, env.self
 	t.Cleanup(func() {
-		doctorLookPath, doctorHomeDir, doctorReadVersion = savedLookPath, savedHome, savedRead
+		doctorLookPath, doctorHomeDir, doctorReadVersion, doctorRunningExe = savedLookPath, savedHome, savedRead, savedSelf
 	})
 }
 
@@ -182,6 +182,7 @@ func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 			doctorLocal("/home/me"):  doctorRebuiltLine,
 		},
 		func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil }, "/home/me")
+	env.self = func() (string, error) { return "/opt/go/bin/nova-swarm", nil }
 
 	var errOut bytes.Buffer
 	code, stop := env.preflight([]string{"native", "--dir", "d"}, &errOut)
@@ -217,6 +218,50 @@ func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
 	require.False(t, stop, "template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	require.Equal(t, 0, code, "template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	assert.Zero(t, errOut.Len(), "a verb that starts nothing was refused: %q", errOut.String())
+}
+
+// THE RUNNING EXECUTABLE IS THE TRUTH, not PATH. A rebuild launched by its absolute path
+// runs its own bytes even when PATH still names an older binary, so the preflight compares
+// the executable that is actually running against the local build and passes here: nothing
+// is shadowed for this launch.
+func TestPreflightPassesTheRebuiltBinaryByAbsolutePath(t *testing.T) {
+	t.Parallel()
+	env := doctorFake(
+		map[string]string{
+			"/usr/local/bin/nova-swarm":      doctorStaleLine,
+			"/home/me/.local/bin/nova-swarm": doctorRebuiltLine,
+		},
+		func(string) (string, error) { return "/usr/local/bin/nova-swarm", nil }, "/home/me")
+	env.self = func() (string, error) { return "/home/me/.local/bin/nova-swarm", nil }
+
+	var errOut bytes.Buffer
+	code, stop := env.preflight([]string{"native", "--dir", "d"}, &errOut)
+	require.False(t, stop, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
+	require.Equal(t, 0, code, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
+	assert.Zero(t, errOut.Len(), "a rebuild that is actually running was refused: %q", errOut.String())
+}
+
+// The converse: PATH resolves to the rebuild but the process actually running is a stale
+// binary, so the launch is refused. A PATH-only check would pass this and every card would
+// run the stale bytes.
+func TestPreflightRefusesAStaleRunningBinaryWhenPATHIsClean(t *testing.T) {
+	t.Parallel()
+	env := doctorFake(
+		map[string]string{
+			"/opt/old/nova-swarm":            doctorStaleLine,
+			"/home/me/.local/bin/nova-swarm": doctorRebuiltLine,
+		},
+		func(string) (string, error) { return "/home/me/.local/bin/nova-swarm", nil }, "/home/me")
+	env.self = func() (string, error) { return "/opt/old/nova-swarm", nil }
+
+	var errOut bytes.Buffer
+	code, stop := env.preflight([]string{"native", "--dir", "d"}, &errOut)
+	require.True(t, stop, "preflight(exit=%d, stop=%v), want (2, true)\n%s", code, stop, errOut.String())
+	require.Equal(t, 2, code, "preflight(exit=%d, stop=%v), want (2, true)\n%s", code, stop, errOut.String())
+	both := errOut.String()
+	assert.Contains(t, both, doctorStaleLine, "the running binary's full line is not printed:\n%s", both)
+	assert.Contains(t, both, doctorRebuiltLine, "the local build's full line is not printed:\n%s", both)
+	assert.Contains(t, both, "shadows", "the refusal names no shadowing:\n%s", both)
 }
 
 // The verb is reachable from the dispatcher, and `doctor` is not a launch verb itself, so
@@ -329,7 +374,13 @@ func doctorStubs(t *testing.T, pathScript, localScript, hung string) (env doctor
 // doctorStubsGrace is doctorStubs with the grace named.
 func doctorStubsGrace(t *testing.T, pathScript, localScript, hung string, grace time.Duration) (env doctorEnv, pathBin, localBin string) {
 	t.Helper()
-	dir := t.TempDir()
+	// The stubs live under the temporary directory's real path. The preflight evaluates
+	// symlinks on the running executable (resolveRunning) and the doctor verb reports PATH's
+	// name as found; on macOS t.TempDir() is under /var, a symlink to /private/var, so a
+	// fixture under the unresolved name would be one binary under two spellings, and the
+	// reader below, which picks a stub's deadline by its name, would miss it.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	home := filepath.Join(dir, "home")
 	pathBin = filepath.Join(dir, "bin", "nova-swarm")
 	localBin = filepath.Join(home, ".local", "bin", "nova-swarm")
@@ -343,6 +394,7 @@ func doctorStubsGrace(t *testing.T, pathScript, localScript, hung string, grace 
 	env = doctorEnv{
 		lookPath: func(string) (string, error) { return pathBin, nil },
 		homeDir:  func() (string, error) { return home, nil },
+		self:     func() (string, error) { return pathBin, nil },
 		read: func(p string) (string, error) {
 			deadline := doctorGoodDeadline
 			if (p == pathBin && strings.Contains(hung, "path")) || (p == localBin && strings.Contains(hung, "local")) {
@@ -544,13 +596,14 @@ func TestCompareBinariesReadsTheTwoAtTheSameTime(t *testing.T) {
 
 // The preflight reads its arguments the way the dispatcher does: --seat comes out first,
 // wherever it stands. A help request with a --seat in it is still help, and a launch with
-// --seat before the verb is still a launch. The PATH binary here cannot be read, so a launch
+// --seat before the verb is still a launch. The running binary here cannot be read, so a launch
 // is refused and help is not.
 func TestPreflightReadsArgumentsAfterTheGlobalFlagsAreStripped(t *testing.T) {
 	t.Parallel()
 	env := doctorFake(map[string]string{doctorLocal("/home/me"): doctorRebuiltLine}, func(string) (string, error) {
 		return "/opt/go/bin/nova-swarm", nil
 	}, "/home/me")
+	env.self = func() (string, error) { return "/opt/go/bin/nova-swarm", nil }
 
 	cases := []struct {
 		name string

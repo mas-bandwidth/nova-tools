@@ -47,9 +47,9 @@ var dialers = map[string][]string{
 	"net/http/httptest":                {"NewServer", "NewTLSServer", "NewUnstartedServer"},
 	"github.com/alicebob/miniredis/v2": {"Run", "RunT", "RunTLS", "NewMiniRedis"},
 	"github.com/redis/go-redis/v9":     {"Dial"},
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn":     {"Open"},
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn":          {"Open"},
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store": {"Open"},
-	"github.com/mas-bandwidth/nova-tools/internal/testredis":     {"Far", "FarLink", "CommandCounter"},
+	"github.com/mas-bandwidth/nova-tools/pkg/testredis":          {"Far", "FarLink", "CommandCounter"},
 }
 
 var majorVersion = regexp.MustCompile(`^v[0-9]+$`)

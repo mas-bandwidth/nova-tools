@@ -23,15 +23,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
@@ -224,9 +224,10 @@ func refuse(stderr io.Writer, where, what string) int {
 
 func main() {
 	args := os.Args[1:]
-	// Before a launch verb starts a card, refuse a nova-swarm whose PATH copy is not the
-	// built one (doctor.go). The check is at the process boundary because it reads the real
-	// PATH and the real home; the dispatcher below is what the tests drive with fakes.
+	// Before a launch verb starts a card, refuse a nova-swarm whose running executable is not
+	// the built one (doctor.go). The check is at the process boundary because it reads the
+	// real running executable and the real home; the dispatcher below is what the tests drive
+	// with fakes.
 	if code, stop := preflightDoctor(args, os.Stderr); stop {
 		os.Exit(code)
 	}
@@ -624,6 +625,10 @@ type nativeFlags struct {
 	stageTimeout    *string
 	frame           *string
 	identity        *string
+	budgetServer    *string
+	budgetAs        *string
+	budgetHolder    *string
+	budgetSlots     *bool
 	repos           []string
 	recipients      []string
 }
@@ -670,6 +675,13 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
 	nf.frame = f.fs.String("frame", "", "the frame `file` a member wrote: the repository, commit and branch to stage, from which JOB.md and the shims are written")
 	nf.identity = f.fs.String("identity", "", "the pool identity the child commits under, `owner,name,email` (default: <root>/identity.tsv)")
+	// a limited route's global rate budget (nova-sprint routes limit): every model request
+	// takes it from the sprint's server first (budget take) and stalls while it is spent;
+	// absent, the route is unlimited and the proxy is as it was (providerbudget.go)
+	nf.budgetServer = f.fs.String("budget-server", "", "the sprint server's `host:port` a limited route's every model request takes its global budget from (budget take); empty: unlimited")
+	nf.budgetAs = f.fs.String("budget-as", "", "the `worker` the budget is taken as (the member or reader), with --budget-server")
+	nf.budgetHolder = f.fs.String("budget-holder", "", "the `prefix` of each request's holder (the launch), with --budget-server")
+	nf.budgetSlots = f.fs.Bool("budget-slots", false, "the route's provider has a concurrency budget: each request's slot is renewed and released through --budget-server")
 	f.fs.Var(stringListValue{&nf.repos}, "repo", "a repository the card may clone, `owner/name` (again for more): the wall opens the network to it alone")
 	f.fs.Var(stringListValue{&nf.recipients}, "recipient", "a bus lane the card may address (again for more); a bus send is denied inside the wall whatever is named")
 	return f, nf
@@ -885,6 +897,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		benchName:      *benchFlag,
 		stageTimeout:   stageDur,
 		identity:       identity,
+		budgetServer:   *nf.budgetServer,
+		budgetAs:       *nf.budgetAs,
+		budgetHolder:   *nf.budgetHolder,
+		budgetSlots:    *nf.budgetSlots,
 	}
 	if workerGiven {
 		cfg.worker = &w
@@ -938,16 +954,16 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// this field are independent: budget= and stopped= are carried by an INCOMPLETE line
 	// too, because every other field is byte-for-byte the same in every line, so a
 	// reader that parses fields still reads them all.
-	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s",
+	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
-		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped), idleSuffix(res.idled))
 	if res.survivors != "" {
 		// what the harness left in its group, ended before this line (nativeEndLeftovers)
 		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
 	}
 	// what the job spent, by token class, with the harness's own cost (spendWord): the
-	// member carries it into the card's cost record (internal/cardcost, ParseSpend)
+	// member carries it into the card's cost record (pkg/cardcost, ParseSpend)
 	if res.spend != "" {
 		fmt.Fprintf(stdout, " spend=%s", oneline.Field(res.spend))
 	}
@@ -987,8 +1003,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// wall stopped says so; a card that simply went still says THAT, on a line that is
 	// deliberately not a WALL line -- `js-under-20-bytes` died in a provider stall and was
 	// reported as a wall death at a path it had already worked past sixteen steps earlier.
+	// A refusal the watch carried that names no path is reported as what it is -- the
+	// idle reaping -- and never as a WALL line that names nothing
+	// (docs/roadmap.sexp, swarm-idle-reap-verdict).
 	if res.idled {
-		if res.idleEnd.Refused {
+		if _, named := res.idleEnd.WallRefusal(); named {
 			fmt.Fprintln(stdout, swarm.WallRefusedLine(cfg.label, res.idleEnd.Kind, res.idleEnd.Path, res.idleEnd.Step))
 		} else {
 			fmt.Fprintln(stdout, swarm.CardIdleLine(cfg.label, res.idleEnd))
@@ -996,6 +1015,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		if res.blockedPath != "" {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
+	}
+	if res.deadlined && res.blockedPath != "" {
+		fmt.Fprintf(stdout, "NATIVE NOTE: the card was ended at its deadline with commits and published no report of its own; one naming the work was written to %s\n", oneline.Field(res.blockedPath))
 	}
 	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST. --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
@@ -1143,6 +1165,18 @@ func stoppedSuffix(stopped string) string {
 func termSuffix(terminated bool) string {
 	if terminated {
 		return " reason=" + oneline.Field("terminated")
+	}
+	return ""
+}
+
+// idleSuffix is the mark the NATIVE line carries when the idle watch ended the card:
+// ` reason=idle-reap`, one safe token like termSuffix's. It is how the member's read of
+// the log tells a card the watch reaped from a card the deadline killed -- both are
+// rc=-1 -- so the finish states idle reaping and never a deadline that never fired
+// (docs/roadmap.sexp, swarm-idle-reap-verdict).
+func idleSuffix(idled bool) string {
+	if idled {
+		return " reason=" + oneline.Field("idle-reap")
 	}
 	return ""
 }

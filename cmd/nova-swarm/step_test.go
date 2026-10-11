@@ -32,7 +32,7 @@ func TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot(t *
 // treeSteps is a tree under STEP 2 of lintGoodCard: two model steps (docs/SPEC-SPRINT.md, a
 // card is a tree of steps).
 const treeSteps = "STEP 2. Read docs/SPEC-SWARM.md first.\n" +
-	"STEP 2.1. Rename Foo to Bar.\n  PATHS: internal/swarm/a.go\n  COMMIT: swarm: rename Foo to Bar\n  VERDICT: ok when go vet passes\n" +
+	"STEP 2.1. Rename Foo to Bar.\n  PATHS: pkg/swarm/a.go\n  COMMIT: swarm: rename Foo to Bar\n  VERDICT: ok when go vet passes\n" +
 	"STEP 2.2. Write the doc line.\n  PATHS: docs/SPEC-SWARM.md\n  COMMIT: docs: say Bar\n  VERDICT: ok when the doc says Bar"
 
 // regexStep is a regex script step over a.txt whose POST is the hash of want.
@@ -65,7 +65,7 @@ func TestATreeCardLintsCleanAndItsDefectsDrift(t *testing.T) {
 	require.Equal(t, 1, exit, stdout)
 	assert.Contains(t, stdout, "LINT DRIFT card=gap.card steps-nested:")
 	assert.NotContains(t, stdout, "steps-numbered", "the top-level numbering is unchanged by the children")
-	mixed := strings.Replace(tree, "  VERDICT: ok when go vet passes\n", "  VERDICT: ok when go vet passes\n  SCRIPT: regex\n  ```\n  s/Foo/Bar/\n  ```\n  POST: exit0 go vet ./internal/swarm/\n", 1)
+	mixed := strings.Replace(tree, "  VERDICT: ok when go vet passes\n", "  VERDICT: ok when go vet passes\n  SCRIPT: regex\n  ```\n  s/Foo/Bar/\n  ```\n  POST: exit0 go vet ./pkg/swarm/\n", 1)
 	exit, stdout, _ = runSwarm(t, "lint", "--card", writeLintCard(t, "mixed.card", mixed))
 	require.Equal(t, 1, exit, stdout)
 	assert.Contains(t, stdout, "LINT DRIFT card=mixed.card script-step:", "a script step beside a model step is refused")

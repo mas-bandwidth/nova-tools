@@ -1,4 +1,0 @@
-file	finding	remedy	test
-internal/bus/send.go:12	the receipt is not fsynced before the rename	call f.Sync before f.Close	internal/bus TestReceiptIsFsynced
-internal/bus/send.go:40	the close error is dropped	return it with the write error	
-cmd/nova-bus/main.go:9	the banner names a verb that no longer exists	drop the line from the usage constant

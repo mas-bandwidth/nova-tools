@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 )
 
 // Every shape the banner names, by the words it names it with, is found by a scan of a sentence

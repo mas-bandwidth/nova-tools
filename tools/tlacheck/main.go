@@ -6,7 +6,7 @@
 // It is a bench tool: TLC needs java, the replays need redis-server, and the
 // runs are bounded (docs/SPEC-CI.md, the tlc job). Run it on a bench, never on
 // a working machine. The reading of TLC's results and the suites live in
-// internal/tlc and internal/tablemodel; this file is the command line.
+// pkg/tlc and internal/tablemodel; this file is the command line.
 //
 //	example:
 //	  tlacheck groups --root .
@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
 const tool = "tlacheck"

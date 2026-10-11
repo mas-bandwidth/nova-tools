@@ -29,7 +29,7 @@ func TestGitHubEventReadersDoNotImportIngestion(t *testing.T) {
 	require.NotEmpty(t, module, "go.mod has no module directive")
 	wire := module + "internal/ghevent/wire"
 	imports := map[string][]string{}
-	for _, f := range repoTree(t).GoFilesUnder(false, "cmd", "internal") {
+	for _, f := range repoTree(t).GoFilesUnder(false, "cmd", "internal", "pkg") {
 		if f.HasDirNamed("testdata") {
 			continue
 		}

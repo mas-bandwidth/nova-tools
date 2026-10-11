@@ -13,8 +13,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisfn"
+	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 	"github.com/stretchr/testify/require"
 )
 

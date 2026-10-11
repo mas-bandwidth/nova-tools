@@ -10,7 +10,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -31,7 +31,7 @@ func dryRunFlag(fs *flag.FlagSet, value bool) {
 }
 
 // preflight is THE REAL RUN'S OWN PLAN, run before anything is dialled. call
-// is the verb's one call to internal/ntable, the very call the real run makes;
+// is the verb's one call to pkg/ntable, the very call the real run makes;
 // here it runs against a client that sends nothing (planClient), so every
 // check the call makes before its first command (a name, a column spec, a
 // manifest's outgoing bytes, a place) runs exactly as it will for real, and
