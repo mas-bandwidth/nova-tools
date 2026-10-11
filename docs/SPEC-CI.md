@@ -1127,10 +1127,16 @@ diagnostic build).
 **Its remedy line.** `ci.yml:<n>: build/test/lint command is not a make
 invocation: <cmd>`, and `ci.yml names no make invocation; the Makefile is not the
 one entry for the CL tier`.
-**Its narrowings.** Both files are read as text — go.mod carries no YAML library
-and these tests must answer identically on every platform in the matrix — so a
-command assembled in a variable or hidden in a composite action is not seen, and
-the allowlist is matched by prefix.
+ **Its narrowings.** Both files are read as text — go.mod carries no YAML library
+ and these tests must answer identically on every platform in the matrix — so a
+ command assembled in a variable or hidden in a composite action is not seen, and
+ the allowlist is matched by prefix.
+
+ **The `mod-tidy` gate.** The lint job runs `make mod-tidy` first; it checks that
+ `go.mod` and `go.sum` are tidy and refuses the run with a diff if they are not.
+ This prevents a module that is imported but not listed (or listed as indirect
+ when it is used directly) from landing and breaking downstream jobs that run
+ with `GOFLAGS=-mod=readonly`.
 
 ### `cache` — no cache step on a self-hosted runner
 

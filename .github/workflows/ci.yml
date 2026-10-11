@@ -271,6 +271,11 @@ jobs:
         shell: bash
         run: make fmt
 
+      - name: mod-tidy
+        # issue #5497: refuse an untidy go.mod on the CL path
+        shell: bash
+        run: make mod-tidy
+
       - name: build
         run: make build
 
