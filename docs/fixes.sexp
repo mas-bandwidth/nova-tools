@@ -123,6 +123,15 @@
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
    :origin "fault 9, 2026-10-10")
+  (fix "push-gate-names-the-staged-commit-it-wants" :release "v1.2.14" :status "in-progress"
+   :title "The push gate names the staged commit it wants"
+   :text "A refusal that the result's head does not descend from the staged commit now tells three cases
+    apart: the staged commit held by no branch or HEAD of the checkout (the branch was cut again or
+    reset), a head that parted from a staged commit the checkout does hold (naming their merge base,
+    \"none\" for unrelated histories), and git failing in the push repository. It no longer quotes git's
+    own \"Not a valid commit name\", and the first two say to put the commits on top of the staged
+    commit and finish again."
+   :origin "seat inbox pass 2026-10-11 ~03:38Z, epoch 16: 32 push refusals in an hour read \"the result's head X does not descend from the staged commit S: fatal: Not a valid commit name S\"; re-scoped against nova-tools dev 2314d43 on 2026-10-11")
   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
