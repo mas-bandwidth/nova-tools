@@ -615,8 +615,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 				}
 				continue
 			}
-			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
-			ln.renewed = 0 // the renewal is once per card (renew.go)
+			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job // tla/StopCancels.tla Take
+			ln.renewed = 0                                            // the renewal is once per card (renew.go)
 			ln.tier = d.cardTier(c)
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
