@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -67,7 +68,7 @@ func cycleRig(t *testing.T, plays ...string) (args []string, deps Deps, play *fa
 	require.NoError(t, os.MkdirAll(filepath.Join(source, "fleet"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(source, "fleet", "tools.yml"), []byte("- hosts: all\n"), 0o644))
 	inventory := filepath.Join(t.TempDir(), "nova-inventory")
-	require.NoError(t, os.WriteFile(inventory, []byte("#!/bin/sh\necho '{}'\n"), 0o755))
+	require.NoError(t, testbin.WriteExecutable(inventory, []byte("#!/bin/sh\necho '{}'\n"), 0o755))
 	now := time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC)
 	play = &fakeAnsible{answers: plays}
 	deps = Deps{Ansible: play, Now: func() time.Time { now = now.Add(time.Minute); return now }}
@@ -182,7 +183,7 @@ func TestCycleRefusesBeforeAnyPlay(t *testing.T) {
 func TestCycleRefusesAnInventoryThatCannotList(t *testing.T) {
 	t.Parallel()
 	inv := filepath.Join(t.TempDir(), "nova-inventory")
-	require.NoError(t, os.WriteFile(inv, []byte("#!/bin/sh\necho 'nova-config inventory REFUSED: redis: read the applied names: NOAUTH Authentication required.' >&2\nexit 1\n"), 0o755))
+	require.NoError(t, testbin.WriteExecutable(inv, []byte("#!/bin/sh\necho 'nova-config inventory REFUSED: redis: read the applied names: NOAUTH Authentication required.' >&2\nexit 1\n"), 0o755))
 	args, deps, play := cycleRig(t)
 	args[slices.Index(args, "--inventory")+1] = inv
 	var o, e bytes.Buffer
@@ -195,7 +196,7 @@ func TestCycleRefusesAnInventoryThatCannotList(t *testing.T) {
 
 	good := filepath.Join(t.TempDir(), "nova-inventory")
 	calls := filepath.Join(t.TempDir(), "calls")
-	require.NoError(t, os.WriteFile(good, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+calls+"\necho '{}'\n"), 0o755))
+	require.NoError(t, testbin.WriteExecutable(good, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+calls+"\necho '{}'\n"), 0o755))
 	args, deps, play = cycleRig(t, playOutput("WOULD-INSTALL", "", "batman", "vision"))
 	args[slices.Index(args, "--inventory")+1] = good
 	o.Reset()
