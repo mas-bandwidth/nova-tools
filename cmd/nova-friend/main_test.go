@@ -316,10 +316,21 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 envelope=0 envelope_bytes=0 session=- mode=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=4 beats=7 last_beat=- delivered=2 envelope=0 envelope_bytes=0 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
+}
+
+// status prints the friend row's width, the one source, over the argv --width a stale install
+// wrote into the pong (docs/SPEC-FRIEND.md, width has one source).
+func TestStatusPrintsTheRowWidthAndIgnoresTheArgvWidth(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	state := friend.DefaultStateDir(r.home, "bob")
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", Connection: friend.Connected, Width: 4}))
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-time.Minute), Width: 8}))
+	r.cli().Do(t, "status", "--as", "bob", "--dir", t.TempDir()).Exit(0).Out("STATUS OK", "width=4")
 }
 
 func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testing.T) {
@@ -348,6 +359,28 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK label=com.nova.friend-bob", `UNINSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`)
 	assert.NoFileExists(t, plist)
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK")
+}
+
+// install reads the server's seat holder (w.friends, coordinatorFriends' seam) and refuses a
+// --coordinator that names another seat at exit 1, naming both, unless --force-coordinator is
+// given (docs/SPEC-FRIEND.md, install: the agent never pins a seat the server does not name).
+func TestInstallReadsTheSeatAndRefusesACoordinatorThatNamesAnother(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
+		return nil, "studio", nil // the fake server's /api/view/coordinator names the seat studio
+	}
+	cli := testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		return run(args, stdin, stdout, stderr, w)
+	})
+	do := func(extra ...string) testkit.Ran {
+		args := append([]string{"install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4", "--dry-run"}, extra...)
+		return cli.Do(t, args...)
+	}
+	do("--coordinator", "ada").Exit(1).Err("INSTALL FAILED", "--coordinator ada", "studio", "--force-coordinator")
+	do("--coordinator", "ada", "--force-coordinator").Exit(0).Out("INSTALL OK")
+	do("--coordinator", "studio").Exit(0).Out("INSTALL OK")
 }
 
 // The verb wires the removable-volume rule (docs/SPEC-FRIEND.md). The binary
@@ -468,6 +501,49 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
 	assert.Equal(t, "batch", s.Mode, "the row's mode, read from the beat's answer")
+}
+
+// run refuses a --dir equal to, inside, or holding a deny-self path at exit 2, naming both paths
+// and the fix, from --deny-self, NOVA_FRIEND_DENY_SELF, or the default working root, before the
+// loop starts (docs/SPEC-FRIEND.md, the wall: no write may be a denied path, lie inside one or
+// hold one).
+func TestRunRefusesADirThatConflictsWithTheDenySelf(t *testing.T) {
+	t.Parallel()
+	t.Run("explicit --deny-self", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t, "ada", "bob")
+		cli := r.cli()
+		self := filepath.Join(r.home, "ada-working")
+		cases := []struct {
+			name, dir string
+		}{
+			{"equal", self},
+			{"inside", filepath.Join(self, "sub")},
+			{"holding", r.home},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
+				cli.Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", c.dir, "--deny-self", self).Exit(2).
+					Err("RUN REFUSED", "--dir "+c.dir, "denied self "+self, "move --dir to a sibling of the self")
+			})
+		}
+	})
+	t.Run("NOVA_FRIEND_DENY_SELF", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t, "ada", "bob")
+		self := filepath.Join(r.home, "ada-working")
+		r.env["NOVA_FRIEND_DENY_SELF"] = self
+		r.cli().Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", self).Exit(2).
+			Err("RUN REFUSED", "move --dir to a sibling of the self")
+	})
+	t.Run("the default working root", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t, "ada", "bob")
+		self := filepath.Join(r.home, "ada-working")
+		r.cli().Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", self, "--coordinator", "ada").Exit(2).
+			Err("RUN REFUSED", "--dir "+self, "denied self "+self, "move --dir to a sibling of the self")
+	})
 }
 
 // The beat's row_config_dir= (or --config-dir over it) is the directory a

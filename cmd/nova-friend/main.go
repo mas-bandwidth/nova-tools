@@ -593,7 +593,7 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--force-coordinator] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -635,6 +635,7 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
+					f.Bool("force-coordinator", false, "pin --coordinator into the agent without reading the server's seat holder")
 					f.String("secrets", "", "the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec")
 					f.String("seat", "", "the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets")
 					f.String("launchd-log", "", "launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)")
@@ -1192,6 +1193,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 		denySeatName, denySeatAt = s, w.now()
 		denySeatMu.Unlock()
 		return s
+	}
+	// a --dir that is equal to, lies inside, or holds a deny-self path is refused at the start:
+	// the lane wall then refuses every write and each card would fail in seconds
+	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5). The deny paths are --deny-self (explicit, else
+	// NOVA_FRIEND_DENY_SELF), else the default <home>/<seat>-working, the seat being --coordinator
+	// else the server's seat holder.
+	deny := commaList(c.Str("deny-self"))
+	if len(deny) == 0 {
+		deny = friend.DefaultDenySelf(w.home, denySeat(context.Background()))
+	}
+	if why := friend.DenySelfConflict(dir, sandbox.DeniedWrites(w.home, deny)); why != "" {
+		return tool.Refuse(why)
 	}
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
@@ -1974,6 +1987,20 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
+	// the agent never pins a seat the server does not name, unless forced: read the seat holder
+	// and refuse a --coordinator that names another (docs/SPEC-FRIEND.md, install)
+	if a.Coordinator != "" && !c.Bool("force-coordinator") {
+		if seatOf := w.seat(c.Str("server")); seatOf != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			seat, err := seatOf(ctx)
+			cancel()
+			if err == nil {
+				if why := friend.SeatPinRefusal(a.Coordinator, seat, false); why != "" {
+					return tool.Fail(why)
+				}
+			}
+		}
+	}
 	if a.NotificationsOnly {
 		return w.installNotifications(c, a)
 	}
@@ -2250,8 +2277,11 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	p, _, perr := friend.ReadPong(state)
 	queue, working, qerr := friend.ReadQueue(dir)
+	// width has one source, the friend row: the daemon's status width is the row's, and it wins;
+	// the pong's width is the argv --width a stale install wrote, ignored (docs/SPEC-FRIEND.md,
+	// width has one source).
 	width := s.Width
-	if p.Width > 0 {
+	if width <= 0 {
 		width = p.Width
 	}
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).

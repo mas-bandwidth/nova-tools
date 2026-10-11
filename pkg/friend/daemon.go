@@ -596,6 +596,7 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
+	saidWidth    bool            // the row's width differing from the argv --width was said once
 	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
@@ -664,6 +665,38 @@ func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// DenySelfConflict is the run verb's refusal when the friend's working directory is equal to,
+// lies inside, or holds a deny-self path (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5: no write
+// inside the wall may be a denied path, lie inside one or hold one), so the daemon must not
+// start. deny holds the deny paths with ~/ already made the wall's home (sandbox.DeniedWrites);
+// symlinks are resolved on both sides, so a --dir that reaches the self by a link is caught too.
+// Empty when no deny path conflicts; otherwise it names both paths and the fix.
+func DenySelfConflict(dir string, deny []string) string {
+	real := evalDir(dir)
+	for _, d := range deny {
+		if d == "" {
+			continue
+		}
+		rd := evalDir(d)
+		if rd == "" {
+			continue
+		}
+		if real == rd || strings.HasPrefix(real, rd+string(filepath.Separator)) || strings.HasPrefix(rd, real+string(filepath.Separator)) {
+			return fmt.Sprintf("--dir %s is the denied self %s (a write may be neither a denied path, nor lie inside one, nor hold one); move --dir to a sibling of the self", dir, d)
+		}
+	}
+	return ""
+}
+
+// evalDir cleans a path and resolves its symlinks; a path that does not exist keeps its clean
+// form.
+func evalDir(p string) string {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(real)
+	}
+	return filepath.Clean(p)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -957,6 +990,10 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 			mode = m
 		}
 		if w > 0 {
+			if d.Width > 0 && w != d.Width && !l.saidWidth {
+				l.saidWidth = true
+				d.Record(fmt.Sprintf("%s width: the friend row says %d, not --width %d; the row is the one source", now.UTC().Format(time.RFC3339), w, d.Width))
+			}
 			width = w
 		}
 	}
