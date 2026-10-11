@@ -31,7 +31,8 @@ func TestAMemberRunsReadCardsAtHalfASlotAndReportsThemWithTheReadVerb(t *testing
 	g.s.reset()
 	_, err = g.tick(t)
 	require.NoError(t, err)
-	require.Equal(t, []string{
+	// the two reports run side by side (reportRun), so they land in any order
+	require.ElementsMatch(t, []string{
 		"read --as m --ok p1.r1.m --finding clean --epoch 7",
 		"read --as m --broken p2.r1.m --finding main.go:12: the merge is wrong --epoch 7",
 	}, g.s.lines("report"))
