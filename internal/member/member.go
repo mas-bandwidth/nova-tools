@@ -217,9 +217,12 @@ const (
 // provider failed that left no result, its push not refused, is failed with the kind
 // `provider failure` and the provider's reason, and only that one: the sprint deals that
 // card again and never judges it; a refused push or a result with the shape is failed work
-// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure). A launch
-// refused at staging ran no child: failed with the kind `staging refused` and the stage's
-// reason, the member's failure and never the card's (StageRefused).
+// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure). A provider
+// end with a rate-limited reason (class=rate-limited, or status=429 with a class other than
+// out-of-credit) and no pushed head is also failed with the kind `provider failure`: the
+// sprint deals the card again. A launch refused at staging ran no child: failed with the
+// kind `staging refused` and the stage's reason, the member's failure and never the card's
+// (StageRefused).
 func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
 		// a budget or a deadline names how the run ended first; the provider's kind is
@@ -256,6 +259,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// provider's reason, never the shape's; the sprint deals the card again. A refused
 		// push above, and a shaped result below (nothing, not done), are the card's own
 		return FinishFailed, EndProvider + ": " + r.Provider
+	case r.End == EndProvider && r.Provider != "" && pu.Sha == "" && isRateLimited(r.Provider):
+		// a provider end with a rate-limited reason and no pushed head: the kind and
+		// the provider's reason; the sprint deals the card again. A rate-limited reason
+		// is class=rate-limited, or status=429 with a class other than out-of-credit.
+		return FinishFailed, EndProvider + ": " + r.Provider
 	case !r.Shaped && r.End == "":
 		// the child ended by itself and left no result: no work came back, and the sprint
 		// deals the card again on another route (cardhdr.EndNoResult). A run its budget or
@@ -281,6 +289,23 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		return FinishFailed, cardhdr.EndNoCommit + ": " + pu.None
 	}
 	return FinishOK, ""
+}
+
+// isRateLimited reports whether the provider reason names a rate-limited end:
+// class=rate-limited, or status=429 with a class other than out-of-credit.
+func isRateLimited(reason string) bool {
+	if reason == "" {
+		return false
+	}
+	// Look for class=rate-limited
+	if strings.Contains(reason, "class=rate-limited") {
+		return true
+	}
+	// Look for status=429 with a class that is not out-of-credit
+	if strings.Contains(reason, "status=429") && !strings.Contains(reason, "class=out-of-credit") {
+		return true
+	}
+	return false
 }
 
 // Packet is what a card hands the member, as `nova-sprint queue --json` and

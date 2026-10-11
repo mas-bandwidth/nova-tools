@@ -114,17 +114,17 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken, Routes, MaxRedeals, Members
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
+          prov, ratelimited, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
+          prov, ratelimited, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
 
 \* The variables the staging refusal adds, for the actions that leave them.
 svars == <<stg, mem, refused, sj, lvd>>
 
 \* The variables the provider failure and the staging refusal add, for the actions that
 \* leave them.
-pvars == <<prov, rt, tried, rds, fw, bj, svars>>
+pvars == <<prov, ratelimited, rt, tried, rds, fw, bj, svars>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -140,6 +140,7 @@ Init ==
   /\ fin = [c \in Cards |-> "none"]
   /\ rep = [c \in Cards |-> "none"]
   /\ prov = [c \in Cards |-> FALSE]
+  /\ ratelimited = [c \in Cards |-> FALSE]
   /\ rt \in [Cards -> Routes]
   /\ tried = [c \in Cards |-> {}]
   /\ rds = [c \in Cards |-> 0]
@@ -190,11 +191,12 @@ StageRefused(c) ==
 ChildEnds(c) ==
   /\ ph[c] = "running"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
-  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"}, f \in BOOLEAN :
+  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"}, f \in BOOLEAN, rl \in BOOLEAN :
        /\ commit' = [commit EXCEPT ![c] = k]
        /\ shape' = [shape EXCEPT ![c] = s]
        /\ verdict' = [verdict EXCEPT ![c] = v]
        /\ prov' = [prov EXCEPT ![c] = f]
+       /\ ratelimited' = [ratelimited EXCEPT ![c] = rl]
   /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, rt, tried, rds, fw, bj, svars>>
 
 \* The member's push (cmd/nova-swarm gitPusher.Push): a commit is pushed or
@@ -216,6 +218,7 @@ JudgeOf(c) ==
     [] OTHER ->
          IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
          ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
+         ELSE IF push[c] # "refused" /\ ratelimited[c] /\ push[c] = "nocommit" THEN "provider"
          ELSE IF push[c] # "refused" /\ prov[c] /\ ~shape[c] THEN "provider"
          ELSE "failed"
 
