@@ -349,6 +349,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "tla-friendenvelope-gives-up-and-acks" :release "v1.2.12" :status "planned"
+   :title "FriendEnvelope models the give-up, the ack that can fail and the present's MaxBatch read cap"
+   :text "The module's header named internal/friend/daemon.go (it is pkg/friend/daemon.go) and claimed the
+    MaxBatch read cap was removed, and its Accept was atomic. It now gives up a failed message once it
+    reaches MaxDeliveries (a GiveUp action, daemon.go settle), restates AckOnlyAccepted as only an
+    accepted or given-up turn acks, keeps the MaxBatch read cap while a present is owed, splits Accept
+    into the exit and the ack with the ack able to fail, and corrects the header and the
+    MCFriendEnvelopeFailureReorders name. A new reversed witness giveupearly gives up before
+    MaxDeliveries and violates GivenUpOnlyAtTheBound. Tests and models only, no product change."
+   :origin "the card tla-friendenvelope-gives-up-and-acks.w1")
+
   (fix "cover-friend-read-lane-step" :release "v1.2.12" :status "planned"
    :title "Cover the read lane's step with unit tests"
    :text "readLaneStep (pkg/friend/read_lanes.go:444) had no unit test: 0 of 46 statements run under

@@ -425,6 +425,7 @@ const RestLine = "and %d more: nova-bus recv --as %s --all"
 // are acked when the turn is accepted. A single message with nothing else is
 // its authored text alone. Every message retains its sender's authority
 // label (docs/SPEC-FRIEND.md, bus-authority-labels.w3). A function of its arguments.
+// tla/FriendEnvelope.tla Envelope
 func Envelope(seat string, msgs []bus.Message, now time.Time, me string, limit int, notice, pongCommand string) (text string, shown int) {
 	if len(msgs) == 1 && notice == "" && pongCommand == "" {
 		return authored(seat, msgs[0]), 1
