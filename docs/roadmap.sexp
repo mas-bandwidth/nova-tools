@@ -1430,13 +1430,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "issue #5496")
-  (item "go-mod-tidy-nightly-jobs" :group "ops"
-   :title "Nightly and certification jobs fail on an untidy go.mod"
-   :text "Every job exits at the go.mod update check. Tidy the module file and add a check that keeps it
-    tidy."
-   :date "2026-10-10"
-   :release "v1.2.11"
-   :origin "issue #5497")
   (item "version-snapshot-help-and-manifest" :group "ops"
    :title "nova-version snapshot appears in help and honours a manifest"
    :text "Help omits the snapshot verb, and the snapshot reports every copy on the path. Scope it to the

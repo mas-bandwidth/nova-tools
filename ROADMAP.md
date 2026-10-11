@@ -24,7 +24,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (27)
-- [Setup, release and operations](#setup-release-and-operations) (99)
+- [Setup, release and operations](#setup-release-and-operations) (98)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -935,14 +935,6 @@ One verb refuses typed or masked clocks in a staged diff or commit message. Anot
 Target: after v1.4
 
 From: issue #5495; issue #5515
-
-### Nightly and certification jobs fail on an untidy go.mod
-
-Every job exits at the go.mod update check. Tidy the module file and add a check that keeps it tidy.
-
-Target: v1.2.11
-
-From: issue #5497
 
 ### nova-version snapshot appears in help and honours a manifest
 
