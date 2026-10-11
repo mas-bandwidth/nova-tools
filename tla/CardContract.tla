@@ -1,8 +1,8 @@
 ---------------------------- MODULE CardContract ----------------------------
 \* The card contract's finish (docs/SPEC-CARD-CONTRACT.md), written beside
-\* internal/member's Judge and cmd/nova-swarm's frame: what a launch is
-\* staged from, how its child ends, the member's push, and the one judgment
-\* that turns them into the finish the sprint is told.
+\* pkg/member's Judge and pkg/cardcontract's frame (contract.go, gate.go):
+\* what a launch is staged from, how its child ends, the member's push, and
+\* the one judgment that turns them into the finish the sprint is told.
 \*
 \* THE STATE, per card.
 \*   ph        the launch: new, running (staged, the child at work), ended
@@ -25,56 +25,74 @@
 \*   verdict   the result's verdict: ok or notdone
 \*   push      the member's push: none (not yet), ok, refused, nocommit
 \*   claim     held, or moved (a clear, a redeal, a drop, a return)
-\*   fin       the finish: none, ok, failed, reaped
+\*   fin       the finish, one of three: none, ok, failed, reaped (Judge names
+\*             ok and failed; FinishReaped is the moved claim). The redeal and
+\*             staging classes below are reason prefixes on `failed`, not
+\*             finishes of their own (member.go Finish, Judge)
 \*   rep       what the sprint was told: none, ok, failed, provider, retired
-\*   prov      the child's run ended on the provider's failure: the harness's
-\*             own log carries a provider error, or its transcript stops on a
-\*             tool result after a clean exit (cmd/nova-swarm nativeprovider.go)
+\*   prov      the child's run ended on the provider's failure and the record
+\*             names the provider's reason (EndProvider with a Provider): the
+\*             harness's own log carries a provider error, or its transcript
+\*             stops on a tool result after a clean exit (pkg/swarm's provider
+\*             cause). A provider end with no Provider is not prov: it is
+\*             failed work ("no RESULT.md shape")
+\*   nr        the child ended by itself, within its budget and deadline, and
+\*             left no result (EndNoResult): a redeal class like a provider
+\*             failure, never failed work (member.go Judge)
 \*   rt        the route the take runs on; tried the routes a take of the card
 \*             failed on (the card records the route that failed)
-\*   rds       the work card's redeals (internal/sprint steps_tick.go, MaxRedeals)
+\*   rds       the work card's redeals (nova-sprint's MaxRedeals)
 \*   fw        the failed-work judgments the sprint opened for the card
 \*   bj        the bound judgments the sprint opened for the card
-\*   stg       the launch was refused at staging, before any child ran
-\*             (cmd/nova-swarm native's STAGE FAIL: no bench mirror, the pushed
-\*             head missing, the stage's timeout)
+\*   stg       a staging refusal: the launch was refused at staging, before any
+\*             child ran (native's STAGE FAIL: no bench mirror, the pushed head
+\*             missing, the stage's timeout), or the child's end was
+\*             budget-unverifiable and left no result (EndUnverifiable, EndStaging)
 \*   mem       the member the take is dealt to (the up members are Members)
 \*   refused   the members that refused the card at staging
 \*   sj        the staging-bound judgments the sprint opened for the card
 \*   lvd       the card was levelled onto another member since it was last dealt
 \*
-\* THE PROVIDER FAILURE. A run that ended with no result and whose provider
-\* failed it (prov) is finished `provider`, after a refused push (which is
-\* said first) and before any failed-work reason: Judge. The sprint treats the
-\* finish as an ended take (internal/sprint providerEnded; tla/DirtyTick.tla
-\* RedealsAreEndedTakes): Redeal returns the work card to the deal, the same
-\* attempt, with the route that failed recorded, and the route the redeal draws
-\* leaves it out when another remains (route.go routeOf); it counts toward
-\* MaxRedeals, and the take that ends with the bound reached is Retire: one
-\* judgment, never a failed-work one. A redeal is the same attempt: att and
+\* THE REASON PREFIXES. Judge names one of three finishes, ok, failed or reaped
+\* (pkg/member/member.go, Finish), and the failed finish's reason carries the
+\* prefix that classes it. A run that ended with no result and whose provider
+\* failed it with a reason (prov) is failed `provider failure`, after a refused
+\* push (which is said first) and before any failed-work reason. A run the child
+\* ended by itself with no result at all (nr) is failed `no result`. Both are
+\* redeal classes: the sprint treats the finish as an ended take (nova-sprint's
+\* providerEnded; tla/DirtyTick.tla RedealsAreEndedTakes), and Redeal returns the
+\* work card to the deal, the same attempt, with the route that failed recorded,
+\* and the route the redeal draws leaves it out when another remains; it counts
+\* toward MaxRedeals, and the take that ends with the bound reached is Retire:
+\* one judgment, never a failed-work one. A redeal is the same attempt: att and
 \* earlier do not move, so the next launch is staged exactly as the first was
 \* (StageFrom); redeals count per work card, and a rework (the next attempt, up
-\* to three) is a new work card with a count of its own, outside this model.
+\* to three) is a new work card with a count of its own, outside this model. A
+\* provider end with no reason (EndProvider, empty Provider), and a run its budget
+\* or deadline ended with no result, are failed work, the end said first, never
+\* a redeal.
 \*
 \* THE STAGING REFUSAL. A launch its member refused at staging ran no child: no
-\* commit, no result, nothing pushed (StageRefused). Judge finishes it `staging`, its
-\* own kind and never failed work (internal/member Judge, EndStaging); the sprint
-\* withdraws the card without an ended take (internal/sprint stagingRefused), so
-\* Restage deals it to a member that has not refused it, the same attempt, and spends
-\* none of MaxRedeals: the member's failure, never the card's. Its own bound is the
-\* fleet: each member refuses the card at most once (the deal never places it on one
-\* that did, nor does a provider Redeal), and when every member has refused it,
-\* StagingAll is the one judgment the coordinator sees (internal/sprint
-\* AtStagingBound; the bound's judgment). The refusal is a separate count from
-\* rds, not the same: the redeal bound measures what a card's takes cost (each
-\* ended take ran a child), while a refusal costs nothing and is bounded by the
-\* fleet already, so counting it in rds would retire a sound card for its members'
-\* machines (the fleet store, 2026-10-01: three refusals spent the bound).
-\* Level (internal/sprint level, round.levelTo) moves a dealt card that is not yet
-\* taken to another member to even the queues; it too skips the card's refusers
-\* (the reader's probe on #5000: the level moved a card back onto its refuser every
-\* tick, without end). Levelling is bounded here to once per deal: the code moves a
-\* card only while queues differ by more than one, which one card cannot express.
+\* commit, no result, nothing pushed (StageRefused), and a run the member's usage
+\* source ended budget-unverifiable with no result is the same refusal. Judge
+\* finishes both failed `staging refused`, its own kind and never failed work
+\* (pkg/member/member.go, EndStaging); the sprint withdraws the card without an
+\* ended take (nova-sprint's stagingRefused), so Restage deals it to a member that
+\* has not refused it, the same attempt, and spends none of MaxRedeals: the
+\* member's failure, never the card's. Its own bound is the fleet: each member
+\* refuses the card at most once (the deal never places it on one that did, nor
+\* does a provider Redeal), and when every member has refused it, StagingAll is the
+\* one judgment the coordinator sees (nova-sprint's AtStagingBound; the bound's
+\* judgment). The refusal is a separate count from rds, not the same: the redeal
+\* bound measures what a card's takes cost (each ended take ran a child), while a
+\* refusal costs nothing and is bounded by the fleet already, so counting it in
+\* rds would retire a sound card for its members' machines (the fleet store,
+\* 2026-10-01: three refusals spent the bound). Level (nova-sprint's level) moves
+\* a dealt card that is not yet taken to another member to even the queues; it too
+\* skips the card's refusers (the reader's probe on #5000: the level moved a card
+\* back onto its refuser every tick, without end). Levelling is bounded here to
+\* once per deal: the code moves a card only while queues differ by more than one,
+\* which one card cannot express.
 \*
 \* BROKEN names a reversed witness, a rule as it was or as it could be
 \* written wrong, that TLC must break: "today" (ok unless the push was
@@ -91,7 +109,8 @@
 \* "silentconflict" (a rework whose earlier work did not apply at the tip
 \* staged at the bare tip with no word that the work must be redone: the
 \* pushed work lost in silence), "providerfailed" (a provider failure judged as
-\* failed work), "sameroute" (a redeal on the route that failed though another
+\* failed work), "noresultfailed" (a no-result end judged as failed work),
+\* "sameroute" (a redeal on the route that failed though another
 \* remains), "unbounded" (a redeal past MaxRedeals), "stagingfailed" (a staging
 \* refusal judged as failed work), "levelrefuser" (the level moves a card onto a
 \* member that refused it). "none" is the design.
@@ -114,17 +133,17 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken, Routes, MaxRedeals, Members
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
+          prov, nr, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
+          prov, nr, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
 
 \* The variables the staging refusal adds, for the actions that leave them.
 svars == <<stg, mem, refused, sj, lvd>>
 
-\* The variables the provider failure and the staging refusal add, for the actions that
-\* leave them.
-pvars == <<prov, rt, tried, rds, fw, bj, svars>>
+\* The variables the provider failure, the no-result end and the staging refusal add,
+\* for the actions that leave them.
+pvars == <<prov, nr, rt, tried, rds, fw, bj, svars>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -140,6 +159,7 @@ Init ==
   /\ fin = [c \in Cards |-> "none"]
   /\ rep = [c \in Cards |-> "none"]
   /\ prov = [c \in Cards |-> FALSE]
+  /\ nr = [c \in Cards |-> FALSE]
   /\ rt \in [Cards -> Routes]
   /\ tried = [c \in Cards |-> {}]
   /\ rds = [c \in Cards |-> 0]
@@ -153,7 +173,7 @@ Init ==
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
 
-\* Staging (cmd/nova-swarm frameOf, internal/swarm StageCard and restageAtTip): a first
+\* Staging (pkg/swarm StageCard and restageAtTip): a first
 \* attempt is staged at the base; a rework at the tip of its base branch, carrying the work of
 \* the last pushed head of any earlier attempt (sprint.BaseOf, the packet's base_head and
 \* base_attempt), whatever the attempts between did, when it applies cleanly, and else the bare
@@ -183,19 +203,27 @@ StageRefused(c) ==
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
   /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-                 prov, rt, tried, rds, fw, bj, mem, refused, sj, lvd>>
+                 prov, nr, rt, tried, rds, fw, bj, mem, refused, sj, lvd>>
 
-\* The child ends: any commit, any result, any verdict, and the provider's
-\* failure or not.
+\* The child ends: any commit, any result, any verdict, and the run's end class:
+\* a provider failure with a reason (prov), a no-result end (nr), or a
+\* budget-unverifiable staging refusal (stg); at most one, and a no-result or a
+\* budget-unverifiable end leaves no shape.
 ChildEnds(c) ==
   /\ ph[c] = "running"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
-  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"}, f \in BOOLEAN :
+  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"},
+         f \in BOOLEAN, n \in BOOLEAN, u \in BOOLEAN :
        /\ commit' = [commit EXCEPT ![c] = k]
        /\ shape' = [shape EXCEPT ![c] = s]
        /\ verdict' = [verdict EXCEPT ![c] = v]
        /\ prov' = [prov EXCEPT ![c] = f]
-  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, rt, tried, rds, fw, bj, svars>>
+       /\ nr' = [nr EXCEPT ![c] = n]
+       /\ stg' = [stg EXCEPT ![c] = u]
+       /\ (IF f THEN 1 ELSE 0) + (IF n THEN 1 ELSE 0) + (IF u THEN 1 ELSE 0) <= 1
+       /\ n => ~s
+       /\ u => ~s
+  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, rt, tried, rds, fw, bj, mem, refused, sj, lvd>>
 
 \* The member's push (cmd/nova-swarm gitPusher.Push): a commit is pushed or
 \* refused; no commit is nothing to push.
@@ -206,21 +234,32 @@ Push(c) ==
        push' = [push EXCEPT ![c] = p]
   /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, pvars>>
 
-\* THE ONE JUDGMENT (internal/member Judge).
+\* THE ONE JUDGMENT (pkg/member/member.go, Judge): three finishes, ok, failed
+\* and reaped, with a refused push said first and a staging refusal, a provider
+\* failure with a reason, and a no-result end as reason prefixes on failed.
 JudgeOf(c) ==
   CASE Broken = "today" -> IF push[c] = "refused" THEN "failed" ELSE "ok"
     [] Broken = "noshape" -> IF push[c] = "ok" /\ verdict[c] = "ok" THEN "ok" ELSE "failed"
     [] Broken = "pushignored" -> IF shape[c] /\ verdict[c] = "ok" /\ commit[c] THEN "ok" ELSE "failed"
     [] Broken = "providerfailed" ->
          IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok" ELSE "failed"
+    [] Broken = "noresultfailed" ->
+         IF stg[c] THEN "staging"
+         ELSE IF push[c] = "refused" THEN "failed"
+         ELSE IF prov[c] /\ ~shape[c] THEN "provider"
+         ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
+         ELSE "failed"
     [] OTHER ->
          IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
+         ELSE IF push[c] = "refused" THEN "failed"
+         ELSE IF prov[c] /\ ~shape[c] THEN "provider"
+         ELSE IF nr[c] THEN "provider"
          ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
-         ELSE IF push[c] # "refused" /\ prov[c] /\ ~shape[c] THEN "provider"
          ELSE "failed"
 
-\* A finish `failed` opens the failed-work judgment; a finish `provider` opens
-\* none, and records the route that failed; a finish `staging` opens none.
+\* A finish `failed` with no redeal or staging reason opens the failed-work
+\* judgment; a `provider` finish (a provider failure or a no-result end) opens
+\* none, and records the route that failed; a `staging` finish opens none.
 Judge(c) ==
   /\ ph[c] = "pushed" /\ claim[c] = "held"
   /\ ph' = [ph EXCEPT ![c] = "done"]
@@ -228,7 +267,7 @@ Judge(c) ==
   /\ rep' = [rep EXCEPT ![c] = JudgeOf(c)]
   /\ fw' = [fw EXCEPT ![c] = IF JudgeOf(c) = "failed" THEN @ + 1 ELSE @]
   /\ tried' = [tried EXCEPT ![c] = IF JudgeOf(c) = "provider" THEN @ \cup {rt[c]} ELSE @]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, rt, rds, bj, svars>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, rt, rds, bj, svars>>
 
 \* The claim moves under the launch at any time before it is judged.
 Move(c) ==
@@ -236,7 +275,7 @@ Move(c) ==
   /\ claim' = [claim EXCEPT ![c] = "moved"]
   /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, pvars>>
 
-\* REAPED is its own finish (internal/member FinishReaped): the child has
+\* REAPED is its own finish (pkg/member/member.go, FinishReaped): the child has
 \* ended, its claim is gone, and nothing is reported.
 Reap(c) ==
   /\ claim[c] = "moved" /\ ph[c] \in {"ended", "pushed"}
@@ -245,7 +284,7 @@ Reap(c) ==
   /\ rep' = IF Broken = "reapreported" THEN [rep EXCEPT ![c] = "failed"] ELSE rep
   /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, pvars>>
 
-\* THE SPRINT'S SIDE OF A PROVIDER FINISH (internal/sprint providerEnded, then the
+\* THE SPRINT'S SIDE OF A PROVIDER FINISH (nova-sprint providerEnded, then the
 \* deal's redeal). The take ended: the work card returns to the deal and the launch
 \* is new again, the same attempt (att and earlier stay; the launch is staged from
 \* them again, as the first was, so `from` is the unstaged record), the redeal is
@@ -268,6 +307,7 @@ Redeal(c) ==
   /\ fin' = [fin EXCEPT ![c] = "none"]
   /\ rep' = [rep EXCEPT ![c] = "none"]
   /\ prov' = [prov EXCEPT ![c] = FALSE]
+  /\ nr' = [nr EXCEPT ![c] = FALSE]
   /\ rds' = [rds EXCEPT ![c] = @ + 1]
   /\ \E r \in RedealRoutes(c) : rt' = [rt EXCEPT ![c] = r]
   /\ \E m \in Members \ refused[c] : mem' = [mem EXCEPT ![c] = m]
@@ -281,9 +321,9 @@ Retire(c) ==
   /\ fin' = [fin EXCEPT ![c] = "retired"]
   /\ rep' = [rep EXCEPT ![c] = "retired"]
   /\ bj' = [bj EXCEPT ![c] = @ + 1]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, rt, tried, rds, fw, svars>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, nr, rt, tried, rds, fw, svars>>
 
-\* THE SPRINT'S SIDE OF A STAGING FINISH (internal/sprint stagingRefused, then the deal's
+\* THE SPRINT'S SIDE OF A STAGING FINISH (nova-sprint stagingRefused, then the deal's
 \* redeal). The member is recorded as having refused the card; the deal places it on a
 \* member that has not, the same attempt, on the same route, and the redeal bound is not
 \* spent (rds does not move).
@@ -300,19 +340,19 @@ Restage(c) ==
   /\ refused' = [refused EXCEPT ![c] = @ \cup {mem[c]}]
   /\ \E m \in Members \ (refused[c] \cup {mem[c]}) : mem' = [mem EXCEPT ![c] = m]
   /\ lvd' = [lvd EXCEPT ![c] = FALSE]
-  /\ UNCHANGED <<att, earlier, commit, shape, verdict, prov, rt, tried, rds, fw, bj, sj>>
+  /\ UNCHANGED <<att, earlier, commit, shape, verdict, prov, nr, rt, tried, rds, fw, bj, sj>>
 
 \* Every member has refused the card at staging: one judgment, the bound's, naming the
-\* members and the reason; the card is not dealt again (internal/sprint AtStagingBound).
+\* members and the reason; the card is not dealt again (nova-sprint AtStagingBound).
 StagingAll(c) ==
   /\ fin[c] = "staging" /\ Members \subseteq refused[c] \cup {mem[c]}
   /\ fin' = [fin EXCEPT ![c] = "stagingall"]
   /\ rep' = [rep EXCEPT ![c] = "stagingall"]
   /\ refused' = [refused EXCEPT ![c] = @ \cup {mem[c]}]
   /\ sj' = [sj EXCEPT ![c] = @ + 1]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, rt, tried, rds, fw, bj, stg, mem, lvd>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, nr, rt, tried, rds, fw, bj, stg, mem, lvd>>
 
-\* THE LEVEL (internal/sprint level): a card dealt and not yet taken moves to another
+\* THE LEVEL (nova-sprint level): a card dealt and not yet taken moves to another
 \* member, never one that refused it at staging; once per deal here.
 LevelTargets(c) ==
   IF Broken = "levelrefuser" THEN Members \ {mem[c]}
@@ -323,7 +363,7 @@ Level(c) ==
   /\ \E m \in LevelTargets(c) : mem' = [mem EXCEPT ![c] = m]
   /\ lvd' = [lvd EXCEPT ![c] = TRUE]
   /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-                 prov, rt, tried, rds, fw, bj, stg, refused, sj>>
+                 prov, nr, rt, tried, rds, fw, bj, stg, refused, sj>>
 
 Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ Judge(c) \/ Move(c) \/ Reap(c)
                           \/ Redeal(c) \/ Retire(c) \/ StageRefused(c) \/ Restage(c) \/ StagingAll(c) \/ Level(c)
@@ -342,6 +382,8 @@ TypeOK ==
   /\ fw \in [Cards -> 0..1]
   /\ bj \in [Cards -> 0..1]
   /\ stg \in [Cards -> BOOLEAN]
+  /\ prov \in [Cards -> BOOLEAN]
+  /\ nr \in [Cards -> BOOLEAN]
   /\ mem \in [Cards -> Members]
   /\ refused \in [Cards -> SUBSET Members]
   /\ sj \in [Cards -> 0..1]
@@ -383,6 +425,11 @@ ReworkStagedAtTheTip == \A c \in Cards :
 \* that left no result, its push not refused, is never finished `failed`.
 ProviderIsNotFailedWork ==
   \A c \in Cards : fin[c] = "failed" => ~(prov[c] /\ ~shape[c] /\ push[c] # "refused")
+
+\* A no-result end never opens a failed-work judgment: a run the child ended by
+\* itself with no result, its push not refused, is never finished `failed`.
+NoResultIsNotFailedWork ==
+  \A c \in Cards : fin[c] = "failed" => ~(nr[c] /\ push[c] # "refused")
 
 \* A staging refusal never opens a failed-work judgment: a launch refused at staging ran no
 \* child, and is never finished `failed`.
