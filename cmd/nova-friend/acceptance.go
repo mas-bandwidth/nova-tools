@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -35,13 +37,27 @@ func (w world) acceptance(c *tool.Call) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("--dir cannot be made: %s: %v", dir, err))
 	}
 
-	// For now, a stub implementation that writes RESULT.md and exits 0
-	// In a full implementation, this would:
-	// 1. Fetch a probe card from the server
-	// 2. Run it under the wall using walledRaw
-	// 3. Write RESULT.md with the results
-	// 4. Return the actual exit code
+	// Run a probe under the wall to verify the lane can execute
+	// Use the wall function if available, otherwise fall back to direct exec
+	var execFunc friend.Exec
+	if w.wall != nil {
+		wallCfg := friend.Wall{
+			Profile:   "friend",
+			ConfigDir: w.getenv("CLAUDE_CONFIG_DIR"),
+			Deny:      []string{},
+		}
+		execFunc = w.wall(wallCfg, w.exec)
+	} else {
+		execFunc = w.exec
+	}
 
+	ctx := context.Background()
+	// Run a simple probe: touch a file in the probe directory
+	// This exercises the wall without requiring opencode
+	prog := "touch"
+	args := []string{filepath.Join(probeDir, "probed")}
+	out, exit, err := execFunc(ctx, dir, prog, args, "")
+	
 	resultPath := filepath.Join(probeDir, "RESULT.md")
 	f, err := os.Create(resultPath)
 	if err != nil {
@@ -49,10 +65,19 @@ func (w world) acceptance(c *tool.Call) *tool.Out {
 	}
 	defer f.Close()
 
-	fmt.Fprintln(f, "ACCEPTANCE OK")
 	fmt.Fprintf(f, "friend=%s\n", name)
 	fmt.Fprintf(f, "dir=%s\n", dir)
 	fmt.Fprintf(f, "at=%s\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(f, "exit=%d\n", exit)
+	if out != "" {
+		fmt.Fprintf(f, "out=%s\n", out)
+	}
+	if err != nil {
+		fmt.Fprintf(f, "err=%s\n", err)
+	}
 
-	return tool.Done()
+	if exit == 0 {
+		return tool.Done()
+	}
+	return tool.Exit(exit)
 }
