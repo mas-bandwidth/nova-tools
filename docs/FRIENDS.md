@@ -44,6 +44,12 @@ directory, not a symlink to one: install refuses a symlink and writes nothing
 (on 2026-10-05 a Codex writable root that was a symlink took no writes for ten
 hours). Name the real path with `--dir`.
 
+After an install, `nova-doctor run --local` is the first step: it reads the
+daemon this machine loads and fails with the one fix line for any setup fault
+(a `--coordinator` on a previous seat, a row that is not one-shot, a refused
+beat, a `--dir` inside the lane wall's deny-self, an unsigned claude config dir,
+a plist `plutil` refuses). It changes nothing.
+
 ## Her inbox pushes to her: the push proof
 
 `nova-friend install` and `run` refuse a harness nothing pushes into: one
