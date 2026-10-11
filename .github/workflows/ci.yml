@@ -271,6 +271,11 @@ jobs:
         shell: bash
         run: make fmt
 
+      - name: mod-tidy
+        # issue #5497: go mod tidy -diff; card sprint/go-mod-tidy-nightly-jobs.w1.g4.e17
+        shell: bash
+        run: make mod-tidy
+
       - name: build
         run: make build
 

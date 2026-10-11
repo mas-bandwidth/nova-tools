@@ -1132,6 +1132,29 @@ and these tests must answer identically on every platform in the matrix — so a
 command assembled in a variable or hidden in a composite action is not seen, and
 the allowlist is matched by prefix.
 
+### `mod-tidy` — the Makefile has a mod-tidy target that runs `go mod tidy -diff`
+
+**The rule.** The Makefile declares a phony `mod-tidy` target whose recipe runs
+`go mod tidy -diff`, `lint` has `mod-tidy` as a prerequisite, and `ci.yml`'s lint
+job has a step that runs `make mod-tidy`. This refuses an untidy go.mod from
+landing on dev.
+**The mistake it prevents.** An untidy go.mod (a module imported directly but listed as
+indirect or not at all, or a require nothing imports) makes every job run under
+`GOFLAGS=-mod=readonly` fail at `go: updates to go.mod needed` before a test runs.
+**The test.** `TestAnUntidyModuleIsRefusedOnTheCLPath` (`internal/ci/modtidy_class_test.go`),
+which reads the Makefile and ci.yml as text and checks that mod-tidy is phony with
+the right recipe, that lint has mod-tidy as a prerequisite, and that ci.yml's lint
+job runs `make mod-tidy`.
+**Its allowlist.** None.
+**Its remedy line.** `Makefile:<n>: no mod-tidy target found; add a mod-tidy target
+that runs `go mod tidy -diff``, `Makefile:<n>: mod-tidy must be declared in .PHONY`,
+`Makefile:<n>: mod-tidy recipe must run `go mod tidy -diff`: got ...`,
+`Makefile:<n>: lint target must have mod-tidy as a prerequisite; got deps: ...`,
+and `ci.yml:<n>: lint job must have a step that runs `make mod-tidy`; add a step
+named mod-tidy with run: make mod-tidy`.
+**Its narrowings.** The Makefile and ci.yml are read as text; a recipe or step hidden
+in a composite action is not seen.
+
 ### `cache` — no cache step on a self-hosted runner
 
 **The rule.** Every `actions/cache` step in `ci.yml` (including its `restore` and
