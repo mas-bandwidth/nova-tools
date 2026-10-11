@@ -116,7 +116,7 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken, Routes, MaxRedeals, Members
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
+          prov, rateLimited, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
           prov, rateLimited, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
@@ -186,7 +186,7 @@ StageRefused(c) ==
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
   /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-                 prov, rt, tried, rds, fw, bj, mem, refused, sj, lvd>>
+                 prov, rateLimited, rt, tried, rds, fw, bj, mem, refused, sj, lvd>>
 
 \* The child ends: any commit, any result, any verdict, and the provider's
 \* failure or not. rateLimited is set only when prov is set.
@@ -233,7 +233,7 @@ Judge(c) ==
   /\ rep' = [rep EXCEPT ![c] = JudgeOf(c)]
   /\ fw' = [fw EXCEPT ![c] = IF JudgeOf(c) = "failed" THEN @ + 1 ELSE @]
   /\ tried' = [tried EXCEPT ![c] = IF JudgeOf(c) = "provider" THEN @ \cup {rt[c]} ELSE @]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, rt, rds, bj, svars>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, rateLimited, prov, rt, rds, bj, svars>>
 
 \* The claim moves under the launch at any time before it is judged.
 Move(c) ==
@@ -287,7 +287,7 @@ Retire(c) ==
   /\ fin' = [fin EXCEPT ![c] = "retired"]
   /\ rep' = [rep EXCEPT ![c] = "retired"]
   /\ bj' = [bj EXCEPT ![c] = @ + 1]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, rt, tried, rds, fw, svars>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, rateLimited, prov, rt, tried, rds, fw, svars>>
 
 \* THE SPRINT'S SIDE OF A STAGING FINISH (internal/sprint stagingRefused, then the deal's
 \* redeal). The member is recorded as having refused the card; the deal places it on a
@@ -306,7 +306,7 @@ Restage(c) ==
   /\ refused' = [refused EXCEPT ![c] = @ \cup {mem[c]}]
   /\ \E m \in Members \ (refused[c] \cup {mem[c]}) : mem' = [mem EXCEPT ![c] = m]
   /\ lvd' = [lvd EXCEPT ![c] = FALSE]
-  /\ UNCHANGED <<att, earlier, commit, shape, verdict, prov, rt, tried, rds, fw, bj, sj>>
+  /\ UNCHANGED <<att, earlier, commit, shape, verdict, rateLimited, prov, rt, tried, rds, fw, bj, sj>>
 
 \* Every member has refused the card at staging: one judgment, the bound's, naming the
 \* members and the reason; the card is not dealt again (internal/sprint AtStagingBound).
@@ -316,7 +316,7 @@ StagingAll(c) ==
   /\ rep' = [rep EXCEPT ![c] = "stagingall"]
   /\ refused' = [refused EXCEPT ![c] = @ \cup {mem[c]}]
   /\ sj' = [sj EXCEPT ![c] = @ + 1]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, rt, tried, rds, fw, bj, stg, mem, lvd>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, rateLimited, prov, rt, tried, rds, fw, bj, stg, mem, lvd>>
 
 \* THE LEVEL (internal/sprint level): a card dealt and not yet taken moves to another
 \* member, never one that refused it at staging; once per deal here.
@@ -329,7 +329,7 @@ Level(c) ==
   /\ \E m \in LevelTargets(c) : mem' = [mem EXCEPT ![c] = m]
   /\ lvd' = [lvd EXCEPT ![c] = TRUE]
   /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-                 prov, rt, tried, rds, fw, bj, stg, refused, sj>>
+                 prov, rateLimited, rt, tried, rds, fw, bj, stg, refused, sj>>
 
 Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ Judge(c) \/ Move(c) \/ Reap(c)
                           \/ Redeal(c) \/ Retire(c) \/ StageRefused(c) \/ Restage(c) \/ StagingAll(c) \/ Level(c)
