@@ -808,4 +808,18 @@
   (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
    :title "The claude harness runs the newest model of each tier's class"
    :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
-   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")))
+   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")
+
+  (fix "a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop" :release "v1.2.15" :status "planned"
+   :title "A friend step drains every ended result and finishes off the loop"
+   :text "Each daemon step took at most one ended result from the batch, lane and read channels, so k
+    lanes that ended together were seen over k beats and their lanes stayed held that long; the step now
+    drains all of them (capped at maxStepResults), applying each in the loop goroutine so the daemon's
+    state stays single-writer. outboxStep no longer sends each finished job's tip check and finish
+    serially in the loop, blocking the step's lane take behind every other card's finish: each due job's
+    tip check and finish now runs in a goroutine, at most pushWidth at once, marked in flight so the
+    next step neither sends it again nor counts it finished, and its answer (finished, refused with the
+    reason, tip moved) is posted on a channel the step drains and applied by the loop. On shutdown the
+    daemon waits for in-flight finishes up to FinishWait and leaves any unanswered to be sent again
+    next run."
+   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")))
