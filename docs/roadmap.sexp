@@ -662,13 +662,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "PR #4597")
-  (item "update-revert-on-red-cancelled-run" :group "ops"
-   :title "A cancelled workflow run counts as red for revert-on-red"
-   :text "Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a
-    bad main."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "PR #4600")
   (item "ci-queue-and-flake-verbs" :group "ops"
    :title "nova-ci prints merge-queue status and detects flaky tests"
    :text "A queue verb prints each entry with failure receipts. A flake verb reruns tests in isolated
