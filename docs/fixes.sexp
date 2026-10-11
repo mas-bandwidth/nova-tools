@@ -559,7 +559,7 @@
     tla/BenchStage.tla at its verify, check.go cites tla/FuseBox.tla on cmdCheck, pkg/filelock's
     caller list adds pkg/friend and cmd/nova-config, and tla/README.md says six FuseBox witnesses.
     The nine groups rerun and merge clean (tla/RUNS.tsv). Tests and models only, no product change."
-   :origin "card tla-nova-tools-matching-models-cite-their-code.w2 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+   :origin "card tla-nova-tools-matching-models-cite-their-code.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
