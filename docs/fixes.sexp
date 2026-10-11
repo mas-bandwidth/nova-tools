@@ -307,6 +307,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-friend-read-lane-step" :release "v1.2.12" :status "planned"
+   :title "Unit-cover the read lane's step (readLaneStep)"
+   :text "readLaneStep (pkg/friend/read_lanes.go:444) had no unit test: under -cover it ran 0 of its
+    46 statements. A new pkg/friend/read_lane_step_test.go drives it through the daemon with a
+    reader row (Daemon.Take set, read lanes neither held nor stopped) under the package's
+    fake-clock synctest rig, asserting on what leaves the daemon: the take, verdict and return
+    argv, the harness runs and the recorded lines. It covers the took and held answers, a
+    refusal, holds=-, a held read with no packet, two lanes on one read, the slot lanes and the
+    stopped machine. No product change."
+   :origin "tmp/v1.2.12-inventory-2026-10-11.md section 8 item C8 (unit coverage)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
