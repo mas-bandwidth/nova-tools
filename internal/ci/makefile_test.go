@@ -53,7 +53,7 @@ var commandAllowlist = []string{
 	// the one build of CI's own verbs, once per job, before the steps that call the binary
 	// (TestToolsCIIsBuiltOnceAndNeverRun holds the shape)
 	`go build -o "$RUNNER_TEMP/ci" ./tools/ci`,
-	"go build ./... && go test -count=1 ./internal/oneline/",
+	"go build ./... && go test -count=1 ./pkg/oneline/",
 }
 
 // requiredTargets is the one entry CARD-9019 names: build, test (fast tier),

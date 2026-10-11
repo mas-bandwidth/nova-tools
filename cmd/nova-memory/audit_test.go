@@ -3,11 +3,11 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline/audit"
 )
 
 // The source-level tripwire behind the one-line guarantee: every argument this binary
-// prints is quoted, numeric, literal, escaped through internal/oneline, or exempted here
+// prints is quoted, numeric, literal, escaped through pkg/oneline, or exempted here
 // with its reason. See package audit for what the two walks see and what they cannot.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 	t.Parallel()
@@ -32,7 +32,7 @@ var memoryAudit = audit.Config{
 	// single spaces, so the echo is one line whatever an argument holds. The
 	// classifier walks each body like the others, so every claim here is checked.
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
-	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// every one of its four fields through oneline.Field inside pkg/buildinfo, where
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
@@ -53,16 +53,16 @@ var memoryAudit = audit.Config{
 		"verify.go|cmdVerify|*links":              "validated above the site to be exactly gate or info",
 	},
 	Imports: []string{
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`, // shared JSON renderer marshals the result as one escaped JSON record
+		`"github.com/mas-bandwidth/nova-tools/pkg/tool"`, // shared JSON renderer marshals the result as one escaped JSON record
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"`,
 		// runtime is read for GOOS alone, in commandLine: which shell the echoed
 		// quickstart line has to paste into is a property of the machine printing it.
 		// It writes to no stream.
@@ -83,7 +83,7 @@ var memoryAudit = audit.Config{
 		// package, which the classifier walks like any other print site, and bounded puts
 		// its own two fields -- the kind and the remedy -- through oneline before writing
 		// them. It writes to the stream the caller hands it and to nothing else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/memindex"`,
 	},
 	MinClassified: 30,

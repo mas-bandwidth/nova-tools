@@ -14,9 +14,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisfn"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -183,7 +183,7 @@ func want(t *testing.T) string {
 }
 
 // TestFnLibraryIsTheLoadersBytes: the library the fn verbs load is, byte for
-// byte, the source internal/nsprint/fn builds and every earlier loader put on
+// byte, the source pkg/nsprint/fn builds and every earlier loader put on
 // the store, so its digest is the one a deployed store holds.
 func TestFnLibraryIsTheLoadersBytes(t *testing.T) {
 	t.Parallel()

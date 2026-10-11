@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/readregular"
+	"github.com/mas-bandwidth/nova-tools/pkg/readregular"
 )
 
 // BrokenLink is one relative markdown link that does not resolve — or, when

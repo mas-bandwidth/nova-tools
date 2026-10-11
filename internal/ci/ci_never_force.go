@@ -36,6 +36,26 @@ var neverForcePatterns = []*regexp.Regexp{
 // acting on one, so it is not a finding.
 var neverForceSharedRef = regexp.MustCompile(`(^|[^A-Za-z0-9_])origin([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])dev([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])main([^A-Za-z0-9_]|$)`)
 
+// neverForceLiterals are the literal words neverForcePatterns cannot match
+// without: `push` (three of them), `--force-with-lease` and `reset`. A line
+// holding none of them can match no pattern, so it is passed over before any
+// regexp runs on it. Every line of every scanned file is read, and under -race
+// running the two regexps on each one was most of the rule's time: 29-56 s of
+// TestNoForcePushOrHardResetOfASharedRef on macos-latest, which put
+// internal/ci over its 75 s test timeout in certification.
+var neverForceLiterals = []string{"push", "--force-with-lease", "reset"}
+
+// neverForceMayMatch reports whether line holds one of neverForceLiterals,
+// the necessary condition for any of neverForcePatterns to match it.
+func neverForceMayMatch(line string) bool {
+	for _, lit := range neverForceLiterals {
+		if strings.Contains(line, lit) {
+			return true
+		}
+	}
+	return false
+}
+
 // neverForceFinding is one refused pattern at one line of one file.
 type neverForceFinding struct {
 	Rel     string
@@ -79,7 +99,7 @@ func scanNeverForce(rel, body string) []neverForceFinding {
 			strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if !neverForceSharedRef.MatchString(line) {
+		if !neverForceMayMatch(line) || !neverForceSharedRef.MatchString(line) {
 			continue
 		}
 		for _, re := range neverForcePatterns {

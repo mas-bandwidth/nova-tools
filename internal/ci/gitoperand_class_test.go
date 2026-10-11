@@ -16,7 +16,7 @@ import (
 // The class test behind issue mas-bandwidth/ideas#829: a card is untrusted input, and
 // a value a card supplies (base-repo:, base-sha:, a BASE: ref, a PR-HEAD:) that reaches
 // git as a positional is read as an option when it starts with `-`. Every git call under
-// internal/swarm and cmd/nova-swarm puts such an operand behind `--` (or behind
+// pkg/swarm and cmd/nova-swarm puts such an operand behind `--` (or behind
 // `--end-of-options`, the form for a rev that `--` would turn into a path), so git reads
 // every word after the separator as an operand and nothing else.
 //
@@ -35,11 +35,11 @@ import (
 // operand with no separator before it, and is a finding. A final `args...` spread is not
 // read: the argv it spreads is read where it is built.
 const (
-	gitrunPath = "github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	gitrunPath = "github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
 // gitOperandDirs are where card values reach git.
-var gitOperandDirs = []string{"internal/swarm", "cmd/nova-swarm"}
+var gitOperandDirs = []string{"pkg/swarm", "cmd/nova-swarm"}
 
 // gitOperandHelpers are the swarm helpers that run a git, with the count of leading
 // parameters before the argv.
@@ -72,7 +72,7 @@ var gitOperandSubcommandValueOptions = map[string]map[string]bool{
 // gitOperandAllowed names the sites allowed an operand with no separator, as "file:Func"
 // with the reason: a site whose operand is held to a shape git printed, where no separator works.
 var gitOperandAllowed = map[string]string{
-	"internal/swarm/lintbase.go:testDefinedAt": "git grep 2.43 reads --end-of-options before a tree-ish as a revision; the function refuses any tree that is not the 40 hex digits of rev-parse",
+	"pkg/swarm/lintbase.go:testDefinedAt": "git grep 2.43 reads --end-of-options before a tree-ish as a revision; the function refuses any tree that is not the 40 hex digits of rev-parse",
 }
 
 // gitSubcommandOf is the first literal of an argv that is neither an option nor the value
@@ -273,7 +273,7 @@ func TestCardDerivedGitOperandsFollowTheSeparator(t *testing.T) {
 func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 	t.Parallel()
 
-	const head = "package p\n\nimport (\n\t\"context\"\n\t\"os/exec\"\n\n\t\"github.com/mas-bandwidth/nova-tools/internal/gitrun\"\n)\n\nvar _ = context.Background\nvar _ = exec.Command\nvar _ = gitrun.Run\n\n"
+	const head = "package p\n\nimport (\n\t\"context\"\n\t\"os/exec\"\n\n\t\"github.com/mas-bandwidth/nova-tools/pkg/gitrun\"\n)\n\nvar _ = context.Background\nvar _ = exec.Command\nvar _ = gitrun.Run\n\n"
 	cases := []struct {
 		name string
 		src  string
@@ -291,7 +291,7 @@ func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 		{"an argv spread is read where it is built", head + "func f(ctx context.Context, argv []string) { stageGit(ctx, argv...) }", 0},
 		{"a gitrun call with a card value", head + "func f(ctx context.Context, sha string) { _, _ = gitrun.Output(ctx, gitrun.Options{}, \"show\", sha) }", 1},
 		{"a gitrun call behind --end-of-options", head + "func f(ctx context.Context, sha string) { _, _ = gitrun.Output(ctx, gitrun.Options{}, \"show\", \"--end-of-options\", sha) }", 0},
-		{"an aliased gitrun", strings.Replace(head, "\"github.com/mas-bandwidth/nova-tools/internal/gitrun\"", "g \"github.com/mas-bandwidth/nova-tools/internal/gitrun\"", 1) + "func f(ctx context.Context, sha string) { _, _ = g.Output(ctx, g.Options{}, \"show\", sha) }", 1},
+		{"an aliased gitrun", strings.Replace(head, "\"github.com/mas-bandwidth/nova-tools/pkg/gitrun\"", "g \"github.com/mas-bandwidth/nova-tools/pkg/gitrun\"", 1) + "func f(ctx context.Context, sha string) { _, _ = g.Output(ctx, g.Options{}, \"show\", sha) }", 1},
 		{"exec.CommandContext of git with a card value", head + "func f(ctx context.Context, sha string) { _ = exec.CommandContext(ctx, \"git\", \"show\", sha) }", 1},
 		{"exec.Command of git behind --", head + "func f(sha string) { _ = exec.Command(\"git\", \"show\", \"--\", sha) }", 0},
 		{"exec.Command of another program", head + "func f(sha string) { _ = exec.Command(\"ls\", sha) }", 0},
@@ -308,13 +308,13 @@ func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 		{"a separator in a comment is not one", head + "func f(sha string) {\n\t// -- before sha\n\tbaseGit(\"r\", \"show\", sha)\n}", 1},
 	}
 	for _, c := range cases {
-		got := gitOperandFindings("internal/swarm/probe.go", []byte(c.src))
+		got := gitOperandFindings("pkg/swarm/probe.go", []byte(c.src))
 		assert.Len(t, got, c.want, "%s: %v", c.name, got)
 	}
 
 	// The real stage.go is read, so a probe above is not the only proof the rule sees it.
 	f := stageFile(t)
-	require.NotNil(t, f, "internal/swarm/stage.go is not in the tree")
+	require.NotNil(t, f, "pkg/swarm/stage.go is not in the tree")
 	assert.Empty(t, gitOperandFindings(f.Rel, f.Src))
 	stripped := strings.Replace(string(f.Src), "\"remote\", \"set-url\", \"origin\", \"--\", baseRepo", "\"remote\", \"set-url\", \"origin\", baseRepo", 1)
 	require.NotEqual(t, string(f.Src), stripped, "the set-url call moved; re-aim this probe")
@@ -325,7 +325,7 @@ func TestGitOperandClassTestSeesTheCatFileSeparatorInStage(t *testing.T) {
 	t.Parallel()
 
 	f := stageFile(t)
-	require.NotNil(t, f, "internal/swarm/stage.go is not in the tree")
+	require.NotNil(t, f, "pkg/swarm/stage.go is not in the tree")
 	stripped := strings.Replace(string(f.Src), "\"cat-file\", \"-e\", \"--end-of-options\", baseSha", "\"cat-file\", \"-e\", baseSha", 1)
 	require.NotEqual(t, string(f.Src), stripped, "the cat-file call moved; re-aim this probe")
 	assert.Len(t, gitOperandFindings(f.Rel, []byte(stripped)), 1, "stage.go without its separator before the card's base-sha in cat-file is red")
@@ -333,8 +333,8 @@ func TestGitOperandClassTestSeesTheCatFileSeparatorInStage(t *testing.T) {
 
 func stageFile(t *testing.T) *treeFile {
 	t.Helper()
-	for _, f := range repoTree(t).GoFilesUnder(false, "internal/swarm") {
-		if f.Rel == "internal/swarm/stage.go" {
+	for _, f := range repoTree(t).GoFilesUnder(false, "pkg/swarm") {
+		if f.Rel == "pkg/swarm/stage.go" {
 			return f
 		}
 	}

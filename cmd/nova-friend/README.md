@@ -32,7 +32,7 @@ home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
 
 ```text
-$ nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+$ nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
 INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
 INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"

@@ -9,7 +9,7 @@ import (
 	"io/fs"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // cmdInit makes an empty box where none is. It is the one way a box comes into being

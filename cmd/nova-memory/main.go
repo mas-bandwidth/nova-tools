@@ -35,9 +35,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 const usage = `nova-memory: search your own markdown notes, and check a draft against what they already say
@@ -358,7 +358,7 @@ func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 // given is nil when the arguments could not be parsed at all: nothing after that is
 // knowable. An unknown flag, one missing its value or one with a value it cannot take is
 // refused naming the verb's flags and the nearest one (verbflag.Explain, the wording
-// internal/tool gives every tool), with the verb's help as the remedy. -h after a verb is
+// pkg/tool gives every tool), with the verb's help as the remedy. -h after a verb is
 // not refused: verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, pos []string, ok bool) {
 	fs.SetOutput(io.Discard)

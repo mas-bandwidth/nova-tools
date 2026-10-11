@@ -3,7 +3,7 @@
 package main
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // ISSUE #1463: THE HARNESS FENCE IGNORED THE WORKER DESCRIPTION'S `read_roots`, so a staged
@@ -13,7 +13,7 @@ import (
 //
 // `read_roots` is the worker description's own declaration of what every job of this worker
 // may READ: a bench-local mirror, a corpus, a toolchain under a user directory. It is
-// validated at load (internal/swarm/worker.go:227-236 refuses a relative entry, an empty one,
+// validated at load (pkg/swarm/worker.go:227-236 refuses a relative entry, an empty one,
 // one that does not exist and one that is not a directory) and `worker check` answers
 // `WORKER OK`, so a coordinator has every reason to believe the path is usable.
 //

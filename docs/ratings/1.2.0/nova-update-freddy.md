@@ -18,7 +18,7 @@ USE: The tool is highly suitable for AI agent automation. It supports structured
 | 1 | internal/update/out.go:30 | Binary prints FAILED but help/spec document FAIL | Change binary to print FAIL instead of FAILED | S |
 | 2 | internal/update/cli.go:165 | Banner says check and report compare the two; report reads installed only | Say check and status compare; report prints what this box runs | S |
 | 3 | internal/update/read.go:72 | Pin row with local:go version reports latest=version, exit 0, a false green | Refuse pin read whose token is not version-shaped | M |
-| 4 | internal/release/cli.go:242 | --version help says such as 1.2.0; install refuses 1.2.0 as not v-prefixed | Say such as v1.2.0 | S |
+| 4 | pkg/release/cli.go:242 | --version help says such as 1.2.0; install refuses 1.2.0 as not v-prefixed | Say such as v1.2.0 | S |
 | 5 | internal/update/adopt.go:148 | watch splits pass across stdout and stderr; ESCALATE claims duty files issue while watch -h says this tool files nothing | One stream for pass; say who answers, not that something was filed | M |
 | 6 | internal/update/cli.go:146 | Usage line lists 5 release verbs; help release lists 6 (cycle) | Name cycle in usage line | S |
 | 7 | docs/SPEC-UPDATE.md:6 | Spec opens "One tool, three verbs" over 4 verb bullets | State the real surface | S |

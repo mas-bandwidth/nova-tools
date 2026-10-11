@@ -1,7 +1,7 @@
 // Command nova-up sets up nova on one machine, from nothing to a first
 // sprint: it plans every step, prints one line per step, and applies the
 // steps that are not ok (docs/SPEC-UP.md). The tool is internal/up's Tool on
-// internal/tool, over this machine.
+// pkg/tool, over this machine.
 //
 //	example:
 //	  nova-up --local --dry-run --root ./nova-try

@@ -46,19 +46,3 @@ func TestPathFilterHasCompleteHistoryAndGatesCI(t *testing.T) {
 	}
 	assert.Equal(t, 2, verdicts)
 }
-
-func TestTickGateUsesTheCurrentRedisInstaller(t *testing.T) {
-	t.Parallel()
-	jobs, _ := certJobs(t)
-	job, ok := jobs["tick-gate"]
-	require.True(t, ok)
-	i := stepIndex(job, "install redis-server")
-	require.GreaterOrEqual(t, i, 0)
-	assert.Equal(t, `"$RUNNER_TEMP/ci" install-redis-server`, job.Steps[i].Run)
-	build := stepIndex(job, "build the ci runner")
-	require.GreaterOrEqual(t, build, 0)
-	assert.Equal(t, `go build -o "$RUNNER_TEMP/ci" ./tools/ci`, job.Steps[build].Run)
-	assert.Less(t, build, i)
-	assert.Less(t, stepIndex(job, "use the installed Go toolchain"), i)
-	assert.Less(t, i, stepIndex(job, "the tick gate, against the bench's store"))
-}

@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
@@ -114,7 +114,7 @@ func migrationLines(sql string) []string {
 }
 
 // shownSQL is the first max lines of a migration's SQL (all of it when max is
-// zero or negative), the cut internal/bounded's MORE line stands for
+// zero or negative), the cut pkg/bounded's MORE line stands for
 // (docs/STANDARD.md, section 2, "Output is bounded and keeps its totals").
 func shownSQL(sql []string, max int) []string {
 	if max <= 0 || len(sql) <= max {

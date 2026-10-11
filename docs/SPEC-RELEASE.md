@@ -30,7 +30,7 @@ is a line nobody reads.
 ### The list
 
 Each entry is a **directory prefix**, trailing slash included, and the slash is load-bearing:
-`internal/secrets` without it would also catch `internal/secrets<sibling>/` — a directory whose name
+`pkg/secrets` without it would also catch `pkg/secrets<sibling>/` — a directory whose name
 merely begins the same way. Matching is by prefix and by nothing else — no guessing from a file name, no
 substring anywhere in the path.
 
@@ -39,13 +39,13 @@ substring anywhere in the path.
 cmd/nova-sandbox/
 cmd/nova-secrets/
 infra/image/
-internal/sandbox/
-internal/secrets/
+pkg/sandbox/
+pkg/secrets/
 profiles/
 tools/sandboxcheck/
 ```
 
-**The list lives in `internal/release/sensitive.go`, and this block is the same list in the same order.**
+**The list lives in `pkg/release/sensitive.go`, and this block is the same list in the same order.**
 `internal/ci`'s `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` reads both and fails when they
 disagree, because two copies of a security list drift and the copy that drifts is always the one nobody is
 running. A path is added to the Go file and to this block in the same commit.
@@ -226,7 +226,7 @@ RELEASE BUILD OK version=<v> platforms=<a,b,c> tools=<n> sums=<sha256,sha256,sha
 ```
 
 `platforms=` and `sums=` are the same list in the same order, one token each. `pruned=` is the
-retention rule (`internal/release/prune.go`), run last by `build` on `--out` and by `install` on
+retention rule (`pkg/release/prune.go`), run last by `build` on `--out` and by `install` on
 `--from`: of the directories whose names are versions, it keeps the one just built or installed,
 the one the machine had installed before it, and the `KeepBesides` (3) newest of the rest by
 modification time, and removes the others through `safepath.RemoveUnder`. A removal that fails is
@@ -306,7 +306,7 @@ The five verbs that put binaries on every bench in the fleet are declared in thi
 SPEC-UPDATE, in the help string — and in the command reference. `docs/CLI.md` is what the dogfood
 ledger reads, so a verb missing from it would be a verb nothing asks to have been run by a
 non-author. `### The release verb` under `## nova-update` is that section, and a test holds it
-against `internal/release.Verbs` so a sixth release verb fails on the day it is added.
+against `pkg/release.Verbs` so a sixth release verb fails on the day it is added.
 
 *Tests: `TestTheCommandReferenceDeclaresEveryReleaseVerb`,
 `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec`.*
@@ -377,7 +377,7 @@ verbs are its caller, so the claim that a release has been dogfooded is never ju
 person said it was. A tag cannot be quietly amended and pushed again.
 
 **`cut` and `build` run the gate FIRST.** Before the forge is asked anything, before a single tool is
-compiled. The gate is `internal/dogfood.Gate` in process rather than a shell out to `nova-check` — one
+compiled. The gate is `pkg/dogfood.Gate` in process rather than a shell out to `nova-check` — one
 process, one set of refusals, no shell to get wrong — and it is the same read
 `nova-check dogfood gate --cli <reference> --receipts <dir>` does.
 
@@ -415,7 +415,7 @@ cannot be read refuses naming its path: an I/O error is not a tool outside the r
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
 `--source` for `build`). `--receipts` names the receipts directory and defaults to
-`DefaultReceiptsDir` (in `internal/release`, under the home directory) **when that directory exists** — the single exception to no path being guessed,
+`DefaultReceiptsDir` (in `pkg/release`, under the home directory) **when that directory exists** — the single exception to no path being guessed,
 taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
 run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
 
@@ -505,16 +505,16 @@ A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receip
 
 ## 14. A promised recovery journey is proven at the release revision, or the cut refuses
 
-A review of the release lane (item 5): the chaos suite (`internal/friend/chaos_functional_test.go`) turns every part
+A review of the release lane (item 5): the chaos suite (`internal/sprint/friend_chaos_functional_test.go`: friend against the sprint's store, so it lives with the sprint) turns every part
 the landed code cannot meet yet into a named skip (`OWED <card>: ...`), so a red-by-design test does
 not block the merge queue, and `go test` reports a parent whose subtests all skipped as a pass. A
 green run was read as proof that a friend whose harness closed, whose session went silent, who hit a
 usage limit or whose bus credential was revoked is detected, his cards are dealt elsewhere and he
 recovers. It proved none of that.
 
-**The promise is the checkout's.** A checkout that ships `internal/friend` promises the journeys in
+**The promise is the checkout's.** A checkout that ships `internal/sprint` promises the journeys in
 `release.PromisedJourneys`, one per chaos subtest; `TestThePromisedJourneysAreTheChaosSuitesSubtests`
-holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
+(nova-sprint's `journeys_test.go`, beside the suite, in mas-bandwidth/nova-sprint) holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
 the receipt says `journeys=none-promised`.
 
 **The evidence is bound to the revision.** `cut --journeys <file>` names a file whose first line is
@@ -562,8 +562,8 @@ for an unkept promise, not for evidence about something else: evidence that does
 `nova-sprint adopt` runs `fleet/tools.yml` for the seat. Its checks precede the installation window; the
 configuration store migrates as its owning role, and a refusal in the window restores the previous tools
 and function library while leaving the migration in place. The command is not called by the sprint tick.
-The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "Adopting a build"; the coordinator procedure is in
-[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md), "Adopting the seat build".
+The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), "Adopting a build"; the coordinator procedure is in
+[SPRINT-COORDINATOR.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR.md), "Adopting the seat build".
 
 *Test: `TestAdoptRunsThePlayAndRefusesAHalfMove`.*
 
@@ -644,7 +644,7 @@ The owner, 2026-10-05: "We should not make a release without verifying that we c
 not < 1/2 of it." and "We must be reliable, and accurate." On 2026-10-04 openrouter's own account
 showed about $2,250 spent while the sprint's cost panel showed $836: runs with no result, reads and
 retries were not priced. The cost records price every paid call whatever its outcome
-(`internal/sprint`, cost.go); this gate is how a release proves they do (`internal/release/spendcheck.go`).
+(`internal/sprint`, cost.go); this gate is how a release proves they do (`pkg/release/spendcheck.go`).
 
 **The window.** From the previous tag's commit (the forge's `commits/<tag>` committer date), or
 `--spend-since <RFC3339>`, taken back to the start of its UTC day (the providers count by the UTC
@@ -705,6 +705,37 @@ tier amounts sum exactly to the displayed total.
 `TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`,
 `TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`.*
 
+## 19. A red or missing CI is cut past only with `--waive-ci`, and the waiver is in the tag
+
+A tag is a claim about source, and a release must not make that claim about a commit CI never
+vouched for. `cut` reads the check runs on the commit and refuses unless every one has completed
+green — a check that has not finished is as unvouched-for as one that failed, and a commit no run
+has judged is refused too, because "nobody looked" is not "nobody objected". The refusal names the
+checks:
+
+```
+RELEASE CUT REFUSED: CI is not green on this commit: ci=failure; fix the red and cut again; a tag cannot be amended
+RELEASE CUT REFUSED: no check run has judged this commit; dispatch CI on this commit and cut again when it is green
+```
+
+**The way past is the cut's own flag, `--waive-ci "<who, when>"`** — the person who waives the CI
+and the date, the pair the owner's v1.2.0 and v1.2.1 waivers had to be hand-made tags to carry.
+With it the cut prints `RELEASE CUT CI WAIVED waived=<who> checks=<name,...>` and records the
+waiver where the release is read: both the tag annotation and the CHANGELOG section carry
+
+```
+CI waived: <who, when>
+CI waived checks: <name=conclusion, ...>
+```
+
+naming the red checks it let past (or the unfinished ones, or that none judged the commit), so a
+person asking in six months why a version shipped on a red commit reads the answer in the tag. The
+flag is the cut's and no other verb's, and certification is not waived by it: `--no-certify` is
+`adopt`'s, and a waived CI says nothing about a machine's certificate. **An empty value refuses**
+(`--waive-ci ""` is not a waiver), and **a green CI refuses a waiver** with `cut without it; nothing here needs waiving`, because a waiver of nothing is a lie in the release's permanent record.
+
+*Tests: `TestACutWithAWaiverRecordsItInTheTag`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -721,7 +752,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 2. `TestCutWithASecurityReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
 3. `TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths` — an ordinary range prints no `RELEASE CUT SENSITIVE` line.
 4. `TestSensitiveClassifiesByPrefixAndNothingElse` — classification is by directory prefix (trailing slash load-bearing) and nothing else, never by filename or substring.
-5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `internal/release/sensitive.go` and the spec block stay the same list in the same order.
+5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `pkg/release/sensitive.go` and the spec block stay the same list in the same order.
 6. `TestCutRefusesARangeTooBigToClassify` — a range whose file list reaches the compare ceiling (300) is refused rather than classified from a prefix.
 7. `TestCutRefusesASecurityReadNoReceiptCouldCarry` — `--security-read` is held to the field law (no whitespace, no `=`, one token) and refused otherwise, even on an ordinary range.
 8. `TestTheTagIsAnnotatedAndCarriesTheSumsDigest` — the tag object's message carries the version, `Cut from <sha>.`, and `sums=<sha256>` (written only with `--sums`).
@@ -751,7 +782,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 32. `TestPullDeletesTheDigestFileToo` — `pull` names and removes `SUMS.digest` alongside the listed artifacts, so the final `rmdir` does not find it non-empty.
 33. `TestAdoptRefusesWhenTheLocalToolPredatesTheRelease` — `adopt` refuses when the local tool predates the release, naming both versions and the `release install` that fixes it.
 34. `TestSnapshotRefusesAMissingFlag` — `nova-version snapshot` requires both `--bin` and `--out` and defaults neither.
-35. `TestTheCommandReferenceDeclaresEveryReleaseVerb` — `docs/CLI.md` declares every release verb, held against `internal/release.Verbs`.
+35. `TestTheCommandReferenceDeclaresEveryReleaseVerb` — `docs/CLI.md` declares every release verb, held against `pkg/release.Verbs`.
 36. `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec` — rules 4 to 10 are in the release spec.
 37. `TestAdoptTakesWindowsDrivePathsForBinAndDest` — drive-absolute paths are accepted for the windows target only (refused by name elsewhere: `TestAdoptRefusesAWindowsPathForALinuxTarget`).
 38. `TestRemotePathFoldsBackslashesForTheFarSidesShell` — backslashes are folded to forward slashes by `RemotePath` before any command is composed (POSIX shell, no PowerShell: `TestAdoptComposesSlashPathsForAWindowsBench`).
@@ -780,10 +811,11 @@ One numbered line per test; where one test holds several behaviours, they share 
 61. `TestATransitiveChangeRebuildsTheTool` (functional) — the real `go list` on a chain A -> B -> C (a tool, a package it imports, a package that one imports) puts C in A's set (`.Deps` is recursive), and a change under C, an embedded-style file included, rebuilds A and reuses a tool beside it.
 62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
 63. `TestTheGateRefusesAPromisedJourneyWithoutEvidence` — a cut whose checkout promises recovery journeys refuses without `--journeys`, on evidence for another revision or installed build, without a function or schema version, on a broken line, and on any owed, skipped, failed or not-run journey (a green parent proves nothing); an optional platform's `PLATFORM UNAVAILABLE` skip is named and passes; a proven cut binds the revision, versions and installed builds into the section; `--no-journey-gate --reason` enumerates every incomplete journey there.
-64. `TestThePromisedJourneysAreTheChaosSuitesSubtests` — every promised journey names a subtest the chaos suite runs.
+64. `TestThePromisedJourneysAreTheChaosSuitesSubtests` (`internal/sprint`) — every promised journey names a subtest the chaos suite runs.
 65. `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` — over the window since the previous tag's UTC day, a store figure of $836 against a provider's own $2,250 refuses naming the provider, both figures and the gap; a 3% gap passes (`spend=ok`); a provider whose readout errs, or has none, refuses; subscription friends' recorded tokens are set beside their receipts the same way, and no receipts refuses; no store refuses; `--no-spend-gate --reason` writes every unpassed row into the section.
 66. `TestOpenRouterSpendIsTheActivityDaysAndToday` — openrouter's own count is its activity's completed days in the window plus the key's count of today; no key, or a window past 30 days, is unread; opencode and Inception are unread.
 67. `TestReceiptsAreReadOnlyForTheirWindow` — a receipts file is read only for the window it covers.
+68. `TestACutWithAWaiverRecordsItInTheTag` — a cut over a red or missing CI is refused without `--waive-ci`; with `--waive-ci "<who, when>"` the tag annotation and the CHANGELOG section carry `CI waived: <who, when>` and the red check names; an empty waiver is refused.
 
 Demanded, and proven by no test yet (8):
 

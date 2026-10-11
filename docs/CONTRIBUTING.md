@@ -175,7 +175,7 @@ standard-library rule as a rule. Nothing mechanical reads intent.
 ### revert-on-red: the mechanical revert of a red main
 
 `.github/workflows/revert-on-red.yml` runs on its own. When
-`ci` concludes failure on a push to `main` whose parent ci run on `main` was
+`ci` concludes failure or is cancelled on a push to `main` whose parent ci run on `main` was
 green, it first re-runs the failed jobs once (flake guard) and waits for that
 rerun — the rerun's own `workflow_run` completion re-enters the workflow with
 `run_attempt` 2. Only if the rerun is red too does it revert that push —

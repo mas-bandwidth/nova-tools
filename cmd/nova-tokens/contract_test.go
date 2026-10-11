@@ -78,13 +78,13 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// removes the sentinel this run made.
 		"internal/tokens/lock_other.go": {"os.Remove"},
 		// The fold's own lock file, whose whole body this run wrote: the pid the
-		// platform with no flock writes, and on unix internal/filelock's holder
+		// platform with no flock writes, and on unix pkg/filelock's holder
 		// stamp, which the take truncates to write and the release truncates to
 		// clear. The file itself is never removed.
-		"internal/tokens/lock_poll_other.go":    {".Truncate("},
-		"internal/filelock/filelock.go":         {".Truncate("},
-		"internal/filelock/filelock_unix.go":    {".Truncate("},
-		"internal/filelock/filelock_windows.go": {".Truncate("},
+		"internal/tokens/lock_poll_other.go": {".Truncate("},
+		"pkg/filelock/filelock.go":           {".Truncate("},
+		"pkg/filelock/filelock_unix.go":      {".Truncate("},
+		"pkg/filelock/filelock_windows.go":   {".Truncate("},
 		// The copy under --scratch, made from the live database this run and read there;
 		// the live file is never opened for writing.
 		"internal/tokens/opencode.go": {"os.Create("},
@@ -93,7 +93,7 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		"cmd/nova-tokens/privatecopy.go": {"os.Remove"},
 		// The temporary file atomicfile writes through before rename; on error or
 		// cleanup, atomicfile removes the temporary file this run created.
-		"internal/atomicfile/atomicfile.go": {"os.Remove"},
+		"pkg/atomicfile/atomicfile.go": {"os.Remove"},
 	}
 	used := map[string]bool{}
 	// Every package of the binary, walked from its imports and from the directories this

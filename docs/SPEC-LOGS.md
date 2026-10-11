@@ -1,17 +1,17 @@
 # SPEC-LOGS — the structured event line
 
-`internal/log` writes one structured event line **beside** the one human line a part
+`pkg/log` writes one structured event line **beside** the one human line a part
 already writes, never instead of it, to whatever writer its caller points it at. No living
-production path points it at a stream today: `internal/fleet`'s certify pass takes a `Log`
-writer, and its one caller leaves it nil, so nothing is written. The primitive is `internal/log`: Go's own `log/slog`
+production path points it at a stream today: `pkg/fleet`'s certify pass takes a `Log`
+writer, and its one caller leaves it nil, so nothing is written. The primitive is `pkg/log`: Go's own `log/slog`
 with `slog.NewJSONHandler`, the fixed field list below, the one-line escape of
-`internal/oneline`, and a redaction pass that keeps secret values out of every line. Nothing
+`pkg/oneline`, and a redaction pass that keeps secret values out of every line. Nothing
 here is a second logging system. Related: [SPEC.md](SPEC.md) (an event is exactly one
 line), [SPEC-SECRETS.md](SPEC-SECRETS.md) (the secrets a line must never carry).
 
 ## Part 1 — the primitive
 
-`internal/log` holds two things:
+`pkg/log` holds two things:
 
 - **`Line`** — one event as a value. `New(clock, guid, source)` fills `ts` from the injected
   clock, `guid` from the injected source, `source` from the caller, and `level` as `INFO`;

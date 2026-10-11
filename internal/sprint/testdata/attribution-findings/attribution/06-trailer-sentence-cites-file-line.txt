@@ -1,1 +1,0 @@
-the commit trailer claims Claude Opus 5.5 but BRIEF.md:14 asks for Claude <your model>; amend the trailer (see BRIEF.md:14).

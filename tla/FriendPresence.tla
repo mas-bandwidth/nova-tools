@@ -64,6 +64,9 @@
 \*                   her row never carries (only a machine's does): her
 \*                   ready card is never taken while she is up,
 \*                   ReadyTakenWhileUp
+\*   "oneshotsession" a one-shot friend answers only from her session (the
+\*                   batch rule), so a silent or full session keeps her down:
+\*                   OneShotNeverDownBySession
 \*
 \* The take (internal/sprint/steps_work.go takeSeat; the card
 \* take-by-id-reads-the-friends-presence.w1): a card on a friend's row is
@@ -76,9 +79,10 @@
 
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Friends, Cards, Bound, MaxEvents, Broken, Watched
+CONSTANTS Friends, Cards, Bound, MaxEvents, Broken, Watched, OneShot
 
 ASSUME Bound >= 1 /\ MaxEvents \in Nat /\ Watched \subseteq Friends
+ASSUME OneShot \subseteq Friends
 
 VARIABLES harness, closedAge, session, limit, daemon, app,
           held, answered, answerAge, pending, holder, takenFrom, taken, events
@@ -212,11 +216,15 @@ Ping(f) ==
 
 \* The session answers the open nonce: only a running harness, a session
 \* that takes turns and a provider not limiting it can (the witness
-\* "closedanswers" counts an answer from a closed harness). The answer's age
-\* starts again.
+\* "closedanswers" counts an answer from a closed harness). A one-shot friend
+\* has no long-lived session by design (docs/SPEC-FRIEND.md, presence: her
+\* check is a tiny fresh turn per check), so her answer does not depend on
+\* session[f]; the witness "oneshotsession" makes it depend on the session
+\* again, as a batch friend's does. The answer's age starts again.
+SessionNeeded(f) == f \notin OneShot \/ Broken = "oneshotsession"
 CanAnswer(f) ==
   /\ harness[f] = "running" \/ Broken = "closedanswers"
-  /\ session[f] = "answering"
+  /\ session[f] = "answering" \/ ~SessionNeeded(f)
   /\ limit[f] = "none"
 Answer(f) ==
   /\ pending[f] /\ CanAnswer(f)
@@ -328,6 +336,17 @@ NoCardOffUp == \A f \in Friends : Status(f) # "up" => CardsOf(f) = {}
 \* The daemon's beat alone never makes a friend up: a friend whose session
 \* never answered is not up, however the daemon beats.
 BeatAloneNeverUp == \A f \in Friends : ~answered[f] => Status(f) # "up"
+
+\* A one-shot friend with a running daemon is never down because of her
+\* session: when she is down, her daemon running, a check pending and her
+\* session silent, the silence is not what blocks the answer (CanAnswer does
+\* not read session[f] for her). The witness "oneshotsession" answers only
+\* from the session, so a silent one-shot friend is down with no answer open
+\* to her and this fails.
+OneShotNeverDownBySession ==
+  \A f \in OneShot : Status(f) = "down" =>
+    ~(harness[f] = "running" /\ limit[f] = "none" /\ ~held[f]
+      /\ session[f] = "silent" /\ pending[f] /\ ~CanAnswer(f))
 
 \* The liveness. A closed harness is shown down (or opens again) on a clock
 \* that keeps ticking (SpecClosed or SpecLive).

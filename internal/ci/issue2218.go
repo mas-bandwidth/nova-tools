@@ -16,8 +16,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // CILegsFromYAML reads the ci.yml workflow text and returns the GOOS values
@@ -326,7 +326,7 @@ func helpBannerExamplesWith(root string, seams SourceSeams) (map[string]string, 
 					}
 				}
 			}
-			// A tool on internal/tool writes its banner from its verbs: each
+			// A tool on pkg/tool writes its banner from its verbs: each
 			// verb's Example is its example lines, after the tool's name.
 			for _, ex := range exampleFields(file) {
 				for _, l := range strings.Split(ex, "\n") {
@@ -343,7 +343,7 @@ func helpBannerExamplesWith(root string, seams SourceSeams) (map[string]string, 
 }
 
 // exampleFields returns the string literal of every `Example:` field of a
-// composite literal: an internal/tool Verb's example lines.
+// composite literal: an pkg/tool Verb's example lines.
 func exampleFields(file *ast.File) []string {
 	var out []string
 	ast.Inspect(file, func(n ast.Node) bool {

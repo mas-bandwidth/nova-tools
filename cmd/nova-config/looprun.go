@@ -11,18 +11,18 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// loop run: a loop's command under its single-instance lock (internal/config/looprun.go,
+// loop run: a loop's command under its single-instance lock (pkg/config/looprun.go,
 // docs/SPEC-CONFIG.md "loop run"). The verb opens the store only when no command follows
 // `--`; the lock, the start count and the metrics are files on this machine.
 //
-// loop run is a verb on internal/tool: its flags are the skeleton's (tool.Flags), so
+// loop run is a verb on pkg/tool: its flags are the skeleton's (tool.Flags), so
 // the no-hand-printing ledger records no verbflag.New site for it. The name may stand
 // before the flags and the command follows `--`, which the skeleton's parser does not
 // read, so runLoopRun takes those two words off the arguments and hands the flags to
@@ -39,7 +39,7 @@ const loopRunMore = "a unit runs it in place of the bash nova-loop: ExecStart=no
 type runLoop func(ctx context.Context, argv []string, stdout, stderr io.Writer) (int, error)
 
 // startLoop is the real runLoop: one long-lived child that outlives the caller's
-// interrupt but not the caller itself. internal/tool's RunContext cancels the
+// interrupt but not the caller itself. pkg/tool's RunContext cancels the
 // context it hands a verb on SIGINT, and loop run passes SIGINT and SIGTERM to
 // the command instead of letting that cancellation kill it, so the child runs
 // under the context's values with the cancellation removed. The lock lives in
@@ -105,7 +105,7 @@ func runLoopRun(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 }
 
 // loopRunTool is the one verb loop run, so its -h, its flags and its refusals come
-// from internal/tool (the tool that owns the fleet's configuration).
+// from pkg/tool (the tool that owns the fleet's configuration).
 func loopRunTool(d deps, name string, command []string, dashed bool) *tool.Tool {
 	return &tool.Tool{
 		Name:      toolName,

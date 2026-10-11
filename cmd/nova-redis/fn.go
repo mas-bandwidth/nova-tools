@@ -3,8 +3,8 @@ package main
 // The fn verbs put the nova_sprint Redis function library (the Lua that
 // nova-table and nova-config call with FCALL) on a store, and say whether a
 // store holds it. The library is the one this binary embeds
-// (internal/nsprint/fn's lua/, described by fn.Spec) and the machinery is
-// internal/redisfn:
+// (pkg/nsprint/fn's lua/, described by fn.Spec) and the machinery is
+// pkg/redisfn:
 //
 //   - fn load is redisfn's Ensure, the deployer's load: nothing is written
 //     when the store holds this exact code, and other code under the name is
@@ -21,7 +21,7 @@ package main
 //
 // Both log in as --user (default NOVA_REDIS_USER) with the password in the
 // variable --password-env names, and open the store through connect
-// (internal/redisconn), as every nova-redis verb does.
+// (pkg/redisconn), as every nova-redis verb does.
 //
 // A tool preparing for an FCALL uses redisfn.LoadMissing, which loads the
 // library only when it is absent so it does not overwrite a deployed library.
@@ -40,11 +40,11 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisfn"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // library is the function library the fn verbs load and check.
@@ -92,7 +92,7 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 	}
 	// after prints the one NOTE a run that spelled --addr carries, after the
 	// verb's own outcome line: the status word leads the line the reader acts
-	// on, and the alias note follows it as internal/tool renders its own
+	// on, and the alias note follows it as pkg/tool renders its own
 	// notes. A failure is the report, and prints nothing more.
 	alias := store.aliasNote()
 	after := func() {

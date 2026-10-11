@@ -1,6 +1,6 @@
 # nova-table: current implementation model and counterexamples
 
-The table implementation is in `internal/nsprint/fn/lua/table.lua`, with the public-call shape in `internal/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
+The table implementation is in `pkg/nsprint/fn/lua/table.lua`, with the public-call shape in `pkg/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
 
 **Disposition: the desired ONE PLACE and lossless-bind contract is not implemented.** The model intentionally contains the current behavior. Passing the narrower current-contract suite is not approval of the desired foundation. The default `strict` runner fails on an outstanding invariant; `witnesses` verifies that each named known failure remains reproducible. No assumed repair has been inserted into the model.
 
@@ -61,7 +61,7 @@ Use the official [TLA+ tools v1.7.4 release](https://github.com/tlaplus/tlaplus/
 go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode all --dir /tmp/table-model-results
 go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode strict --dir /tmp/table-model-strict
 # Extract the exact pin in a nova-tools checkout, then replay locally:
-git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-f7745885.lua
+git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/table.lua > /tmp/table-f7745885.lua
 go run ./tools/tlacheck witnesses /tmp/table-f7745885.lua
 ```
 

@@ -4,10 +4,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// VersionTool is nova-version on internal/tool: its verbs are this package's
+// VersionTool is nova-version on pkg/tool: its verbs are this package's
 // moved, snapshot and diff (SPEC-VERSION), and report and send, which share
 // nova-update's report body. Run("nova-version", ...) is this tool's Run, so
 // the package's tests reach it by that name.
@@ -147,7 +147,7 @@ func positiveBounds(c *tool.Call) {
 
 // reportFlags are report's flags; send is report with delivery implied.
 // Report's body prints its own lines because nova-update shares it, so these
-// verbs Print until nova-update is on internal/tool.
+// verbs Print until nova-update is on pkg/tool.
 func reportFlags(f *tool.Flags, report bool) {
 	f.Prints()
 	f.String("file", "", "manifest (required): "+manifestShape)

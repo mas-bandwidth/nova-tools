@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // benchStandardSource is the file of the LINUX provisioning standard that carries the
@@ -42,7 +42,7 @@ const (
 // Unable to locate a Java Runtime`. So the one list is PER GOOS, and this test is PER GOOS
 // with it: an OS whose two lists disagree is red here rather than red on a bench.
 //
-// The fix was ONE list (internal/swarm/toolchain.go) that the wall reads to build its argv.
+// The fix was ONE list (pkg/swarm/toolchain.go) that the wall reads to build its argv.
 // This test is what keeps it one, in BOTH DIRECTIONS for every operating system the list
 // speaks for -- a root the wall grants that the standard does not name is a wall granting a
 // path that will not be there, and a root the standard names that the wall does not grant is
@@ -62,7 +62,7 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		// system's benches are actually provisioned and checked from.
 		fromStandard := standardRoots(t, root, goos)
 		if fromStandard != nil {
-			assert.Equalf(t, strings.Join(fromStandard, " "), strings.Join(fromWall, " "), "the %s provisioning standard and the wall name different toolchain roots:\n  standard (%s): %v\n  internal/swarm/toolchain.go: %v\nThey are ONE list. Edit both sides together.",
+			assert.Equalf(t, strings.Join(fromStandard, " "), strings.Join(fromWall, " "), "the %s provisioning standard and the wall name different toolchain roots:\n  standard (%s): %v\n  pkg/swarm/toolchain.go: %v\nThey are ONE list. Edit both sides together.",
 				goos, standardSource(goos), fromStandard, fromWall)
 		}
 		// ONE LIST, TWO KINDS, and the kind is the security decision. A `--read` root carries
