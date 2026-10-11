@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,46 +39,47 @@ func TestAStepAppliesEveryEndedLaneResultWaitingOnTheChannels(t *testing.T) {
 // finish deadlocks on the barrier and neither ends.
 func TestTwoOutboxFinishesRunSideBySide(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	dir := r.d.Dir
-	row := &twinRow{}
-	r.d.Held = row.held
-	const head = "0123456789abcdef0123456789abcdef01234567"
-	a, b := workCard("a.w1", "working"), workCard("b.w1", "working")
-	for _, c := range []HeldCard{a, b} {
-		inboxJob(t, dir, c.Job, c.Brief)
-		outboxReport(t, dir, c.Job, "Verdict: LAND\nHead: "+head+"\n\n"+c.Card+".\n")
-	}
-	row.set(a, b)
-
-	var mu sync.Mutex
-	started, done := 0, 0
-	both := make(chan struct{})
-	r.d.Finish = func(_ context.Context, _ []string) error {
-		mu.Lock()
-		started++
-		second := started == 2
-		mu.Unlock()
-		if second {
-			close(both)
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		dir := r.d.Dir
+		row := &twinRow{}
+		r.d.Held = row.held
+		const head = "0123456789abcdef0123456789abcdef01234567"
+		a, b := workCard("a.w1", "working"), workCard("b.w1", "working")
+		for _, c := range []HeldCard{a, b} {
+			inboxJob(t, dir, c.Job, c.Brief)
+			outboxReport(t, dir, c.Job, "Verdict: LAND\nHead: "+head+"\n\n"+c.Card+".\n")
 		}
-		select {
-		case <-both:
-		case <-time.After(2 * time.Second):
-			return errors.New("the other finish never started: the finishes ran one at a time")
-		}
-		mu.Lock()
-		done++
-		mu.Unlock()
-		return nil
-	}
-	r.run(t, 6)
+		row.set(a, b)
 
-	mu.Lock()
-	defer mu.Unlock()
-	assert.Equal(t, 2, started, "both finishes started")
-	assert.Equal(t, 2, done, "both finishes saw the other start and ended: neither waited for the other to end")
-	assert.True(t, r.d.outbox.finished[a.Job] && r.d.outbox.finished[b.Job], "both finishes ended and were applied")
+		var mu sync.Mutex
+		started, done := 0, 0
+		both := make(chan struct{})
+		r.d.Finish = func(_ context.Context, _ []string) error {
+			mu.Lock()
+			started++
+			second := started == 2
+			mu.Unlock()
+			if second {
+				close(both)
+			}
+			// a serial finish blocks here with the other never started, the step
+			// waits behind it, and synctest's virtual clock reports the deadlock
+			// without a wall-clock bound
+			<-both
+			mu.Lock()
+			done++
+			mu.Unlock()
+			return nil
+		}
+		r.run(t, 6)
+
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Equal(t, 2, started, "both finishes started")
+		assert.Equal(t, 2, done, "both finishes saw the other start and ended: neither waited for the other to end")
+		assert.True(t, r.d.outbox.finished[a.Job] && r.d.outbox.finished[b.Job], "both finishes ended and were applied")
+	})
 }
 
 // A lane freed in a step is taken in the same step, while a finish is still in flight:
@@ -86,45 +87,45 @@ func TestTwoOutboxFinishesRunSideBySide(t *testing.T) {
 // could never deliver and the finish would never return (the package timeout is red).
 func TestALaneIsTakenInTheStepWhileAFinishIsInFlight(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	dir := r.d.Dir
-	row := &twinRow{}
-	r.d.Held = row.held
-	fin, work := workCard("fin.w1", "working"), workCard("work.w1", "working")
-	inboxJob(t, dir, work.Job, work.Brief)
-	outboxReport(t, dir, fin.Job, "Verdict: FAIL\n\nstuck.\n")
-	row.set(fin, work)
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		dir := r.d.Dir
+		row := &twinRow{}
+		r.d.Held = row.held
+		fin, work := workCard("fin.w1", "working"), workCard("work.w1", "working")
+		inboxJob(t, dir, work.Job, work.Brief)
+		outboxReport(t, dir, fin.Job, "Verdict: FAIL\n\nstuck.\n")
+		row.set(fin, work)
 
-	delivered := make(chan struct{})
-	r.d.Deliver = &barrierLanes{delivered: delivered}
-	r.passive = true
-	r.d.Row = func() (string, int) { return ModeOneShot, 1 }
-	r.d.CardDone = func(card, to string) string { return "nova-bus send --as bob --to " + to }
-	// the lane already holds its session, so the freed lane takes the card on the
-	// first step without waiting for an open's result: the finish is the only
-	// thing off the loop the take could wait behind.
-	laneState := LaneState{Sessions: map[int]string{1: "ses_1"}}
-	r.d.LoadLanes = func() (LaneState, error) { return laneState, nil }
-	r.d.SaveLanes = func(s LaneState) error { laneState = s; return nil }
+		delivered := make(chan struct{})
+		r.d.Deliver = &barrierLanes{delivered: delivered}
+		r.passive = true
+		r.d.Row = func() (string, int) { return ModeOneShot, 1 }
+		r.d.CardDone = func(card, to string) string { return "nova-bus send --as bob --to " + to }
+		// the lane already holds its session, so the freed lane takes the card on the
+		// first step without waiting for an open's result: the finish is the only
+		// thing off the loop the take could wait behind.
+		laneState := LaneState{Sessions: map[int]string{1: "ses_1"}}
+		r.d.LoadLanes = func() (LaneState, error) { return laneState, nil }
+		r.d.SaveLanes = func(s LaneState) error { laneState = s; return nil }
 
-	var mu sync.Mutex
-	finished := false
-	r.d.Finish = func(_ context.Context, _ []string) error {
-		select {
-		case <-delivered:
-		case <-time.After(2 * time.Second):
-			return errors.New("the lane was not taken while the finish was in flight")
+		var mu sync.Mutex
+		finished := false
+		r.d.Finish = func(_ context.Context, _ []string) error {
+			// the lane must deliver while this finish is in flight: a step that
+			// waited behind the finish would deadlock and synctest would report it
+			<-delivered
+			mu.Lock()
+			finished = true
+			mu.Unlock()
+			return nil
 		}
-		mu.Lock()
-		finished = true
-		mu.Unlock()
-		return nil
-	}
-	r.run(t, 6)
+		r.run(t, 6)
 
-	mu.Lock()
-	defer mu.Unlock()
-	assert.True(t, finished, "the lane was taken while the finish was still in flight")
+		mu.Lock()
+		defer mu.Unlock()
+		assert.True(t, finished, "the lane was taken while the finish was still in flight")
+	})
 }
 
 // barrierLanes is a lane harness that opens one session and closes delivered when it is
