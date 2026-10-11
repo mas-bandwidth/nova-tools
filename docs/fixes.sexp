@@ -307,6 +307,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "nt-usage-limit-test-reads-beats-without-an-order" :release "v1.2.12" :status "planned"
+   :title "TestUsageLimitMarksDownUntilReset reads the beats without an order"
+   :text "The test required slices.Compact(beats) to be exactly up, down until the reset, up, which
+    assumes the daemon's beat runs before the delivery that reaches the limit. Inside one synctest
+    instant the beat and the delivery turn are both ready and their order is not fixed, so the beats may
+    open with down. The test now asserts the behavior: an optional leading up, exactly one down until the
+    reset with its reason, then up after the wake, and never an up between the limit and the reset. The
+    asked turns assert their set and the one order the product promises (the wake turn before the
+    message, limit.go Gate), not the schedule. Test-side only; no product change."
+   :origin "the card nt-usage-limit-test-reads-beats-without-an-order.w1 (the v1.2.12 plan, \"From the nova-tools certification fix\", 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
