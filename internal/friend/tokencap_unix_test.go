@@ -23,6 +23,13 @@ import (
 // (TestTokenCapFakeHarness): it then reports usage and runs, and never the tests.
 const tokenCapChild = "NOVA_FRIEND_TOKENCAP_CHILD"
 
+// openCodePolls is how many TokenPoll ticks the test's injected clock delivers to an
+// OpenCode turn: a card runs for a handful of polls, not for as many as the clock can
+// send, so the lane counts the card's own record (tokencap.go deliverCapped) rather than
+// the test's send rate. It is enough for the default cap at the over-cap growth and far
+// short of it at the under-cap growth.
+const openCodePolls = 5
+
 // TestTokenCapFakeHarness is the fake harness a capped lane runs, this test binary
 // started again with tokenCapChild set: in mode claude it prints TOKENCAP_MSGS
 // stream-json assistant messages, each two lines (one per content block) with the
@@ -35,6 +42,9 @@ func TestTokenCapFakeHarness(t *testing.T) {
 	t.Parallel()
 	if os.Getenv(tokenCapChild) == "" {
 		return
+	}
+	if ready := os.Getenv("TOKENCAP_READY"); ready != "" {
+		_ = os.WriteFile(ready, []byte("1"), 0o644) // ignored: the lane's injected clock waits for it; a write that fails leaves the clock unstarted, no count
 	}
 	if os.Getenv("TOKENCAP_MODE") == "claude" {
 		n, _ := strconv.Atoi(os.Getenv("TOKENCAP_MSGS")) // ignored: the test sets it; none is zero messages
@@ -134,6 +144,11 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 					return fmt.Sprintf(`{"messages":[{"info":{"role":"user"}},{"info":{"role":"assistant","cost":0.01,"tokens":{"input":%d,"output":%d,"reasoning":%d,"cache":{"read":%d,"write":%d}}}}]}`,
 						5000000+n*per, n*per/5, n*per/10, n*per/2, n*per/5)
 				}
+				// ready is the file the harness writes when its process is up: the clock waits for
+				// it so a poll cannot stop the run before the run's child exists, which would make
+				// RealExec (adapter.go:156) report a cancelled start as exit 0.
+				ready := filepath.Join(dir, "harness-ready")
+				env = append(env, "TOKENCAP_READY="+ready)
 				ticks := make(chan time.Time)
 				started, stop := make(chan struct{}), make(chan struct{})
 				p := &OpenCodePriced{OpenCode: &OpenCode{Dir: dir, Run: fakeHarnessExec(t, env, export, started), Out: &out}, Friend: "bob", TokenCap: tc.row,
@@ -142,13 +157,29 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 						return ticks, func() {}
 					}}
 				go func() {
-					<-started // the clock ticks once the turn's harness runs
-					for at := time.Unix(0, 0); ; at = at.Add(TokenPoll) {
+					<-started // the turn's harness has begun; wait until its process is up
+					for {
+						if _, err := os.Stat(ready); err == nil {
+							break
+						}
+						select {
+						case <-stop:
+							return
+						default:
+						}
+						runtime.Gosched()
+					}
+					// a handful of polls, one per TokenPoll: enough for the default cap at the
+					// over-cap growth, far short of it at the under-cap growth, so the lane's count
+					// follows the card's own record, never this clock's send rate
+					at := time.Unix(0, 0)
+					for i := 0; i < openCodePolls; i++ {
 						select {
 						case ticks <- at:
 						case <-stop:
 							return
 						}
+						at = at.Add(TokenPoll)
 					}
 				}()
 				lt, err = p.DeliverTo(ctx, "ses_1", CardText(LaneJob{Card: c}, 1, 1, "nova-bus send ...", "", "", "", nil))
