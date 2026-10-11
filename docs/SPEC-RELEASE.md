@@ -753,6 +753,33 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 
 *Tests: `TestACutWithAWaiverRecordsItInTheTag`, `TestACutIgnoresThePreviousTagsCancelledReleaseRun`.*
 
+## 20. Adopting a build
+
+The install play adopts one build onto every fleet host, and it stages the rollout so a bad build reaches one host
+before it reaches the fleet. The install runs in two batches: the canary alone first, then every other fleet host.
+The canary is `nova_adopt_canary`, a group var that defaults to the first host of the fleet group in inventory
+order that is not the coordinator; the first batch holds one host, and the play stops on the canary's failure
+(`max_fail_percentage 0`), so the other hosts are never touched. `nova_adopt_canary=none` runs the play in one
+batch, as it did before, and the play says so.
+
+After the canary's loops step the play waits on the canary alone. It reads only the canary's own log, the unit's
+journal (`nova-loop-<name>`) on Linux and `~/Library/Logs/nova-loop-<name>.log` on Darwin, for one `finish <id>
+ok=true exit=0` line the canary's member printed after the restart: on Linux the journal is read since the
+restart's moment, and on Darwin, where the log appends with no timestamp, only the lines past the log's length at
+the restart's moment are read. It polls every 30 s for up to `nova_adopt_canary_wait` (default 30 minutes) and then
+prints `CANARY OK host=<h> card=<id> after <duration>`, the duration the wait actually took. A
+canary whose member refused, a `finish ... exit=1` line before any ok one, or one that finished nothing within the
+wait, ends the play with `ADOPT REFUSED step=canary host=<h>: <the line or no finish in 30m>`.
+
+The refusal rolls the canary back first: it installs the version the build fact held before, from the same release
+directory (`nova-update release install --version <the build fact's version>`), restarts the loops as the loops step
+does, and checks that each replaced member and reader runs the old version. A canary whose build fact held no
+version, a host this play has never installed, is not rolled back, and the refusal says so. Under `--check` the play
+names the canary and prints `WOULD-WAIT`, and it changes nothing.
+
+*Tests: `TestInstallPlayStartsWithOneCanaryBatch`, `TestInstallPlayCanaryWaitsOnItsMemberLog`,
+`TestInstallPlayCanaryRollsBackTheBuildFactVersion`, `TestInstallPlayCanaryNoneSkipsTheWait`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
