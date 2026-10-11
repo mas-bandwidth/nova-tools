@@ -139,9 +139,11 @@ func TestARealMemberRunsAReadWhoseStageFailedAgainNeverHoldsItAsAGhost(t *testin
 		}
 		stopped = true
 		_ = cmd.Process.Signal(syscall.SIGTERM) // ignored: a member that already exited
+		// the wait is on the member's exit; the allowance is only the safety net past it, at
+		// the wall-clock law's thirty seconds (a drained member exits within a pass)
 		select {
 		case <-exited:
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			_ = cmd.Process.Kill() // ignored: only this test's own process, by its pid
 			<-exited
 		}
