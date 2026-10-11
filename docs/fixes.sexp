@@ -480,6 +480,19 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friendstage-every-hand-is-guarded" :release "v1.2.12" :status "planned"
+   :title "FriendStage names pkg/friend and models the guarded hand and the un-cleared generic-failure key"
+   :text "FriendStage.tla named internal/friend/stage.go, which moved to pkg/friend/stage.go with the rest of
+    the package; the header now names pkg/friend. The Hand action's guard is one place in the model but three
+    in the code -- nextCard (inbox.go:417) and laneAsk only when heldOf finds the card (lane_take.go:158, :177)
+    -- and the header now names them. A stage failure for any other reason (the code's default case,
+    stage.go:645-650) is said once under a \"job <job>: <err>\" key a later success never clears (the success
+    clears only the repo and card keys, stage.go:627-629): the module models that generic failure (EndGeneric)
+    and adds NoStaleStage, which says what the un-cleared key leaves -- a stale failure line, never a stale
+    stage. The existing handunstaged witness stays; no clearsonsuccess witness, because the failure key's
+    clearing is not what any invariant holds to."
+   :origin "card tla-friendstage-every-hand-is-guarded.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
