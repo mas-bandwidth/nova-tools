@@ -307,6 +307,19 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "planned"
+   :title "Unit coverage for the provider proxy's global rate budget"
+   :text "pkg/swarm/providerbudget_behaviour_test.go drives (*ProviderProxy).ServeHTTP with a ProxyBudget
+    of fakes and an in-process RoundTripper, so it opens no socket and waits on no real clock: the take
+    wait, grant and open paths; the stall and grant log lines; a limit refusal retried in place with the
+    same method, path, query, body and ContentLength and the hop-by-hop headers dropped; a quota refusal
+    passed through whole, a body over 64 KiB byte for byte; the run-ended 502s; an unreadable request body
+    and a transport error. The three budget functions go from no unit coverage at dev 2314d43 to takeBudget
+    92.6%, serveBudgeted 100.0% and forwardBudgeted 75.9%. A new test found a real defect instead of a
+    green: a send the body-silence timer aborts skips Release, so its slot is kept until the lease
+    expires; it is written as a v1.2.14 card (see the card's report)."
+   :origin "the card cover-provider-budget-proxy-unit.w1 (the v1.2.12 inventory, section 8 item C9; measured at nova-tools dev 2a648d8, re-read at 2314d43)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
