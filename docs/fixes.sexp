@@ -142,6 +142,11 @@
     (its add refuses a held rules file that differs), stops children rewriting history, which caused the
     does-not-descend refusals. A test pins the file's digest in both repositories."
    :origin "v1.2.5 candidate list")
+  (fix "friend-width-fits-slots" :release "v1.2.6" :status "planned"
+   :title "A friend's width fits within her slots"
+   :text "nova-config refuses a friend width larger than her slots and names both values, so one-shot
+    lanes cannot silently halve the friend's available capacity."
+   :origin "dogfood 2026-10-10: one-shot friend at width 32 with 16 slots")
   (fix "worker-question-ending-asked" :release "v1.2.9" :status "planned"
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
