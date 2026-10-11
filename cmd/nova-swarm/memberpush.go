@@ -167,8 +167,27 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if serr != nil || !typedrec.IsFullSha(base) {
 		return member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}
 	}
+	// The descent is judged on the push repository, so the staged commit S must be
+	// a commit of it: every fetched ref brings its whole history, so an S the push
+	// repository does not hold is on no branch or HEAD of the checkout (the child
+	// cut or reset its branch), never the gate's own failure. Name that case, and
+	// the merge base when S is there but the head is not a descendant, instead of
+	// quoting git's "Not a valid commit name" as if the gate had failed
+	// (docs/SPEC-CARD-CONTRACT.md section 4).
+	stagedHere := false
+	if _, err := g.run(ctx, repo, nil, "rev-parse", "--verify", "-q", "--end-of-options", base+"^{commit}"); err == nil {
+		stagedHere = true
+	}
 	if res, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, full); err != nil {
-		return member.Push{Refused: "the result's head " + full + " does not descend from the staged commit " + base + ": " + gitLine(res, err)}
+		var exit *exec.ExitError
+		switch {
+		case !stagedHere:
+			return member.Push{Refused: "the result's head " + full + " does not descend from the staged commit " + base + ": no branch or HEAD of the checkout holds " + base + " (the branch was cut again or reset); put the commits on top of " + base + " and finish again"}
+		case errors.As(err, &exit) && exit.ExitCode() == 1:
+			return member.Push{Refused: "the result's head " + full + " does not descend from the staged commit " + base + " (merge base " + g.mergeBase(ctx, repo, base, full) + "); put the commits on top of " + base + " and finish again"}
+		default:
+			return member.Push{Refused: "checking that the result's head " + full + " descends from the staged commit " + base + ": " + gitLine(res, err)}
+		}
 	}
 	res, err = g.run(ctx, repo, nil, "rev-list", "--count", "--end-of-options", full, "^"+base)
 	if err != nil {
@@ -202,6 +221,21 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		pu.PR, pu.PRNote = g.openPR(url, ref, p.Branch, r.Title, r.Body)
 	}
 	return pu
+}
+
+// mergeBase is the merge base of the staged commit and the head in the push
+// repository: what the head and the staged commit share, named when the head is
+// not a descendant of the staged commit (docs/SPEC-CARD-CONTRACT.md section 4).
+// "none" when git names no base: the histories are unrelated, or git cannot say.
+func (g *gitPusher) mergeBase(ctx context.Context, repo, base, full string) string {
+	res, err := g.run(ctx, repo, nil, "merge-base", "--end-of-options", base, full)
+	if err != nil {
+		return "none"
+	}
+	if mb := strings.TrimSpace(string(res.Stdout)); mb != "" {
+		return oneLineOf(mb)
+	}
+	return "none"
 }
 
 // checkoutTip is the one tip of the checkout's HEAD and branches (fetched under ns) that holds

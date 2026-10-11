@@ -353,7 +353,14 @@ from an interrupted push, so a commit on any branch the child made, in the
 checkout or in a clone the shim linked to it, is found. The head must be on one of those
 fetched refs (the push repository keeps every launch's objects, so a commit being there is no
 evidence it is this launch's) and must descend from the staged commit, else the push is
-refused. A result head on none of those refs is replaced by the checkout's own head when the
+refused: the refusal names the head and the staged commit, and when the checkout holds no
+branch or HEAD with the staged commit (the branch was cut again or reset) it says so and tells
+the child to put the commits on top of the staged commit, when the staged commit is there but
+the head does not descend from it it names the merge base (or `none` for unrelated histories)
+and gives the same remedy, and any other failure of `git merge-base --is-ancestor` is reported
+as git failing in the member's push repository
+(`TestAReCutBranchThatLosesTheStagedCommitIsNamed`, `TestAHeadOnASideBranchNamesItsMergeBaseWithTheStaged`).
+A result head on none of those refs is replaced by the checkout's own head when the
 child made exactly one line of work: exactly one fetched tip descends from the staged commit
 with a commit of its own; it is pushed, never forced, and the member's output says
 `NOTE push <card> head: the result named <claimed>, which is no commit of the checkout; the

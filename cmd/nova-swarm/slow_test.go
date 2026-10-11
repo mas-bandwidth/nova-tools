@@ -4546,6 +4546,48 @@ func TestAHeadThatDoesNotDescendFromTheStagedCommitIsRefused(t *testing.T) {
 	assert.Contains(t, got.Refused, "does not descend from the staged commit")
 }
 
+// A child that re-cut its branch (reset it to the base commit and committed the
+// work there) leaves no branch or HEAD of the checkout holding the staged commit;
+// the refusal says so, names the head and the staged commit, tells the child to
+// put the commits on top of the staged commit, and never quotes git's "Not a
+// valid commit name" as if the gate had failed (docs/SPEC-CARD-CONTRACT.md
+// section 4).
+func TestAReCutBranchThatLosesTheStagedCommitIsNamed(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	staged := b.commit(t, "the staged work\n")
+	b.staged(t, staged)
+	gitAs(t, b.checkout, "switch", "-q", "-C", "rowan/c1", b.base)
+	head := b.commit(t, "the work again\n")
+	got := b.pusher().Push(b.p, member.Result{Head: head})
+	assert.Empty(t, got.Sha)
+	assert.Contains(t, got.Refused, "the result's head "+head+" does not descend from the staged commit "+staged)
+	assert.Contains(t, got.Refused, "no branch or HEAD of the checkout holds "+staged)
+	assert.Contains(t, got.Refused, "put the commits on top of "+staged)
+	assert.NotContains(t, got.Refused, "Not a valid commit name")
+	assert.Empty(t, b.originHas(t, "sprint/c1"))
+}
+
+// A head on a side branch while the staged commit is still on another branch of
+// the checkout is refused: the line names the head, the staged commit and their
+// merge base, and tells the child to put the commits on top of the staged commit
+// (docs/SPEC-CARD-CONTRACT.md section 4).
+func TestAHeadOnASideBranchNamesItsMergeBaseWithTheStaged(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	staged := b.commit(t, "the staged work\n")
+	b.staged(t, staged)
+	gitAs(t, b.checkout, "switch", "-q", "-c", "side", b.base)
+	head := b.commit(t, "the side work\n")
+	mb := gitAs(t, b.checkout, "merge-base", staged, head)
+	got := b.pusher().Push(b.p, member.Result{Head: head})
+	assert.Empty(t, got.Sha)
+	assert.Contains(t, got.Refused, "the result's head "+head+" does not descend from the staged commit "+staged)
+	assert.Contains(t, got.Refused, "merge base "+mb)
+	assert.Contains(t, got.Refused, "put the commits on top of "+staged)
+	assert.Empty(t, b.originHas(t, "sprint/c1"))
+}
+
 // A result whose head names no commit of the checkout (its tail invented), from a child that
 // made exactly one line of work, pushes the checkout's own head and says so: five of the first
 // twelve failures of the load test were this, the commit on the checkout's branch all along.
