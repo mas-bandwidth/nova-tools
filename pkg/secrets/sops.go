@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -70,10 +71,38 @@ func sopsDecryptFailure(keyPath, filePath, stderr string) string {
 	return ""
 }
 
+// installRemedy is the one command that provides tool on goos: the install when
+// the binary is absent, the upgrade when one is present but older than the
+// pinned minimum. It mirrors internal/up/layout.go's tools table
+// (program.install): sops is brew "sops" on darwin and
+// go install github.com/getsops/sops/v3/cmd/sops@latest elsewhere, and
+// age-keygen is brew "age" on darwin and the apt package "age" on linux. That
+// table is the source these commands must match (docs/SPEC-SECRETS.md,
+// Dependencies, pinned).
+func installRemedy(tool string, old bool, goos string) string {
+	if goos == "darwin" {
+		verb := "install"
+		if old {
+			verb = "upgrade"
+		}
+		return "brew " + verb + " " + tool
+	}
+	if tool == "sops" {
+		return "go install github.com/getsops/sops/v3/cmd/sops@latest"
+	}
+	return "sudo apt-get install -y age"
+}
+
 // CheckSopsVersion probes the sops binary with --disable-version-check to prevent network calls.
 func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
+	return checkSopsVersion(run, sopsPath, runtime.GOOS)
+}
+
+// checkSopsVersion is CheckSopsVersion for a named platform, so the remedy
+// names that platform's install (docs/SPEC-SECRETS.md, Dependencies, pinned).
+func checkSopsVersion(run execCommand, sopsPath, goos string) (string, error) {
 	if !filepathIsExecutable(sopsPath) {
-		return "", fmt.Errorf("sops binary %s is absent or not executable; run: brew install sops", sopsPath)
+		return "", fmt.Errorf("sops binary %s is absent or not executable; run: %s", sopsPath, installRemedy("sops", false, goos))
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", sopsPath, "--version", "--disable-version-check")
@@ -96,7 +125,7 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 3 || (major == 3 && minor < 13) || (major == 3 && minor == 13 && patch < 3) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: brew upgrade sops", major, minor, patch, MinSopsVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinSopsVersion, installRemedy("sops", true, goos))
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
@@ -104,8 +133,15 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 
 // CheckAgeKeygenVersion probes the age-keygen binary.
 func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error) {
+	return checkAgeKeygenVersion(run, ageKeygenPath, runtime.GOOS)
+}
+
+// checkAgeKeygenVersion is CheckAgeKeygenVersion for a named platform, so the
+// remedy names that platform's install (docs/SPEC-SECRETS.md, Dependencies,
+// pinned).
+func checkAgeKeygenVersion(run execCommand, ageKeygenPath, goos string) (string, error) {
 	if !filepathIsExecutable(ageKeygenPath) {
-		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: brew install age", ageKeygenPath)
+		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: %s", ageKeygenPath, installRemedy("age", false, goos))
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", ageKeygenPath, "--version")
@@ -124,7 +160,7 @@ func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 1 || (major == 1 && minor < 3) || (major == 1 && minor == 3 && patch < 2) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: brew upgrade age", major, minor, patch, MinAgeKeygenVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinAgeKeygenVersion, installRemedy("age", true, goos))
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
