@@ -175,4 +175,9 @@
   (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
    :title "A HOLD report with zero findings is malformed"
    :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
-   :origin "PR #4635")))
+   :origin "PR #4635")
+  (fix "update-revert-on-red-cancelled-run" :release "v1.2.9" :status "in-progress"
+   :title "A cancelled workflow run counts as red for revert-on-red"
+   :text "Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a
+    bad main."
+   :origin "PR #4600")))
