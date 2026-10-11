@@ -6,8 +6,8 @@
 \* `verdict`), the apply of one named entry and its dry run
 \* (internal/update/cli.go `apply`, `applyDryRun`), and the report's state
 \* file with the deliveries it records SENT (internal/update/report.go
-\* `report`, `deliver`, `confirmed`; internal/update/snapshot.go
-\* `readSnapshot`, `writeSnapshot`).
+\* `report`, `deliver`, `sendOK`; internal/update/snapshot.go
+\* `readSnapshot`, `writeSnapshotWith`).
 \*
 \* The manifest's entries are the model's constants and not its state: one
 \* invocation loads them once from the file and nothing this module does
@@ -17,7 +17,7 @@
 \* the entry's kind is one whose verdict compares by equality (`Pins`: the
 \* kinds pin and model, cli.go `verdict`), and the version its source
 \* publishes (`Published`, one version for every entry, below `MaxVer` so an
-\* installed version can be ahead of it). An entry whose apply column is
+\* installed version can be NEWER than it). An entry whose apply column is
 \* `none` is refused before any process starts, so every entry here has an
 \* apply argv.
 \*
@@ -50,15 +50,16 @@
 \*   "installonverdict"  a STALE verdict installs by itself -> ApplyOnlyWhatIsNamed
 \*   "dryruninstalls"    a dry run starts the install       -> DryRunInstallsNothing
 \*   "sentonrefusal"     a refusal is recorded as SENT      -> SentOnlyOnOK
+\*   "aheadisnewer"      a greater release version reads AHEAD -> VerdictMatchesVersion
 
 EXTENDS Naturals
 
-CONSTANTS Entries, Pins, Published, MaxVer, MaxFaults, Broken
+CONSTANTS Entries, Pins, Published, MaxVer, MaxFaults, Broken, Scopes
 
 None == 0 - 1     \* this run has not read it
 Unknown == 0 - 2  \* the read ran and did not answer
 Vers == {None, Unknown} \cup 0..MaxVer
-Verdicts == {"none", "EQUAL", "STALE", "AHEAD", "DIFFERENT", "UNKNOWN"}
+Verdicts == {"none", "EQUAL", "STALE", "NEWER", "AHEAD", "DIFFERENT", "UNKNOWN"}
 Phases == {"idle", "reading", "written", "crashed", "named"}
 Starts == {"none", "named", "unnamed", "dryrun"}
 
@@ -77,8 +78,8 @@ VARIABLES
   stateObserved,  \* the state file's observed set
   changedSet,     \* the CHANGED names the last run printed
   changedAgrees,  \* ghost: CHANGED named exactly the entries that moved
-  delivered,      \* the state file records a delivery SENT
-  sentOK,         \* ghost: the bus said SEND OK when that delivery was recorded
+  delivered,      \* the scopes the state file records a delivery SENT for
+  sentOK,         \* ghost: the bus said SEND OK for each scope delivered
   pending,        \* a report is composed and held in the state file, not sent
   faults          \* the events that compete with a run so far, bounded by MaxFaults
 
@@ -100,8 +101,8 @@ TypeOK ==
   /\ stateObserved \in [Entries -> Vers]
   /\ changedSet \in SUBSET Entries
   /\ changedAgrees \in BOOLEAN
-  /\ delivered \in BOOLEAN
-  /\ sentOK \in BOOLEAN
+  /\ delivered \in SUBSET Scopes
+  /\ sentOK \in SUBSET Scopes
   /\ pending \in BOOLEAN
   /\ faults \in 0..MaxFaults
 
@@ -119,8 +120,8 @@ Init ==
   /\ stateObserved = [e \in Entries |-> None]
   /\ changedSet = {}
   /\ changedAgrees = TRUE
-  /\ delivered = FALSE
-  /\ sentOK = FALSE
+  /\ delivered = {}
+  /\ sentOK = {}
   /\ pending = FALSE
   /\ faults = 0
 
@@ -157,7 +158,10 @@ Read(e) ==
                  delivered, sentOK, pending, faults>>
 
 \* Verdict: from the two reads of one entry, and only once this run has both
-\* (cli.go `verdict`).
+\* (cli.go `verdict`). A greater release version reads NEWER; AHEAD is the
+\* vX.Y.Z-0 pseudo-version only, which the model's number versions never are,
+\* so the module never reads AHEAD but the broken witness (cli.go `ahead`;
+\* read.go `Compare`).
 Verdict(e) ==
   /\ phase = "reading"
   /\ verdictOf[e] = "none"
@@ -168,7 +172,9 @@ Verdict(e) ==
          THEN "UNKNOWN"
          ELSE IF e \in Pins
            THEN IF instRead[e] = latRead[e] THEN "EQUAL" ELSE "DIFFERENT"
-           ELSE IF instRead[e] > latRead[e] THEN "AHEAD"
+           ELSE IF Broken = "aheadisnewer" /\ instRead[e] > latRead[e]
+             THEN "AHEAD"
+           ELSE IF instRead[e] > latRead[e] THEN "NEWER"
            ELSE IF instRead[e] < latRead[e] THEN "STALE"
            ELSE "EQUAL"]
   /\ UNCHANGED <<installed, instRead, latRead, installs, applyRan, afterVer,
@@ -206,13 +212,14 @@ Crash ==
                  stateObserved, changedSet, changedAgrees, delivered, sentOK, pending>>
 
 \* Deliver: the bus said `SEND OK id=<id> pushed=true` for this report, so
-\* the state file records the delivery SENT and nothing is pending
-\* (report.go `deliver`, `confirmed`; SPEC-UPDATE rule 24).
+\* the state file records the delivery SENT for its recipient scope and
+\* nothing is pending (report.go `deliver`, `sendOK`; SPEC-UPDATE rule 24).
 DeliverOK ==
   /\ phase = "written"
   /\ pending
-  /\ delivered' = TRUE
-  /\ sentOK' = TRUE
+  /\ \E s \in Scopes :
+       /\ delivered' = delivered \cup {s}
+       /\ sentOK' = sentOK \cup {s}
   /\ pending' = FALSE
   /\ phase' = "idle"
   /\ UNCHANGED <<installed, instRead, latRead, verdictOf, installs, applyRan,
@@ -226,8 +233,9 @@ DeliverRefused ==
   /\ pending
   /\ faults < MaxFaults
   /\ faults' = faults + 1
-  /\ delivered' = (delivered \/ Broken = "sentonrefusal")
-  /\ sentOK' = (sentOK /\ Broken # "sentonrefusal")
+  /\ \E s \in Scopes :
+       /\ delivered' = IF Broken = "sentonrefusal" THEN delivered \cup {s} ELSE delivered
+       /\ sentOK' = sentOK
   /\ phase' = "idle"
   /\ UNCHANGED <<installed, instRead, latRead, verdictOf, installs, applyRan,
                  afterVer, dryRun, named, stateObserved, changedSet, changedAgrees, pending>>
@@ -319,6 +327,22 @@ DryRunInstallsNothing == \A e \in Entries : installs[e] # "dryrun"
 VerdictFromReads ==
   \A e \in Entries : verdictOf[e] # "none" => instRead[e] # None /\ latRead[e] # None
 
+\* A verdict names the version relationship it was read from: a greater
+\* release version reads NEWER and AHEAD is the pseudo-version only, which the
+\* model's number versions never are (cli.go `verdict`, `ahead`; read.go
+\* `Compare`).
+VerdictMatchesVersion ==
+  \A e \in Entries :
+    verdictOf[e] # "none" =>
+      verdictOf[e] =
+        IF instRead[e] = Unknown \/ latRead[e] = Unknown
+          THEN "UNKNOWN"
+          ELSE IF e \in Pins
+            THEN IF instRead[e] = latRead[e] THEN "EQUAL" ELSE "DIFFERENT"
+            ELSE IF instRead[e] < latRead[e] THEN "STALE"
+            ELSE IF instRead[e] > latRead[e] THEN "NEWER"
+            ELSE "EQUAL"
+
 \* The state file holds only versions read in a run that completed its reads:
 \* the write follows the reads of every entry (report.go; SPEC-UPDATE
 \* rule 25).
@@ -326,9 +350,9 @@ StateWrittenAfterRead ==
   phase = "written" => \A e \in Entries : stateObserved[e] = instRead[e] /\ instRead[e] # None
 
 \* A delivery is recorded SENT only after the bus's SEND OK: an unconfirmed
-\* send is uncertain and stays pending (report.go `deliver`, `confirmed`;
+\* send is uncertain and stays pending (report.go `deliver`, `sendOK`;
 \* SPEC-UPDATE rule 24).
-SentOnlyOnOK == delivered => sentOK
+SentOnlyOnOK == delivered \subseteq sentOK
 
 \* CHANGED names exactly the entries whose read differs from the state file,
 \* the first run's baseline included (report.go; SPEC-UPDATE rule 25).
