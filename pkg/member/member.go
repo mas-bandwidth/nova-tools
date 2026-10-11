@@ -1166,10 +1166,13 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 // RULE (docs/SPEC-SPRINT.md, the fleet member): a pass's reports run side by side up to
 // pushWidth, and a non-background pass collects them after the take, so it is still one step.
 func (m *Member) collectReports() int {
+	// the lap opens before the wait, so spent.Report is the report's own wall time,
+	// the wait for the goroutines included, as the pass's other parts count their wait
+	// (docs/SPEC-SPRINT.md, the fleet member: a pass is one step)
+	reportLap := m.clock()
 	if !m.cfg.Background {
 		m.longs.Wait()
 	}
-	reportLap := m.clock()
 	acted := m.collect()
 	m.spent.Report += m.clock().Sub(reportLap)
 	return acted
