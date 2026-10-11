@@ -66,3 +66,4 @@ A worker card whose last turn is a question ends as asked instead of holding its
 - **The dispatcher releases a slot lease by its own id** (planned). Release removes every lease with the same owner and label. It releases only the one lease it took. From: issue #1582.
 - **CI runs on card PRs are not cancelled under load** (planned). CI runs at the head of card PRs are cancelled mid-job when many PRs open together; the concurrency rule is fixed so each head gets one full run. From: issue #2795.
 - **A cancelled workflow run counts as red for revert-on-red** (in-progress). Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a bad main. From: PR #4600.
+- **nova-swarm doctor checks the running executable, not only PATH** (planned). The launch preflight refuses a new binary found on PATH but passes the same binary by absolute path. It checks the executable that is actually running. From: issue #3469.
