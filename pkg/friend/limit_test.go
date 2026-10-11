@@ -297,3 +297,88 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 	_, body = LimitUpText("bob")
 	assert.Contains(t, body, "nova-sprint friend up bob")
 }
+
+// A harness's weekly limit, in the wording claude -p (Claude Code 2.1.289)
+// prints with the middle dot and the CLI's ANSI colour codes, beside a
+// non-rejecting rate_limit_event, is a limit until its named reset in the
+// zone the line names (the finding of 2026-10-11: the lane run exited 1 and
+// the daemon recorded a failed attempt). The classifier strips the colour
+// codes before it matches, and reads the limit line even when an allowed
+// event measured usage (docs/SPEC-FRIEND.md,
+// usage-limit-reset-read-from-the-message-b.w1).
+func TestTheWeeklyLimitLineWithItsColourCodesIsALimitUntilItsReset(t *testing.T) {
+	t.Parallel()
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 11, 8, 0, 0, 0, ny).UTC()
+	reset := time.Date(2026, 10, 16, 3, 0, 0, 0, ny)
+	plain := "You've hit your weekly limit \u00b7 resets Oct 16 at 3am (America/New_York)"
+	coloured := "You've hit your \x1b[1;36mweekly\x1b[0m limit \u00b7 resets Oct 16 at 3am (America/New_York)"
+	event := claudeEvent("allowed", false, 0.9, 1.0, now.Add(90*time.Minute), now.Add(50*time.Hour))
+	for _, tc := range []struct{ name, out string }{
+		{"the line in the CLI's colour", coloured + "\n"},
+		{"the line beside an allowed rate_limit_event", event + "\n" + coloured + "\n"},
+		{"the line plain", plain + "\n"},
+	} {
+		lim, found := ReadLimit(tc.out, now)
+		require.True(t, found, tc.name)
+		assert.True(t, lim.Limited, tc.name)
+		assert.True(t, reset.Equal(lim.Until), "%s: until %s, want %s", tc.name, lim.Until.Format(time.RFC3339), reset.Format(time.RFC3339))
+	}
+}
+
+// A weekly limit read beside a non-rejecting rate_limit_event sends the
+// friend down with the reset all the same: her lanes pause until it and the
+// card that hit it is kept in the lane's hand, never counted as a failed
+// attempt (docs/SPEC-FRIEND.md, a harness at its limit).
+func TestAWeeklyLimitBesideARateLimitEventSendsTheFriendDown(t *testing.T) {
+	t.Parallel()
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 11, 8, 0, 0, 0, ny).UTC()
+	reset := time.Date(2026, 10, 16, 3, 0, 0, 0, ny)
+	var downs []time.Time
+	l := &Limits{Now: func() time.Time { return now }, Down: func(until time.Time, _ string) {
+		downs = append(downs, until)
+	}}
+	event := claudeEvent("allowed", false, 0.9, 1.0, now.Add(90*time.Minute), now.Add(50*time.Hour))
+	out := event + "\nYou've hit your \x1b[1;36mweekly\x1b[0m limit \u00b7 resets Oct 16 at 3am (America/New_York)\n"
+	_, _, _ = l.Watch(func(context.Context, string, string, []string, string) (string, int, error) {
+		return out, 1, nil
+	})(context.Background(), "", "x", nil, "")
+	require.Len(t, downs, 1, "sent down once, until the reset")
+	assert.True(t, reset.Equal(downs[0]), "down until the reset: %s", downs[0].Format(time.RFC3339))
+	until, _, limited := l.Limited()
+	assert.True(t, limited)
+	assert.True(t, reset.Equal(until), "limited until the reset: %s", until.Format(time.RFC3339))
+}
+
+// Every limit wording the repository has seen is a limit with its reset,
+// read by ReadLimit alike: the usage-limit and credit wordings of
+// testdata/limits.tsv and the weekly lines the spec and the seat recorded
+// (docs/SPEC-FRIEND.md, a harness at its limit).
+func TestReadLimitClassifiesEveryLimitWordingTheRepoHasSeen(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct{ out, until string }{
+		{"Claude AI usage limit reached|1791205200\n", "2026-10-05T13:00:00Z"},
+		{"You've hit your limit · resets 3pm (UTC)\n", "2026-10-05T15:00:00Z"},
+		{`API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}}` + "\n", "2026-11-01T00:00:00Z"},
+		{"ERROR: You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again at 1:00 PM.\n", "2026-10-05T13:00:00Z"},
+		{"ERROR: You've hit your usage limit. Try again in 2 days 3 hours 4 minutes.\n", "2026-10-07T13:04:00Z"},
+		{`{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":1791205200,"resets_in_seconds":10800}}` + "\n", "2026-10-05T13:00:00Z"},
+		{`{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_in_seconds":3600}}` + "\n", "2026-10-05T11:00:00Z"},
+		{"Usage limit reached. Resets at 2026-10-05T14:30:00Z.\n", "2026-10-05T14:30:00Z"},
+		{"dsh: daily usage limit reached, try again in 90 minutes\n", "2026-10-05T11:30:00Z"},
+		{"Insufficient AI Credits. Your credits will refresh 6:52 PM.\n", "2026-10-05T18:52:00Z"},
+		{"You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)\n", "2026-10-10T09:00:00Z"},
+		{"You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\n", "2026-10-16T07:00:00Z"},
+	} {
+		want, err := time.Parse(time.RFC3339, tc.until)
+		require.NoError(t, err, tc.until)
+		lim, found := ReadLimit(tc.out, now)
+		require.True(t, found, tc.out)
+		assert.True(t, lim.Limited, tc.out)
+		assert.True(t, want.Equal(lim.Until), "%s: until %s, want %s", tc.out, lim.Until.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}

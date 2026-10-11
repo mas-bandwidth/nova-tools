@@ -797,4 +797,8 @@
   (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
    :title "The claude harness runs the newest model of each tier's class"
    :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
-   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")))
+   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")
+  (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.15" :status "planned"
+   :title "A harness limit in any wording pauses the lanes, never a failed attempt"
+   :text "A provider or harness limit in any wording the harness prints pauses the friend's lanes until its reset and is never a failed attempt of the card. ReadLimit strips the CLI's colour codes before it matches and reads the harness's own weekly-limit line beside a non-rejecting rate_limit_event, so claude -p's \"You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\" is a limit until its named reset instead of a run the daemon records as a failed attempt."
+   :origin "card a-harness-limit-in-any-wording-pauses-the-lanes.w4")))
