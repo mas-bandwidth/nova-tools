@@ -1068,6 +1068,11 @@ func TestARefusedVerbIsRaisedOnTheThirdAndClearedWhenItAnswers(t *testing.T) {
 	r.beatErr = &Refused{Why: "friend beat refused: You must hook in first"}
 
 	steps := int(3*ServedEvery/BeatEvery) + 2
+	var cardsAtOne, beatAtOne int
+	r.at[int(ServedEvery/BeatEvery/2)] = func() {
+		cardsAtOne = r.d.status.Refused[FriendCardsVerb]
+		beatAtOne = r.d.status.Refused[FriendBeatVerb]
+	}
 	var cardsAtRaise, beatAtRaise int
 	// the server answers again after three ServedEvery periods; capture the counts first
 	r.at[int(3*ServedEvery/BeatEvery)] = func() {
@@ -1077,14 +1082,18 @@ func TestARefusedVerbIsRaisedOnTheThirdAndClearedWhenItAnswers(t *testing.T) {
 	}
 	r.run(t, steps)
 
+	assert.Less(t, beatAtOne, RefusalRepeats, "a refusal is counted once a ServedEvery, never once a beat: after half a ServedEvery the beat has %d, not one per second", beatAtOne)
+	assert.LessOrEqual(t, cardsAtOne, 1, "friend cards is asked once a ServedEvery")
 	assert.GreaterOrEqual(t, cardsAtRaise, RefusalRepeats, "friend cards refused, counted per verb")
 	assert.GreaterOrEqual(t, beatAtRaise, RefusalRepeats, "friend beat refused, counted per verb")
 	assert.Contains(t, r.last().LastRefusal, "You must hook in first")
 	require.Len(t, downs, 2, "raised once per verb, not once per refusal: %v", downs)
 	assert.Contains(t, strings.Join(downs, " "), "refused")
 	got := r.adaGot(t)
-	require.Len(t, got, 2, "one word to the coordinator per verb: %v", got)
-	assert.Contains(t, strings.Join(got, " "), "refused")
+	require.Len(t, got, 2, "one word to the coordinator per verb, through tellBroken: %v", got)
+	assert.Contains(t, strings.Join(got, " "), "the server refused friend cards")
+	assert.Contains(t, strings.Join(got, " "), "the server refused friend beat")
+	assert.Contains(t, strings.Join(got, " "), "You must hook in first")
 	assert.GreaterOrEqual(t, ups, 1, "the down is lifted once the server answers again")
 	assert.Empty(t, r.last().Refused, "the counts clear on recovery")
 	var recoveredLines int

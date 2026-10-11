@@ -583,13 +583,14 @@ type loop struct {
 	refusal      string // the last provider refusal, and how many turns in a row said it
 	streak       int
 	broken, told bool
-	unable       string          // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
-	unableTries  int             // the turns refused for it since
-	refusedTold  map[string]bool // verbs whose refusal has been raised, once each (inbox.go, "A refused verb")
-	proofReason  string          // the harness proof's last terminal reason, "" when it answers
-	proofAt      time.Time       // when the proof last ran
-	proofTold    bool            // the harness proof's failure has been told to the coordinator, once
-	instantFails int             // consecutive card runs that ended with no report within InstantFail (lanes.go, "A lane proves its harness")
+	unable       string               // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
+	unableTries  int                  // the turns refused for it since
+	refusedTold  map[string]bool      // verbs whose refusal has been raised, once each (inbox.go, "A refused verb")
+	refusedAt    map[string]time.Time // a verb's last counted refusal: one refusal counted per ServedEvery, never once a beat (inbox.go, "A refused verb")
+	proofReason  string               // the harness proof's last terminal reason, "" when it answers
+	proofAt      time.Time            // when the proof last ran
+	proofTold    bool                 // the harness proof's failure has been told to the coordinator, once
+	instantFails int                  // consecutive card runs that ended with no report within InstantFail (lanes.go, "A lane proves its harness")
 	results      chan result
 	lanes        *laneSet
 	reads        *readSet
@@ -805,9 +806,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
 		}
 		if l.broken && !l.told {
-			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
+			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, d.status.SessionID, d.status.SessionReason), fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
 		} else if l.unable != "" && !l.told {
-			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
+			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, d.status.SessionID, d.status.SessionReason), fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
 		if d.StepBeatForTests {
 			if storeOK {
@@ -1690,35 +1691,42 @@ func (l *loop) refusedTurn(t *turn, u SessionRefused, now time.Time) {
 		now.UTC().Format(time.RFC3339), t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), reason, oneLine(u.Detail, 400), RecheckEvery))
 }
 
-// tellBroken sends the coordinator one message that the session is broken:
-// to the seat the last ping named, else Coordinator. It answers whether
-// the word went out, or there was no one to tell (said on the record); a
-// send that fails is tried again the next step.
-func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, why string) bool {
+// tellBroken sends the coordinator one message that the daemon is broken — a
+// broken session, or a server that refused a verb — to the seat the last ping
+// named, else Coordinator. subject names what is broken; why says how to read
+// it. It answers whether the word went out, or there was no one to tell (said
+// on the record); a send that fails is tried again the next step.
+func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, subject, why string) bool {
 	to := d.m.Seat
 	if to == "" {
 		to = d.Coordinator
 	}
-	s := d.status
 	if to == "" {
-		d.Record("session broken, and no coordinator to tell: no ping has named the seat and --coordinator is not set")
+		d.Record("broken, and no coordinator to tell: no ping has named the seat and --coordinator is not set")
 		return true
 	}
-	subject := fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, s.SessionID, s.SessionReason)
 	body := subject + "\n" + why + "\n"
 	if _, err := d.send(ctx, b, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
-		d.status.StoreError = "telling " + to + " the session is broken: " + err.Error()
+		d.status.StoreError = "telling " + to + " it is broken: " + err.Error()
 		return false
 	}
 	return true
 }
 
 // refused observes one refusal of a server verb at now: counted per verb on
-// the status, and the RefusalRepeats-th consecutive one is raised once — a
-// down beat naming the reason (RefusalDown) and one word to the coordinator —
-// never only logged (docs/SPEC-FRIEND.md, "A refused verb").
+// the status, one per ServedEvery (never once a beat), and the
+// RefusalRepeats-th consecutive one is raised once — a down beat naming the
+// reason (RefusalDown) and one word to the coordinator (tellBroken) — never
+// only logged (docs/SPEC-FRIEND.md, "A refused verb").
 func (l *loop) refused(verb, why string, now time.Time) {
 	d := l.d
+	if l.refusedAt == nil {
+		l.refusedAt = map[string]time.Time{}
+	}
+	if last, ok := l.refusedAt[verb]; ok && now.Sub(last) < ServedEvery {
+		return // one refusal counted per ServedEvery, never once a beat
+	}
+	l.refusedAt[verb] = now
 	if d.status.Refused == nil {
 		d.status.Refused = map[string]int{}
 	}
@@ -1737,16 +1745,7 @@ func (l *loop) refused(verb, why string, now time.Time) {
 	if d.RefusalDown != nil {
 		d.RefusalDown(until, why)
 	}
-	to := l.coordinator()
-	if to == "" {
-		d.Record(now.UTC().Format(time.RFC3339) + " refused: no coordinator to tell: " + verb)
-		return
-	}
-	subject := fmt.Sprintf("friend %s: the server refused %s", d.Friend, verb)
-	body := subject + "\n" + oneLine(why, 400) + "\nHer beat says down with it until the server answers.\n"
-	if _, err := d.send(l.ctx, l.b, bus.Message{From: d.Friend, To: []string{to}, Kind: bus.KindBlocker, Subject: subject, Body: body}); err != nil {
-		d.Record(now.UTC().Format(time.RFC3339) + " refused: telling " + to + " failed: " + err.Error())
-	}
+	d.tellBroken(l.ctx, l.b, fmt.Sprintf("friend %s: the server refused %s", d.Friend, verb), oneLine(why, 400)+"\nHer beat says down with it until the server answers.")
 }
 
 // recovered clears one verb's refusals at now: said once, and the down a
@@ -1758,6 +1757,7 @@ func (l *loop) recovered(verb string, now time.Time) {
 	}
 	delete(d.status.Refused, verb)
 	delete(l.refusedTold, verb)
+	delete(l.refusedAt, verb)
 	d.Record(fmt.Sprintf("%s recovered: %s answers again; the down is lifted", now.UTC().Format(time.RFC3339), verb))
 	if d.RefusalUp != nil {
 		d.RefusalUp()
