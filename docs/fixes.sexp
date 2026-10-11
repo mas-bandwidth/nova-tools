@@ -18,7 +18,9 @@
    (release "v1.2.6" :status "planned"
     :text "The fixes held during the split, the point-release candidates found on 2026-10-10, the owed
      tests, and the sprint store cards that are point-release work. Each is re-applied or written in
-     this repository, then cut as one release."))
+     this repository, then cut as one release.")
+   (release "v1.2.9" :status "planned"
+    :text "A worker card whose last turn is a question ends as asked instead of holding its slot."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -139,4 +141,9 @@
    :text "The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds
     (its add refuses a held rules file that differs), stops children rewriting history, which caused the
     does-not-descend refusals. A test pins the file's digest in both repositories."
-   :origin "v1.2.5 candidate list")))
+   :origin "v1.2.5 candidate list")
+  (fix "worker-question-ending-asked" :release "v1.2.9" :status "planned"
+   :title "End a card as asked when its last turn is a question"
+   :text "A headless card whose last turn asks the user a question ends at once as asked instead of
+     holding its slot to the deadline."
+   :origin "issue #2548")))
