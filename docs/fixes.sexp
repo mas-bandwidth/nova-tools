@@ -458,6 +458,19 @@
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
+  (fix "tla-nova-tools-matching-models-cite-their-code" :release "v1.2.12" :status "planned"
+   :title "Nine matching models cite today's code"
+   :text "BenchStage, FileLock, FirstConn, FuseBox, RedisFn, TableSession, TableFirstContact, TableOrder
+    and WakeCursor each do what their code does; their headers still named internal/ paths and line
+    numbers that moved to pkg/ or to other files, and three Go functions never cited them. Each header
+    now names today's path and lines and says the one difference the code makes (BenchStage's seed guard
+    is the stage's SHA256SUMS, FirstConn disarms only the last dial, FuseBox has six witnesses, RedisFn's
+    Skipped and Unchanged are the model's done, TableFirstContact's Skipped sets done with no resend,
+    WakeCursor does not tell a first arm from a re-arm); install.go cites BenchStage at the verify,
+    check.go cites FuseBox on cmdCheck, and filelock.go's caller list is complete. Tests and models only,
+    no product change."
+   :origin "the card tla-nova-tools-matching-models-cite-their-code.w1")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
