@@ -300,6 +300,9 @@ func recordWrite(files map[string]string) func(string, []byte) error {
 func TestPlanBinaryPinsTheVolumesCopyRule(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
+	// Write a stale stored copy so the /Volumes test proves it is overwritten.
+	require.NoError(t, os.MkdirAll(filepath.Dir(InstalledBinary(home)), 0o755))
+	require.NoError(t, os.WriteFile(InstalledBinary(home), []byte("stale"), 0o755))
 
 	t.Run("a /Volumes binary always copies", func(t *testing.T) {
 		t.Parallel()

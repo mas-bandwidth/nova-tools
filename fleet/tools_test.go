@@ -308,6 +308,24 @@ func debugMsg(task map[string]any) string {
 }
 
 // taskNamed is the first task whose name is exactly name.
+func readSeatFriend(t *testing.T) []map[string]any {
+	content, err := os.ReadFile("seat-friend.yml")
+	require.NoError(t, err)
+	var tasks []map[string]any
+	require.NoError(t, yaml.Unmarshal(content, &tasks))
+	return tasks
+}
+
+func findTaskNamed(t *testing.T, tasks []map[string]any, name string) map[string]any {
+	for _, task := range tasks {
+		if task["name"] == name {
+			return task
+		}
+	}
+	t.Fatalf("task %q not found", name)
+	return nil
+}
+
 func taskNamed(t *testing.T, tasks []map[string]any, name string) map[string]any {
 	t.Helper()
 	for _, task := range tasks {
@@ -411,19 +429,27 @@ func TestFriendHostInstallsAdoptedBuild(t *testing.T) {
 	play := playNamed(t, plays, "the friends of the fleet hosts reinstalled onto the installed build")
 	tasks := flattenTasks(t, tasksOf(t, play))
 
-	// Find the reinstall task that runs nova-friend install from nova_bin_dir.
+	// Find the include_tasks that references seat-friend.yml for the friends reinstall.
 	found := false
 	for _, task := range tasks {
-		if cmd, ok := task["ansible.builtin.command"].(map[string]any); ok {
-			if argv, ok := cmd["argv"].(string); ok {
-				if strings.Contains(argv, "nova_bin_dir") && strings.Contains(argv, "nova-friend") && strings.Contains(argv, "install") {
-					found = true
-					break
-				}
+		if include, ok := task["ansible.builtin.include_tasks"].(string); ok {
+			if include == "seat-friend.yml" {
+				found = true
+				break
 			}
 		}
 	}
-	assert.True(t, found, "the friend host step does not plan to install the adopted build from nova_bin_dir")
+	require.True(t, found, "the friend host step does not include seat-friend.yml")
+
+	// Read seat-friend.yml and assert the install command uses {{ nova_bin_dir }}/nova-friend.
+	seat := readSeatFriend(t)
+	installTask := findTaskNamed(t, seat, "friends: {{ seat_friend.friend }} is reinstalled with the flags its plist records")
+	cmd, ok := installTask["ansible.builtin.command"].(map[string]any)
+	require.True(t, ok, "seat-friend.yml reinstall task has no ansible.builtin.command")
+	argv, ok := cmd["argv"].(string)
+	require.True(t, ok, "seat-friend.yml reinstall task has no argv")
+	assert.Contains(t, argv, "nova_bin_dir", "seat-friend.yml install does not reference nova_bin_dir")
+	assert.Contains(t, argv, "nova-friend", "seat-friend.yml install does not reference nova-friend")
 }
 
 // TestToolsPlayChecksEveryInstalledToolAgainstTheRelease: after the install and
