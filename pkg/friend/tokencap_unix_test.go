@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -22,6 +23,11 @@ import (
 // tokenCapChild is set when this test binary is started again as a lane's fake harness
 // (TestTokenCapFakeHarness): it then reports usage and runs, and never the tests.
 const tokenCapChild = "NOVA_FRIEND_TOKENCAP_CHILD"
+
+// tokenCapReady is the fifo a lane's fake harness opens once its run is up, so a
+// test's clock waits for the child it must stop to have started (the opencode
+// cases: a tick that reached the cap first cancels a run that never launched).
+const tokenCapReady = "TOKENCAP_READY"
 
 // TestTokenCapFakeHarness is the fake harness a capped lane runs, this test binary
 // started again with tokenCapChild set: in mode claude it prints TOKENCAP_MSGS
@@ -35,6 +41,14 @@ func TestTokenCapFakeHarness(t *testing.T) {
 	t.Parallel()
 	if os.Getenv(tokenCapChild) == "" {
 		return
+	}
+	// Opening the ready fifo for write blocks until the test opens its read end,
+	// so the fifo pairing is the signal that this run is up; the fd is kept open
+	// until this process exits so the test never misses it.
+	if ready := os.Getenv(tokenCapReady); ready != "" {
+		if fd, err := syscall.Open(ready, syscall.O_WRONLY, 0); err == nil {
+			_ = fd
+		}
 	}
 	if os.Getenv("TOKENCAP_MODE") == "claude" {
 		n, _ := strconv.Atoi(os.Getenv("TOKENCAP_MSGS")) // ignored: the test sets it; none is zero messages
@@ -124,6 +138,14 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 				cl := &Claude{Stub: Stub{Harness: "claude"}, Friend: "bob", Dir: dir, Run: fakeHarnessExec(t, env, nil, nil), Out: &out, ConfigDir: func() string { return "/accounts/heavy-a" }, TokenCap: tc.row}
 				lt, err = cl.RunCard(ctx, c)
 			case "opencode":
+				// A fifo under the test's own dir: the fake harness opens its write end
+				// only once its run is up, so the injected clock's ticks begin after the
+				// child the cap must stop has started. A tick that reached the cap first
+				// would cancel a run that never launched, and the stopped child would
+				// report a zero exit.
+				ready := filepath.Join(dir, "ready")
+				require.NoError(t, syscall.Mkfifo(ready, 0o600))
+				env = append(env, tokenCapReady+"="+ready)
 				// the session holds 5000000 input tokens of earlier cards, and each export it grew
 				// by 2000000 tokens: the turn's read before it is the base, and each tick of the
 				// injected clock one read
@@ -143,6 +165,11 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 					}}
 				go func() {
 					<-started // the clock ticks once the turn's harness runs
+					if fd, err := syscall.Open(ready, syscall.O_RDONLY, 0); err == nil {
+						// paired with the child's write end: its run has started, and
+						// the fd stays open there until it is stopped or finishes
+						_ = syscall.Close(fd)
+					}
 					for at := time.Unix(0, 0); ; at = at.Add(TokenPoll) {
 						select {
 						case ticks <- at:

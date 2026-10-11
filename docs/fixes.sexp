@@ -361,6 +361,15 @@
     fix, 2026-10-11): TestUsageLimitMarksDownUntilReset ordering assumption; rechecked at dev 7b6cccbc2 on
     2026-10-11: still open")
 
+  (fix "nt-friend-token-cap-test-passes-repeated" :release "v1.2.12" :status "planned"
+   :title "A repeated run of the one-shot token-cap test passes"
+   :text "TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason failed under -count>1 in its opencode
+    over-cap case: the injected clock's ticks could reach the cap before the fake harness's run had
+    launched, so the lane cancelled a run that never started and the stopped child reported a zero
+    exit. The opencode case now pairs on a fifo the harness opens only once its run is up, so the
+    clock ticks after the child it must stop has started; the assertions are unchanged."
+   :origin "the v1.2.12 plan (tmp/point-release-plan-v1.2.11-v1.2.12.md, \"From the nova-tools certification fix\", 2026-10-11); this card nt-friend-token-cap-test-passes-repeated.w1")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
