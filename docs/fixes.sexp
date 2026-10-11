@@ -307,6 +307,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-provider-budget-proxy-unit" :release "v1.2.12" :status "planned"
+   :title "Unit tests pin the provider proxy's rate budget on the wire"
+   :text "New unit tests in pkg/swarm drive (*ProviderProxy).ServeHTTP with a budget set, fake
+    Take, Release, Renew, Log and Sleep, and an in-process RoundTripper: a take that waits then
+    grants and frees its holder; an unreadable budget going open; one wait log and its grant; a
+    limit refusal retried in place with a doubling backoff and each send's holder freed; an
+    out-of-funds answer passed through whole; the run ending in a stall and in a refusal backoff;
+    an unreadable request body; a transport failure; and renewal of a running send. No product
+    change."
+   :origin "card cover-provider-budget-proxy-unit.w3, tmp/v1.2.12-inventory-2026-10-11.md section 8 item C9")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
