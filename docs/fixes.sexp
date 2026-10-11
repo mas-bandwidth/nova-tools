@@ -583,6 +583,19 @@
     them. Tests and models only, no product change."
    :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
 
+  (fix "tla-cardcontract-judge-against-pkg-member" :release "v1.2.12" :status "planned"
+   :title "CardContract's Judge names the pkg paths, the three finishes and the reason prefixes"
+   :text "The module's header cited internal/member, cmd/nova-swarm, internal/swarm and internal/sprint, none
+    of which this tree has; it now names pkg/member/member.go and pkg/cardcontract (contract.go, gate.go), and
+    pkg/swarm and nova-sprint where the staging and sprint code live. Judge names three finishes, ok, failed
+    and reaped, with a refused push said first and a staging refusal, a provider failure with a reason, and a
+    no-result end as reason prefixes on failed, as member.Judge does: a no-result end (EndNoResult) is now a
+    redeal class, a budget-unverifiable end with no result is a staging refusal, and a provider end with no
+    Provider is failed work, never a redeal. A new NoResultIsNotFailedWork invariant holds, with the reversed
+    witness noresultfailed (MCCardContractBrokenNoResultFailed.cfg), and the witness count in COVERAGE and
+    README (eleven) now matches CASES. Tests and models only, no product change."
+   :origin "card tla-cardcontract-judge-against-pkg-member.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11; the first of two CardContract cards)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
