@@ -337,6 +337,23 @@
     slow tier."
    :origin "card cover-member-push-with-a-scripted-git.w2, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C10")
 
+  (fix "cover-native-prepare-refusals-and-report" :release "v1.2.12" :status "planned"
+   :title "Cover prepare's refusals and report's outcomes"
+   :text "Tests and models only, no product change. Eleven unit tests in cmd/nova-swarm/
+    native_prepare_behaviour_test.go pin the refusals nativeRun's prepare makes before it spends
+    anything -- a model with no provider prefix, a worker description pinning another model, an unset
+    worker secret, a slot outside the root, a walking label, a results root inside the job directory,
+    a job or slot lease held by a live run, a public worker with an unlisted repo (exit 1), and a
+    loose auth file whose leases are released -- driving nativeRun with a nativeRunConfig built the
+    way native_test.go builds one; prepare's unit statement coverage moves from 39.3% to 54.1%. Three
+    functional tests in native_report_functional_test.go pin report's outcomes on a run of the fake
+    harness buildShared builds: a child that exits non-zero ends failed, one that exits 0 and writes
+    no RESULT.md is harness-silent, and one whose last turn asked a question has the asked result
+    written. The public-worker test spells its clone URL from separate literals, as pkg/swarm's own
+    publicclass_test.go does, so no test names a real network host and the CI net class test stays
+    green."
+   :origin "the card cover-native-prepare-refusals-and-report.w3 (stream v1212), from the v1.2.12 inventory's section 8 item C11 (tmp/v1.2.12-inventory-2026-10-11.md)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
