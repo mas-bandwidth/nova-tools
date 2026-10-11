@@ -666,6 +666,19 @@
     the module does not model. Tests and models only, no product change."
    :origin "card tla-delivery-note-from-the-seat.w10 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-configapply-friend-slots-and-stamp-cas" :release "v1.2.12" :status "planned"
+   :title "ConfigApply models the fleet kind, the beat charge and the CAS stamp"
+   :text "The module's header named internal/config, which the tree no longer has. A friend row kept the
+    machine she runs on, but a friend row has no machine: her slots are charged at apply time to the
+    machine her beat reports (a beat-host mapping chosen by TLC), so the module now keeps a friend's
+    slots and a beat mapping, and a friend add or set is written only while the machine her beat names
+    has a ceiling. The stamp is a WATCH compare-and-set, not an unconditional write: an outside write
+    may move a stamp mid-apply and the stamp step then refuses, and the fleet kind sits between machine
+    and friend in the apply order. ConflictRefusesAhead and ApplyOrder hold, with a new reversed
+    witness blindstamp (an outside write mid-apply plus a stamp written with no compare) that fails
+    ConflictRefusesAhead. Tests and models only, no product change."
+   :origin "card tla-configapply-friend-slots-and-stamp-cas.w7 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "tla-stopcancels-held-cards-and-reads" :release "v1.2.12" :status "planned"
    :title "The stop-cancels model holds the take, the held card and the reads"
    :text "StopCancels.tla named its worker's functions internal/member machineStop and

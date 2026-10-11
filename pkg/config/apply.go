@@ -137,6 +137,7 @@ func Idem(kind string, rev int64) string { return fmt.Sprintf("config:%s:%d", ki
 // sprint:coordinator the live store disagrees with is held, every other
 // sprint field is written and one OpHeld line is said. The seat moves by
 // nova-sprint's seat verb, or by ApplyMovingSeat (nova-config apply --move-seat).
+// tla/ConfigApply.tla StartApply, Advance
 func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
 	return apply(ctx, st, ap, kind, actor, check, false, report)
 }
