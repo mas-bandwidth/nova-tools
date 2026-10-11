@@ -307,6 +307,16 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-member-push-with-a-scripted-git" :release "v1.2.12" :status "planned"
+   :title "The member's push pinned in the unit tier with a scripted git"
+   :text "cmd/nova-swarm/memberpush_behaviour_test.go drives (g *gitPusher) Push (memberpush.go:88) with a
+    git that answers by argv and records every call's directory and env, a sleep that records the waits,
+    and gh off PATH, so the head's push, the launch's refs, the waits and the pull-request note are
+    checked with no real git and no clock. Push's unit statement coverage moves from 0.0% to 94.2%. The
+    checkoutTip not-a-descendant branch reads a *exec.ExitError a fake cannot build, so it stays in the
+    slow tier."
+   :origin "card cover-member-push-with-a-scripted-git.w2, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C10")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
