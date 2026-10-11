@@ -559,6 +559,14 @@ type Member struct {
 	// pass re-checks its launch's claim against it, so a report whose claim moved while it
 	// ran is reaped, never applied (moved; the in-pass moved check).
 	queueCards map[string]queueCard
+	// queueRead is whether this pass has attempted its queue read: a report post is only
+	// applied once it has, so a report that posts during the inter-tick sleep is applied
+	// against the queue the collecting pass just read, never the previous pass's queue
+	// (STEP 4). The two collects before the queue read defer their report posts to the
+	// collects after it; on a failed read the best queue is the previous pass's, and the
+	// report is still applied (reportOnQueueFailure), so a failing queue never starves an
+	// already-finished child.
+	queueRead bool
 	// passNoAnswer is the current pass's noAnswer: a report a later pass collects notes the
 	// verb against the pass that collects it, so the collecting pass returns the
 	// store-did-not-answer error for it (a Background member; reportOut).
@@ -959,6 +967,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		wasOurs[id] = true
 	}
 	claimMoved := map[string]bool{}
+	m.queueRead = false // the queue is not this pass's until it is read below
 	acted += m.collect()
 	m.endEndedLocal()
 	acted += m.collect()
@@ -993,6 +1002,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// minutes by its pushes and finishes never lets the machine go down while it works
 	code, out := queueOf(m.run, m.queueArgs())
 	m.spent.Queue = since()
+	m.queueRead = true // the queue read is attempted: a report post applies from here on
 	if code != 0 {
 		acted += m.collect()
 		acted += reportOnQueueFailure()
@@ -1049,6 +1059,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// (pruneFinishRefused; member.go, handedBack)
 	m.pruneFinishRefused(byID)
 	if acted += m.machineStop(q, byID, now); m.stopped {
+		// a report in flight when the machine stopped is still its own card's words
+		// (docs/SPEC-SPRINT.md, the fleet member): collect it now, against the queue
+		// just read, so it is reaped when its claim moved and applied otherwise, never
+		// left holding its lane for the length of the stop.
+		acted += m.collect()
 		m.spent.Fill = since()
 		return acted, nil
 	}
@@ -1667,6 +1682,17 @@ func (m *Member) collect() (acted int) {
 		l, ours := m.running[card]
 		if !ours || !l.busy {
 			continue // unreachable while a busy launch is left alone; nothing to give it to
+		}
+		if po.report != nil && !m.queueRead {
+			// The queue is not this pass's yet (m.queueCards is the previous pass's
+			// answer): applying the report now would re-check its claim against the old
+			// queue and apply a finish for a claim that moved while the report ran
+			// (STEP 4). Keep the launch busy and put the post back for the collect
+			// after the queue read, which reaps it against this pass's queue.
+			m.postMu.Lock()
+			m.posted[card] = po
+			m.postMu.Unlock()
+			continue
 		}
 		l.busy = false
 		if po.note != "" {
