@@ -2244,8 +2244,11 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	p, _, perr := friend.ReadPong(state)
 	queue, working, qerr := friend.ReadQueue(dir)
+	// width has one source, the friend row: the daemon's status width is the row's, and it wins;
+	// the pong's width is the argv --width a stale install wrote, ignored (docs/SPEC-FRIEND.md,
+	// width has one source).
 	width := s.Width
-	if p.Width > 0 {
+	if width <= 0 {
 		width = p.Width
 	}
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
