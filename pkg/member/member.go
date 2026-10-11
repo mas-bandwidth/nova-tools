@@ -1061,7 +1061,19 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			// card's commit pushed) has not been collected yet
 			continue
 		}
-		if m.reportOne(id, l, now, c.Packet, noAnswer) {
+		// the queue listed the card working at the launch's own claim (m.moved above), so the
+		// queue's state is known: a member's queue sends no packet for a card it names in
+		// --have (queueArgs), and a read whose stage failed is run again from the launch's own
+		// packet. Before v1.2.14 the retry waited for a packet that never came, the launch
+		// stayed in the running map with its result and no child, and the read sat working, a
+		// ghost, to the server's 60-minute read deadline (port of nova-sprint #112,
+		// a-member-hands-back-a-read-it-is-not-running).
+		qp := c.Packet
+		if qp == nil {
+			own := l.packet
+			qp = &own
+		}
+		if m.reportOne(id, l, now, qp, noAnswer) {
 			acted++
 		}
 	}
