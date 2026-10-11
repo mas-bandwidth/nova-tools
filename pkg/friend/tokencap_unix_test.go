@@ -23,6 +23,13 @@ import (
 // (TestTokenCapFakeHarness): it then reports usage and runs, and never the tests.
 const tokenCapChild = "NOVA_FRIEND_TOKENCAP_CHILD"
 
+// tokenCapTicks bounds the fake clock's opencode case: a real ticker fires every
+// TokenPoll, so a fast turn is read only a handful of times before it ends; the fake
+// clock delivers a few ticks and then holds, rather than spinning, so a turn under the
+// cap cannot accumulate reads past it however slow the run (tokencap.go, deliverCapped).
+// Three ticks reach the default cap for the growth the table names.
+const tokenCapTicks = 8
+
 // TestTokenCapFakeHarness is the fake harness a capped lane runs, this test binary
 // started again with tokenCapChild set: in mode claude it prints TOKENCAP_MSGS
 // stream-json assistant messages, each two lines (one per content block) with the
@@ -143,13 +150,14 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 					}}
 				go func() {
 					<-started // the clock ticks once the turn's harness runs
-					for at := time.Unix(0, 0); ; at = at.Add(TokenPoll) {
+					for at, n := time.Unix(0, 0), 0; n < tokenCapTicks; n, at = n+1, at.Add(TokenPoll) {
 						select {
 						case ticks <- at:
 						case <-stop:
 							return
 						}
 					}
+					<-stop // a capped turn is stopped by its cap; an under-cap turn by its own end
 				}()
 				lt, err = p.DeliverTo(ctx, "ses_1", CardText(LaneJob{Card: c}, 1, 1, "nova-bus send ...", "", "", "", nil))
 				close(stop)
