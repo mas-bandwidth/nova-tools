@@ -214,8 +214,16 @@ func TestCardsThatEndTogetherArePushedSideBySide(t *testing.T) {
 	assert.ElementsMatch(t, ids, pu.cards())
 	finish := g.s.lines("finish")
 	require.Len(t, finish, len(ids))
-	for i, id := range ids {
-		assert.True(t, strings.HasPrefix(finish[i], "finish --as m "+id+"@1 "), "finish %d is %s's: %s", i, id, finish[i])
+	// the finishes run side by side (reportRun), so they land in any order: each
+	// card's own finish is there once
+	for _, id := range ids {
+		found := false
+		for _, f := range finish {
+			if strings.HasPrefix(f, "finish --as m "+id+"@1 ") {
+				found = true
+			}
+		}
+		assert.True(t, found, "a finish names %s: %v", id, finish)
 	}
 }
 
