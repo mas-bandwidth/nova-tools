@@ -281,6 +281,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// provider's reason, never the shape's; the sprint deals the card again. A refused
 		// push above, and a shaped result below (nothing, not done), are the card's own
 		return FinishFailed, EndProvider + ": " + r.Provider
+	case r.End == EndProvider && r.Provider != "" && pu.Sha == "" && (strings.Contains(r.Provider, "class=rate-limited") || (strings.Contains(r.Provider, "status=429") && !strings.Contains(r.Provider, "class=out-of-credit"))):
+		// the provider ended the run and the push was not made: the kind and the
+		// provider's reason, whatever the shape (docs/SPEC-CARD-CONTRACT.md section 4,
+		// provider failure; tla/CardContract.tla, JudgeOf and ProviderFailure)
+		return FinishFailed, EndProvider + ": " + r.Provider
 	case !r.Shaped && r.End == "":
 		// the child ended by itself and left no result: no work came back, and the sprint
 		// deals the card again on another route (cardhdr.EndNoResult). A run its budget or
