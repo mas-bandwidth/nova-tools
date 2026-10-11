@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -268,6 +269,71 @@ func TestJudgeIsTheFinishRule(t *testing.T) {
 		{"push refused", shaped, Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},
 		{"nothing to do", Result{Shaped: true, Verdict: "nothing", Report: "nothing: the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
 		{"nothing to do, said plainly", Result{Shaped: true, Verdict: "nothing", Report: "the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
+	} {
+		fin, why := Judge(tc.r, tc.pu)
+		assert.Equal(t, tc.fin, fin, tc.name)
+		assert.Equal(t, tc.why, why, tc.name)
+	}
+}
+
+// A run that ends at its first RESULT.md — verdict not-done, nothing committed, no
+// gate, under FirstResultWall — gave back no work at all: it is the same kind as a run
+// that wrote none, `no result:`, an ended take the sprint redeals on a route the card
+// has not been drawn on, never a spent attempt (docs/SPEC-CARD-CONTRACT.md section 4;
+// tla/CardContract.tla, JudgeOf).
+func TestARunThatEndsAtItsFirstResultIsNoResult(t *testing.T) {
+	t.Parallel()
+	const wall = 62 * time.Second
+	fin, why := Judge(
+		Result{Ran: true, Shaped: true, Verdict: "not-done", Head: fullSha, Wall: wall, Report: "starting: will run the gate"},
+		Push{None: "the child committed nothing: ..."})
+	assert.Equal(t, FinishFailed, fin)
+	assert.True(t, strings.HasPrefix(why, EndNoResult+": the run ended at its first RESULT.md (verdict not-done, nothing committed, after "), "the reason: %q", why)
+	assert.Contains(t, why, wall.Round(time.Second).String(), "the reason names the wall: %q", why)
+	assert.True(t, strings.HasPrefix(why, EndNoResult+":"), "the reason keeps the \"no result:\" prefix nova-sprint's IsNoResult routes on: %q", why)
+}
+
+// Every other run that ends at its first RESULT.md is judged exactly as it was: only
+// a not-done result with no commit, no refusal, no gate, no end and a wall under
+// FirstResultWall is the new no-result kind; a wall of 0 is unknown and never it
+// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, JudgeOf).
+func TestTheFirstResultWallLeavesEveryOtherFinishAlone(t *testing.T) {
+	t.Parallel()
+	first := Result{Ran: true, Shaped: true, Verdict: "not-done", Head: fullSha, Report: "starting: will run the gate"}
+	withWall := func(r Result, w time.Duration) Result { r.Wall = w; return r }
+	for _, tc := range []struct {
+		name string
+		r    Result
+		pu   Push
+		fin  Finish
+		why  string
+	}{
+		{"wall over the bound", withWall(first, 3*time.Minute), Push{None: "the child committed nothing"}, FinishFailed, "verdict not-done"},
+		{"wall unknown", first, Push{None: "the child committed nothing"}, FinishFailed, "verdict not-done"},
+		{"gate pre-existing", func() Result {
+			r := first
+			r.Wall = 62 * time.Second
+			r.Gate, r.GateTests = GatePreExisting, "TestOld"
+			return r
+		}(), Push{None: "the child committed nothing"}, FinishFailed, GatePreExisting + ": TestOld"},
+		{"gate set otherwise", func() Result { r := first; r.Wall = 62 * time.Second; r.Gate = GateGreen; return r }(), Push{None: "the child committed nothing"}, FinishFailed, "verdict not-done"},
+		{"budget end", func() Result { r := first; r.Wall = 62 * time.Second; r.End = EndBudget; return r }(), Push{None: "the child committed nothing"}, FinishFailed, "budget: verdict not-done"},
+		{"deadline end", func() Result { r := first; r.Wall = 62 * time.Second; r.End = EndDeadline; return r }(), Push{None: "the child committed nothing"}, FinishFailed, "deadline: verdict not-done"},
+		{"provider end", func() Result {
+			r := first
+			r.Wall = 62 * time.Second
+			r.End = EndProvider
+			r.Provider = "provider: class=rate_limit status=429 msg=slow down"
+			return r
+		}(), Push{None: "the child committed nothing"}, FinishFailed, "verdict not-done"},
+		{"pushed sha", withWall(first, 62*time.Second), Push{Sha: fullSha}, FinishFailed, "verdict not-done"},
+		{"push refused", withWall(first, 62*time.Second), Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},
+		{"nothing to do", func() Result {
+			r := withWall(first, 62*time.Second)
+			r.Verdict, r.Report = "nothing", "nothing: the check holds"
+			return r
+		}(), Push{None: "the child committed nothing"}, FinishFailed, "nothing to do: the check holds"},
+		{"verdict ok", func() Result { r := withWall(first, 62*time.Second); r.Verdict = "ok"; return r }(), Push{Sha: fullSha}, FinishOK, ""},
 	} {
 		fin, why := Judge(tc.r, tc.pu)
 		assert.Equal(t, tc.fin, fin, tc.name)

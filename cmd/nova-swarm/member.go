@@ -987,6 +987,7 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		var wall time.Duration
 		nativeHasSpend := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			carry = cardcontract.ParseCarryLine(b)
@@ -1021,6 +1022,11 @@ func (c *nativeChild) Result() member.Result {
 				}
 				u.Wall, u.Budget = string(m[1]), string(m[2])
 				usage = u.String()
+				// the run's wall clock as the harness stated it, for Judge's first-result
+				// case; a wall that does not parse leaves it 0 (unknown) (member.FirstResultWall)
+				if d, err := time.ParseDuration(string(m[1])); err == nil {
+					wall = d
+				}
 			}
 			if s := nativeSpend.FindSubmatch(b); s != nil {
 				nativeHasSpend = true
@@ -1107,7 +1113,7 @@ func (c *nativeChild) Result() member.Result {
 			// their rerun passed: the work is done as far as its gate says; the readers read it
 			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Wall: wall, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry}
 	})
 	return c.result
 }

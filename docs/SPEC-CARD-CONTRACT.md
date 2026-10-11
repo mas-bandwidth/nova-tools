@@ -271,6 +271,10 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
   (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
+  that ended under two minutes with only a not-done RESULT.md, nothing committed and no gate
+  is the same kind: its reason is `no result: the run ended at its first RESULT.md (verdict
+  not-done, nothing committed, after <wall>)` (`member.FirstResultWall`), an ended take the
+  sprint redeals on a route the card has not been drawn on, never a spent attempt. A run
   its budget or its deadline ended with no result is failed work, the end said first, and
   for a budget which budget and at what count, from native's `NATIVE BUDGET` line, the cost
   the harness reported to the cent and rounded up

@@ -125,6 +125,14 @@ const ReadStageRetry = 15 * time.Second
 // origin, and a tick whose children ended together pushes them together.
 const pushWidth = 8
 
+// FirstResultWall is how soon a run that ends at its first RESULT.md is judged a
+// no-result ended take rather than failed work: a child that wrote only a not-done
+// RESULT.md, committed nothing, ran no gate and stopped under this wall gave back the
+// same work as one that wrote no result at all (member.Judge; docs/SPEC-CARD-CONTRACT.md
+// section 4; the card a-run-that-ends-at-its-first-result-is-not-a-finish). A longer run
+// is a spent attempt, the child's own to be judged.
+const FirstResultWall = 2 * time.Minute
+
 // Result is how a child ended. Ran is whether the child ran to its end (its
 // harness answered); OK is its verdict: a work card's, that the work is done,
 // a read's, the reader's `verdict: ok` in RESULT.md. A read whose child did
@@ -139,8 +147,12 @@ type Result struct {
 	Verdict string // a work card's "ok" or "not-done"; a read's "ok", "broken", or "" when the reader gave none
 	Head    string
 	Report  string
-	Title   string // the pull request the child asked for (gh pr create), "" when none
-	Body    string
+	// Wall is the run's wall clock as native's NATIVE line states it, 0 when
+	// unknown. Judge reads it to tell a run that ended at its first RESULT.md
+	// from a spent attempt (FirstResultWall; docs/SPEC-CARD-CONTRACT.md section 4).
+	Wall  time.Duration
+	Title string // the pull request the child asked for (gh pr create), "" when none
+	Body  string
 	// End is how a run that did not finish ended, as the child's harness said it:
 	// EndProvider, EndBudget, EndDeadline, or "" (Judge puts it first in a failed
 	// finish's reason). Usage is what it spent, one line (its budget and wall),
@@ -275,6 +287,14 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the gate decision classed every failure that stayed red pre-existing: the base's
 		// or the member's, never the card's (sprint.FailureClass gives it no class)
 		return FinishFailed, cardhdr.EndPreExisting + ": " + r.GateTests
+	case r.Shaped && r.Verdict == "not-done" && r.End == "" && r.Gate == "" && pu.Sha == "" && pu.Refused == "" && r.Wall > 0 && r.Wall < FirstResultWall:
+		// a run that ended at its first RESULT.md: only a not-done result, nothing
+		// committed, no gate and no end, under FirstResultWall. It gave back the same
+		// work as a run that wrote no result at all, so it is the same kind — the
+		// sprint deals the card again on another route, never a spent attempt — and
+		// keeps the "no result:" prefix nova-sprint's IsNoResult routes on
+		// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, JudgeOf)
+		return FinishFailed, EndNoResult + ": the run ended at its first RESULT.md (verdict not-done, nothing committed, after " + r.Wall.Round(time.Second).String() + ")"
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":

@@ -118,6 +118,20 @@ func TestUnknownRetryCostDoesNotKeepPartialNativePrice(t *testing.T) {
 	assert.Contains(t, r.Usage, "input=30")
 }
 
+// A NATIVE line's wall= word is the run's clock as the harness stated it, carried as
+// member.Result.Wall so Judge can tell a run that ended at its first RESULT.md from a
+// spent attempt (member.FirstResultWall; docs/SPEC-CARD-CONTRACT.md section 4).
+func TestANativeWallReachesTheResult(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(dir, "c1.native.log"), "NATIVE OK label=c1 rc=0 wall=62.0s harness=opencode budget=unmetered\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
+	assert.Equal(t, 62*time.Second, c.Result().Wall)
+}
+
 func TestMalformedReceiptSpendIsReportedUnreconciled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
