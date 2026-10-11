@@ -1039,6 +1039,19 @@ read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or
 				},
 				Run: w.serve,
 			},
+			{
+				Name:    "acceptance",
+				Usage:   "acceptance --as <friend> --dir <working_dir>",
+				Effect:  tool.Delivery + ": the acceptance run; one lane takes a probe card from the server, runs it under the real lane wall, writes RESULT.md, and exits 0",
+				Detail: `The acceptance run (docs/SPEC-FRIEND.md, "Acceptance run"): one lane takes a probe card from the server,
+runs it under the real lane wall, writes RESULT.md, and exits 0; the play fails the host otherwise,
+naming the friend, the exit code and the log line.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "the friend name")
+					f.Required("dir", "the friend's working directory")
+				},
+				Run: w.acceptance,
+			},
 		},
 	}
 }
