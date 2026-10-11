@@ -692,6 +692,19 @@
     its exit mapping. Tests and models only, no product change."
    :origin "card tla-benchrun-an-interrupted-exec-ran.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friendpresence-daemon-evidence" :release "v1.2.12" :status "planned"
+   :title "FriendPresence models the daemon's evidence: any session line, a finish"
+   :text "FriendPresence.tla's word (UpIn) read an answer to a nonce alone; the daemon counts any bus
+    line the session writes (Heard, pkg/friend/presence.go) and the server counts a card finished
+    (nova-sprint FriendStatus) as evidence too. The module adds the Heard and Finish evidence actions,
+    Proven (the push's proof this run, set by Heard or Answer) and names the check cadence
+    (ProveEvery, ReaskAfter, Read), and restates UpHasFreshAnswer as UpHasFreshEvidence over all the
+    evidence; the reversed witness MCFriendPresenceBrokenFinishForever.cfg (a finish never ages) fails
+    it. presence.go cites the module from its Heard, Ask, Answer and Tick. The header says the table
+    half (Hold, TakeBack, Deal, Take) models nova-sprint code and belongs beside SeatHealth. Tests and
+    models only, no product change."
+   :origin "card tla-friendpresence-daemon-evidence.w10 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
