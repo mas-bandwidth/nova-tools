@@ -822,4 +822,16 @@
     reason, tip moved) is posted on a channel the step drains and applied by the loop. On shutdown the
     daemon waits for in-flight finishes up to FinishWait and leaves any unanswered to be sent again
     next run."
-   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")))
+   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day,     in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
+
+  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.15" :status "in-progress"
+   :title "A member reports its ended cards side by side"
+   :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
+    verb that may wait on the wire, so a lane stayed held after its child ended for the length of the report lag.
+    The pass now runs up to pushWidth reports side by side (reportGate), each still one verb with its own refusal
+    contract, and posts its exit code and output for the pass goroutine's collect to apply; a launch being reported
+    is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
+    reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
+    its reports, so it is still one step. The lander's diffcheck now holds a package's tests always inside PATHS
+    (cardgen.AlwaysInPathsRule), so the tests this changes beside the member source are in scope."
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w8")))
