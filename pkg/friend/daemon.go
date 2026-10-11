@@ -425,6 +425,7 @@ const RestLine = "and %d more: nova-bus recv --as %s --all"
 // are acked when the turn is accepted. A single message with nothing else is
 // its authored text alone. Every message retains its sender's authority
 // label (docs/SPEC-FRIEND.md, bus-authority-labels.w3). A function of its arguments.
+// tla/FriendEnvelope.tla Envelope
 func Envelope(seat string, msgs []bus.Message, now time.Time, me string, limit int, notice, pongCommand string) (text string, shown int) {
 	if len(msgs) == 1 && notice == "" && pongCommand == "" {
 		return authored(seat, msgs[0]), 1
@@ -816,6 +817,7 @@ const (
 
 // proof is whether the daemon may deliver into the session at now (Proof), with
 // the status saying the push proof and the session proof the server last took.
+// tla/Friend.tla NoTurnBeforeProof
 func (l *loop) proof(now time.Time) bool {
 	d := l.d
 	if d.Sent != nil {
@@ -1061,6 +1063,7 @@ func (l *loop) tellKind(kind, subject, body string, now time.Time) {
 // ping is a ping read or peeked: answered by the daemon at once, stepped
 // into the machine, and, a wake check (IsWake) to a harness that can be
 // pushed into, a wake turn owed (docs/SPEC-FRIEND.md, session-pong.w1).
+// tla/Friend.tla Ping
 func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now time.Time) {
 	if l.answered[e.Entry] {
 		return // the machine saw it when the daemon first did
@@ -1088,6 +1091,7 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 // session not broken), else a peek that answers pings.
 // The full set is read before Envelope applies the adapter's text limit
 // (docs/SPEC-FRIEND.md, the loop).
+// tla/Friend.tla Ping (a nonce past the challenge window is dropped, never answered)
 // It answers whether the store answered.
 func (l *loop) read(now time.Time) bool {
 	d, b := l.d, l.b

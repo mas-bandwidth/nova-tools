@@ -349,6 +349,17 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "tla-friendenvelope-gives-up-and-acks" :release "v1.2.12" :status "planned"
+   :title "FriendEnvelope models the give-up, the ack that can fail and the present's MaxBatch read cap"
+   :text "The module's header named internal/friend/daemon.go (it is pkg/friend/daemon.go) and claimed the
+    MaxBatch read cap was removed, and its Accept was atomic. It now gives up a failed message once it
+    reaches MaxDeliveries (a GiveUp action, daemon.go settle), restates AckOnlyAccepted as only an
+    accepted or given-up turn acks, keeps the MaxBatch read cap while a present is owed, splits Accept
+    into the exit and the ack with the ack able to fail, and corrects the header and the
+    MCFriendEnvelopeFailureReorders name. A new reversed witness giveupearly gives up before
+    MaxDeliveries and violates GivenUpOnlyAtTheBound. Tests and models only, no product change."
+   :origin "the card tla-friendenvelope-gives-up-and-acks.w1")
+
   (fix "cover-friend-read-lane-step" :release "v1.2.12" :status "planned"
    :title "Cover the read lane's step with unit tests"
    :text "readLaneStep (pkg/friend/read_lanes.go:444) had no unit test: 0 of 46 statements run under
@@ -493,6 +504,50 @@
     :1236 and T.reshape :1263-1300. TABLE-MODEL.md and MEMBER-TABLE-MODEL.md say the same where they
     said proposed. Tests and models only, no product change."
    :origin "the card tla-table-layer-headers-name-table-lua.w1 (stream v1212), from the v1.2.12 inventory item T35 (the table layer)")
+
+  (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
+   :title "Unit tests pin how nova-friend run, serve and the dispatcher answer faults"
+   :text "cmd/nova-friend/run_serve_faults_test.go drives the wall and hook dispatch, the coordinator's
+    ping loop and the daemon's fault paths through the package rig: a wall with no command or an unknown
+    flag is refused at sandbox.ExitRefused and wall -h exits 0; hook -h is the tool's help, never the
+    claude hook; serve notes a store that fails one tick then answers, notes the rows it cannot re-read
+    while its pings go on, and waits through a store that will not open; a limit with no seat and no
+    --coordinator is said on the record, a credit refusal with no down verb (and with one that errors) is
+    said and told once on the bus, and --refuse-go with an unbuildable shim runs no lane. Found defect:
+    serve refuses (exit 2) when the store opens but the first friend-rows read fails, where openUntil's
+    doc says a store down at the start is no reason to exit (v1.2.14)."
+   :origin "card cover-nova-friend-run-and-serve-faults (stream v1212), tmp/v1.2.12-inventory-2026-10-11.md section 8 item C13")
+
+  (fix "tla-cairnstore-no-gap-ledger-and-reopen" :release "v1.2.12" :status "planned"
+   :title "CairnStore models the code as it is: no gap ledger, no publish, a refused re-open, a healed open"
+   :text "The module's header cited stale line ranges, it held a gap ledger and a Liveness the code has no
+    counterpart for (Index builds rows from entries/*.json and Ledger holds only counts), and it modelled
+    Publish and RemoteDown over a package that implements no transport. Those are removed and the header
+    says so. Open now refuses a re-open naming another publish policy, and an open interrupted before
+    logging is healed on the next open, both as cairn.go does. A new OneOpenPolicy invariant holds, with
+    the reversed witness BrokenReopenOther (a re-open accepted under another policy); BrokenPublishedWithoutPersisted
+    left with PublishedImpliesPersisted. cairn.go now cites the module from Open and appendEntry."
+   :origin "card tla-cairnstore-no-gap-ledger-and-reopen.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
+  (fix "tla-friend-link-and-challenge" :release "v1.2.12" :status "planned"
+   :title "Friend's link and challenge model brought level with the daemon"
+   :text "Friend.tla's header names pkg/friend, not internal/friend; a ping read past the challenge
+    window is dropped, never answered, instead of every ping being answered; any line the session
+    writes after a ping ends the challenge and proves the push, where the model's Pong needed a seen
+    nonce; and a proven flag gates delivery, so nothing is delivered until the session is proven, held
+    by the new NoTurnBeforeProof invariant and its reversed witness noproof
+    (MCFriendBrokenNoProof.cfg). Tests and models only, no product change."
+   :origin "card tla-friend-link-and-challenge.w4 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35; the first of three Friend cards, chained)")
+
+  (fix "tla-moved-sprint-models-leave-nova-tools" :release "v1.2.12" :status "planned"
+   :title "FriendReadyTake, FriendRedealLate and StopReturn retire; nova-sprint's are the ones"
+   :text "FriendReadyTake, FriendRedealLate and StopReturn model nova-sprint code (the server-side take,
+    deal and redeal, and the stop-return, now StopFence) that moved to mas-bandwidth/nova-sprint in
+    v1.2.3, and the models move there now. The three modules, their MC modules and configurations, and
+    their CASES.tsv and RUNS.tsv rows are removed; no module here extended or cited them. COVERAGE.tsv
+    keeps the friend's one-shot lanes as missing (owed_by tla-friend-one-shot-lanes); tla/README.md says
+    the three moved in v1.2.12."
+   :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
