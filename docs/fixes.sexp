@@ -307,6 +307,11 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-member-end-and-script-read" :release "v1.2.12" :status "planned"
+   :title "Unit tests for a launch's end and the script read"
+   :text "Two new test files under pkg/member, no product change. end_ended_behaviour_test.go drives Member.Tick over the end of a launch and pins the no-pusher and no-branch refusals, the columns and the moved claim that skip the end, a reader's one report, a finish the store refused reported again with no second push, and the eight-push width. script_verify_behaviour_test.go drives ScriptVerifier.Verify over real git in temp repositories and pins the missing program and head, a base or head the mirror lacks (no program run), the origin branch as the start, a missing git with no checkout left under Temp, and the run's argv, directory and one-line ok. Coverage: endEnded 27.3% to 93.9%, Verify 79.2% to 87.5%."
+   :origin "the card cover-member-end-and-script-read.w1, from tmp/v1.2.12-inventory-2026-10-11.md section 8 item C12 (the owner, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
