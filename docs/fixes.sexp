@@ -470,6 +470,16 @@
     product change."
    :origin "the card tla-reach-from-a-step-and-early-proof.w1 (stream v1212)")
 
+  (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "planned"
+   :title "The CardMachine copy is retired; nova-sprint's is the one copy"
+   :text "tla/CardMachine.tla modelled 02_card_move.lua, which neither repository carries any more, and
+    nothing here extended or cited it; its one case, MCCardMachine.cfg, had only a timed-out record
+    (exit 124 at 110 s). The module, its MC module and configuration, and its CASES.tsv and RUNS.tsv rows
+    are removed; nova-sprint's tla/CardMachine.tla is the one copy, kept for its CardISA. The TLC record
+    class test loses its MCCardMachine exception, so every case is now held to a current record and a debt
+    declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
+   :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

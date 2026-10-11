@@ -3,10 +3,11 @@
 > **The nova-sprint models live in nova-sprint (mas-bandwidth/nova-sprint, `tla/`) from v1.2.3.** The modules that
 > model only nova-sprint, nova-card and nova-work code moved there with their MC modules, configurations, `CASES.tsv` and
 > `RUNS.tsv` rows, READMEs and benches (docs/SPLIT-NOVA-SPRINT.md, section (c)). What stays here models code that stays
-> here. `CardMachine` (the Lua of `pkg/nsprint/fn`) stays, and nova-sprint carries a copy because its `CardISA`
-> extends it. `CardContract`, `FriendPresence`, `FriendReadyTake`, `FriendRedealLate` and `StopReturn` model nova-swarm,
-> member or nova-friend code beside the sprint's and stay. `CardMachine` and `CardContract` are stale: they describe
-> designs no longer run (the owner's ruling of 2026-10-01: nova-tables is the modelled layer). `BenchStage` is current.
+> here. The `CardMachine` copy here was retired in v1.2.12 (it modelled 02_card_move.lua, deleted from both
+> repositories); nova-sprint's `tla/CardMachine.tla` is the one copy, kept for its `CardISA`.
+> `CardContract`, `FriendPresence`, `FriendReadyTake`, `FriendRedealLate` and `StopReturn` model nova-swarm,
+> member or nova-friend code beside the sprint's and stay. `CardContract` is stale: it describes a
+> design no longer run (the owner's ruling of 2026-10-01: nova-tables is the modelled layer). `BenchStage` is current.
 > The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`, `TableEdit`, `TableOrder`,
 > `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current. [`COVERAGE.tsv`](COVERAGE.tsv)
 > lists every state machine with its code, its module and its status (current, partial, stale or missing) and the card
@@ -16,7 +17,6 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 
 | Module | Instance | What it is |
 |---|---|---|
-| `CardMachine.tla` | `MCCardMachine` | the card's life over cells (the copy model of 02_card_move.lua), the corrected design after its three findings |
 | `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (Stella; the strict gate fails on purpose) |
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
@@ -58,7 +58,6 @@ go run ./tools/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/
 go run ./tools/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source pkg/nsprint/fn/lua/table.lua
 git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
 go run ./tools/tlacheck witnesses /tmp/table-pinned.lua
-timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -deadlock tla/MCCardMachine.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock tla/MCFirstConn.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -config tla/MCFuseBox.cfg tla/MCFuseBox.tla
 ```
