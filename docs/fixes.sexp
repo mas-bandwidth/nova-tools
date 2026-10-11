@@ -642,6 +642,19 @@
     check."
    :origin "card tla-coverage-names-every-module-in-nova-tools-after-the-retire.w4 (stream v1212, 2026-10-11; the module walk the retired CardMachine copy left)")
 
+  (fix "tla-bus2-names-pkg-bus-and-the-idle-claim" :release "v1.2.12" :status "planned"
+   :title "Bus2 names pkg/bus and models the idle claim"
+   :text "Bus2's header named internal/bus2/bus2.go and docs/SPEC-BUS2.md, both gone; it now names
+    pkg/bus/bus.go and redis.go and docs/SPEC-BUS.md. The model told a dead holder only by a crash;
+    the code tells one by the entry's idle time past ClaimAfter, with one consumer name for every
+    reader, so Bus2 gains a Stall action (a live holder idle past ClaimAfter becomes claimable by any
+    reader, its holder NoOne) and HeldStaysHeld is restated as held while under ClaimAfter. A skipped
+    kind is released back as a lost one, and a message's cc is folded into its recipients. A sixth
+    reversed witness, claimfresh, claims a holder before ClaimAfter and fails HeldStaysHeld; the five
+    existing witnesses and Bus2Receipts' cases keep their results, and bus.go cites the Send action.
+    Tests and models only, no product change."
+   :origin "card tla-bus2-names-pkg-bus-and-the-idle-claim.w7 (v1.2.12 inventory item T32; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

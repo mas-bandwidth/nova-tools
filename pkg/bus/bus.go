@@ -315,6 +315,7 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // arguments and gets the original. The same token with other arguments, or
 // past its life, is refused. Without a token a lost response retried is a
 // second message.
+// tla/Bus2.tla Send.
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
