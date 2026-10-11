@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -237,26 +238,46 @@ func TestALaneHandsItsNextCardOnlyWhenTheTurnEnds(t *testing.T) {
 }
 
 // A lane restarted keeps its session (no new one opened) and does not hand a
-// card it set aside before; the mode follows the row, changing only when the
-// other mode's turns are over.
-func TestALaneKeepsItsSessionAcrossARestartAndTheModeFollowsTheRow(t *testing.T) {
+// card it set aside before.
+func TestALaneKeepsItsSessionAcrossARestart(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}, {"c2", "queued"}}, []string{"c1", "c2"}, nil)
 		h := &lanesHarness{dir: dir, finish: map[string]bool{"c2": true}, active: map[string]int{}}
 		r, state := laneRig(t, h, 1)
 		*state = LaneState{Sessions: map[int]string{1: "ses_old"}, GivenUp: []string{"c1"}}
-		var mu sync.Mutex
-		mode := ModeBatch
-		r.d.Row = func() (string, int) { mu.Lock(); defer mu.Unlock(); return mode, 1 }
 		r.send(t, "ada", "first", "in batch")
-		r.at[5] = func() { mu.Lock(); mode = ModeOneShot; mu.Unlock() }
 		r.run(t, 12)
 		turns, _, seeds := h.got()
 		assert.Empty(t, seeds, "the lane's session is kept")
 		assert.Equal(t, []string{"ses_old: c2"}, turns, "c1 was set aside before the restart")
-		assert.Contains(t, strings.Join(r.records, "\n"), "mode: one-shot, from batch (the friend row)")
 		assert.Equal(t, ModeOneShot, r.last().Mode)
+	})
+}
+
+// A stored batch row (the retired mode) reads as one-shot through
+// pkg/config.FriendMode, the reader nova-sprint's friend sync writes onto her
+// roster row and her beat answers: the daemon deals and runs one card per lane
+// (docs/SPEC-FRIEND.md, one-shot lanes).
+func TestAStoredBatchRowIsDealtAndRunPerLane(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}, {"c2", "queued"}}, []string{"c1", "c2"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true, "c2": true}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 2)
+		row := config.Row{Name: "bob", Fields: map[string]string{"mode": config.FriendModeBatch}}
+		r.d.Row = func() (string, int) { return config.FriendMode(row), 2 } // the row still says batch
+		r.run(t, 12)
+		turns, _, seeds := h.got()
+		require.Len(t, seeds, 2, "one session per lane, not one batch session")
+		require.Len(t, turns, 2, "each lane is handed one card: %v", turns)
+		var cards []string
+		for _, tn := range turns {
+			_, card, _ := strings.Cut(tn, ": ")
+			cards = append(cards, card)
+		}
+		assert.ElementsMatch(t, []string{"c1", "c2"}, cards, "one card per lane")
+		assert.Equal(t, ModeOneShot, r.last().Mode, "the retired batch row reads as one-shot")
 	})
 }
 

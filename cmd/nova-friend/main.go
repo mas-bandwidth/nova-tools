@@ -557,13 +557,13 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 					f.Int("load-width", friend.DefaultLoadWidth, "the lanes that run while the load is above --load-max")
 					f.String("pause-on", "", "funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)")
 					f.Bool("refuse-go", false, "put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)")
-					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.String("mode", "", "override the friend row's delivery mode, one-shot, for a test (default: one-shot; batch is retired)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
 					f.String("config-dir", "", "the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.Check(func(c *tool.Call) {
-						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
-							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
+						if m := c.Str("mode"); m != "" && m != friend.ModeOneShot {
+							c.Problem(fmt.Sprintf("--mode %q wants one-shot; batch is retired and every friend takes one card per lane", m))
 						}
 						if d := c.Str("config-dir"); d != "" && !filepath.IsAbs(d) {
 							c.Problem(fmt.Sprintf("--config-dir %q wants an absolute path: CLAUDE_CONFIG_DIR is read as given, never expanded", d))
