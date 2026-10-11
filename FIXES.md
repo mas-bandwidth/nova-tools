@@ -54,6 +54,7 @@ The fixes held during the split, the point-release candidates found on 2026-10-1
 The fleet-install fixes found while dogfooding v1.2.5 and later.
 
 - **Every installed tool is checked against the release's bytes** (in-progress). After the install and the friends' reinstall, tools.yml lists each machine's bin directory with the sha256 of every file and compares it with the platform's SHA256SUMS; a tool built or copied on the machine, which prints the release's version and holds another toolchain's bytes, refuses the play (TOOLS REFUSED step=identity) and is named. --check says WOULD-REPLACE and refuses nothing. fleet/tools_test.go pins the check and that no task compiles a tool. From: dogfood 2026-10-10: after the v1.2.5 adopt one machine's nova-friend reported go1.27.1 while every other tool reported go1.26.6.
+- **The friend acceptance run takes a probe card and reports its result** (in-progress). Each friend placed on the host has an acceptance task: a command runs a probe card under the lane wall and registers its result, followed by a separate assert that checks the exit code. On non-zero exit the play fails the host with the friend's name, the exit code and the log line. From: dogfood 2026-10-10: a friend exit 126 after an adopt reported done.
 
 ## v1.2.9 (planned)
 
