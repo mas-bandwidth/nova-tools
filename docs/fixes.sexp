@@ -526,6 +526,26 @@
     from adapter_codex.go. Tests and models only, no product change."
    :origin "card tla-friendnotifications-withdraw-and-coalesce.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friend-link-and-challenge" :release "v1.2.12" :status "planned"
+   :title "Friend's link and challenge model brought level with the daemon"
+   :text "Friend.tla's header names pkg/friend, not internal/friend; a ping read past the challenge
+    window is dropped, never answered, instead of every ping being answered; any line the session
+    writes after a ping ends the challenge and proves the push, where the model's Pong needed a seen
+    nonce; and a proven flag gates delivery, so nothing is delivered until the session is proven, held
+    by the new NoTurnBeforeProof invariant and its reversed witness noproof
+    (MCFriendBrokenNoProof.cfg). Tests and models only, no product change."
+   :origin "card tla-friend-link-and-challenge.w4 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35; the first of three Friend cards, chained)")
+
+  (fix "tla-moved-sprint-models-leave-nova-tools" :release "v1.2.12" :status "planned"
+   :title "FriendReadyTake, FriendRedealLate and StopReturn retire; nova-sprint's are the ones"
+   :text "FriendReadyTake, FriendRedealLate and StopReturn model nova-sprint code (the server-side take,
+    deal and redeal, and the stop-return, now StopFence) that moved to mas-bandwidth/nova-sprint in
+    v1.2.3, and the models move there now. The three modules, their MC modules and configurations, and
+    their CASES.tsv and RUNS.tsv rows are removed; no module here extended or cited them. COVERAGE.tsv
+    keeps the friend's one-shot lanes as missing (owed_by tla-friend-one-shot-lanes); tla/README.md says
+    the three moved in v1.2.12."
+   :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
