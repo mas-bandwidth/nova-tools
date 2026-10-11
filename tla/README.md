@@ -5,13 +5,15 @@
 > `RUNS.tsv` rows, READMEs and benches (docs/SPLIT-NOVA-SPRINT.md, section (c)). What stays here models code that stays
 > here. The `CardMachine` copy here was retired in v1.2.12 (it modelled 02_card_move.lua, deleted from both
 > repositories); nova-sprint's `tla/CardMachine.tla` is the one copy, kept for its `CardISA`.
-> `CardContract`, `FriendPresence`, `FriendReadyTake`, `FriendRedealLate` and `StopReturn` model nova-swarm,
-> member or nova-friend code beside the sprint's and stay. `CardContract` is stale: it describes a
+> `CardContract` and `FriendPresence` model nova-swarm, member or nova-friend code beside the sprint's and stay.
+> `CardContract` is stale: it describes a
 > design no longer run (the owner's ruling of 2026-10-01: nova-tables is the modelled layer). `BenchStage` is current.
 > The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`, `TableEdit`, `TableOrder`,
 > `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current. [`COVERAGE.tsv`](COVERAGE.tsv)
 > lists every state machine with its code, its module and its status (current, partial, stale or missing) and the card
 > that owes a model that is not current; `TestEveryStateMachineHasACurrentModel` (internal/ci) holds it.
+
+`FriendReadyTake`, `FriendRedealLate` and `StopReturn` moved to nova-sprint in v1.2.12 (`StopReturn` as `StopFence`).
 
 The TLA+ modules here are the specifications of the state machines this repo implements (rowan-new SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; Glenn 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in rowan-new `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
 
