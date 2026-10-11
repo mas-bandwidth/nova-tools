@@ -564,6 +564,12 @@ configuration store migrates as its owning role, and a refusal in the window res
 and function library while leaving the migration in place. The command is not called by the sprint tick.
 The contract is [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), "Adopting a build"; the coordinator procedure is in
 [SPRINT-COORDINATOR.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPRINT-COORDINATOR.md), "Adopting the seat build".
+On every fleet host the tools play restarts each loop member and reader whose binary the install replaced, reading them from the installed
+`nova-sprint live`: on Linux that read finds the systemd units, and on Darwin it finds the launchd agents and the system-domain
+LaunchDaemons. A host whose manifest lists a member or reader and finds none stale is already on the installed build, prints
+`LOOPS OK ... already on the installed build` and restarts nothing; the step refuses only a host whose manifest lists no member or
+reader at all, naming the manager and the directories the read named. The manifest read itself is one command per platform: on Darwin
+it passes the launchd agents directory and the system-domain LaunchDaemons directory, and on Linux it passes neither.
 
 *Test: `TestAdoptRunsThePlayAndRefusesAHalfMove`.*
 

@@ -1,6 +1,7 @@
 config	module	expected	property	deadlock	group	gate	debt
 MCBenchRun.cfg	MCBenchRun.tla	pass	-	ignore-terminal	benchrun	required	-
 MCBenchRunBrokenNoRemove.cfg	MCBenchRun.tla	invariant	NothingLeftBehind	ignore-terminal	benchrun	required	-
+MCBenchRunBrokenInterruptRefused.cfg	MCBenchRun.tla	invariant	InterruptedExecRan	ignore-terminal	benchrun	required	-
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
 MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal	cairnstore	required	-
@@ -140,6 +141,7 @@ MCFriendLaneBrokenLocalEpochLive.cfg	MCFriendLane.tla	temporal	WorkingResolves	i
 MCFriendLaneBrokenKeepOnRefusal.cfg	MCFriendLane.tla	invariant	OneRequestApart	ignore-terminal	friendlane	required	-
 MCFriendLaneBrokenCardOnly.cfg	MCFriendLane.tla	invariant	NoStaleStep	ignore-terminal	friendlane	required	-
 MCFriendLaneBrokenNoGone.cfg	MCFriendLane.tla	temporal	WorkingResolves	ignore-terminal	friendlane	required	-
+MCFriendLaneBrokenKeepOnMismatch.cfg	MCFriendLane.tla	invariant	WorkingOnlyOnTheServersSay	ignore-terminal	friendlane	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
 MCFriendBrokenNoProof.cfg	MCFriend.tla	action	NoTurnBeforeProof	ignore-terminal	friend	required	-
@@ -158,6 +160,7 @@ MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	delivery	required	-
 MCDeliveryBrokenNoPresent.cfg	MCDelivery.tla	invariant	GapCarriesThePresent	ignore-terminal	delivery	required	-
 MCDeliveryBrokenReclaim.cfg	MCDelivery.tla	invariant	NoSupersededDelivered	ignore-terminal	delivery	required	-
 MCDeliveryBrokenAnswerStale.cfg	MCDelivery.tla	invariant	NoStaleNonceAnswered	ignore-terminal	delivery	required	-
+MCDeliveryBrokenAnySender.cfg	MCDelivery.tla	invariant	NoteFromSeat	ignore-terminal	delivery	required	-
 MCFriendEnvelope.cfg	MCFriendEnvelope.tla	pass	-	ignore-terminal	frienddelivery	required	-
 MCFriendEnvelopeBrokenNewestFirst.cfg	MCFriendEnvelope.tla	invariant	NoYoungerFirst	ignore-terminal	frienddelivery	required	-
 MCFriendEnvelopeBrokenOnePerTurn.cfg	MCFriendEnvelope.tla	invariant	EnvelopeTakesAll	ignore-terminal	frienddelivery	required	-
@@ -183,6 +186,7 @@ MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfter
 MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal	stopcancels	required	-
+MCStopCancelsBrokenHeldThrough.cfg	MCStopCancels.tla	invariant	NoLaunchAfterStop	ignore-terminal	stopcancels	required	-
 MCLoopRedial.cfg	MCLoopRedial.tla	pass	-	ignore-terminal	loopredial	required	-
 MCLoopRedialBrokenNoRedial.cfg	MCLoopRedialBrokenNoRedial.tla	invariant	NoParkOnDropped	ignore-terminal	loopredial	required	-
 MCLoopRedialBrokenNoBound.cfg	MCLoopRedial.tla	invariant	BackoffBounded	ignore-terminal	loopredial	required	-

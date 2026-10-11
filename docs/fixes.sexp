@@ -62,7 +62,9 @@
      lines per repository and package, product against test, from a baseline taken before the first
      pass.")
    (release "v1.2.14" :status "planned" :date "2026-10-11"
-    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find."))
+    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
+   (release "v1.2.15" :status "planned"
+    :text "The next small product fixes, one concern each."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -502,6 +504,16 @@
     product change."
    :origin "the card tla-reach-from-a-step-and-early-proof.w1 (stream v1212)")
 
+  (fix "tla-friendlane-every-hand-back-is-a-request" :release "v1.2.12" :status "planned"
+   :title "FriendLane models a work card's no-begin run and the row-read drop"
+   :text "The FriendLane model now does what lane_take.go does: a work card goes from taken to running
+    with no begin (a read keeps its begin, read_lanes.go), a row read that disagrees drops the card
+    locally and the lane asks again (laneCheck), and Card.Epoch's directory-epoch fallback (the
+    LocalEpoch witness's live behaviour wherever the server named none) is named. A seventh reversed
+    witness, keeponmismatch, lets a lane keep running its card after a row read disagrees and fails
+    WorkingOnlyOnTheServersSay. Tests and models only, no product change."
+   :origin "card tla-friendlane-every-hand-back-is-a-request.w6 (stream v1212)")
+
   (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "planned"
    :title "The CardMachine copy is retired; nova-sprint's is the one copy"
    :text "tla/CardMachine.tla modelled 02_card_move.lua, which neither repository carries any more, and
@@ -642,6 +654,44 @@
     check."
    :origin "card tla-coverage-names-every-module-in-nova-tools-after-the-retire.w4 (stream v1212, 2026-10-11; the module walk the retired CardMachine copy left)")
 
+  (fix "tla-delivery-note-from-the-seat" :release "v1.2.12" :status "planned"
+   :title "Delivery's present takes its note only from the seat"
+   :text "The module took any note as the newest and always delivered it in the present step, with a gap
+    rule that always applied. It now carries a seat variable: the note is the newest note from the seat
+    (none while the seat is unknown, and a one-shot present supersedes the note too), a present whose
+    turn fails is owed again after RecheckEvery carrying the same note, and the gap rule holds only in
+    batch mode, never for a passive harness, and not before the first beat. NoteFromSeat holds, with a
+    new reversed witness anysender that picks a note not from the seat; the three existing witnesses keep
+    their results. adapter_tmux.go's Deliver comment no longer cites Delivery for the idle pane, which
+    the module does not model. Tests and models only, no product change."
+   :origin "card tla-delivery-note-from-the-seat.w10 (stream v1212; drift read at dev 2314d437f, 2026-10-11)")
+
+  (fix "tla-stopcancels-held-cards-and-reads" :release "v1.2.12" :status "planned"
+   :title "The stop-cancels model holds the take, the held card and the reads"
+   :text "StopCancels.tla named its worker's functions internal/member machineStop and
+    internal/friend/stop.go, both gone (pkg/member/member.go, pkg/friend/stop.go); its Return
+    required the word STOPPED where the code sends every owed stop-return whatever the word; its
+    Start took and launched in one step where the code claims a card and holds it before it launches,
+    a held card given up with its return owed when the word turns (releaseHeld); and it had no reads,
+    where stopReads cancels every read under way and owes its return. The module now names pkg/member
+    and pkg/friend, splits Take from Start, gives the held card up on STOP, cancels reads with owed
+    returns, and sends Return in either word, with a reversed witness (heldthrough: a held card
+    launches through the stop, breaking NoLaunchAfterStop). NoLaunchAfterStop still holds. Only lanes
+    and reads are cancelled: a batch turn already running goes on (a dealt-card turn started by
+    startDealt, daemon.go), a v1.2.14 candidate."
+   :origin "card tla-stopcancels-held-cards-and-reads.w7 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
+  (fix "tla-benchrun-an-interrupted-exec-ran" :release "v1.2.12" :status "planned"
+   :title "BenchRun's exec interrupt kills the command, never refuses a run that ran"
+   :text "BenchRun.tla's header names pkg/bench, not internal/bench. The Interrupt action is split into
+    InterruptCopy (an interrupt during the copy refuses the run, as before) and InterruptExec (an
+    interrupt during the exec sets ranCmd and exits Killed, the code's sshLine ExitCode -1, stored as
+    Code by runIn and the verb's exit); the new InterruptedExecRan invariant holds that a run whose
+    command ran is never refused. The reversed witness MCBenchRunBrokenInterruptRefused.cfg (an exec
+    interrupt that refuses a run whose command ran) fails it. cmd/nova-ci/bench.go cites the module from
+    its exit mapping. Tests and models only, no product change."
+   :origin "card tla-benchrun-an-interrupted-exec-ran.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
@@ -701,6 +751,11 @@
    :text "The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three."
    :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")
 
+  (fix "adopt-play-loops-step-works-on-every-host" :release "v1.2.11" :status "in-progress"
+   :title "The adopt's loops step works on every host"
+   :text "One nova-sprint live manifest command per platform (launchd agents and system-domain LaunchDaemons on Darwin, systemd units on Linux, defined once in group_vars); the loops step succeeds when every member and reader already runs the installed binary and refuses only a manifest with no member or reader; each stale agent restarts through its own target's domain, and the adoption table's disk-free read runs under --check and defaults an empty df."
+   :origin "card adopt-play-loops-step-works-on-every-host.w4")
+
   (fix "a-run-that-ends-at-its-first-result-is-not-a-finish" :release "v1.2.14" :status "planned"
    :title "A run that ends at its first RESULT.md is a no-result finish"
    :text "A child whose harness stopped soon after it wrote the early RESULT.md its brief asks for (verdict not-done, nothing committed) was judged failed work, spending an attempt, while the same run with no RESULT.md was judged no result and dealt again. member.Judge now classes a shaped not-done run under FirstResultWall (two minutes), with nothing committed and no gate, as the same no-result kind, with a reason that keeps the \"no result:\" prefix so nova-sprint's IsNoResult routes it."
@@ -732,4 +787,14 @@
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
-   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")))
+   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+
+  (fix "a-friend-lane-gives-the-harness-its-own-tmpdir" :release "v1.2.15" :status "in-progress"
+   :title "A friend lane gives its harness its own TMPDIR"
+   :text "Every harness run in a friend lane gets a private, writable temp directory inside its own lane: <lane dir>/tmp, made 0700 before the run and removed after it, with TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR all naming it, so no harness ever touches the shared /tmp. The lane wall carries the directory as --tmp and grants nothing outside the lane. A run that ends within five seconds with no REPORT.md and no RESULT.md and whose output names a filesystem error (EEXIST, EACCES, EPERM, ENOENT) on a path outside its lane ends as an environment fault of the friend: the card stays in the lane's hand, its attempt not counted, her lanes pause and the coordinator gets a pushed judgment naming the error line, never a failed attempt of the card."
+   :origin "card a-friend-lane-gives-the-harness-its-own-tmpdir.w2; the seat, 2026-10-11 20:06Z: every claude harness run in a friend lane on the seat's machine died in about a second with EEXIST mkdir '/tmp/claude-501'")
+
+  (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
+   :title "The claude harness runs the newest model of each tier's class"
+   :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
+   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")))

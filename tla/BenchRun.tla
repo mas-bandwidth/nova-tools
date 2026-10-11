@@ -1,5 +1,5 @@
 ---- MODULE BenchRun ----
-\* BenchRun is one `nova-ci bench run` (internal/bench/bench.go Run): the
+\* BenchRun is one `nova-ci bench run` (pkg/bench/bench.go Run): the
 \* hosts in order, the make, copy, exec and remove steps on the first host
 \* that answers, and an interrupt that may land at any step. Every host's
 \* answer and every step's outcome is chosen by TLC, so the model covers each
@@ -11,19 +11,23 @@
 \*   AtMostOneHostAnswers     the run never moves past a host that answered;
 \*   FallbackOnlyOnNoAnswer   a host is passed over only when it did not answer;
 \*   ExitIsTheCommands        a run that reached the command ends with its code;
+\*   InterruptedExecRan       a run whose command ran is never refused (an exec
+\*                            interrupt kills the command, it does not refuse it);
 \*   NothingLeftBehind        a finished run that made a directory has asked
 \*                            for its removal, whatever happened after the make.
-EXTENDS Naturals, Sequences, FiniteSets
+EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS
-  NHosts,     \* the host and its fallbacks
-  Codes,      \* exit codes the command may return
-  RemoveBuggy \* TRUE: the broken twin, which skips the remove after a red copy
+  NHosts,          \* the host and its fallbacks
+  Codes,           \* exit codes the command may return
+  RemoveBuggy,     \* TRUE: the broken twin, which skips the remove after a red copy
+  InterruptRefused \* TRUE: the broken twin, whose exec interrupt refuses a run that ran
 
 Hosts == 1..NHosts
 Dirs  == {"run1", "bogus"} \* what mktemp may print: a run directory, or not
 None    == 100 \* the verb has no exit yet
 Refused == 200 \* the run never reached the command (the code's exit 2 REFUSED)
+Killed  == -1  \* an interrupt killed the running command (ssh's ExitCode on a signal)
 
 VARIABLES
   phase,    \* "make" | "copy" | "exec" | "remove" | "done"
@@ -45,8 +49,8 @@ TypeOK ==
   /\ answered \subseteq Hosts /\ passed \subseteq Hosts
   /\ made \in {"", "run1"}
   /\ removed \subseteq Dirs
-  /\ ranCmd \in BOOLEAN /\ cmdCode \in Codes \cup {0}
-  /\ exit \in Codes \cup {0, None, Refused}
+  /\ ranCmd \in BOOLEAN /\ cmdCode \in Codes \cup {0, Killed}
+  /\ exit \in Codes \cup {0, None, Refused, Killed}
 
 Init ==
   /\ phase = "make" /\ host = 1
@@ -99,10 +103,22 @@ Exec(c) ==
   /\ ranCmd' = TRUE /\ cmdCode' = c /\ exit' = c
   /\ UNCHANGED <<host, answered, passed, made, removed, outcome>>
 
-Interrupt ==
-  /\ phase \in {"copy", "exec"} /\ phase' = "remove"
+\* InterruptCopy: an interrupt during the copy, before the command ran, is a
+\* refused run (runIn returns before the command starts).
+InterruptCopy ==
+  /\ phase = "copy" /\ phase' = "remove"
   /\ exit' = Refused
   /\ UNCHANGED <<host, answered, passed, made, removed, ranCmd, cmdCode, outcome>>
+
+\* InterruptExec: an interrupt during the exec kills ssh; sshLine's ExitCode is
+\* -1 (Killed) with a nil error, runIn stores it as Code, and the verb exits
+\* with it: the command did run. The broken twin InterruptRefused makes it a
+\* refused run while ranCmd is TRUE, which InterruptedExecRan forbids.
+InterruptExec ==
+  /\ phase = "exec" /\ phase' = "remove"
+  /\ ranCmd' = TRUE /\ cmdCode' = Killed
+  /\ exit' = IF InterruptRefused THEN Refused ELSE Killed
+  /\ UNCHANGED <<host, answered, passed, made, removed, outcome>>
 
 \* remove: rm -rf of the one directory made; its own failure is reported
 \* (removed=no) and does not change the exit.
@@ -114,7 +130,7 @@ Remove(ok) ==
 
 Next ==
   \/ MakeNoAnswer \/ MakeRefused \/ \E d \in Dirs : MakeAnswers(d)
-  \/ CopyOk \/ CopyFails \/ Interrupt
+  \/ CopyOk \/ CopyFails \/ InterruptCopy \/ InterruptExec
   \/ \E c \in Codes : Exec(c)
   \/ \E ok \in BOOLEAN : Remove(ok)
 
@@ -124,6 +140,7 @@ OnlyTheMadeDirIsRemoved == removed \subseteq ({made} \ {""})
 AtMostOneHostAnswers   == Cardinality(answered) <= 1
 FallbackOnlyOnNoAnswer == passed \cap answered = {} /\ \A h \in passed : h < host
 ExitIsTheCommands      == (phase = "done" /\ ranCmd /\ exit # Refused) => exit = cmdCode
+InterruptedExecRan     == (phase = "done" /\ ranCmd) => exit # Refused
 NothingLeftBehind      == (phase = "done" /\ made # "") => outcome \in {"removed", "kept"}
 
 Terminates == <>(phase = "done")
