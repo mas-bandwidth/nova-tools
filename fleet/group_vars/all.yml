@@ -143,11 +143,36 @@ nova_seat_tick_deadline: 60s
 nova_seat_beat_within: 60
 nova_seat_hold: []
 # The launchd agents directory the seat play reads and the launchctl it
-# runs, and how long it waits for a stale friend daemon's lanes to put their
-# cards down when its plist sets no ExitTimeOut (seconds).
+# runs, the system-domain LaunchDaemons directory (a member in the system
+# domain), and how long it waits for a stale friend daemon's lanes to put
+# their cards down when its plist sets no ExitTimeOut (seconds).
 nova_seat_agents_dir: "{{ nova_home }}/Library/LaunchAgents"
+nova_seat_daemons_dir: /Library/LaunchDaemons
 nova_launchctl: launchctl
 nova_seat_friend_drain: 180
+
+# One nova-sprint live read's flags, defined once per platform for every play
+# that reads live (docs/SPEC-RELEASE.md, "Adopting a build"): on Darwin live
+# reads the launchd agents directory and the system-domain LaunchDaemons
+# directory; on Linux live reads the systemd units directly, so neither
+# directory is named.
+nova_seat_live_flags_darwin:
+  - --json
+  - --bin-dir
+  - "{{ nova_bin_dir }}"
+  - --agents-dir
+  - "{{ nova_seat_agents_dir }}"
+  - --daemons-dir
+  - "{{ nova_seat_daemons_dir }}"
+  - --launchctl
+  - "{{ nova_launchctl }}"
+nova_seat_live_flags_linux:
+  - --json
+  - --bin-dir
+  - "{{ nova_bin_dir }}"
+  - --launchctl
+  - "{{ nova_launchctl }}"
+nova_seat_live_flags: "{{ nova_seat_live_flags_darwin if ansible_system == 'Darwin' else nova_seat_live_flags_linux }}"
 # Where the seat play keeps the tools an adoption replaces (bin/), so a
 # refusal inside its window can put them back, load their library again and
 # start the old server on them; and how long the window waits for every old

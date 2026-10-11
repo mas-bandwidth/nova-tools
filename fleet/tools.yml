@@ -96,10 +96,9 @@
     tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
     tools_was_version: "{{ tools_was.content | default('') | b64decode | trim }}"
     # The host's running manifest (its nova-sprint live), read after the
-    # install to name each loop member and reader whose binary it replaced.
-    tools_live: >-
-      {{ [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
-          '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl] }}
+    # install to name each loop member and reader whose binary it replaced. The
+    # per-platform flags are defined once (group_vars nova_seat_live_flags).
+    tools_live: "{{ [nova_bin_dir ~ '/nova-sprint', 'live'] + nova_seat_live_flags }}"
   tasks:
     - name: the build installed now (the build fact)
       ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
@@ -221,8 +220,7 @@
         - name: "seat: the host read by the candidate (its nova-sprint live)"
           ansible.builtin.command:
             argv: >-
-              {{ seat_wrap + [seat_cand ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
-                 '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl]
+              {{ seat_wrap + [seat_cand ~ '/nova-sprint', 'live'] + nova_seat_live_flags
                  + (nova_seat_dashboard_links | map('regex_replace', '^', '--dashboard=') | list) }}
           environment: "{{ seat_env }}"
           register: seat_before
@@ -471,8 +469,20 @@
               ({{ ((tools_manifest.stderr | default('')) or (tools_manifest.stdout | default('')) or (tools_manifest.msg | default(''))) | default('') }}); nothing was restarted or checked
             quiet: true
 
-        - name: "loops: the replaced members and readers (stale in the manifest)"
+        # The members and readers the manifest lists, and the ones it finds
+        # stale (a process not on the installed binary). A host whose agents are
+        # already the installed build has an empty replaced set and is success,
+        # not a refusal (docs/SPEC-RELEASE.md, "Adopting a build").
+        - name: "loops: the members and readers the manifest lists, and the ones it finds stale"
           ansible.builtin.set_fact:
+            tools_agents: >-
+              {{ ((tools_manifest.stdout | from_json).agents if (tools_manifest.stdout | default('')) is match('[{]') else [])
+                 | rejectattr('disabled') | selectattr('role', 'equalto', 'agent')
+                 | rejectattr('label', 'in', nova_seat_hold) | list }}
+            tools_agents_labels: >-
+              {{ ((tools_manifest.stdout | from_json).agents if (tools_manifest.stdout | default('')) is match('[{]') else [])
+                 | rejectattr('disabled') | selectattr('role', 'equalto', 'agent')
+                 | rejectattr('label', 'in', nova_seat_hold) | map(attribute='label') | list }}
             tools_replaced: >-
               {{ ((tools_manifest.stdout | from_json).agents if (tools_manifest.stdout | default('')) is match('[{]') else [])
                  | rejectattr('disabled') | selectattr('role', 'equalto', 'agent')
@@ -482,19 +492,32 @@
                  | rejectattr('disabled') | selectattr('role', 'equalto', 'agent')
                  | rejectattr('label', 'in', nova_seat_hold) | selectattr('stale') | map(attribute='label') | list }}
 
-        - name: "loops: the manifest lists a member or reader whose binary the install replaced"
+        # Every member and reader runs the installed binary: nothing is stale,
+        # so nothing is restarted and the step goes on.
+        - name: "loops: the host is already on the installed build"
+          ansible.builtin.debug:
+            msg: "LOOPS OK host={{ inventory_hostname }} already on the installed build: {{ tools_agents_labels | join(', ') }}"
+          when: tools_agents | length > 0 and tools_replaced | length == 0
+
+        # The only refusal: the manifest lists no member or reader at all, so
+        # the play names the manager and the directories the read named.
+        - name: "loops: the manifest lists a member or reader"
           ansible.builtin.assert:
-            that: tools_replaced | length > 0
+            that: tools_agents | length > 0
             fail_msg: >-
-              ADOPT REFUSED step=loops host={{ inventory_hostname }}: the install replaced a tool but the
-              installed nova-sprint live lists no member or reader whose binary it replaced (the roles on
-              the host: {{ tools_manifest_roles | join(', ') }}); nothing was restarted or checked
+              ADOPT REFUSED step=loops host={{ inventory_hostname }}: the installed nova-sprint live lists no
+              member or reader (manager {{ tools_manager }}, directories read {{ tools_read_dirs }}); nothing
+              was restarted or checked
             quiet: true
           vars:
-            tools_manifest_roles: >-
-              {{ ((tools_manifest.stdout | from_json).agents if (tools_manifest.stdout | default('')) is match('[{]') else [])
-                 | map(attribute='role') | unique | sort | list }}
+            tools_manager: "{{ 'launchd' if ansible_system == 'Darwin' else 'systemd' }}"
+            tools_read_dirs: >-
+              {{ ([nova_seat_agents_dir, nova_seat_daemons_dir] | join(', ')) if ansible_system == 'Darwin'
+                 else 'the systemd units' }}
 
+        # A launchd agent in the system domain is booted out and bootstrapped
+        # with become, as fleet/loops.yml does for loop_system; an agent in the
+        # login domain is not.
         - name: "loops: boot out each replaced member and reader (launchd)"
           ansible.builtin.command: { argv: ["{{ nova_launchctl }}", bootout, "{{ item.target }}"] }
           loop: "{{ tools_replaced }}"
@@ -503,6 +526,7 @@
           changed_when: tools_bootout.rc == 0
           # 3 and 113: launchd already holds no such service
           failed_when: tools_bootout.rc not in [0, 3, 113]
+          become: "{{ item.target.startswith('system/') }}"
           when: ansible_system == 'Darwin'
 
         - name: "loops: launchd no longer holds it"
@@ -516,6 +540,7 @@
           changed_when: false
           # the non-zero exit is the answer it waits for, never a failure
           failed_when: tools_out.rc == 0
+          become: "{{ item.target.startswith('system/') }}"
           when: ansible_system == 'Darwin'
 
         - name: "loops: bootstrap each from its plist"
@@ -524,20 +549,22 @@
           loop: "{{ tools_replaced }}"
           loop_control: { label: "{{ item.label }}" }
           changed_when: true
+          become: "{{ item.target.startswith('system/') }}"
           when: ansible_system == 'Darwin'
 
         # On linux live names each loop agent by its systemd unit
-        # (nova-loop-<name>), which is the agent's label; the restart runs in
-        # the fleet's nova_systemd_scope, never a hardcoded user scope.
+        # (nova-loop-<name>), which is the agent's label, and its target's
+        # prefix is the scope: user/ runs in the seat's manager with
+        # XDG_RUNTIME_DIR, system/ runs as root.
         - name: "loops: restart each replaced member and reader (systemd)"
           ansible.builtin.systemd_service:
             name: "{{ item.label }}"
-            scope: "{{ nova_systemd_scope }}"
+            scope: "{{ 'system' if item.target.startswith('system/') else 'user' }}"
             state: restarted
           loop: "{{ tools_replaced }}"
           loop_control: { label: "{{ item.label }}" }
-          environment: "{{ {} if nova_systemd_scope == 'system' else { 'XDG_RUNTIME_DIR': '/run/user/' ~ ansible_user_uid } }}"
-          become: "{{ nova_systemd_scope == 'system' }}"
+          environment: "{{ {} if item.target.startswith('system/') else { 'XDG_RUNTIME_DIR': '/run/user/' ~ ansible_user_uid } }}"
+          become: "{{ item.target.startswith('system/') }}"
           when: ansible_system == 'Linux'
 
         - name: "loops: the manifest after, until each replaced one is loaded and runs the installed binary"
@@ -760,8 +787,7 @@
       NOVA_SPRINT_REDIS_USER: "{{ nova_redis_deploy_user }}"
       NOVA_SPRINT_REDIS_PASSWORD_ENV: "{{ nova_redis_deploy_password_key }}"
     seat_live: >-
-      {{ seat_wrap + [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
-         '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl]
+      {{ seat_wrap + [nova_bin_dir ~ '/nova-sprint', 'live'] + nova_seat_live_flags
          + (nova_seat_dashboard_links | map('regex_replace', '^', '--dashboard=') | list) }}
     # the agents the window stops: every loaded nova agent but the friend daemons
     seat_stopped: >-
@@ -1302,9 +1328,7 @@
     PATH: "{{ nova_loop_path }}"
   vars:
     seat_env: {}
-    seat_live: >-
-      {{ [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
-          '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl] }}
+    seat_live: "{{ [nova_bin_dir ~ '/nova-sprint', 'live'] + nova_seat_live_flags }}"
   tasks:
     - name: "friends: the coordinator's friends are the seat play's"
       ansible.builtin.meta: end_host
@@ -1526,9 +1550,7 @@
   tags: [seat]
   vars:
     seat_env: {}
-    seat_live: >-
-      {{ [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
-          '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl] }}
+    seat_live: "{{ [nova_bin_dir ~ '/nova-sprint', 'live'] + nova_seat_live_flags }}"
   tasks:
     - name: "table: read the host"
       ansible.builtin.command: { argv: "{{ seat_live }}" }
@@ -1560,6 +1582,8 @@
       ansible.builtin.command: { argv: [df, -kP, "{{ nova_home }}"] }
       register: seat_table_disk
       changed_when: false
+      # a read, so it runs under --check too; the row defaults an unread df
+      check_mode: false
       # ignored: the table says the disk is unread rather than failing the run
       failed_when: false
 
@@ -1569,7 +1593,7 @@
           ADOPT TABLE host={{ inventory_hostname }} version={{ nova_version }}
           members_readers_up={{ seat_table_up }}
           harness={{ 'present' if seat_table_harness.results | selectattr('stat', 'defined') | selectattr('stat.exists') | list | length > 0 else 'missing' }}
-          disk_free_kb={{ (seat_table_disk.stdout | default('') | regex_search('(?m)^\\S+\\s+\\d+\\s+\\d+\\s+(\\d+)', '\\1')) | default('?') }}
+          disk_free_kb={{ (seat_table_disk.stdout | default('') | regex_findall('(?m)^\\S+\\s+\\d+\\s+\\d+\\s+(\\d+)') | first) | default('?') }}
       vars:
         seat_table_up: >-
           {{ ((seat_table_read.stdout | from_json).agents if (seat_table_read.stdout | default('')) is match('[{]') else [])
