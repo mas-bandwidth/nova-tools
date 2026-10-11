@@ -186,3 +186,4 @@ MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ign
 MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal	stopcancels	required	-
 MCLoopRedial.cfg	MCLoopRedial.tla	pass	-	ignore-terminal	loopredial	required	-
 MCLoopRedialBrokenNoRedial.cfg	MCLoopRedialBrokenNoRedial.tla	invariant	NoParkOnDropped	ignore-terminal	loopredial	required	-
+MCLoopRedialBrokenNoBound.cfg	MCLoopRedial.tla	invariant	BackoffBounded	ignore-terminal	loopredial	required	-

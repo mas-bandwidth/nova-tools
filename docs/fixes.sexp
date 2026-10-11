@@ -535,6 +535,18 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-loopredial-names-what-the-code-cites" :release "v1.2.12" :status "planned"
+   :title "The LoopRedial model names what sprintredial.go cites"
+   :text "Tests and models only, no product change. LoopRedial now holds the actions and properties
+    sprintredial.go cites: the dial is Redial (a verb on a fresh connection whose error is how a
+    restart is noticed), the backoff doubles one second to MaxBackoff and is bounded by the new
+    invariant BackoffBounded, and the reversed witness nobound doubles a failed verb's backoff past
+    the bound and fails BackoffBounded. NoParkOnDropped (the dead connection the code avoids) and
+    BeatsAgain stay, MCLoopRedialBrokenNoRedial keeps its NoParkOnDropped failure, and the comments
+    in sprintredial.go name the actions and properties the module has; DeadConnection and Backoff
+    had no counterpart and left. pkg/member/member.go still does not cite the module."
+   :origin "the card tla-loopredial-names-what-the-code-cites.w3 (stream v1212)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
