@@ -60,6 +60,13 @@ func (w world) acceptance(c *tool.Call) *tool.Out {
 		}
 	}
 	probeDir := filepath.Join(dir, ".acceptance")
+	if c.DryRun() {
+		// The plan from the same path the real run takes: the wall is assembled and the
+		// runner found above; nothing is made, run or written.
+		return tool.Done().Fact("friend", name).Fact("dir", dir).
+			Item("plan", "command", tool.Text(strings.Join(append([]string{program}, versionArg...), " "))).
+			Note("nothing was run or written; the run would make " + probeDir + ", run the command inside the lane wall and write RESULT.md there")
+	}
 	if err := os.MkdirAll(probeDir, 0o755); err != nil {
 		return tool.Refuse(fmt.Sprintf("the probe job directory cannot be made: %s: %v", probeDir, err))
 	}
