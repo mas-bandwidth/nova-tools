@@ -169,11 +169,13 @@ func tlcRecordProblems(root string) []string {
 		}
 		// These models are outside layer one's required table gate. New modules
 		// and cases are required by default; changing a gate to debt cannot hide one.
-		bench := row[1] == "MCCardMachine.tla" || row[1] == "MCTableMachine.tla" || row[1] == "MCFileLock.tla"
+		// No case declares a debt: every case is held to a current record (the one
+		// exception, the card machine's case, was retired in v1.2.12 with its module).
+		bench := row[1] == "MCTableMachine.tla" || row[1] == "MCFileLock.tla"
 		if row[6] != "required" && row[6] != "bench" || row[6] == "bench" && !bench {
 			bad("TLC %s cannot leave the required model gate", row[0])
 		}
-		if row[7] == "" || row[7] != "-" && (row[6] != "bench" || row[1] != "MCCardMachine.tla") {
+		if row[7] != "-" {
 			bad("TLC %s invalid debt declaration", row[0])
 		}
 	}
@@ -639,7 +641,7 @@ func TestTLCRecordFileHoldsOneJar(t *testing.T) {
 // record's result, budget and mode, and about a case's gate and debt.
 func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 	t.Parallel()
-	for _, mutation := range []string{"none", "failed-record", "wrong-exit", "waived-required", "manual-required", "stale-debt", "declared-debt"} {
+	for _, mutation := range []string{"none", "failed-record", "wrong-exit", "waived-required", "manual-required", "declared-debt"} {
 		t.Run(mutation, func(t *testing.T) {
 			t.Parallel()
 			f := newTLCFixture(t)
@@ -653,9 +655,11 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 				edit = func(row []string) []string { row[tc["mode"]] = "manual"; return row }
 			case "waived-required":
 				f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "required\t-\n", "bench\twaiver\n", 1))
-			case "declared-debt", "stale-debt":
-				f.write("tla/MCCardMachine.tla", "card model\n")
-				f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "MCA.cfg\tMCA.tla\tpass\t-\tcheck\talpha\trequired\t-", "MCA.cfg\tMCCardMachine.tla\tpass\t-\tcheck\tcard\tbench\tlayer-2", 1))
+			case "declared-debt":
+				// A bench case that declares a debt over a timed-out record: no case
+				// may, since the card machine's exception was retired in v1.2.12.
+				f.write("tla/MCFileLock.tla", "lock model\n")
+				f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "MCA.cfg\tMCA.tla\tpass\t-\tcheck\talpha\trequired\t-", "MCA.cfg\tMCFileLock.tla\tpass\t-\tcheck\tlock\tbench\tlayer-2", 1))
 				edit = func(row []string) []string {
 					if row[tc["config"]] == "MCA.cfg" {
 						row[tc["generated"]], row[tc["distinct"]], row[tc["seconds"]], row[tc["exit"]], row[tc["result"]] = "-", "-", "110.2", "124", "FAIL"
@@ -664,15 +668,14 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 				}
 			}
 			f.seal(edit)
-			if mutation == "stale-debt" {
-				f.write("tla/MCCardMachine.tla", "changed card\n")
-			}
 			problems := tlcRecordProblems(f.root)
-			if mutation == "none" || mutation == "declared-debt" {
+			if mutation == "none" {
 				require.Emptyf(t, problems, "valid fixture refused: %v", problems)
-			}
-			if mutation != "none" && mutation != "declared-debt" {
+			} else {
 				require.NotEmptyf(t, problems, "%s did not invalidate the run evidence", mutation)
+			}
+			if mutation == "declared-debt" {
+				require.Containsf(t, strings.Join(problems, "\n"), "invalid debt declaration", "the debt itself was not refused: %v", problems)
 			}
 		})
 	}

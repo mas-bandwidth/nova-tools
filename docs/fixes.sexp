@@ -458,6 +458,16 @@
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
+  (fix "nt-retire-the-cardmachine-copy" :release "v1.2.12" :status "planned"
+   :title "The CardMachine copy is retired; nova-sprint's is the one copy"
+   :text "tla/CardMachine.tla modelled 02_card_move.lua, which neither repository carries any more, and
+    nothing here extended or cited it; its one case, MCCardMachine.cfg, had only a timed-out record
+    (exit 124 at 110 s). The module, its MC module and configuration, and its CASES.tsv and RUNS.tsv rows
+    are removed; nova-sprint's tla/CardMachine.tla is the one copy, kept for its CardISA. The TLC record
+    class test loses its MCCardMachine exception, so every case is now held to a current record and a debt
+    declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
+   :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "tla-cardcontract-judge-against-pkg-member" :release "v1.2.12" :status "planned"
    :title "CardContract's finish is pkg/member Judge's: three finishes with reason classes"
    :text "The model made provider and staging finishes of their own, but the code has three finishes, ok,
