@@ -215,6 +215,10 @@
    :text "Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a
     bad main."
    :origin "PR #4600")
+  (fix "friend-follows-adopted-build" :release "v1.2.6" :status "in-progress"
+   :title "Friend daemons follow the adopted release automatically"
+   :text "When the adopted build for a line changes, each friend host installs it through the play and proves its lanes, with no hand adopt per host."
+   :origin "the owner 2026-10-10: what else is manual that should be automatic from the machine")
   (fix "swarm-doctor-checks-running-executable" :release "v1.2.9" :status "planned"
    :title "nova-swarm doctor checks the running executable, not only PATH"
    :text "The launch preflight refuses a new binary found on PATH but passes the same binary by absolute

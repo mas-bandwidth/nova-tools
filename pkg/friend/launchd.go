@@ -192,20 +192,21 @@ func InstalledBinary(home string) string {
 	return filepath.Join(home, ".nova-friend", "bin", "nova-friend")
 }
 
-// PlanBinary is the path the plist will name. A binary off /Volumes is itself.
-// A binary on /Volumes is copied to InstalledBinary before the plist is
-// written; a home that is empty or itself on /Volumes is refused, because a
-// copy there would stay on the wall (docs/SPEC-FRIEND.md).
+// PlanBinary is the path the plist will name. A binary on /Volumes is copied
+// to InstalledBinary before the plist is written (copy=true); a binary off
+// /Volumes is used as-is (copy=false). A home that is empty or itself on
+// /Volumes is refused, because a copy there would stay on the wall
+// (docs/SPEC-FRIEND.md).
 func PlanBinary(binary, home string) (path string, copy bool, err error) {
 	binary = slashClean(binary)
 	home = slashClean(home)
-	if !onRemovableVolume(binary) {
-		return binary, false, nil
+	if onRemovableVolume(binary) {
+		if home == "" || home == "." || home == "/" || onRemovableVolume(home) {
+			return "", false, fmt.Errorf("%w; the home directory is not off /Volumes, so there is nowhere to copy it; move the binary off /Volumes and run nova-friend install again", ErrBinaryOnRemovableVolume)
+		}
+		return InstalledBinary(home), true, nil
 	}
-	if home == "" || home == "." || home == "/" || onRemovableVolume(home) {
-		return "", false, fmt.Errorf("%w; the home directory is not off /Volumes, so there is nowhere to copy it; move the binary off /Volumes and run nova-friend install again", ErrBinaryOnRemovableVolume)
-	}
-	return InstalledBinary(home), true, nil
+	return binary, false, nil
 }
 
 func onRemovableVolume(p string) bool {

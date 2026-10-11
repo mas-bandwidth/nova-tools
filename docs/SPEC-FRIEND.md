@@ -109,7 +109,7 @@ below): the daemon answering is never the session.
   (no home directory off `/Volumes`, or the copy fails) is refused: no plist
   is written and the agent is not loaded. A binary already off `/Volumes` is
   named as it is. The log path is a separate rule and stays under the home
-  directory.
+  directory. A `/Volumes` source is always copied onto InstalledBinary (copy=true).
 
 ## The protocol
 
