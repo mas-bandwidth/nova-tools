@@ -87,6 +87,15 @@ type nativeRunConfig struct {
 	// loop record), the name and email every commit carries; nil reads the pool's
 	// <root>/identity.tsv (swarm.LoadPoolIdentity).
 	identity *swarm.StagingIdentity
+	// budgetServer, budgetAs and budgetHolder are a limited route's global rate budget
+	// (--budget-server, --budget-as, --budget-holder; nativebudget.go): with the server set,
+	// the provider proxy takes the budget before every model request; empty is unlimited.
+	budgetServer, budgetAs, budgetHolder string
+	// budgetSlots says the route's provider has a concurrency budget (--budget-slots): each
+	// request's slot is renewed and released through the server.
+	budgetSlots bool
+	// budgetTake, when set, is the budget's take in place of the server's (a test's).
+	budgetTake func(ctx context.Context, holder string) (bool, time.Duration, error)
 	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost
 	// at which the card is stopped beside the token budget; nil for none.
 	usd *big.Rat
@@ -1216,10 +1225,15 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	// turn, and turns that complete still spend (docs/roadmap.sexp,
 	// swarm-idle-reap-verdict). A sampler that reads nothing answers false, and the
 	// watch is what it was without the reading.
-	idleC := nativeWatchIdle(swarm.IdleWatch{
+	watchCfg := swarm.IdleWatch{
 		Log: s.outLog, Job: s.prep.jobDir, Pid: pgid, Idle: s.prep.cfg.idle, Reader: s.reader,
 		Spend: s.sampler.Spend,
-	}, stopWatch)
+	}
+	if s.prep.proxy != nil && s.prep.cfg.budgetServer != "" {
+		// a request stalled on its budget is a card waiting, never an idle one
+		watchCfg.Stalled = s.prep.proxy.Stalling
+	}
+	idleC := nativeWatchIdle(watchCfg, stopWatch)
 
 	return &nativeStarted{
 		cmd:            cmd,
@@ -2873,7 +2887,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			}
 			opened, err := swarm.ListenProviderProxy(swarm.ProviderProxyConfig{
 				Upstream: upstream, Silence: silence, After: cfg.bodyAfter,
-				HeaderWait: cfg.headerWait,
+				HeaderWait: cfg.headerWait, Budget: nativeBudget(cfg, notes),
 			})
 			if err != nil {
 				return "", fmt.Sprintf("the provider read proxy could not listen: %s", oneline.Escape(err.Error())), nil
@@ -2887,6 +2901,9 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			body = pointed
 			proxy = opened
 		}
+	}
+	if cfg.budgetServer != "" && proxy == nil && notes != nil {
+		fmt.Fprintf(notes, "NATIVE NOTE: the route is limited (--budget-server) but the provider %s has no http baseURL the proxy can stand in front of: its requests take no per-request budget; the sprint's deal and take still hold its concurrency\n", oneline.Field(provider))
 	}
 	if !merged && notes != nil {
 		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it and the provider request was not pointed at the read-deadline proxy; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))

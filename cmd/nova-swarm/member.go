@@ -214,6 +214,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, held: held, identity: *identity,
+		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
@@ -472,14 +473,17 @@ type nativeRunner struct {
 	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
 	noWall                                         bool
-	stderr                                         io.Writer
-	env                                            []string                     // added to this process's environment: none in production, a test's
-	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
-	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
-	held                                           map[string]secrets.Secret    // secrets read in this process; nil when the environment already held every name
-	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
-	load                                           hostload.Source
-	maxLoad, warnLoad                              float64
+	// server and as are the sprint's server and this worker's name: a limited route's
+	// child takes its global rate budget there (--budget-server, nativebudget.go)
+	server, as        string
+	stderr            io.Writer
+	env               []string                     // added to this process's environment: none in production, a test's
+	lookPath          func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
+	pass              []string                     // the secret names handed to native (--pass, the worker's secret)
+	held              map[string]secrets.Secret    // secrets read in this process; nil when the environment already held every name
+	benchHome         string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
+	load              hostload.Source
+	maxLoad, warnLoad float64
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -621,6 +625,14 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}
 	if r.identity != "" {
 		args = append(args, "--identity", r.identity)
+	}
+	if (p.RateRPM > 0 || p.RateConcurrent > 0) && r.server != "" {
+		// a limited route (nova-sprint routes limit): every model request of the child takes
+		// the global budget from the sprint's server first, and stalls while it is spent
+		args = append(args, "--budget-server", r.server, "--budget-as", r.as, "--budget-holder", name)
+		if p.RateConcurrent > 0 {
+			args = append(args, "--budget-slots")
+		}
 	}
 	// A long-lived child: its own cancellable context and no deadline (its own --deadline
 	// ends it), released when the wait returns.
