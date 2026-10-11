@@ -1825,7 +1825,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --launchd-log <string>  accepted and ignored: launchd's stdout and stderr file the daemon's plist records
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
-  --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
+  --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)
   --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
