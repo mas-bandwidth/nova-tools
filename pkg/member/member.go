@@ -1163,6 +1163,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 
 // collectReports waits for a non-background pass's reports and applies their results, so a
 // pass is still one step: what the goroutines found is collected before the pass returns.
+// RULE (docs/SPEC-SPRINT.md, the fleet member): a pass's reports run side by side up to
+// pushWidth, and a non-background pass collects them after the take, so it is still one step.
 func (m *Member) collectReports() int {
 	if !m.cfg.Background {
 		m.longs.Wait()
@@ -1314,6 +1316,9 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 // posts its exit code and output for the pass's collect to apply. The launch is marked busy
 // here, in the pass goroutine, so the next pass neither reports it twice nor counts its lane
 // free until the result is collected; the verb goroutine changes no state but the post.
+// RULE (docs/SPEC-SPRINT.md, the fleet member): the cards a pass reports go out side by
+// side, bounded by pushWidth, exactly as its ends do (endEnded), so the member spends the
+// process spawn and the wire wait of each report at once instead of one after another.
 func (m *Member) reportRun(id string, args []string, ro reportOut) bool {
 	l, ours := m.running[id]
 	if !ours {
@@ -1338,6 +1343,9 @@ func (m *Member) reportRun(id string, args []string, ro reportOut) bool {
 // did when it ran the verb itself: the result line, the no-answer note, the refusal's
 // memory for a pushed finish, the return of a read with no verdict, and the forgetting of
 // the card. It returns how many cards it acted on.
+// RULE (docs/SPEC-SPRINT.md, the fleet member): only the pass goroutine applies a report's
+// result (reportRun runs only the verb), so the running, forget and returned-at state moves
+// in one goroutine and a launch being reported stays busy until its result is collected.
 func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 	if ro.returnNoVerdict {
 		fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, ro.code, ro.returnReason)
