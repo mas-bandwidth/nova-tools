@@ -169,10 +169,28 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		}
 		r.run(t, 400)
 
+		// What was asked is the message that hit the limit, one wake turn, and the
+		// same message delivered once after the wake. Nothing is delivered while
+		// limited, so the first turn is the limit hit; the product promises one
+		// order besides ("the first after the reset is a wake turn (WakeText)
+		// whose output must carry its nonce ... before the message goes in",
+		// limit.go, Gate), so the set is fixed and the wake stands before the
+		// delivery.
 		require.Len(t, h.asked, 3, "the turn that hit the limit, one wake turn after the reset, then the message")
-		assert.Equal(t, Text(hello), h.asked[0])
-		assert.Contains(t, h.asked[1], "w4k3up", "the wake turn")
-		assert.Equal(t, Text(hello), h.asked[2], "the message goes in after the wake answered, once")
+		assert.Equal(t, Text(hello), h.asked[0], "the one turn while limited: the message, and the turn hit the limit")
+		hellos, wakes, wake := 0, 0, -1
+		for i, a := range h.asked {
+			switch {
+			case a == Text(hello):
+				hellos++
+			case strings.Contains(a, "w4k3up"):
+				wakes, wake = wakes+1, i
+			}
+		}
+		assert.Equal(t, 2, hellos, "the message is asked once before the limit and once after the wake: %v", h.asked)
+		if assert.Equal(t, 1, wakes, "one wake turn: %v", h.asked) {
+			assert.Less(t, wake, len(h.asked)-1, "the wake turn goes in before the message (Gate): %v", h.asked)
+		}
 
 		var limited []Status
 		for _, s := range r.status {
@@ -197,8 +215,19 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		r.mu.Lock()
 		sent := slices.Compact(slices.Clone(beats))
 		r.mu.Unlock()
-		assert.Equal(t, []string{"up", "down until=2026-10-04T03:03:00Z reason=harness limit: ERROR: You've hit your usage limit. Try again at 3:03 AM.", "up"}, sent,
-			"the beat says up, then down with the until and the reason while limited, then up after the wake")
+		// The beat and the delivery turn are both ready in one synctest instant,
+		// so their order is not fixed and the beats open with "up" only when the
+		// beat ran first. What the behavior pins: an optional leading "up", then
+		// exactly one "down until=<reset> reason=<limit>" from the turn that hit
+		// the limit to the reset, then "up" after the wake -- never an "up"
+		// between the limit and the reset.
+		down := "down until=" + reset.UTC().Format(time.RFC3339) + " reason=harness limit: " + h.limit
+		seq := sent
+		if len(seq) > 0 && seq[0] == "up" {
+			seq = seq[1:]
+		}
+		assert.Equal(t, []string{down, "up"}, seq,
+			"the beat says down with the until and the reason while limited, then up after the wake; the compacted beats are %v", sent)
 
 		assert.Equal(t, []string{reset.UTC().Format(time.RFC3339)}, downs, "the coordinator is told once of the limit")
 		assert.Equal(t, []string{"up"}, ups, "and once of the wake")
