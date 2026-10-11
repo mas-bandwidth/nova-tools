@@ -62,7 +62,9 @@
      lines per repository and package, product against test, from a baseline taken before the first
      pass.")
    (release "v1.2.14" :status "planned" :date "2026-10-11"
-    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find."))
+    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
+   (release "v1.2.15" :status "planned"
+    :text "The next small product fixes, one concern each."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -116,12 +118,7 @@
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
-   (fix "claude-harness-maps-tiers-to-newest-models" :release "v1.2.14" :status "planned"
-    :title "The claude harness maps each tier to the newest model of its class"
-    :text "ReadModels maps flash to claude-haiku-5-5, pro to claude-sonnet-5-5, heavy to claude-opus-5-5,
- and frontier to claude-fable-5-1, ensuring each tier uses the newest model of its class."
-    :origin "the-claude-harness-runs-the-newest-model-of-each-tier-class.w1, 2026-10-11")
-   (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
+  (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
    :title "A child ended at its deadline with a commit and no result gets a report"
    :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
     to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the
@@ -754,4 +751,9 @@
   (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
-   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")))
+   :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
+
+  (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
+   :title "The claude harness runs the newest model of each tier's class"
+   :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
+   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")))
