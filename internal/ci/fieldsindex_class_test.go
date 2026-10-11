@@ -46,7 +46,7 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 	seen := map[string]bool{}
 	var violations []string
 
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		base := filepath.Join(root, dir)
 		err := walkSourceDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {

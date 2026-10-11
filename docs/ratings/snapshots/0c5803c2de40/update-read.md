@@ -27,7 +27,7 @@ is executed line for line against the binary. The prose is present tense and the
 comments say why.
 
 What keeps it from a higher score is weight and scope. The release pipeline is
-larger than the update tool it lives inside (internal/release is about 4,900
+larger than the update tool it lives inside (pkg/release is about 4,900
 lines against internal/update's 4,100), one package carries two binaries, a
 hand-rolled output renderer sits beside the shared skeleton, the help is a wall
 of prose, and the test that would prove the banner's example lines run as
@@ -41,7 +41,7 @@ numbers, and the example-lines contract test actually running.
 | # | where | finding | fix | size |
 |---|---|---|---|---|
 | 1 | README.md:40 | the row says compare-and-update, yet the binary is also a six-verb release pipeline (docs/CLI.md:1490), so a reader choosing from the table cannot see most of the tool | name the release verbs in the row, or move them to their own binary | L |
-| 2 | internal/update/out.go:22 | a hand-rolled renderer (emit, capped, text, typed) sits beside the shared skeleton and is kept only because an item cannot carry a prose tail | teach internal/tool's item a prose tail and delete the local renderer | L |
+| 2 | internal/update/out.go:22 | a hand-rolled renderer (emit, capped, text, typed) sits beside the shared skeleton and is kept only because an item cannot carry a prose tail | teach pkg/tool's item a prose tail and delete the local renderer | L |
 | 3 | internal/update/cli.go:157 | help prints roughly forty lines: the opening, ten usage lines, a defaults sentence, a note paragraph, a two-binary paragraph, six manifest lines, an exit paragraph and the example | move the manifest rules under `report -h` and cut the banner back to the three onboarding answers | M |
 | 4 | docs/CLI.md:1509 | the public reference names an individual's sign-off, a personal home path (docs/CLI.md:1520) and a ticket number (docs/CLI.md:1462); docs/SPEC-UPDATE.md:894 defers a default to a named person | replace each with a role, a generic path and a resolved statement | M |
 | 5 | [examplelines_test.go:36 at the rated commit](https://github.com/mas-bandwidth/nova-tools/blob/0c5803c2de406c1b0b2b0841f579c9bf73406b1c/cmd/nova-update/examplelines_test.go#L36) | the test that would run the help example lines as printed is skipped, so the banner's promise is unverified, and its comment names a person and a ticket | run it under a mocked clock or as a functional test | M |
@@ -62,7 +62,7 @@ the binary by cmd/nova-update/firstrun_test.go:71.
 |---|---|---|
 | a hand-built CLI beside the skeleton | STILL THERE | internal/update/out.go:22 |
 | banner walls | STILL THERE | internal/update/cli.go:157 |
-| a release pipeline larger than the tool | STILL THERE | README.md:40 and internal/release against internal/update |
+| a release pipeline larger than the tool | STILL THERE | README.md:40 and pkg/release against internal/update |
 | manifest arguments | STILL THERE | internal/update/manifest.go:13 |
 | oversized shared CLI code | STILL THERE | internal/update/versiontool.go:10 |
 | the README then 6.5 to 7 from one rater and 8.4 from another | CHANGED | README.md:40 |

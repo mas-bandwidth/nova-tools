@@ -29,8 +29,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 )
 
 // The Win32 constants, each with its value, because a constant referred to by name from a
@@ -186,7 +186,7 @@ type winJobHandle struct {
 // winWallAvailable is the windows form of "OS-enforced or refused", and today it says NO.
 //
 // The PLACE is this file. The WALL is the AppContainer body of the section above, and it is
-// not built: internal/sandbox/wrap_other.go is what compiles on windows and its Available
+// not built: pkg/sandbox/wrap_other.go is what compiles on windows and its Available
 // answers false. A place without a wall is a disposable directory, not containment, and a
 // tool that ran the command anyway would be the silent sandbox "OS-enforced or refused"
 // exists to prevent --

@@ -89,3 +89,29 @@ func TestNeverForceCheckerScans(t *testing.T) {
 	assert.Equal(t, "force-dev.sh:1", findings[0].key())
 	assert.Contains(t, findings[0].Pattern, "push")
 }
+
+// TestNeverForceLiteralFilterPassesEveryPattern holds neverForceMayMatch to
+// being only a shortcut: a line in each of the five refused shapes against a
+// shared ref passes the literal filter and is found, so the filter drops no
+// line a pattern could match; a line holding none of the literals is passed over.
+func TestNeverForceLiteralFilterPassesEveryPattern(t *testing.T) {
+	t.Parallel()
+	lines := []string{
+		"git push --force origin dev",
+		"git push -f origin main",
+		"git push origin dev --force-with-lease",
+		"git push origin +HEAD:dev",
+		"git reset --hard origin/main",
+	}
+	require.Len(t, lines, len(neverForcePatterns), "one line per refused pattern")
+	for i, line := range lines {
+		assert.True(t, neverForcePatterns[i].MatchString(line), "the line for %s is in its shape: %q", neverForcePatterns[i], line)
+		assert.True(t, neverForceMayMatch(line), "the literal filter drops %q, which %s matches", line, neverForcePatterns[i])
+		found := scanNeverForce("x.sh", line+"\n")
+		if assert.Len(t, found, 1, "%q", line) {
+			assert.Equal(t, neverForcePatterns[i].String(), found[0].Pattern)
+		}
+	}
+	assert.False(t, neverForceMayMatch("git fetch origin dev && git merge --ff-only origin/dev"), "a line with no push, lease or reset")
+	assert.Empty(t, scanNeverForce("x.sh", "git fetch origin dev\n"))
+}

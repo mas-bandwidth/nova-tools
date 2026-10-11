@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 )
 
 // tree_test.go is the shared repository tree the class tests read: ONE walk and
@@ -66,7 +66,7 @@ type treeFile struct {
 }
 
 // InDir reports whether the file lies under the repo-relative directory dir,
-// written with forward slashes and no trailing slash ("cmd", "internal",
+// written with forward slashes and no trailing slash ("cmd", "internal", "pkg",
 // ".github"). This is the filter that replaces `filepath.WalkDir(root/dir, …)`.
 func (f *treeFile) InDir(dir string) bool {
 	return strings.HasPrefix(f.Rel, dir+"/")

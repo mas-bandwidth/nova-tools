@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -412,7 +412,7 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 	// duration virtual; a literal that must stay short carries a // wall-ok:
 	// reason (issue #916).
 	secLitRe := regexp.MustCompile(`(?:([0-9]+)\s*[*]\s*)?time[.]Second\b`)
-	for _, dir := range []string{"internal", "cmd"} {
+	for _, dir := range []string{"internal", "pkg", "cmd"} {
 		for _, f := range tree.GoFilesUnder(true, dir) {
 			raw := f.Src
 			rel := f.Rel

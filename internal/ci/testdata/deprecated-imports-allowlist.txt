@@ -1,7 +1,7 @@
 # The ratchet: packages that are permitted to import non-keep deprecated
 # packages, one `<importer> -> <imported>  # reason` per line.
 #
-# Living packages must not depend on packages internal/pkgselect/DEPRECATED drops
+# Living packages must not depend on packages pkg/pkgselect/DEPRECATED drops
 # without a keep line. A keep line there permits importing that package;
 # it is never permission for that package's test dependencies to import non-keep
 # retired packages. Every lift out of nsprint eliminates one or more edges.

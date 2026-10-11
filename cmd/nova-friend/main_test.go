@@ -15,12 +15,12 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/friend/friendtest"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend/friendtest"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +28,7 @@ import (
 var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 
 // TestMain starts the runtime's signal-mask goroutine outside any synctest
-// bubble. Every run goes through signal.NotifyContext (internal/tool's
+// bubble. Every run goes through signal.NotifyContext (pkg/tool's
 // RunContext); the first such call in the process makes that goroutine and its
 // channels, and made inside a bubble they belong to it, so another bubble's
 // Notify blocks durably on them and the bubble panics as deadlocked.
@@ -56,6 +56,12 @@ type rig struct {
 	alive        friend.Aliver
 	deaf         bool              // bob's opencode session takes a turn and never runs the pong line
 	fs           *friendtest.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	// mu guards now and answeredMu guards answered: the daemon reads its clock
+	// and runs its turns (bob's session, which answers checks) from its own
+	// goroutines as well as the run's. The clock takes mu and then, answering
+	// checks, answeredMu; nothing takes them the other way round.
+	mu         sync.Mutex
+	answeredMu sync.Mutex
 }
 
 type fakeAlive struct {
@@ -95,8 +101,18 @@ func (r *rig) world() world {
 			}
 			return "", nil
 		},
-		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
-		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
+		now: func() time.Time {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.answerChecks()
+			r.now = r.now.Add(time.Second)
+			return r.now
+		},
+		sleep: func(context.Context, time.Duration) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.now = r.now.Add(time.Second)
+		},
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
 		home:    r.home,
@@ -131,27 +147,37 @@ func (r *rig) opencode(_ context.Context, dir, _ string, args []string, _ string
 
 // answerChecks is bob's session, alive: each session check the daemon put
 // on his own stream (a passive harness reads it there) is answered once, from
-// bob, with its nonce, as the pong verb sends it.
+// bob, with its nonce, as the pong verb sends it. The clock calls it with r.mu held.
 func (r *rig) answerChecks() {
 	es, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
 	if err != nil {
 		return // ignored: a store that is down answers nothing; the test that wants it down says so
 	}
 	for _, e := range es {
-		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok && !r.answered[nonce] {
+		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok && !r.wasAnswered(nonce) {
 			r.answer(nonce)
 		}
 	}
 }
 
-// answer is bob's session sending its pong for nonce.
+// answer is bob's session sending its pong for nonce. It is called from the
+// daemon's turn goroutines and from the clock, so the record is under its lock.
 func (r *rig) answer(nonce string) {
+	r.answeredMu.Lock()
 	if r.answered == nil {
 		r.answered = map[string]bool{}
 	}
 	r.answered[nonce] = true
+	r.answeredMu.Unlock()
 	b := &bus.Bus{Store: r.store}
 	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
+}
+
+// wasAnswered reports whether bob's session has answered the check nonce.
+func (r *rig) wasAnswered(nonce string) bool {
+	r.answeredMu.Lock()
+	defer r.answeredMu.Unlock()
+	return r.answered[nonce]
 }
 
 // stopAfter cancels the run once the rig's clock is d past the start: an
@@ -217,7 +243,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	r.env = map[string]string{}
 	r.cli().Do(t, "ping", "--as", "ada", "--to", "bob").Exit(2).Err("--redis is required", RedisEnv)
-	r.cli().Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "d", "--dry-run").Exit(2).Err("--redis is required", "written into the agent")
+	r.cli().Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "d", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("--redis is required", "written into the agent")
 }
 
 func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
@@ -301,14 +327,14 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--dry-run").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist+" launchd_log="+filepath.Join(r.home, "Library", "Logs", "nova-friend-bob.log")+" dry_run=true",
 			`INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL PLAN command="launchctl bootstrap gui/501 `+plist+`"`,
 			"NOTE the agent runs: nova-friend run --as bob --harness opencode --dir /w/bob --width 4, with --redis and --server as given here")
 	assert.NoFileExists(t, plist)
 	assert.Empty(t, r.launchctl)
 
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1", "--model", "deepseek/deepseek-v4").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`,
 			"INSTALL NOTE check: CHECK OK harness=opencode took=", "NOTE check it: nova-friend status --as bob --dir /w/bob")
 	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
@@ -343,13 +369,13 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 		return run(args, stdin, stdout, stderr, w)
 	})
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--dry-run").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
 		Out(`INSTALL PLAN command="copy ` + src + " " + dst + `"`)
 	assert.Empty(t, copied, "a dry run copies nothing")
 	assert.Empty(t, r.launchctl)
 	assert.NoFileExists(t, plist)
 
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
 	assert.Equal(t, []string{src + " -> " + dst}, copied)
 	raw, err := os.ReadFile(plist)
@@ -366,7 +392,7 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 		return run(args, stdin, stdout, stderr, w)
 	})
 	plist = filepath.Join(refused.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(2).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4").Exit(2).
 		Err("INSTALL REFUSED", "removable volume", "disk full")
 	assert.Empty(t, refused.launchctl)
 	assert.NoFileExists(t, plist)
@@ -393,7 +419,7 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 	})
 	agents := filepath.Join(r.home, "Library", "LaunchAgents")
 	plist := filepath.Join(agents, "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--server", "127.0.0.1:6390").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--model", "deepseek/deepseek-v4", "--server", "127.0.0.1:6390").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
@@ -412,7 +438,7 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 }
 
 // run over the fake store, the fake opencode session and a cancelled context: the
-// daemon's own tests are internal/friend's; here, that the verb wires it.
+// daemon's own tests are pkg/friend's; here, that the verb wires it.
 func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
@@ -525,9 +551,11 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
 		flags      []string
+		deny       []string // the wall's deny list; nil is the seat's working root under the home
 	}{
-		{"the row's", "/accounts/heavy-a", nil},
-		{"the flag over it", "/accounts/other", []string{"--config-dir", "/accounts/other"}},
+		{"the row's", "/accounts/heavy-a", nil, nil},
+		{"the flag over it", "/accounts/other", []string{"--config-dir", "/accounts/other"}, nil},
+		{"a given --deny-self", "/accounts/heavy-a", []string{"--deny-self", "/seat/self,/vol/self"}, []string{"/seat/self", "/vol/self"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) { // not parallel: a bubble at a time
 			synctest.Test(t, func(t *testing.T) {
@@ -544,8 +572,9 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 				var mu sync.Mutex
-				var walls []string // the config dir of each wall a lane's child ran in
-				var plain int      // children run outside any lane's wall
+				var walls []string    // the config dir of each wall a lane's child ran in
+				var denies [][]string // and what each wall denied
+				var plain int         // children run outside any lane's wall
 				w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
 					return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
 						mu.Lock()
@@ -555,6 +584,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 							return "", 0, nil
 						}
 						walls = append(walls, wl.ConfigDir)
+						denies = append(denies, wl.Deny)
 						out := filepath.Join(dir, "outbox", "c1~15")
 						if err := os.MkdirAll(out, 0o755); err != nil {
 							return "", 0, err
@@ -582,6 +612,11 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				defer mu.Unlock()
 				require.NotEmpty(t, walls, "the card ran inside a lane's wall\n%s", out.String())
 				assert.Equal(t, tc.want, walls[0], "the wall's --config-dir")
+				wantDeny := tc.deny
+				if wantDeny == nil { // none given: never a wall that denies nothing (bad_profile, exit 125 for every lane)
+					wantDeny = []string{filepath.Join(w.home, "ada-working")}
+				}
+				assert.Equal(t, wantDeny, denies[0], "the wall's deny list")
 				assert.Zero(t, plain, "no child of the lane ran outside the wall")
 				assert.Contains(t, out.String(), "card=done")
 				assert.Equal(t, 1, strings.Count(out.String(), "spend: harness=claude runs=1 cost_usd=0.0125"), "the beat after the run says its cost once, not on every beat\n%s", out.String())
@@ -673,15 +708,15 @@ func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--dry-run").Exit(2).Err("--secrets wants --seat")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,no-such", "--seat", "studio", "--dry-run").Exit(2).Err(`"no-such" is none`)
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("--secrets wants --seat")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,no-such", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err(`"no-such" is none`)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
 	r.onPath = map[string]string{"nova-secrets": "/opt/nova/bin/nova-secrets", "sops": "/opt/homebrew/bin/sops"}
 	wrap := "/opt/nova/bin/nova-secrets exec --store " + filepath.Join(r.home, "nova-bench", "secrets") + " --as studio --key " + filepath.Join(r.home, ".config", "nova-secrets", "studio.key") +
 		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390 --width 0"
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--dry-run").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
 		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis and --server as given here")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--model", "deepseek/deepseek-v4").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
 	raw, err := os.ReadFile(filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 	require.NoError(t, err)
 	var args []string
@@ -723,7 +758,7 @@ func TestClaudeInstallPrintsTheSessionsWaitAndStatusSaysPassive(t *testing.T) {
 	// status names it in the state directory the daemon did keep
 	state := friend.DefaultStateDir(r.home, "bob")
 	wait := "nova-bus wait --as bob --after <cursor> --wake-file " + filepath.Join(state, "bob.wake")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", dir, "--dry-run").Exit(0).NotOut("nova-bus wait")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", dir, "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).NotOut("nova-bus wait")
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "claude", At: start, Connection: friend.Connected, Challenge: friend.Quiet}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("route=passive", wait)
 }
@@ -736,11 +771,11 @@ func TestInstallCarriesTheCoordinatorAndANonDefaultSilentStop(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--silent-stop", "30m").Exit(0)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--silent-stop", "30m", "--model", "deepseek/deepseek-v4").Exit(0)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>\n    <string>--silent-stop</string>\n    <string>30m0s</string>")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4").Exit(0)
 	raw, err = os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "--silent-stop", "the defaults are not written")
@@ -817,10 +852,17 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			}
 			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
 		}
-		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		// The daemon writes its record from the run's goroutine and the lane's
+		// open (its price line) from the turn's, so stdout is under a lock.
+		var outMu sync.Mutex
+		out := &lockedBuilder{mu: &outMu}
+		var errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
-		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, out.String())
+		outMu.Lock()
+		said := out.String()
+		outMu.Unlock()
+		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, said)
 		assert.True(t, strings.HasPrefix(runs[0], "run You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
 		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
@@ -834,8 +876,79 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)
-		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
-		assert.Contains(t, out.String(), "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
+		assert.Contains(t, said, "lane=1 session=ses_lane1")
+		assert.Contains(t, said, "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
+	})
+}
+
+// A one-shot opencode friend's presence needs no session: her check goes in as
+// a fresh turn of its own (opencode run with no --session), never into a
+// growing session, so a session that is missing (no opencode session in the
+// directory) or full (past the model's context, every turn refused) is never
+// the reason she is down; the fresh turn's answer brings her up. This drives
+// the real world.run wiring: --mode one-shot reads the row, not a closure a
+// test sets by hand (docs/SPEC-FRIEND.md, presence: a tiny fresh turn per
+// check).
+func TestRunAOneShotFriendReadsUpWithNoSessionInTheDirectory(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, "ada", "bob")
+		w := r.world()
+		var cancel context.CancelFunc
+		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel = context.WithCancel(ctx)
+			return ctx, cancel
+		}
+		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+		dir := t.TempDir()
+		var mu sync.Mutex
+		viaSession, viaFresh := 0, 0
+		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if args[0] == "sysctl" {
+				return "{ 0.00 0.00 0.00 }\n", 0, nil // the daemon's load read where there is no /proc/loadavg: not a harness run
+			}
+			if args[0] == "--version" || len(args) > 1 && args[1] == "--help" {
+				return "", 0, nil // the daemon's read of the installed opencode (CheckRun)
+			}
+			if args[0] == "session" {
+				return "[]", 0, nil // no session in the directory: the check must not depend on one
+			}
+			text := args[len(args)-1]
+			if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
+				if len(args) > 1 && args[1] == "--session" {
+					viaSession++
+					return "the context window is full", 1, nil // the full session refuses every turn
+				}
+				viaFresh++
+				r.answer(nonce)
+				return "answered\n", 0, nil
+			}
+			return "", 0, nil // a lane seed or card, none queued: nothing to answer
+		}
+		beats := 0
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+			beats++
+			if beats == 12 {
+				cancel()
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+		}
+		w.beatDown = func(context.Context, string, string, time.Time, time.Time, string, friend.BeatWords) error {
+			return nil
+		}
+		var out, errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada", "--mode", "one-shot"}, strings.NewReader(""), &out, &errb, w)
+		require.Equal(t, 0, code, errb.String())
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Zero(t, viaSession, "the check never went into the broken session")
+		assert.GreaterOrEqual(t, viaFresh, 1, "the check went in as a fresh turn of its own")
+		st, _, err := friend.ReadStatus(friend.StateDirIn(dir))
+		require.NoError(t, err)
+		assert.Equal(t, "one-shot", st.Mode)
+		assert.Contains(t, out.String(), "presence: up: the session answered", "the fresh turn's answer brought her up")
 	})
 }
 
@@ -1255,7 +1368,7 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 
 	// install: the check's fail is a NOTE, the agent stays loaded
 	r.store.Fail = nil
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--within", "5s").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4", "--within", "5s").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob", "INSTALL NOTE check: CHECK FAIL harness=opencode stage=act")
 	assert.FileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 }

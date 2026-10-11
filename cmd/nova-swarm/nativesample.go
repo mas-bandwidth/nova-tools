@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // THE LIVE SAMPLER, IN THE PROCESS THAT HOLDS THE CARD'S DEADLINE.
@@ -22,7 +22,7 @@ import (
 // a failed read, and the deadline and a TERM from outside end the card at their own instants
 // whatever a read is doing." A sample SYNCHRONOUSLY inside the select would make a slow
 // read a stretch of time in which the deadline case cannot run -- the very fault the walWait
-// comment in internal/swarm/opencode.go records, where two slow queries spent ~40s in one sample. On this route the sample runs
+// comment in pkg/swarm/opencode.go records, where two slow queries spent ~40s in one sample. On this route the sample runs
 // beside the select and never inside it, so the longest read this tool can suffer costs the
 // deadline nothing.
 //
@@ -417,6 +417,18 @@ func (s *liveSampler) Observed() (spent int, observed, partial bool, failures in
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.spent, s.observed, s.partial, s.failures, s.lastErr
+}
+
+// Spend is the job's spend the sampler last answered with, and whether any answer has
+// reported figures. It is what the idle watch asks beside its log and its tree: the
+// harness's shell cap can silence a working card's printed output, and the spend is the
+// one reading that cap cannot silence, because turns that completed spent tokens
+// (docs/roadmap.sexp, swarm-idle-reap-verdict). A sampler that never reads -- no budget
+// to watch, no data home -- answers false, and the watch reads nothing by it.
+func (s *liveSampler) Spend() (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spent, s.observed
 }
 
 // Why is the reason the last failed read gave, in its own words, or "" when the last read

@@ -43,7 +43,7 @@ var lintExts = map[string]bool{
 
 // glossaryFiles may name a retired word after "Replaces:".
 var glossaryFiles = map[string]bool{
-	"docs/GLOSSARY.md": true, "docs/sprint/GLOSSARY.md": true, "docs/TERMINOLOGY.md": true,
+	"docs/GLOSSARY.md": true, "docs/TERMINOLOGY.md": true,
 }
 
 // isDatedRecord reports whether a repository-relative path is a dated record or
@@ -248,19 +248,19 @@ func githubSlug(h string) string {
 	return b.String()
 }
 
-// TestGlossariesDefineEveryTermWithItsSection reads both glossaries: every entry
+// TestGlossariesDefineEveryTermWithItsSection reads the glossary: every entry
 // is one definition naming the section that defines it, each link resolves to a
-// file and a heading, TERMINOLOGY.md links both, and the entries are in order.
+// file and a heading, TERMINOLOGY.md links it and nova-sprint's, and the entries are in order.
 func TestGlossariesDefineEveryTermWithItsSection(t *testing.T) {
 	t.Parallel()
 
 	term, err := os.ReadFile("../../docs/TERMINOLOGY.md")
 	require.NoError(t, err, "reading TERMINOLOGY.md: %v", err)
-	for _, link := range []string{"](GLOSSARY.md)", "](sprint/GLOSSARY.md)"} {
+	for _, link := range []string{"](GLOSSARY.md)", "/nova-sprint/blob/main/docs/sprint/GLOSSARY.md)"} {
 		assert.Contains(t, string(term), link, "docs/TERMINOLOGY.md links the glossary %s", link)
 	}
 
-	for _, rel := range []string{"docs/GLOSSARY.md", "docs/sprint/GLOSSARY.md"} {
+	for _, rel := range []string{"docs/GLOSSARY.md"} {
 		data, readErr := os.ReadFile(filepath.Join("../..", rel))
 		require.NoError(t, readErr, "reading %s: %v", rel, readErr)
 		// An entry may wrap; join each bullet to one line.

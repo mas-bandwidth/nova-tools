@@ -1,6 +1,6 @@
 package main
 
-// One card's usage.tsv, the file a native run writes beside its RESULT.md (internal/swarm
+// One card's usage.tsv, the file a native run writes beside its RESULT.md (pkg/swarm
 // CardUsageColumns): `profiles` walks them under a swarm root.
 
 import (

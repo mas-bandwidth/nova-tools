@@ -3,7 +3,7 @@
 nova-bus is the message bus between AIs: a message is sent once and delivered
 until it is acked. It depends on Redis, reached over the tailnet, and on
 nothing else: no git, no file twin, no mode that works without a server. The
-tool is `cmd/nova-bus`, the rules are `internal/bus`, the delivery machine is
+tool is `cmd/nova-bus`, the rules are `pkg/bus`, the delivery machine is
 `tla/Bus2.tla`. It was built as nova-bus2 beside the git bus and took the name
 nova-bus on 2026-10-04, when the git bus was removed.
 
@@ -335,7 +335,7 @@ friends table shows as undelivered and the oldest undelivered age
 an entry of a stream is still never deleted.
 
 A send that fails on the login (`NOAUTH`, `WRONGPASS`, as
-internal/redisconn classifies it) or on the connection is an outage, said
+pkg/redisconn classifies it) or on the connection is an outage, said
 by `bus.Watch` as one alarm naming the store and the user, raised at the
 first such failure, counting every later one, and cleared at the next send
 that succeeds (the clear says how many failed). The alarm's reason is the
@@ -363,7 +363,7 @@ recipient sent a message whose `re` is its id). The receipts are one hash
 per recipient beside its stream, `bus2:receipt:<name>`, field the message
 id, value the state and the store's time it was reached in Unix seconds
 (`acted 1791288000`). Only the bus writes it, through one rule that the
-store runs as one script (`internal/bus/redis.go`, `forwardLua`) and both
+store runs as one script (`pkg/bus/redis.go`, `forwardLua`) and both
 fakes keep in Go beside it (`forwardReceipt`): a receipt moves only
 forward, and only `delivered` starts one, so a message is never read or
 acted before it was delivered. `recv` stamps `delivered` (one trip more)
@@ -405,7 +405,7 @@ writes `delivered` over the receipt (`MCBus2BrokenBackStamp`,
 
 Who a verb acts as is the user the connection logged in as, never a word on
 the line. With a login user (`NOVA_SPRINT_REDIS_USER`, or whatever
-internal/redisconn resolves), `--as` defaults to that user, may repeat it, and
+pkg/redisconn resolves), `--as` defaults to that user, may repeat it, and
 any other name is refused: `--as bob is not the login user ada: this connection
 acts as ada; drop --as, or log in as bob`. `send`'s `from` is that identity.
 With no login user (a store whose default user is open, as a trial store is)
@@ -417,7 +417,7 @@ the friend is; creating users is the owner's, never the tool's.
 ## The ACL per friend
 
 The user for friend `<f>` is named `<f>` and needs, measured against what
-the tool sends (`internal/bus/redis.go`; the key flags are what `COMMAND
+the tool sends (`pkg/bus/redis.go`; the key flags are what `COMMAND
 INFO` on Redis 8 answers):
 
 | Verb | Commands | Keys |
@@ -475,9 +475,9 @@ answer, the refusal names the row and how it is set. The store is on loopback or
 the tailnet (100.64.0.0/10) and nowhere else: the tailnet is the boundary and
 there is no ACL behind it (decided 2026-10-04), so an address outside both, by
 literal or by any address its name resolves to, is refused before a dial in one
-line naming the rule (`internal/bus`, `CheckAddr`); a name that does not
+line naming the rule (`pkg/bus`, `CheckAddr`); a name that does not
 resolve is refused the same way. A Unix socket path is this machine's. The login follows
-the fleet convention exactly (internal/redisconn): `NOVA_SPRINT_REDIS_USER`
+the fleet convention exactly (pkg/redisconn): `NOVA_SPRINT_REDIS_USER`
 names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` the variable that holds its
 password (`NOVA_REDIS_BENCH_PASSWORD` when it names none); never a password on
 the line or in a message. The known names are nova-config's friend rows plus
@@ -497,14 +497,14 @@ the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: o
 
 The finding (2026-10-04, one timeout on a host whose load average was 35) was
 read against the base tip first. The client already set a bound on every network
-step, in `internal/redisconn/open.go`: `OpenTimeout`, `DialTimeout`, `WriteTimeout`,
+step, in `pkg/redisconn/open.go`: `OpenTimeout`, `DialTimeout`, `WriteTimeout`,
 `ReadTimeout` and `PoolTimeout`, 5 s each; a command that blocks gets its block
 plus 10 s (go-redis); `MaxRetries` is -1, so nothing was retried. What was missing
 was a bound of the bus's own and the words for it: a call that ran out surfaced
 as a bare `i/o timeout`, there was no `--timeout` on the verbs that do not park,
 and a transient stall on a read ended the verb at once.
 
-The rule, in `internal/bus/redis.go` (`Redis.call`):
+The rule, in `pkg/bus/redis.go` (`Redis.call`):
 
 - Every store call runs under a context deadline of `Timeout` (`--timeout`, default
   `CallTimeout`, 5 s). A blocking `Read` (recv, including `recv --forever`'s
@@ -529,7 +529,7 @@ The rule, in `internal/bus/redis.go` (`Redis.call`):
 Worst case for a retried read is two deadlines (10 s at the default); for a send, one (5 s).
 A blocking read's worst case is one deadline of `Timeout` plus the block plus `BlockMargin`.
 
-Measured with a stalled in-process store (`internal/bus/timeout_test.go`, a pipe
+Measured with a stalled in-process store (`pkg/bus/timeout_test.go`, a pipe
 that reads and never answers, no port): `Roster` at `Timeout` 20 ms sent its pipeline (two SMEMBERS) twice and
 refused in the words above; `AddAll` and `Ack` sent once; a blocking `Read` of 10 ms with a 20 ms
 margin and 20 ms timeout refused at 50 ms (20 + 10 + 20) having sent XREADGROUP once. The tests

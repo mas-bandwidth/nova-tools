@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
 
 // applied reports whether dsn is user at host with password pw (pw empty means
@@ -143,7 +143,7 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 	ok, fact := applied(dsns[len(dsns)-1], "nova_config", "127.0.0.1:5432", recordedPassword)
 	require.True(t, ok, "bare list: %s", fact)
 
-	code, _, errs = do("friend", "add", "f1", "--slots", "4", "--tiers", "flash", "--roles", "builder")
+	code, _, errs = do("friend", "add", "f1", "--slots", "8", "--tiers", "flash", "--roles", "builder")
 	require.Equal(t, 0, code, errs)
 	ok, fact = applied(dsns[len(dsns)-1], "nova_config", "127.0.0.1:5432", recordedPassword)
 	require.True(t, ok, "bare add: %s", fact)
@@ -207,7 +207,7 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 	assert.Contains(t, out, "resolves=yes")
 	delete(h.env, "NOVA_PG_DSN")
 	delete(h.env, "NOVA_PG_PASSWORD_ENV")
-	code, _, errs = do("friend", "set", "f1", "--slots", "5")
+	code, _, errs = do("friend", "set", "f1", "--slots", "8")
 	require.Equal(t, 0, code, errs)
 	code, out, errs = do("friend", "history", "f1")
 	require.Equal(t, 0, code, errs)

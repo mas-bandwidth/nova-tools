@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

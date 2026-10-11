@@ -8,7 +8,7 @@ package main
 // leave the copy green, and the tool and the spec would be silently apart -- the exact
 // disagreement the comment says it guards. The repository already answers this two ways:
 // cmd/nova-tokens/grammar_test.go reads docs/SPEC-TOKENS.md's fenced grammar block, and
-// internal/swarm/grammar_run_test.go reads SPEC-SWARM's. This is the same pattern for the
+// pkg/swarm/grammar_run_test.go reads SPEC-SWARM's. This is the same pattern for the
 // third spec that publishes a fixed reason set.
 //
 // Both tests here read the FENCED block, not the prose: a spec sentence that happens to

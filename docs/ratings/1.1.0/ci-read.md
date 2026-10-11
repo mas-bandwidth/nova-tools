@@ -39,12 +39,12 @@ The spec now names each class test as a go test, not a nova-ci verb
 tool's verbs.
 
 The cost is that the tool is still not one family. Only slowtests builds
-internal/tool's one value and renders it as lines or --json; the other five
+pkg/tool's one value and renders it as lines or --json; the other five
 verbs print a shape of their own, so an AI reading the tool cold meets five
 output dialects and no data form to consume, against the standard's one output
 structure with two renderings (docs/STANDARD.md:56). A second, undispatched
 main sits in the tool's directory (cmd/nova-ci/timing.go:1), the dispatch and
-refusal printer are hand-rolled beside internal/tool's copies
+refusal printer are hand-rolled beside pkg/tool's copies
 (cmd/nova-ci/main.go:169-206, 236-259), one document prints the wrong exit for
 --enforce (docs/TESTS.md:908), and the CLI section opens without the First run
 the standard requires (docs/CLI.md:1920). A 10 needs every verb on the one
@@ -55,9 +55,9 @@ and the numbers and the doors right wherever a stranger meets them.
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| 1 | cmd/nova-ci/main.go:54 | only slowtests takes `--json` and builds internal/tool's one value; functional, local, new-rule, new-verb and github receipt each print a shape of their own (main.go:533 CI FUNCTIONAL, local.go:380 PKG, newrule.go:69 wrote, receipt.go:108 CI RECEIPT), so an AI meets five output dialects and no data form to consume, against docs/STANDARD.md:56 | render every verb through internal/tool's one value and add `--json`, so the line and the object come from one value | L |
+| 1 | cmd/nova-ci/main.go:54 | only slowtests takes `--json` and builds pkg/tool's one value; functional, local, new-rule, new-verb and github receipt each print a shape of their own (main.go:533 CI FUNCTIONAL, local.go:380 PKG, newrule.go:69 wrote, receipt.go:108 CI RECEIPT), so an AI meets five output dialects and no data form to consume, against docs/STANDARD.md:56 | render every verb through pkg/tool's one value and add `--json`, so the line and the object come from one value | L |
 | 2 | cmd/nova-ci/timing.go:1 | a second `package main` behind `//go:build ignore`, 128 lines plus the 490-line internal/ci/timing, run by hand and reached by no shipped verb; the banner (cmd/nova-ci/main.go:38-146) and docs/CLI.md:1920 never name it; its default `--repos` names another repository, carried in a generality debt row; it is the leftover script the last read named | delete the script and internal/ci/timing, or wire a `timing` verb into the banner, docs/CLI.md and the dispatch | M |
-| 3 | cmd/nova-ci/main.go:236 | the tool that enforces the house standard stands off the shared skeleton: dispatch, refusal printer and exit-table extraction are hand-rolled beside internal/tool's copies (cmd/nova-ci/main.go:169-206), and no line at the switch says why, so the tree carries two of each | write the reason at the dispatch in one line, or move the tool onto internal/tool and delete the copies | M |
+| 3 | cmd/nova-ci/main.go:236 | the tool that enforces the house standard stands off the shared skeleton: dispatch, refusal printer and exit-table extraction are hand-rolled beside pkg/tool's copies (cmd/nova-ci/main.go:169-206), and no line at the switch says why, so the tree carries two of each | write the reason at the dispatch in one line, or move the tool onto pkg/tool and delete the copies | M |
 | 4 | docs/TESTS.md:908 | the nova-ci first-run transcript says "only `--enforce` makes it exit 2"; slowtests exits 1 when --enforce finds a package over budget (cmd/nova-ci/main.go:127, docs/CLI.md:1937, docs/SPEC-CI.md:220), so the document a stranger copies names the wrong exit | change "exit 2" to "exit 1" in docs/TESTS.md:908-909 | S |
 | 5 | docs/CLI.md:1920 | the nova-ci section opens with a summary and three commands, not the `### First run` block docs/STANDARD.md:72 says every tool section opens with; the tool first run lives only in docs/TESTS.md:892 | add the `### First run` block with the two slowtests commands and how to read CI-SLOW and CI-LOAD, as sibling sections in the same file do | S |
 

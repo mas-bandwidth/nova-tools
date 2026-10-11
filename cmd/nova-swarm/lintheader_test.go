@@ -11,7 +11,7 @@ import (
 
 // `lint --card` GAINS THE FOUR TOKENS OF SPEC-TOOLWORK §5 RULE 1 (issue #1651).
 //
-// The rules themselves are tested in internal/swarm/lintheader_test.go; these tests are
+// The rules themselves are tested in pkg/swarm/lintheader_test.go; these tests are
 // the CLI's half: the token reaches the card writer on a LINT DRIFT line with its
 // remedy, the exit code is the lint's usual 2, and the flags that turn the checks on
 // behave. Every one was red before the flags existed -- `flag provided but not defined:
@@ -42,8 +42,8 @@ func TestLintCardMissingKindDrawsKindDeclared(t *testing.T) {
 	t.Parallel()
 
 	card := writeLintCard(t, "nokind.card", typedCardText(t,
-		"PATHS: internal/swarm/lintheader.go",
-		"TEST: internal/swarm TestCardHeaderMissingKindDrawsKindDeclared",
+		"PATHS: pkg/swarm/lintheader.go",
+		"TEST: pkg/swarm TestCardHeaderMissingKindDrawsKindDeclared",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
@@ -79,8 +79,8 @@ func TestLintCardAcceptsKindReportAndRefusesANonsenseKind(t *testing.T) {
 
 	report := writeLintCard(t, "report.card", typedCardText(t,
 		"KIND: report",
-		"PATHS: internal/swarm/lintheader.go",
-		"TEST: internal/swarm TestLintCardAcceptsKindReportAndRefusesANonsenseKind",
+		"PATHS: pkg/swarm/lintheader.go",
+		"TEST: pkg/swarm TestLintCardAcceptsKindReportAndRefusesANonsenseKind",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
@@ -101,8 +101,8 @@ func TestLintCardAcceptsKindReportAndRefusesANonsenseKind(t *testing.T) {
 
 	bad := writeLintCard(t, "nonsense.card", typedCardText(t,
 		"KIND: not-a-real-kind",
-		"PATHS: internal/swarm/lintheader.go",
-		"TEST: internal/swarm TestLintCardAcceptsKindReportAndRefusesANonsenseKind",
+		"PATHS: pkg/swarm/lintheader.go",
+		"TEST: pkg/swarm TestLintCardAcceptsKindReportAndRefusesANonsenseKind",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
@@ -119,8 +119,8 @@ func TestLintCardCompleteHeaderPasses(t *testing.T) {
 
 	card := writeLintCard(t, "good.card", typedCardText(t,
 		"KIND: fix-red",
-		"PATHS: internal/swarm/lintheader.go, internal/swarm/lintheader_test.go",
-		"TEST: internal/swarm TestCardHeaderFullHeaderDrawsNothing",
+		"PATHS: pkg/swarm/lintheader.go, pkg/swarm/lintheader_test.go",
+		"TEST: pkg/swarm TestCardHeaderFullHeaderDrawsNothing",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
@@ -141,8 +141,8 @@ func TestLintCardPausedKindNamesTheTrialRemedy(t *testing.T) {
 	}, "\n"))
 	card := writeLintCard(t, "paused.card", typedCardText(t,
 		"KIND: fix-red",
-		"PATHS: internal/swarm/lintheader.go",
-		"TEST: internal/swarm TestCardHeaderFullHeaderDrawsNothing",
+		"PATHS: pkg/swarm/lintheader.go",
+		"TEST: pkg/swarm TestCardHeaderFullHeaderDrawsNothing",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
@@ -162,8 +162,8 @@ func TestLintCardTrialKindAndNoFixtureAreClean(t *testing.T) {
 	trust := lintTrustFixture(t, "TRUST kind=fix-red area=- state=trial cards=0/10 pass=- need=0.80 run_of_fails=0/3 since=- by=-\n")
 	card := writeLintCard(t, "trial.card", typedCardText(t,
 		"KIND: fix-red",
-		"PATHS: internal/swarm/lintheader.go",
-		"TEST: internal/swarm TestCardHeaderFullHeaderDrawsNothing",
+		"PATHS: pkg/swarm/lintheader.go",
+		"TEST: pkg/swarm TestCardHeaderFullHeaderDrawsNothing",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
@@ -229,7 +229,7 @@ func TestLintCloneStepReadsTheWholeStepNotOnlyItsLine(t *testing.T) {
 		"You are a Go engineer. Work in $(pwd).",
 		"STEP 1. Get the tree.",
 		"    git clone -q \"$REPO_URL\" repo && cd repo && git log --oneline -1",
-		"STEP 2. Write a red test named TestSomething and run go test ./internal/swarm/ against <job>/scratch.",
+		"STEP 2. Write a red test named TestSomething and run go test ./pkg/swarm/ against <job>/scratch.",
 		"STEP 3. finish within 20 minutes.",
 		"STEP 4. Write RESULT.md: line 1 is the RESULT: line above.",
 		"",
@@ -250,7 +250,7 @@ func TestLintCloneStepStillDraftsAStepThatEntersNothing(t *testing.T) {
 		"RESULT: CARD-0000 do the thing",
 		"STEP 1. Get the tree.",
 		"    read the file and think about it",
-		"STEP 2. Write a red test named TestSomething and run go test ./internal/swarm/ in <job>/scratch.",
+		"STEP 2. Write a red test named TestSomething and run go test ./pkg/swarm/ in <job>/scratch.",
 		"STEP 3. finish within 20 minutes.",
 		"STEP 4. Write RESULT.md.",
 		"",

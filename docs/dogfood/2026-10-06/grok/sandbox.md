@@ -3,7 +3,7 @@
 Tool: nova-sandbox. Build: `nova-sandbox v1.0.1-0.20261007150632-34db18e07dff linux/amd64 go1.26.6 backend=landlock platform=linux`
 (the tip of `sprint/mechanical-2026-10-02` at run time). The card's recorded sha
 5844884e267c is 30 files behind that tip in `cmd/nova-sandbox` and
-`internal/sandbox` (`git diff --stat` between them), so these findings are against
+`pkg/sandbox` (`git diff --stat` between them), so these findings are against
 the branch tip, which is the tree the release is cut from, not the recorded sha.
 Run cold, from the binary's own help (`nova-sandbox help`, `nova-sandbox <verb> -h`) and `docs/SPEC-SANDBOX.md` only, with no code read, on a Linux bench (kernel
 7.0.0, Landlock ABI 8). Every verb ran for real against one scratch tree:

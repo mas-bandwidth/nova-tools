@@ -14,6 +14,13 @@
 # unit on the machine is left as it is and nothing is retired. A name no
 # record of the run's machines carries is refused before anything is written.
 #
+# nova_loop_restart names the records a run restarts whether or not their unit
+# file changed (a list, or one comma-separated word:
+# -e nova_loop_restart=reader-a,reader-a-2), so a loop hung on a dead server
+# connection is restarted through the play, never by hand (a reader's restart
+# drains it as any member's does: SIGTERM, its cards finish). A name no record
+# of the run's machines carries is refused before anything is written.
+#
 # A unit runs as the machine's login. On darwin it is a LaunchAgent in the
 # login's GUI domain when the login has one, else a LaunchDaemon dropped to the
 # login (sudo); nova_launchd_domain (auto, gui, system) decides it per host. On
@@ -88,6 +95,11 @@
     loop_only: >-
       {{ ((nova_loop_only.split(',') if nova_loop_only is string else nova_loop_only) | map('trim') | reject('equalto', '') | list)
          if nova_loop_only else [] }}
+    # the records this run restarts whether or not their unit file changed:
+    # nova_loop_restart's, so a hung loop is restarted through the play
+    loop_restart: >-
+      {%- set raw = nova_loop_restart | default([]) -%}
+      {{ ((raw.split(',') if raw is string else raw) | map('trim') | reject('equalto', '') | list) if raw else [] }}
     loop_records: >-
       {%- set with_guard = nova_loops + ([loop_guard] if (nova_disk_guard | bool)
           and 'disk-guard' not in (nova_loops | map(attribute='name') | list) else []) -%}
@@ -118,12 +130,39 @@
           list is not an empty one; run: nova-config apply --kind loop, then print the inventory again
         quiet: true
 
+    - name: the installed version on this host (what --check compares)
+      ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
+      register: loop_build
+
+    - name: the installed version on this host
+      ansible.builtin.set_fact:
+        loop_installed: "{{ loop_build.content | default('') | b64decode | trim }}"
+
+    - name: a member refuses when its checkout version differs from the adopted release
+      ansible.builtin.assert:
+        that: nova_version is not defined or nova_version == loop_installed
+        fail_msg: >-
+          {{ inventory_hostname }} has adopted {{ loop_installed }}; this play runs from {{ nova_version }};
+          refuse and run from the adopted checkout, or install {{ nova_version }} first
+        quiet: true
+      when: loop_installed != '' and nova_version is defined
+
     - name: every record nova_loop_only names is on one of this run's machines
       ansible.builtin.assert:
         that: loop_only | reject('in', loop_all) | list | length == 0
         fail_msg: >-
           nova_loop_only names {{ loop_only | reject('in', loop_all) | join(',') }}, which no loop record of this run's
           machines is (their records: {{ loop_all | join(',') or 'none' }}); nothing was written
+        quiet: true
+      vars:
+        loop_all: "{{ ansible_play_hosts_all | map('extract', hostvars, 'nova_loops') | select('defined') | flatten | map(attribute='name') | list }}"
+
+    - name: every record nova_loop_restart names is on one of this run's machines
+      ansible.builtin.assert:
+        that: loop_restart | reject('in', loop_all) | list | length == 0
+        fail_msg: >-
+          nova_loop_restart names {{ loop_restart | reject('in', loop_all) | join(',') }}, which no loop record of this run's
+          machines is (their records: {{ loop_all | join(',') or 'none' }}); nothing was restarted
         quiet: true
       vars:
         loop_all: "{{ ansible_play_hosts_all | map('extract', hostvars, 'nova_loops') | select('defined') | flatten | map(attribute='name') | list }}"
@@ -281,13 +320,15 @@
     - name: the units a run restarts, and why
       ansible.builtin.debug:
         msg: >-
-          {{ 'WOULD-RESTART' if ansible_check_mode else 'RESTART' }} {{ item.name }} on {{ inventory_hostname }}: its unit file changed;
+          {{ 'WOULD-RESTART' if ansible_check_mode else 'RESTART' }} {{ item.name }} on {{ inventory_hostname }}:
+          {{ 'named by nova_loop_restart' if item.name in loop_restart else 'its unit file changed' }};
           {{ ('a member: the restart drains it (SIGTERM: it takes no new card, lets its running cards finish and reports them), waiting up to '
               ~ nova_member_stop_timeout ~ ' s, then the new unit starts') if item.name in loop_member_names else 'not a member: restarted at once' }}
       loop: "{{ loop_records | selectattr('enabled') | list }}"
       loop_control: { label: "{{ item.name }}" }
       when: >-
-        ((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list | length > 0)
+        (((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list | length > 0)
+         or item.name in loop_restart)
         and (not loop_darwin or (loop_loaded.results | selectattr('item', 'equalto', item.name) | first).rc == 0)
 
     - name: unload the disabled and the changed (darwin)
@@ -300,7 +341,8 @@
       when: >-
         loop_darwin and item.rc | default(1) == 0 and (
           not (loop_records | selectattr('name', 'equalto', item.item) | first).enabled
-          or (loop_units.results | selectattr('item.name', 'equalto', item.item) | first).changed)
+          or (loop_units.results | selectattr('item.name', 'equalto', item.item) | first).changed
+          or item.item in loop_restart)
 
     # A member drains on the bootout's SIGTERM: launchd holds it until it has
     # reported its last card (ExitTimeOut), and its new unit loads only after.
@@ -328,7 +370,8 @@
       when: >-
         loop_darwin and (
           (loop_loaded.results | selectattr('item', 'equalto', item.name) | first).rc != 0
-          or (loop_units.results | selectattr('item.name', 'equalto', item.name) | first).changed)
+          or (loop_units.results | selectattr('item.name', 'equalto', item.name) | first).changed
+          or item.name in loop_restart)
 
     - name: unload the retired (darwin; one launchd does not hold is already out)
       ansible.builtin.command: "launchctl bootout {{ 'system' if item.system else 'gui/' ~ ansible_user_uid }}/com.nova.loop.{{ item.name }}"
@@ -349,8 +392,9 @@
         daemon_reload: true
         enabled: "{{ item.enabled }}"
         state: >-
-          {{ ('restarted' if ((loop_units.results + (loop_timers.results | default([])))
-                               | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list) else 'started')
+          {{ ('restarted' if (((loop_units.results + (loop_timers.results | default([])))
+                                | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list
+                                or item.name in loop_restart) else 'started')
              if item.enabled else 'stopped' }}
       loop: "{{ loop_records }}"
       loop_control: { label: "{{ item.name }}" }

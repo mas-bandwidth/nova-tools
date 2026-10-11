@@ -4,8 +4,8 @@
 // probabilities; the train side records each decision, attaches its outcome
 // when it is known, and calibrates the bar a decision is trusted at from the
 // decisions whose outcome is known. The dispatch, the banner, the help, the
-// version verb, the refusals and the output envelope are internal/tool's; the
-// decisions, the backends and the record are internal/decide's.
+// version verb, the refusals and the output envelope are pkg/tool's; the
+// decisions, the backends and the record are pkg/decide's.
 package main
 
 import (
@@ -20,9 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 var version string
@@ -117,7 +117,7 @@ The line names the top class and its p; nova-sprint land asks it as <card>@lande
 			{
 				Name:    "attempt",
 				Usage:   "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "attempt --brief " + fixture + "card.md --result " + fixture + "result.md --reason \"verdict not-done: tests red in internal/decide\" --backend fixed --answers " + fixture + "attempt-answers.json --record ./decisions.jsonl --op c1@1",
+				Example: "attempt --brief " + fixture + "card.md --result " + fixture + "result.md --reason \"verdict not-done: tests red in pkg/decide\" --backend fixed --answers " + fixture + "attempt-answers.json --record ./decisions.jsonl --op c1@1",
 				Effect:  tool.Delivery + "; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record",
 				Detail: `The attempt decision: how a work take ended, one choice, class: done, nothing-to-do,
 wrong-scope, no-result, needs-pro or provider-failure, each with its p. The state is the brief,
@@ -503,7 +503,7 @@ func (w world) scoreGrades(c *tool.Call) *tool.Out {
 }
 
 // findings prints the record's score decisions in the window clustered by class;
-// card values follow the one-token field model of internal/oneline.Field.
+// card values follow the one-token field model of pkg/oneline.Field.
 func (w world) findings(c *tool.Call) *tool.Out {
 	ds, err := decide.Load(c.Str("record"))
 	if err != nil {

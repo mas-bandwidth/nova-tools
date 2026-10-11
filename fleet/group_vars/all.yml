@@ -13,8 +13,8 @@ nova_release_dir: "{{ nova_home }}/nova-bench/release"
 # installed (the machine's nova_build fact).
 nova_build_file: "{{ nova_home }}/.config/nova/build"
 
-# The PATH a loop unit runs with.
-nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# The PATH a loop unit runs with (/usr/sbin and /sbin hold lsof, which nova-sprint live needs).
+nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # A darwin machine's loops are LaunchAgents in the login's GUI domain (gui) or
 # LaunchDaemons dropped to the login (system, which needs sudo); auto asks
 # launchd whether the login has a GUI domain (a login that is never the
@@ -43,6 +43,11 @@ nova_disk_guard_args: ["--scan", "~/nova-bench/run", "--cache", "~/runner-*/_cac
 # comma-separated word); empty is every record of the machine. Under it every
 # other unit is left as it is and nothing is retired.
 nova_loop_only: []
+
+# The loop records a run restarts even when their unit file did not change, by
+# name (a list, or one comma-separated word); a loop hung on a dead server is
+# restarted through the play, never by hand. Empty restarts nothing extra.
+nova_loop_restart: []
 
 # How long the supervisor waits for a member loop (nova-swarm member) it stops
 # before it kills what is left, in seconds: a member drains on SIGTERM (takes
@@ -95,7 +100,11 @@ nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 
 # The build tools.yml installs: nova_version (required, -e) built from the
 # nova-tools checkout nova_source on the machine that runs the play, under
-# nova_release_out. nova_release_gate_args is passed to the build as is, for
+# nova_release_out, with nova-sprint, nova-card and nova-work (which left
+# nova-tools at v1.2.3) taken from the mas-bandwidth/nova-sprint release
+# downloaded into nova_sprint_release (required, -e; `gh release download <tag>
+# -R mas-bandwidth/nova-sprint -D <dir>`), verified and never compiled here.
+# nova_release_gate_args is passed to the build as is, for
 # its definition-of-done gate: the checkout's command reference and the dogfood
 # receipts in nova_dogfood_receipts (required, -e: the build guesses no
 # receipts directory, SPEC-RELEASE rule 12). A waiver replaces the list whole:
@@ -145,3 +154,16 @@ nova_seat_friend_drain: 180
 # nova-sprint and nova-swarm member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
 nova_seat_quiet: 60
+
+# The coordinator's self a friend's lane wall never writes inside (nova-friend install
+# --deny-self), for a friend whose plist records none; the seat play passes it to the
+# reinstall. Empty (the default) leaves the daemon's own default: the seat's working root,
+# <home>/<seat>-working. A friend's plist that already records --deny-self keeps its own.
+nova_friend_deny_self: ""
+
+# What a friend's lane wall lets its harness read beyond the system roots (nova-friend install
+# --wall-reads), for a friend whose plist records none; the seat play passes it to the reinstall.
+# A pinned harness whose shim lives under the home (~/.local/bin/opencode execs ~/nova-bench/<harness_dir>)
+# needs its directory here or every lane exits 126 (Operation not permitted). Set it in the host's
+# host_vars; empty (the default) adds nothing. A friend's plist that already records --wall-reads keeps its own.
+nova_friend_wall_reads: ""

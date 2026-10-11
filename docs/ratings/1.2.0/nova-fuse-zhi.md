@@ -41,7 +41,7 @@ The missing-`--box` hint is a second, indented line that is not the `NOTE` line 
 grammar names (cmd/nova-fuse/main.go:300). README.md:86 still says the commands are
 1.0.0 and installs the 1.0.0 tag. The internal/fuse package doc opens on 86 lines of
 shouted numbered headings. And the tool has no `--json` and never calls
-internal/tool, so the one house shape cannot see the exception the spec argues in a
+pkg/tool, so the one house shape cannot see the exception the spec argues in a
 sentence (docs/SPEC.md:2062).
 
 A 10 would print the grammar the binary emits, say the status listing is sorted,
@@ -96,7 +96,7 @@ as well, accepts the flags after the words, and renders the same value as JSON.
 | 5 | cmd/nova-fuse/main.go:264 | A flag parse failure returns before `--box` is judged, so `nova-fuse check --bogus` names only `--bogus` and not the missing required `--box`, and `--bogus1 --bogus2` names only the first; this contradicts the "every problem at once" rule the function's own comment states at cmd/nova-fuse/main.go:214. | After a parse failure, report every missing required flag and every unknown flag in one run. | S |
 | 6 | internal/fuse/mutate.go:15 | Every mutation leaves a 0-byte `<box>.lock` beside the box (internal/fuse/mutate.go:94), while docs/SPEC.md:1954 says "All state lives in one JSON file — the box" and neither the spec nor docs/CLI.md names the sibling. | Name `<box>.lock` in the spec and the CLI box paragraph, or unlink it after unlock where the lock design allows. | S |
 | 7 | cmd/nova-fuse/main.go:282 | `--dry-run` must precede the positional words, so `nova-fuse quarantine --box b s1 "reason" --dry-run` is refused `flags come before positional arguments`, and the banner's `example:` block never shows a dry run, so the first dry run a reader tries fails. | Accept the flags after the positional words, or put a `--dry-run` line in the example. | S |
-| 8 | docs/SPEC.md:2062 | The tool has no `--json` and never calls internal/tool, while the house standard tells every tool to render one value as lines or JSON; the spec argues the exception in one sentence, so the standard cannot see the argument. | Build the one value and encode it on request, or cite the exception beside the standard's rule. | M |
+| 8 | docs/SPEC.md:2062 | The tool has no `--json` and never calls pkg/tool, while the house standard tells every tool to render one value as lines or JSON; the spec argues the exception in one sentence, so the standard cannot see the argument. | Build the one value and encode it on request, or cite the exception beside the standard's rule. | M |
 | 9 | internal/fuse/fuse.go:1 | The package doc opens on 86 lines of shouted numbered headings ("WHAT IS ACTUALLY DECIDED HERE", "THE READ HAS ONE YES AND TWO NOES"), so a reader meets capitals before a sentence. | State each rule once, present tense, in ordinary prose, and move the design essay to a note. | M |
 | 10 | README.md:86 | The trial section says "These are the Nova Tools 1.0.0 commands" and README.md:91 installs `@v1.0.0`, while the tree carries the 1.2.0 rating tree and the 1.2.0 candidate. | Move the sentence and the install example to the shipped release. | S |
 | 11 | cmd/nova-fuse/main.go:300 | The missing-`--box` refusal prints the one-line refusal plus a second indented `--box <path> is the JSON file …` paragraph; the paragraph carries no `NOTE` token, so it is outside the grammar docs/SPEC.md:2055 defines. | Prefix the hint with the tool's `NOTE` token, or fold it into the refusal line. | S |
@@ -119,7 +119,7 @@ silent overwrite; a re-quarantine under another spelling of one surface is one
 surface in both directions.
 
 The one-line guarantee holds under a hostile box: every reason, name, stamp, path
-and error prints escaped through internal/oneline, so a hand-edited newline or an
+and error prints escaped through pkg/oneline, so a hand-edited newline or an
 ESC arrives as text and cannot forge a `FUSE OK` beneath a `FUSE FAILED`.
 
 The refusal grammar and its remedies: one line naming the problem, a runnable
@@ -140,7 +140,7 @@ print the same bytes.
 | the banner is about seventy lines (1.1.0 READ 4) | CHANGED | the banner still runs long, but its first paragraph now names the box and the surface, and the example is six pasteable lines |
 | the package doc shouts in capitals (1.1.0 READ 5) | STILL THERE | internal/fuse/fuse.go:1 |
 | the verb list stands in four places (1.1.0 READ 6) | WORSE | the two refusal lists now disagree and `nova-fuse help help` is refused (cmd/nova-fuse/help.go:108) |
-| no `--json`, no internal/tool (1.1.0 READ 7) | STILL THERE | docs/SPEC.md:2062 |
+| no `--json`, no pkg/tool (1.1.0 READ 7) | STILL THERE | docs/SPEC.md:2062 |
 | a quarantine behind a blown lockdown is invisible (1.1.0 READ 8) | STILL THERE | docs/SPEC.md:2297 |
 | a re-blow silently rewrites the record (1.1.0 USE 2) | FIXED | `lockdown` again prints `LOCKDOWN OK already=blown … (standing record kept; the new reason was not recorded)`; the same for quarantine |
 | an unknown flag stops the parse before a missing `--box` is named (1.1.0 USE 3) | STILL THERE | `nova-fuse check --bogus` names only `--bogus` |

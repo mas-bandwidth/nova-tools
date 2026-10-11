@@ -25,7 +25,7 @@ const discardedAllowlistPath = "testdata/discarded"
 
 // discardedDirs are the directories of the living, non-test Go this rule reads.
 // testdata/ holds fixtures, not code that runs.
-var discardedDirs = []string{"cmd", "internal", "tools"}
+var discardedDirs = []string{"cmd", "internal", "pkg", "tools"}
 
 // ignoredMarker is the house form of a reason: `// ignored: <reason>` on the
 // line of the discard or on the line above it.

@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 // ci_selection_test.go pins the SELECTION side of the class-test contract. The
 // budget test (ci_budget_test.go) says what the checks must be; this one says
-// which packages must run them. internal/pkgselect's Select chooses the packages
+// which packages must run them. pkg/pkgselect's Select chooses the packages
 // a change tests: it builds the `want` set the self-hosted shards use (`ci
 // test-matrix` and `nova-ci local` both call it).
 //
@@ -54,9 +54,9 @@ func classTestSelection(t *testing.T) []string {
 		switch strings.Join(argv, " ") {
 		case "git diff --name-only base HEAD":
 			return pkgselect.Result{Stdout: "docs/CLI.md\n.github/workflows/ci.yml\n"}, nil
-		case "go list ./cmd/... ./internal/... ./tools/...":
+		case "go list ./cmd/... ./internal/... ./pkg/... ./tools/...":
 			return pkgselect.Result{Stdout: "example.com/m/cmd/a\nexample.com/m/internal/ci\nexample.com/m/internal/docs\n"}, nil
-		case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./tools/...":
+		case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./pkg/... ./tools/...":
 			return pkgselect.Result{Stdout: "example.com/m/cmd/a fmt\nexample.com/m/internal/ci fmt\nexample.com/m/internal/docs fmt\n"}, nil
 		}
 		return pkgselect.Result{}, nil // git fetch
@@ -72,7 +72,7 @@ func TestSelectPackagesAlwaysAddsInternalCI(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
+	src := readFile(t, filepath.Join(root, "pkg", "pkgselect", "select.go"))
 	assert.Regexp(t, selectAppendRe, src, "pkgselect.Select does not add ./internal/ci to want unconditionally; internal/ci scans the tree instead of importing what it guards, so an edit elsewhere selects no shard to run its class tests")
 	assert.Contains(t, classTestSelection(t), "./internal/ci", "a docs-only change must select ./internal/ci")
 }
@@ -84,14 +84,14 @@ func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
+	src := readFile(t, filepath.Join(root, "pkg", "pkgselect", "select.go"))
 	assert.Regexp(t, selectDocsAppendRe, src, "pkgselect.Select does not add ./internal/docs to want unconditionally; internal/docs scans the tree instead of importing what it guards, so a docs-only change that breaks TestAgentsPageNamesEveryClassRule (#1504) selects no shard to run it, and the red surfaces in an integration batch instead of on the PR (#1364 toolchainroots, #1409 hostseam)")
 	assert.Contains(t, classTestSelection(t), "./internal/docs", "a docs-only change must select ./internal/docs")
 }
 
 // TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile pins the
 // selection against nova-tools#5111: docsd-16 changed a heading in
-// docs/SPEC-SWARM.md, internal/swarm's test asserts that heading, and the run
+// docs/SPEC-SWARM.md, pkg/swarm's test asserts that heading, and the run
 // tested only the touched packages and their importers, so a red test landed
 // green. A changed file that is not Go selects every package whose _test.go
 // files or testdata name it, though no import edge says so. The fixture is the
@@ -103,8 +103,8 @@ func TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile(t *testing.T) {
 
 	root := t.TempDir()
 	for name, body := range map[string]string{
-		"go.mod":                       "module example.com/m\n",
-		"internal/swarm/swarm_test.go": "package swarm\n\nvar doc = filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-SWARM.md\")\n",
+		"go.mod":                  "module example.com/m\n",
+		"pkg/swarm/swarm_test.go": "package swarm\n\nvar doc = filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-SWARM.md\")\n",
 	} {
 		p := filepath.Join(root, filepath.FromSlash(name))
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
@@ -115,10 +115,10 @@ func TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile(t *testing.T) {
 			switch strings.Join(argv, " ") {
 			case "git diff --name-only base HEAD":
 				return pkgselect.Result{Stdout: diff}, nil
-			case "go list ./cmd/... ./internal/... ./tools/...":
-				return pkgselect.Result{Stdout: "example.com/m/internal/ci\nexample.com/m/internal/docs\nexample.com/m/internal/swarm\n"}, nil
-			case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./tools/...":
-				return pkgselect.Result{Stdout: "example.com/m/internal/ci fmt\nexample.com/m/internal/docs fmt\nexample.com/m/internal/swarm fmt\n"}, nil
+			case "go list ./cmd/... ./internal/... ./pkg/... ./tools/...":
+				return pkgselect.Result{Stdout: "example.com/m/internal/ci\nexample.com/m/internal/docs\nexample.com/m/pkg/swarm\n"}, nil
+			case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./pkg/... ./tools/...":
+				return pkgselect.Result{Stdout: "example.com/m/internal/ci fmt\nexample.com/m/internal/docs fmt\nexample.com/m/pkg/swarm fmt\n"}, nil
 			}
 			return pkgselect.Result{}, nil // git fetch
 		}
@@ -126,7 +126,7 @@ func TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile(t *testing.T) {
 		require.NoError(t, err)
 		return out.Packages
 	}
-	assert.Equal(t, []string{"./internal/ci", "./internal/docs", "./internal/swarm"}, selectFor("docs/SPEC-SWARM.md\n"),
+	assert.Equal(t, []string{"./internal/ci", "./internal/docs", "./pkg/swarm"}, selectFor("docs/SPEC-SWARM.md\n"),
 		"a docs-only change to SPEC-SWARM.md selected no package whose test reads it; pkgselect.Select must map a changed non-Go file to the packages whose _test.go files or testdata name it (nova-tools#5111)")
 	assert.Equal(t, []string{"./internal/ci", "./internal/docs"}, selectFor("docs/OTHER.md\n"),
 		"a doc no test names selected a package beyond the two class-test packages")

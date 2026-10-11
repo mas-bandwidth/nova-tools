@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 func init() {
@@ -28,7 +28,7 @@ Which run it is comes from the environment:
 Exit 0 passed, 1 the shim is not first on PATH, else make's own exit status, 2 bad usage.
 
 example:
-  go run ./tools/ci unit-test --packages "./cmd/nova-swarm ./internal/swarm"
+  go run ./tools/ci unit-test --packages "./cmd/nova-swarm ./pkg/swarm"
 `,
 		do: func(e env, args []string) int { return unitTestVerb(e, args, selRealHost()) },
 	})

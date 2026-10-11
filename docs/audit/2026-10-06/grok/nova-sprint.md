@@ -3,7 +3,7 @@
 Read as a stranger against the design at the base `sprint/mechanical-2026-10-02`,
 tip `ad2f20c6bc71f6769ad464fe96586c57c0c5fb11`: the sprint command package
 (`cmd/nova-sprint`), its engine and store (`internal/sprint`, `internal/sprint/store`),
-the dashboard and wire packages (`internal/sprintdash`, `internal/sprintwire`), the
+the dashboard and wire packages (`internal/sprintdash`, `pkg/sprintwire`), the
 sprint and card-contract specs under `docs/`, and the sprint models under `tla/`
 (`ServerLanes`, the tick/fence, `FriendPresence`). Nothing was run against the live
 store or server; no code was changed. `go vet` and the unit tier of the scoped packages
@@ -30,7 +30,7 @@ Fix: delete `LegacyPongGrace` and the legacy branch; a pong that names no nonce 
 daemon's run asked within `CheckAnswerWithin` is `NoProof`.
 
 ### 2. URGENT. `member.PathsProposed` drops every proposed path after the first item with prose
-`internal/member/member.go:1758-1769`.
+`pkg/member/member.go:1758-1769`.
 The loop appends an item's first word and then breaks on `len(words) > 1`, so
 `PATHS-PROPOSED: a.go because it is used, b.go` reads as `[a.go]`: `b.go` never reaches
 `member.CarryProposed` (`member.go:1777-1787`) or the `paths` rule's `heldProposal`
@@ -75,7 +75,7 @@ Fix: at the top of each iteration, when `ctx.Err() != nil`, answer the remaining
 with `goneResult` and stop.
 
 ### 5. NEXT. `sprintwire.Worker.Run` panics when the context is already done
-`internal/sprintwire/worker.go:54-68`.
+`pkg/sprintwire/worker.go:54-68`.
 `ctx, cancel := context.WithTimeout(...)` with a non-positive budget leaves the `for`
 loop unentered, `err` stays nil, and line 68 calls `err.Error()` on it.
 Evidence: the loop guard `for try := 0; try < Tries && ctx.Err() == nil` and the final
