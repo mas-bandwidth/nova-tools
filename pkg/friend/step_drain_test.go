@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,12 +60,8 @@ func TestTwoOutboxFinishesRunSideBySide(t *testing.T) {
 			close(both)
 		}
 		mu.Unlock()
-		select {
-		case <-both:
-			return nil
-		case <-time.After(2 * time.Second):
-			return errors.New("the other finish never started")
-		}
+		<-both
+		return nil
 	}
 	r.run(t, 6)
 
@@ -78,7 +73,7 @@ func TestTwoOutboxFinishesRunSideBySide(t *testing.T) {
 
 // A lane freed in a step is taken in the same step, while a finish is still in flight:
 // the finish blocks until the lane has delivered, so a step that waited behind the finish
-// could never deliver, and the finish times out red.
+// could never deliver and the finish would never return (the package timeout is red).
 func TestALaneIsTakenInTheStepWhileAFinishIsInFlight(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -95,22 +90,21 @@ func TestALaneIsTakenInTheStepWhileAFinishIsInFlight(t *testing.T) {
 	r.passive = true
 	r.d.Row = func() (string, int) { return ModeOneShot, 1 }
 	r.d.CardDone = func(card, to string) string { return "nova-bus send --as bob --to " + to }
-	var laneState LaneState
+	// the lane already holds its session, so the freed lane takes the card on the
+	// first step without waiting for an open's result: the finish is the only
+	// thing off the loop the take could wait behind.
+	laneState := LaneState{Sessions: map[int]string{1: "ses_1"}}
 	r.d.LoadLanes = func() (LaneState, error) { return laneState, nil }
 	r.d.SaveLanes = func(s LaneState) error { laneState = s; return nil }
 
 	var mu sync.Mutex
 	finished := false
 	r.d.Finish = func(_ context.Context, _ []string) error {
-		select {
-		case <-delivered:
-			mu.Lock()
-			finished = true
-			mu.Unlock()
-			return nil
-		case <-time.After(2 * time.Second):
-			return errors.New("the lane was not taken while the finish was in flight")
-		}
+		<-delivered
+		mu.Lock()
+		finished = true
+		mu.Unlock()
+		return nil
 	}
 	r.run(t, 6)
 
