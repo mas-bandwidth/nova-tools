@@ -426,6 +426,39 @@ func TestTheAgentCarriesDenySelfOnlyWhenSetAndTheDefaultIsTheSeatsWorkingRoot(t 
 	assert.Nil(t, DefaultDenySelf("", "ada"))
 }
 
+// install never pins the seat unless forced: with no --coordinator the agent writes no
+// --coordinator flag (the daemon reads the seat from the server at run time, as run does), and a
+// --coordinator against a server that names another seat is refused, naming both, unless
+// --force-coordinator is given (docs/SPEC-FRIEND.md, install).
+func TestInstallNeverPinsTheSeatUnlessForced(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	assert.NotContains(t, a.Args(), "--coordinator", "no --coordinator: the daemon reads the seat at run time")
+	a.Coordinator = "ada"
+	assert.Contains(t, a.Args(), "--coordinator", "with one it is written")
+
+	t.Run("refused when the server names another seat", func(t *testing.T) {
+		t.Parallel()
+		why := SeatPinRefusal("ada", "studio", false)
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, "ada")
+		assert.Contains(t, why, "studio")
+		assert.Contains(t, why, "--force-coordinator")
+	})
+	t.Run("not refused when the server names the same seat", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, SeatPinRefusal("ada", "ada", false))
+	})
+	t.Run("not refused when forced", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, SeatPinRefusal("ada", "studio", true))
+	})
+	t.Run("not refused when no server seat is known", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, SeatPinRefusal("ada", "", false))
+	})
+}
+
 // A pinned harness whose shim lives under the home execs a directory the lane wall does not read
 // (v1.2.6: ~/.local/bin/opencode execs ~/nova-bench/harness-v1.18.20/opencode, and every lane of
 // that friend exited 126, "Operation not permitted"), so the agent can carry --wall-reads, as it

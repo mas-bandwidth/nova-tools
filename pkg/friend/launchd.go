@@ -130,6 +130,18 @@ func (a Agent) Args() []string {
 	return args
 }
 
+// SeatPinRefusal is the install verb's refusal when --coordinator names one seat and the
+// sprint server's coordinator view names another (docs/SPEC-FRIEND.md, install: the agent
+// never pins a seat the server does not name, unless forced). Empty when force is set, when
+// either name is empty, or when the two agree; otherwise it names both and the
+// --force-coordinator remedy.
+func SeatPinRefusal(coordinator, serverSeat string, force bool) string {
+	if force || coordinator == "" || serverSeat == "" || coordinator == serverSeat {
+		return ""
+	}
+	return fmt.Sprintf("--coordinator %s names a seat the sprint server does not: it names %s; run: nova-friend install with --coordinator %s, or --force-coordinator to pin %s", coordinator, serverSeat, serverSeat, coordinator)
+}
+
 // Plist is the agent's plist: RunAtLoad and KeepAlive, so it starts at
 // login and is restarted when it dies (pending messages redeliver first,
 // nova-bus's rule). launchd opens its own log itself, before the daemon

@@ -110,6 +110,12 @@ below): the daemon answering is never the session.
   is written and the agent is not loaded. A binary already off `/Volumes` is
   named as it is. The log path is a separate rule and stays under the home
   directory. A `/Volumes` source is always copied onto InstalledBinary (copy=true).
+  The agent never pins the seat the server does not name, unless forced: `install`
+  reads the server's seat holder (GET `/api/view/coordinator`, as `run` does) and
+  refuses a `--coordinator` that names another seat (exit 1, naming both);
+  `--force-coordinator` pins the name unchecked, and an install with no
+  `--coordinator` writes none, so the daemon reads the seat from the server at run
+  time.
 
 ## The protocol
 
@@ -130,7 +136,11 @@ below): the daemon answering is never the session.
   that carries messages, and the session runs it first. It proves the AI. The
   coordinator reads it from the friend's own stream (the message's `from`),
   never from the body: a pong is forgeable only by the friend's login.
-- Width is the nova-config friend row's, given to the daemon at install.
+- Width has one source, the nova-config friend row: the daemon reads `row_width=`
+  off each beat's answer and delivers by it, and when it differs from the argv
+  `--width` install wrote it says so once on the record (`width: the friend row
+  says <n>, not --width <m>`) and runs at the row's width (`nova-friend status`
+  prints `width=<row>`; the argv width is ignored).
 
 ### session-pong.w1: a wake check is answered by the session
 
@@ -2508,6 +2518,12 @@ the wall. `run` flags: `--profile`, `--config-dir` (default
 coordinator's self, which no write inside the wall reaches; a wall that
 denies nothing is refused, so a one-shot daemon with none runs no lane),
 `--wall-jobs` and `--wall-reads` (comma-separated).
+
+`run` refuses a `--dir` that is equal to, lies inside, or holds a deny-self
+path (`--deny-self`, `NOVA_FRIEND_DENY_SELF`, or the default
+`<home>/<seat>-working`), symlinks resolved, at the start, exit 2, naming both
+paths: the wall then refuses every write, and each card would fail in seconds.
+`--dir` must be a sibling of the self, never the self or a path that holds it.
 
 Not yet: nova-sprint's beat does not print `row_profile=` and the friend row
 has no `profile` column (internal/sprint and pkg/config are outside this

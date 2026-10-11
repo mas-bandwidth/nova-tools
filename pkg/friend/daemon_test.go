@@ -1014,6 +1014,71 @@ func TestAnsweringManyPingsKeepsNoProofIDs(t *testing.T) {
 	assert.Empty(t, r.d.own)
 }
 
+// A beat whose row_width differs from the argv --width logs one line naming both and the daemon
+// runs at the row's width: the friend row is the one source, the argv --width a stale pin
+// (docs/SPEC-FRIEND.md, width has one source).
+func TestABeatWhoseRowWidthDiffersFromArgvWidthLogsAndRunsAtTheRowWidth(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Width = 4                                          // the argv --width, a stale pin
+	r.d.Row = func() (string, int) { return ModeBatch, 1 } // the friend row's width
+	r.send(t, "ada", "hello", "x")
+	r.run(t, 4)
+	assert.Equal(t, 1, r.last().Width, "the row's width is the one source")
+	var found bool
+	for _, line := range r.records {
+		if strings.Contains(line, "width: the friend row says 1, not --width 4") {
+			found = true
+		}
+	}
+	assert.True(t, found, "one line names both the row width and the argv --width: %v", r.records)
+}
+
+// run refuses a --dir that is equal to, lies inside, or holds a deny-self path, symlinks
+// resolved, naming both paths and the fix (docs/SPEC-FRIEND.md, the wall: no write may be a
+// denied path, lie inside one or hold one).
+func TestRunRefusesADirThatIsInsideOrHoldsTheDenySelf(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, dir string
+		deny      []string
+		want      string // empty: no refusal
+	}{
+		{"equal", "/home/u/ada-working", []string{"/home/u/ada-working"}, "/home/u/ada-working"},
+		{"inside", "/home/u/ada-working/sub", []string{"/home/u/ada-working"}, "/home/u/ada-working"},
+		{"holding", "/home/u", []string{"/home/u/ada-working"}, "/home/u/ada-working"},
+		{"a sibling is fine", "/home/u/bob-working", []string{"/home/u/ada-working"}, ""},
+		{"an empty deny refuses nothing", "/home/u/bob-working", []string{""}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			why := DenySelfConflict(c.dir, c.deny)
+			if c.want == "" {
+				assert.Empty(t, why)
+				return
+			}
+			assert.NotEmpty(t, why)
+			assert.Contains(t, why, c.dir)
+			assert.Contains(t, why, c.want)
+			assert.Contains(t, why, "move --dir to a sibling of the self")
+		})
+	}
+
+	t.Run("symlinks are resolved", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		self := filepath.Join(root, "ada-working")
+		require.NoError(t, os.MkdirAll(self, 0o755))
+		link := filepath.Join(root, "link-to-self")
+		require.NoError(t, os.Symlink(self, link))
+		why := DenySelfConflict(link, []string{self})
+		assert.NotEmpty(t, why)
+		assert.Contains(t, why, self)
+		assert.Contains(t, why, "move --dir to a sibling of the self")
+	})
+}
+
 // Proof ids live only until their line is scanned or a newer ping makes
 // them too old to prove life (docs/SPEC-FRIEND.md, the loop).
 func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
