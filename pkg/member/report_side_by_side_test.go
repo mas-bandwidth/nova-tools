@@ -38,10 +38,7 @@ func (b *barrierSprint) Run(args ...string) (int, []byte) {
 		close(b.release)
 	}
 	b.mu.Unlock()
-	select {
-	case <-b.release:
-	case <-time.After(2 * time.Second):
-	}
+	<-b.release
 	b.mu.Lock()
 	b.in--
 	b.mu.Unlock()
@@ -51,7 +48,7 @@ func (b *barrierSprint) Run(args ...string) (int, []byte) {
 // TestReportsRunSideBySideInOnePass pins that a pass reports every ended card side by
 // side, bounded by pushWidth: eight finishes that each wait for all eight to be in
 // flight all run in one pass. Red at BASE: reportOne ran each finish one after another,
-// so only one was ever in flight and the barrier timed out.
+// so only one was ever in flight and the barrier was never reached.
 func TestReportsRunSideBySideInOnePass(t *testing.T) {
 	t.Parallel()
 	const n = 8
@@ -86,21 +83,23 @@ func TestReportsRunSideBySideInOnePass(t *testing.T) {
 	assert.Equal(t, 0, m.Running(), "every reported launch is forgotten")
 }
 
-// orderSprint records whether the take ran before any finish returned: a finish sleeps the
-// delay given, and the take notes how many finishes had returned when it was called.
+// orderSprint records whether the take ran before any finish returned: a finish holds on
+// release until the take closes it, and the take notes how many finishes had returned when
+// it was called. No clock is read.
 type orderSprint struct {
 	*scriptSprint
-	delay time.Duration
-	mu    sync.Mutex
-	done  int
-	saw   bool
-	at    int
+	mu      sync.Mutex
+	done    int
+	saw     bool
+	at      int
+	release chan struct{}
+	once    sync.Once
 }
 
 func (o *orderSprint) Run(args ...string) (int, []byte) {
 	switch verbOf(args) {
 	case "finish":
-		time.Sleep(o.delay)
+		<-o.release
 		o.mu.Lock()
 		o.done++
 		o.mu.Unlock()
@@ -109,6 +108,7 @@ func (o *orderSprint) Run(args ...string) (int, []byte) {
 		o.mu.Lock()
 		o.saw, o.at = true, o.done
 		o.mu.Unlock()
+		o.once.Do(func() { close(o.release) })
 		return o.scriptSprint.Run(args...)
 	}
 	return o.scriptSprint.Run(args...)
@@ -116,12 +116,13 @@ func (o *orderSprint) Run(args ...string) (int, []byte) {
 
 // TestTakeRunsBeforeTheReportsReturn pins step 5: the take for the lanes free now runs in
 // the same pass, before any report returns, so a lane freed by a report is filled by the
-// next pass and never by waiting for every report. Four slow finishes and four free lanes:
+// next pass and never by waiting for every report. Four finishes held until the take and
+// four free lanes:
 // the take is called while none of the finishes has returned. Red at BASE: the reports ran
 // to completion before the take.
 func TestTakeRunsBeforeTheReportsReturn(t *testing.T) {
 	t.Parallel()
-	s := &orderSprint{scriptSprint: newScript(), delay: 500 * time.Millisecond}
+	s := &orderSprint{scriptSprint: newScript(), release: make(chan struct{})}
 	rn, out := newRunner(), &bytes.Buffer{}
 	m := New(Config{As: "m", Width: 8}, s, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
