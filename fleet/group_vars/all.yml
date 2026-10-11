@@ -44,6 +44,11 @@ nova_disk_guard_args: ["--scan", "~/nova-bench/run", "--cache", "~/runner-*/_cac
 # other unit is left as it is and nothing is retired.
 nova_loop_only: []
 
+# The loop records a run restarts even when their unit file did not change, by
+# name (a list, or one comma-separated word); a loop hung on a dead server is
+# restarted through the play, never by hand. Empty restarts nothing extra.
+nova_loop_restart: []
+
 # How long the supervisor waits for a member loop (nova-swarm member) it stops
 # before it kills what is left, in seconds: a member drains on SIGTERM (takes
 # nothing new, lets its running cards finish and reports them) for at most
