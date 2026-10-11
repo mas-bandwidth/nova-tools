@@ -45,7 +45,7 @@ var ReadModels = map[string]string{
 	"frontier": "claude-fable-5-1",
 	"heavy":    "claude-opus-5-5",
 	"pro":      "claude-sonnet-5-5",
-	"flash":    "claude-haiku-4-5-20251001",
+	"flash":    "claude-haiku-5-5",
 }
 
 // ParseReadSlots reads the friend's read slots off her beat's answer (row_read_slots=<n>,

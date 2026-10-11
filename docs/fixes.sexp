@@ -116,7 +116,12 @@
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
-  (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
+   (fix "claude-harness-maps-tiers-to-newest-models" :release "v1.2.14" :status "planned"
+    :title "The claude harness maps each tier to the newest model of its class"
+    :text "ReadModels maps flash to claude-haiku-5-5, pro to claude-sonnet-5-5, heavy to claude-opus-5-5,
+ and frontier to claude-fable-5-1, ensuring each tier uses the newest model of its class."
+    :origin "the-claude-harness-runs-the-newest-model-of-each-tier-class.w1, 2026-10-11")
+   (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
    :title "A child ended at its deadline with a commit and no result gets a report"
    :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
     to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the
