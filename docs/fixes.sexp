@@ -307,6 +307,19 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
+   :title "Unit tests: nova-friend run and serve faults"
+   :text "Tests, in cmd/nova-friend, of how the wall verb, the hook help, and serve answer
+    faults: the wall with no command and with an unknown flag refuses, wall -h is help, hook
+    -h is the tool's help, a store that fails for one tick is noted once and its recovery
+    noted, a later friend-rows read failure is noted with pings going on, a store that will
+    not open is retried and a signal ends serve cleanly, and a dry run with an unopenable
+    store exits 2. A candidate test for serve waiting on a friend-rows read that fails after
+    the store opened is a v1.2.14 candidate: serve refuses with exit 2, where openUntil's doc
+    says a store down at the start is no reason to exit. Tests and models only; no product
+    change."
+   :origin "card cover-nova-friend-run-and-serve-faults, attempt 3 (v1.2.12, stream v1212)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
