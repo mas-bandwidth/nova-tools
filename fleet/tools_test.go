@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -454,4 +455,142 @@ func TestToolsPlayChecksEveryInstalledToolAgainstTheRelease(t *testing.T) {
 	assert.Contains(t, asText(vars["id_sums"]), "SHA256SUMS")
 	assert.Contains(t, asText(vars["id_want"]), "lookup('ansible.builtin.file', id_sums)")
 	assert.GreaterOrEqual(t, tasks, 4)
+}
+
+// taskContaining is the first task whose name contains name (a play names its
+// steps with a variable word, e.g. a friend's name, in the middle).
+func taskContaining(t *testing.T, tasks []map[string]any, name string) map[string]any {
+	t.Helper()
+	for _, task := range tasks {
+		if strings.Contains(asText(task["name"]), name) {
+			return task
+		}
+	}
+	require.FailNow(t, "no task named like "+name)
+	return nil
+}
+
+// runsInstalled is the check the plays encode for one running daemon: it must
+// be loaded and not stale, where the manifest's stale means the running process
+// is not the installed binary (docs/SPEC-RELEASE.md, "Adopting a build"). A
+// process on an older binary is stale and fails; the installed one passes.
+func runsInstalled(loaded, stale bool) bool { return loaded && !stale }
+
+// TestRestartSelectsEveryReplacedDaemon pins the restart selection: the set is
+// every loaded member, reader and friend whose binary the install replaced (the
+// manifest's stale, role agent for members and readers, friend for the friend
+// daemons), built from seat_replaced and the base's stale-with-tool set. Bug 13
+// was exactly a member outside the old selection, so a fix that adds no restart
+// path does not reach it.
+func TestRestartSelectsEveryReplacedDaemon(t *testing.T) {
+	t.Parallel()
+	seat := playNamed(t, readTools(t), "the seat adopts the build")
+	replaced := varOf(t, seat, flattenTasks(t, tasksOf(t, seat)), "seat_replaced")
+	restart := varOf(t, seat, flattenTasks(t, tasksOf(t, seat)), "seat_restart")
+
+	assert.Contains(t, replaced, "'agent'", "the replaced set names the manifest's role for members and readers (agent)")
+	assert.Contains(t, replaced, "'friend'", "the replaced set names the friend daemons")
+	assert.Contains(t, replaced, "stale")
+	assert.NotContains(t, replaced, "'member'", "the manifest names no role member: live emits agent")
+	assert.NotContains(t, replaced, "'reader'", "the manifest names no role reader: live emits agent")
+	assert.NotContains(t, replaced, "seat_restart")
+	assert.Contains(t, restart, "seat_replaced", "the restart set is built from the replaced set")
+	assert.Contains(t, restart, "selectattr('tool', 'defined')", "the base's stale-with-tool restart is kept beside the replaced set")
+}
+
+// TestInstallPlayRestartsReplacedMembersAndReaders pins the restart in the
+// every-machine install play (not the coordinator's seat play): after `release
+// install` replaces a tool, the play restarts every member and reader whose
+// binary it replaced and fails a host whose running member still reports an
+// older version. Bug 13's six members were fleet hosts this play installed with
+// no restart at all.
+func TestInstallPlayRestartsReplacedMembersAndReaders(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	task := taskContaining(t, flattenTasks(t, tasksOf(t, install)), "each member and reader whose binary the install replaced")
+	raw := fmt.Sprint(task)
+
+	assert.Contains(t, raw, "selectattr('role', 'equalto', 'agent')", "the restart names the manifest's member and reader role (agent)")
+	assert.Contains(t, raw, "tools_replaced | length > 0", "the play fails the host when the manifest lists no replaced member or reader")
+	assert.Contains(t, raw, "selectattr('stale')", "the restart names the agents whose binary was replaced")
+	assert.Contains(t, raw, "bootout", "the restart drains through launchd bootout")
+	assert.Contains(t, raw, "bootstrap", "the restart loads through launchd bootstrap")
+	assert.Contains(t, raw, "systemd_service", "the restart drains through systemd on linux")
+	assert.Contains(t, raw, "nova_systemd_scope", "the linux restart runs in the fleet's systemd scope, never a hardcoded user")
+	assert.Contains(t, raw, "restarted", "the restart is a drain-restart, never a kill")
+	assert.Contains(t, raw, "rejectattr('stale')", "the check reads the running process, not the binary on disk")
+	assert.NotContains(t, raw, "item.binary", "the check never runs the binary file's version verb")
+	assert.Contains(t, raw, "tools_manifest.rc == 0", "the manifest read is asserted before the restart, never skipped when it fails")
+
+	when := fmt.Sprint(task["when"])
+	assert.Contains(t, when, "not in (groups['coordinator']", "the restart runs on the fleet hosts, not the coordinator")
+	assert.Contains(t, when, "RELEASE INSTALLED .*tools=[1-9]", "the restart runs only after the install replaced a tool")
+
+	assert.False(t, runsInstalled(true, true), "a running member on an older binary passed the check")
+	assert.True(t, runsInstalled(true, false), "a running member on the installed binary failed the check")
+}
+
+// TestVersionCheckFailsAnOlderRunningVersion pins the post-install check: the
+// running process's own state (the manifest's stale, set when the process is not
+// the installed binary) is what the play reads, never the binary file's `version`
+// verb. A member left on an older binary is stale and fails; the installed one is
+// not stale and passes.
+func TestVersionCheckFailsAnOlderRunningVersion(t *testing.T) {
+	t.Parallel()
+	seat := playNamed(t, readTools(t), "the seat adopts the build")
+	check := taskContaining(t, flattenTasks(t, tasksOf(t, seat)), "manifest after, until each one started")
+
+	assert.Contains(t, fmt.Sprint(check), "rejectattr('stale')", "the check reads the running process, not the binary on disk")
+	assert.NotContains(t, fmt.Sprint(flattenTasks(t, tasksOf(t, seat))), "{{ item.binary }} version", "no seat check runs the binary file's version verb")
+
+	assert.False(t, runsInstalled(true, true), "an older running version passed the check")
+	assert.True(t, runsInstalled(true, false), "the installed version failed the check")
+}
+
+// TestFriendVersionCheckedAfterReinstall pins the friend half: the reinstall
+// reads the reinstalled daemon's running process (the manifest's stale in the
+// beat check), never the binary file's `version` verb. Bug 13 left friends
+// version-unread; their only post-install check was a beat, which now requires
+// not stale.
+func TestFriendVersionCheckedAfterReinstall(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("seat-friend.yml")
+	require.NoError(t, err)
+	var tasks []map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &tasks))
+	check := taskContaining(t, tasks, "is there exactly once, not stale")
+	assert.Contains(t, fmt.Sprint(check), "stale", "the friend's running process is checked, not the binary file")
+	raw := string(b)
+	assert.NotContains(t, raw, "version", "the friend's check never runs the binary file's version verb")
+	assert.Less(t, strings.Index(raw, "is reinstalled with the flags its plist records"),
+		strings.Index(raw, "is there exactly once, not stale"), "the running-process check follows the reinstall")
+}
+
+// TestAdoptionEndsWithOneTable pins the closing table: the last play prints one
+// row per host with the host, the version running, the members and readers up,
+// the harness present and the disk free. The play ended in per-step debug
+// receipts before this. The disk free names the capture group, so the column is
+// the Available number, never the whole df row.
+func TestAdoptionEndsWithOneTable(t *testing.T) {
+	t.Parallel()
+	plays := readTools(t)
+	last := plays[len(plays)-1]
+	assert.Equal(t, "the adoption table", fmt.Sprint(last["name"]), "the adoption does not end with its table")
+	table := fmt.Sprint(tasksOf(t, last))
+	assert.Contains(t, table, "ADOPT TABLE")
+	for _, col := range []string{"host=", "version=", "members_readers_up=", "harness=", "disk_free_kb="} {
+		assert.Contains(t, table, col, "the table has no %s column", col)
+	}
+	assert.Contains(t, table, "', '\\\\1'", "the disk_free_kb column does not name the capture group, so regex_search returns the whole df row")
+}
+
+// TestRefusalCausesAreNotTruncated pins the card's rule that a refusal's cause
+// is printed whole: neither play cuts a cause at a fixed width.
+func TestRefusalCausesAreNotTruncated(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"tools.yml", "seat-friend.yml"} {
+		b, err := os.ReadFile(name)
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), "truncate(", "%s cuts a refusal's cause", name)
+	}
 }
