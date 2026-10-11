@@ -15,6 +15,7 @@ run would do.
 | `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source`, with nova-sprint's tools from its release in `nova_sprint_release`, in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
 | `fleet/redis.yml` | the store's ACL users, rendered from the library and the key families | the render on the machine running the play; check and apply on `store_deployer` |
 | `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
+| `fleet/toolchains.yml` | every toolchain a card needs (go, rust/cargo, dart, node, the JDK, dotnet, Erlang/OTP, Elixir, SBCL) under `~/sdk` at the versions and SHA-256 pins of `group_vars/all.yml` (`nova_sdk_*`), linked in `~/sdk/bin` (which the member puts first on every card's PATH), `~/sdk/env.sh` hooked from `~/.bashrc` or `~/.zshenv`, the pinned TLC jar at `nova_tla_jar`; ends with one table, host by tool, refusing a host with any tool absent (python3 is verified, not installed) | every machine but the coordinator |
 | `fleet/container-runtime.yml` | rootless podman, the fleet's container runtime, and its version recorded in `~/.config/nova/podman` | every bench: Linux (apt on Ubuntu and Debian, dnf on Fedora) and macOS (brew, and a podman machine) |
 
 ## An adopter's path

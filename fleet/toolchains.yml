@@ -1,0 +1,566 @@
+# toolchains.yml: every member carries every toolchain the cards need (Glenn,
+# 2026-10-11: "all machines must be setup with all necessary tools, via
+# ansible"). Every card needs go (the repositories are Go) and python3; the
+# schema repository's legs need rustc/cargo, dart, java/javac, node, dotnet,
+# erl, elixir/mix and sbcl; nova-sprint's TLA cards need java and the pinned
+# TLC jar. On 2026-10-11 rustc was absent on b1-b3 (b2 was held by the sprint
+# on "no rustc on PATH"), dart and sbcl on b1-b3, hetzner2 and mini-m5, javac
+# on every machine with only the distro's JRE, java itself on mini-m5 (macOS's
+# /usr/bin/java stub), go unlinked on mini-m5, and the jar on the three macOS
+# machines; a card that reached such a host ended TOOLCHAIN absent.
+#
+#   ansible-playbook -i ./nova-inventory fleet/toolchains.yml --check --diff | cat
+#   ansible-playbook -i ./nova-inventory fleet/toolchains.yml --limit <canary> | cat
+#   ansible-playbook -i ./nova-inventory fleet/toolchains.yml | cat
+#
+# A card finds the tools through the member, not through a shell file: on every
+# card the member puts ~/sdk/bin (and the Go's GOROOT/bin) first on the child's
+# PATH, read off the filesystem at that run (cmd/nova-swarm/native.go, the
+# BenchPath of pkg/swarm/toolchain.go), so a toolchain this play lands is seen by
+# the next card with no member restart. env.sh and its hooks are for the shells
+# a person or a make recipe gets. python3 is the machine's own (ansible itself
+# runs on it); the play only verifies it.
+#
+# The layout is the bench standard of 2026-09-20 (hetzner1, space, vision,
+# batman, superman hold it already, made by hand then; the play changes
+# nothing there): nova_sdk_dir (~/sdk) holds <tool>-<version>/, its bin/ holds
+# a link per executable, env.sh puts bin/ first on PATH and is sourced from the
+# first line of ~/.bashrc (Linux) or from ~/.zshenv (Darwin), the shells a card
+# and a make recipe get. Versions and the SHA-256 of every download are pinned
+# in group_vars/all.yml (nova_sdk_*); a download whose sum differs refuses the
+# play before anything is unpacked. Each install is one step guarded by the
+# executable it makes, so a converged machine changes nothing and a half-done
+# install is redone whole (the archive unpacks into a stage directory and is
+# moved into place last). sudo is used for the distro's archive tools and
+# compilers on Linux and, on every system, only to make the jar's directory
+# (nova_tla_dir, /opt) when it is not there and not the login's; a machine
+# whose sudo asks for a password keeps everything under its home and is
+# refused for the jar alone, by name, in the last play's table.
+#
+# The verify play at the end sources env.sh the way a shell does, runs every
+# tool, and refuses the host when one is missing: an absent cell is a finding,
+# never a pass. The Studio (the keeper, the inventory's coordinator group) is
+# never a target: every play here is hosts all:!coordinator, so a bare run
+# cannot reach it. A host that is down is unreachable in the recap, never a
+# fault and never removed.
+
+- name: the platform of every machine
+  hosts: all:!coordinator
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: the platform, measured (the beat's os and arch, else the gathered facts)
+      ansible.builtin.set_fact:
+        sdk_platform: >-
+          {{ (nova_os ~ '-' ~ nova_arch) if (nova_os is defined and nova_arch is defined)
+             else ((ansible_system | lower) ~ '-' ~ ({'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}[ansible_architecture] | default(ansible_architecture))) }}
+        sdk_login: "{{ ansible_facts['user_id'] }}"
+
+    - name: the platform is one the pins cover
+      ansible.builtin.assert:
+        that: sdk_platform in nova_sdk_downloads
+        fail_msg: "TOOLCHAINS REFUSED host={{ inventory_hostname }} platform={{ sdk_platform }}: no downloads pinned for it (group_vars/all.yml nova_sdk_downloads holds {{ nova_sdk_downloads.keys() | join(',') }})"
+        quiet: true
+
+- name: the toolchains under the login's home
+  hosts: all:!coordinator
+  gather_facts: false
+  vars:
+    sdk: "{{ nova_sdk_dir }}"
+    dl: "{{ nova_sdk_dir }}/dl"
+    sdk_is_darwin: "{{ sdk_platform is match('^darwin-') }}"
+    sdk_dls: "{{ nova_sdk_downloads[sdk_platform] }}"
+    # Go's directory carries no dash: the standard's own layout (go1.26.6).
+    sdk_go_dir: "{{ sdk }}/go{{ nova_sdk_go_version }}"
+    sdk_rust_dir: "{{ sdk }}/rust-{{ nova_sdk_rust_version }}"
+    sdk_dart_dir: "{{ sdk }}/dart-{{ nova_sdk_dart_version }}"
+    sdk_node_dir: "{{ sdk }}/node-v{{ nova_sdk_node_version }}"
+    sdk_jdk_dir: "{{ sdk }}/jdk-{{ nova_sdk_jdk_version }}"
+    # Temurin's macOS tarball is a bundle: the JDK is at Contents/Home.
+    sdk_jdk_home: "{{ sdk_jdk_dir }}{{ '/Contents/Home' if sdk_is_darwin else '' }}"
+    sdk_dotnet_dir: "{{ sdk }}/dotnet-{{ nova_sdk_dotnet_version }}"
+    sdk_dotnet_home: "{{ sdk }}/dotnet-home"
+    sdk_otp_dir: "{{ sdk }}/otp-{{ nova_sdk_otp_version }}"
+    sdk_elixir_dir: "{{ sdk }}/elixir-{{ nova_sdk_elixir_version }}"
+    # SBCL's version and source are the platform's when its pins name them
+    # (darwin-arm64: 2.5.8 does not run on macOS 27), else the fleet's.
+    sdk_sbcl_version: "{{ sdk_dls.sbcl_version | default(nova_sdk_sbcl_version) }}"
+    sdk_sbcl_source: "{{ sdk_dls.sbcl_source | default(nova_sdk_common_downloads.sbcl_source) }}"
+    sdk_sbcl_dir: "{{ sdk }}/sbcl-{{ sdk_sbcl_version }}"
+    # Every executable nova_sdk_dir/bin links, and where each points.
+    sdk_links:
+      go: "{{ sdk_go_dir }}/bin/go"
+      gofmt: "{{ sdk_go_dir }}/bin/gofmt"
+      cargo: "{{ sdk_rust_dir }}/bin/cargo"
+      cargo-clippy: "{{ sdk_rust_dir }}/bin/cargo-clippy"
+      cargo-fmt: "{{ sdk_rust_dir }}/bin/cargo-fmt"
+      clippy-driver: "{{ sdk_rust_dir }}/bin/clippy-driver"
+      rustc: "{{ sdk_rust_dir }}/bin/rustc"
+      rustdoc: "{{ sdk_rust_dir }}/bin/rustdoc"
+      rustfmt: "{{ sdk_rust_dir }}/bin/rustfmt"
+      dart: "{{ sdk_dart_dir }}/bin/dart"
+      node: "{{ sdk_node_dir }}/bin/node"
+      npm: "{{ sdk_node_dir }}/bin/npm"
+      npx: "{{ sdk_node_dir }}/bin/npx"
+      jar: "{{ sdk_jdk_home }}/bin/jar"
+      java: "{{ sdk_jdk_home }}/bin/java"
+      javac: "{{ sdk_jdk_home }}/bin/javac"
+      jshell: "{{ sdk_jdk_home }}/bin/jshell"
+      dotnet: "{{ sdk_dotnet_dir }}/dotnet"
+      erl: "{{ sdk_otp_dir }}/bin/erl"
+      erlc: "{{ sdk_otp_dir }}/bin/erlc"
+      escript: "{{ sdk_otp_dir }}/bin/escript"
+      dialyzer: "{{ sdk_otp_dir }}/bin/dialyzer"
+      elixir: "{{ sdk_elixir_dir }}/bin/elixir"
+      elixirc: "{{ sdk_elixir_dir }}/bin/elixirc"
+      iex: "{{ sdk_elixir_dir }}/bin/iex"
+      mix: "{{ sdk_elixir_dir }}/bin/mix"
+      sbcl: "{{ sdk_sbcl_dir }}/bin/sbcl"
+  tasks:
+    - name: the distro's archive tools and compilers (Linux; Darwin has them in the command line tools)
+      ansible.builtin.package:
+        name: [build-essential, unzip, xz-utils, bzip2, curl]
+        state: present
+      become: true
+      when: not sdk_is_darwin
+
+    - name: the sdk directories
+      ansible.builtin.file: { path: "{{ item }}", state: directory }
+      loop: ["{{ sdk }}", "{{ sdk }}/bin", "{{ dl }}", "{{ nova_home }}/.local/bin", "{{ nova_home }}/go/bin"]
+
+    - name: what is installed already (one executable per toolchain)
+      ansible.builtin.stat: { path: "{{ item.value }}" }
+      loop:
+        - { key: go, value: "{{ sdk_go_dir }}/bin/go" }
+        - { key: rust, value: "{{ sdk_rust_dir }}/bin/rustc" }
+        - { key: dart, value: "{{ sdk_dart_dir }}/bin/dart" }
+        - { key: node, value: "{{ sdk_node_dir }}/bin/node" }
+        - { key: jdk, value: "{{ sdk_jdk_home }}/bin/javac" }
+        - { key: dotnet, value: "{{ sdk_dotnet_dir }}/dotnet" }
+        - { key: otp, value: "{{ sdk_otp_dir }}/bin/erl" }
+        - { key: elixir, value: "{{ sdk_elixir_dir }}/bin/mix" }
+        - { key: sbcl, value: "{{ sdk_sbcl_dir }}/bin/sbcl" }
+      loop_control: { label: "{{ item.key }}" }
+      register: sdk_have
+
+    - name: the toolchains to install
+      ansible.builtin.set_fact:
+        sdk_missing: "{{ sdk_have.results | rejectattr('stat.exists') | map(attribute='item.key') | list }}"
+
+    - name: what the play finds
+      ansible.builtin.debug:
+        msg: "TOOLCHAINS host={{ inventory_hostname }} platform={{ sdk_platform }} sdk={{ sdk }} installed={{ sdk_have.results | selectattr('stat.exists') | map(attribute='item.key') | join(',') or 'none' }} missing={{ sdk_missing | join(',') or 'none' }}"
+
+    # Each download is checked against its pinned SHA-256; a file already in
+    # dl/ with that sum is not fetched again, one with another sum is replaced.
+    # Under --check nothing is fetched (dl/ may not even exist yet); the list
+    # that would be is printed instead.
+    - name: the downloads the missing toolchains need
+      ansible.builtin.set_fact:
+        sdk_fetch_list: >-
+          {{ ([sdk_dls.go] if 'go' in sdk_missing else [])
+           + ([sdk_dls.rust] if 'rust' in sdk_missing else [])
+           + ([sdk_dls.dart] if 'dart' in sdk_missing else [])
+           + ([sdk_dls.node] if 'node' in sdk_missing else [])
+           + ([sdk_dls.jdk] if 'jdk' in sdk_missing else [])
+           + ([nova_sdk_common_downloads.dotnet_install] if 'dotnet' in sdk_missing else [])
+           + ([sdk_dls.otp] if 'otp' in sdk_missing else [])
+           + ([nova_sdk_common_downloads.elixir] if 'elixir' in sdk_missing else [])
+           + (([sdk_dls.sbcl] if not sdk_is_darwin else (([sdk_dls.sbcl_boot] if sdk_dls.sbcl_boot.url is defined else []) + [sdk_sbcl_source])) if 'sbcl' in sdk_missing else []) }}
+
+    - name: what would be fetched (--check)
+      ansible.builtin.debug:
+        msg: "WOULD-FETCH host={{ inventory_hostname }} {{ sdk_fetch_list | map(attribute='file') | join(',') or 'nothing' }}"
+      when: ansible_check_mode
+
+    - name: the downloads of the missing toolchains, checked against their pins
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ dl }}/{{ item.file }}"
+        checksum: "sha256:{{ item.sha256 }}"
+        mode: "0644"
+        timeout: 120
+      loop: "{{ sdk_fetch_list }}"
+      loop_control: { label: "{{ item.file }}" }
+      register: sdk_fetched
+      until: sdk_fetched is succeeded
+      retries: 3
+      delay: 10
+      when: not ansible_check_mode
+
+    # Go: the release tarball unpacks to go/.
+    - name: go {{ nova_sdk_go_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-go"; rm -rf "$stage" "{{ sdk_go_dir }}"; mkdir -p "$stage";
+          tar -xf "{{ dl }}/{{ sdk_dls.go.file }}" -C "$stage";
+          mv "$stage/{{ sdk_dls.go.top }}" "{{ sdk_go_dir }}"; rm -rf "$stage"
+        creates: "{{ sdk_go_dir }}/bin/go"
+      when: "'go' in sdk_missing"
+
+    # Rust: the standalone installer of the release tarball, into its own prefix.
+    - name: rust {{ nova_sdk_rust_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-rust"; rm -rf "$stage" "{{ sdk_rust_dir }}"; mkdir -p "$stage";
+          tar -xf "{{ dl }}/{{ sdk_dls.rust.file }}" -C "$stage";
+          bash "$stage/{{ sdk_dls.rust.top }}/install.sh" --prefix="{{ sdk_rust_dir }}" --disable-ldconfig >/dev/null;
+          rm -rf "$stage"
+        creates: "{{ sdk_rust_dir }}/bin/rustc"
+      when: "'rust' in sdk_missing"
+
+    # Dart: the SDK zip unpacks to dart-sdk/.
+    - name: dart {{ nova_sdk_dart_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-dart"; rm -rf "$stage" "{{ sdk_dart_dir }}"; mkdir -p "$stage";
+          unzip -q "{{ dl }}/{{ sdk_dls.dart.file }}" -d "$stage";
+          mv "$stage/{{ sdk_dls.dart.top }}" "{{ sdk_dart_dir }}"; rm -rf "$stage"
+        creates: "{{ sdk_dart_dir }}/bin/dart"
+      when: "'dart' in sdk_missing"
+
+    - name: node {{ nova_sdk_node_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-node"; rm -rf "$stage" "{{ sdk_node_dir }}"; mkdir -p "$stage";
+          tar -xf "{{ dl }}/{{ sdk_dls.node.file }}" -C "$stage";
+          mv "$stage/{{ sdk_dls.node.top }}" "{{ sdk_node_dir }}"; rm -rf "$stage"
+        creates: "{{ sdk_node_dir }}/bin/node"
+      when: "'node' in sdk_missing"
+
+    # The JDK (Temurin 21): the tarball's top directory holds a '+', the sdk's does not.
+    - name: jdk {{ nova_sdk_jdk_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-jdk"; rm -rf "$stage" "{{ sdk_jdk_dir }}"; mkdir -p "$stage";
+          tar -xf "{{ dl }}/{{ sdk_dls.jdk.file }}" -C "$stage";
+          mv "$stage/{{ sdk_dls.jdk.top }}" "{{ sdk_jdk_dir }}"; rm -rf "$stage"
+        creates: "{{ sdk_jdk_home }}/bin/javac"
+      when: "'jdk' in sdk_missing"
+
+    - name: java-home.sh (JAVA_HOME for a recipe that asks)
+      ansible.builtin.copy:
+        dest: "{{ sdk }}/java-home.sh"
+        content: |
+          export JAVA_HOME="{{ sdk_jdk_home }}"
+        mode: "0644"
+
+    # .NET: Microsoft's installer fetches the pinned SDK for this platform into its own directory.
+    # Both installers here are bash scripts (#!/usr/bin/env bash): run under sh,
+    # which is dash on Ubuntu, dotnet-install.sh stops at its line 681 (b2, 2026-10-11).
+    - name: dotnet {{ nova_sdk_dotnet_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; rm -rf "{{ sdk_dotnet_dir }}";
+          bash "{{ dl }}/{{ nova_sdk_common_downloads.dotnet_install.file }}" --version "{{ nova_sdk_dotnet_version }}"
+          --install-dir "{{ sdk_dotnet_dir }}" --no-path >/dev/null
+        creates: "{{ sdk_dotnet_dir }}/dotnet"
+      when: "'dotnet' in sdk_missing"
+
+    # The read-only CLI home: the first-run configurer runs once here, as the
+    # bench, and never inside a card (env.sh points DOTNET_CLI_HOME at it).
+    - name: the dotnet CLI home, seeded once and made read-only
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; home="{{ sdk_dotnet_home }}"; chmod -R u+w "$home" 2>/dev/null || true; mkdir -p "$home";
+          HOME="$home" DOTNET_CLI_HOME="$home" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+          NUGET_PACKAGES="$home/.nuget/packages" "{{ sdk_dotnet_dir }}/dotnet" help >/dev/null;
+          rm -rf "$home/.nuget/packages" "$home/.local" "$home/.cache"; chmod -R a-w "$home"
+        creates: "{{ sdk_dotnet_home }}/.dotnet/{{ nova_sdk_dotnet_version }}.dotnetFirstUseSentinel"
+
+    # Erlang/OTP: on Linux a release tree whose Install script is run where it
+    # lands; on Darwin a flat tree that finds its root from erl's own path.
+    - name: erlang/otp {{ nova_sdk_otp_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-otp"; rm -rf "$stage" "{{ sdk_otp_dir }}"; mkdir -p "$stage";
+          tar -xf "{{ dl }}/{{ sdk_dls.otp.file }}" -C "$stage";
+          mv "$stage{{ ('/' ~ sdk_dls.otp.top) if sdk_dls.otp.top else '' }}" "{{ sdk_otp_dir }}"; rm -rf "$stage";
+          if [ -x "{{ sdk_otp_dir }}/Install" ]; then cd "{{ sdk_otp_dir }}" && ./Install -sasl "{{ sdk_otp_dir }}" >/dev/null; fi
+        creates: "{{ sdk_otp_dir }}/bin/erl"
+      when: "'otp' in sdk_missing"
+
+    # A flat OTP build (erlef's, on Darwin) finds its root by walking up from
+    # $0 to a directory holding erts-*, else falls back to the path it was built
+    # at (/tmp/otp-<arch>-apple-darwin). Run through a link in nova_sdk_dir/bin
+    # the walk starts in bin/ and finds nothing, so erl, erlc, escript and every
+    # elixir tool failed on mini-m5 (2026-10-11). The fallback is set here to the
+    # tree itself, in every launcher whose fallback names no OTP tree; a source
+    # build whose fallback is real (batman, superman) is left as it is.
+    - name: the OTP launchers fall back to their own tree
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; d="{{ sdk_otp_dir }}"; ls -d "$d"/erts-* >/dev/null 2>&1 || exit 0;
+          for f in "$d"/bin/* "$d"/erts-*/bin/*; do
+          [ -f "$f" ] || continue; grep -qI 'find_rootdir "$0" "' "$f" || continue;
+          fb=$(sed -n 's/.*find_rootdir "$0" "\([^"]*\)".*/\1/p' "$f" | head -1);
+          if [ "$fb" != "$d" ] && ! ls -d "$fb"/erts-* >/dev/null 2>&1; then
+          sed -i.fleet-bak "s|find_rootdir \"\$0\" \"$fb\"|find_rootdir \"\$0\" \"$d\"|" "$f"; rm -f "$f.fleet-bak"; echo "PATCHED $f"; fi;
+          done
+      register: sdk_otp_root
+      changed_when: "'PATCHED' in sdk_otp_root.stdout"
+      when: not ansible_check_mode
+
+    - name: elixir {{ nova_sdk_elixir_version }}
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-elixir"; rm -rf "$stage" "{{ sdk_elixir_dir }}"; mkdir -p "$stage";
+          unzip -q "{{ dl }}/{{ nova_sdk_common_downloads.elixir.file }}" -d "$stage";
+          mv "$stage" "{{ sdk_elixir_dir }}"
+        creates: "{{ sdk_elixir_dir }}/bin/mix"
+      when: "'elixir' in sdk_missing"
+
+    # SBCL: sbcl.org's binary on Linux; on Darwin, where it publishes none of
+    # this version, the pinned source built with the pinned bootstrap binary.
+    - name: sbcl {{ sdk_sbcl_version }} (the published binary)
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-sbcl"; rm -rf "$stage" "{{ sdk_sbcl_dir }}"; mkdir -p "$stage";
+          tar -xf "{{ dl }}/{{ sdk_dls.sbcl.file }}" -C "$stage";
+          cd "$stage/{{ sdk_dls.sbcl.top }}"; INSTALL_ROOT="{{ sdk_sbcl_dir }}" sh install.sh >/dev/null;
+          cd /; rm -rf "$stage"
+        creates: "{{ sdk_sbcl_dir }}/bin/sbcl"
+      when: "'sbcl' in sdk_missing and not sdk_is_darwin"
+
+    # The host lisp from Homebrew, on a platform whose pin names a formula
+    # (sbcl_boot.brew) rather than a download; brew runs as the login, never root.
+    - name: brew on this machine (for a host lisp from Homebrew)
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: [/opt/homebrew/bin/brew, /usr/local/bin/brew]
+      register: sdk_brew_stat
+      when: "'sbcl' in sdk_missing and sdk_is_darwin and sdk_dls.sbcl_boot.brew is defined"
+
+    - name: the host lisp from Homebrew
+      ansible.builtin.command:
+        argv: ["{{ sdk_brew }}", install, "{{ sdk_dls.sbcl_boot.brew }}"]
+      environment: { HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_ENV_HINTS: "1" }
+      vars:
+        sdk_brew: "{{ sdk_brew_stat.results | selectattr('stat.exists') | map(attribute='item') | first | default('') }}"
+      register: sdk_brew_boot
+      changed_when: "'already installed' not in (sdk_brew_boot.stderr ~ sdk_brew_boot.stdout)"
+      failed_when: sdk_brew == '' or sdk_brew_boot.rc != 0
+      when: "'sbcl' in sdk_missing and sdk_is_darwin and sdk_dls.sbcl_boot.brew is defined and not ansible_check_mode"
+
+    - name: the host lisp the build runs
+      ansible.builtin.set_fact:
+        sdk_sbcl_xc_host: >-
+          {{ ((sdk_brew_stat.results | selectattr('stat.exists') | map(attribute='item') | first | dirname) ~ '/sbcl --no-userinit --no-sysinit --disable-debugger')
+             if sdk_dls.sbcl_boot.brew is defined else
+             ('$stage/' ~ sdk_dls.sbcl_boot.top ~ '/src/runtime/sbcl --core $stage/' ~ sdk_dls.sbcl_boot.top ~ '/output/sbcl.core --no-userinit --no-sysinit --disable-debugger') }}
+      when: "'sbcl' in sdk_missing and sdk_is_darwin"
+
+    # Every step is its own statement under set -e, and the build's log is kept
+    # outside the stage: on 2026-10-11 (mini-m5) this was one && chain, which
+    # set -e does not stop on, so a failed make.sh fell through to the rm that
+    # took its log with it, and the task reported ok with no sbcl made.
+    - name: sbcl {{ sdk_sbcl_version }} (built from source with the host lisp)
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; stage="{{ sdk }}/.stage-sbcl"; log="{{ dl }}/sbcl-{{ sdk_sbcl_version }}-make.log";
+          rm -rf "$stage" "{{ sdk_sbcl_dir }}"; mkdir -p "$stage";
+          {{ ('tar -xf "' ~ dl ~ '/' ~ sdk_dls.sbcl_boot.file ~ '" -C "$stage";') if sdk_dls.sbcl_boot.file is defined else '' }}
+          tar -xf "{{ dl }}/{{ sdk_sbcl_source.file }}" -C "$stage";
+          cd "$stage/sbcl-{{ sdk_sbcl_version }}";
+          if ! sh make.sh --prefix="{{ sdk_sbcl_dir }}" --xc-host="{{ sdk_sbcl_xc_host }}" >"$log" 2>&1;
+          then echo "SBCL BUILD FAILED host={{ inventory_hostname }} log=$log" >&2; tail -40 "$log" >&2; exit 1; fi;
+          INSTALL_ROOT="{{ sdk_sbcl_dir }}" sh install.sh >/dev/null;
+          cd /; rm -rf "$stage"
+        creates: "{{ sdk_sbcl_dir }}/bin/sbcl"
+      when: "'sbcl' in sdk_missing and sdk_is_darwin"
+
+    - name: the links in {{ nova_sdk_dir }}/bin
+      ansible.builtin.file: { path: "{{ sdk }}/bin/{{ item.key }}", src: "{{ item.value }}", state: link, force: true }
+      loop: "{{ sdk_links | dict2items }}"
+      loop_control: { label: "{{ item.key }}" }
+
+    - name: sbcl in ~/.local/bin as well (where the bench standard put it)
+      ansible.builtin.file: { path: "{{ nova_home }}/.local/bin/sbcl", src: "{{ sdk_sbcl_dir }}/bin/sbcl", state: link, force: true }
+
+    - name: go in ~/go/bin as well (the standard's link, the one the member's BenchGoBin looks for)
+      ansible.builtin.file: { path: "{{ nova_home }}/go/bin/go", src: "{{ sdk_go_dir }}/bin/go", state: link, force: true }
+
+    - name: env.sh
+      ansible.builtin.template: { src: templates/sdk-env.sh.j2, dest: "{{ sdk }}/env.sh" }
+
+    # The hook: on Linux the first two lines of ~/.bashrc, before any early
+    # return for a non-interactive shell; on Darwin ~/.zshenv, which every zsh reads.
+    - name: ~/.bashrc sources env.sh on its first line (Linux)
+      ansible.builtin.lineinfile:
+        path: "{{ nova_home }}/.bashrc"
+        line: '[ -f "{{ sdk }}/env.sh" ] && . "{{ sdk }}/env.sh"'
+        regexp: '^\[ -f "{{ sdk | regex_escape }}/env\.sh" \] && \. '
+        insertbefore: BOF
+        create: true
+        mode: "0644"
+      when: not sdk_is_darwin
+
+    - name: ~/.bashrc names the hook (Linux)
+      ansible.builtin.lineinfile:
+        path: "{{ nova_home }}/.bashrc"
+        line: "# fleet-toolchains: the bench toolchain PATH, before any non-interactive early return"
+        regexp: '^# fleet-toolchains: the bench toolchain PATH'
+        insertbefore: '^\[ -f "{{ sdk | regex_escape }}/env\.sh" \] && \. '
+        firstmatch: true
+      when: not sdk_is_darwin
+
+    - name: ~/.zshenv names the hook (Darwin)
+      ansible.builtin.lineinfile:
+        path: "{{ nova_home }}/.zshenv"
+        line: "# fleet-toolchains: the bench toolchain PATH, before any non-interactive early return"
+        regexp: '^# fleet-toolchains: the bench toolchain PATH'
+        create: true
+        mode: "0644"
+      when: sdk_is_darwin
+
+    - name: ~/.zshenv sources env.sh (Darwin)
+      ansible.builtin.lineinfile:
+        path: "{{ nova_home }}/.zshenv"
+        line: '[ -f "{{ sdk }}/env.sh" ] && . "{{ sdk }}/env.sh"'
+        regexp: '^\[ -f "{{ sdk | regex_escape }}/env\.sh" \] && \. '
+        insertafter: '^# fleet-toolchains: the bench toolchain PATH'
+        # create too: a machine with no ~/.zshenv (mini-m5 on 2026-10-11) has
+        # none under --check either, since the task above made nothing there.
+        create: true
+        mode: "0644"
+      when: sdk_is_darwin
+
+# The TLC jar on every member, at the path the TLA cards and the tla play of
+# tools.yml read (nova_tla_jar), with the SHA-256 the repository pins. The jar
+# is fetched into the sdk's dl/ under that pin, then placed; its directory is
+# made with sudo only when it is missing and sudo answers without a password,
+# else the machine is refused for the jar (the table below says so) and keeps
+# everything else.
+- name: the TLC jar on every member
+  hosts: all:!coordinator
+  gather_facts: false
+  vars:
+    tla_want: "{{ (lookup('ansible.builtin.file', nova_tla_sha256_file).split() | first | default('')) | lower }}"
+  tasks:
+    - name: the repository's sum is one SHA-256
+      ansible.builtin.assert:
+        that: tla_want is match('^[0-9a-f]{64}$')
+        fail_msg: "{{ nova_tla_sha256_file }} holds no SHA-256 (64 hex digits) first"
+        quiet: true
+
+    - name: the jar and its SHA-256
+      ansible.builtin.stat: { path: "{{ nova_tla_jar }}", checksum_algorithm: sha256 }
+      register: tla_jar
+
+    - name: whether the jar is the pinned one already
+      ansible.builtin.set_fact:
+        tla_ok: "{{ tla_jar.stat.exists and tla_jar.stat.checksum == tla_want }}"
+
+    - name: the jar's directory
+      ansible.builtin.stat: { path: "{{ nova_tla_dir }}" }
+      register: tla_dir
+
+    - name: whether sudo answers without a password (asked only when the directory has to be made or handed to the login)
+      ansible.builtin.command: sudo -n true
+      register: tla_sudo
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not tla_ok and (not tla_dir.stat.exists or not tla_dir.stat.writeable)
+
+    - name: the jar's directory, the login's
+      ansible.builtin.file: { path: "{{ nova_tla_dir }}", state: directory, owner: "{{ sdk_login }}", mode: "0755" }
+      become: true
+      when: not tla_ok and (not tla_dir.stat.exists or not tla_dir.stat.writeable) and (tla_sudo.rc | default(1)) == 0
+
+    - name: why the jar cannot be placed, when it cannot
+      ansible.builtin.set_fact:
+        tla_refused: >-
+          {{ nova_tla_dir }} is not there or not the login's and sudo asks for a password ({{ tla_sudo.stderr | default('') | trim }});
+          once, as an administrator on {{ inventory_hostname }}: sudo mkdir -p {{ nova_tla_dir }} && sudo chown {{ sdk_login }} {{ nova_tla_dir }}; then run the play again
+      when: not tla_ok and (not tla_dir.stat.exists or not tla_dir.stat.writeable) and (tla_sudo.rc | default(1)) != 0
+
+    - name: the jar, fetched under its pin
+      ansible.builtin.get_url:
+        url: "{{ nova_sdk_tla_jar_url }}"
+        dest: "{{ nova_sdk_dir }}/dl/tla2tools.jar"
+        checksum: "sha256:{{ tla_want }}"
+        mode: "0644"
+        timeout: 120
+      when: not tla_ok and tla_refused is not defined and not ansible_check_mode
+      register: tla_fetch
+      until: tla_fetch is succeeded
+      retries: 3
+      delay: 10
+
+    - name: the jar in place (the directory is the login's by now)
+      ansible.builtin.copy:
+        src: "{{ nova_sdk_dir }}/dl/tla2tools.jar"
+        dest: "{{ nova_tla_jar }}"
+        remote_src: true
+        mode: "0644"
+      when: not tla_ok and tla_refused is not defined and not ansible_check_mode
+
+    - name: what would be placed (--check)
+      ansible.builtin.debug: { msg: "WOULD-PLACE host={{ inventory_hostname }} {{ nova_tla_jar }} sha256={{ tla_want }} from {{ nova_sdk_tla_jar_url }}" }
+      when: not tla_ok and tla_refused is not defined and ansible_check_mode
+
+    - name: the refusal, when there is one
+      ansible.builtin.debug: { msg: "TLA REFUSED host={{ inventory_hostname }}: {{ tla_refused }}" }
+      when: tla_refused is defined
+
+# The verify play: source env.sh as a card does (a non-login sh), find and run
+# every tool, and refuse the host when any is missing. It runs even under
+# --check (nothing it does changes the machine) so the table is always real;
+# under --check a refusal is reported, not failed, since the install was not
+# run. The last play prints one table, host by tool.
+- name: every tool answers from env.sh
+  hosts: all:!coordinator
+  gather_facts: false
+  tasks:
+    - name: the tools, found and run the way a card finds them
+      ansible.builtin.shell:
+        executable: /bin/sh
+        cmd: |
+          . "{{ nova_sdk_dir }}/env.sh" 2>/dev/null || true
+          missing=""; versions=""
+          v() { if [ -n "$2" ]; then versions="$versions $1=$2"; else missing="$missing $1"; fi; }
+          have() { command -v "$1" >/dev/null 2>&1; }
+          have go     && v go     "$(go version 2>/dev/null | awk '{print $3}')"       || v go ""
+          have python3 && v python3 "$(python3 --version 2>&1 | awk '{print $2}')"   || v python3 ""
+          have rustc  && v rustc  "$(rustc --version 2>/dev/null | awk '{print $2}')"  || v rustc ""
+          have cargo  && v cargo  "$(cargo --version 2>/dev/null | awk '{print $2}')"  || v cargo ""
+          have dart   && v dart   "$(dart --version 2>&1 | awk '{print $4}')"         || v dart ""
+          have sbcl   && v sbcl   "$(sbcl --noinform --non-interactive --no-userinit --no-sysinit --eval '(progn (princ (lisp-implementation-version)) (terpri))' 2>/dev/null | tail -1)" || v sbcl ""
+          have java   && v java   "$(java -version 2>&1 | sed -n 's/.*version "\([^"]*\)".*/\1/p' | head -1)" || v java ""
+          have javac  && v javac  "$(javac -version 2>&1 | awk '{print $2}')"         || v javac ""
+          have node   && v node   "$(node --version 2>/dev/null)"                     || v node ""
+          have dotnet && v dotnet "$(dotnet --version 2>/dev/null)"                   || v dotnet ""
+          have erl    && v erl    "$(erl -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]), halt().' 2>/dev/null)" || v erl ""
+          have elixir && v elixir "$(elixir --version 2>/dev/null | sed -n 's/^Elixir \([^ ]*\).*/\1/p')" || v elixir ""
+          have mix    && v mix    "$(mix --version 2>/dev/null | sed -n 's/^Mix \([^ ]*\).*/\1/p')"       || v mix ""
+          if [ -f "{{ nova_tla_jar }}" ]; then versions="$versions tla2tools.jar=present"; else missing="$missing tla2tools.jar"; fi
+          if [ -n "$missing" ]; then echo "TOOLCHAINS REFUSED host={{ inventory_hostname }} missing=$(echo $missing | tr ' ' ',')$versions"; exit 3; fi
+          echo "TOOLCHAINS OK host={{ inventory_hostname }}$versions"
+      register: sdk_verify
+      changed_when: false
+      check_mode: false
+      failed_when: sdk_verify.rc != 0 and not ansible_check_mode
+
+    - name: the receipt
+      ansible.builtin.debug: { msg: "{{ sdk_verify.stdout_lines | last | default(sdk_verify.stderr) }}" }
+
+- name: the toolchain table
+  hosts: all:!coordinator
+  gather_facts: false
+  vars:
+    sdk_tools: [go, python3, rustc, cargo, dart, sbcl, java, javac, node, dotnet, erl, elixir, mix, tla2tools.jar]
+  tasks:
+    - name: one row per host, one column per tool (its version, or ABSENT); a refused host is in it too
+      run_once: true
+      ansible.builtin.debug:
+        msg: |
+          {{ (['host'] + sdk_tools) | join(' | ') }}
+          {% for h in hostvars.keys() | sort if hostvars[h].sdk_verify is defined %}
+          {% set line = (hostvars[h].sdk_verify.stdout_lines | default([])) | last | default('') %}
+          {% set cells = [] %}
+          {% for t in sdk_tools %}
+          {% set m = line | regex_search(' ' ~ (t | regex_escape) ~ '=([^ ]+)', '\\1') %}
+          {% set _ = cells.append((m | first) if m else 'ABSENT') %}
+          {% endfor %}
+          {{ ([h] + cells) | join(' | ') }}
+          {% endfor %}
