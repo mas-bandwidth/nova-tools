@@ -421,6 +421,7 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 // which another lane there picks up. While the lanes back off from a rate
 // limit, or are held out of funds, no lane starts a turn or an open
 // (ratelimit.go).
+// tla/Friend.tla LaneStart
 func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
@@ -663,6 +664,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 
 // laneDone is a lane's open or turn ending: a session kept, or a card done,
 // handed again, or set aside and reported.
+// tla/Friend.tla LaneEnds
 func (l *loop) laneDone(r laneResult, now time.Time) {
 	d, s, ln := l.d, l.lanes, r.ln
 	at := now.UTC().Format(time.RFC3339)

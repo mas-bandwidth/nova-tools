@@ -25,12 +25,11 @@ import (
 // section 4; tla/CardContract.tla, Push). Every test drives Push with a git that answers
 // by argv, records each call with its directory and env, a sleep that records the waits,
 // and gh off PATH, so no git, no clock and no child is real. The slow tier owns the real
-// git; the checkoutTip not-a-descendant branch needs the *exec.ExitError a fake cannot
-// build, so it is left to slow_test.go and named in the report.
+// git; real non-descendant exits are exercised in slow_test.go.
 
 // scriptedGit is a git that answers by argv and records every call's options. Its
 // fields are the answers: the full sha rev-parse returns, whether the head is contained
-// by the launch's refs, whether it descends from the staged commit, the rev-list count,
+// by the launch's refs, whether its ancestry check fails, the rev-list count,
 // and how many fetches and pushes fail before the rest succeed.
 type scriptedGit struct {
 	mu    sync.Mutex
@@ -48,10 +47,10 @@ type scriptedGit struct {
 	pushes   int
 	pushLine string
 
-	head          string
-	contains      string
-	notDescendant bool
-	commits       string
+	head        string
+	contains    string
+	ancestryErr bool
+	commits     string
 }
 
 func (s *scriptedGit) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
@@ -102,8 +101,8 @@ func (s *scriptedGit) run(ctx context.Context, o gitrun.Options, args ...string)
 		}
 		return gitrun.Result{}, nil
 	case "merge-base":
-		if s.notDescendant {
-			return gitrun.Result{Stderr: []byte("fatal: not a descendant\n")}, errors.New("exit status 1")
+		if s.ancestryErr {
+			return gitrun.Result{Stderr: []byte("fatal: could not read commit object\n")}, errors.New("exit status 128")
 		}
 		return gitrun.Result{}, nil
 	case "rev-list":
@@ -308,16 +307,17 @@ func TestALaunchWithNoStagedCommitIsNotPushed(t *testing.T) {
 	assert.Equal(t, member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}, got)
 }
 
-// A head that does not descend from the staged commit is refused
-// (memberpush.go:170-172; docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, Push).
-func TestAHeadThatDoesNotDescendIsRefused(t *testing.T) {
+// A failed ancestry check is refused with git's own line, not classified as a
+// non-descendant head (docs/SPEC-CARD-CONTRACT.md section 4).
+func TestAnAncestryCheckFailureIsRefusedNamingGitsLine(t *testing.T) {
 	t.Parallel()
 	h := newPushHarness(t)
-	h.git.notDescendant = true
+	h.git.ancestryErr = true
 	got := h.pusher().Push(h.p, member.Result{Head: h.git.head})
-	assert.Contains(t, got.Refused, "does not descend from the staged commit")
+	assert.Equal(t, "checking that the result's head "+h.git.head+" descends from the staged commit "+strings.Repeat("b", 40)+": fatal: could not read commit object", got.Refused)
 	assert.Empty(t, got.Sha)
 	assert.Empty(t, got.None)
+	assert.Zero(t, h.git.pushes, "a failed ancestry check never pushes")
 }
 
 // A head that is the staged commit or behind it is not pushed: the child committed

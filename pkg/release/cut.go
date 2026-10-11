@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"golang.org/x/mod/semver"
 )
 
 // prNumber matches the `(#123)` a squash merge puts at the end of the subject.
@@ -115,6 +116,26 @@ func green(runs []CheckRun) error {
 			"CI has not finished on this commit: %s", strings.Join(pending, ", "))
 	}
 	return nil
+}
+
+// sourceChecks excludes only a cancelled publication of an existing older
+// release tag (docs/SPEC-RELEASE.md section 19). All other checks, including
+// unknown provenance, remain evidence the ordinary CI gate must judge.
+func sourceChecks(runs []CheckRun, tags []string, version string) []CheckRun {
+	older := map[string]bool{}
+	for _, tag := range tags {
+		if ValidVersion(tag) == nil && semver.IsValid(tag) && semver.IsValid(version) && semver.Compare(tag, version) < 0 {
+			older[tag] = true
+		}
+	}
+	kept := make([]CheckRun, 0, len(runs))
+	for _, r := range runs {
+		if r.Status == "completed" && r.Conclusion == "cancelled" && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push" && r.TagPush && older[r.HeadBranch] {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept
 }
 
 // ciNotGreen reads the runs once and answers the checks green() would refuse
@@ -594,6 +615,12 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the checks on %s: %w (ask again when the forge answers)", sha, err))
 	}
+	progress(errs, "reading the tags")
+	tags, err := forge.Tags(ctx, o.repo)
+	if err != nil {
+		return refusal(errs, "CUT", fmt.Errorf("cannot read the tags of %s: %w (ask again when the forge answers)", o.repo, err))
+	}
+	runs = sourceChecks(runs, tags, o.version)
 	// THE GREEN GATE, AND THE ONE WAY PAST IT. A waiver with an empty value is
 	// not a waiver, and a waiver of a green commit is a lie in the tag's
 	// permanent record, so both refuse before anything is written
@@ -623,11 +650,6 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return 2
 		}
 		return refusal(errs, "CUT", err)
-	}
-	progress(errs, "reading the tags")
-	tags, err := forge.Tags(ctx, o.repo)
-	if err != nil {
-		return refusal(errs, "CUT", fmt.Errorf("cannot read the tags of %s: %w (ask again when the forge answers)", o.repo, err))
 	}
 	for _, tag := range tags {
 		if tag == o.version {
