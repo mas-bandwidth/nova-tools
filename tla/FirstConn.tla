@@ -1,7 +1,7 @@
 ----------------------------- MODULE FirstConn -----------------------------
 \* The connection redisconn.Open dials, as state. nova-tools
-\* internal/redisconn/open.go at f6ec9e2b8: firstConn (Read :255, Write
-\* :280, disarm :291), firstDial (dialer :194, done :209), the probe :180;
+\* pkg/redisconn/open.go: firstConn (Read :343, Write
+\* :368, disarm :379), firstDial (dialer :223, done :265), the probe :203;
 \* firstconn_test.go, whose seven events and three rules are this module's.
 \*
 \* Why it exists. go-redis shakes hands inside the first command on a
@@ -12,6 +12,13 @@
 \* Anything else the store says first, and any write that is not exactly the
 \* probe, makes the connection inert: the probe travels and the store's own
 \* answer decides. Once Open returns (disarm) no write is taken again.
+\*
+\* One thing the code does that this module names only in part: every
+\* connection dialed while Open runs becomes a firstConn (open.go:243-249),
+\* but only the last one is disarmed when Open returns (open.go:267-268) --
+\* the dialer keeps only the last in d.first, and the earlier ones stay armed
+\* and inert once the client drops them. The module has one connection, the
+\* last, which is the one the caller keeps.
 \*
 \* The state the code owns: state (watching, armed, answering, inert) and
 \* given, the bytes of the answer read so far. The wire: sent, what the store

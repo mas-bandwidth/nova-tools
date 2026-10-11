@@ -21,6 +21,11 @@
 \* are one step here; RedisFn.tla models them as two and proves a LoadMissing
 \* never replaces under racing loaders.
 \*
+\* LoadMissing's Skipped outcome (a NOPERM read, or a load refused for a
+\* function name another library holds) sets done with no resend
+\* (library.go:79-80): the verb is sent once, one send fewer than the model's
+\* Load, which resends after every load that reaches an outcome.
+\*
 \* Broken names a misimplementation a reversed witness turns on:
 \*   "resend-lost": a verb whose reply was lost is sent again (AtMostOnce).
 \*   "replace":     the load sends FUNCTION LOAD REPLACE (NeverReplaced).

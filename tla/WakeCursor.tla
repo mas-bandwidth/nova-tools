@@ -1,4 +1,12 @@
 --------------------------- MODULE WakeCursor ---------------------------
+\* The wake cursor of nova-bus wait --wake-file (cmd/nova-bus/wake_cursor.go):
+\* one file, appended to, read between an arm and its bound. An arm with no
+\* --wake-after starts at the end of the file (wake_cursor.go:118-120,
+\* documented main.go:204): that is the model's Broken arm, Arm's
+\* `offset' = IF Broken THEN lines ELSE saved` -- a re-arm with a saved cursor
+\* reads on from saved, a first arm begins at the end. The model does not
+\* tell a first arm from a re-arm: the one Arm action, with Broken choosing
+\* the offset, stands for both.
 EXTENDS Naturals
 CONSTANTS MaxLines, Broken
 VARIABLES lines, saved, offset, shown, armed, generation, bound, refused

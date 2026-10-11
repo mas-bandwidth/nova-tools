@@ -192,6 +192,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		}
 		return refusal(errs, "INSTALL", err)
 	}
+	// tla/BenchStage.tla Verify.
 	// VERIFIED WHOLE BEFORE THE FIRST RENAME. A set checked file by file as it
 	// installs puts good binaries beside a bad one and leaves the box in a
 	// state no version answers for.

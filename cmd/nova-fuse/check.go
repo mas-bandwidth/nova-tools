@@ -24,6 +24,7 @@ func liftRemedy(box, surface string) string {
 		`nova-fuse lift quarantine --box "${nova_fuse_box%_}" -- "${nova_fuse_surface%_}")`
 }
 
+// tla/FuseBox.tla cmdCheck.
 // cmdCheck gates. Every ingestion path calls it, and only exit 0 is permission: 1 means
 // a fuse is positively blown, 2 means it could not be proven clear.
 func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {

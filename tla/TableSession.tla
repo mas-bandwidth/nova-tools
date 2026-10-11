@@ -20,7 +20,12 @@
 \* arrives: the session ends and no line follows. SIGINT inside a watch is
 \* not a stop: it is how a watch is left, and the reader goes on to the next
 \* line. SIGINT at the prompt or inside a verb is a stop. A session ended by
-\* a stop reports the signal (143, 130), not the codes of its lines.
+\* a stop reports the signal (143, 130), not the codes of its lines. The
+\* shell drops SIGTERM from the watch's signal list (watch.go:79-87), so a
+\* resident shell's SIGTERM keeps its process-wide default and terminates at
+\* once, with no following line; only SIGINT is the watch-local
+\* return-to-prompt. A lost connection is reopened by the next line that
+\* needs the store (session.go:62-85, prepare; called by main.go:428-430).
 \*
 \* The reader waits for input as long as the outside likes: a shell left
 \* open at its prompt is not stuck. So the liveness here is only of what

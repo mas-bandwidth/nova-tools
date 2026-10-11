@@ -17,16 +17,20 @@
 \* (installedBytes), which differ when the directory is corrupt and are None
 \* when it is partial.
 \*
-\* Mapped to fleet/tools.yml:
+\* Mapped to fleet/tools.yml and pkg/release/install.go:
 \*   Seed / NoSeed = "the stage seeded from the installed build's directory",
 \*                   taken only when the stage is not begun and there is a
-\*                   directory to seed from
+\*                   directory to seed from. The code's seed guard is the
+\*                   stage's SHA256SUMS being absent (fleet/tools.yml:135-145,
+\*                   tools_begun); the model uses "any file present" (Begun)
+\*                   where the code names that one file.
 \*   SendOne       = "send them", one file of the send list
 \*   SendDone      = the end of that loop; the run goes on to install
 \*   Verify        = `release install` verifying the whole SHA256SUMS before
-\*                   its first rename; Refuse is its refusal, which ends the run
+\*                   its first rename (install.go:195-201); Refuse is its
+\*                   refusal, which ends the run
 \*   InstallOne    = `release install` replacing one binary (a binary already
-\*                   holding the release's bytes is skipped)
+\*                   holding the release's bytes is skipped, install.go:256-263)
 \*   Crash         = the run halts anywhere; the stage stays as it is and the
 \*                   next run starts (bounded by MaxCrashes)
 \*

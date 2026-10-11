@@ -1,6 +1,6 @@
 ------------------------------ MODULE RedisFn ------------------------------
 (* The function libraries of one Redis under several loaders: nova-tools    *)
-(* internal/redisfn (Check, Load, Ensure, LoadMissing).                     *)
+(* pkg/redisfn (Check, Load, Ensure, LoadMissing).                          *)
 (*                                                                          *)
 (* The store holds, under each library name, one build of the library or    *)
 (* none. A build registers a set of function names, and a function name     *)
@@ -20,6 +20,11 @@
 (* not a failure, and it looks for no holder. MissReplaces = TRUE is the    *)
 (* witness of nova-tools #3620: its load is FUNCTION LOAD REPLACE.          *)
 (*                                                                          *)
+(* LoadMissing's outcomes are the model's done: the read's NOPERM answer    *)
+(* is Skipped (store.go:339-344), and a load refused because a library of   *)
+(* this name is already there is Unchanged (store.go:358-360); neither      *)
+(* writes anything.                                                         *)
+(*                                                                          *)
 (* Atomic = TRUE is the code: FUNCTION LOAD REPLACE, one command, after     *)
 (* which the store holds the new build whole or is as it was. Atomic =      *)
 (* FALSE is the witness: FUNCTION DELETE and then FUNCTION LOAD.            *)
@@ -28,7 +33,7 @@
 (* store that persists nothing; a load whose reply is lost (the loader      *)
 (* then knows neither outcome, and the store holds one of the two, whole);  *)
 (* the text of a library (a build here is a name for it, and the functional *)
-(* tests of internal/redisfn hold the text).                                *)
+(* tests of pkg/redisfn hold the text).                                     *)
 (*                                                                          *)
 (* Written 2026-09-27 under the owner's rule: TLA+ for every state machine. *)
 EXTENDS Naturals, FiniteSets
