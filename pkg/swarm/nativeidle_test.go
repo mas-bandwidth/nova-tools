@@ -32,12 +32,14 @@ type fakeSnap struct {
 func (f *fakeSnap) TreeCPU(int) (uint64, bool) { return f.cpu, f.ok }
 
 // idleBench is one watch under an injected clock: a log file the test grows or does not, a
-// ticker the test drives, and a tree whose CPU the test sets.
+// ticker the test drives, and a tree whose CPU the test sets. spend is the card's own
+// accounting the watch is handed (the harness shell cap's proof of work); nil reads nothing.
 type idleBench struct {
 	job   string
 	log   string
 	ticks chan time.Time
 	snap  *fakeSnap
+	spend func() (int, bool)
 	out   <-chan IdleEnd
 	stop  chan struct{}
 }
@@ -53,7 +55,13 @@ func newIdleBench(t *testing.T, idle time.Duration, reader *WallReader) *idleBen
 		stop:  make(chan struct{}),
 	}
 	require.NoError(t, os.WriteFile(b.log, []byte("start\n"), 0o644))
-	w := IdleWatch{Log: b.log, Job: job, Pid: 4242, Idle: idle, Reader: reader}
+	w := IdleWatch{Log: b.log, Job: job, Pid: 4242, Idle: idle, Reader: reader,
+		Spend: func() (int, bool) {
+			if b.spend == nil {
+				return 0, false
+			}
+			return b.spend()
+		}}
 	w.now = func() time.Time { return time.Unix(0, 0) }
 	w.ticker = func(time.Duration) (<-chan time.Time, func()) { return b.ticks, func() {} }
 	w.snapshot = func() activitySnapshot { return b.snap }
@@ -275,4 +283,63 @@ func TestWatchIdleKeepsACardSpendingARealShareOfACore(t *testing.T) {
 		end, ended := b.tick(t, at)
 		require.False(t, ended, "a card pinning a core is working, not idle: %+v at %v", end, at)
 	}
+}
+
+// TestWatchIdleKeepsACardTheHarnessShellCapSilenced (docs/roadmap.sexp,
+// swarm-idle-reap-verdict): the harness caps what a shell tool prints, so a WORKING card's
+// log can stay under the dribble floor while its turns complete, and its tree waits on the
+// model under the CPU bar exactly as a stalled one does. What the cap cannot silence is the
+// card's own accounting: turns that complete spend tokens, and the spend the watch is handed
+// rises. RED WITHOUT THE FIX: the watch read the silenced log and the sub-bar tree and ended
+// a card that was turning.
+func TestWatchIdleKeepsACardTheHarnessShellCapSilenced(t *testing.T) {
+	t.Parallel()
+
+	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
+	b.snap.ok = true
+	spend := 0
+	b.spend = func() (int, bool) {
+		spend += 1000 // a turn completed between every poll, its output capped away
+		return spend, true
+	}
+	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
+		// a tree waiting on the model: a sliver of the interval, under the bar
+		b.snap.cpu += uint64(3*time.Second) / 100
+		end, ended := b.tick(t, at)
+		require.False(t, ended, "a card whose own accounting shows turns completing is working, not idle: %+v at %v", end, at)
+	}
+}
+
+// TestWatchIdleEndsACardWhoseSpendHasStopped: the other half of the same wiring. A spend
+// reading that has stopped rising is not work: a card whose log and tree are still and whose
+// accounting shows no new turn is the card the watch exists to end, spend reader or no.
+func TestWatchIdleEndsACardWhoseSpendHasStopped(t *testing.T) {
+	t.Parallel()
+
+	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
+	b.snap.ok = true
+	spend := 5000
+	b.spend = func() (int, bool) { return spend, true }
+	end, ended := b.tick(t, 11*time.Second)
+	require.True(t, ended, "a card whose spend has stopped moving is still a still card")
+	require.GreaterOrEqual(t, end.Idle, 10*time.Second, "the end names how long the card was still, got %v", end.Idle)
+}
+
+// TestIdleEndReportsOnlyARefusalThatNamesAPath (docs/roadmap.sexp,
+// swarm-idle-reap-verdict): a wall refusal that NAMES NOTHING -- a `SANDBOX REFUSED` line
+// with no path in it -- is no cause a reader can act on, and the report an idle end owes
+// states idle reaping, not a wall death at `path=-`. A refusal that names a path is the
+// wall's, and it is reported; a card that simply went still carried no refusal at all.
+func TestIdleEndReportsOnlyARefusalThatNamesAPath(t *testing.T) {
+	t.Parallel()
+
+	named, ok := IdleEnd{Refused: true, Kind: "write", Path: "/etc/hosts", Step: "3"}.WallRefusal()
+	require.True(t, ok, "a refusal that names a path is a wall death the report carries")
+	require.Equal(t, WallRefusal{Path: "/etc/hosts", Step: "3"}, named)
+
+	_, ok = IdleEnd{Refused: true, Kind: "denied", Step: "3"}.WallRefusal()
+	require.False(t, ok, "a refusal that names nothing is no wall death: the end's cause is the idle reaping")
+
+	_, ok = IdleEnd{Idle: 300 * time.Second, Step: "16"}.WallRefusal()
+	require.False(t, ok, "a card that simply went still carried no refusal at all")
 }

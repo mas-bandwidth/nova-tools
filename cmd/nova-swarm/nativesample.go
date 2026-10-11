@@ -419,6 +419,18 @@ func (s *liveSampler) Observed() (spent int, observed, partial bool, failures in
 	return s.spent, s.observed, s.partial, s.failures, s.lastErr
 }
 
+// Spend is the job's spend the sampler last answered with, and whether any answer has
+// reported figures. It is what the idle watch asks beside its log and its tree: the
+// harness's shell cap can silence a working card's printed output, and the spend is the
+// one reading that cap cannot silence, because turns that completed spent tokens
+// (docs/roadmap.sexp, swarm-idle-reap-verdict). A sampler that never reads -- no budget
+// to watch, no data home -- answers false, and the watch reads nothing by it.
+func (s *liveSampler) Spend() (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spent, s.observed
+}
+
 // Why is the reason the last failed read gave, in its own words, or "" when the last read
 // answered. It is what an unverifiable end carries onto the NATIVE BUDGET line: three reads
 // that each did not answer within the limit and three that each exited on a locked database
