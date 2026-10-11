@@ -95,7 +95,7 @@ A secret handed to a tool never comes back in the tool's own words. A refusal
 that quotes the value it was given (a DSN, a URL with userinfo, a token) carries
 that value to a terminal, a log and a report, so a refusal names the defect and
 the error's type, or a fixed sentence, and never the input. The Postgres DSN
-parse error that printed a password (`internal/config/pg.go`) is the case, and
+parse error that printed a password (`pkg/config/pg.go`) is the case, and
 `OpenPG` refuses with the type alone. `TestNoSecretReachesAnError` drives
 secret-shaped strings through every exported `Open*`, `Parse*`, `Dial*` and
 `New*` function that takes a string and refuses one whose error, panic or log

@@ -32,7 +32,7 @@ func refusalLineIsRefusal(line string) bool {
 // refusalGrammarRe is the one refusal line:
 // `<TOKEN> REFUSED[ k=v ...]: <why>; run: <remedy>` (docs/STANDARD.md,
 // "The status word leads every line"). The token is the tool or verb as it was
-// invoked: internal/tool upper-cases it (`SEND`), a hand printer writes it as
+// invoked: pkg/tool upper-cases it (`SEND`), a hand printer writes it as
 // the reader typed it (`nova-sprint`, `nova-swarm install`). Its two captures
 // are the why and the remedy, so the judge below reads them back and refuses an
 // empty one: the line needs a non-whitespace why and a non-whitespace remedy.

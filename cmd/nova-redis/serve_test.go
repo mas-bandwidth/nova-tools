@@ -7,7 +7,7 @@ package main
 // 22-24: it records the argv, environment and stdin config `serve` hands to
 // redis-server. The restart test (25, #3879) runs the real launch against a
 // throwaway redis-server on loopback in the test's temp dir, found through
-// internal/testredis, which skips on a laptop without the binary and
+// pkg/testredis, which skips on a laptop without the binary and
 // fails under NOVA_CI=1.
 
 import (
@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

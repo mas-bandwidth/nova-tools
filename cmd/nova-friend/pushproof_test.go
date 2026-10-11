@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +27,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		r := newRig(t, "ada", "bob")
 		cli := r.cli()
 		for _, h := range []string{"cursor"} {
-			remedy := "run: the adapter card: give internal/friend a deliver command for " + h + " (NewDeliverer), or run the friend under a harness that has one: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux"
+			remedy := "run: the adapter card: give pkg/friend a deliver command for " + h + " (NewDeliverer), or run the friend under a harness that has one: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux"
 			cli.Do(t, "run", "--as", "bob", "--harness", h, "--dir", "/w/bob").Exit(2).
 				Err("RUN REFUSED: no deliver command for "+h, "the daemon did not start", remedy)
 			cli.Do(t, "run", "--as", "bob", "--harness", h, "--dir", "/w/bob", "--dry-run").Exit(2).Err("RUN REFUSED: no deliver command for "+h, remedy)

@@ -39,7 +39,7 @@ func TestSlotsInitMakesAStoreTheLeaseCodeCanRead(t *testing.T) {
 	}
 
 	// The file is compared BYTE FOR BYTE, because its format is a contract with
-	// internal/swarm.loadSlotShares and a stray space is a store that refuses to load.
+	// pkg/swarm.loadSlotShares and a stray space is a store that refuses to load.
 	raw, err := os.ReadFile(filepath.Join(store, "shares.tsv"))
 	require.NoError(t, err)
 	got, want := string(raw), "capacity\t1\nreserve\t0\nswarm-space\t1\n"

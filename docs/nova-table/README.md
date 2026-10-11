@@ -18,7 +18,7 @@ Requested help exits 0 on stdout and needs no store.
 
 Install `nova-table` and Redis 7 or later. The image the functional tier runs in
 (`make test-functional-container`) builds Redis 8.10.2. Every table verb calls
-the `nova_sprint` function library (`internal/nsprint/fn`), which `nova-table`
+the `nova_sprint` function library (`pkg/nsprint/fn`), which `nova-table`
 carries. On first contact with a store that holds no library, `nova-table`
 loads its own: the first verb the store answers `Function not found` loads the
 library once per process, never replacing one the store holds, and runs again;
@@ -78,7 +78,7 @@ above is for a new disposable store. The commands below omit connection flags.
 ## What a table is
 
 The primitive is the ordered set: a Redis ZSET, members with scores, read in
-score order. `internal/ntable` gives it five verbs (`Add`, `Remove`, `Move`,
+score order. `pkg/ntable` gives it five verbs (`Add`, `Remove`, `Move`,
 `Members`, `Card`) and one count (`QueueCount`: the set's size, one member
 left out when a row names it) and knows nothing about sprints.
 
@@ -508,7 +508,7 @@ parentheses: the shell reads `pct(busy)` unquoted as a pattern.
 `ns_table_bind` (the sprint's stream block) uses its supplied order in manual
 mode and maintains the table's standing sort when one is active. The model is
 `tla/TableOrder.tla`; the tests are
-`internal/ntable/order_functional_test.go`.
+`pkg/ntable/order_functional_test.go`.
 
 ## The render rules
 

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 func init() {
@@ -67,9 +67,9 @@ func unitLoad(goos, op, path string) error {
 // mirror verb for that unit to run. The unit runs this binary directly. A test gives
 // --dir and its own loader, so nothing is loaded on the machine the test runs on.
 //
-// The shared unit text lives in internal/units. This binary does not import that
+// The shared unit text lives in pkg/units. This binary does not import that
 // package: its oneline import list is cmd/nova-swarm/audit_test.go, which this card
-// cannot change. The text written here is the same plist and unit internal/units
+// cannot change. The text written here is the same plist and unit pkg/units
 // writes, and TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh reads both.
 
 const (
@@ -107,7 +107,7 @@ func (k swarmKind) file(goos string) string {
 func swarmKindNames() string { return "disk-guard|mirror-refresh" }
 
 // foreignInstall is the verb that installs a unit this binary does not own. The
-// words are the same as internal/units.UnitKinds.
+// words are the same as pkg/units.UnitKinds.
 func foreignInstall(kind string) (string, bool) {
 	switch kind {
 	case "store":
@@ -364,7 +364,7 @@ func throttleSeconds(every time.Duration) int {
 	return s
 }
 
-// launchdText is the same agent internal/units.LaunchdPlist writes. The log key is
+// launchdText is the same agent pkg/units.LaunchdPlist writes. The log key is
 // split in source so a class rule that greps for the key name does not see it here;
 // the default log is under the home's Library/Logs. The text is concatenated, not
 // written through a Builder: this binary's oneline audit refuses WriteString.

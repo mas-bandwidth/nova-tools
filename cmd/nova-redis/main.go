@@ -7,7 +7,7 @@
 // or expired key. A write with no owner or no TTL is refused before the
 // instance is dialled, so an unbounded key never reaches Redis (the spill and
 // recall section of the spec). The fn verbs
-// load and check the store's function library (fn.go, over internal/redisfn).
+// load and check the store's function library (fn.go, over pkg/redisfn).
 //
 // Scratch is scratch: nothing spilled is a record, and recall is allowed to
 // miss. The password comes from the environment (NOVA_REDIS_PASSWORD, or the
@@ -15,13 +15,13 @@
 // time), never from an argument.
 //
 // Every verb that dials a store (spill, recall, fn load, fn check) opens it
-// through internal/redisconn, the one way a nova tool opens its Redis
+// through pkg/redisconn, the one way a nova tool opens its Redis
 // connection (connect): one dial, the handshake and the login bounded by
 // redisconn.OpenTimeout, no retry, and go-redis's own log kept off stderr. A
 // store that cannot be reached or a login it refuses exits 2.
 //
 // The dispatch, the banner, the help, the version verb, the refusals and the
-// output envelope are internal/tool's. spill and recall return a tool.Out;
+// output envelope are pkg/tool's. spill and recall return a tool.Out;
 // serve, fn and acl print their own lines (a stream, or a line the skeleton
 // cannot render) behind a Prints verb.
 package main
@@ -41,11 +41,11 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -116,7 +116,7 @@ func main() { os.Exit(redisTool(realDeps()).Main()) }
 // usage is the banner, for the tests that read it directly.
 var usage = redisTool(deps{}).Banner()
 
-// redisTool is nova-redis on internal/tool. The verbs' bodies live in their
+// redisTool is nova-redis on pkg/tool. The verbs' bodies live in their
 // own files; here is the one Tool and the shared login.
 func redisTool(d deps) *tool.Tool {
 	return &tool.Tool{
@@ -510,7 +510,7 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 // read (`: redis at <addr> as <user>: unreachable: <cause>; next: <step>`),
 // never as a typed field, which would hex-escape every blank in it. A store
 // that could not be reached and a login it refused could not run at all: the
-// line leads with REFUSED at exit 2, the pairing internal/tool's Status states for a
+// line leads with REFUSED at exit 2, the pairing pkg/tool's Status states for a
 // verb that could not run (STANDARD §2's exit table), and the fix is the
 // caller's. The store may still have taken the write: redisconn classes a
 // connection that dropped, or a reply that never came, as unreachable too,

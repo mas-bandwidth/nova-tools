@@ -11,8 +11,8 @@ This read is of source snapshot 0c5803c2de406c1b0b2b0841f579c9bf73406b1c, judged
 reading: README.md top to bottom, then AGENTS.md and what it points to first (docs/USAGE.md,
 docs/CLI.md, docs/SPEC.md, docs/TESTS.md), then the fuse section of docs/CLI.md and the
 spec's output grammar, then cmd/nova-fuse from main.go (help.go, lift_remedy.go, version.go,
-and the tests), then the internal packages it leans on: internal/fuse, internal/atomicfile,
-internal/oneline, internal/bounded. Nothing was run.
+and the tests), then the internal packages it leans on: internal/fuse, pkg/atomicfile,
+pkg/oneline, pkg/bounded. Nothing was run.
 
 The README's line for the tool is one sentence (README.md:36: a recorded decision to stop
 reading an untrusted source, checked before every read), and the code does that: the box is
@@ -58,9 +58,9 @@ carries its own qualifier.
 | # | where | finding | fix | size |
 |---|---|---|---|---|
 | 1 | cmd/nova-fuse/main.go:6 | The reasoning a cold reader needs is shouted: comment bodies open in all-caps bursts (LOCKDOWN IS HARD, THE COUNT IS NEVER CAPPED, EVERY FLAG TAKES ONE VALUE) through main.go and internal/fuse/fuse.go:9-63, and two narrate history instead of the design (main.go:122 "It was the whole 32-line banner", main.go:748 "did before this branch too") | Rewrite the comments in the present tense at normal weight, keeping every reason; the essay underneath is already good | L |
-| 2 | internal/fuse/fuse.go:33 | Two concurrent writers lose one write: quarantine and lockdown are read-modify-write over the whole box with no lock (cmd/nova-fuse/main.go:606-624, 547-567), the loss is documented as accepted, and internal/filelock, this tree's process-exclusive lock, goes unused here | Hold the named file lock across each read-modify-write so a racing quarantine and lockdown both land | M |
+| 2 | internal/fuse/fuse.go:33 | Two concurrent writers lose one write: quarantine and lockdown are read-modify-write over the whole box with no lock (cmd/nova-fuse/main.go:606-624, 547-567), the loss is documented as accepted, and pkg/filelock, this tree's process-exclusive lock, goes unused here | Hold the named file lock across each read-modify-write so a racing quarantine and lockdown both land | M |
 | 3 | cmd/nova-fuse/main.go:128 | Refusals print `nova-fuse <verb>: <what>; run: nova-fuse help`, not the family's `<TOKEN> REFUSED: <what>; run: <remedy>` that docs/SPEC.md:144 states; a scanner anchored on REFUSED finds no nova-fuse refusal, and the one refusal that does carry the word (main.go:325) spells it mid-sentence | Print refusals through the family shape with a REFUSED word leading, keeping exit 2 | M |
-| 4 | cmd/nova-fuse/main.go:195 | Flags, help, the refusal printer and the exit table are hand-rolled here instead of the shared skeleton, and no verb renders --json, so the one result value has one rendering (docs/SPEC.md:140-147) | Take dispatch and the refused -h from internal/tool's HelpRefused seam and render --json from the same value, keeping exit 0 as CLEAR | M |
+| 4 | cmd/nova-fuse/main.go:195 | Flags, help, the refusal printer and the exit table are hand-rolled here instead of the shared skeleton, and no verb renders --json, so the one result value has one rendering (docs/SPEC.md:140-147) | Take dispatch and the refused -h from pkg/tool's HelpRefused seam and render --json from the same value, keeping exit 0 as CLEAR | M |
 | 5 | cmd/nova-fuse/help.go:77 | The verb list is written four times — the usage block (main.go:46-56), the unknown-verb refusals (main.go:173, help.go:77) and docs/CLI.md:289-299 — and the two refusal copies already disagree on the lift spellings | Keep one verb-list constant and print it from every refusal | S |
 | 6 | internal/fuse/fuse.go:226 | Unknown JSON fields decode silently, so a hand-edit that misspells lockdown changes nothing and the box still answers clear at exit 0 | Decode with unknown fields refused, so a misspelled key is an unreadable box and reads as blown | S |
 | 7 | README.md:36 | The headline "checked before every read" promises the enforcement the tool deliberately does not do; the correction lives one column over in the setup cell | Fold the qualifier into the headline: the harness that consults the box is what does the checking | S |

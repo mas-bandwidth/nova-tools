@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
+	"github.com/mas-bandwidth/nova-tools/pkg/provbalance"
 )
 
 // The providers check: each nova-config route names a provider and model, and the friends
@@ -33,7 +33,7 @@ func init() {
 const providersTimeout = 15 * time.Second
 
 // providerKeys is the environment variable NAME each provider's key is sealed under in
-// the seat's secrets store (docs/MODELS.md, "The routes"; internal/provbalance.KeyEnv for
+// the seat's secrets store (docs/MODELS.md, "The routes"; pkg/provbalance.KeyEnv for
 // openrouter). A provider not named here keeps its key elsewhere (opencode's login file)
 // or needs none (ollama on the loopback), so the check does not hold it to a sealed name.
 var providerKeys = map[string]string{
@@ -74,7 +74,7 @@ func providerProbeFor(env Env) ProviderProbe {
 }
 
 // httpProbe is the real provider client: the models list over HTTP and the balance
-// through internal/provbalance, the sprint's own balance read.
+// through pkg/provbalance, the sprint's own balance read.
 type httpProbe struct{}
 
 func (p httpProbe) Models(ctx context.Context, provider, key string) error {
@@ -200,7 +200,7 @@ func providersRoutes(ctx context.Context, env Env) ([]providerRoute, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Every field of a `route list --json` item is a string (internal/tool's envelope
+	// Every field of a `route list --json` item is a string (pkg/tool's envelope
 	// carries the config row's map[string]string: `"enabled":"true"`), so enabled is read
 	// as the word the store holds and compared, never as a JSON boolean.
 	var wire struct {
@@ -230,7 +230,7 @@ func providersRoutes(ctx context.Context, env Env) ([]providerRoute, error) {
 }
 
 // secretNames reads the top-level key names of the seat's file in the secrets store and
-// never a value (internal/secrets, names). It reads the file through Env, so a test roots
+// never a value (pkg/secrets, names). It reads the file through Env, so a test roots
 // it in t.TempDir().
 func secretNames(env Env) (map[string]bool, error) {
 	store, seat := env.Getenv("NOVA_SECRETS_STORE"), env.Getenv("NOVA_SECRETS_SEAT")

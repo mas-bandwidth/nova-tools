@@ -113,7 +113,7 @@ func shardWallProblems(rows []shardWallRow, packages map[string]bool) []string {
 // livePackageDirs walks the module the way `go list ./...` does -- a directory
 // holding a .go file is a package; testdata, vendor, and names starting with
 // "." or "_" are skipped, and so is a directory with its own go.mod -- keeps the
-// live ones (internal/pkgselect/DEPRECATED read by loadLiveTree), and reports
+// live ones (pkg/pkgselect/DEPRECATED read by loadLiveTree), and reports
 // for each whether it holds a _test.go file.
 func livePackageDirs(t *testing.T, root string) map[string]bool {
 	t.Helper()

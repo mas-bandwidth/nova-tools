@@ -13,7 +13,7 @@ import (
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and none of
 // them reads a card, opens a store, runs a runner or writes a file (the CLI style's
-// rule (b), #4505; internal/nsprint/verbflag is the seam).
+// rule (b), #4505; pkg/nsprint/verbflag is the seam).
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	testverbhelp.Check(t, swarmRun, []testverbhelp.Case{

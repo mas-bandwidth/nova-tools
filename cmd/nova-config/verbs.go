@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 )
 
 // What each verb's -h adds above its flags (verbflag.RecoverWith): its effect
@@ -40,7 +40,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"fleet", "set", "nova-config fleet set --coordinator m1 --store m1 --loops_dir ~/nova-bench/loops --actor a1 --file try.json"},
 	{"fleet", "show", "nova-config fleet show --file try.json"},
 	{"fleet", "history", "nova-config fleet history --file try.json"},
-	{"friend", "add", "nova-config friend add f1 --slots 4 --tiers flash,pro --roles builder --actor a1 --file try.json"},
+	{"friend", "add", "nova-config friend add f1 --slots 8 --tiers flash,pro --roles builder --actor a1 --file try.json"},
 	{"friend", "set", "nova-config friend set f1 --slots 8 --actor a1 --file try.json"},
 	{"friend", "list", "nova-config friend list --file try.json"},
 	{"friend", "show", "nova-config friend show f1 --file try.json"},

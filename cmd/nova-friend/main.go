@@ -8,7 +8,7 @@
 // second. The verbs are run, beat, install, uninstall, check, status, pong,
 // ping, wait-pong, watch, host, serve and reach; the
 // dispatch, the banner, the help, the refusals and the output envelope are
-// internal/tool's, and the rules are internal/friend's.
+// pkg/tool's, and the rules are pkg/friend's.
 package main
 
 import (
@@ -33,15 +33,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 var version string
@@ -62,7 +62,7 @@ const WaitPongEvery = time.Second
 const OpenRetryMax = 30 * time.Second
 
 // world is what the tool reaches outside itself; main passes the real one,
-// a test its own over internal/bus's Fake, a fake harness and its own
+// a test its own over pkg/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
 	getenv         func(string) string
@@ -124,7 +124,7 @@ func sprintVerb(ctx context.Context, server string, argv []string) error {
 		return fmt.Errorf("%s: the server answered %d results, want 1", argv[0], len(res))
 	}
 	if res[0].Code != 0 {
-		return fmt.Errorf("%s refused: %s", argv[0], strings.TrimSpace(res[0].Stderr))
+		return &friend.Refused{Why: fmt.Sprintf("%s refused: %s", argv[0], strings.TrimSpace(res[0].Stderr))} // the server's word: a lane drops its job on it
 	}
 	return nil
 }
@@ -314,7 +314,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 	}
 	if len(args) > 0 && args[0] == friend.WallVerb {
 		// the lane's wall around one command: its argv follows "--", which the verb table
-		// does not carry, so it is dispatched here (internal/friend RunWall)
+		// does not carry, so it is dispatched here (pkg/friend RunWall)
 		return friend.RunWall(args[1:], os.Environ(), stdin, stdout, stderr)
 	}
 	w.argv = args
@@ -328,7 +328,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
 
-// openRedis dials the bus store the way nova-bus does (internal/redisconn,
+// openRedis dials the bus store the way nova-bus does (pkg/redisconn,
 // the fleet's login from the environment, the password never on the line).
 func (w world) openRedis(ctx context.Context, addr string) (bus.Store, func(), error) {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
@@ -383,7 +383,7 @@ func friendTool(w world) *tool.Tool {
 	}
 	settingFlags := func(f *tool.Flags) {
 		f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)")
-		f.String("model", "", "harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)")
+		f.String("model", "", "harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)")
 	}
 	daemonFlags := func(f *tool.Flags) {
 		f.Required("as", "your name, a nova-config friend row")
@@ -397,6 +397,8 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
+		f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)")
+		f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)")
 		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
 		f.Duration("notify-window", friend.NotificationWindow, "global card-delivery burst window and minimum wake interval; urgent messages bypass it")
@@ -555,15 +557,13 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 					f.Int("load-width", friend.DefaultLoadWidth, "the lanes that run while the load is above --load-max")
 					f.String("pause-on", "", "funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)")
 					f.Bool("refuse-go", false, "put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)")
-					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.String("mode", "", "override the friend row's delivery mode, one-shot, for a test (default: one-shot; batch is retired)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
 					f.String("config-dir", "", "the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)")
-					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
-					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
 					f.Check(func(c *tool.Call) {
-						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
-							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
+						if m := c.Str("mode"); m != "" && m != friend.ModeOneShot {
+							c.Problem(fmt.Sprintf("--mode %q wants one-shot; batch is retired and every friend takes one card per lane", m))
 						}
 						if d := c.Str("config-dir"); d != "" && !filepath.IsAbs(d) {
 							c.Problem(fmt.Sprintf("--config-dir %q wants an absolute path: CLAUDE_CONFIG_DIR is read as given, never expanded", d))
@@ -593,8 +593,8 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
-				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Example: "install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
 settings), each merged into what the file holds and read back, one INSTALL WROTE line each: codex,
@@ -603,9 +603,10 @@ agent preset registry's default and selectedDefault "` + friend.DSHPreset + `" i
 (a session keeps the preset it was opened under); grok, the wake file (--session, else
 ~/.nova-friend/<me>/<me>.wake), made empty, and named in the agent; claude, --config-dir (default
 CLAUDE_CONFIG_DIR) made private and named in the agent; opencode, the friend's directory allowed in
-<dir>/opencode.json and --model there when given. The friend's directory, the writable root, the wake
+<dir>/opencode.json and --model there. The friend's directory, the writable root, the wake
 file's directory and the config directory must each be a real directory: a symlink (or a config file
-that is one) is refused and nothing is written or loaded. nova-friend check --settings names drift.
+that is one) is refused and nothing is written or loaded. For opencode, --model is required to
+ensure the friend uses the correct provider key after a machine move. nova-friend check --settings names drift.
 Then writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
 restarted when it dies, pending messages redelivered first), boots out whatever that label runs,
 and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
@@ -647,6 +648,9 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 							if !secretNameRe.MatchString(name) {
 								c.Problem(fmt.Sprintf("--secrets names a secret by its variable name, letters, digits and underscores: %q is none", name))
 							}
+						}
+						if c.Str("harness") == "opencode" && c.Str("model") == "" {
+							c.Problem("--harness opencode wants --model <provider/model>: the provider and model to use; required to ensure the friend uses the correct provider key after a machine move")
 						}
 					})
 				},
@@ -1039,6 +1043,28 @@ read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or
 				},
 				Run: w.serve,
 			},
+			{
+				Name:   "acceptance",
+				Usage:  "acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]",
+				Effect: tool.Delivery + ": the acceptance run; one lane runs the friend's own program under the real lane wall, writes RESULT.md, and exits with the wall's real code",
+				DryRun: true,
+				Detail: `The acceptance run (docs/SPEC-FRIEND.md, the acceptance run): the same wall the daemon's lane
+children run inside, built from the same flags the plist records; the friend's own adapter runner runs
+its no-cost version flag inside it, writes RESULT.md, and the verb exits with the wall's real code (125
+when the profile will not build, 126 when the program cannot execute). No model is called and no card is
+taken. The play fails the host on a non-zero exit, naming the friend, the exit code and the output line.`,
+				Flags: func(f *tool.Flags) {
+					daemonFlags(f) // the friend's own flags, so the play can pass the plist's recorded list whole
+					settingFlags(f)
+					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none: "+strings.Join(sandbox.LaneProfiles, ", "))
+					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
+					f.String("secrets", "", "accepted and ignored: the names of the secrets the daemon's plist records, comma-separated")
+					f.String("seat", "", "accepted and ignored: the machine's nova-secrets seat the daemon's plist records")
+					f.String("launchd-log", "", "accepted and ignored: launchd's stdout and stderr file the daemon's plist records")
+					f.Duration("within", friend.DefaultCheckWithin, "accepted and ignored: the install's delivery-check window")
+				},
+				Run: w.acceptance,
+			},
 		},
 	}
 }
@@ -1089,6 +1115,33 @@ func (w world) openUntil(ctx context.Context, addr string, record func(string)) 
 	}
 }
 
+// laneWall assembles the lane wall the daemon's lane children run inside, from the flags
+// and the friend's row: the same wall every lane child runs inside (docs/SPEC-FRIEND.md,
+// buds-in-the-wall-r.w5). run and acceptance both call it, so an acceptance run's wall is
+// the daemon's own wall and never one of its own (docs/SPEC-FRIEND.md, the acceptance run).
+// deny names the wall's deny list when --deny-self gives none; rowConfig and rowProfile are
+// the beat's row values, absent (ok false) in a world with no row. rowProfile's ok is a
+// beat that answered row_profile= (ParseProfile, pkg/friend/lanes.go): the row's empty
+// profile wins over --profile, the way run read it before run and acceptance shared the
+// assembly, so run's behaviour does not change.
+func laneWall(c *tool.Call, w world, dir string, deny func() []string, rowConfig func() string, rowProfile func() (string, bool)) friend.Wall {
+	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
+	if bin, err := w.binary(); err == nil {
+		wall.Self = []string{bin}
+	} // else no Self: a lane's child is refused, never run outside the wall
+	if len(wall.Deny) == 0 {
+		wall.Deny = deny()
+	}
+	if wall.ConfigDir = c.Str("config-dir"); wall.ConfigDir == "" {
+		wall.ConfigDir = rowConfig()
+	}
+	wall.Profile = c.Str("profile")
+	if p, ok := rowProfile(); ok {
+		wall.Profile = p
+	}
+	return wall
+}
+
 func (w world) run(c *tool.Call) *tool.Out {
 	if c.Bool("notifications-only") {
 		return w.runNotifications(c)
@@ -1112,27 +1165,52 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var rowConfigDir atomic.Pointer[string] // her row's config_dir as her beat last answered; read by the lanes' runs and the wall
 	var rowTokenCap atomic.Int64            // her row's per-card token cap as her beat last answered; DefaultTokenCap until it says, 0 none
 	rowTokenCap.Store(friend.DefaultTokenCap)
-	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
-	if bin, err := w.binary(); err == nil {
-		wall.Self = []string{bin}
-	} // else no Self: a lane's child is refused, never run outside the wall
+	var denySeatMu sync.Mutex
+	var denySeatName string
+	var denySeatAt time.Time
+	// denySeat is the seat whose working root a lane wall denies when no --deny-self was given:
+	// --coordinator, else the seat holder the sprint server names (asked at most once a minute).
+	denySeat := func(ctx context.Context) string {
+		if s := c.Str("coordinator"); s != "" {
+			return s
+		}
+		seatOf := w.seat(server)
+		if seatOf == nil {
+			return ""
+		}
+		denySeatMu.Lock()
+		name, at := denySeatName, denySeatAt
+		denySeatMu.Unlock()
+		if !at.IsZero() && w.now().Sub(at) <= time.Minute { // a failed read is cached a minute too: never one per lane command
+			return name
+		}
+		s, err := seatOf(ctx) // outside the lock: a slow server never holds the other lanes
+		if err != nil {
+			s = name // keep the last holder it named
+		}
+		denySeatMu.Lock()
+		denySeatName, denySeatAt = s, w.now()
+		denySeatMu.Unlock()
+		return s
+	}
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
 			return w.exec(ctx, d, prog, args, stdin)
 		}
-		wl := wall
-		// the wall's config directory: --config-dir, else her row's config_dir, else CLAUDE_CONFIG_DIR
-		if wl.ConfigDir = c.Str("config-dir"); wl.ConfigDir == "" {
-			if d := rowConfigDir.Load(); d != nil && *d != "" {
-				wl.ConfigDir = *d
-			} else {
-				wl.ConfigDir = w.getenv("CLAUDE_CONFIG_DIR")
-			}
-		}
-		wl.Profile = c.Str("profile")
-		if p := rowProfile.Load(); p != nil {
-			wl.Profile = *p
-		}
+		wl := laneWall(c, w, dir,
+			func() []string { return friend.DefaultDenySelf(w.home, denySeat(ctx)) }, // none given: the seat's working root, never a wall that denies nothing
+			func() string { // --config-dir first is the shared rule; this closure is her row, then CLAUDE_CONFIG_DIR
+				if d := rowConfigDir.Load(); d != nil && *d != "" {
+					return *d
+				}
+				return w.getenv("CLAUDE_CONFIG_DIR")
+			},
+			func() (string, bool) {
+				if p := rowProfile.Load(); p != nil {
+					return *p, true
+				}
+				return "", false
+			})
 		return w.wall(wl, w.exec)(ctx, d, prog, args, stdin)
 	}
 	// the lane rules: the flags are the defaults and her row, as her beat answers it, wins
@@ -1592,6 +1670,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return w.finish(ctx, server, argv)
 		},
+		Take: func(ctx context.Context, argv []string) (string, error) {
+			if w.cards == nil {
+				return "", errors.New("this world sends no take") // a test's: d.Take is cleared below
+			}
+			return w.cards(ctx, server, argv) // the server's answer (a lane reads its LANE line), a refusal an error
+		},
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
 			if err != nil {
@@ -1615,6 +1699,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	owedStopReturns = d.OwedStopReturns
+	if c.Str("harness") == "opencode" {
+		// a one-shot friend's presence is her lanes', never a growing session
+		// (docs/SPEC-FRIEND.md, presence): her check goes in as a fresh turn of its
+		// own, so a session that is full or missing is never the reason she is down.
+		// The mode is read from --mode (the config at start) first, then the row her
+		// beat delivered; "" (not yet read) is the presence check's own fallback.
+		sc.Mode = func() string { m, _ := d.Row(); return m }
+	}
+	if w.finish == nil || w.cards == nil {
+		d.Take = nil // a world that asks no server: its lanes run the cards on her row in order (a test's)
+	}
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}
@@ -1625,7 +1720,25 @@ func (w world) run(c *tool.Call) *tool.Out {
 		db := c.Str("db")
 		if w.sqlite != nil {
 			d.Tokens = func(ctx context.Context, session string) (friend.LaneTokens, error) {
-				return friend.TokensFromOpenCode(ctx, w.sqlite, db, session)
+				// a walled lane's opencode writes under the wall's HOME: the config directory
+				// as the wall names it (walledRaw), else her working directory
+				// (sandbox.LaneProfile); a batch turn under the daemon's HOME (--db)
+				dbs := []string{db}
+				if w.wall != nil {
+					home := c.Str("config-dir")
+					if home == "" {
+						if rd := rowConfigDir.Load(); rd != nil && *rd != "" {
+							home = *rd
+						} else {
+							home = w.getenv("CLAUDE_CONFIG_DIR")
+						}
+					}
+					if home == "" {
+						home = dir
+					}
+					dbs = []string{filepath.Join(home, ".local", "share", "opencode", "opencode.db"), db}
+				}
+				return friend.TokensFromOpenCodeIn(ctx, w.sqlite, dbs, session)
 			}
 		}
 		d.Route = w.route(server, c.Str("model"))
@@ -1790,7 +1903,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), Adapter: c.Str("adapter"), DeliveryDir: c.Str("delivery-dir"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
-		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), DenySelf: c.Str("deny-self"), WallReads: c.Str("wall-reads"),
 		NotificationsOnly: c.Bool("notifications-only"), NotifyKinds: c.Str("notify-kinds"), NotifyWindow: c.Dur("notify-window"),
 	}
 	if a.Harness == "claude" {
@@ -1931,7 +2044,7 @@ func undriven(harness, dir, undone string) *tool.Out {
 }
 
 // harnessSettings is what install writes into the friend's harness and
-// check --settings compares (internal/friend/settings.go).
+// check --settings compares (pkg/friend/settings.go).
 func (w world) harnessSettings(c *tool.Call) friend.HarnessSettings {
 	h := friend.HarnessSettings{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), Home: w.home, StateDir: c.Str("state-dir"),
 		ConfigDir: c.Str("config-dir"), Model: c.Str("model"), CodexHome: w.getenv("CODEX_HOME"), DSHHome: w.getenv("DSH_HOME"), FS: w.settings}

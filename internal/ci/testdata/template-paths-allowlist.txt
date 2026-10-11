@@ -8,5 +8,5 @@
 # These two predate the checker: filepath.ToSlash(filepath.Join(...)) into a
 # JSON worker description kept the Windows reds (#904, #920) from firing, but
 # the allowed shape is strconv.Quote.
-internal/swarm/inputlimit_test.go:37 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker
-internal/swarm/inputlimit_test.go:39 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker
+pkg/swarm/inputlimit_test.go:37 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker
+pkg/swarm/inputlimit_test.go:39 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker

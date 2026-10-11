@@ -52,6 +52,7 @@ nova-decide outcome example
 nova-decide read example
 nova-decide score example
 nova-decide version description,example
+nova-friend acceptance example
 nova-friend install example
 nova-friend ping example
 nova-friend pong example

@@ -277,7 +277,7 @@ task: say which release carries each tool and that a friend needs nova-friend, n
   release or commit the binary is.
 
 card: version-names-the-commit-of-a-checkout-build
-paths: internal/buildinfo,internal/binstamp
+paths: pkg/buildinfo,pkg/binstamp
 task: print the commit, and the nearest release tag, when a binary is built from a checkout without a stamp.
 
 ### 3. `run --dry-run` fails with an internal-sounding line

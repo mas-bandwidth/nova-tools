@@ -1,7 +1,7 @@
 // Command nova-secrets keeps a team's secrets sops-encrypted in a git repository (the
 // store) and hands the values one command needs to that command alone, in its
 // environment; no verb prints a value. The verbs are thin: each parses its flags here and
-// calls internal/secrets, which holds every check and every refusal. run is the whole
+// calls pkg/secrets, which holds every check and every refusal. run is the whole
 // tool on its arguments and three streams, so a test drives it in process; main only
 // hands it the process's own.
 package main
@@ -14,10 +14,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
 
 const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time

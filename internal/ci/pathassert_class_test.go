@@ -69,7 +69,7 @@ func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
 	seen := map[string]bool{}
 	var violations []string
 
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		for _, src := range tree.GoFilesUnder(true, dir) {
 			require.NoError(t, src.ParseErr)
 			rel := src.Rel

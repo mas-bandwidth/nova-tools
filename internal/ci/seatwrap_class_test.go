@@ -21,7 +21,7 @@ import (
 // read its own password. A new session had to recreate them, and every hand
 // fix and table render went through them. nova-sprint, nova-card, nova-swarm
 // and nova-wake now take --seat <name> (or NOVA_SEAT) and read the Redis user
-// and password from the seat's file through internal/seatcred, the library
+// and password from the seat's file through pkg/seatcred, the library
 // nova-secrets exec runs on; `nova-sprint redis-cli -- <cmd...>` is the hand
 // read. A shell line in this tree that still wraps one of them for a Redis
 // password teaches the next session to rebuild the wrapper, so the shape is

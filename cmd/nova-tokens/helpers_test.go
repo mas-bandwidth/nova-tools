@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // foldStamp is the clock every test hands run(), so that `at=` is a fixture and not a
@@ -244,7 +245,16 @@ func reenterTest(t *testing.T, name string) {
 	t.Helper()
 	self, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.Command(self, "-test.run=^"+name+"$", "-test.count=1")
+	args := []string{"-test.run=^" + name + "$", "-test.count=1"}
+	// Under -cover the child would build its own coverage directory at exit, which reads
+	// TMPDIR; a test that points TMPDIR at bait it removes before the child exits (as rule
+	// 1's does) would then fail in the teardown, not in the tool. Hand the child the
+	// parent's own -test.gocoverdir when there is one, so the teardown touches no path the
+	// test has taken away.
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		args = append(args, "-test.gocoverdir="+f.Value.String())
+	}
+	cmd := exec.Command(self, args...)
 	cmd.Env = childEnv(childTestEnv + "=1")
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()

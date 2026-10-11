@@ -20,7 +20,7 @@ The first place of doubting a claim was cmd/nova-fuse/main.go:16, where the bann
 | 1 | internal/fuse/fuse.go:244 | unsynchronized read-modify-write allows concurrent writers to silently overwrite earlier updates | wrap read-modify-write sequences with advisory file locking | M |
 | 2 | internal/fuse/fuse.go:226 | standard json unmarshal permits arbitrary unknown fields in the box file without schema validation | decode with json.NewDecoder and DisallowUnknownFields to reject foreign keys | S |
 | 3 | cmd/nova-fuse/help.go:17 | verb list is duplicated across fuseHelps, main.go usage text, and subcommand dispatch refusals | derive usage listings and validation checks from a single centralized verb registry | M |
-| 4 | cmd/nova-fuse/main.go:128 | tool hand-rolls custom output formatting and refusal grammar rather than adopting internal/tool | integrate with standard tool skeleton while retaining exit code semantics | L |
+| 4 | cmd/nova-fuse/main.go:128 | tool hand-rolls custom output formatting and refusal grammar rather than adopting pkg/tool | integrate with standard tool skeleton while retaining exit code semantics | L |
 | 5 | cmd/nova-fuse/main.go:121 | comments contain historical narratives about previous implementation sizes and shout in all caps | rewrite comments into concise present-tense descriptions of current behavior | S |
 | 6 | cmd/nova-fuse/main.go:195 | flag parser is wrapped with custom discard streams and single-value wrappers across 75 lines | factor custom flag parsing primitives into a reusable helper | M |
 

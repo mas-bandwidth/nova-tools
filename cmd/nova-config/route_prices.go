@@ -1,7 +1,7 @@
 // route_prices.go holds `nova-config route prices --refresh`: each enabled
 // route's price fields set from its provider's published list (config's
 // PlanPriceRefresh), dated today, with the list's URL as their source
-// (docs/SPEC-CONFIG.md, "route prices"). The verb is declared on internal/tool,
+// (docs/SPEC-CONFIG.md, "route prices"). The verb is declared on pkg/tool,
 // as login and logout are, so the tool package adds no verbflag.New site and the
 // no-hand-printing ledger for cmd/nova-config stays where it is.
 
@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // listTimeout bounds the read of a provider's list: a daily loop that hangs on
@@ -28,7 +28,7 @@ const listTimeout = 60 * time.Second
 // maxListBytes bounds the list read: OpenRouter's is a few megabytes.
 const maxListBytes = 64 << 20
 
-// runRoutePricesTool dispatches route prices through internal/tool with the two
+// runRoutePricesTool dispatches route prices through pkg/tool with the two
 // words runKind stripped, so the verb's name is "route prices" on every line and
 // in its help.
 func runRoutePricesTool(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
