@@ -1,7 +1,7 @@
 ------------------------------ MODULE FuseBox ------------------------------
-\* nova-fuse's box, as state. nova-tools cmd/nova-fuse/main.go and
-\* internal/fuse/fuse.go: ReadBox (ErrNoBox and CANNOT TELL), CreateBox (init),
-\* cmdCheck (the gate), cmdLockdown, cmdQuarantine, liftQuarantine, and
+\* nova-fuse's box, as state. nova-tools cmd/nova-fuse/check.go (cmdCheck,
+\* the gate, :29) and internal/fuse/fuse.go: ReadBox (ErrNoBox and CANNOT
+\* TELL), CreateBox (init), cmdLockdown, cmdQuarantine, liftQuarantine, and
 \* parseBoxWith's one-value rule for --box.
 \*
 \* The state the code owns, per box file b: st[b], what a read of the path

@@ -1,8 +1,10 @@
 --------------------------- MODULE TableSession ---------------------------
 \* nova-table shell as state: one process reading one command per line over
-\* one connection. nova-tools#4458 at ed959e1a3: cmd/nova-table/session.go
-\* (cmdShell, readCommands), watch.go (cmdWatch, watchLoop), main.go (client,
-\* storeRefusal); go-redis v9.22.0 internal/pool/pool.go (dialConn, tryDial).
+\* one connection. cmd/nova-table/session.go (cmdShell, readCommands; the
+\* reopen-on-lost connection, sharedConnection and prepare :62-85), watch.go
+\* (cmdWatch, watchLoop; SIGTERM dropped inside the shell :79-87), main.go
+\* (client, the reopen call :428-430); go-redis v9.22.0
+\* internal/pool/pool.go (dialConn, tryDial).
 \*
 \* The state the session owns: the lines not yet read (input), whether it
 \* goes on after a failed line (keep: --keep-going), where the reader is (pc:

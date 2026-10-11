@@ -25,7 +25,7 @@ func liftRemedy(box, surface string) string {
 }
 
 // cmdCheck gates. Every ingestion path calls it, and only exit 0 is permission: 1 means
-// a fuse is positively blown, 2 means it could not be proven clear.
+// a fuse is positively blown, 2 means it could not be proven clear. tla/FuseBox.tla cmdCheck.
 func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	box, positional, ok, parsed := parseBox("check", rest, stderr, inv.getenv)
 	if !parsed {

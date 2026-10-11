@@ -20,13 +20,18 @@
 \* Mapped to fleet/tools.yml:
 \*   Seed / NoSeed = "the stage seeded from the installed build's directory",
 \*                   taken only when the stage is not begun and there is a
-\*                   directory to seed from
+\*                   directory to seed from. The code's seed guard is the
+\*                   stage's SHA256SUMS being absent (fleet/tools.yml:135-145,
+\*                   tools_begun); the model seeds when any file of the
+\*                   installed build's directory is present (InstalledPresent),
+\*                   not when its SHA256SUMS is.
 \*   SendOne       = "send them", one file of the send list
 \*   SendDone      = the end of that loop; the run goes on to install
 \*   Verify        = `release install` verifying the whole SHA256SUMS before
-\*                   its first rename; Refuse is its refusal, which ends the run
+\*                   its first rename (pkg/release/install.go:195-201);
+\*                   Refuse is its refusal, which ends the run
 \*   InstallOne    = `release install` replacing one binary (a binary already
-\*                   holding the release's bytes is skipped)
+\*                   holding the release's bytes is skipped, :256-263)
 \*   Crash         = the run halts anywhere; the stage stays as it is and the
 \*                   next run starts (bounded by MaxCrashes)
 \*

@@ -9,9 +9,10 @@
 // an old and a new binary exclude each other across an upgrade (each package's
 // *compat*_test.go or TestAnOldBinarysCreateLockKeepsTheNewOneOut): cmd/nova-sandbox
 // (the volume-creation lock, darwin), pkg/swarm (the slot store's lock, behind an
-// in-process turn), internal/tokens (the fold lock) and internal/update (the snapshot
-// lock). Each creates a fresh lock file itself with the mode it always had. On Windows
-// those three packages keep their own locks (an O_EXCL .held file, or byte 0) until a
+// in-process turn), internal/tokens (the fold lock), internal/update (the snapshot
+// lock), pkg/friend (the folder deliver adapter's lock) and cmd/nova-config (the loop
+// run's lock). Each creates a fresh lock file itself with the mode it always had. On Windows
+// those packages keep their own locks (an O_EXCL .held file, or byte 0) until a
 // migration in which old and new still exclude each other: this lock is LockFileEx at
 // OffsetHigh 0x80000000. pkg/bus keeps its own lock.
 package filelock

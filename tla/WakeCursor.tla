@@ -1,4 +1,11 @@
 --------------------------- MODULE WakeCursor ---------------------------
+\* nova-bus wait's wake-file cursor, as state: an armed cursor reads one
+\* appended line at a time from the offset it armed at, and a bus return or a
+\* crash leaves the unread lines for the next arm (cmd/nova-bus/wake_cursor.go,
+\* cmd/nova-bus/main.go:204). An arm with no --wake-after starts at the end
+\* of the file (wake_cursor.go:118-120), which is the model's Broken arm
+\* (Arm at WakeCursor.tla:11); the model does not tell a first arm from a
+\* re-arm.
 EXTENDS Naturals
 CONSTANTS MaxLines, Broken
 VARIABLES lines, saved, offset, shown, armed, generation, bound, refused

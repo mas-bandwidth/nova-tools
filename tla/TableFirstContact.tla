@@ -4,6 +4,10 @@
 \* answers "Function not found", and nova-table puts the library there with
 \* LoadMissing (never REPLACE) and sends the verb again, once.
 \*
+\* A load whose outcome is Skipped sets done and is not sent again
+\* (library.go:79-80): the code sends one fewer than the model's Load, which
+\* always resends once after a load.
+\*
 \* State: the store's library ("none", "old" = a build that lacks the verb's
 \* function, "new" = this build's), and per process: whether a load reached
 \* an outcome (done), the loads that reached an outcome, and per verb where it is (pc), how
