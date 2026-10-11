@@ -468,6 +468,21 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-coverage-names-every-module-in-nova-tools" :release "v1.2.12" :status "planned"
+   :title "The TLA+ coverage test names every module, not only the rows"
+   :text "TestEveryStateMachineHasACurrentModel walked tla/COVERAGE.tsv's rows only, so a module
+    no row named was never seen; nine modules (BusSendOnce, Delivery, FriendNotifications,
+    FriendNotificationsCapacity, FriendPresence, LoopRedial, Reach, StopCancels and StopReturn)
+    were named by none. A new check, called from the class test beside tlaCoverageProblems, holds
+    every tla/<X>.tla whose name does not start with MC to being named by exactly one row's module
+    column, and TestTLACoverageNamesEveryModule pins it on a fixture root: an unnamed module is
+    reported by name, a module two rows name is reported on both rows, and a configuration module
+    (MC) is not. The nine modules gain rows; rows the drift read found no longer current become
+    partial or stale with the card that owes them, nova-table gains pkg/nsprint/fn/lua/table.lua
+    and pkg/ntable/store.go and says TableMachine models the pinned baseline, and docs/SPEC-CI.md
+    says the check. Tests and data only, no product change."
+   :origin "the coordinator, 2026-10-11: a card that makes TestEveryStateMachineHasACurrentModel catch a module with no COVERAGE row; card tla-coverage-names-every-module-in-nova-tools.w1 (drift read at nova-tools dev 2314d437f)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
