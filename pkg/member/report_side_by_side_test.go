@@ -283,3 +283,107 @@ func TestAStopWordStartsNoChildWhileAReportRuns(t *testing.T) {
 	assert.Len(t, g.s.lines("finish"), 1, "the report still runs its own card's words")
 	assert.Equal(t, before, len(g.r.started()), "no child is started under the stop word")
 }
+
+// gateSprint is the package's scriptSprint with a finish that says it is in flight
+// (began) and holds until release: a report held while the queue shows the claim moved.
+type gateSprint struct {
+	*scriptSprint
+	began   chan string
+	release chan struct{}
+}
+
+func (g *gateSprint) Run(args ...string) (int, []byte) {
+	if verbOf(args) == "finish" {
+		g.began <- args[0]
+		<-g.release
+	}
+	return g.scriptSprint.Run(args...)
+}
+
+// TestAMovedClaimWhileReportingIsReapedNotApplied pins STEP (4): a report whose claim moved
+// while it ran is collected as reaped, not applied (m.forget + the FinishReaped line), exactly
+// as the in-pass moved-claim reap does. In a Background member the report is launched by the
+// pass that still showed the old claim; a later pass reads the queue showing the claim moved
+// and skips the busy launch; only when the report posts is it collected, and it must be reaped
+// then, never applied with a finish for the old generation/epoch. Red at HEAD: collect applied
+// the posted report (applyReport), printing `finish c1 ok=true` and forgetting it as reported.
+func TestAMovedClaimWhileReportingIsReapedNotApplied(t *testing.T) {
+	t.Parallel()
+	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
+	rn, out := newRunner(), &bytes.Buffer{}
+	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+
+	old := pk("c1") // gen 1, epoch 7
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	<-m.Wake() // the background start posted
+	_, err = m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.NotNil(t, rn.child("c1"), "the child started")
+
+	rn.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "0123456", Report: "done"})
+	_, err = m.Tick(time.Unix(0, 0)) // the end begins (its push runs)
+	require.NoError(t, err)
+	<-m.Wake() // the end posted
+
+	// the pass that collects the end launches the finish report, held on the gate
+	_, err = m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
+
+	// the claim moves while the report runs: the queue shows gen 2
+	moved := pk("c1")
+	moved.Gen = 2
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
+	_, err = m.Tick(time.Unix(0, 0)) // the busy launch is skipped
+	require.NoError(t, err)
+
+	close(gs.release)
+	<-m.Wake()                       // the report posted
+	_, err = m.Tick(time.Unix(0, 0)) // collect: reap, never apply
+	require.NoError(t, err)
+
+	assert.Contains(t, out.String(), "reaped c1: the claim moved", "the moved report is reaped")
+	assert.NotContains(t, out.String(), "finish c1 ok=true", "a moved claim's report is never applied")
+	assert.Empty(t, m.running, "the reaped launch is forgotten")
+}
+
+// TestABackgroundReportNoAnswerIsTheCollectingPassesError pins STEP (4)/finding (2): a
+// Background member's report is collected by a later pass than the one that launched it, and
+// the store-did-not-answer note is that collecting pass's, so the collecting pass returns the
+// error (cmd/nova-swarm logs the "store did not answer" line for the verb). Red at HEAD: the
+// note was applied to the launching (already returned) pass's unanswered slice, so the
+// collecting pass returned no error.
+func TestABackgroundReportNoAnswerIsTheCollectingPassesError(t *testing.T) {
+	t.Parallel()
+	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
+	rn, out := newRunner(), &bytes.Buffer{}
+	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+
+	p := pk("c1")
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	<-m.Wake()
+	_, err = m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.NotNil(t, rn.child("c1"))
+
+	rn.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "0123456", Report: "done"})
+	_, err = m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	<-m.Wake()
+
+	gs.set("finish", 2, "the store did not answer")
+	_, err = m.Tick(time.Unix(0, 0)) // collect the end, launch the finish (held)
+	require.NoError(t, err)
+	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
+
+	close(gs.release)
+	<-m.Wake() // the report posted
+	_, err = m.Tick(time.Unix(0, 0))
+	require.Error(t, err, "the collecting pass returns the store-did-not-answer error")
+	assert.Contains(t, out.String(), "NOTE finish c1: the store did not answer",
+		"the no-answer note names the verb the store did not answer")
+}

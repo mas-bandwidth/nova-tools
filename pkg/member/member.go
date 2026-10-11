@@ -555,6 +555,14 @@ type Member struct {
 	// the beat, which carries it (--no-room) so the deal and the read ask pass this member
 	// by while it starts no card
 	noRoomWhy atomic.Pointer[string]
+	// queueCards is the last queue answer's cards by id. A report collected in a later
+	// pass re-checks its launch's claim against it, so a report whose claim moved while it
+	// ran is reaped, never applied (moved; the in-pass moved check).
+	queueCards map[string]queueCard
+	// passNoAnswer is the current pass's noAnswer: a report a later pass collects notes the
+	// verb against the pass that collects it, so the collecting pass returns the
+	// store-did-not-answer error for it (a Background member; reportOut).
+	passNoAnswer func(string, []byte)
 
 	// the beat's own clock (BeatLoop): beatMu guards beaten; progress is when the work pass
 	// last advanced, in unix nanoseconds
@@ -626,7 +634,6 @@ type reportOut struct {
 	now             time.Time
 	code            int
 	out             []byte
-	noAnswer        func(string, []byte)
 }
 
 // decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
@@ -939,6 +946,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		unanswered = append(unanswered, what)
 		fmt.Fprintf(m.out, "NOTE %s: the store did not answer; the pass goes on, and it is tried again next pass: %s\n", what, oneLine(strings.TrimSpace(string(out))))
 	}
+	m.passNoAnswer = noAnswer
 	defer m.haveWords() // what the pass ended holding, for the beat
 	defer func() {
 		if err == nil && len(unanswered) > 0 {
@@ -976,7 +984,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if l.res == nil {
 				continue
 			}
-			reports += m.reportOne(id, l, now, nil, noAnswer)
+			reports += m.reportOne(id, l, now, nil)
 		}
 		return reports + m.collectReports()
 	}
@@ -1033,6 +1041,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
+	// the queue answer is kept, so a report that posts in a later pass re-checks its
+	// launch's claim against the last queue this member saw and is reaped when it moved
+	m.queueCards = byID
 	// the queue is read: the memory of a card the queue no longer lists at its generation,
 	// working on this row, goes before anything is reported or recovered from the answer
 	// (pruneFinishRefused; member.go, handedBack)
@@ -1087,7 +1098,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		// its result for the collect below: the card it reports is acted on there, in
 		// the pass goroutine (reportRun, applyReport). A read it runs again here and
 		// now is a state change of this pass and is counted here.
-		acted += m.reportOne(id, l, now, c.Packet, noAnswer)
+		acted += m.reportOne(id, l, now, c.Packet)
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
 	// card was dealt elsewhere) has nothing left to report to: once it has
@@ -1181,7 +1192,7 @@ func (m *Member) collectReports() int {
 // reportOne reports one ended launch whose result is ready. It returns how many cards it
 // acted on in the pass goroutine (a read run again here and now): a report it hands to
 // reportRun is counted when its result is collected (applyReport), so it returns 0 for it.
-func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, noAnswer func(string, []byte)) int {
+func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet) int {
 	r := *l.res
 	if r.End == EndUnverifiable {
 		m.usageStopped = now // the member's rest (UsageRest), from the last such end
@@ -1263,7 +1274,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 				reason = cut(NoFinding + ": the broken read names no file, line or rule: " + finding)
 			}
 			args = append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
-			m.reportRun(id, args, reportOut{reads: true, ok: ok, returnNoVerdict: true, returnReason: reason, now: now, noAnswer: noAnswer})
+			m.reportRun(id, args, reportOut{reads: true, ok: ok, returnNoVerdict: true, returnReason: reason, now: now})
 			return 0
 		}
 		word := "--ok"
@@ -1311,7 +1322,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 		ok = fin == FinishOK
 		args = append(args, launched...)
 	}
-	m.reportRun(id, args, reportOut{reads: m.reads(l), ok: ok, pushedHead: pushedHead, now: now, noAnswer: noAnswer})
+	m.reportRun(id, args, reportOut{reads: m.reads(l), ok: ok, pushedHead: pushedHead, now: now})
 	return 0
 }
 
@@ -1357,11 +1368,14 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 	}
 	if ro.code == 2 {
 		// the no-answer note names the verb the store did not answer: a read that reached no
-		// verdict is returned as `read --return`, exactly as reportOne labeled it
+		// verdict is returned as `read --return`, exactly as reportOne labeled it. It is
+		// noted against the collecting pass (m.passNoAnswer), never the launching one, so a
+		// report a later pass collects still makes that pass return the store-did-not-answer
+		// error (a Background member: collectReports does not wait).
 		if ro.returnNoVerdict {
-			ro.noAnswer("read --return "+id, ro.out)
+			m.passNoAnswer("read --return "+id, ro.out)
 		} else {
-			ro.noAnswer(ro.verb+" "+id, ro.out)
+			m.passNoAnswer(ro.verb+" "+id, ro.out)
 		}
 		m.running[id] = l // left for the next pass
 		return 0
@@ -1688,6 +1702,17 @@ func (m *Member) collect() (acted int) {
 			m.running[card] = l
 			fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", card, l.attempt, l.gen, m.Running(), m.width, routeWords(l.packet))
 		case po.report != nil:
+			// a report whose claim moved while it ran is nobody's: it is reaped here,
+			// in the pass goroutine, exactly as the in-pass moved check reaps a launch
+			// (Tick). The last queue answer is consulted, so a report that posts in a
+			// later pass than the one that launched it is still reaped when its claim
+			// moved (STEP 4).
+			if c, listed := m.queueCards[card]; listed && m.moved(l, c) {
+				epoch, gen, attempt := m.claim(c)
+				fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, card, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
+				m.forget(card, false)
+				continue
+			}
 			// a report that ran apart from the pass is applied here, in the pass
 			// goroutine, so the state it changes is the pass's alone
 			acted += m.applyReport(card, l, po.report)
