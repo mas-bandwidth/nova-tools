@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"io"
 	"net/http"
 	"os"
@@ -98,6 +99,9 @@ func (w world) wakeFriends(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
+	if o := w.gateVerb(b.Store, c.Str("as"), hook.Coordinator, hook.Bus); o != nil {
+		return o // not hooked in: nothing is sent or read (docs/SPEC-HOOK.md)
+	}
 	me, server, every, within := c.Str("as"), c.Str("server"), c.Dur("every"), c.Dur("within")
 	never := commaList(c.Str("never-wake"))
 	say := func(line string) { fmt.Fprintln(c.Stdout, "WAKE "+line) }

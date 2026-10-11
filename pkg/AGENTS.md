@@ -28,6 +28,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `gocache/` | Go build cache held under a size, least recently used first | `go test ./pkg/gocache` | `go test ./pkg/gocache` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./pkg/goenv` | `go test ./pkg/goenv` |
 | `harness/` | the harness words: opencode and the headless subscription harnesses of the heavy tier | `go test ./pkg/harness` | `go test ./pkg/harness` |
+| `hookgate/` | the hook gate as a nova-tools verb meets it: the hook module's Gate over a bus store, its no as the verb's result | `go test ./pkg/hookgate` | `go test ./pkg/hookgate` |
 | `hostload/` | a machine's load: CPU busy percent of all its cores, else the load average over them | `go test ./pkg/hostload` | `go test ./pkg/hostload` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./pkg/hygiene` | `go test ./pkg/hygiene` |
 | `keyshape/` | cryptographic key format verification | `go test ./pkg/keyshape` | `go test ./pkg/keyshape` |

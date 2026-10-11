@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
@@ -36,6 +37,9 @@ type rig struct {
 	clock   time.Time // the store's clock as advance moved it (each trip adds a second more)
 	now     time.Time // the wait verbs' clock; the fake store's block moves it, never real time
 	wake    []string  // the wake-file reader's answers, one per look: "" is nothing new
+	// gate is the hook gate the verbs meet; nil lets every name act, as a name
+	// hooked in with its pushes proven (hook_test.go runs the real one).
+	gate func(ctx context.Context, st bus.Store, want hook.Want) error
 }
 
 // newRig is the rig with every name heard: each has a proven inbox push,
@@ -122,6 +126,12 @@ func (r *rig) world() world {
 			}[host], nil
 		},
 		now: func() time.Time { return r.now },
+		gate: func(ctx context.Context, st bus.Store, want hook.Want) error {
+			if r.gate == nil {
+				return nil
+			}
+			return r.gate(ctx, st, want)
+		},
 		wakeArm: func(_ string, token string) (wakeCursor, error) {
 			if token != "" {
 				return parseWakeCursor(token)
@@ -208,7 +218,7 @@ func TestAStoreThatDoesNotAnswerIsRefusedWithTheReason(t *testing.T) {
 	r := newRig("ada", "bob")
 	r.openErr = io.ErrUnexpectedEOF
 	r.cli().Do(t, "peek", "--as", "bob").Exit(2).Err("PEEK REFUSED", "unexpected EOF")
-	r.cli().Do(t, "names").Exit(2).Err("NAMES REFUSED", "unexpected EOF")
+	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("NAMES REFUSED", "unexpected EOF")
 }
 
 func TestTheLoopSendPeekRecvAckLog(t *testing.T) {
@@ -234,10 +244,10 @@ func TestTheLoopSendPeekRecvAckLog(t *testing.T) {
 	cli.Do(t, "ack", "--as", "bob", "--id", mid).Exit(0).Out("ACK OK acked=0 asked=1", "acked=false")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=0")
 
-	cli.Do(t, "log", "--bodies").Exit(0).Out("LOG OK total=1", "LOG MESSAGE id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z subject=\"hello there\" body=\"line one\\nline two\\n\"")
-	cli.Do(t, "log", "--max", "1").Exit(0).Out("LOG OK total=1", "LOG MESSAGE").NotOut("MORE")
-	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2", "NAMES NAME name=ada", "NAMES NAME name=bob")
-	cli.Do(t, "names", "--json").Exit(0).Out(`"status":"ok"`, `"name":"ada"`)
+	cli.Do(t, "log", "--as", "ada", "--bodies").Exit(0).Out("LOG OK total=1", "LOG MESSAGE id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z subject=\"hello there\" body=\"line one\\nline two\\n\"")
+	cli.Do(t, "log", "--as", "ada", "--max", "1").Exit(0).Out("LOG OK total=1", "LOG MESSAGE").NotOut("MORE")
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2", "NAMES NAME name=ada", "NAMES NAME name=bob")
+	cli.Do(t, "names", "--as", "ada", "--json").Exit(0).Out(`"status":"ok"`, `"name":"ada"`)
 }
 
 func TestRecvExecAcksOnZeroAndKeepsThePendingMessageOnFailure(t *testing.T) {
@@ -313,20 +323,20 @@ func TestTheStoreIsTheFlagTheVariableOrTheFleetRow(t *testing.T) {
 	t.Parallel()
 	r := newRig("ada", "bob")
 	r.env = map[string]string{"NOVA_REDIS_ADDR": "127.0.0.1:1"}
-	r.cli().Do(t, "names").Exit(2).Err("--redis is required", RedisEnv+" is unset", "no "+SprintRedisEnv, "nova-config fleet set --bus")
+	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("--redis is required", RedisEnv+" is unset", "no "+SprintRedisEnv, "nova-config fleet set --bus")
 	r.env = map[string]string{SprintRedisEnv: "127.0.0.1:6380"}
-	r.cli().Do(t, "names").Exit(2).Err("the fleet's bus row is empty", "nova-config fleet set --bus <host:port>", "nova-config apply")
+	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("the fleet's bus row is empty", "nova-config fleet set --bus <host:port>", "nova-config apply")
 	assert.Equal(t, []string{"127.0.0.1:6380"}, r.fleetAt, "the row is read from the sprint store")
 	r.fleet = "down"
-	r.cli().Do(t, "names").Exit(2).Err("could not be read from the sprint store", "unexpected EOF")
+	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("could not be read from the sprint store", "unexpected EOF")
 	r.fleet = "store.test:6381"
-	r.cli().Do(t, "names").Exit(0).Out("NAMES OK count=2")
+	r.cli().Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2")
 	r.fleet = "lan.test:6381"
-	r.cli().Do(t, "names").Exit(2).Err("loopback or the tailnet", "lan.test:6381 is 10.0.0.5")
+	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("loopback or the tailnet", "lan.test:6381 is 10.0.0.5")
 	r.env[RedisEnv] = "127.0.0.1:1"
 	r.fleetAt = nil
-	r.cli().Do(t, "names").Exit(0).Out("NAMES OK count=2")
-	r.cli().Do(t, "names", "--redis", "127.0.0.1:2").Exit(0).Out("NAMES OK count=2")
+	r.cli().Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2")
+	r.cli().Do(t, "names", "--as", "ada", "--redis", "127.0.0.1:2").Exit(0).Out("NAMES OK count=2")
 	assert.Empty(t, r.fleetAt, "the variable or the flag names the store; the row is not read")
 }
 
@@ -335,7 +345,7 @@ func TestSendReadsTheBodyFromStdinAndBoundsIt(t *testing.T) {
 	r := newRig("ada", "bob")
 	cli := r.cli()
 	cli.OKIn(t, "from stdin\n", "send", "--as", "ada", "--to", "bob", "--subject", "s", "--stdin")
-	cli.Do(t, "log", "--bodies").Exit(0).Out(`body="from stdin\n"`)
+	cli.Do(t, "log", "--as", "ada", "--bodies").Exit(0).Out(`body="from stdin\n"`)
 	big := strings.Repeat("x", bus.MaxBody+7)
 	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", big).Exit(2).Err("the body is 1048583 bytes, at most 1048576")
 	cli.DoIn(t, big, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--stdin").Exit(2).Err("the body on stdin is over 1 MiB; at most 1048576 bytes")
@@ -353,7 +363,7 @@ func TestTheIdentityIsTheLoginUser(t *testing.T) {
 	sent := cli.OK(t, "send", "--to", "bob", "--subject", "s", "--body", "x")
 	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=- at=2026-10-03T12:00:01Z bytes=1 sha256=[0-9a-f]{64}\n$`, sent.Stdout, "no login=none with a login")
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x")
-	cli.Do(t, "log").Exit(0).Out("LOG OK total=2", "from=ada")
+	cli.Do(t, "log", "--as", "ada").Exit(0).Out("LOG OK total=2", "from=ada")
 	for _, verb := range [][]string{
 		{"send", "--as", "bob", "--to", "ada", "--subject", "s", "--body", "x"},
 		{"recv", "--as", "bob"},
@@ -398,8 +408,8 @@ func TestTheBodysTrailingNewlineIsKeptBySendLogAndRecv(t *testing.T) {
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "with", "--body", "x\n")
 	cli.OKIn(t, "y\n", "send", "--as", "ada", "--to", "bob", "--subject", "stdin", "--stdin")
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "without", "--body", "z")
-	cli.Do(t, "log", "--bodies").Exit(0).Out(`subject="with" body="x\n"`, `subject="stdin" body="y\n"`, `subject="without" body="z"`)
-	cli.Do(t, "log", "--bodies", "--json").Exit(0).Out(`"body":"x\n"`, `"body":"y\n"`, `"body":"z"`)
+	cli.Do(t, "log", "--as", "ada", "--bodies").Exit(0).Out(`subject="with" body="x\n"`, `subject="stdin" body="y\n"`, `subject="without" body="z"`)
+	cli.Do(t, "log", "--as", "ada", "--bodies", "--json").Exit(0).Out(`"body":"x\n"`, `"body":"y\n"`, `"body":"z"`)
 	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob", "--json").Stdout, `"payload":"\nx\n"}`+"\n"))
 	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob").Stdout, "\n\ny\n"))
 	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob", "--json").Stdout, `"payload":"\nz"}`+"\n"))
@@ -423,13 +433,13 @@ func TestAStoreOffLoopbackAndTheTailnetIsRefusedBeforeTheDial(t *testing.T) {
 	r := newRig("ada", "bob")
 	cli := r.cli()
 	const rule = "nova-bus reaches a store over loopback or the tailnet (100.64.0.0/10) only: "
-	cli.Do(t, "names", "--redis", "far.test:6381").Exit(2).Err("NAMES REFUSED: " + rule + "far.test:6381 is 203.0.113.9")
+	cli.Do(t, "names", "--as", "ada", "--redis", "far.test:6381").Exit(2).Err("NAMES REFUSED: " + rule + "far.test:6381 is 203.0.113.9")
 	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x", "--redis", "elsewhere.test:6381").Exit(2).Err("SEND REFUSED: " + rule + "elsewhere.test:6381 does not resolve")
 	r.env[RedisEnv] = "lan.test:6381"
 	cli.Do(t, "peek", "--as", "bob").Exit(2).Err("PEEK REFUSED: " + rule + "lan.test:6381 is 10.0.0.5")
 	assert.Equal(t, 0, r.opened, "nothing was dialled")
-	cli.Do(t, "names", "--redis", "127.0.0.1:6381").Exit(0).Out("NAMES OK count=2")
-	cli.Do(t, "names", "--redis", "store.test:6381").Exit(0).Out("NAMES OK count=2")
+	cli.Do(t, "names", "--as", "ada", "--redis", "127.0.0.1:6381").Exit(0).Out("NAMES OK count=2")
+	cli.Do(t, "names", "--as", "ada", "--redis", "store.test:6381").Exit(0).Out("NAMES OK count=2")
 }
 
 // Alex, 2026-10-04: draining a thirty-message backlog was thirty recv-then-ack
@@ -488,21 +498,21 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	r := newRig("ada", "bob")
 	cli := r.cli()
 	mid := id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "first", "--body", "x").Stdout)
-	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0 older=10m0s")
+	cli.Do(t, "overdue", "--as", "ada").Exit(0).Out("OVERDUE OK count=0 older=10m0s")
 	r.advance(11 * time.Minute)
-	cli.Do(t, "overdue").Exit(1).Err("OVERDUE OVERDUE count=1 older=10m0s",
+	cli.Do(t, "overdue", "--as", "ada").Exit(1).Err("OVERDUE OVERDUE count=1 older=10m0s",
 		"OVERDUE MESSAGE name=bob id="+mid+" state=new from=ada age=11m")
-	cli.Do(t, "overdue", "--older", "1h").Exit(0).Out("OVERDUE OK count=0 older=1h0m0s")
-	cli.Do(t, "overdue", "--json").Exit(1).Out(`"word":"OVERDUE"`, `"id":"`+mid+`"`)
+	cli.Do(t, "overdue", "--as", "ada", "--older", "1h").Exit(0).Out("OVERDUE OK count=0 older=1h0m0s")
+	cli.Do(t, "overdue", "--as", "ada", "--json").Exit(1).Out(`"word":"OVERDUE"`, `"id":"`+mid+`"`)
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("RECEIPTS OK count=1", "RECEIPTS RECEIPT id="+mid+" state=none age=-")
 
 	cli.OK(t, "recv", "--as", "bob")
-	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0")
+	cli.Do(t, "overdue", "--as", "ada").Exit(0).Out("OVERDUE OK count=0")
 	r.advance(time.Minute)
 	cli.Do(t, "receipts", "--as", "bob").Exit(0).Out("RECEIPTS OK count=1 login=none", "RECEIPTS RECEIPT id="+mid+" state=delivered age=1m")
 	cli.OK(t, "send", "--as", "bob", "--to", "ada", "--re", mid, "--subject", "re first", "--body", "done")
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
-	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
+	cli.Do(t, "overdue", "--as", "ada", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
 
 func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {

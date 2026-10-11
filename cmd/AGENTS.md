@@ -13,6 +13,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-doctor/` | one command that says what is missing and how to fix it: every registered dependency check, exit by the worst | `go test ./cmd/nova-doctor` | `go test ./cmd/nova-doctor` |
 | `nova-friend/` | what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon | `go test ./cmd/nova-friend` | `go test -tags functional ./cmd/nova-friend` |
 | `nova-fuse/` | the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
+| `nova-hook/` | hooks an identity in: the pushes its role needs, live and proven; no bus, friend or sprint tool runs until they are | `go test ./cmd/nova-hook` | `go test -tags functional ./cmd/nova-hook` |
 | `nova-local/` | run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts | `go test ./cmd/nova-local` | `go test ./cmd/nova-local` |
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |
 | `nova-redis/` | Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |

@@ -3,7 +3,9 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are wait, send, peek, recv, ack, receipts, overdue, log and names; the dispatch, the banner,
+// are wait, send, peek, recv, ack, receipts, overdue, log and names, each run
+// only while the identity acting is hooked in (pkg/hookgate, docs/SPEC-HOOK.md);
+// the dispatch, the banner,
 // the help, the version verb, the refusals and the output envelope are
 // pkg/tool's, and the rules are pkg/bus's.
 package main
@@ -27,13 +29,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
-	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
-	"github.com/redis/go-redis/v9"
 )
 
 var version string
@@ -44,9 +46,9 @@ var version string
 // (SPEC-BUS.md, the config). The key is spelled here, as the roster's are in
 // pkg/bus, so this command depends on no config code.
 const (
-	RedisEnv       = "NOVA_BUS_REDIS"
-	SprintRedisEnv = "NOVA_SPRINT_REDIS"
-	FleetBusKey    = "fleet:bus"
+	RedisEnv       = bus.RedisEnv
+	SprintRedisEnv = bus.SprintRedisEnv
+	FleetBusKey    = bus.FleetBusKey
 )
 
 // RequirePushEnv set to 1 makes the push gate refuse, as --require-push does. Without
@@ -85,11 +87,15 @@ type world struct {
 	// wakeArm binds a caller-owned cursor; wakeLine validates it and reads one record.
 	wakeArm  func(path, token string) (wakeCursor, error)
 	wakeLine func(path string, cursor wakeCursor) (string, wakeCursor, error)
+	// gate is the hook gate every verb meets before it acts (docs/SPEC-HOOK.md):
+	// nil when the identity is hooked in, its bus push live and proven
+	// (pkg/hookgate over the store the verb opened); a test passes its own.
+	gate func(ctx context.Context, st bus.Store, want hook.Want) error
 }
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
-		wakeArm: realWakeArm, wakeLine: realWakeLine,
+		wakeArm: realWakeArm, wakeLine: realWakeLine, gate: hookgate.Gate,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -108,49 +114,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 	return busTool(w).Run(args, stdin, stdout, stderr)
 }
 
-// openRedis dials the store through redisconn, the one way a nova tool opens
-// Redis, with the fleet's login: NOVA_SPRINT_REDIS_USER names the user and
-// NOVA_SPRINT_REDIS_PASSWORD_ENV the variable that holds its password
-// (NOVA_REDIS_BENCH_PASSWORD when it names none); no user is the default
-// user with no password. The password is never on the line and never
-// printed (pkg/redisconn).
-// sprintOptions is the fleet's login for a store at addr (the convention above).
-func (w world) sprintOptions(addr string) redisconn.Options {
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-	if w.getenv(redisauth.UserEnv) != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if w.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
-	}
-	return o
-}
-
-// readFleetBus is one GET of FleetBusKey on the sprint store.
+// readFleetBus is one GET of FleetBusKey on the sprint store (bus.ReadFleetBus).
 func (w world) readFleetBus(ctx context.Context, addr string) (string, error) {
-	conn, err := redisconn.Open(ctx, w.sprintOptions(addr), w.getenv)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Close()
-	v, err := conn.Client().Get(ctx, FleetBusKey).Result()
-	if errors.Is(err, redis.Nil) {
-		return "", nil
-	}
-	return v, err
+	return bus.ReadFleetBus(ctx, addr, w.getenv)
 }
 
+// openRedis dials the store with the fleet's login (bus.OpenRedis).
 func (w world) openRedis(ctx context.Context, addr string) (bus.Store, string, func(), error) {
-	o := w.sprintOptions(addr)
-	resolved, err := redisconn.Resolve(o, w.getenv)
+	st, login, closeStore, err := bus.OpenRedis(ctx, addr, w.getenv)
 	if err != nil {
 		return nil, "", nil, err
 	}
-	conn, err := redisconn.Open(ctx, o, w.getenv)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	return bus.Redis{C: conn.Client()}, resolved.User, func() { conn.Close() }, nil
+	return st, login, closeStore, nil
 }
 
 // runShell runs --exec's command through the shell with the message on its
@@ -174,10 +149,10 @@ func busTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
-ack --as <me> --id <id> acks; an unproven push is a NOTE, not a refusal; --require-push refuses.
+ack --as <me> --id <id> acks; every verb needs <me> hooked in (nova-hook hook), else FAILED.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/tailnet only.`,
-		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
+		ExitTable: "0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE", "OVERDUE"},
 		Verbs: []tool.Verb{
 			{
@@ -185,7 +160,7 @@ first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/ta
 				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--wake-after <cursor>] [--redis <addr>]",
 				Example: "wait --as bob --timeout 1s",
 				Effect:  tool.Inspection,
-				ExitTable: "0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; " +
+				ExitTable: "0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out, or not hooked in (FAILED reason=unhooked); " +
 					"2 could not run (a flag, an input, a store that did not answer).",
 				Detail: `Prints WAIT ARMED after=<id> first: the cursor the wait starts past, --after <id> when given (a stream
 entry id, <ms>-<seq>), else the stream's last id read once at start, 0-0 when the stream is empty.
@@ -407,9 +382,9 @@ example: nova-bus receipts --as bob`,
 			},
 			{
 				Name:      "overdue",
-				Usage:     "overdue [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Usage:     "overdue [--as <me>] [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Effect:    tool.Inspection,
-				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more; 2 could not run (a flag, a store that did not answer).",
+				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more, or not hooked in (FAILED reason=unhooked); 2 could not run (a flag, a store that did not answer).",
 				Detail: `The alarm the coordinator's loop and the seat check run. Looks at every known name's stream and
 lists each message still short of delivered (new, never taken by a reader, or pending with no
 delivered receipt) sent longer ago than --older (a Go duration, default 10m), by the store's clock.
@@ -418,6 +393,7 @@ older=<d>, then one OVERDUE MESSAGE name=<recipient> id=<id> state=<new|pending>
 age=<duration> subject=<s> line each, oldest first, at exit 1. A message acked is never listed.
 example: nova-bus overdue --older 10m`,
 				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
 					f.Duration("older", 10*time.Minute, "how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
@@ -433,12 +409,13 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
-				Example: "log --max 5",
+				Usage:   "log [--as <me>] [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Example: "log --as bob --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
 [kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
 				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
@@ -449,8 +426,8 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "names",
-				Usage:   "names [--timeout <duration>] [--redis <addr>]",
-				Example: "names",
+				Usage:   "names [--as <me>] [--timeout <duration>] [--redis <addr>]",
+				Example: "names --as bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> push=<state> age=<age>
 harness=<h> line per known name (nova-config's friend and machine rows). push is proven (its friend
@@ -459,6 +436,7 @@ renewing), down (its session did not answer the daemon's SESSION CHECK) or none 
 recorded one); age is how long ago the daemon wrote it, never when there is none. The push is the
 seat's liveness rule and a sender's advice: send and recv say it as a NOTE, never refuse on it.`,
 				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
@@ -523,14 +501,34 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 // identity, not a word on the line; SPEC-BUS.md, the identity); with no
 // login user, --as alone, and the result says login=none.
 func identity(c *tool.Call, login string) (string, *tool.Out) {
-	as := c.Str("as")
-	switch {
-	case login == "" && strings.TrimSpace(as) == "":
-		return "", tool.Refuse("--as is required: this connection has no login user (" + redisauth.UserEnv + " is unset), so it wants your name; refusing to guess")
-	case login != "" && as != "" && as != login:
-		return "", tool.Refuse(fmt.Sprintf("--as %s is not the login user %s: this connection acts as %s; drop --as, or log in as %s (%s=%s with its password)", as, login, login, as, redisauth.UserEnv, as))
-	case login != "":
-		return login, nil
+	as, refusal := bus.Identity(c.Str("as"), login)
+	if refusal != "" {
+		return "", tool.Refuse(refusal)
+	}
+	return as, nil
+}
+
+// hooked is the gate every verb meets once it knows who acts, before it reads
+// or writes anything of the bus (docs/SPEC-HOOK.md; tla/Hook.tla,
+// GateMeansHooked): as must be hooked in, every push of its role live and
+// proven, its role carrying the bus push. A no is the verb's result, FAILED at
+// exit 1 with the breadcrumb (the hook command and who holds each push); a
+// record that cannot be read is REFUSED at exit 2: fail closed.
+func (w world) hooked(b *bus.Bus, as string) *tool.Out {
+	ctx, cancel := context.WithTimeout(context.Background(), bus.CallTimeout)
+	defer cancel()
+	return hookgate.Out(w.gate(ctx, b.Store, hook.Want{Name: as, Need: []hook.Push{hook.Bus}}))
+}
+
+// acting is identity and the gate together: who the verb acts as, once that
+// identity is hooked in, or the result that stops it.
+func (w world) acting(c *tool.Call, b *bus.Bus, login string) (string, *tool.Out) {
+	as, refused := identity(c, login)
+	if refused != nil {
+		return "", refused
+	}
+	if o := w.hooked(b, as); o != nil {
+		return "", o
 	}
 	return as, nil
 }
@@ -582,7 +580,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	as, refused := identity(c, login)
+	as, refused := w.acting(c, b, login)
 	if refused != nil {
 		return refused
 	}
@@ -696,7 +694,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	as, refused := identity(c, login)
+	as, refused := w.acting(c, b, login)
 	if refused != nil {
 		return refused
 	}
@@ -838,7 +836,7 @@ func (w world) ack(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	as, refused := identity(c, login)
+	as, refused := w.acting(c, b, login)
 	if refused != nil {
 		return refused
 	}
@@ -870,7 +868,7 @@ func (w world) peek(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	as, refused := identity(c, login)
+	as, refused := w.acting(c, b, login)
 	if refused != nil {
 		return refused
 	}
@@ -897,11 +895,14 @@ func (w world) peek(c *tool.Call) *tool.Out {
 }
 
 func (w world) log(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
 	defer closeStore()
+	if _, refused := w.acting(c, b, login); refused != nil {
+		return refused
+	}
 	got, err := b.Log(context.Background(), "-")
 	if err != nil {
 		return answer(err)
@@ -919,11 +920,14 @@ func (w world) log(c *tool.Call) *tool.Out {
 }
 
 func (w world) names(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
 	defer closeStore()
+	if _, refused := w.acting(c, b, login); refused != nil {
+		return refused
+	}
 	got, err := b.Names(context.Background())
 	if err != nil {
 		return answer(err)
@@ -957,7 +961,7 @@ func (w world) receipts(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	as, refused := identity(c, login)
+	as, refused := w.acting(c, b, login)
 	if refused != nil {
 		return refused
 	}
@@ -981,11 +985,14 @@ func (w world) receipts(c *tool.Call) *tool.Out {
 // overdue is every message on every stream still short of delivered past
 // --older: OVERDUE at exit 1 when there is one (SPEC-BUS.md, message-receipts).
 func (w world) overdue(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
 	defer closeStore()
+	if _, refused := w.acting(c, b, login); refused != nil {
+		return refused
+	}
 	older := c.Dur("older")
 	late, _, err := b.Overdue(context.Background(), older)
 	if err != nil {
@@ -1006,19 +1013,9 @@ func (w world) overdue(c *tool.Call) *tool.Out {
 // else the fleet row's bus field read from the sprint store at
 // SprintRedisEnv; with none of the three, a refusal naming all three.
 func (w world) address(ctx context.Context, c *tool.Call) (string, *tool.Out) {
-	if addr := c.Str("redis"); strings.TrimSpace(addr) != "" {
-		return addr, nil
-	}
-	sprint := w.getenv(SprintRedisEnv)
-	if sprint == "" {
-		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset, and with no " + SprintRedisEnv + " the fleet's bus row (nova-config fleet set --bus <host:port>, then apply) cannot be read either; refusing to guess")
-	}
-	addr, err := w.fleetBus(ctx, sprint)
-	if err != nil {
-		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row could not be read from the sprint store: " + err.Error())
-	}
-	if addr == "" {
-		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row is empty; set it once: nova-config fleet set --bus <host:port> --as <you>, then nova-config apply")
+	addr, refusal := bus.Address(ctx, c.Str("redis"), w.getenv, w.fleetBus)
+	if refusal != "" {
+		return "", tool.Refuse(refusal)
 	}
 	return addr, nil
 }
@@ -1114,7 +1111,7 @@ func (w world) wait(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	as, refused := identity(c, login)
+	as, refused := w.acting(c, b, login)
 	if refused != nil {
 		return refused
 	}

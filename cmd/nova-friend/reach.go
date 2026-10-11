@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"regexp"
 	"strings"
 	"time"
@@ -120,6 +121,9 @@ func (w world) reach(c *tool.Call) *tool.Out {
 	}
 	defer closeStore()
 	ctx := c.Ctx
+	if o := w.gateVerb(b.Store, c.Str("as"), hook.Coordinator, hook.Bus); o != nil {
+		return o // not hooked in: nothing is sent or read (docs/SPEC-HOOK.md)
+	}
 	state := w.reachState(c, to)
 	status, found, _ := friend.ReadStatus(state) // ignored: DaemonUp reads and reports the current status at the push
 	harness := c.Str("harness")

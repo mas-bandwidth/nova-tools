@@ -33,8 +33,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
@@ -99,6 +101,11 @@ type world struct {
 	stepBeat       bool                                // deterministic fake clock in CLI tests; never set by realWorld
 	checkGo        func(func())                        // optional test scheduler for a fake-clock session check
 	reachPermitted func(context.Context) (bool, error) // reach window permission; nil checks the platform without prompting
+	// hookStore is the hook record over the bus store (hookgate.Store) the daemon holds its
+	// friend's pushes in, and gate the gate a verb meets before it acts (hookgate.Gate;
+	// docs/SPEC-HOOK.md). realWorld sets both; a test's world that sets neither gates nothing.
+	hookStore func(bus.Store) (hook.Store, error)
+	gate      func(ctx context.Context, st bus.Store, want hook.Want) error
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -261,18 +268,20 @@ func realWorld() world {
 			_, err := sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 			return err
 		},
-		progress: sprintVerb,
-		finish:   sprintVerb,
-		down:     sprintVerb,
-		cards:    sprintAsk,
-		view:     sprintView,
-		friends:  coordinatorFriends,
-		holders:  sprintHolders,
-		stage:    func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
-		tip:      (&friend.Stager{}).Tip,
-		lookPath: exec.LookPath,
-		copy:     friend.CopyExecutable,
-		settings: friend.OSFS{},
+		progress:  sprintVerb,
+		finish:    sprintVerb,
+		hookStore: hookgate.Store,
+		gate:      hookgate.Gate,
+		down:      sprintVerb,
+		cards:     sprintAsk,
+		view:      sprintView,
+		friends:   coordinatorFriends,
+		holders:   sprintHolders,
+		stage:     func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
+		tip:       (&friend.Stager{}).Tip,
+		lookPath:  exec.LookPath,
+		copy:      friend.CopyExecutable,
+		settings:  friend.OSFS{},
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -1445,6 +1454,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		sc.Deliver = &friend.FolderCheck{Friend: name, Dir: dir}
 	}
 	prover.Deliver = sc.Deliver
+	// the daemon is her hook (docs/SPEC-HOOK.md, holders; hook.go): it hooks her in as a
+	// friend at its first step and holds her bus push (proven by her session's answer to its
+	// check) and her work push (proven by the sprint server's answers to her beats); while
+	// the gate says no her lanes take and report nothing and her beat says her down, unhooked
+	dh := w.newDaemonHook(st, name, hook.Friend, func() bool { p, _ := sc.Proof(); return p }, record)
+	go dh.loop(ctx, w.sleep)
+	w.beat, w.beatDown = dh.beats(w.now, w.beat, w.beatDown)
 	tellSeat = func(subject, body string) {
 		to := answerTo()
 		if to == "" {
@@ -1629,7 +1645,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return rowMode, rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
-		Sprint:    w.sprintAsk(server),
+		Sprint:    gated(dh, w.sprintAsk(server)),
 		Rules:     rules,
 		Model:     c.Str("model"),
 		Load:      w.load1(),
@@ -1663,6 +1679,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if w.progress == nil {
 				return nil // a world that sends none (a test's)
 			}
+			if ok, why := dh.ok(); !ok {
+				return fmt.Errorf("%w: %s", ErrUnhooked, why) // reported once she is hooked in again
+			}
 			for _, argv := range friend.ProgressArgv(name, cards) {
 				if err := w.progress(ctx, server, argv); err != nil {
 					return err
@@ -1680,14 +1699,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
 			}
+			if ok, why := dh.ok(); !ok {
+				return fmt.Errorf("%w: %s", ErrUnhooked, why) // not answered: finished once she is hooked in again
+			}
 			return w.finish(ctx, server, argv)
 		},
-		Take: func(ctx context.Context, argv []string) (string, error) {
+		Take: gated(dh, func(ctx context.Context, argv []string) (string, error) {
 			if w.cards == nil {
 				return "", errors.New("this world sends no take") // a test's: d.Take is cleared below
 			}
 			return w.cards(ctx, server, argv) // the server's answer (a lane reads its LANE line), a refusal an error
-		},
+		}),
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
 			if err != nil {
@@ -2496,6 +2518,9 @@ func (w world) ping(c *tool.Call) *tool.Out {
 	}
 	defer closeStore()
 	me, to := c.Str("as"), c.Str("to")
+	if o := w.gateVerb(b.Store, c.Str("as"), hook.Coordinator, hook.Bus); o != nil {
+		return o // not hooked in: nothing is sent or read (docs/SPEC-HOOK.md)
+	}
 	body := friend.PingText(me, since, nonce)
 	if c.Bool("wake") { // a wake check: answered by the session, never by the daemon (docs/SPEC-FRIEND.md, session-pong.w1)
 		body = friend.WakePingText(me, since, nonce)

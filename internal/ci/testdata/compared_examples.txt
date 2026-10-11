@@ -104,8 +104,11 @@ cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus peek --as bob
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus recv --as bob --exec true
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
-cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus log --max 5
-cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus names
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus log --as bob --max 5
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus names --as bob
+cmd/nova-hook/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-hook status --as m1
+cmd/nova-hook/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-hook hook --as m1 --role member --once
+cmd/nova-hook/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-hook unhook --as m1
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend uninstall --as bob --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend ping --as ada --to bob --nonce abc123

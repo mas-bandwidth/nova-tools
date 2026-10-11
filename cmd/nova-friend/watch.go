@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"io"
 	"io/fs"
 	"os"
@@ -158,6 +159,9 @@ func (w world) watch(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
+	if o := w.gateVerb(b.Store, c.Str("as"), hook.Coordinator, hook.Bus); o != nil {
+		return o // not hooked in: nothing is sent or read (docs/SPEC-HOOK.md)
+	}
 	as, timeout := c.Str("as"), c.Dur("timeout")
 	state := w.stateDir(c, "")
 	ctx := context.Background()

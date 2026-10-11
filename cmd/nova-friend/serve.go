@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"slices"
 	"strings"
 	"time"
@@ -50,6 +51,9 @@ func (w world) serve(c *tool.Call) *tool.Out {
 			return o
 		}
 		defer closeStore()
+		if o := w.gateVerb(b.Store, c.Str("as"), hook.Coordinator, hook.Bus); o != nil {
+			return o // not hooked in: nothing is sent or read (docs/SPEC-HOOK.md)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 		defer cancel()
 		rows, _, err := friendRows(ctx, b.Store)
@@ -68,6 +72,10 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	if st == nil {
 		say("STOP interrupted")
 		return tool.Exit(0)
+	}
+	if o := w.gateVerb(st, me, hook.Coordinator, hook.Bus); o != nil {
+		closeStore()
+		return o // not hooked in: no ping is sent (docs/SPEC-HOOK.md)
 	}
 	defer closeStore()
 	rows, storeNow, err := friendRows(ctx, st)

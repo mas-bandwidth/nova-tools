@@ -12,6 +12,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/client9/misspell v0.3.4
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/mas-bandwidth/nova-tools/hook v0.1.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/stretchr/testify v1.12.1
@@ -40,3 +41,7 @@ require (
 	golang.org/x/tools v0.50.0 // indirect
 	honnef.co/go/tools v0.8.1 // indirect
 )
+
+// The hook module lives in this repository (hook/, its own go.mod) and is
+// tagged hook/vX.Y.Z for the repositories that require it; here it is the tree.
+replace github.com/mas-bandwidth/nova-tools/hook => ./hook

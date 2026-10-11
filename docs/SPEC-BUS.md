@@ -419,6 +419,20 @@ With no login user (a store whose default user is open, as a trial store is)
 never silent. The fleet's store therefore needs one user per friend, named as
 the friend is; creating users is the owner's, never the tool's.
 
+## The hook gate
+
+Every verb (`wait`, `send`, `peek`, `recv`, `ack`, `receipts`, `overdue`,
+`log`, `names`) acts only while the identity acting is hooked in: its hook
+record in this store (`hook:rec:<f>`, docs/SPEC-HOOK.md) is hooked, every push
+of its role is live and proven, and its role carries the bus push. `log`,
+`names` and `overdue` therefore take `--as` too. A name that is not hooked in
+is `FAILED reason=unhooked` at exit 1, nothing read or written, the command
+that hooks it in the remedy and the rest of the breadcrumb (who holds each
+push, how to see and end the hook) its `NOTE` lines; a hook record that cannot
+be read is a refusal at exit 2. The gate is the actor's: a message to a
+recipient that is not hooked in lands and waits on its stream, the push proof
+below saying so as advice.
+
 ## The ACL per friend
 
 The user for friend `<f>` is named `<f>` and needs, measured against what
@@ -467,7 +481,9 @@ If the fan-out moved into the store (a Redis function running `XADD` for the
 caller, which Redis runs under the caller's own ACL, so it buys nothing; or a
 privileged relay process, which is a second writer), the pattern could narrow
 to `%W~bus2:to:*` plus `~bus2:to:<f>`. Neither is built; the one line above is
-what the bus needs today.
+what the bus needs today. A store run with per-friend users also grants the
+hook record's keys (`hook:*`, docs/SPEC-HOOK.md, the key layout) and the
+commands its scripts run, or every verb is refused at the gate.
 
 ## The config
 

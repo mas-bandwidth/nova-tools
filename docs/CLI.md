@@ -1330,7 +1330,7 @@ name of the git bus it replaced.
 ### First run
 
 A Redis whose nova-config rows name ada and bob, each with a proven inbox push
-(their friend daemons' proofs on `bus2:push`), its address in `--redis` or
+(their friend daemons' proofs on `bus2:push`) and hooked in ([SPEC-HOOK](SPEC-HOOK.md)), its address in `--redis` or
 `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus)):
 
 ```sh
@@ -1339,8 +1339,8 @@ nova-bus send --as ada --to bob --subject hello --body "are you there?"
 nova-bus peek --as bob
 nova-bus recv --as bob --exec true
 nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
-nova-bus log --max 5
-nova-bus names
+nova-bus log --as bob --max 5
+nova-bus names --as bob
 ```
 
 `wait` prints `WAIT ARMED after=<id>` first — the cursor it starts past,
@@ -1427,6 +1427,37 @@ Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`) and logs
 in as `NOVA_SPRINT_REDIS_USER` with the password in the variable
 `NOVA_SPRINT_REDIS_PASSWORD_ENV` names, the fleet's convention. Exit codes: 0
 done; 1 the verb ran and said no; 2 could not run.
+
+## nova-hook
+
+Hooks an identity in: the pushes its role needs (`coordinator`: bus and sprint;
+`friend`: bus and work; `comms`: bus; `member` and `reader`: work), each live while
+its holder renews a lease in the bus Redis and proven while a proof stands
+([SPEC-HOOK](SPEC-HOOK.md)). Every `nova-bus` verb, the friend daemon's lanes and
+beat, and the coordinator's `nova-friend` verbs refuse an identity that is not
+hooked in, naming the command below.
+
+### First run
+
+A Redis at `--redis` or `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-hook)):
+
+```sh
+nova-hook status --as m1
+nova-hook hook --as m1 --role member --once
+nova-hook unhook --as m1
+```
+
+A session hooks in under its Monitor, and each line the hook prints is a push:
+
+```
+nova-hook hook --as ada --role coordinator
+```
+
+It prints `HOOK CHALLENGE nonce=<n>` at start and every 30 minutes; the session
+runs the `nova-hook prove --as ada --nonce <n>` line it carries within five
+minutes. A friend's daemon (`nova-friend run`) is her hook: it hooks her in at
+its start. `nova-hook status` lists every record; `nova-hook unhook --as <name>`
+ends one, and every tool refuses the name until it hooks in again.
 
 ## nova-friend
 

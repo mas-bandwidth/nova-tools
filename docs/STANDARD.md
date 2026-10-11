@@ -18,9 +18,7 @@ This is the standard every tool and module in this repository is built to, and t
 
 **When writing tests.** testify (require in setup, assert in rows), rigs as helper structs or the package's testkit, named cases under `t.Run`, `t.Parallel()` in every test, no sockets and few ports, one minute on average and two minutes at most per shard. The proof a test is worth its lines is a mutation it catches; a copy of a neighbour with one value changed is a table row. Check: `testify`, `TestEveryTestOpensWithTParallel` (`parallel`), `TestUnitTierRefusesRedisServer` (`tiers`), `cap`.
 
-**When working in the tree.** One owner per package at a time; a package in an open PR is off the table until that PR lands. A PR is one small piece that merges with the base at landing, never later; landings go one at a time in order, each merging the tip first. Every PR gets a cold read with probes before it lands; a friend's or an author's yes alone never lands one. Builds and tests run niced on the machine that hosts runners, or on a bench, one test stream per machine. When the merge queue backs up, stop starting new work: backpressure is the coordinator's job, and a PR that cannot merge is closed with its reason and re-cut later.
-
-**After every expansion, contract (section 11).**
+**When working in the tree.** One owner per package at a time; a package in an open PR is off the table until that PR lands. A PR is one small piece that merges with the base at landing, never later; landings go one at a time in order, each merging the tip first. Every PR gets a cold read with probes before it lands; a friend's or an author's yes alone never lands one. Builds and tests run niced on the machine that hosts runners, or on a bench, one test stream per machine. When the merge queue backs up, stop starting new work: backpressure is the coordinator's job, and a PR that cannot merge is closed with its reason and re-cut later. **After every expansion, contract (section 11).**
 
 ## 1. Working in the tree
 

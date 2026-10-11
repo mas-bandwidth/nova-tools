@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,11 @@ func firstRunStore(t *testing.T) string {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	require.NoError(t, c.SAdd(context.Background(), "friends", "ada", "bob").Err())
+	// ada, the coordinator who pings, is hooked in (docs/SPEC-HOOK.md): her verbs
+	// run only while her bus push is live and proven, as her session's hook holds it
+	h := &hook.Holder{Store: hook.Store{C: c}, Name: "ada", Role: hook.Comms, Pushes: []hook.Push{hook.Bus}, By: "first-run"}
+	require.NoError(t, h.Start(context.Background()))
+	require.NoError(t, h.Beat(context.Background(), map[hook.Push]bool{hook.Bus: true}))
 	return addr
 }
 
