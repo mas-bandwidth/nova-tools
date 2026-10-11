@@ -496,13 +496,13 @@ type Member struct {
 	// readRetried is the reads run again once after a stage or environment failure, by card
 	// id: a second such failure of the card is returned, whichever path launches it
 	readRetried map[string]bool
-	epoch        uint64
-	width        int  // the width this tick runs to: the override, else the fleet row's
-	saidNoWidth  bool // the NOTE that no row names a width has been said
-	drain        bool
-	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
-	beaten       uint64 // the Meter's samples the last written beat has carried
-	noRoom       bool   // Room said no on the last tick it was asked
+	epoch       uint64
+	width       int  // the width this tick runs to: the override, else the fleet row's
+	saidNoWidth bool // the NOTE that no row names a width has been said
+	drain       bool
+	noRow       bool   // a reader whose queue said it is no row of the readers table, said once
+	beaten      uint64 // the Meter's samples the last written beat has carried
+	noRoom      bool   // Room said no on the last tick it was asked
 	// usageStopped is when a launch of this member last ended because its usage source
 	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
 	usageStopped time.Time

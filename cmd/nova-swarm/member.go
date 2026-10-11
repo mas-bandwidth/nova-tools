@@ -781,11 +781,11 @@ type nativeChild struct {
 	card, logPath, results, job string
 	// read is whether this launch is a READ (member.Packet.Kind): a wall refusal on a read
 	// is the reader's own environment, never the work's (member.EndEnvironment).
-	read                        bool
-	done                        chan struct{}
-	err                         error
-	once                        sync.Once
-	result                      member.Result
+	read   bool
+	done   chan struct{}
+	err    error
+	once   sync.Once
+	result member.Result
 	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
 	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
 	proc *os.Process
