@@ -185,6 +185,7 @@ func (a *RedisApplier) declRev(ctx context.Context, kind string) (int64, error) 
 
 // Stamp is the compare-and-set of friend_declare.lua in a WATCH/MULTI: the
 // stamp is written only while it still reads prev.
+// tla/ConfigApply.tla, DoStamp.
 func (a *RedisApplier) Stamp(ctx context.Context, kind string, prev, rev int64) error {
 	err := a.Client.Watch(ctx, func(tx *redis.Tx) error {
 		cur, err := tx.HGet(ctx, DeclKey, revField(kind)).Result()

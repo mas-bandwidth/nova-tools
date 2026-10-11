@@ -621,6 +621,18 @@
     the tries and fails the restated invariant. lanes.go cites the module from laneStep and laneDone, limit.go
     from Gate. Tests and models only, no product change."
    :origin "card tla-friend-one-shot-lanes-and-caps.w7 (nova-tools drift read at dev 2314d437f, 2026-10-11; the last of three Friend cards, chained)")
+  (fix "tla-configapply-friend-slots-and-stamp-cas" :release "v1.2.12" :status "planned"
+   :title "ConfigApply charges a friend to her beat's machine and stamps compare-and-set"
+   :text "The model had drifted from pkg/config: its header named internal/config, a friend row was
+    the machine she was placed on rather than her desired slots charged to the machine her own beat
+    reports, the stamp wrote unconditionally, and the fleet kind was missing from the apply order.
+    ConfigApply.tla now names pkg/config, keeps a beat-host mapping TLC chooses (a friend's slots are
+    charged to beat[friend]), writes the stamp as a compare-and-set that refuses when a direct Redis
+    write moved it mid-apply, and orders machine, fleet and friend. ApplyOrder and ConflictRefusesAhead
+    hold; a fifth reversed witness, blindstamp (a direct Redis write mid-apply with no compare at the
+    stamp), fails ConflictRefusesAhead. apply.go and redis.go cite the module in comments only; there
+    is no product change. TLC is owed for the edited module and the new witness."
+   :origin "card tla-configapply-friend-slots-and-stamp-cas.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
