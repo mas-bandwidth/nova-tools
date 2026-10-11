@@ -468,6 +468,17 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-benchrun-an-interrupted-exec-ran" :release "v1.2.12" :status "planned"
+   :title "BenchRun models an exec interrupt as the command's killed exit"
+   :text "BenchRun's Interrupt set exit Refused in every phase, but in the code an interrupt during the
+    exec kills ssh (sshLine returns ExitCode() -1 with a nil error, runIn stores it as Code and the verb
+    exits with it), so the command ran. Interrupt now splits: a copy interrupt ends Refused (the command
+    never ran); an exec interrupt sets ranCmd and ends with Killed. The invariant InterruptedExecRan (a
+    run that reached the command never ends Refused) holds it, and the reversed witness
+    MCBenchRunBrokenInterruptRefused (an exec interrupt that refuses while ranCmd) breaks it. The header
+    names pkg/bench, where the runner moved. Tests and models only, no product change."
+   :origin "card tla-benchrun-an-interrupted-exec-ran.w1 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
