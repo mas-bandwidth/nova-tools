@@ -32,17 +32,17 @@
    :title "Six Lua comment lines restored"
    :text "The function library's digest is its v1.2.2 value again, so the adopt's shadow tick accepts it."
    :origin "PR #5592, head 7d1dc0c06")
-  (fix "roadmap-and-fixes-as-data" :release "v1.2.5" :status "in-progress"
-   :title "ROADMAP.md and FIXES.md generated from s-expression data"
-   :text "docs/roadmap.sexp and docs/fixes.sexp are the data; `make roadmap` writes both pages, and a test
-    fails when a page differs from what its data renders."
-   :origin "PR #5533")
-  (fix "card-tells-child-its-wall" :release "v1.2.6" :status "in-progress"
-   :title "The card tells the child its wall: deadline and temporary directory"
-   :text "The worker card tells the child its deadline, and the native wall passes the slot temporary
-    directory so TMPDIR is the slot one."
-   :origin "nova-tools PR #5575, head 4725d7d7d; landed in dev as 7dc8304560 via PR #5594")
-  (fix "a-reader-writes-scratch-inside-its-job" :release "v1.2.6" :status "in-progress"
+   (fix "roadmap-and-fixes-as-data" :release "v1.2.5" :status "shipped"
+    :title "ROADMAP.md and FIXES.md generated from s-expression data"
+    :text "docs/roadmap.sexp and docs/fixes.sexp are the data; `make roadmap` writes both pages, and a test
+     fails when a page differs from what its data renders."
+    :origin "PR #5533")
+   (fix "card-tells-child-its-wall" :release "v1.2.6" :status "shipped"
+    :title "The card tells the child its wall: deadline and temporary directory"
+    :text "The worker card tells the child its deadline, and the native wall passes the slot temporary
+     directory so TMPDIR is the slot one."
+    :origin "nova-tools PR #5575, head 4725d7d7d; landed in dev as 7dc8304560 via PR #5594")
+   (fix "a-reader-writes-scratch-inside-its-job" :release "v1.2.6" :status "shipped"
    :title "A reader writes its scratch inside its job"
    :text "A reader's child is given a writable scratch directory inside its job: TMPDIR, TMP and TEMP
     name $JOB/tmp, made before the child starts and removed with the job, and the read brief says so.
@@ -60,18 +60,18 @@
    :text "Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of
     one mirror); make them pass there."
    :origin "v1.2.5 candidate list")
-  (fix "friend-provider-key-after-move" :release "v1.2.6" :status "in-progress"
+   (fix "friend-provider-key-after-move" :release "v1.2.6" :status "shipped"
    :title "A friend AI moved to another machine uses the provider key that worked"
    :text "After a move the friend AI ran with a stored provider key that differs from the working one, and
     the provider refused it. The stored key is replaced by the owner, then the friend AI restarts
     through the play."
    :origin "v1.2.5 candidate list")
-  (fix "release-build-refuses-without-sprint-release" :release "v1.2.6" :status "in-progress"
+   (fix "release-build-refuses-without-sprint-release" :release "v1.2.6" :status "shipped"
    :title "release build refuses to ship without the sprint release"
    :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
     refuses unless an explicit opt-out flag is given."
    :origin "nova-tools PR #5571 cold read")
-  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "in-progress"
+   (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "shipped"
    :title "The release changelog lists merge-queue merges"
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
@@ -83,14 +83,14 @@
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
    :origin "fault 9, 2026-10-10")
-  (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "in-progress"
+   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
     replaced, fails each running process that does not report the installed version, prints a
     refusal's cause whole, and ends with one table: host, version running, members and readers up,
     harness present, disk free."
    :origin "bug 13, fleet/tools.yml")
-  (fix "draining-member-word-is-this-ticks" :release "v1.2.6" :status "in-progress"
+   (fix "draining-member-word-is-this-ticks" :release "v1.2.6" :status "shipped"
    :title "A draining member's beat carries this tick's no-room word"
    :text "The member asks Room every tick before the drain return, so a member that drained under its
     disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla,
@@ -102,7 +102,7 @@
     take (the machine STOPPED) is asked again on a later pass, a batch daemon takes her ready cards, and
     a card set aside on a refused take or finish is taken again (tla/FriendLaneTake.tla)."
    :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")
-  (fix "adopt-removes-friend-units-that-moved" :release "v1.2.6" :status "in-progress"
+   (fix "adopt-removes-friend-units-that-moved" :release "v1.2.6" :status "shipped"
    :title "The adopt removes the unit of a friend who moved hosts"
    :text "The friends step of the tools play splits the stale friend daemons live lists by what launchd
     holds: it reinstalls the ones the host runs (the friends table's place for them) and removes the
@@ -138,14 +138,14 @@
     nova_friend_wall_reads to a reinstall whose plist records none, so a pinned harness whose shim
     execs a directory under the home no longer exits 126 (Operation not permitted) for every lane."
    :origin "a one-shot friend host, 2026-10-10: every lane exit 126 after the harness pin; the wall denied reading the pinned harness directory")
-  (fix "friends-snap-to-the-new-epoch" :release "v1.2.6" :status "in-progress"
+   (fix "friends-snap-to-the-new-epoch" :release "v1.2.6" :status "shipped"
    :title "A friend's new epoch retires her older-epoch items and starts empty"
    :text "On the sprint's new epoch the daemon moves every older-epoch inbox and outbox item to the
     retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
     empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
     stale session never carries across a clear."
    :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")
-  (fix "a-friend-session-full-or-missing-starts-fresh" :release "v1.2.6" :status "in-progress"
+   (fix "a-friend-session-full-or-missing-starts-fresh" :release "v1.2.6" :status "shipped"
    :title "A friend's lane session full or missing starts a fresh one itself"
    :text "A provider's context-limit refusal on a lane's session, or a session the harness no longer
     has, no longer counts the card's turns against it and waits for a hand session plus a restart: the
@@ -159,25 +159,25 @@
     (its add refuses a held rules file that differs), stops children rewriting history, which caused the
     does-not-descend refusals. A test pins the file's digest in both repositories."
    :origin "v1.2.5 candidate list")
-  (fix "friend-width-fits-slots" :release "v1.2.6" :status "planned"
+   (fix "friend-width-fits-slots" :release "v1.2.6" :status "shipped"
    :title "A friend's width fits within her slots"
    :text "nova-config refuses a friend width larger than her slots and names both values, so one-shot
     lanes cannot silently halve the friend's available capacity."
    :origin "dogfood 2026-10-10: one-shot friend at width 32 with 16 slots")
-  (fix "no-friend-runs-in-batch-mode" :release "v1.2.6" :status "in-progress"
+   (fix "no-friend-runs-in-batch-mode" :release "v1.2.6" :status "shipped"
    :title "No friend runs in batch mode"
    :text "A friend's delivery mode is one-shot always: nova-config refuses --mode batch, a stored batch row
     reads as one-shot (config.FriendMode, the reader nova-sprint's friend sync writes onto her roster
     row), and her daemon runs one card per lane."
    :origin "dogfood 2026-10-10: a friend row still mode=batch")
-  (fix "one-shot-friend-presence-needs-no-session" :release "v1.2.6" :status "in-progress"
+   (fix "one-shot-friend-presence-needs-no-session" :release "v1.2.6" :status "shipped"
    :title "A one-shot friend's presence needs no session"
    :text "A one-shot opencode friend has no long-lived session by design: her presence comes from the
     daemon and its lanes, never a growing session. Her session check goes in as a fresh turn of its
     own (opencode run with no --session), so a session that is full (past the model's context) or
     missing is never the reason she is down."
    :origin "the seat ledger v1.2.4-held-2026-10-10.md, two friends down after the adopt: one past the 260000-token context refused every turn, one with no opencode session in its directory")
-  (fix "a-reader-loop-redials-after-a-server-restart" :release "v1.2.6" :status "in-progress"
+   (fix "a-reader-loop-redials-after-a-server-restart" :release "v1.2.6" :status "shipped"
    :title "A reader loop re-dials the sprint server after its restart"
    :text "The sprint connection a reader beats and takes through is rebuilt after any error and backed
     off one second doubling to thirty (cmd/nova-swarm/sprintredial.go, tla/LoopRedial.tla), so a
@@ -185,12 +185,12 @@
     on the dead socket; fleet/loops.yml takes nova_loop_restart=<records> to restart a hung loop
     through the play, never by hand."
    :origin "measured 2026-10-11 01:05-01:20Z: after the v1.2.6 adopt every Linux reader loop stopped at its last connection-refused line while the member loops on the same hosts recovered, 24 reads waited with 0 reading and the server raised cannot ask (0 free readers) until each reader unit was restarted by hand")
-  (fix "worker-question-ending-asked" :release "v1.2.9" :status "planned"
+   (fix "worker-question-ending-asked" :release "v1.2.9" :status "shipped"
    :title "End a card as asked when its last turn is a question"
    :text "A headless card whose last turn asks the user a question ends at once as asked instead of
      holding its slot to the deadline."
    :origin "issue #2548")
-  (fix "fleet-built-from-release-not-source" :release "v1.2.8" :status "in-progress"
+   (fix "fleet-built-from-release-not-source" :release "v1.2.8" :status "shipped"
    :title "Every installed tool is checked against the release's bytes"
    :text "After the install and the friends' reinstall, tools.yml lists each machine's bin directory with
     the sha256 of every file and compares it with the platform's SHA256SUMS; a tool built or copied on
@@ -212,30 +212,30 @@
    :text "The adopt window waits only for the agents the adopt itself stopped, and its dry run reports
     what each step would do instead of saying would for every step."
    :origin "card from the sprint store (2026-10-10)")
-  (fix "swarm-idle-reap-verdict" :release "v1.2.9" :status "planned"
+   (fix "swarm-idle-reap-verdict" :release "v1.2.9" :status "shipped"
    :title "Idle-reaped cards report their real cause and are not wrongly reaped"
    :text "A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced
     working cards. The verdict states idle reaping and the idle watch accounts for the shell cap."
    :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")
-  (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
+   (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "shipped"
    :title "A HOLD report with zero findings is malformed"
    :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
    :origin "PR #4635")
-  (fix "update-adopt-partial-release-dir" :release "v1.2.9" :status "planned"
+   (fix "update-adopt-partial-release-dir" :release "v1.2.9" :status "shipped"
    :title "Release adopt does not trust a partial release directory"
    :text "A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt
     verifies completeness or uses a temporary dir renamed at the end."
    :origin "issue #1981")
-  (fix "swarm-slot-lease-release-by-id" :release "v1.2.9" :status "planned"
+   (fix "swarm-slot-lease-release-by-id" :release "v1.2.9" :status "shipped"
    :title "The dispatcher releases a slot lease by its own id"
    :text "Release removes every lease with the same owner and label. It releases only the one lease it took."
    :origin "issue #1582")
-  (fix "ci-cancelled-under-load" :release "v1.2.9" :status "planned"
+   (fix "ci-cancelled-under-load" :release "v1.2.9" :status "shipped"
    :title "CI runs on card PRs are not cancelled under load"
    :text "CI runs at the head of card PRs are cancelled mid-job when many PRs open together; the
     concurrency rule is fixed so each head gets one full run."
    :origin "issue #2795")
-  (fix "update-revert-on-red-cancelled-run" :release "v1.2.9" :status "in-progress"
+   (fix "update-revert-on-red-cancelled-run" :release "v1.2.9" :status "shipped"
    :title "A cancelled workflow run counts as red for revert-on-red"
    :text "Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a
     bad main."
@@ -244,7 +244,7 @@
    :title "Friend daemons follow the adopted release automatically"
    :text "When the adopted build for a line changes, each friend host installs it through the play and proves its lanes, with no hand adopt per host."
    :origin "the owner 2026-10-10: what else is manual that should be automatic from the machine")
-  (fix "swarm-doctor-checks-running-executable" :release "v1.2.9" :status "planned"
+   (fix "swarm-doctor-checks-running-executable" :release "v1.2.9" :status "shipped"
    :title "nova-swarm doctor checks the running executable, not only PATH"
    :text "The launch preflight refuses a new binary found on PATH but passes the same binary by absolute
     path. It checks the executable that is actually running."
