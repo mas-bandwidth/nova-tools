@@ -140,6 +140,15 @@
      block, for the word and for the line it names, so a bare variable named `scratch` in quoted
      code is no longer refused as a relative scratch path (issues #1994, #2302, #3470)."
     :origin "the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11: swarm-lint false refusals; code read at nova-tools dev 2314d43")
+   (fix "nova-friend-raises-a-refused-verb-and-proves-its-harness-first" :release "v1.2.14" :status "planned"
+    :title "A refused verb is raised, and a lane proves its harness before it takes"
+    :text "A sprint server that refuses a friend verb (friend cards, friend beat) is counted per verb; the
+     third consecutive refusal raises it once — a down beat naming the reason and one word to the
+     coordinator — never only logs, and a server that answers again clears it. A claude lane proves
+     its harness first (claude -p ok --output-format json --max-turns 1 with the row's config_dir as
+     CLAUDE_CONFIG_DIR), re-proved after two instant failures, before any take; a
+     harness that cannot answer takes no card, beats down with the reason, and re-proves every minute."
+    :origin "nova-friend-raises-a-refused-verb-and-proves-its-harness-first.w6, 2026-10-11: the coordinator's friend daemon ran 11 hours refused \"You must hook in first\", and a lane's unsigned --config-dir burned ~35 card attempts in 6 minutes")
   (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "shipped"
    :title "Members are restarted and checked after adoption"
    :text "After installing, the play restarts every member, reader and friend daemon whose binary it
@@ -491,6 +500,20 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-table-layer-headers-name-table-lua" :release "v1.2.12" :status "planned"
+   :title "The table layer's headers name the table.lua they model"
+   :text "EpochMemberTable and MemberTable no longer say PROPOSED: the epoch composition and member
+    placement they model are what pkg/nsprint/fn/lua/table.lua implements today (STALE and EPOCHAHEAD
+    :1159-1164, MEMBEREPOCH :665 and :687, the per-table place:<name> :700, OWNEDALIAS :891, OCCUPIED
+    :917 and :921, PLACED :1636, DRIFT :939). MemberMove keeps its row/col shape: the batch member move
+    names a destination row and column (MemberMoveOp, store.go:1491; table.lua:2806, :2816), and only
+    the separate cell move verb is row-only (table.lua:1619). TableMachine says it is the baseline of
+    table-pinned.lua, whose six findings hold only there (tlacheck witnesses); TableEdit cites the
+    current ns_table_set :1354, ns_table_rows_add :1213, ns_table_rows_hide :1222, ns_table_row_set
+    :1236 and T.reshape :1263-1300. TABLE-MODEL.md and MEMBER-TABLE-MODEL.md say the same where they
+    said proposed. Tests and models only, no product change."
+   :origin "the card tla-table-layer-headers-name-table-lua.w1 (stream v1212), from the v1.2.12 inventory item T35 (the table layer)")
+
   (fix "cover-nova-friend-run-and-serve-faults" :release "v1.2.12" :status "planned"
    :title "Unit tests pin how nova-friend run, serve and the dispatcher answer faults"
    :text "cmd/nova-friend/run_serve_faults_test.go drives the wall and hook dispatch, the coordinator's
@@ -560,6 +583,20 @@
     caller list adds pkg/friend and cmd/nova-config, and tla/README.md says six FuseBox witnesses.
     The nine groups rerun and merge clean (tla/RUNS.tsv). Tests and models only, no product change."
    :origin "card tla-nova-tools-matching-models-cite-their-code.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
+  (fix "tla-cardcontract-retire-the-sprint-actions" :release "v1.2.12" :status "planned"
+   :title "CardContract retires the sprint's redeal, retire, restage, staging bound and level"
+   :text "CardContract.tla's Redeal, Retire, Restage, StagingAll and Level modelled internal/sprint's side
+    (the redeal after a provider finish, the retire at the redeal bound, the restage after a staging
+    refusal, the staging bound and the level), which moved to nova-sprint in v1.2.3 and nothing in
+    nova-tools runs. Those actions, the sprint-side variables (rt, tried, rds, fw, bj, mem, refused, sj,
+    lvd) and constants (Routes, MaxRedeals, Members), and the invariants they alone reached
+    (NeverOnARefuser, StagingBoundJudgedOnce, RedealBound, BoundJudgedOnce, RedealAvoidsFailedRoute,
+    RedealRestagesTheSameBase) are removed, with their reversed witnesses (sameroute, unbounded,
+    levelrefuser) and their CASES.tsv and RUNS.tsv rows. The member's push and the one judgment stay; a
+    provider finish and a staging refusal are now terminal finishes, and EveryLaunchEnds is restated over
+    them. Tests and models only, no product change."
+   :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"

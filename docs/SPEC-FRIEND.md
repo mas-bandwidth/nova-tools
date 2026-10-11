@@ -1580,6 +1580,25 @@ naming that card (`inbox: the sprint server does not serve friend cards (card
 daemon-writes-every-taken-card3 adds it) ...`), never once a loop; with no worker view to
 fall back on (`friend.NotServed`) it writes and retires nothing.
 
+**A refused verb.** A refusal the server answered (a non-zero exit, `friend.Refused`) is a
+fault the daemon raises, never only logs: it counts refusals per verb (friend cards, friend
+beat), and the third consecutive one is one down beat naming the reason
+(`friend.RefusalDown`, her beat says down with it) and one word to the coordinator, tried
+once each; a server that answers again clears the count and the down with one recovery
+line. On 2026-10-11 the coordinator's friend daemon was refused "You must hook in first"
+on friend cards and friend beat for eleven hours and only logged it: its row read down,
+no judgment reached the seat, nothing exited.
+
+**A lane proves its harness.** A claude lane runs `claude -p` on each card at once; a lane
+whose `--config-dir` was never signed in ends every run `terminal_reason api_error` in
+about a second, and the daemon finished each card FAILED and took the next, ~35 attempts
+in 6 minutes. A daemon whose harness cannot answer must take nothing: it runs the
+harness's cheapest no-tool turn at the start and after the second instant failure, before
+any take (`claude -p ok --output-format json --max-turns 1` with the lane's `CLAUDE_CONFIG_DIR`,
+run by the daemon itself, never a card child; dsh and
+gemini their equivalent one-turn invocation), reads its terminal reason, and while it
+cannot answer beats down with `harness <h> cannot answer: <terminal_reason> (config dir <dir>)`, tells the coordinator once, and re-proves every `ServedEvery` until it passes.
+
 ## The daemon stages every job it writes (pkg/friend/stage.go)
 
 On 2026-10-05 the first lanes of the rocketnet audit held with "no worktree, no remote" and the

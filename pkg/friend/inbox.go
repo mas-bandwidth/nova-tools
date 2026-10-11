@@ -69,12 +69,24 @@ type Row struct {
 	From  string
 	Note  string
 	Epoch uint64
+	// Refused is why the server refused friend cards this pass (a refusal it
+	// answered, Refused); "" when it answered, or was not asked this pass. The
+	// daemon counts these per verb and raises the third consecutive one
+	// (inboxStep; docs/SPEC-FRIEND.md, "A refused verb").
+	Refused string
 }
 
 // The sources of a Row.
 const (
 	FromCards = "friend cards"
 	FromView  = "the worker view"
+)
+
+// The server verbs the daemon counts refusals of, one key per verb in
+// Status.Refused (docs/SPEC-FRIEND.md, "A refused verb").
+const (
+	FriendCardsVerb = "friend cards"
+	FriendBeatVerb  = "friend beat"
 )
 
 // ErrNotDue is a Held that did not ask this pass (the worker view is read once a ViewEvery):
@@ -312,6 +324,7 @@ func (l *loop) inboxStep(now time.Time) {
 	}
 	var ns *NotServed
 	if errors.As(err, &ns) {
+		l.refused(FriendCardsVerb, ns.Why, now)
 		// asked again once a ServedEvery, so said once a minute, never once a loop
 		d.Record(fmt.Sprintf("%s inbox: %s; nothing written or retired until it does", now.UTC().Format(time.RFC3339), oneLine(ns.Error(), 400)))
 		d.status.InboxError = ns.Error()
@@ -323,6 +336,11 @@ func (l *loop) inboxStep(now time.Time) {
 			d.status.InboxError = why
 		}
 		return
+	}
+	if row.Refused != "" {
+		l.refused(FriendCardsVerb, row.Refused, now)
+	} else if row.From == FromCards {
+		l.recovered(FriendCardsVerb, now)
 	}
 	if row.Note != "" {
 		d.Record(fmt.Sprintf("%s inbox: %s", now.UTC().Format(time.RFC3339), oneLine(row.Note, 400)))
@@ -468,7 +486,7 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 	var refusedAt, viewAt time.Time
 	return func(ctx context.Context) (Row, error) {
 		at := now()
-		note := ""
+		note, refusedWhy := "", ""
 		if refusedAt.IsZero() || at.Sub(refusedAt) >= ServedEvery {
 			out, err := ask(ctx, FriendCardsArgv(friend))
 			var refused *Refused
@@ -481,9 +499,10 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 				return Row{}, err
 			}
 			refusedAt, viewAt = at, time.Time{}
+			refusedWhy = refused.Why
 			ns := &NotServed{Why: refused.Why}
 			if view == nil {
-				return Row{}, ns
+				return Row{Refused: refused.Why}, ns
 			}
 			note = ns.Error() + "; her row is read from the worker view, counted and retired"
 		} else if view == nil {
@@ -498,7 +517,7 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 			return Row{}, fmt.Errorf("friend cards is not served (card %s adds it), and the worker view did not answer: %w", ServedBy, err)
 		}
 		cards, err := ParseView(friend, out)
-		return Row{Cards: cards, From: FromView, Note: note, Epoch: viewEpoch(out)}, err
+		return Row{Cards: cards, From: FromView, Note: note, Refused: refusedWhy, Epoch: viewEpoch(out)}, err
 	}
 }
 
