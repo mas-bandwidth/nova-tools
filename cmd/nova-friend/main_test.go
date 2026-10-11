@@ -217,7 +217,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	r.env = map[string]string{}
 	r.cli().Do(t, "ping", "--as", "ada", "--to", "bob").Exit(2).Err("--redis is required", RedisEnv)
-	r.cli().Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "d", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("--redis is required", "written into the agent")
+	r.cli().Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "d", "--dry-run").Exit(2).Err("--redis is required", "written into the agent")
 }
 
 func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
@@ -301,14 +301,14 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--dry-run").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist+" launchd_log="+filepath.Join(r.home, "Library", "Logs", "nova-friend-bob.log")+" dry_run=true",
 			`INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL PLAN command="launchctl bootstrap gui/501 `+plist+`"`,
 			"NOTE the agent runs: nova-friend run --as bob --harness opencode --dir /w/bob --width 4, with --redis and --server as given here")
 	assert.NoFileExists(t, plist)
 	assert.Empty(t, r.launchctl)
 
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1", "--model", "deepseek/deepseek-v4").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`,
 			"INSTALL NOTE check: CHECK OK harness=opencode took=", "NOTE check it: nova-friend status --as bob --dir /w/bob")
 	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
@@ -343,13 +343,13 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 		return run(args, stdin, stdout, stderr, w)
 	})
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--dry-run").Exit(0).
 		Out(`INSTALL PLAN command="copy ` + src + " " + dst + `"`)
 	assert.Empty(t, copied, "a dry run copies nothing")
 	assert.Empty(t, r.launchctl)
 	assert.NoFileExists(t, plist)
 
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
 	assert.Equal(t, []string{src + " -> " + dst}, copied)
 	raw, err := os.ReadFile(plist)
@@ -366,7 +366,7 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 		return run(args, stdin, stdout, stderr, w)
 	})
 	plist = filepath.Join(refused.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4").Exit(2).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(2).
 		Err("INSTALL REFUSED", "removable volume", "disk full")
 	assert.Empty(t, refused.launchctl)
 	assert.NoFileExists(t, plist)
@@ -393,7 +393,7 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 	})
 	agents := filepath.Join(r.home, "Library", "LaunchAgents")
 	plist := filepath.Join(agents, "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--model", "deepseek/deepseek-v4", "--server", "127.0.0.1:6390").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--server", "127.0.0.1:6390").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
@@ -682,15 +682,15 @@ func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("--secrets wants --seat")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,no-such", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err(`"no-such" is none`)
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--dry-run").Exit(2).Err("--secrets wants --seat")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,no-such", "--seat", "studio", "--dry-run").Exit(2).Err(`"no-such" is none`)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
 	r.onPath = map[string]string{"nova-secrets": "/opt/nova/bin/nova-secrets", "sops": "/opt/homebrew/bin/sops"}
 	wrap := "/opt/nova/bin/nova-secrets exec --store " + filepath.Join(r.home, "nova-bench", "secrets") + " --as studio --key " + filepath.Join(r.home, ".config", "nova-secrets", "studio.key") +
 		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390 --width 0"
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--dry-run").Exit(0).
 		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis and --server as given here")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--model", "deepseek/deepseek-v4").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
 	raw, err := os.ReadFile(filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 	require.NoError(t, err)
 	var args []string
@@ -732,7 +732,7 @@ func TestClaudeInstallPrintsTheSessionsWaitAndStatusSaysPassive(t *testing.T) {
 	// status names it in the state directory the daemon did keep
 	state := friend.DefaultStateDir(r.home, "bob")
 	wait := "nova-bus wait --as bob --after <cursor> --wake-file " + filepath.Join(state, "bob.wake")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", dir, "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).NotOut("nova-bus wait")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", dir, "--dry-run").Exit(0).NotOut("nova-bus wait")
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "claude", At: start, Connection: friend.Connected, Challenge: friend.Quiet}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("route=passive", wait)
 }
@@ -745,11 +745,11 @@ func TestInstallCarriesTheCoordinatorAndANonDefaultSilentStop(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--silent-stop", "30m", "--model", "deepseek/deepseek-v4").Exit(0)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--silent-stop", "30m").Exit(0)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>\n    <string>--silent-stop</string>\n    <string>30m0s</string>")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4").Exit(0)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0)
 	raw, err = os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "--silent-stop", "the defaults are not written")
@@ -1335,7 +1335,7 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 
 	// install: the check's fail is a NOTE, the agent stays loaded
 	r.store.Fail = nil
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4", "--within", "5s").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--within", "5s").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob", "INSTALL NOTE check: CHECK FAIL harness=opencode stage=act")
 	assert.FileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 }

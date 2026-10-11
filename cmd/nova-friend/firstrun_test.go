@@ -44,7 +44,7 @@ func firstRunStore(t *testing.T) string {
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 	documentedExamples := []string{
-		"nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run",
+		"nova-friend install --as bob --harness opencode --dir ./bob --dry-run",
 		"nova-friend uninstall --as bob --dry-run",
 		"nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider",
 		"nova-friend ping --as ada --to bob --nonce abc123",
