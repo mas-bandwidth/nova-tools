@@ -622,6 +622,26 @@
     from Gate. Tests and models only, no product change."
    :origin "card tla-friend-one-shot-lanes-and-caps.w7 (nova-tools drift read at dev 2314d437f, 2026-10-11; the last of three Friend cards, chained)")
 
+  (fix "tla-coverage-names-every-module-in-nova-tools" :release "v1.2.12" :status "planned"
+   :title "Every TLA+ module is named by a COVERAGE row"
+   :text "Tests and models only, no product change. TestEveryStateMachineHasACurrentModel walked the rows
+    of tla/COVERAGE.tsv and never saw a module no row named; a check beside it, tlaCoverageModuleProblems,
+    walks every tla/<X>.tla whose name does not begin with MC and reports each one named by no row (with the
+    card that owes it) or by more than one. TestTLACoverageNamesEveryModule proves both shapes over a fixture
+    root under t.TempDir(). Four modules -- BusSendOnce, Delivery, FriendPresence and StopCancels -- had no
+    row and now have one, partial with the card that owes the model; the notes say what each module holds and
+    what is outside it. Rows the walk found drifted are marked partial with the card that owes them:
+    friend-lifecycle (tla-friend-link-and-challenge), friend-stage, bus-delivery, nova-update-apply,
+    cairn-store, card-contract, bench-run, config, bus-receipts, friend-lane-take, friend-notifications,
+    friend-reach and nova-table (the last also names pkg/ntable/store.go and pkg/nsprint/fn/lua/table.lua,
+    the table it models). No sprint-stop-fence row is added: StopReturn.tla moved to nova-sprint
+    (tla-moved-sprint-models-leave-nova-tools), and the row walk refuses a module with no tla/<module>.tla;
+    no friend-lanes-and-take row is added: that row was retired by tla-friend-one-shot-lanes-and-caps, and
+    friend-lane-take is the row it left. No sprint-redial row is added: LoopRedial is already named by the
+    reader-loop row, made current by tla-loopredial-names-what-the-code-cites. docs/SPEC-CI.md says the
+    check."
+   :origin "card tla-coverage-names-every-module-in-nova-tools-after-the-retire.w4 (stream v1212, 2026-10-11; the module walk the retired CardMachine copy left)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
