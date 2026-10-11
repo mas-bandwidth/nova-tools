@@ -95,7 +95,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
 	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds", scopedGot97)
 	for _, f := range friend.Fields {
-		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
+		scopedWant102 := f.Name == "slots" || f.Name == "tiers" || f.Name == "roles"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
 	}
 	for _, invented := range []string{"machine", "harness", "logins", "wake", "note", "coordinator"} {
@@ -402,7 +402,7 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners", "--os_arch is not a machine field"} {
 		assert.ErrorContains(t, err, want, "the machine refusal does not name %q:\n%s", want, err)
 	}
-	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64"})
+	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64", "roles": "builder"})
 	require.NoError(t, err)
 	for _, f := range friend.Fields {
 		_, scopedOk277 := row.Fields[f.Name]
@@ -410,7 +410,7 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	}
 	assertionMsg257 := []any{"row %+v", row.Fields}
 	func() {
-		if !assert.Equal(t, "", row.Fields["roles"], assertionMsg257...) {
+		if !assert.Equal(t, "builder", row.Fields["roles"], assertionMsg257...) {
 			return
 		}
 		if !assert.Equal(t, "64", row.Fields["slots"], assertionMsg257...) {
@@ -484,14 +484,14 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	t.Parallel()
 
 	friend, _ := Lookup(KindFriend)
-	row, err := friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash"})
+	row, err := friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "roles": "builder"})
 	require.NoError(t, err)
 	assert.Equal(t, "8", row.Fields["width"], "add stores the default width")
 	assert.Equal(t, DefaultFriendWidth, FriendWidth(row))
 	assert.Equal(t, 8, FriendWidth(Row{Name: "amy", Fields: map[string]string{"slots": "8"}}), "a row without the field reads as the default")
 	assert.Equal(t, 3, FriendWidth(Row{Name: "amy", Fields: map[string]string{"width": "3"}}))
 
-	_, err = friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "width": "0"})
+	_, err = friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "roles": "builder", "width": "0"})
 	require.Error(t, err)
 	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
 	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
@@ -726,13 +726,13 @@ func TestAFriendsTokenCapDefaultsToSixMillionAndZeroIsNone(t *testing.T) {
 	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "nope"}}))
 	friend, ok := Lookup(KindFriend)
 	require.True(t, ok)
-	row, err := friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash"})
+	row, err := friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "roles": "builder"})
 	require.NoError(t, err)
 	assert.Equal(t, "6000000", row.Fields["token_cap"], "add with no token_cap stores the default")
-	row, err = friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "token_cap": "0"})
+	row, err = friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "roles": "builder", "token_cap": "0"})
 	require.NoError(t, err)
 	assert.Equal(t, "0", row.Fields["token_cap"], "an explicit 0 is stored, and is no cap")
-	_, err = friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "token_cap": "-1"})
+	_, err = friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "roles": "builder", "token_cap": "-1"})
 	require.Error(t, err)
 }
 

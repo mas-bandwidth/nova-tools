@@ -386,7 +386,7 @@ func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	const held = "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run nova-config sprint set --coordinator a to make the row agree"
 	// The live seat holds a; the row names b and an unrelated field.
 	st := NewMem()
-	fb, err := friend.NewRow("b", map[string]string{"slots": "8", "tiers": "flash"})
+	fb, err := friend.NewRow("b", map[string]string{"slots": "8", "tiers": "flash", "roles": "builder"})
 	require.NoError(t, err)
 	_, err = st.Insert(ctx, KindFriend, fb, "rowan")
 	require.NoError(t, err)
@@ -432,7 +432,7 @@ func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 
 	// A first apply, with no live key, writes the row's coordinator.
 	st2 := NewMem()
-	fc, err := friend.NewRow("c", map[string]string{"slots": "8", "tiers": "flash"})
+	fc, err := friend.NewRow("c", map[string]string{"slots": "8", "tiers": "flash", "roles": "builder"})
 	require.NoError(t, err)
 	_, err = st2.Insert(ctx, KindFriend, fc, "rowan")
 	require.NoError(t, err)
