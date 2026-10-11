@@ -585,7 +585,11 @@ type Member struct {
 	posted   map[string]post
 	startMu  sync.Mutex
 	pushGate chan struct{}
-	wake     chan struct{}
+	// reportGate bounds the reports running at once (pushWidth): a report is one verb
+	// and may wait on the wire, so the pass runs up to pushWidth of them side by side
+	// instead of one after another (docs/SPEC-SPRINT.md, the fleet member).
+	reportGate chan struct{}
+	wake       chan struct{}
 }
 
 // post is what a launch's long work found: its start (the child, or why there is none),
@@ -602,6 +606,27 @@ type post struct {
 	// with no child of ours for machineStop to hand back with stop-return, never finished
 	// (NoLaunchAfterStop, NoFinishOfACancelledCard; tla/StopCancels.tla).
 	cancelledByStop bool
+	// report is a report verb that ran apart from the pass (reportOne): its exit code,
+	// its output, and what applying it in the pass goroutine needs.
+	report *reportOut
+}
+
+// reportOut is one report verb's outcome as its goroutine posts it. The goroutine runs
+// only the verb (m.run); every state change reportOne makes (m.running, m.forget,
+// m.returnedAt, a re-read packet's m.start, the noAnswer note) is applied in the pass
+// goroutine when collect gives this to the launch.
+type reportOut struct {
+	args            []string
+	verb            string
+	reads           bool
+	ok              bool
+	pushedHead      string
+	returnNoVerdict bool
+	returnReason    string
+	now             time.Time
+	code            int
+	out             []byte
+	noAnswer        func(string, []byte)
 }
 
 // decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
@@ -616,7 +641,7 @@ type decided struct {
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
-		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}, finishRefused: map[string]*refusedFinish{}}
+		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), reportGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}, finishRefused: map[string]*refusedFinish{}}
 	m.advanced() // a member begins with its pass going on
 	return m
 }
@@ -951,12 +976,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if l.res == nil {
 				continue
 			}
-			if m.reportOne(id, l, now, nil, noAnswer) {
-				reports++
-			}
+			reports += m.reportOne(id, l, now, nil, noAnswer)
 		}
-		m.spent.Report += since()
-		return reports
+		return reports + m.collectReports()
 	}
 
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
@@ -1061,9 +1083,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			// card's commit pushed) has not been collected yet
 			continue
 		}
-		if m.reportOne(id, l, now, c.Packet, noAnswer) {
-			acted++
-		}
+		// reportOne runs the verb apart from the pass, bounded by pushWidth, and posts
+		// its result for the collect below: the card it reports is acted on there, in
+		// the pass goroutine (reportRun, applyReport). A read it runs again here and
+		// now is a state change of this pass and is counted here.
+		acted += m.reportOne(id, l, now, c.Packet, noAnswer)
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
 	// card was dealt elsewhere) has nothing left to report to: once it has
@@ -1093,6 +1117,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// tla/NoRoom.tla in nova-sprint, Tick: WordIsThisTicks)
 	ok, why := m.room(now)
 	if m.drain {
+		acted += m.collectReports()
+		m.spent.Fill = since()
 		return acted, nil
 	}
 	// every card this tick would start is started, or, when Config.Room says no, finished as
@@ -1112,6 +1138,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			return returned
 		}
 	}
+	fillLap := m.clock()
 	// 4. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child
 	// of ours is a card from before this process started (or one whose moved
@@ -1125,13 +1152,33 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if out != nil {
 		noAnswer(m.takeVerb(), out)
 	}
-	m.spent.Fill = since()
+	m.spent.Fill = m.clock().Sub(fillLap)
+	// the reports launched this pass are the pass's when it is not Background: it waits
+	// for them (as endEnded waits for its ends) and collects their results here, after
+	// the take, so a lane freed by a report is filled by the next pass and never by
+	// waiting for every report
+	acted += m.collectReports()
 	return acted + n, nil
 }
 
-// reportOne reports one ended launch whose result is ready. It returns true if the card
-// was acted on and forgotten, or false if retained for retry or left in flight.
-func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, noAnswer func(string, []byte)) bool {
+// collectReports waits for a non-background pass's reports and applies their results, so a
+// pass is still one step: what the goroutines found is collected before the pass returns.
+// RULE (docs/SPEC-SPRINT.md, the fleet member): a pass's reports run side by side up to
+// pushWidth, and a non-background pass collects them after the take, so it is still one step.
+func (m *Member) collectReports() int {
+	if !m.cfg.Background {
+		m.longs.Wait()
+	}
+	reportLap := m.clock()
+	acted := m.collect()
+	m.spent.Report += m.clock().Sub(reportLap)
+	return acted
+}
+
+// reportOne reports one ended launch whose result is ready. It returns how many cards it
+// acted on in the pass goroutine (a read run again here and now): a report it hands to
+// reportRun is counted when its result is collected (applyReport), so it returns 0 for it.
+func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, noAnswer func(string, []byte)) int {
 	r := *l.res
 	if r.End == EndUnverifiable {
 		m.usageStopped = now // the member's rest (UsageRest), from the last such end
@@ -1158,13 +1205,13 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 				} else {
 					fmt.Fprintf(m.out, "read %s: stage failed (%s); no verdict recorded; run again in %s\n", id, oneLine(r.Staging), ReadStageRetry)
 				}
-				return false
+				return 0
 			}
 			if now.Before(l.retryAt) {
-				return false
+				return 0
 			}
 			if qPacket == nil {
-				return false // suppress new starts from an unknown queue state
+				return 0 // suppress new starts from an unknown queue state
 			}
 			// the retry is owed once per card: it is remembered across a start that fails and
 			// across a launch the recovery path makes (start gives it to the launch)
@@ -1174,7 +1221,12 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 			if qPacket != nil {
 				p = *qPacket
 			}
-			return m.start(p)
+			// the run again is a state change of this pass (m.start, here in the pass
+			// goroutine), so it is counted here, never by a collected report
+			if m.start(p) {
+				return 1
+			}
+			return 0
 		}
 		finding := oneLine(r.Report)
 		if r.Verdict == "broken" {
@@ -1208,20 +1260,8 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 				reason = cut(NoFinding + ": the broken read names no file, line or rule: " + finding)
 			}
 			args = append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
-			code, out := m.run(args...)
-			fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
-			if code == 2 {
-				noAnswer("read --return "+id, out)
-				return false
-			}
-			if code != 0 {
-				l.spent = true
-				m.running[id] = l
-				return false
-			}
-			m.forget(id, true) // returned with no verdict
-			m.returnedAt[id] = now
-			return true
+			m.reportRun(id, args, reportOut{reads: true, ok: ok, returnNoVerdict: true, returnReason: reason, now: now, noAnswer: noAnswer})
+			return 0
 		}
 		word := "--ok"
 		if r.Verdict == "broken" {
@@ -1268,24 +1308,86 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 		ok = fin == FinishOK
 		args = append(args, launched...)
 	}
-	code, out := m.run(args...)
-	fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", args[0], id, ok, code, routeWords(l.packet))
-	if code == 2 {
-		noAnswer(args[0]+" "+id, out)
+	m.reportRun(id, args, reportOut{reads: m.reads(l), ok: ok, pushedHead: pushedHead, now: now, noAnswer: noAnswer})
+	return 0
+}
+
+// reportRun runs one report verb (m.run) apart from the pass, up to pushWidth at once, and
+// posts its exit code and output for the pass's collect to apply. The launch is marked busy
+// here, in the pass goroutine, so the next pass neither reports it twice nor counts its lane
+// free until the result is collected; the verb goroutine changes no state but the post.
+// RULE (docs/SPEC-SPRINT.md, the fleet member): the cards a pass reports go out side by
+// side, bounded by pushWidth, exactly as its ends do (endEnded), so the member spends the
+// process spawn and the wire wait of each report at once instead of one after another.
+func (m *Member) reportRun(id string, args []string, ro reportOut) bool {
+	l, ours := m.running[id]
+	if !ours {
 		return false
 	}
-	if code != 0 {
+	l.busy, l.busyAt = true, m.clock()
+	m.running[id] = l
+	ro.args, ro.verb = args, args[0]
+	m.longs.Add(1)
+	go func() {
+		defer m.longs.Done()
+		m.reportGate <- struct{}{}
+		code, out := m.run(args...)
+		<-m.reportGate
+		ro.code, ro.out = code, out
+		m.post(id, post{report: &ro})
+	}()
+	return true
+}
+
+// applyReport applies in the pass goroutine what a report verb found, exactly as reportOne
+// did when it ran the verb itself: the result line, the no-answer note, the refusal's
+// memory for a pushed finish, the return of a read with no verdict, and the forgetting of
+// the card. It returns how many cards it acted on.
+// RULE (docs/SPEC-SPRINT.md, the fleet member): only the pass goroutine applies a report's
+// result (reportRun runs only the verb), so the running, forget and returned-at state moves
+// in one goroutine and a launch being reported stays busy until its result is collected.
+func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
+	if ro.returnNoVerdict {
+		fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, ro.code, ro.returnReason)
+	} else {
+		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", ro.verb, id, ro.ok, ro.code, routeWords(l.packet))
+	}
+	if ro.code == 2 {
+		ro.noAnswer(ro.verb+" "+id, ro.out)
+		m.running[id] = l // left for the next pass
+		return 0
+	}
+	if ro.code != 0 {
 		// the refusal's own words are said; a refused finish of a generation that pushed is
 		// remembered, so the same finish is sent again and the card is never run again
 		// (launch.push: a finish is reported again, never pushed again)
-		text := oneLine(strings.TrimSpace(string(out)))
-		fmt.Fprintf(m.out, "NOTE %s %s refused: %s\n", args[0], id, text)
-		if !m.reads(l) && pushedHead != "" {
-			m.rememberFinish(id, l.gen, pushedHead, args, text, now)
+		text := oneLine(strings.TrimSpace(string(ro.out)))
+		fmt.Fprintf(m.out, "NOTE %s %s refused: %s\n", ro.verb, id, text)
+		if !ro.reads && ro.pushedHead != "" {
+			m.rememberFinish(id, l.gen, ro.pushedHead, ro.args, text, ro.now)
+		}
+		if ro.reads && ro.returnNoVerdict {
+			// a refused return of a read that reached no verdict leaves the launch spent
+			// (the read stays for the lateness rule, reportOne's read --return refusal); a
+			// refused read VERDICT is not spent: exactly as reportOne today, it falls to
+			// m.forget(id, false) below, the launch is dropped and the reading card is
+			// recovered on a later pass
+			l.spent = true
+			m.running[id] = l
+			return 0
 		}
 	}
-	m.forget(id, !m.reads(l) && !ok) // refused (1) too: the card is no longer ours to report
-	return true
+	if ro.reads {
+		if ro.returnNoVerdict {
+			m.forget(id, true) // returned with no verdict
+			m.returnedAt[id] = ro.now
+		} else {
+			m.forget(id, false) // a read verdict is reported and the lane is free
+		}
+		return 1
+	}
+	m.forget(id, !ro.ok) // refused (1) too: the card is no longer ours to report
+	return 1
 }
 
 // takeVerb is the verb a take is: a reader's is read --begin.
@@ -1575,6 +1677,10 @@ func (m *Member) collect() (acted int) {
 			}
 			m.running[card] = l
 			fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", card, l.attempt, l.gen, m.Running(), m.width, routeWords(l.packet))
+		case po.report != nil:
+			// a report that ran apart from the pass is applied here, in the pass
+			// goroutine, so the state it changes is the pass's alone
+			acted += m.applyReport(card, l, po.report)
 		default:
 			l.res, l.push, l.decided = po.res, po.push, po.decided
 			m.running[card] = l
@@ -2061,23 +2167,12 @@ func (m *Member) haveWords() string {
 	return words
 }
 
-// lanes is how many cards this pass may start: the lanes free now, and one for every
-// launch the pass will report (its end collected or posted, or its child exited), so a
-// read begun in the lane a report frees has its packet in the same pass.
+// lanes is how many cards this pass may start: the lanes free now. A launch the pass
+// reports still holds its lane while its report runs (reportRun), and the take runs
+// before the reports are collected, so a lane a report frees is filled by the next pass
+// and its packet is asked for then, never this pass (reportOne, step 5).
 func (m *Member) lanes() int {
-	m.postMu.Lock()
-	ended := map[string]bool{}
-	for id, po := range m.posted {
-		ended[id] = po.child == nil // a start posted frees nothing; its failure, or an end, does
-	}
-	m.postMu.Unlock()
-	n := m.width - m.Running()
-	for id, l := range m.running {
-		if !l.spent && (l.res != nil || ended[id] || (l.child != nil && l.child.Done())) {
-			n++
-		}
-	}
-	return max(n, 0)
+	return max(m.width-m.Running(), 0)
 }
 
 // queueOf runs a queue that asks for its packets (--packets), and, when the server is one
