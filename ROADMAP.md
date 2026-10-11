@@ -24,7 +24,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (27)
-- [Setup, release and operations](#setup-release-and-operations) (100)
+- [Setup, release and operations](#setup-release-and-operations) (99)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
