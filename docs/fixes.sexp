@@ -193,4 +193,8 @@
    :title "Release adopt does not trust a partial release directory"
    :text "A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt
     verifies completeness or uses a temporary dir renamed at the end."
-   :origin "issue #1981")))
+   :origin "issue #1981")
+  (fix "swarm-slot-lease-release-by-id" :release "v1.2.9" :status "planned"
+   :title "The dispatcher releases a slot lease by its own id"
+   :text "Release removes every lease with the same owner and label. It releases only the one lease it took."
+   :origin "issue #1582")))
