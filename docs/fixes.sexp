@@ -468,6 +468,19 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friendpresence-daemon-evidence" :release "v1.2.12" :status "planned"
+   :title "FriendPresence models the daemon's evidence, not only the nonce answer"
+   :text "tla/FriendPresence.tla read up from the session's answer to a nonce alone; the code makes any bus
+    line the session writes evidence (pkg/friend/presence.go Heard), keeps a check cadence (ProveEvery,
+    ReaskAfter, read) and a push proof (Proven), and the server's FriendStatus counts a recent finish as
+    evidence. The module now models those: up is evidence younger than the bound (a session line, an
+    answer, or a finish), read and proven are states the actions move, Finish is a finish evidence action,
+    and UpHasFreshAnswer is restated as UpHasFreshEvidence, with a reversed witness (finishforever: a
+    finish never ages). The appholds witness is removed: it models the pre-fix behaviour the new evidence
+    rule supersedes. The table half (Hold, TakeBack, Deal, Take) still models nova-sprint code and should
+    move beside SeatHealth there (a follow-up)."
+   :origin "card tla-friendpresence-daemon-evidence.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
