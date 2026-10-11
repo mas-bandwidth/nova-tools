@@ -173,8 +173,8 @@ func (t *Tmux) Busy(ctx context.Context) (bool, error) {
 	return !t.idle(screen), nil
 }
 
-// Deliver types text into the idle pane (SPEC-FRIEND.md, "Hosted in tmux";
-// Delivery.tla: the pane's prompt is the session's free state, the typed line
+// Deliver types text into the idle pane (SPEC-FRIEND.md, "Hosted in tmux":
+// the pane's prompt shown is the session's free state, and the typed line
 // starts the turn that makes it busy).
 func (t *Tmux) Deliver(ctx context.Context, text string) (int, error) {
 	screen, err := t.capture(ctx)
