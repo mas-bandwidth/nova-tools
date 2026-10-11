@@ -193,6 +193,58 @@ func TestARefusedReadVerdictIsForgottenNotSpent(t *testing.T) {
 	assert.Empty(t, g.m.running, "a refused read verdict is forgotten, not kept spent")
 }
 
+// TestAReadReturnRefusalIsQuietAndSpent pins STEP (1)'s "the state changes reportOne makes
+// today ... applied by collect from the posted result", exactly as today: a read that reached
+// no verdict and whose `read --return` verb exits 1 is refused; reportOne's return path set
+// the launch spent (the read stays for the lateness rule) and printed NO refusal NOTE, unlike
+// a refused read verdict. Red at HEAD: applyReport printed the NOTE for a refused read
+// --return.
+func TestAReadReturnRefusalIsQuietAndSpent(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &a)))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1"}, g.r.started(), "the read runs")
+
+	g.r.child("r1").end(Result{Ran: false, Report: "STAGE FAIL no bench mirror"})
+	g.s.set("queue", 0, queueJSON(t, 7, working("r1", 1, &a)))
+	g.s.set("return", 1, "REFUSED read --return: no such card")
+	g.s.reset()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+
+	require.Len(t, g.s.lines("return"), 1, "the read is returned")
+	require.Len(t, g.m.running, 1, "a refused read --return leaves the launch spent")
+	assert.True(t, g.m.running["r1"].spent, "the launch is spent")
+	assert.NotContains(t, g.out.String(), "refused:",
+		"reportOne printed no refusal note for a read --return")
+}
+
+// TestAReadReturnNoAnswerNamesTheReturnVerb pins STEP (1)'s noAnswer note, exactly as today:
+// the store not answering a `read --return` is noted as `read --return <id>`, the label
+// reportOne passed, never the bare `read <id>`.
+func TestAReadReturnNoAnswerNamesTheReturnVerb(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &a)))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1"}, g.r.started(), "the read runs")
+
+	g.r.child("r1").end(Result{Ran: false, Report: "STAGE FAIL no bench mirror"})
+	g.s.set("queue", 0, queueJSON(t, 7, working("r1", 1, &a)))
+	g.s.set("return", 2, "the store did not answer")
+	g.s.reset()
+	_, err = g.tick(t)
+	require.Error(t, err, "a store that did not answer is reported")
+
+	assert.Contains(t, g.out.String(), "NOTE read --return r1: the store did not answer",
+		"the no-answer note names the read --return verb")
+}
+
 // TestARefusedFinishIsRetriedByteForByteNextPass pins that a refused finish of a pushed
 // generation is sent again, byte for byte, by a later pass, and the run is never repeated
 // (retryFinishes; launch.push).

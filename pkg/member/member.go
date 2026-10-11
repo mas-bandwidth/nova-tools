@@ -1356,11 +1356,28 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", ro.verb, id, ro.ok, ro.code, routeWords(l.packet))
 	}
 	if ro.code == 2 {
-		ro.noAnswer(ro.verb+" "+id, ro.out)
+		// the no-answer note names the verb the store did not answer: a read that reached no
+		// verdict is returned as `read --return`, exactly as reportOne labeled it
+		if ro.returnNoVerdict {
+			ro.noAnswer("read --return "+id, ro.out)
+		} else {
+			ro.noAnswer(ro.verb+" "+id, ro.out)
+		}
 		m.running[id] = l // left for the next pass
 		return 0
 	}
 	if ro.code != 0 {
+		if ro.reads && ro.returnNoVerdict {
+			// a refused return of a read that reached no verdict leaves the launch spent
+			// (the read stays for the lateness rule); reportOne's read --return path printed
+			// no refusal note, it only set the launch spent, so none is printed here. A
+			// refused read VERDICT is not spent: exactly as reportOne today, it falls to
+			// m.forget(id, false) below, the launch is dropped and the reading card is
+			// recovered on a later pass.
+			l.spent = true
+			m.running[id] = l
+			return 0
+		}
 		// the refusal's own words are said; a refused finish of a generation that pushed is
 		// remembered, so the same finish is sent again and the card is never run again
 		// (launch.push: a finish is reported again, never pushed again)
@@ -1368,16 +1385,6 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 		fmt.Fprintf(m.out, "NOTE %s %s refused: %s\n", ro.verb, id, text)
 		if !ro.reads && ro.pushedHead != "" {
 			m.rememberFinish(id, l.gen, ro.pushedHead, ro.args, text, ro.now)
-		}
-		if ro.reads && ro.returnNoVerdict {
-			// a refused return of a read that reached no verdict leaves the launch spent
-			// (the read stays for the lateness rule, reportOne's read --return refusal); a
-			// refused read VERDICT is not spent: exactly as reportOne today, it falls to
-			// m.forget(id, false) below, the launch is dropped and the reading card is
-			// recovered on a later pass
-			l.spent = true
-			m.running[id] = l
-			return 0
 		}
 	}
 	if ro.reads {
