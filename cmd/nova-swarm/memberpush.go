@@ -167,8 +167,27 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if serr != nil || !typedrec.IsFullSha(base) {
 		return member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}
 	}
+	// the descent refusal tells three cases apart (docs/SPEC-CARD-CONTRACT.md section 4): the
+	// staged commit held by no branch or HEAD of the checkout (the child cut its branch again
+	// or reset it, so no fetched ref brought it), a head that parted from the staged commit
+	// (named with their merge base), and git itself failing in the push repository. The first
+	// two begin "the result's head ... does not descend from the staged commit ...", the text
+	// member.Judge's classes and the refusal tests match on; the new words go after it.
+	if sres, serr := g.run(ctx, repo, nil, "rev-parse", "--verify", "-q", "--end-of-options", base+"^{commit}"); serr != nil || strings.TrimSpace(string(sres.Stdout)) == "" {
+		return member.Push{Refused: "the result's head " + full + " does not descend from the staged commit " + base + ": no branch or HEAD of the checkout holds " + base + " (the branch was cut again or reset); put the commits on top of " + base + " and finish again"}
+	}
 	if res, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, full); err != nil {
-		return member.Push{Refused: "the result's head " + full + " does not descend from the staged commit " + base + ": " + gitLine(res, err)}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			m := "none"
+			if mres, merr := g.run(ctx, repo, nil, "merge-base", "--end-of-options", base, full); merr == nil {
+				if s := strings.TrimSpace(string(mres.Stdout)); s != "" {
+					m = s
+				}
+			}
+			return member.Push{Refused: "the result's head " + full + " does not descend from the staged commit " + base + " (merge base " + m + "); put the commits on top of " + base + " and finish again"}
+		}
+		return member.Push{Refused: "checking that the result's head " + full + " descends from the staged commit " + base + ": " + gitLine(res, err)}
 	}
 	res, err = g.run(ctx, repo, nil, "rev-list", "--count", "--end-of-options", full, "^"+base)
 	if err != nil {
