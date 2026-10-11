@@ -1822,8 +1822,9 @@ spaces (`REDIS_VERSION = "<v>"`, `const RedisVersion = "<v>"`,
 tier is green on one while a document, an installer or a captured error text
 names the other, and a behaviour that differs between them is found by a user
 and never by a test.
-**The test.** `TestRedisIsOneVersionEverywhere` and
-`TestRedisVersionRuleSeesEachShape`
+**The test.** `TestRedisIsOneVersionEverywhere`,
+`TestRedisVersionRuleSeesEachShape` and
+`TestRedisVersionLineFilterIsOnlyAShortcut`
 (`internal/ci/redis_version_class_test.go`). The first reads the reference,
 requires each named place to name a version at least once, sweeps the files of
 the living tree of these kinds (Go, Markdown, YAML, TOML, INI, JSON, shell,
@@ -1835,7 +1836,9 @@ data and other people's code (`vendor`, `node_modules`, a Python virtualenv) are
 not, the versions of other programs (`go-redis v9.22.0`, `nova-redis 1.0.0`),
 minimums (`Redis 7 or later`) and addresses (`redis=127.0.0.1:6379`) are not,
 and a split of three versions is reported once per differing version with all
-its places.
+its places. The third holds the line filter: a line without `redi` in any ASCII
+case, which both readers need, is passed over before any regexp runs, and every
+line in a shape the rule reads passes it.
 **Its allowlist.** None. `redisVersionHistory` lists the paths the sweep does
 not read, each with its reason (release history, and the fixtures of a package
 deprecated in place that record servers of other versions), and the test is red
