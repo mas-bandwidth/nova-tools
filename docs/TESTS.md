@@ -141,12 +141,12 @@ push (a member's work push is its loop's) and says so, naming the holder; and
 
 ```
 $ nova-hook status --as m1
-! STATUS FAILED name=m1 state=none role=- epoch=0 reason=unhooked: m1 is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is; run: nova-hook hook --as m1 --role coordinator
-! STATUS NOTE or, as friend: nova-hook hook --as m1 --role friend
-! STATUS NOTE or, as comms: nova-hook hook --as m1 --role comms
-! STATUS NOTE or, as member: nova-hook hook --as m1 --role member
-! STATUS NOTE or, as reader: nova-hook hook --as m1 --role reader
-! STATUS NOTE see it: nova-hook status --as m1
+! STATUS FAILED name=m1 state=none role=- epoch=0 reason=unhooked: m1 is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is; run: nova-hook status --as m1
+! STATUS NOTE hook in as comms (on the bus, taking no sprint work): nova-hook hook --as m1 --role comms
+! STATUS NOTE hook in as friend (a friend working the sprint): nova-hook hook --as m1 --role friend
+! STATUS NOTE hook in as coordinator (the seat): nova-hook hook --as m1 --role coordinator
+! STATUS NOTE hook in as member (a machine's member loop): nova-hook hook --as m1 --role member
+! STATUS NOTE hook in as reader (a machine's reader loop): nova-hook hook --as m1 --role reader
 ! STATUS NOTE unhook: nova-hook unhook --as m1
 
 $ nova-hook hook --as m1 --role member --once

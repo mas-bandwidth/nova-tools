@@ -7,9 +7,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/hook/hooktest"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
@@ -100,7 +102,8 @@ func TestHookProveStatusUnhook(t *testing.T) {
 	assert.Equal(t, 1, res.Code)
 	assert.Contains(t, res.Stdout+res.Stderr, "STATUS FAILED name=ada state=none")
 	assert.Contains(t, res.Stdout+res.Stderr, "reason=unhooked: ada is not hooked in: no hook record")
-	assert.Contains(t, res.Stdout+res.Stderr, "; run: nova-hook hook --as ada --role coordinator")
+	assert.Contains(t, res.Stdout+res.Stderr, "; run: nova-hook status --as ada", "no role known: the remedy looks, it never guesses the coordinator")
+	assert.Contains(t, res.Stdout+res.Stderr, "NOTE hook in as comms (on the bus, taking no sprint work): nova-hook hook --as ada --role comms")
 
 	res = cli.Run("hook", "--as", "ada", "--role", "comms", "--once")
 	require.Equal(t, 1, res.Code, res.Stdout+res.Stderr)
@@ -247,4 +250,80 @@ func TestHookAsAnotherRoleTakesTheRecordOver(t *testing.T) {
 	assert.Contains(t, res.Stdout+res.Stderr, "role=member epoch=2 joined=false")
 	assert.Contains(t, res.Stdout+res.Stderr, "the record was hooked as friend: it is member from now")
 	assert.Equal(t, hook.Member, r.h.State(t, "bob").Role)
+}
+
+// TestAStoreThatIsDownNeverFloodsTheHook pins the loop against a store that
+// answers every read with an error: the fault is said once while it stays the
+// same, the loop waits a tick between reads, and it says when the stream
+// answers again. The store fails the first 50 stream reads after the
+// challenge, and the run is stopped at the 60th: no wall clock in the test.
+func TestAStoreThatIsDownNeverFloodsTheHook(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := r.world()
+	var mu sync.Mutex
+	var stop context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(ctx)
+		mu.Lock()
+		stop = cancel
+		mu.Unlock()
+		return ctx, cancel
+	}
+	var armed atomic.Bool
+	var reads atomic.Int64
+	r.h.MR.Server().SetPreHook(func(c *server.Peer, cmd string, _ ...string) bool {
+		if !armed.Load() || !strings.EqualFold(cmd, "XREAD") {
+			return false
+		}
+		switch n := reads.Add(1); {
+		case n <= 50:
+			c.WriteError("ERR the store is down")
+			return true
+		case n == 60:
+			mu.Lock()
+			stop()
+			mu.Unlock()
+		}
+		return false
+	})
+	out := &streamOut{}
+	out.each = func(l string) {
+		if strings.HasPrefix(l, "HOOK CHALLENGE") {
+			armed.Store(true)
+		}
+	}
+	code := run([]string{"hook", "--as", "ada", "--role", "comms"}, strings.NewReader(""), out, io.Discard, w)
+	assert.Equal(t, 0, code, out.all.String())
+	all := out.all.String()
+	assert.GreaterOrEqual(t, reads.Load(), int64(60), "the loop read on after the fault")
+	assert.Equal(t, 1, strings.Count(all, "HOOK STATE state=unread"), all)
+	assert.Contains(t, all, "the bus stream did not answer: ERR the store is down")
+	assert.Equal(t, 1, strings.Count(all, "HOOK STATE state=read"), all)
+}
+
+// TestALostRecordIsArmedAgainUnderTheHook pins that the session's hook arms a
+// record lost under it (none: the store flushed) at its next renewal, and is
+// not ended by it as by an unhook.
+func TestALostRecordIsArmedAgainUnderTheHook(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	out := &streamOut{}
+	flushed := false
+	out.each = func(l string) {
+		switch {
+		case strings.HasPrefix(l, "HOOK CHALLENGE") && !flushed:
+			flushed = true
+			r.h.MR.FlushAll()
+		case strings.HasPrefix(l, "HOOK STATE state=none"):
+			r.advance(hook.RenewEvery) // the loop saw the record gone: its next renewal is due
+		case strings.Contains(l, "was lost under this hook"):
+			r.cancel()
+		}
+	}
+	code := run([]string{"hook", "--as", "ada", "--role", "comms"}, strings.NewReader(""), out, io.Discard, r.world())
+	assert.Equal(t, 0, code, out.all.String())
+	st := r.h.State(t, "ada")
+	assert.Equal(t, hook.Comms, st.Role)
+	assert.Equal(t, hook.StateLive, st.State, "armed again and its lease renewed; the new challenge waits for its answer")
 }

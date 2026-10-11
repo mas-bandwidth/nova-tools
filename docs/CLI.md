@@ -1493,7 +1493,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 usage:
   nova-friend hook --harness claude
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
-  nova-friend beat --as <me> [--server <addr>]
+  nova-friend beat --as <me> [--server <addr>] [--redis <addr>]
   nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
@@ -1589,12 +1589,13 @@ effect: delivery: sends beyond this machine: the daemon; messages go into the se
 ```
 usage: nova-friend beat [flags]
 from `nova-friend help`:
-  nova-friend beat --as <me> [--server <addr>]
+  nova-friend beat --as <me> [--server <addr>] [--redis <addr>]
 example: nova-friend beat --as bob --server 127.0.0.1:6390
 flags:
   --as <string>  your name, a nova-config friend row (required)
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing

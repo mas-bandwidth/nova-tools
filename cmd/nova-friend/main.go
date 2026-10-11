@@ -584,19 +584,22 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 			},
 			{
 				Name:    "beat",
-				Usage:   "beat --as <me> [--server <addr>]",
+				Usage:   "beat --as <me> [--server <addr>] [--redis <addr>]",
 				Example: "", // the daemon's own act; the example block's first run has no beat line
 				Effect:  tool.Delivery + ": one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing",
 				Detail: `The daemon's beat on its own (docs/SPEC-FRIEND.md, the loop): one "friend beat <me>" to
 the sprint server, what keeps the friend up in the sprint's friends table. The agent install writes
 runs the daemon, and the daemon beats already while its session is alive, so the beat needs no
-agent of its own and no hand plist: this verb is the canary, run by hand. A server that does not
-answer is exit 2. --dry-run says the beat it would send, and to which server, and sends nothing.
+agent of its own and no hand plist: this verb is the canary, run by hand. Like every verb that acts
+as a friend it is gated (docs/SPEC-HOOK.md): unless --as is hooked in as a friend it sends nothing and
+is FAILED at exit 1 with the breadcrumb. A server that does not answer is exit 2. --dry-run says the
+beat it would send, and to which server, and opens nothing.
 example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, a nova-config friend row")
 					f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+					redis(f)
 				},
 				Run: w.beatVerb,
 			},
@@ -1458,7 +1461,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// friend at its first step and holds her bus push (proven by her session's answer to its
 	// check) and her work push (proven by the sprint server's answers to her beats); while
 	// the gate says no her lanes take and report nothing and her beat says her down, unhooked
-	dh := w.newDaemonHook(st, name, hook.Friend, func() bool { p, _ := sc.Proof(); return p }, record)
+	// her bus push's proof: a session harness's session answered its check and is
+	// present (within BusGrace); a per-card harness has no interactive session to wait
+	// for, so the daemon's own round trip on her bus store proves it
+	busProof := sessionProof(sc, w.now, BusGrace)
+	if perCard {
+		busProof = roundTripProof(st)
+	}
+	dh := w.newDaemonHook(st, name, hook.Friend, busProof, record)
 	go dh.loop(ctx, w.sleep)
 	w.beat, w.beatDown = dh.beats(w.now, w.beat, w.beatDown)
 	tellSeat = func(subject, body string) {
@@ -1814,11 +1824,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 // time round (docs/SPEC-FRIEND.md, the loop). The agent install writes
 // runs the daemon, and the daemon beats already while its session is alive,
 // so no agent of the beat's own is written (the hand plists are retired);
-// the verb is the canary, and a server that does not answer is exit 2.
+// the verb is the canary, gated on --as as a friend (docs/SPEC-HOOK.md), and a
+// server that does not answer is exit 2.
 func (w world) beatVerb(c *tool.Call) *tool.Out {
 	name, server := c.Str("as"), c.Str("server")
 	if c.DryRun() {
 		return tool.Done().Fact("as", name).Fact("server", server).Fact("dry_run", true).Note("dry run: no beat sent; it would send friend beat " + name + " to " + server)
+	}
+	b, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	if o := w.gateVerb(b.Store, name, hook.Friend, hook.Work); o != nil {
+		return o // not hooked in as a friend: no beat is sent (docs/SPEC-HOOK.md)
 	}
 	if _, err := w.beat(context.Background(), server, name, time.Time{}, friend.BeatWords{}); err != nil {
 		return tool.Refuse("the beat was not taken: " + err.Error())

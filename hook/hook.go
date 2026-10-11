@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,8 +92,11 @@ const (
 	ChallengeEvery = 30 * time.Minute
 	// AnswerBound is how long a challenge waits for its answer.
 	AnswerBound = 5 * time.Minute
-	// ProofTTL is how long a proof stands: a challenge's cadence and its answer's bound.
-	ProofTTL = ChallengeEvery + AnswerBound
+	// ProofTTL is how long a proof stands: a challenge's cadence and twice its
+	// answer's bound, so a proof answered at the last moment of one challenge's
+	// bound outlives the whole bound of the next (a session answering every
+	// challenge inside its bound is never unproven between them).
+	ProofTTL = ChallengeEvery + 2*AnswerBound
 )
 
 // The keys (docs/SPEC-HOOK.md, the key layout), all in the bus Redis.
@@ -234,12 +238,18 @@ func msTime(s string) time.Time {
 }
 
 // Want is what a gate asks of an identity: its name, the pushes the act needs,
-// and the role the caller would hook in as when the record names none (the
-// breadcrumb's role; "" lists every role that carries the pushes).
+// the roles the act is for, and the role the caller would hook in as when the
+// record names none (the breadcrumb's role; "" offers every role that carries
+// the pushes, and the remedy is to look first).
 type Want struct {
 	Name string
 	Need []Push
-	Role Role
+	// Roles, when set, are the only roles the act is for: a record hooked as
+	// another role is refused even when that role carries every push Need
+	// names (a friend daemon arming the seat's name as friend opens none of the
+	// coordinator's verbs). Empty: any role that carries Need.
+	Roles []Role
+	Role  Role
 }
 
 // Refusal is the gate's no: the identity is not hooked in for the act. It
@@ -259,20 +269,23 @@ func (r *Refusal) Error() string { return r.Why + "; run: " + r.Hook }
 var ErrNotHooked = errors.New("the record is not hooked under this epoch: it was unhooked, or hooked again since")
 
 // Gate is nil when st lets w act: the record is hooked, every push of its role
-// is live and proven, and its role carries every push w needs. Otherwise it
-// is the Refusal with its breadcrumb (tla/Hook.tla, GateOK).
+// is live and proven, its role carries every push w needs, and it is one of
+// w.Roles when w names any. Otherwise it is the Refusal with its breadcrumb
+// (tla/Hook.tla, Gate and GateMeansHooked).
 func (st Status) Gate(w Want) *Refusal {
+	hooked := st.State != StateNone && st.State != StateUnhooked
 	var missing []string
 	for _, p := range w.Need {
-		if st.State != StateNone && st.State != StateUnhooked && !slices.Contains(needs[st.Role], p) {
+		if hooked && !slices.Contains(needs[st.Role], p) {
 			missing = append(missing, string(p))
 		}
 	}
-	if st.State == StateProven && len(missing) == 0 {
+	otherRole := hooked && len(w.Roles) > 0 && !slices.Contains(w.Roles, st.Role)
+	if st.State == StateProven && len(missing) == 0 && !otherRole {
 		return nil
 	}
 	role := st.Role
-	if st.State == StateNone || len(missing) > 0 || role == "" {
+	if st.State == StateNone || len(missing) > 0 || role == "" || len(w.Roles) > 0 && !slices.Contains(w.Roles, role) {
 		role = w.Role
 	}
 	r := &Refusal{Status: st}
@@ -281,6 +294,8 @@ func (st Status) Gate(w Want) *Refusal {
 		r.Why = fmt.Sprintf("%s is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is", w.Name)
 	case st.State == StateUnhooked:
 		r.Why = fmt.Sprintf("%s is not hooked in: unhooked at %s; nothing on the bus, friend comms or the sprint works until it hooks in again", w.Name, st.Unhooked.Format(time.RFC3339))
+	case otherRole:
+		r.Why = fmt.Sprintf("%s is hooked in as %s, and this act is only for %s; hook in as one of them", w.Name, st.Role, roleWords(w.Roles))
 	case len(missing) > 0:
 		r.Why = fmt.Sprintf("%s is hooked in as %s, which carries no %s push; this act needs it, so hook in under a role that does", w.Name, st.Role, strings.Join(missing, ","))
 	default:
@@ -311,40 +326,47 @@ func (st Status) Words() string {
 	return s
 }
 
-// Breadcrumb is the command that hooks name in as role, and the lines that
-// say who holds each push and how to see and end the hook, each runnable as
-// printed (docs/SPEC-HOOK.md, the breadcrumb). With no role it names every
-// role that carries need.
+// offerOrder is the order a breadcrumb with no role offers the roles: the
+// least first (comms carries the bus alone), then a friend, then the seat;
+// the machines' roles last.
+var offerOrder = []Role{Comms, Friend, Coordinator, Member, Reader}
+
+// roleUse is what each role is for, as a breadcrumb that offers it says.
+var roleUse = map[Role]string{
+	Comms:       "on the bus, taking no sprint work",
+	Friend:      "a friend working the sprint",
+	Coordinator: "the seat",
+	Member:      "a machine's member loop",
+	Reader:      "a machine's reader loop",
+}
+
+// Breadcrumb is the remedy and the lines that say who holds each push and how
+// to see and end the hook, each runnable as printed (docs/SPEC-HOOK.md, the
+// breadcrumb). With a role, the remedy is the command that hooks name in as
+// it. With no role known the breadcrumb never guesses one: the remedy is to
+// look (nova-hook status), and the lines offer every role that carries need,
+// comms first, then friend, then coordinator.
 func Breadcrumb(name string, role Role, need []Push, st Status) (string, []string) {
-	roles := []Role{role}
-	if role == "" {
-		roles = nil
-		for _, r := range Roles {
-			if containsAll(needs[r], need) {
-				roles = append(roles, r)
-			}
-		}
-	}
-	hook := HookCommand(name, roles[0])
 	var lines []string
-	for _, r := range roles[1:] {
-		lines = append(lines, "or, as "+string(r)+": "+HookCommand(name, r))
-	}
-	for _, r := range roles {
-		if role == "" {
-			break // no role known: the hook command of each role is the breadcrumb; its holders follow once one is chosen
-		}
-		for _, p := range needs[r] {
-			if st.pushState(p) == PushProven {
-				continue
+	if role == "" {
+		for _, r := range offerOrder {
+			if containsAll(needs[r], need) {
+				lines = append(lines, "hook in as "+string(r)+" ("+roleUse[r]+"): "+HookCommand(name, r))
 			}
-			lines = append(lines, fmt.Sprintf("the %s push of a %s is held by: %s", p, r, HeldBy(name, r, p)))
 		}
+		lines = append(lines, "unhook: nova-hook unhook --as "+name)
+		return "nova-hook status --as " + name, lines
+	}
+	for _, p := range needs[role] {
+		if st.pushState(p) == PushProven {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("the %s push of a %s is held by: %s", p, role, HeldBy(name, role, p)))
 	}
 	lines = append(lines,
 		"see it: nova-hook status --as "+name,
 		"unhook: nova-hook unhook --as "+name)
-	return hook, lines
+	return HookCommand(name, role), lines
 }
 
 // HookCommand is the line that hooks name in as role.
@@ -352,21 +374,58 @@ func HookCommand(name string, r Role) string {
 	return "nova-hook hook --as " + name + " --role " + string(r)
 }
 
-// HeldBy is who holds push p of a role for name: the command that runs it.
+// SprintHookPR is where the sprint push's holder, nova-sprint hook, ships:
+// until it does, a coordinator cannot be proven, and the seat hooks in as
+// comms (the bus alone).
+const SprintHookPR = "nova-sprint PR #93"
+
+// AgentLabel is the service that holds a friend's pushes for role: her daemon
+// (com.nova.friend-<name>) as a friend, her notifications receiver
+// (com.nova.friend-notifications-<name>) as comms.
+func AgentLabel(name string, r Role) string {
+	if r == Comms {
+		return "com.nova.friend-notifications-" + name
+	}
+	return "com.nova.friend-" + name
+}
+
+// RestartCommand is the line that restarts the service label on goos, runnable
+// as printed: launchctl in the user's gui domain on darwin, systemctl --user
+// elsewhere (pkg/units.Load names the services the same way).
+func RestartCommand(goos, label string) string {
+	if goos == "darwin" {
+		return "launchctl kickstart -k gui/$(id -u)/" + label
+	}
+	return "systemctl --user restart " + label
+}
+
+// HeldBy is who holds push p of a role for name: the service or the command
+// that runs it, each line runnable as printed on this machine.
 func HeldBy(name string, r Role, p Push) string {
 	switch {
 	case p == Sprint:
-		return "nova-sprint hook --as " + name + " (under its own Monitor; it renews the sprint push while its subscription is proven)"
+		return "nova-sprint hook --as " + name + " under its own Monitor (nova-sprint hook ships with " + SprintHookPR + "; until then: --role comms, " + HookCommand(name, Comms) + ")"
 	case p == Bus && (r == Friend || r == Comms):
-		return "the friend daemon, nova-friend run --as " + name + " ... (its agent com.nova.friend-" + name + "; it hooks in at start), or a session's own " + HookCommand(name, r) + " under a Monitor"
+		label := AgentLabel(name, r)
+		return "the friend daemon's service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label) + "; or a session's own " + HookCommand(name, r) + " under a Monitor"
 	case p == Bus:
 		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>)"
 	case r == Friend:
-		return "the friend daemon's lanes, nova-friend run --as " + name + " ... (its agent com.nova.friend-" + name + "; it hooks in at start)"
+		label := AgentLabel(name, r)
+		return "the friend daemon's lanes, its service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label)
 	case r == Reader:
 		return "the reader loop, nova-swarm member --as " + name + " --reader (it hooks in at start)"
 	}
 	return "the member loop, nova-swarm member --as " + name + " (it hooks in at start)"
+}
+
+// roleWords is roles as words: "coordinator or comms".
+func roleWords(rs []Role) string {
+	var out []string
+	for _, r := range rs {
+		out = append(out, string(r))
+	}
+	return strings.Join(out, " or ")
 }
 
 // pushState is p's state in st, PushDown when st holds none.

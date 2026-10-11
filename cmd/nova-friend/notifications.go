@@ -49,7 +49,7 @@ func (w world) runNotifications(c *tool.Call) *tool.Out {
 	defer closeStore()
 	// the receiver is her hook as comms (docs/SPEC-HOOK.md, holders; hook.go): it holds her
 	// bus push while it runs and reads her stream; she takes no sprint work in this mode
-	dh := w.newDaemonHook(st, name, hook.Comms, func() bool { return true }, record)
+	dh := w.newDaemonHook(st, name, hook.Comms, roundTripProof(st), record) // its own round trip on her stream's store proves the push
 	go dh.loop(ctx, w.sleep)
 	d := &friend.Daemon{Friend: name, Harness: c.Str("harness"), Dir: dir, Store: st, Deliver: cx, Now: w.now, Pause: w.sleep, Record: record,
 		Coordinator: c.Str("coordinator"), NotificationOnly: true, NotificationStateDir: state,

@@ -18,6 +18,18 @@ import (
 // round trip, a script or a pipeline (docs/SPEC-HOOK.md, the verbs).
 type Store struct {
 	C redis.Cmdable
+	// Timeout, when set, bounds each round trip on its own, inside the
+	// caller's context: a long-running holder's beat makes several, and one
+	// slow call never spends the next one's time.
+	Timeout time.Duration
+}
+
+// call is ctx bounded by one round trip's Timeout, when the store has one.
+func (s Store) call(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.Timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, s.Timeout)
 }
 
 // allKeys is every push's lease and proof key of name, then its challenge: the
@@ -36,20 +48,31 @@ const nowMS = `local t = redis.call('TIME')
 local ms = t[1] .. string.format('%03d', math.floor(tonumber(t[2]) / 1000))
 `
 
-// armLua hooks name in as a role (tla/Hook.tla, Arm and Join): a record
-// already hooked as the same role is joined at its epoch, unless fresh; a
-// record hooked as another role is left as it is and answered (code 2), unless
-// fresh; otherwise the epoch moves on, every lease, proof and challenge is
-// cleared, and the record says hooked.
-// KEYS: record, names, then allKeys. ARGV: name, role, by, fresh.
+// The modes of an arm (armLua's ARGV[4]).
+const (
+	armHolder = "0" // a holder's start: join the role's record, arm only where there is none
+	armFresh  = "1" // always a new epoch
+	armWord   = "2" // the identity's own word (nova-hook hook): join the role's record, else a new epoch
+)
+
+// armLua hooks name in as a role (tla/Hook.tla, Arm and HookAs). A record
+// hooked as the same role is joined at its epoch (code 1), unless fresh. A
+// holder's arm leaves a record hooked as another role as it is (code 2) and
+// an unhooked record unhooked (code 3), so an unhook stands across a holder's
+// restart; it arms only where there is no record at all. The identity's word
+// arms over either, and fresh always arms. To arm, the epoch moves on, every
+// lease, proof and challenge is cleared, and the record says hooked (code 0).
+// KEYS: record, names, then allKeys. ARGV: name, role, by, mode.
 var armLua = redis.NewScript(nowMS + `
 local st = redis.call('HGET', KEYS[1], 'state')
 local role = redis.call('HGET', KEYS[1], 'role')
-if ARGV[4] ~= '1' and st == 'hooked' then
-  if role == ARGV[2] then
-    return {tonumber(redis.call('HGET', KEYS[1], 'epoch')), 1}
+if st and ARGV[4] ~= '` + armFresh + `' then
+  local e = tonumber(redis.call('HGET', KEYS[1], 'epoch'))
+  if st == 'hooked' and role == ARGV[2] then return {e, 1} end
+  if ARGV[4] == '` + armHolder + `' then
+    if st ~= 'hooked' then return {e, 3} end
+    return {e, 2}
   end
-  return {tonumber(redis.call('HGET', KEYS[1], 'epoch')), 2}
 end
 local e = redis.call('HINCRBY', KEYS[1], 'epoch', 1)
 redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3])
@@ -59,33 +82,41 @@ redis.call('SADD', KEYS[2], ARGV[1])
 return {e, 0}
 `)
 
-// stampLua writes a lease or a proof under the record's epoch (tla/Hook.tla,
-// Renew and ProveDaemon): refused (0) unless the record is hooked at that
-// epoch, and a proof (need set) refused (-1) unless the push's lease is live.
-// KEYS: record, the key to write, the lease that must stand ("" none). ARGV: epoch, ttl ms, by (JSON).
+// held is the test every write of a holder makes, as a Lua condition: the
+// record is hooked at the holder's epoch (ARGV[1]) as the holder's role
+// (ARGV[2]). The role matters after a record is lost and armed again from
+// nothing (tla/Hook.tla, Flush): its epoch counts from 1 again, and a holder
+// of another role that joined an old epoch of the same number writes nothing.
+const held = `redis.call('HGET', KEYS[1], 'state') == 'hooked' and redis.call('HGET', KEYS[1], 'epoch') == ARGV[1] and redis.call('HGET', KEYS[1], 'role') == ARGV[2]`
+
+// stampLua writes a lease or a proof under the record's epoch and role
+// (tla/Hook.tla, Renew and ProveDaemon): refused (0) unless held, and a proof
+// (need set) refused (-1) unless the push's lease is live.
+// KEYS: record, the key to write, the lease that must stand. ARGV: epoch, role, ttl ms, by (JSON).
 var stampLua = redis.NewScript(nowMS + `
-if redis.call('HGET', KEYS[1], 'state') ~= 'hooked' or redis.call('HGET', KEYS[1], 'epoch') ~= ARGV[1] then return 0 end
+if not (` + held + `) then return 0 end
 if KEYS[3] ~= KEYS[2] and redis.call('EXISTS', KEYS[3]) == 0 then return -1 end
-redis.call('SET', KEYS[2], '{"epoch":' .. ARGV[1] .. ',"at":' .. ms .. ',"by":' .. ARGV[3] .. '}', 'PX', ARGV[2])
+redis.call('SET', KEYS[2], '{"epoch":' .. ARGV[1] .. ',"at":' .. ms .. ',"by":' .. ARGV[4] .. '}', 'PX', ARGV[3])
 return 1
 `)
 
-// dropLua clears a proof under the record's epoch (tla/Hook.tla, Unprove):
-// a daemon whose session stopped answering. KEYS: record, proof. ARGV: epoch.
+// dropLua clears a proof under the record's epoch and role (tla/Hook.tla,
+// Unprove): a daemon whose session stopped answering. KEYS: record, proof.
+// ARGV: epoch, role.
 var dropLua = redis.NewScript(`
-if redis.call('HGET', KEYS[1], 'state') ~= 'hooked' or redis.call('HGET', KEYS[1], 'epoch') ~= ARGV[1] then return 0 end
+if not (` + held + `) then return 0 end
 redis.call('DEL', KEYS[2])
 return 1
 `)
 
 // challengeLua sets name's challenge (tla/Hook.tla, Challenge): the nonce's
 // sum, never the nonce, so only a reader of the hook's stream can answer.
-// KEYS: record, challenge. ARGV: epoch, sum, pushes (comma), ttl ms.
+// KEYS: record, challenge. ARGV: epoch, role, sum, pushes (comma), ttl ms.
 var challengeLua = redis.NewScript(`
-if redis.call('HGET', KEYS[1], 'state') ~= 'hooked' or redis.call('HGET', KEYS[1], 'epoch') ~= ARGV[1] then return 0 end
+if not (` + held + `) then return 0 end
 redis.call('DEL', KEYS[2])
-redis.call('HSET', KEYS[2], 'epoch', ARGV[1], 'sum', ARGV[2], 'pushes', ARGV[3])
-redis.call('PEXPIRE', KEYS[2], ARGV[4])
+redis.call('HSET', KEYS[2], 'epoch', ARGV[1], 'sum', ARGV[3], 'pushes', ARGV[4])
+redis.call('PEXPIRE', KEYS[2], ARGV[5])
 return 1
 `)
 
@@ -155,50 +186,71 @@ func checkName(name string) string {
 // identity itself) does.
 var ErrOtherRole = errors.New("the record is hooked as another role")
 
-// Arm hooks name in as role, joining a record already hooked as that role at
-// its epoch (joined true), else starting a new epoch; a record hooked as
-// another role is ErrOtherRole, left as it is; fresh always starts a new epoch.
-// by is who armed it, as the record shows it.
+// Arm hooks name in as role. Not fresh (a holder's start), it joins a record
+// already hooked as that role at its epoch (joined true) and arms only where
+// there is no record at all; a record hooked as another role is ErrOtherRole
+// and an unhooked one ErrNotHooked, each left as it is, so neither a holder's
+// start nor its restart ever undoes the identity's word. Fresh (nova-hook
+// hook, the identity's own word) always starts a new epoch. by is who armed
+// it, as the record shows it.
 func (s Store) Arm(ctx context.Context, name string, role Role, by string, fresh bool) (epoch int64, joined bool, err error) {
+	if fresh {
+		return s.arm(ctx, name, role, by, armFresh)
+	}
+	return s.arm(ctx, name, role, by, armHolder)
+}
+
+// HookAs is the identity's own word, nova-hook hook: it joins a record hooked
+// as role at its epoch (joined true); otherwise (no record, an unhooked one,
+// one hooked as another role, which it takes over) it starts a new epoch.
+func (s Store) HookAs(ctx context.Context, name string, role Role, by string) (epoch int64, joined bool, err error) {
+	return s.arm(ctx, name, role, by, armWord)
+}
+
+func (s Store) arm(ctx context.Context, name string, role Role, by, mode string) (epoch int64, joined bool, err error) {
 	if p := checkName(name); p != "" {
 		return 0, false, errors.New(p)
 	}
 	if _, err := ParseRole(string(role)); err != nil {
 		return 0, false, err
 	}
-	f := "0"
-	if fresh {
-		f = "1"
-	}
 	keys := append([]string{RecordKey(name), NamesKey}, allKeys(name)...)
-	got, err := armLua.Run(ctx, s.C, keys, name, string(role), by, f).Int64Slice()
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	got, err := armLua.Run(ctx, s.C, keys, name, string(role), by, mode).Int64Slice()
 	if err != nil {
 		return 0, false, err
 	}
 	if len(got) != 2 {
 		return 0, false, fmt.Errorf("the arm script answered %v, not an epoch and a join word", got)
 	}
-	if got[1] == 2 {
+	switch got[1] {
+	case 2:
 		return got[0], false, ErrOtherRole
+	case 3:
+		return got[0], false, ErrNotHooked
 	}
 	return got[0], got[1] == 1, nil
 }
 
-// Renew renews the lease of name's push p under epoch for LeaseTTL;
-// ErrNotHooked when the record is not hooked at that epoch.
-func (s Store) Renew(ctx context.Context, name string, p Push, epoch int64, by string) error {
-	return s.stamp(ctx, name, LiveKey(name, p), LiveKey(name, p), epoch, LeaseTTL, by)
+// Renew renews the lease of name's push p under epoch and role for LeaseTTL;
+// ErrNotHooked when the record is not hooked at that epoch as that role.
+func (s Store) Renew(ctx context.Context, name string, role Role, p Push, epoch int64, by string) error {
+	return s.stamp(ctx, name, role, LiveKey(name, p), LiveKey(name, p), epoch, LeaseTTL, by)
 }
 
-// Prove writes the proof of name's push p under epoch for ProofTTL: a daemon
-// holder's own proof of its round trip. ErrNotHooked when the record is not
-// hooked at that epoch; an error naming the lease when p is not live.
-func (s Store) Prove(ctx context.Context, name string, p Push, epoch int64, how string) error {
-	return s.stamp(ctx, name, ProofKey(name, p), LiveKey(name, p), epoch, ProofTTL, how)
+// Prove writes the proof of name's push p under epoch and role for ProofTTL:
+// a daemon holder's own proof of its round trip. ErrNotHooked when the record
+// is not hooked at that epoch as that role; an error naming the lease when p
+// is not live.
+func (s Store) Prove(ctx context.Context, name string, role Role, p Push, epoch int64, how string) error {
+	return s.stamp(ctx, name, role, ProofKey(name, p), LiveKey(name, p), epoch, ProofTTL, how)
 }
 
-func (s Store) stamp(ctx context.Context, name, key, lease string, epoch int64, ttl time.Duration, by string) error {
-	got, err := stampLua.Run(ctx, s.C, []string{RecordKey(name), key, lease}, epoch, ttl.Milliseconds(), byJSON(by)).Int64()
+func (s Store) stamp(ctx context.Context, name string, role Role, key, lease string, epoch int64, ttl time.Duration, by string) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	got, err := stampLua.Run(ctx, s.C, []string{RecordKey(name), key, lease}, epoch, string(role), ttl.Milliseconds(), byJSON(by)).Int64()
 	switch {
 	case err != nil:
 		return err
@@ -210,10 +262,12 @@ func (s Store) stamp(ctx context.Context, name, key, lease string, epoch int64, 
 	return nil
 }
 
-// Unprove clears the proof of name's push p under epoch: its holder's session
-// stopped answering, so the push is armed and no longer proven.
-func (s Store) Unprove(ctx context.Context, name string, p Push, epoch int64) error {
-	got, err := dropLua.Run(ctx, s.C, []string{RecordKey(name), ProofKey(name, p)}, epoch).Int64()
+// Unprove clears the proof of name's push p under epoch and role: its
+// holder's session stopped answering, so the push is armed and no longer proven.
+func (s Store) Unprove(ctx context.Context, name string, role Role, p Push, epoch int64) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	got, err := dropLua.Run(ctx, s.C, []string{RecordKey(name), ProofKey(name, p)}, epoch, string(role)).Int64()
 	if err == nil && got == 0 {
 		return ErrNotHooked
 	}
@@ -226,15 +280,17 @@ func Sum(nonce string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Challenge sets name's challenge for pushes under epoch, outstanding for
-// AnswerBound: the hook prints the nonce on its stream, and only a session
-// that read it answers it (Answer).
-func (s Store) Challenge(ctx context.Context, name string, epoch int64, pushes []Push, nonce string) error {
+// Challenge sets name's challenge for pushes under epoch and role,
+// outstanding for AnswerBound: the hook prints the nonce on its stream, and
+// only a session that read it answers it (Answer).
+func (s Store) Challenge(ctx context.Context, name string, role Role, epoch int64, pushes []Push, nonce string) error {
 	var ps []string
 	for _, p := range pushes {
 		ps = append(ps, string(p))
 	}
-	got, err := challengeLua.Run(ctx, s.C, []string{RecordKey(name), ChallengeKey(name)}, epoch, Sum(nonce), strings.Join(ps, ","), AnswerBound.Milliseconds()).Int64()
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	got, err := challengeLua.Run(ctx, s.C, []string{RecordKey(name), ChallengeKey(name)}, epoch, string(role), Sum(nonce), strings.Join(ps, ","), AnswerBound.Milliseconds()).Int64()
 	if err == nil && got == 0 {
 		return ErrNotHooked
 	}
@@ -256,6 +312,8 @@ func (s Store) Answer(ctx context.Context, name, nonce, by string) (int, error) 
 		keys = append(keys, LiveKey(name, p), ProofKey(name, p))
 		args = append(args, string(p))
 	}
+	ctx, cancel := s.call(ctx)
+	defer cancel()
 	got, err := answerLua.Run(ctx, s.C, keys, args...).Int64Slice()
 	if err != nil {
 		return 0, err
@@ -280,6 +338,8 @@ func (s Store) Unhook(ctx context.Context, name string) (was string, err error) 
 	if p := checkName(name); p != "" {
 		return "", errors.New(p)
 	}
+	ctx, cancel := s.call(ctx)
+	defer cancel()
 	got, err := unhookLua.Run(ctx, s.C, append([]string{RecordKey(name)}, allKeys(name)...)).Int64()
 	if err != nil {
 		return "", err
@@ -298,6 +358,8 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 	}
 	all := make([]reads, len(names))
 	var clock *redis.TimeCmd
+	ctx, cancel := s.call(ctx)
+	defer cancel()
 	_, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i, n := range names {
 			r := &all[i]
@@ -337,6 +399,8 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 
 // Names is every name that ever hooked in, sorted.
 func (s Store) Names(ctx context.Context) ([]string, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
 	got, err := s.C.SMembers(ctx, NamesKey).Result()
 	if err != nil {
 		return nil, err

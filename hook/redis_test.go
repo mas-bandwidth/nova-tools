@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/hook/hooktest"
 	"github.com/stretchr/testify/assert"
@@ -44,7 +45,7 @@ func TestArmJoinsAndUnhookClears(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), e)
 	assert.False(t, joined)
-	require.NoError(t, r.s.Renew(ctx, "ada", hook.Bus, e, "hook"))
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Coordinator, hook.Bus, e, "hook"))
 	assert.Equal(t, hook.StatePartial, r.state(t, "ada").State)
 
 	e2, joined, err := r.s.Arm(ctx, "ada", hook.Coordinator, "test", false)
@@ -61,9 +62,9 @@ func TestArmJoinsAndUnhookClears(t *testing.T) {
 	assert.Equal(t, int64(2), e3)
 	assert.False(t, joined)
 	assert.Equal(t, hook.StateExpired, r.state(t, "ada").State, "a new role clears the leases")
-	assert.ErrorIs(t, r.s.Renew(ctx, "ada", hook.Bus, e, "old"), hook.ErrNotHooked, "a holder of the old epoch writes nothing")
+	assert.ErrorIs(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "old"), hook.ErrNotHooked, "a holder of the old epoch writes nothing")
 
-	require.NoError(t, r.s.Renew(ctx, "ada", hook.Bus, e3, "hook"))
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e3, "hook"))
 	was, err := r.s.Unhook(ctx, "ada")
 	require.NoError(t, err)
 	assert.Equal(t, "hooked", was)
@@ -71,7 +72,7 @@ func TestArmJoinsAndUnhookClears(t *testing.T) {
 	assert.Equal(t, hook.StateUnhooked, st.State)
 	assert.False(t, st.Unhooked.IsZero())
 	assert.False(t, r.mr.Exists(hook.LiveKey("ada", hook.Bus)), "unhook clears the lease")
-	assert.ErrorIs(t, r.s.Renew(ctx, "ada", hook.Bus, e3, "hook"), hook.ErrNotHooked)
+	assert.ErrorIs(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e3, "hook"), hook.ErrNotHooked)
 
 	was, err = r.s.Unhook(ctx, "ada")
 	require.NoError(t, err)
@@ -119,12 +120,12 @@ func TestAChallengeProvesOnlyWithItsNonce(t *testing.T) {
 	r := newRig(t)
 	e, _, err := r.s.Arm(ctx, "ada", hook.Comms, "test", false)
 	require.NoError(t, err)
-	require.NoError(t, r.s.Renew(ctx, "ada", hook.Bus, e, "hook"))
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "hook"))
 
 	_, err = r.s.Answer(ctx, "ada", "n1", "session")
 	assert.ErrorIs(t, err, hook.ErrNoChallenge)
 
-	require.NoError(t, r.s.Challenge(ctx, "ada", e, []hook.Push{hook.Bus}, "n1"))
+	require.NoError(t, r.s.Challenge(ctx, "ada", hook.Comms, e, []hook.Push{hook.Bus}, "n1"))
 	assert.NotContains(t, r.mr.HGet(hook.ChallengeKey("ada"), "sum"), "n1", "the store keeps the sum, never the nonce")
 	_, err = r.s.Answer(ctx, "ada", "n2", "session")
 	assert.ErrorIs(t, err, hook.ErrWrongNonce)
@@ -137,18 +138,18 @@ func TestAChallengeProvesOnlyWithItsNonce(t *testing.T) {
 	_, err = r.s.Answer(ctx, "ada", "n1", "session")
 	assert.ErrorIs(t, err, hook.ErrNoChallenge, "an answered challenge is spent")
 
-	require.NoError(t, r.s.Challenge(ctx, "ada", e, []hook.Push{hook.Bus}, "n3"))
+	require.NoError(t, r.s.Challenge(ctx, "ada", hook.Comms, e, []hook.Push{hook.Bus}, "n3"))
 	r.pass(hook.AnswerBound + time.Second)
 	_, err = r.s.Answer(ctx, "ada", "n3", "session")
 	assert.ErrorIs(t, err, hook.ErrNoChallenge, "a challenge lapses past its bound")
 
-	require.NoError(t, r.s.Renew(ctx, "ada", hook.Bus, e, "hook"))
-	require.NoError(t, r.s.Challenge(ctx, "ada", e, []hook.Push{hook.Bus}, "n4"))
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "hook"))
+	require.NoError(t, r.s.Challenge(ctx, "ada", hook.Comms, e, []hook.Push{hook.Bus}, "n4"))
 	_, err = r.s.Unhook(ctx, "ada")
 	require.NoError(t, err)
 	_, err = r.s.Answer(ctx, "ada", "n4", "session")
 	assert.ErrorIs(t, err, hook.ErrNoChallenge, "unhook clears the challenge")
-	assert.ErrorIs(t, r.s.Challenge(ctx, "ada", e, []hook.Push{hook.Bus}, "n5"), hook.ErrNotHooked)
+	assert.ErrorIs(t, r.s.Challenge(ctx, "ada", hook.Comms, e, []hook.Push{hook.Bus}, "n5"), hook.ErrNotHooked)
 }
 
 // TestAProofNeedsALiveLease pins that nothing proves a push nobody holds
@@ -159,12 +160,12 @@ func TestAProofNeedsALiveLease(t *testing.T) {
 	r := newRig(t)
 	e, _, err := r.s.Arm(ctx, "bob", hook.Friend, "test", false)
 	require.NoError(t, err)
-	err = r.s.Prove(ctx, "bob", hook.Work, e, "lanes")
+	err = r.s.Prove(ctx, "bob", hook.Friend, hook.Work, e, "lanes")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, hook.ErrNotHooked))
 	assert.Contains(t, err.Error(), "holds no live lease")
 
-	require.NoError(t, r.s.Challenge(ctx, "bob", e, []hook.Push{hook.Bus, hook.Work}, "n"))
+	require.NoError(t, r.s.Challenge(ctx, "bob", hook.Friend, e, []hook.Push{hook.Bus, hook.Work}, "n"))
 	n, err := r.s.Answer(ctx, "bob", "n", "session")
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "an answer proves no push whose lease is down")
@@ -178,13 +179,13 @@ func TestAProofNeedsALiveLease(t *testing.T) {
 	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
 	for range 4 {
 		r.pass(hook.RenewEvery)
-		require.NoError(t, r.s.Renew(ctx, "bob", hook.Bus, h.Epoch(), "daemon"))
-		require.NoError(t, r.s.Renew(ctx, "bob", hook.Work, h.Epoch(), "daemon"))
+		require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Bus, h.Epoch(), "daemon"))
+		require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Work, h.Epoch(), "daemon"))
 	}
 	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
 	r.pass(hook.ProofTTL)
-	require.NoError(t, r.s.Renew(ctx, "bob", hook.Bus, h.Epoch(), "daemon"))
-	require.NoError(t, r.s.Renew(ctx, "bob", hook.Work, h.Epoch(), "daemon"))
+	require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Bus, h.Epoch(), "daemon"))
+	require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Work, h.Epoch(), "daemon"))
 	assert.Equal(t, hook.StateLive, r.state(t, "bob").State, "a proof lapses after hook.ProofTTL")
 }
 
@@ -202,7 +203,9 @@ func TestAHolderRespectsAnUnhook(t *testing.T) {
 	assert.ErrorIs(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}), hook.ErrNotHooked)
 	assert.Equal(t, hook.StateUnhooked, r.state(t, "bob").State, "the holder wrote nothing")
 
-	e, joined, err := r.s.Arm(ctx, "bob", hook.Friend, "nova-hook", false)
+	_, _, err = r.s.Arm(ctx, "bob", hook.Friend, "a holder", false)
+	require.ErrorIs(t, err, hook.ErrNotHooked, "a holder's arm never undoes an unhook")
+	e, joined, err := r.s.HookAs(ctx, "bob", hook.Friend, "nova-hook")
 	require.NoError(t, err)
 	assert.False(t, joined)
 	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
@@ -252,4 +255,100 @@ func TestNamesAreRefusedBeforeAnyWrite(t *testing.T) {
 	_, _, err := r.s.Arm(ctx, "ada", hook.Role("seat"), "test", false)
 	assert.ErrorContains(t, err, "is no role")
 	assert.Empty(t, r.mr.Keys())
+}
+
+// TestAnUnhookStandsAcrossARestart pins that a holder's start never undoes an
+// unhook (tla/Hook.tla, Arm only from none; HookedByItsWord): a daemon
+// restarted after its friend was unhooked holds nothing and the record stays
+// unhooked; the identity's own word (nova-hook hook) hooks it in again, and
+// the restarted holder then joins.
+func TestAnUnhookStandsAcrossARestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	first := &hook.Holder{Store: r.s, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus, hook.Work}, By: "daemon pid 1"}
+	require.NoError(t, first.Start(ctx))
+	_, err := r.s.Unhook(ctx, "bob")
+	require.NoError(t, err)
+
+	restarted := &hook.Holder{Store: r.s, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus, hook.Work}, By: "daemon pid 2"}
+	require.ErrorIs(t, restarted.Start(ctx), hook.ErrNotHooked)
+	assert.Equal(t, hook.StateUnhooked, r.state(t, "bob").State, "the restart did not hook bob in")
+	assert.Zero(t, restarted.Epoch())
+	assert.False(t, r.mr.Exists(hook.LiveKey("bob", hook.Bus)), "and wrote no lease")
+
+	e, _, err := r.s.HookAs(ctx, "bob", hook.Friend, "nova-hook")
+	require.NoError(t, err)
+	require.NoError(t, restarted.Start(ctx))
+	assert.Equal(t, e, restarted.Epoch(), "hooked in again, the restarted holder joins")
+	require.NoError(t, restarted.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
+	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
+}
+
+// TestALostRecordReArms pins that a record lost under a running holder (its
+// key deleted, or the store flushed) is armed again by the holder's next beat
+// (tla/Hook.tla, Flush then Arm): none is not an unhook.
+func TestALostRecordReArms(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	h := &hook.Holder{Store: r.s, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus, hook.Work}, By: "daemon"}
+	require.NoError(t, h.Start(ctx))
+	proven := map[hook.Push]bool{hook.Bus: true, hook.Work: true}
+	require.NoError(t, h.Beat(ctx, proven))
+
+	r.mr.FlushAll()
+	assert.Equal(t, hook.StateNone, r.state(t, "bob").State)
+	require.NoError(t, h.Beat(ctx, proven))
+	assert.Equal(t, hook.StateProven, r.state(t, "bob").State, "the running holder armed the lost record again")
+	assert.Equal(t, hook.Friend, r.state(t, "bob").Role)
+
+	r.mr.Del(hook.RecordKey("bob"))
+	require.NoError(t, h.Beat(ctx, proven))
+	assert.Equal(t, hook.StateProven, r.state(t, "bob").State, "a record deleted alone is armed again too")
+}
+
+// TestAHolderOfAnotherRoleWritesNothingAfterALoss pins the role in every
+// holder's write: a record lost and armed again from nothing counts its epoch
+// from 1 again, and a holder of another role that joined the old epoch 1
+// writes nothing under the new one (tla/Hook.tla, Renew's role).
+func TestAHolderOfAnotherRoleWritesNothingAfterALoss(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	seat := &hook.Holder{Store: r.s, Name: "ada", Role: hook.Coordinator, Pushes: []hook.Push{hook.Bus}, By: "session"}
+	require.NoError(t, seat.Start(ctx))
+	r.mr.FlushAll()
+	daemon := &hook.Holder{Store: r.s, Name: "ada", Role: hook.Friend, Pushes: []hook.Push{hook.Bus, hook.Work}, By: "daemon"}
+	require.NoError(t, daemon.Start(ctx))
+	require.Equal(t, seat.Epoch(), daemon.Epoch(), "the epoch counts from 1 again")
+	assert.ErrorIs(t, r.s.Renew(ctx, "ada", hook.Coordinator, hook.Bus, seat.Epoch(), "session"), hook.ErrNotHooked)
+	assert.ErrorIs(t, r.s.Prove(ctx, "ada", hook.Coordinator, hook.Bus, seat.Epoch(), "session"), hook.ErrNotHooked)
+	assert.ErrorIs(t, r.s.Challenge(ctx, "ada", hook.Coordinator, seat.Epoch(), []hook.Push{hook.Bus}, "n"), hook.ErrNotHooked)
+	assert.ErrorIs(t, seat.Beat(ctx, map[hook.Push]bool{hook.Bus: true}), hook.ErrNotHooked, "the seat's holder never rejoins a record of another role")
+}
+
+// TestEachRoundTripHasItsOwnTimeout pins Store.Timeout: a store that does not
+// answer refuses each call within its own bound, not the caller's whole
+// context.
+func TestEachRoundTripHasItsOwnTimeout(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	s := hook.Store{C: r.Client, Timeout: 50 * time.Millisecond}
+	ctx := context.Background()
+	_, _, err := s.Arm(ctx, "ada", hook.Comms, "test", false)
+	require.NoError(t, err)
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	r.mr.Server().SetPreHook(func(c *server.Peer, cmd string, args ...string) bool {
+		if cmd == "EVALSHA" || cmd == "EVAL" {
+			<-blocked
+		}
+		return false
+	})
+	start := time.Now()
+	err = s.Renew(ctx, "ada", hook.Comms, hook.Bus, 1, "test")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), 5*time.Second, "the call's own bound, not the caller's")
 }

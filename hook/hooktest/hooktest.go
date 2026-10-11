@@ -34,6 +34,8 @@ func New(t testing.TB) *Rig {
 	c := redis.NewClient(&redis.Options{
 		Addr:            "127.0.0.1:0", // never dialled: Dialer is the transport
 		DisableIdentity: true,
+		// as pkg/redisconn dials: a call's context bounds its reply's read
+		ContextTimeoutEnabled: true,
 		Dialer: func(context.Context, string, string) (net.Conn, error) {
 			near, far := net.Pipe()
 			piped.Add(1)
@@ -57,12 +59,16 @@ func (r *Rig) Pass(d time.Duration) {
 	r.MR.SetTime(r.now)
 }
 
-// Hook hooks name in as role with every push of the role live and proven,
-// as its holders would after their first beat.
+// Hook hooks name in as role, as nova-hook hook does (the identity's word:
+// after an unhook, or over another role), with every push of the role live
+// and proven, as its holders would after their first beat.
 func (r *Rig) Hook(t testing.TB, name string, role hook.Role) {
 	t.Helper()
 	h := &hook.Holder{Store: r.Store, Name: name, Role: role, Pushes: hook.PushesOf(role), By: "hooktest"}
 	ctx := context.Background()
+	if _, _, err := r.Store.HookAs(ctx, name, role, "hooktest"); err != nil {
+		t.Fatalf("hooktest: hook %s as %s: %v", name, role, err)
+	}
 	if err := h.Start(ctx); err != nil {
 		t.Fatalf("hooktest: hook %s as %s: %v", name, role, err)
 	}

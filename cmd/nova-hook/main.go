@@ -305,22 +305,20 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 	held := holds(role)
+	// the identity's own word (hook.Store.HookAs): it joins a record hooked as role,
+	// and otherwise arms a new epoch: after an unhook, or over a record hooked as
+	// another role, which it takes over (a holder's start never does either)
 	ctx, cancel := call()
-	epoch, joined, err := s.hooks.Arm(ctx, s.as, role, w.holder, false)
 	took := ""
-	if errors.Is(err, hook.ErrOtherRole) {
-		// the identity asks to hook in as another role than the record's: that is its
-		// own word, so the record is taken over, a new epoch (a holder never does this)
-		if st, _, rerr := s.hooks.Read(ctx, s.as); rerr == nil {
-			took = string(st[0].Role)
-		}
-		epoch, joined, err = s.hooks.Arm(ctx, s.as, role, w.holder, true)
+	if st, _, rerr := s.hooks.Read(ctx, s.as); rerr == nil && st[0].Role != role && st[0].State != hook.StateNone && st[0].State != hook.StateUnhooked {
+		took = string(st[0].Role)
 	}
+	epoch, joined, err := s.hooks.HookAs(ctx, s.as, role, w.holder)
 	cancel()
 	if err != nil {
 		return tool.Refuse("the hook record could not be written: " + err.Error())
 	}
-	if err := w.renew(s, held, epoch); err != nil {
+	if err := w.renew(s, role, held, epoch); err != nil {
 		return tool.Refuse("the lease could not be written: " + err.Error())
 	}
 	// the cursor is read before anything is printed, so a message that lands while the
@@ -342,21 +340,21 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if !once {
 		line(c, armed)
 	}
-	challenge := func() *tool.Out {
+	challenge := func(epoch int64) *tool.Out {
 		if len(held) == 0 {
 			return nil
 		}
 		nonce := w.nonce()
 		ctx, cancel := call()
 		defer cancel()
-		if err := s.hooks.Challenge(ctx, s.as, epoch, held, nonce); err != nil {
+		if err := s.hooks.Challenge(ctx, s.as, role, epoch, held, nonce); err != nil {
 			return tool.Refuse("the challenge could not be written: " + err.Error())
 		}
 		o := tool.Done().As("CHALLENGE").Fact("nonce", nonce).Fact("push", pushList(held)).Fact("within", hook.AnswerBound.String())
 		o.Note("run: nova-hook prove --as " + s.as + " --nonce " + nonce)
 		return o
 	}
-	ch := challenge()
+	ch := challenge(epoch)
 	if ch != nil && ch.Status == tool.Refused {
 		return ch
 	}
@@ -389,10 +387,10 @@ func (w world) cursor(s *session, held []hook.Push) (string, *tool.Out) {
 }
 
 // renew renews the lease of every push held.
-func (w world) renew(s *session, held []hook.Push, epoch int64) error {
+func (w world) renew(s *session, role hook.Role, held []hook.Push, epoch int64) error {
 	for _, p := range held {
 		ctx, cancel := call()
-		err := s.hooks.Renew(ctx, s.as, p, epoch, w.holder)
+		err := s.hooks.Renew(ctx, s.as, role, p, epoch, w.holder)
 		cancel()
 		if err != nil {
 			return err
@@ -432,13 +430,24 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 // loop holds the bus push and streams it until a signal or an unhook: one
 // blocking read of the stream a tick, the lease renewed every RenewEvery, a
 // new challenge every ChallengeEvery, and a HOOK STATE line on each change.
-func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func() *tool.Out) *tool.Out {
+// A stream that does not answer is said once while it stays the same fault,
+// and the loop waits a tick before it reads again: a store that is down never
+// floods the Monitor. A record lost under the loop (none: deleted, or the
+// store flushed) is armed again, the session's hook being the identity's word;
+// an unhook ends the loop.
+func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out) *tool.Out {
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stream := bus.StreamOf(s.as)
 	waiter, _ := s.bus.(bus.Waiter) // ignored: a store with no wait reads holds no bus push here; its loop only renews
 	nextRenew, nextChallenge := w.now().Add(hook.RenewEvery), w.now().Add(hook.ChallengeEvery)
-	lastState := ""
+	lastState, unread := "", ""
+	pause := func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(w.tick):
+		}
+	}
 	for {
 		if ctx.Err() != nil {
 			line(c, tool.Done().As("STOP").Fact("as", s.as).Fact("lapse", hook.LeaseTTL.String()))
@@ -446,8 +455,16 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		}
 		if waiter != nil && slices.Contains(held, hook.Bus) {
 			got, err := waiter.BlockRead(ctx, stream, cursor, w.tick, bus.WaitRead)
-			if err != nil && ctx.Err() == nil {
-				line(c, tool.Done().As("STATE").Fact("state", "unread").Note("the bus stream did not answer: "+err.Error()+"; the loop reads it again"))
+			switch {
+			case err != nil && ctx.Err() == nil:
+				if why := err.Error(); why != unread {
+					unread = why
+					line(c, tool.Done().As("STATE").Fact("state", "unread").Note("the bus stream did not answer: "+why+"; the loop reads it again every "+w.tick.String()+", and says so again only when the fault changes"))
+				}
+				pause()
+			case err == nil && unread != "":
+				unread = ""
+				line(c, tool.Done().As("STATE").Fact("state", "read").Note("the bus stream answers again"))
 			}
 			for _, e := range got {
 				cursor = e.Entry
@@ -456,17 +473,23 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				}
 			}
 		} else {
-			select {
-			case <-ctx.Done():
-			case <-time.After(w.tick):
-			}
+			pause()
 		}
 		if ctx.Err() != nil {
 			continue
 		}
 		if !w.now().Before(nextRenew) {
 			nextRenew = w.now().Add(hook.RenewEvery)
-			if err := w.renew(s, held, epoch); errors.Is(err, hook.ErrNotHooked) {
+			err := w.renew(s, role, held, epoch)
+			if errors.Is(err, hook.ErrNotHooked) {
+				if e, ok := w.rearm(s, role, held); ok {
+					// the record was lost (none), not unhooked: armed again, a new challenge
+					epoch, err = e, nil
+					line(c, tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", false).Fact("hold", pushList(held)).Note("the hook record was lost under this hook (no record: deleted, or the store flushed); armed again"))
+					nextChallenge = w.now()
+				}
+			}
+			if errors.Is(err, hook.ErrNotHooked) {
 				o := tool.Fail(s.as + " was unhooked under this hook (nova-hook unhook, or a hook as another role); nothing is held from now")
 				o.Reasons = []string{hookgate.Reason}
 				o.Remedy = hook.HookCommand(s.as, role)
@@ -477,7 +500,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		}
 		if !w.now().Before(nextChallenge) {
 			nextChallenge = w.now().Add(hook.ChallengeEvery)
-			if ch := challenge(); ch != nil {
+			if ch := challenge(epoch); ch != nil {
 				line(c, ch)
 			}
 		}
@@ -489,6 +512,25 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			line(c, stateLine(st[0], role))
 		}
 	}
+}
+
+// rearm arms the record again when it is gone (none) under the loop, and
+// renews what the loop holds: ok false when the record is there (unhooked, or
+// hooked again since), which ends the loop.
+func (w world) rearm(s *session, role hook.Role, held []hook.Push) (int64, bool) {
+	ctx, cancel := call()
+	st, _, err := s.hooks.Read(ctx, s.as)
+	cancel()
+	if err != nil || st[0].State != hook.StateNone {
+		return 0, false
+	}
+	ctx, cancel = call()
+	epoch, _, err := s.hooks.HookAs(ctx, s.as, role, w.holder)
+	cancel()
+	if err != nil || w.renew(s, role, held, epoch) != nil {
+		return 0, false
+	}
+	return epoch, true
 }
 
 // prove is the verb: the answer to the hook's challenge (tla/Hook.tla, Answer).

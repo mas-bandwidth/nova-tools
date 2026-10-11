@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
@@ -53,9 +54,11 @@ func TestEveryVerbRefusesUntilHooked(t *testing.T) {
 			assert.Equal(t, 1, res.Code, res.Stdout+res.Stderr)
 			out := res.Stdout + res.Stderr
 			assert.Contains(t, out, "FAILED reason=unhooked: ada is not hooked in: no hook record")
-			assert.Contains(t, out, "; run: nova-hook hook --as ada --role coordinator")
-			assert.Contains(t, out, "NOTE or, as friend: nova-hook hook --as ada --role friend")
-			assert.Contains(t, out, "NOTE see it: nova-hook status --as ada")
+			assert.Contains(t, out, "; run: nova-hook status --as ada", "no role known: the remedy looks, it never guesses the coordinator")
+			assert.NotContains(t, out, "run: nova-hook hook --as ada --role coordinator")
+			assert.Less(t, strings.Index(out, "NOTE hook in as comms"), strings.Index(out, "NOTE hook in as friend"), "comms is offered first")
+			assert.Less(t, strings.Index(out, "NOTE hook in as friend"), strings.Index(out, "NOTE hook in as coordinator"), "then friend, then coordinator")
+			assert.Contains(t, out, "NOTE hook in as comms (on the bus, taking no sprint work): nova-hook hook --as ada --role comms")
 			assert.Empty(t, r.execIn)
 
 			h.Hook(t, "ada", hook.Comms)

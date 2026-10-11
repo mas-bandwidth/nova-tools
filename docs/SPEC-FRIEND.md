@@ -2817,8 +2817,9 @@ The beat is the daemon's, and the daemon's alone: the agent `install` writes
 runs the daemon, and the daemon beats each time round while it runs (its
 session's whole life, launchd keeping it up), so the beat needs no agent of
 its own and none is written — the one plist a friend needs is the daemon's.
-The beat is also a verb of the tool, `nova-friend beat --as <me> [--server <addr>]`: the daemon's own call, on its own, the canary run by hand. A server
-that does not answer is exit 2.
+The beat is also a verb of the tool, `nova-friend beat --as <me> [--server <addr>] [--redis <addr>]`: the daemon's own call, on its own, the canary run by hand. It is
+gated like every verb that acts as a friend (docs/SPEC-HOOK.md): a name not hooked in as a friend
+sends no beat and is FAILED at exit 1 with the breadcrumb. A server that does not answer is exit 2.
 
 The hand plists are retired (the finding of 2026-10-04): a friend-beat
 agent copied in by hand, for a friend whose harness is the ChatGPT app,

@@ -27,16 +27,22 @@ import (
 // HookRetry is how soon the daemon looks again while its friend is not hooked in.
 const HookRetry = 5 * time.Second
 
+// BusGrace is how long a session harness's bus push stays proven after her
+// session was last seen present (friend.SessionCheck.Present): one check
+// cadence, so a check answered late, or a turn that runs past one check's
+// bound, does not stop her lanes, and a session that is gone for longer does.
+const BusGrace = friend.SessionQuiet
+
 // ErrUnhooked is what a gated sprint verb answers while the friend is not hooked in.
 var ErrUnhooked = errors.New("not hooked in")
 
 // daemonHook is the daemon's hold on its friend's hook.
 type daemonHook struct {
-	holder  *hook.Holder
-	now     func() time.Time
-	record  func(string)
-	session func() bool // the bus push's proof: her session answered its check
-	sprint  bool        // the role carries the work push, proven by the server's answers
+	holder   *hook.Holder
+	now      func() time.Time
+	record   func(string)
+	busProof func(ctx context.Context) bool // the bus push's proof (sessionProof, or the daemon's own round trip)
+	sprint   bool                           // the role carries the work push, proven by the server's answers
 
 	hooked   atomic.Bool
 	why      atomic.Pointer[string]
@@ -48,11 +54,11 @@ type daemonHook struct {
 // or nil when the world gives no hook store (a test's world that gates
 // nothing). A store that keeps no hook record holds nothing and says why:
 // the gate then stays shut (fail closed).
-func (w world) newDaemonHook(st bus.Store, name string, role hook.Role, session func() bool, record func(string)) *daemonHook {
+func (w world) newDaemonHook(st bus.Store, name string, role hook.Role, busProof func(context.Context) bool, record func(string)) *daemonHook {
 	if w.hookStore == nil {
 		return nil
 	}
-	h := &daemonHook{now: w.now, record: record, session: session, sprint: role == hook.Friend}
+	h := &daemonHook{now: w.now, record: record, busProof: busProof, sprint: role == hook.Friend}
 	why := "not hooked in yet: the daemon hooks in at its first step"
 	h.why.Store(&why)
 	hs, err := w.hookStore(st)
@@ -61,6 +67,7 @@ func (w world) newDaemonHook(st bus.Store, name string, role hook.Role, session 
 		h.why.Store(&why)
 		return h
 	}
+	hs.Timeout = bus.CallTimeout // each round trip of a step bounded on its own (hook.Store.Timeout)
 	host, herr := os.Hostname()
 	if herr != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
@@ -90,20 +97,54 @@ func (h *daemonHook) beatAnswered(err error) {
 	h.answered.Store(&at)
 }
 
+// sessionProof is a session harness's bus push proof: proven while the push
+// was proved this run (her session answered a check) and her session is
+// present, or was within grace (the cold reads' finding 7): a proof proved
+// once must not stand for the whole run after her session is gone.
+func sessionProof(sc interface {
+	Proof() (bool, string)
+	Present() (bool, string)
+}, now func() time.Time, grace time.Duration) func(context.Context) bool {
+	var lastUp time.Time
+	return func(context.Context) bool {
+		if proved, _ := sc.Proof(); !proved {
+			return false
+		}
+		if up, _ := sc.Present(); up {
+			lastUp = now()
+			return true
+		}
+		return !lastUp.IsZero() && now().Sub(lastUp) < grace
+	}
+}
+
+// roundTripProof is a per-card harness's bus push proof (a claude friend,
+// friend.SessionCheck.BeatAlways): her cards run as processes of their own, so
+// no interactive session holds her bus push and none is waited for; the daemon
+// reads her stream itself, and its own round trip to the bus store proves it.
+func roundTripProof(st bus.Store) func(context.Context) bool {
+	return func(ctx context.Context) bool {
+		_, _, err := st.Roster(ctx)
+		return err == nil
+	}
+}
+
 // step hooks in on the first call and renews and proves after: one beat of
-// the holder, then the gate, its word recorded when it changes.
+// the holder, then the gate, its word recorded when it changes. Each round
+// trip is bounded on its own (the hook store's Timeout, bus.CallTimeout), so a
+// slow one never spends the time of the next.
 func (h *daemonHook) step(ctx context.Context) {
 	if h == nil || h.holder == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, bus.CallTimeout)
-	defer cancel()
 	var err error
 	if h.holder.Epoch() == 0 {
 		err = h.holder.Start(ctx)
 	}
 	if err == nil {
-		proven := map[hook.Push]bool{hook.Bus: h.session()}
+		bctx, cancel := context.WithTimeout(ctx, bus.CallTimeout)
+		proven := map[hook.Push]bool{hook.Bus: h.busProof(bctx)}
+		cancel()
 		if h.sprint {
 			at := h.answered.Load()
 			proven[hook.Work] = at != nil && h.now().Sub(*at) < hook.LeaseTTL
@@ -121,7 +162,7 @@ func (h *daemonHook) step(ctx context.Context) {
 			word = r.Error()
 		}
 		if errors.Is(err, hook.ErrNotHooked) {
-			word = h.holder.Name + " was unhooked (nova-hook unhook), or hooked as another role since: this daemon holds nothing until she is hooked in as " + string(h.holder.Role) + " again; run: " + hook.HookCommand(h.holder.Name, h.holder.Role)
+			word = h.holder.Name + " was unhooked (nova-hook unhook), or hooked as another role since: this daemon holds nothing, and a restart of it does not hook her in, until she is hooked in as " + string(h.holder.Role) + " again; run: " + hook.HookCommand(h.holder.Name, h.holder.Role)
 		}
 		if errors.Is(err, hook.ErrOtherRole) {
 			word = h.holder.Name + " is hooked as another role (nova-hook status --as " + h.holder.Name + "): this daemon never takes the record over, so it holds nothing and her lanes take nothing; to work as a friend, run: " + hook.HookCommand(h.holder.Name, h.holder.Role)
@@ -204,14 +245,27 @@ func gated[T any](h *daemonHook, verb func(ctx context.Context, argv []string) (
 }
 
 // gateVerb is the gate a verb of this tool meets before it sends or reads the
-// bus as name (docs/SPEC-HOOK.md): nil when name is hooked in with a role that
-// carries need, else the verb's result with the breadcrumb (FAILED at exit 1,
-// or REFUSED at exit 2 when the record cannot be read).
+// bus as name (docs/SPEC-HOOK.md): nil when name is hooked in as a role the
+// verb is for (actsFor) that carries need, else the verb's result with the
+// breadcrumb (FAILED at exit 1, or REFUSED at exit 2 when the record cannot be
+// read).
 func (w world) gateVerb(st bus.Store, name string, role hook.Role, need ...hook.Push) *tool.Out {
 	if w.gate == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bus.CallTimeout)
 	defer cancel()
-	return hookgate.Out(w.gate(ctx, st, hook.Want{Name: name, Need: need, Role: role}))
+	return hookgate.Out(w.gate(ctx, st, hook.Want{Name: name, Need: need, Roles: actsFor(role), Role: role}))
+}
+
+// actsFor is the roles a verb meant for role accepts: its own, and for the
+// coordinator's verbs comms too until nova-sprint hook ships
+// (hook.SprintHookPR): until then a coordinator cannot be proven, and the seat
+// hooks in as comms. A role that merely carries the push is not enough: a
+// friend daemon arming the seat's name as friend opens none of these verbs.
+func actsFor(role hook.Role) []hook.Role {
+	if role == hook.Coordinator {
+		return []hook.Role{hook.Coordinator, hook.Comms}
+	}
+	return []hook.Role{role}
 }

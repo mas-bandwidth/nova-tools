@@ -192,4 +192,7 @@ MCHookBrokenStaleEpoch.cfg	MCHook.tla	invariant	LiveIsJoined	ignore-terminal	hoo
 MCHookBrokenNoEpoch.cfg	MCHook.tla	invariant	UnhookStands	ignore-terminal	hook	required	-
 MCHookBrokenNoLease.cfg	MCHook.tla	invariant	ProofOnlyHeld	ignore-terminal	hook	required	-
 MCHookBrokenNoStream.cfg	MCHook.tla	invariant	ProofMeansRead	ignore-terminal	hook	required	-
+MCHookBrokenNoRole.cfg	MCHook.tla	invariant	LiveIsJoined	ignore-terminal	hook	required	-
+MCHookBrokenTakeover.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
+MCHookBrokenReArm.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
 MCHookBrokenNoExpire.cfg	MCHook.tla	temporal	DeadHolderLosesGate	ignore-terminal	hook	required	-
