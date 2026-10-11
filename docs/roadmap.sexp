@@ -1219,13 +1219,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "issue #3465; issue #3486")
-  (item "swarm-doctor-checks-running-executable" :group "ops"
-   :title "nova-swarm doctor checks the running executable, not only PATH"
-   :text "The launch preflight refuses a new binary found on PATH but passes the same binary by absolute
-    path. It checks the executable that is actually running."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #3469")
   (item "swarm-providers-table-verb" :group "docs"
    :title "A nova-swarm verb prints the providers table and the launcher argv"
    :text "No verb shows the embedded providers table or the one launcher's command line in a dry run. A

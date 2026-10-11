@@ -214,4 +214,9 @@
    :title "A cancelled workflow run counts as red for revert-on-red"
    :text "Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a
     bad main."
-   :origin "PR #4600")))
+   :origin "PR #4600")
+  (fix "swarm-doctor-checks-running-executable" :release "v1.2.9" :status "planned"
+   :title "nova-swarm doctor checks the running executable, not only PATH"
+   :text "The launch preflight refuses a new binary found on PATH but passes the same binary by absolute
+    path. It checks the executable that is actually running."
+   :origin "issue #3469")))
