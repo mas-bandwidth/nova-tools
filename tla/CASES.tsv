@@ -170,6 +170,7 @@ MCFriendEnvelope.cfg	MCFriendEnvelope.tla	pass	-	ignore-terminal	frienddelivery	
 MCFriendEnvelopeBrokenNewestFirst.cfg	MCFriendEnvelope.tla	invariant	NoYoungerFirst	ignore-terminal	frienddelivery	required	-
 MCFriendEnvelopeBrokenOnePerTurn.cfg	MCFriendEnvelope.tla	invariant	EnvelopeTakesAll	ignore-terminal	frienddelivery	required	-
 MCFriendEnvelopeFailureReorders.cfg	MCFriendEnvelope.tla	invariant	NoYoungerFirstAcrossFailure	ignore-terminal	frienddelivery	required	-
+MCFriendEnvelopeBrokenGiveUpEarly.cfg	MCFriendEnvelope.tla	invariant	GivenUpOnlyAtTheBound	ignore-terminal	frienddelivery	required	-
 MCFriendLink.cfg	MCFriend.tla	pass	-	ignore-terminal	friend	required	-
 MCFriendBrokenKeepInHand.cfg	MCFriend.tla	invariant	NoMessageLost	ignore-terminal	friend	required	-
 MCFriendBrokenAckOnRead.cfg	MCFriend.tla	invariant	AckedOnlyRead	ignore-terminal	friend	required	-
