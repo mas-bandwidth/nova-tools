@@ -13,7 +13,7 @@ func TestDoctorFriendLiveNamesARefusedBeat(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFriendPlist(t, root, "ada", "--as", "ada", "--harness", "claude")
-	fake := fakeEnv{env: map[string]string{"HOME": "home"}, root: root, clock: time.Now(),
+	fake := friendEnv{goos: "darwin", fakeEnv: fakeEnv{env: map[string]string{"HOME": "home"}, root: root, clock: time.Now(),
 		exec: func(name string, _ ...string) (string, error) {
 			switch name {
 			case "nova-friend":
@@ -22,7 +22,7 @@ func TestDoctorFriendLiveNamesARefusedBeat(t *testing.T) {
 				return "", nil
 			}
 			return "", errors.New("unexpected " + name)
-		}}
+		}}}
 
 	r := checkFriendLive(context.Background(), fake)
 	assert.Equal(t, Fail, r.Status)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -23,7 +22,11 @@ func checkPlists(ctx context.Context, env Env) Result {
 	}
 	var bad []string
 	for _, p := range paths {
-		out, err := env.Exec(ctx, "plutil", "-lint", p)
+		linter, args := "plutil", []string{"-lint", p}
+		if strings.HasSuffix(p, ".service") {
+			linter, args = "systemd-analyze", []string{"verify", p}
+		}
+		out, err := env.Exec(ctx, linter, args...)
 		if err != nil {
 			bad = append(bad, fmt.Sprintf("%s: %s", p, firstLine(out)))
 		}
@@ -41,7 +44,7 @@ func novaAgentFiles(env Env) []string {
 	home := env.Getenv("HOME")
 	var dirs []string
 	var prefix, suffix string
-	if runtime.GOOS == "linux" {
+	if hostOS(env) == "linux" {
 		dirs = []string{filepath.Join(home, ".config", "systemd", "user")}
 		prefix, suffix = "nova-", ".service"
 	} else {

@@ -49,12 +49,22 @@ func checkFriendWall(ctx context.Context, env Env) Result {
 	return Result{Status: OK, Evidence: fmt.Sprintf("%d friend daemons write outside the wall", len(daemons))}
 }
 
-// pathWithin is whether a and b are equal or one contains the other, by cleaned
-// path.
+// pathWithin is whether a and b are equal or one contains the other, after
+// resolving symlinks where the paths exist, so a --dir that is a link into the
+// self is caught as well as a literal path.
 func pathWithin(a, b string) bool {
-	a, b = filepath.Clean(a), filepath.Clean(b)
+	a, b = resolveLinks(a), resolveLinks(b)
 	if a == b {
 		return true
 	}
 	return strings.HasPrefix(a, b+string(filepath.Separator)) || strings.HasPrefix(b, a+string(filepath.Separator))
+}
+
+// resolveLinks is the path with every symlink resolved where it exists, and the
+// cleaned path where it does not (a path the machine has not made yet).
+func resolveLinks(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
 }

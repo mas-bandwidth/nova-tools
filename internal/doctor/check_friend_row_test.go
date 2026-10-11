@@ -12,13 +12,13 @@ func TestDoctorFriendRowRefusesABatchRowThatCannotBeDealt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFriendPlist(t, root, "ada", "--as", "ada", "--harness", "claude", "--width", "4")
-	fake := fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
+	fake := friendEnv{goos: "darwin", fakeEnv: fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
 		exec: func(name string, _ ...string) (string, error) {
 			if name == "nova-config" {
 				return `{"mode":"one-shot","roles":["builder","reader"],"width":4}`, nil
 			}
 			return "", errors.New("unexpected " + name)
-		}}
+		}}}
 
 	r := checkFriendRow(context.Background(), fake)
 	assert.Equal(t, OK, r.Status)

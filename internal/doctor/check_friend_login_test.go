@@ -12,13 +12,13 @@ func TestDoctorFriendLoginNamesAConfigDirThatIsNotSignedIn(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFriendPlist(t, root, "ada", "--as", "ada", "--harness", "claude", "--config-dir", "home/ada-config")
-	fake := fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
+	fake := friendEnv{goos: "darwin", fakeEnv: fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
 		exec: func(name string, _ ...string) (string, error) {
 			if name == "env" {
 				return `{"terminal_reason":"api_error","duration_api_ms":0}`, nil
 			}
 			return "", errors.New("unexpected " + name)
-		}}
+		}}}
 
 	r := checkFriendLogin(context.Background(), fake)
 	assert.Equal(t, Fail, r.Status)

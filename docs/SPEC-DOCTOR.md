@@ -99,7 +99,8 @@ hook gate; the evidence quotes the refusal) or when the last beat is older than
 **friend-wall.** Dependency: each daemon's `--dir` against the lane wall's
 deny-self. The deny-self is the daemon's `--deny-self`, else
 `NOVA_FRIEND_DENY_SELF`, else `<home>/<coordinator>-working`; `fail` when `--dir`
-equals, contains, or is contained by it, naming both paths. Fix: move `--dir`
+equals, contains, or is contained by it, naming both paths, with both paths
+resolved through symlinks where they exist. Fix: move `--dir`
 beside the self (a sibling directory), never inside it.
 
 **friend-login.** Dependency: a claude daemon's sign-in. For `--harness claude`

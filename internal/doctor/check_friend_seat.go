@@ -21,11 +21,23 @@ type friendDaemon struct {
 	Argv  []string
 }
 
+// hostOS is the operating system whose agents the checks enumerate: the real
+// host, or the platform a test injects through Env (an optional GOOS method), so
+// both the launchd and the systemd paths run on either bench.
+func hostOS(env Env) string {
+	if h, ok := env.(interface{ GOOS() string }); ok {
+		if g := h.GOOS(); g != "" {
+			return g
+		}
+	}
+	return runtime.GOOS
+}
+
 // friendDaemonDir is where the friend agents live: ~/Library/LaunchAgents on
 // darwin, ~/.config/systemd/user on linux.
 func friendDaemonDir(env Env) (dir, prefix, suffix string) {
 	home := env.Getenv("HOME")
-	if runtime.GOOS == "linux" {
+	if hostOS(env) == "linux" {
 		return filepath.Join(home, ".config", "systemd", "user"), "nova-friend-", ".service"
 	}
 	return filepath.Join(home, "Library", "LaunchAgents"), "com.nova.friend-", ".plist"
@@ -51,7 +63,7 @@ func friendDaemons(env Env) []friendDaemon {
 			continue
 		}
 		var argv []string
-		if runtime.GOOS == "linux" {
+		if hostOS(env) == "linux" {
 			argv = unitExecStart(string(b))
 		} else {
 			argv = friend.PlistArgs(string(b))

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -59,7 +58,7 @@ func checkFriendLive(ctx context.Context, env Env) Result {
 // daemonLoaded is whether the machine has the agent loaded, so a stale beat is
 // a fault and not a stopped daemon.
 func daemonLoaded(ctx context.Context, env Env, d friendDaemon) bool {
-	if runtime.GOOS == "linux" {
+	if hostOS(env) == "linux" {
 		_, err := env.Exec(ctx, "systemctl", "--user", "is-active", d.Label)
 		return err == nil
 	}
