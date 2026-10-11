@@ -5,9 +5,9 @@
 \* `Load`), the verdict of one entry's two reads (internal/update/cli.go
 \* `verdict`), the apply of one named entry and its dry run
 \* (internal/update/cli.go `apply`, `applyDryRun`), and the report's state
-\* file with the deliveries it records SENT (internal/update/report.go
-\* `report`, `deliver`, `confirmed`; internal/update/snapshot.go
-\* `readSnapshot`, `writeSnapshot`).
+\* file with the deliveries it records SENT per recipient scope
+\* (internal/update/report.go `report`, `deliver`, `sendOK`;
+\* internal/update/snapshot.go `readSnapshot`, `writeSnapshotWith`).
 \*
 \* The manifest's entries are the model's constants and not its state: one
 \* invocation loads them once from the file and nothing this module does
@@ -22,9 +22,11 @@
 \* apply argv.
 \*
 \* One version read is one number: `None` (this run has not read it),
-\* `Unknown` (the read ran and did not answer: SPEC-UPDATE rule 7), or the
-\* version; the two markers are below every version, so a read is never read
-\* as one. The state file's observed set holds the same value per entry:
+\* `Unknown` (the read ran and did not answer: SPEC-UPDATE rule 7), `Ahead`
+\* (installed is the vX.Y.Z-0 pseudo-version stamped past the latest tag,
+\* read.go `ahead`), or the version; the three markers are below every
+\* version, so a read is never read as one. The state file's observed set
+\* holds the same value per entry:
 \* report.go keeps the raw identity beside the status, and the two move
 \* together, so one value stands for both. `report` reads a latest only for a
 \* `local:` source while `check` reads every one, so this module's Read,
@@ -50,15 +52,18 @@
 \*   "installonverdict"  a STALE verdict installs by itself -> ApplyOnlyWhatIsNamed
 \*   "dryruninstalls"    a dry run starts the install       -> DryRunInstallsNothing
 \*   "sentonrefusal"     a refusal is recorded as SENT      -> SentOnlyOnOK
+\*   "aheadisnewer"      a greater version reads AHEAD      -> VerdictMatchesVersion
 
 EXTENDS Naturals
 
-CONSTANTS Entries, Pins, Published, MaxVer, MaxFaults, Broken
+CONSTANTS Entries, Pins, Published, MaxVer, MaxFaults, Broken, Scopes
 
 None == 0 - 1     \* this run has not read it
 Unknown == 0 - 2  \* the read ran and did not answer
-Vers == {None, Unknown} \cup 0..MaxVer
-Verdicts == {"none", "EQUAL", "STALE", "AHEAD", "DIFFERENT", "UNKNOWN"}
+Ahead == 0 - 3    \* installed is the vX.Y.Z-0 pseudo-version stamped past the latest tag
+Vers == {None, Unknown, Ahead} \cup 0..MaxVer
+InstalledVals == {Ahead} \cup 0..MaxVer
+Verdicts == {"none", "EQUAL", "STALE", "NEWER", "AHEAD", "DIFFERENT", "UNKNOWN"}
 Phases == {"idle", "reading", "written", "crashed", "named"}
 Starts == {"none", "named", "unnamed", "dryrun"}
 
@@ -77,8 +82,8 @@ VARIABLES
   stateObserved,  \* the state file's observed set
   changedSet,     \* the CHANGED names the last run printed
   changedAgrees,  \* ghost: CHANGED named exactly the entries that moved
-  delivered,      \* the state file records a delivery SENT
-  sentOK,         \* ghost: the bus said SEND OK when that delivery was recorded
+  delivered,      \* per recipient scope: the state file records a delivery SENT
+  sentOK,         \* ghost: per scope, the bus said SEND OK when it was recorded
   pending,        \* a report is composed and held in the state file, not sent
   faults          \* the events that compete with a run so far, bounded by MaxFaults
 
@@ -87,7 +92,7 @@ vars == <<installed, instRead, latRead, verdictOf, installs, applyRan, afterVer,
           delivered, sentOK, pending, faults>>
 
 TypeOK ==
-  /\ installed \in [Entries -> 0..MaxVer]
+  /\ installed \in [Entries -> InstalledVals]
   /\ instRead \in [Entries -> Vers]
   /\ latRead \in [Entries -> Vers]
   /\ verdictOf \in [Entries -> Verdicts]
@@ -100,8 +105,8 @@ TypeOK ==
   /\ stateObserved \in [Entries -> Vers]
   /\ changedSet \in SUBSET Entries
   /\ changedAgrees \in BOOLEAN
-  /\ delivered \in BOOLEAN
-  /\ sentOK \in BOOLEAN
+  /\ delivered \in [Scopes -> BOOLEAN]
+  /\ sentOK \in [Scopes -> BOOLEAN]
   /\ pending \in BOOLEAN
   /\ faults \in 0..MaxFaults
 
@@ -119,8 +124,8 @@ Init ==
   /\ stateObserved = [e \in Entries |-> None]
   /\ changedSet = {}
   /\ changedAgrees = TRUE
-  /\ delivered = FALSE
-  /\ sentOK = FALSE
+  /\ delivered = [s \in Scopes |-> FALSE]
+  /\ sentOK = [s \in Scopes |-> FALSE]
   /\ pending = FALSE
   /\ faults = 0
 
@@ -128,7 +133,7 @@ Init ==
 OutsideChange(e) ==
   /\ faults < MaxFaults
   /\ faults' = faults + 1
-  /\ \E v \in 0..MaxVer : installed' = [installed EXCEPT ![e] = v]
+  /\ \E v \in InstalledVals : installed' = [installed EXCEPT ![e] = v]
   /\ UNCHANGED <<instRead, latRead, verdictOf, installs, applyRan, afterVer,
                  dryRun, named, phase, stateObserved, changedSet, changedAgrees,
                  delivered, sentOK, pending>>
@@ -168,9 +173,11 @@ Verdict(e) ==
          THEN "UNKNOWN"
          ELSE IF e \in Pins
            THEN IF instRead[e] = latRead[e] THEN "EQUAL" ELSE "DIFFERENT"
-           ELSE IF instRead[e] > latRead[e] THEN "AHEAD"
-           ELSE IF instRead[e] < latRead[e] THEN "STALE"
-           ELSE "EQUAL"]
+           ELSE IF instRead[e] = Ahead \/ (Broken = "aheadisnewer" /\ instRead[e] > latRead[e])
+             THEN "AHEAD"
+             ELSE IF instRead[e] > latRead[e] THEN "NEWER"
+             ELSE IF instRead[e] < latRead[e] THEN "STALE"
+             ELSE "EQUAL"]
   /\ UNCHANGED <<installed, instRead, latRead, installs, applyRan, afterVer,
                  dryRun, named, phase, stateObserved, changedSet, changedAgrees,
                  delivered, sentOK, pending, faults>>
@@ -207,12 +214,13 @@ Crash ==
 
 \* Deliver: the bus said `SEND OK id=<id> pushed=true` for this report, so
 \* the state file records the delivery SENT and nothing is pending
-\* (report.go `deliver`, `confirmed`; SPEC-UPDATE rule 24).
+\* (report.go `deliver`, `sendOK`; SPEC-UPDATE rule 24).
 DeliverOK ==
   /\ phase = "written"
   /\ pending
-  /\ delivered' = TRUE
-  /\ sentOK' = TRUE
+  /\ \E s \in Scopes :
+       /\ delivered' = [delivered EXCEPT ![s] = TRUE]
+       /\ sentOK' = [sentOK EXCEPT ![s] = TRUE]
   /\ pending' = FALSE
   /\ phase' = "idle"
   /\ UNCHANGED <<installed, instRead, latRead, verdictOf, installs, applyRan,
@@ -226,8 +234,9 @@ DeliverRefused ==
   /\ pending
   /\ faults < MaxFaults
   /\ faults' = faults + 1
-  /\ delivered' = (delivered \/ Broken = "sentonrefusal")
-  /\ sentOK' = (sentOK /\ Broken # "sentonrefusal")
+  /\ \E s \in Scopes :
+       /\ delivered' = [delivered EXCEPT ![s] = delivered[s] \/ Broken = "sentonrefusal"]
+       /\ sentOK' = [sentOK EXCEPT ![s] = sentOK[s] /\ Broken # "sentonrefusal"]
   /\ phase' = "idle"
   /\ UNCHANGED <<installed, instRead, latRead, verdictOf, installs, applyRan,
                  afterVer, dryRun, named, stateObserved, changedSet, changedAgrees, pending>>
@@ -319,6 +328,17 @@ DryRunInstallsNothing == \A e \in Entries : installs[e] # "dryrun"
 VerdictFromReads ==
   \A e \in Entries : verdictOf[e] # "none" => instRead[e] # None /\ latRead[e] # None
 
+\* A verdict names what the two reads say, as the code reads them: a greater
+\* release version is NEWER, AHEAD is only the pseudo-version stamped past the
+\* latest tag and never a greater release version (read.go `Compare`, `ahead`;
+\* cli.go `verdict`).
+VerdictMatchesVersion ==
+  \A e \in Entries :
+    /\ verdictOf[e] = "AHEAD" => instRead[e] = Ahead
+    /\ verdictOf[e] = "NEWER" => instRead[e] > latRead[e]
+    /\ verdictOf[e] = "STALE" => instRead[e] < latRead[e]
+    /\ verdictOf[e] = "EQUAL" => instRead[e] = latRead[e]
+
 \* The state file holds only versions read in a run that completed its reads:
 \* the write follows the reads of every entry (report.go; SPEC-UPDATE
 \* rule 25).
@@ -326,9 +346,9 @@ StateWrittenAfterRead ==
   phase = "written" => \A e \in Entries : stateObserved[e] = instRead[e] /\ instRead[e] # None
 
 \* A delivery is recorded SENT only after the bus's SEND OK: an unconfirmed
-\* send is uncertain and stays pending (report.go `deliver`, `confirmed`;
+\* send is uncertain and stays pending (report.go `deliver`, `sendOK`;
 \* SPEC-UPDATE rule 24).
-SentOnlyOnOK == delivered => sentOK
+SentOnlyOnOK == \A s \in Scopes : delivered[s] => sentOK[s]
 
 \* CHANGED names exactly the entries whose read differs from the state file,
 \* the first run's baseline included (report.go; SPEC-UPDATE rule 25).

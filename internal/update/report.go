@@ -21,6 +21,7 @@ func shaText(s string) string { sum := sha256.Sum256([]byte(s)); return hex.Enco
 // --snapshot (CHANGED) and per delivery (SENT), and a note for what is true and
 // not a finding. Under --draft the value is the note itself, its payload: the
 // headers and this same value's lines, which is also what --send delivers.
+// tla/UpdateApply.tla WriteState
 func report(ctx context.Context, verb string, all, entries []Entry, o options, kinds, help string, started time.Time, env Environment) *tool.Out {
 	state := emptySnapshot()
 	var err error
