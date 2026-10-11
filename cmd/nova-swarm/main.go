@@ -624,6 +624,10 @@ type nativeFlags struct {
 	stageTimeout    *string
 	frame           *string
 	identity        *string
+	budgetServer    *string
+	budgetAs        *string
+	budgetHolder    *string
+	budgetSlots     *bool
 	repos           []string
 	recipients      []string
 }
@@ -670,6 +674,13 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
 	nf.frame = f.fs.String("frame", "", "the frame `file` a member wrote: the repository, commit and branch to stage, from which JOB.md and the shims are written")
 	nf.identity = f.fs.String("identity", "", "the pool identity the child commits under, `owner,name,email` (default: <root>/identity.tsv)")
+	// a limited route's global rate budget (nova-sprint routes limit): every model request
+	// takes it from the sprint's server first (budget take) and stalls while it is spent;
+	// absent, the route is unlimited and the proxy is as it was (providerbudget.go)
+	nf.budgetServer = f.fs.String("budget-server", "", "the sprint server's `host:port` a limited route's every model request takes its global budget from (budget take); empty: unlimited")
+	nf.budgetAs = f.fs.String("budget-as", "", "the `worker` the budget is taken as (the member or reader), with --budget-server")
+	nf.budgetHolder = f.fs.String("budget-holder", "", "the `prefix` of each request's holder (the launch), with --budget-server")
+	nf.budgetSlots = f.fs.Bool("budget-slots", false, "the route's provider has a concurrency budget: each request's slot is renewed and released through --budget-server")
 	f.fs.Var(stringListValue{&nf.repos}, "repo", "a repository the card may clone, `owner/name` (again for more): the wall opens the network to it alone")
 	f.fs.Var(stringListValue{&nf.recipients}, "recipient", "a bus lane the card may address (again for more); a bus send is denied inside the wall whatever is named")
 	return f, nf
@@ -885,6 +896,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		benchName:      *benchFlag,
 		stageTimeout:   stageDur,
 		identity:       identity,
+		budgetServer:   *nf.budgetServer,
+		budgetAs:       *nf.budgetAs,
+		budgetHolder:   *nf.budgetHolder,
+		budgetSlots:    *nf.budgetSlots,
 	}
 	if workerGiven {
 		cfg.worker = &w

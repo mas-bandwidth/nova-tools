@@ -56,6 +56,10 @@ type ProviderProxyConfig struct {
 	Silence    time.Duration
 	After      func(time.Duration) <-chan time.Time
 	HeaderWait time.Duration
+	// Budget is a limited route's global budget (providerbudget.go): every request takes
+	// it first and a limit refusal is sent again after a backoff. Nil is an unlimited
+	// route, and the proxy is exactly as it was.
+	Budget *ProxyBudget
 }
 
 // ProviderProxy is the localhost client the harness dials instead of the
@@ -82,6 +86,9 @@ type ProviderProxy struct {
 
 	once      sync.Once
 	closeOnce sync.Once
+
+	budget *ProxyBudget
+	bstate budgetState
 }
 
 // ListenProviderProxy listens on 127.0.0.1 and forwards to upstream.
@@ -116,6 +123,7 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 		stall:    make(chan struct{}),
 		ctx:      ctx,
 		cancel:   cancel,
+		budget:   cfg.Budget,
 		client: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 nil,
@@ -333,6 +341,10 @@ func headerWaitExpired(ctx context.Context, err error, sent bool) bool {
 }
 
 func (p *ProviderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if p.budget != nil {
+		p.serveBudgeted(w, r)
+		return
+	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	stop := context.AfterFunc(p.ctx, cancel)

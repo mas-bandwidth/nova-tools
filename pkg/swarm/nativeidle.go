@@ -125,6 +125,10 @@ type IdleWatch struct {
 	Pid    int    // the child's process group leader
 	Idle   time.Duration
 	Reader *WallReader // may be nil: the watch then reports no refusal
+	// Stalled, when set, says the card is waiting on its global rate budget or a provider
+	// refusal's backoff (ProviderProxy.Stalling): a card that waits is not idle, and the
+	// still-clock does not run while it waits. Nil is no budget.
+	Stalled func() bool
 
 	// Spend, when not nil, is the card's own accounting asked at every poll: what the
 	// job has spent so far and whether any read of it has answered. The harness caps
@@ -192,6 +196,12 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 			case at := <-tickC:
 				if at.IsZero() {
 					at = now()
+				}
+				if w.Stalled != nil && w.Stalled() {
+					// waiting on its budget: the harness is blocked on a request the proxy
+					// holds by design; the card stalls and is never idle
+					lastGrow = at
+					continue
 				}
 				switch size := logSize(w.Log); {
 				case size < lastSize:
