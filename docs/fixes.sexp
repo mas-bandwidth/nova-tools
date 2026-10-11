@@ -75,6 +75,13 @@
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
    :origin "fault 9, 2026-10-10")
+  (fix "adopt-restarts-what-it-replaced" :release "v1.2.6" :status "in-progress"
+   :title "Members are restarted and checked after adoption"
+   :text "After installing, the play restarts every member, reader and friend daemon whose binary it
+    replaced, fails each running process that does not report the installed version, prints a
+    refusal's cause whole, and ends with one table: host, version running, members and readers up,
+    harness present, disk free."
+   :origin "bug 13, fleet/tools.yml")
   (fix "draining-member-word-is-this-ticks" :release "v1.2.6" :status "in-progress"
    :title "A draining member's beat carries this tick's no-room word"
    :text "The member asks Room every tick before the drain return, so a member that drained under its
