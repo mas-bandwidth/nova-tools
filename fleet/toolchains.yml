@@ -1,12 +1,12 @@
-# toolchains.yml: every member carries every toolchain the cards need (Glenn,
+# toolchains.yml: every member carries every toolchain the cards need (the owner,
 # 2026-10-11: "all machines must be setup with all necessary tools, via
 # ansible"). Every card needs go (the repositories are Go) and python3; the
 # schema repository's legs need rustc/cargo, dart, java/javac, node, dotnet,
 # erl, elixir/mix and sbcl; nova-sprint's TLA cards need java and the pinned
 # TLC jar. On 2026-10-11 rustc was absent on b1-b3 (b2 was held by the sprint
-# on "no rustc on PATH"), dart and sbcl on b1-b3, hetzner2 and mini-m5, javac
-# on every machine with only the distro's JRE, java itself on mini-m5 (macOS's
-# /usr/bin/java stub), go unlinked on mini-m5, and the jar on the three macOS
+# on "no rustc on PATH"), dart and sbcl on every machine joined after the
+# standard, javac on every machine with only the distro's JRE, java itself on
+# the arm64 Mac (macOS's /usr/bin/java stub), go unlinked there, and the jar on the macOS
 # machines; a card that reached such a host ended TOOLCHAIN absent.
 #
 #   ansible-playbook -i ./nova-inventory fleet/toolchains.yml --check --diff | cat
@@ -21,8 +21,8 @@
 # a person or a make recipe gets. python3 is the machine's own (ansible itself
 # runs on it); the play only verifies it.
 #
-# The layout is the bench standard of 2026-09-20 (hetzner1, space, vision,
-# batman, superman hold it already, made by hand then; the play changes
+# The layout is the bench standard of 2026-09-20 (the five machines of that
+# day hold it already, made by hand then; the play changes
 # nothing there): nova_sdk_dir (~/sdk) holds <tool>-<version>/, its bin/ holds
 # a link per executable, env.sh puts bin/ first on PATH and is sourced from the
 # first line of ~/.bashrc (Linux) or from ~/.zshenv (Darwin), the shells a card
@@ -39,7 +39,7 @@
 #
 # The verify play at the end sources env.sh the way a shell does, runs every
 # tool, and refuses the host when one is missing: an absent cell is a finding,
-# never a pass. The Studio (the keeper, the inventory's coordinator group) is
+# never a pass. The coordinator (the keeper, the inventory's coordinator group) is
 # never a target: every play here is hosts all:!coordinator, so a bare run
 # cannot reach it. A host that is down is unreachable in the recap, never a
 # fault and never removed.
@@ -284,9 +284,9 @@
     # $0 to a directory holding erts-*, else falls back to the path it was built
     # at (/tmp/otp-<arch>-apple-darwin). Run through a link in nova_sdk_dir/bin
     # the walk starts in bin/ and finds nothing, so erl, erlc, escript and every
-    # elixir tool failed on mini-m5 (2026-10-11). The fallback is set here to the
+    # elixir tool failed on the arm64 Mac (2026-10-11). The fallback is set here to the
     # tree itself, in every launcher whose fallback names no OTP tree; a source
-    # build whose fallback is real (batman, superman) is left as it is.
+    # build whose fallback is real (the Intel Macs') is left as it is.
     - name: the OTP launchers fall back to their own tree
       ansible.builtin.shell:
         cmd: >-
@@ -350,7 +350,7 @@
       when: "'sbcl' in sdk_missing and sdk_is_darwin"
 
     # Every step is its own statement under set -e, and the build's log is kept
-    # outside the stage: on 2026-10-11 (mini-m5) this was one && chain, which
+    # outside the stage: on 2026-10-11 (the arm64 Mac) this was one && chain, which
     # set -e does not stop on, so a failed make.sh fell through to the rm that
     # took its log with it, and the task reported ok with no sbcl made.
     - name: sbcl {{ sdk_sbcl_version }} (built from source with the host lisp)
@@ -418,7 +418,7 @@
         line: '[ -f "{{ sdk }}/env.sh" ] && . "{{ sdk }}/env.sh"'
         regexp: '^\[ -f "{{ sdk | regex_escape }}/env\.sh" \] && \. '
         insertafter: '^# fleet-toolchains: the bench toolchain PATH'
-        # create too: a machine with no ~/.zshenv (mini-m5 on 2026-10-11) has
+        # create too: a machine with no ~/.zshenv (the arm64 Mac on 2026-10-11) has
         # none under --check either, since the task above made nothing there.
         create: true
         mode: "0644"

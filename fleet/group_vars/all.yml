@@ -169,7 +169,7 @@ nova_friend_deny_self: ""
 nova_friend_wall_reads: ""
 
 # The toolchains every member carries (fleet/toolchains.yml): the bench
-# standard of 2026-09-20 (hetzner1, space, vision, batman, superman were made
+# standard of 2026-09-20 (the five machines of that day were made
 # by hand then; the play converges the rest to the same layout). Each lives
 # under nova_sdk_dir as <tool>-<version>/ with its executables linked into
 # nova_sdk_dir/bin, and nova_sdk_dir/env.sh puts that directory first on PATH;
@@ -180,7 +180,7 @@ nova_friend_wall_reads: ""
 # versions are the bench standard's; change them here and nowhere else.
 nova_sdk_dir: "{{ nova_home }}/sdk"
 # Go lives at nova_sdk_dir/go<version> (no dash: the directory the standard
-# made by hand on 2026-09-20 and the join put on b1-b3, hetzner2 and mini-m5),
+# made by hand on 2026-09-20 and the join put on every machine since),
 # linked as go and gofmt in bin/ and as ~/go/bin/go, the link the member's
 # BenchGoBin (pkg/swarm/toolchain.go) looks for.
 nova_sdk_go_version: 1.26.6
@@ -298,15 +298,15 @@ nova_sdk_downloads:
       top: ""
     # The host lisp that builds nova_sdk_sbcl_version from source: Homebrew's
     # sbcl (brew: names the formula). The newest arm64 Darwin binary sbcl.org
-    # publishes, 2.4.0, does not start on macOS 27 (mini-m5, 2026-10-11:
+    # publishes, 2.4.0, does not start on macOS 27 (the arm64 Mac, 2026-10-11:
     # "failed to allocate 1048576 bytes at 0x300100000"). The host only compiles
     # the pinned source; what lands in nova_sdk_dir is the pinned version.
     sbcl_boot:
       brew: sbcl
     # SBCL 2.5.8 itself does not run on macOS 27 arm64: built here, its own
     # warm init stops at the same "failed to allocate ... at 0x300100000"
-    # (mini-m5, 2026-10-11), which the 2.6 line no longer does. This platform
-    # builds 2.6.9 instead, its source's SHA-256 measured on hetzner2 and equal
+    # (the arm64 Mac, 2026-10-11), which the 2.6 line no longer does. This platform
+    # builds 2.6.9 instead, its source's SHA-256 measured on a Linux member and equal
     # to the one Homebrew's formula records. Every other platform keeps
     # nova_sdk_sbcl_version.
     sbcl_version: 2.6.9
@@ -345,8 +345,8 @@ nova_sdk_downloads:
       file: "otp-{{ nova_sdk_otp_version }}-x86_64-apple-darwin.tar.gz"
       sha256: c8d18eebb9076f90b1c78594e27f67fc9b8b8f07af524aaf1f8e133e3652dec5
       top: ""
-    # The newest x86-64 Darwin binary sbcl.org publishes (the one batman and
-    # superman were bootstrapped from on 2026-09-19).
+    # The newest x86-64 Darwin binary sbcl.org publishes (the one the Intel
+    # Macs were bootstrapped from on 2026-09-19).
     sbcl_boot:
       url: https://sourceforge.net/projects/sbcl/files/sbcl/2.2.9/sbcl-2.2.9-x86-64-darwin-binary.tar.bz2/download
       file: sbcl-2.2.9-x86-64-darwin-binary.tar.bz2
