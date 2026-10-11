@@ -546,6 +546,20 @@
     the three moved in v1.2.12."
    :origin "card tla-moved-sprint-models-leave-nova-tools.w1 (v1.2.12 inventory item T33; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-friendpresence-daemon-evidence" :release "v1.2.12" :status "planned"
+   :title "FriendPresence models the daemon half and the server's finish evidence"
+   :text "FriendPresence.tla's daemon half is brought level with pkg/friend/presence.go: any
+    session line is evidence of up (the Heard action, not only an answer to the open nonce), the
+    check cadence ProveEvery/ReaskAfter/Read and the push proof Proven are modelled, and a Finish
+    evidence action stands for the server's recent finish (nova-sprint
+    internal/sprint/presence.go FriendStatus). UpHasFreshAnswer is restated UpHasFreshEvidence
+    (up is a session line or a finish younger than the bound), BeatAloneNeverUp now allows a
+    finish as evidence, and the reversed witness MCFriendPresenceBrokenFinishForever (a finish
+    never ages) fails UpHasFreshEvidence. The header names the table half (Hold, TakeBack, Deal,
+    Take) as nova-sprint code to move beside SeatHealth (a follow-up, not moved here). Tests and
+    models only, no product change."
+   :origin "card tla-friendpresence-daemon-evidence.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
