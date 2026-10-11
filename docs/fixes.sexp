@@ -456,7 +456,7 @@
     test exec'd them, so a parallel test's fork inherited the open write descriptor and the exec raced
     into ETXTBSY, \"text file busy\" (TestCycleStopsOnAFailedBench). The three executable stubs now use
     testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
-    :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
+   :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
 
   (fix "tla-reach-from-a-step-and-early-proof" :release "v1.2.12" :status "planned"
    :title "Reach models --from, an early proof and a refused window"
