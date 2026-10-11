@@ -89,6 +89,7 @@ func StartPresence() *Presence {
 // answer still owed: only an answered check proves her session to the sprint
 // server. The daemon's own messages never reach here (SessionCheck.read).
 func (p *Presence) Heard(now time.Time) (rose bool) {
+	// tla/FriendPresence.tla Heard
 	rose = !p.Up
 	p.Up, p.Reason, p.LastHeard, p.Proven = true, "", now, true
 	return rose
@@ -97,6 +98,7 @@ func (p *Presence) Heard(now time.Time) (rose bool) {
 // Ask is the check with nonce going into the session at now: the bound runs
 // from here.
 func (p *Presence) Ask(now time.Time, nonce string) {
+	// tla/FriendPresence.tla Ping
 	p.Nonce, p.Asked, p.Open, p.Owed, p.Read, p.Checks = nonce, now, true, false, false, p.Checks+1
 }
 
@@ -104,6 +106,7 @@ func (p *Presence) Ask(now time.Time, nonce string) {
 // nonce makes the friend up, late or not; any other, or one already
 // answered, changes nothing (current false).
 func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
+	// tla/FriendPresence.tla Answer
 	if nonce == "" || nonce != p.Nonce {
 		return false
 	}
@@ -118,6 +121,7 @@ func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 // while down, and an unanswered one the session has not read is asked again
 // only after ReaskAfter.
 func (p *Presence) Tick(now time.Time) {
+	// tla/FriendPresence.tla Tick
 	if p.Open && now.Sub(p.Asked) >= p.Bound {
 		p.Open = false
 		if !p.Up || p.LastHeard.Before(p.Asked) {
