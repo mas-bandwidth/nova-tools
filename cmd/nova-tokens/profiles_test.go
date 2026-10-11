@@ -9,7 +9,7 @@ import (
 )
 
 // cardUsageHeader is the thirteen columns of one card's usage.tsv, transcribed from the
-// contract named in internal/swarm/usagecard.go (job, attempt, started, ended, rc, provider,
+// contract named in pkg/swarm/usagecard.go (job, attempt, started, ended, rc, provider,
 // model, and the five token types plus usd) and written here from that text, never from a
 // constant, so the fixture can disagree with the reader it is meant to check.
 const cardUsageHeader = "job\tattempt\tstarted\tended\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd"

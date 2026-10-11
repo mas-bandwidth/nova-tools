@@ -8,7 +8,7 @@ import (
 
 // One fold per output directory.
 //
-// The day file is written atomically via internal/atomicfile. Each fold takes a
+// The day file is written atomically via pkg/atomicfile. Each fold takes a
 // kernel lock on <out>/fold.lock and holds it to the end; a second fold waits
 // a bounded, jittered time and then refuses, naming the holder's pid so a person
 // can see what to wait for or kill.
@@ -17,7 +17,7 @@ import (
 // a sentinel file cannot: the kernel drops it when the process dies, so a fold killed mid-run
 // leaves nothing for the next one to clear. The pid is written INSIDE the locked file so
 // the name in the refusal is the holder's own, never a stale sentinel's. On unix the lock
-// is internal/filelock's (tla/FileLock.tla), the same flock on the same file the earlier
+// is pkg/filelock's (tla/FileLock.tla), the same flock on the same file the earlier
 // binaries took, so an old and a new fold still exclude each other during an upgrade
 // (lock_compat_unix_test.go); elsewhere it is still lock_other.go's.
 

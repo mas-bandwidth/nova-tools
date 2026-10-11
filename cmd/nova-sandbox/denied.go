@@ -8,7 +8,7 @@
 // investigation.
 //
 // The root cause of that particular one is fixed where it belonged, in the optional roots'
-// ancestors (internal/sandbox/policy.go). This file is the class: when a contained command
+// ancestors (pkg/sandbox/policy.go). This file is the class: when a contained command
 // exits non-zero, ASK THE OPERATING SYSTEM what it refused and print one line per path,
 // with the flag that would have allowed it.
 //
@@ -41,7 +41,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // EVERY PATH IN THIS FILE IS A POSIX PATH, and that is a contract rather than an accident.

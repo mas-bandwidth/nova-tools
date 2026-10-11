@@ -17,7 +17,7 @@ import (
 // shape and retiring issue. The list may only shrink.
 //
 // A SITE is a function (go/ast, every non-test .go file under cmd/ and
-// internal/ outside internal/testguard) that calls
+// internal/ outside pkg/testguard) that calls
 // exec.Command, exec.CommandContext or testguard.RefuseHosts with a program
 // argument that is ssh:
 //
@@ -40,10 +40,10 @@ import (
 // BenchRunnerAllowPath is the allow file, relative to internal/ci.
 const BenchRunnerAllowPath = "testdata/bench-runners.allow"
 
-// benchRunnerSkipDirs are read against themselves: the runner (internal/bench,
+// benchRunnerSkipDirs are read against themselves: the runner (pkg/bench,
 // the one bench runner now, as the benchsh package was before #4327 deleted it)
 // and the guard.
-var benchRunnerSkipDirs = []string{"internal/bench/", "internal/testguard/"}
+var benchRunnerSkipDirs = []string{"pkg/bench/", "pkg/testguard/"}
 
 // BenchRunnerSite is one ssh exec site: its file (slash, from the repo root)
 // and its function key (Recv.Name or Name).
@@ -64,7 +64,7 @@ func FindBenchRunners(root string) ([]BenchRunnerSite, error) {
 // findBenchRunnersWith is FindBenchRunners reading the tree through seams.
 func findBenchRunnersWith(root string, seams SourceSeams) ([]BenchRunnerSite, error) {
 	var sites []BenchRunnerSite
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		err := seams.walk(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err

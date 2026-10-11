@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 func init() {
@@ -23,7 +23,7 @@ $GITHUB_ENV. When GITHUB_OUTPUT is set, also writes matrix=<JSON array of Packag
 Run objects> for one runner per discovered package. A perf-tagged package with no
 test behind the tag is reported and skipped;
 a tree with no perf-tagged test at all is red, because then the perf job asserts nothing.
-Only live packages are considered (internal/pkgselect/DEPRECATED).
+Only live packages are considered (pkg/pkgselect/DEPRECATED).
 
 Exit 0 found, 1 none found or go list failed, 2 bad usage.
 

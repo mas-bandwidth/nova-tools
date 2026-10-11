@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Description is a worker description in nova-swarm's schema (internal/swarm/worker.go,
+// Description is a worker description in nova-swarm's schema (pkg/swarm/worker.go,
 // Worker, decoded with DisallowUnknownFields): exactly its twelve keys, board omitted
 // when not given, and no temperature, seed or num_ctx, which serve baked into the served
 // tag (rule 6); no prompt conditions either, which nova-swarm owns (rule 11).
@@ -29,7 +29,7 @@ type Description struct {
 	Board       string   `json:"board,omitempty"`
 }
 
-// The usage sources nova-swarm reads (internal/swarm, UsageOpenCode and UsageNone).
+// The usage sources nova-swarm reads (pkg/swarm, UsageOpenCode and UsageNone).
 var usages = []string{"opencode", "none"}
 
 // SplitArgs is --harness-args split on commas, with no escape.

@@ -3,10 +3,11 @@ EXTENDS Naturals, FiniteSets
 \* docs/SPEC-SPRINT.md section 1, a friend takes her own ready cards
 \* (internal/sprint/steps_work.go takeOne, friend_deal.go friendDeal,
 \* friend_take.go friendLaneIdle, steps_tick.go TickDeadlines). One friend's
-\* row, "a", in batch mode, and a stranger, "b". Cards are dealt to her row
+\* row, "a", in batch or one-shot mode (the rules are one for both: one lane
+\* per unit of width), and a stranger, "b". Cards are dealt to her row
 \* into working while a lane is free and ready behind otherwise, within her
 \* room (twice her width). Her width can rise (a lane frees with no finish).
-\* Who moves a ready card into working: the tick's deal (batch: it fills a free
+\* Who moves a ready card into working: the tick's deal (it fills a free
 \* lane from her ready cards first), her own take (within her lanes, her own
 \* row only, only while she is up), and her finish (her next). A ready card in
 \* front of a free lane ages a tick at a time while no one takes it, and at Max
@@ -35,7 +36,7 @@ Deal(c) == /\ col[c] = "new" /\ up /\ Room
            /\ taker' = [taker EXCEPT ![c] = IF LaneFree THEN "deal" ELSE "none"]
            /\ UNCHANGED <<width, up, age, judged>>
 
-\* the tick: in batch mode the deal first takes her ready cards into her free
+\* the tick: the deal first takes her ready cards into her free
 \* lanes, oldest first; a ready card still in front of a free lane ages, and is
 \* judged at Max (FriendReadyMax)
 Fill == IF BadNoFill \/ ~up THEN {}
@@ -96,6 +97,6 @@ LanesHard == Cardinality(Working) <= width
 OnlyHerTake == \A c \in Cards : taker[c] \notin {"b"}
 \* a ready card in front of a free lane for Max ticks is judged (never silent)
 NeverStrandedSilently == \A c \in Cards : (col[c] = "ready" /\ age[c] >= Max) => c \in judged
-\* in batch mode, with her up, a tick leaves no card ready in front of a free lane
+\* with her up, a tick leaves no card ready in front of a free lane
 FilledAfterTick == [][Tick /\ up => ~(Ready' # {} /\ Cardinality(Working') < width')]_vars
 =============================================================================

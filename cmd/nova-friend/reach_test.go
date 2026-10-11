@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -169,7 +169,7 @@ func TestReachClimbsTheLadderOnlyUntilProof(t *testing.T) {
 }
 
 // TestReachProofPastTheLogCap is a fresh proof after more than the log
-// read's oldest window (internal/bus logLimit, 10000). A poll that re-reads
+// read's oldest window (pkg/bus logLimit, 10000). A poll that re-reads
 // Log from the start never sees that pong and the ladder returns REACH FAILED.
 func TestReachProofPastTheLogCap(t *testing.T) {
 	t.Parallel()

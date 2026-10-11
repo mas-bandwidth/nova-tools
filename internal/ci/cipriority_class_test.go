@@ -83,7 +83,7 @@ func TestCopiesRunNiced(t *testing.T) {
 	// 3. No production caller gives a copy a Yield of its own (the seam is
 	// for tests).
 	tree := repoTree(t)
-	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
+	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "pkg") {
 		for i, line := range strings.Split(string(f.Src), "\n") {
 			code := strings.TrimSpace(line)
 			assert.False(t, strings.HasPrefix(code, "Yield:") || strings.Contains(code, ".Yield = "), "%s:%d: %q: production never sets a copy's Yield; the real setpriority is the default", f.Rel, i+1, code)

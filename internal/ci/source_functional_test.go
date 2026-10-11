@@ -53,7 +53,7 @@ func TestTheSourceSeamsAnswerAsTheDiskDoes(t *testing.T) {
 		"CheckGoEnv":       func(s SourceSeams) (any, error) { return checkGoEnvWith(root, "", s) },
 		"FindBenchRunners": func(s SourceSeams) (any, error) { return findBenchRunnersWith(root, s) },
 		"CheckCardTemplates": func(s SourceSeams) (any, error) {
-			return checkCardTemplatesWith(root, []string{"docs", "tools", "cmd", "internal"}, "", s)
+			return checkCardTemplatesWith(root, []string{"docs", "tools", "cmd", "internal", "pkg"}, "", s)
 		},
 		"HelpBannerExamples": func(s SourceSeams) (any, error) { return helpBannerExamplesWith(root, s) },
 	}

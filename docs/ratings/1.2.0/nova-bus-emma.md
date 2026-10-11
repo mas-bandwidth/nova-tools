@@ -59,7 +59,7 @@ The 1.1.0 ratings describe the git bus that was removed; this rates the Redis-st
 |---|---|---|
 | no verb takes `--json` | FIXED | send, recv, peek, ack, receipts, overdue, log, names and version all render one result value; only wait uses its own bare object |
 | REFUSED printed at exit 1 | FIXED | every `REFUSED` line seen exits 2; exit 1 is `RECV NONE`, `RECV FAILED`, `WAIT NONE` and `OVERDUE OVERDUE` |
-| a 466-line function on the read path | GONE | the git bus is gone; recv is a short command over internal/bus |
+| a 466-line function on the read path | GONE | the git bus is gone; recv is a short command over pkg/bus |
 | inbox reads a stale checkout | GONE | no checkout: the bus is Redis streams |
 | the receipt path scope is undocumented | GONE | receipts takes `--id`, not a note path |
 | the help example is not runnable cold | STILL THERE | on a scratch store the example's send is `SEND REFUSED: ada is no known name` |

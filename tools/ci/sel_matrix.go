@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 func init() {
@@ -36,9 +36,9 @@ THE DARWIN LEGS run on schedule, on workflow_dispatch and where --target-branch 
 pull request's base branch, the merge group's base_ref, the push's ref name; a refs/heads/
 prefix is cut) is dev or main. For any other target the matrix is Linux only: every
 selected package rides the Linux legs, the darwin-only packages (cmd/nova-sandbox,
-internal/sandbox) are dropped from the selection before the nothing-to-test check, and
+pkg/sandbox) are dropped from the selection before the nothing-to-test check, and
 the darwin-sensitivity analysis does not run. The darwin evidence is taken at dev and
-main (internal/pkgselect DarwinOn).
+main (pkg/pkgselect DarwinOn).
 
 --linux-group and --macos-group are the runner-group labels the legs carry (the
 workflow's own runs-on labels).

@@ -73,8 +73,8 @@ functional test, and no field-specific key convention in the general tool.
 
 | earlier | now | evidence |
 |---|---|---|
-| hand-rolled skeleton (1aac13259) | CHANGED | The tool now runs on internal/tool (cmd/nova-redis/main.go:113 `redisTool(d deps) *tool.Tool`); only the Prints verbs hand-roll line rendering, and each says why (fn.go:231, acl.go:23). |
+| hand-rolled skeleton (1aac13259) | CHANGED | The tool now runs on pkg/tool (cmd/nova-redis/main.go:113 `redisTool(d deps) *tool.Tool`); only the Prints verbs hand-roll line rendering, and each says why (fn.go:231, acl.go:23). |
 | a 50-line prose wall in help | FIXED | The banner's `How` is five lines (main.go:120-124), followed by a runnable `example:` block; verbhelp_test.go holds each verb's `-h`. |
-| ticket numbers in the package doc | STILL THERE | cmd/nova-redis/main.go:1-27 cites docs/SPEC-REDIS.md and internal/redisconn, and serve_functional_test.go:38 names `nova-tools#3879` in the key map. |
+| ticket numbers in the package doc | STILL THERE | cmd/nova-redis/main.go:1-27 cites docs/SPEC-REDIS.md and pkg/redisconn, and serve_functional_test.go:38 names `nova-tools#3879` in the key map. |
 | three line grammars (1aac13259) | CHANGED | spill/recall render one `tool.Out` value; fn, serve and acl still print their own lines with documented reasons, so three printers remain but each is deliberate. |
 | onboarding and output grammar rough edges (8.7 rater) | CHANGED | The first-run refusals are now executed line by line (docs/TESTS.md:772, firstrun_test.go:25), and every verb's `-h` is held by verbhelp_test.go. |

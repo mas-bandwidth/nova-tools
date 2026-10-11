@@ -155,7 +155,7 @@ func TestGoEnvClassRuleHoldsOverTheRepository(t *testing.T) {
 	require.Zero(t, res.Refused(), "%s", res.FailLine())
 }
 
-// A child `go` started through internal/subproc with no environment of its own is refused
+// A child `go` started through pkg/subproc with no environment of its own is refused
 // like exec.Command("go", ...).
 func TestGoEnvRefusesAChildGoStartedThroughSubproc(t *testing.T) {
 	t.Parallel()

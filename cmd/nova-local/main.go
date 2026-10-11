@@ -2,7 +2,7 @@
 // (status), one model served at a context the caller chose (serve), and a worker
 // description nova-swarm accepts (worker). It runs no inference, fetches no weights and
 // judges no model. The dispatch, the banner, the help, the refusals and the output
-// envelope are internal/tool's; the engines (engine.go, ollama.go), the box (box*.go),
+// envelope are pkg/tool's; the engines (engine.go, ollama.go), the box (box*.go),
 // the shared store (store.go), the serving-host rule (host.go) and the worker description
 // (description.go) are this package's own files.
 package main
@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 var version string

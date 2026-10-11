@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -203,7 +203,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 
 // readManifest reads a manifest from r with a ceiling one byte past
 // ntable.LimitManifestBytes, the bound the validator applies
-// (ntable.ValidateBatchManifestRaw, internal/ntable/manifest_validate.go:185).
+// (ntable.ValidateBatchManifestRaw, pkg/ntable/manifest_validate.go:185).
 // A reader that never ends cannot grow the buffer past the cap plus one, and a
 // manifest over the cap is refused by that same validator limit instead of read
 // whole: the path form's FIFO or link target and the stdin form's stream meet

@@ -1,0 +1,7 @@
+# The unit-sockets ledger (docs/SPEC-CI.md, `unit-sockets`): the unit-tier
+# test files that still open a socket, one row per file with its count, seeded
+# once at the rule's landing. It only shrinks.
+# ceiling: 3
+pkg/testredis/counter_test.go:socket 4 the conn counter is counted over real conns
+pkg/testredis/far_test.go:socket 5 Far's distance is proved over real conns
+pkg/testredis/testredis_test.go:socket 2 the harness's subject is the socket itself

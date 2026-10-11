@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // timelineFile is a job's hand-written timeline: the columns the native run writes, with
@@ -34,8 +34,8 @@ func TestProfilePrintsPhases(t *testing.T) {
 		"t_start\tt_end\ttool\twall_ms\tinput_tokens\toutput_tokens\n"+
 			"2026-09-17T00:00:00Z\t2026-09-17T00:00:10Z\tmodel\t10000\t100\t20\n"+
 			"2026-09-17T00:00:10Z\t2026-09-17T00:00:35Z\tbash git clone https://github.com/x/y\t25000\t\t\n"+
-			"2026-09-17T00:00:35Z\t2026-09-17T00:00:40Z\tRead internal/swarm/usage.go\t5000\t\t\n"+
-			"2026-09-17T00:00:40Z\t2026-09-17T00:00:45Z\tEdit internal/swarm/usage.go\t5000\t\t\n"+
+			"2026-09-17T00:00:35Z\t2026-09-17T00:00:40Z\tRead pkg/swarm/usage.go\t5000\t\t\n"+
+			"2026-09-17T00:00:40Z\t2026-09-17T00:00:45Z\tEdit pkg/swarm/usage.go\t5000\t\t\n"+
 			"2026-09-17T00:00:45Z\t2026-09-17T00:00:55Z\tbash go test ./... rc=1\t10000\t\t\n"+
 			"2026-09-17T00:00:55Z\t2026-09-17T00:01:02Z\tbash go test ./... rc=0\t7000\t\t\n"+
 			"2026-09-17T00:01:02Z\t2026-09-17T00:01:05Z\tedit Write RESULT.md\t3000\t\t\n"+

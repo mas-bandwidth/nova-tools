@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // Test 6: TestSopsErrorsAreNeverPassedThroughRaw

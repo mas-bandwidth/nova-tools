@@ -1,6 +1,4 @@
 # The unit-sockets ledger (docs/SPEC-CI.md, `unit-sockets`): the unit-tier
 # test files that still open a socket, one row per file with its count, seeded
 # once at the rule's landing. It only shrinks.
-# ceiling: 2
-internal/sprintdash/events_test.go:socket 1 an httptest server stands in for the events stream
-internal/sprintdash/fresh_test.go:socket 2 the puller reads its upstream over httptest servers
+# ceiling: 0

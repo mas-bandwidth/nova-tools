@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // The stage wall scales with the machine: a member's --stage-wall (default 120s, the loop

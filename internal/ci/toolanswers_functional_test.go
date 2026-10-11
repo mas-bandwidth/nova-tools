@@ -97,18 +97,18 @@ const (
 )
 
 // toolAnswersRemedy is, for each kind, what a tool's author does to clear it;
-// on internal/tool every one of them holds by construction.
+// on pkg/tool every one of them holds by construction.
 var toolAnswersRemedy = map[string]string{
 	answerBare: "a bare `<tool>` prints `<TOOL> REFUSED: no verb given; the verbs are ...; run: <tool> help` on stderr at exit 2 " +
-		"(internal/tool's Run does it)",
+		"(pkg/tool's Run does it)",
 	answerVerb: "an unknown verb is refused at exit 2 in one line naming the tool's verbs, as `<TOOL> REFUSED: unknown verb \"x\"; " +
-		"the verbs are ...; run: <tool> help` (internal/tool's Run does it)",
+		"the verbs are ...; run: <tool> help` (pkg/tool's Run does it)",
 	answerFlag: "an unknown flag is refused naming the verb's flags (and the nearest), never the flag package's " +
-		"`flag provided but not defined` line (internal/tool does it; a tool not on it prints verbflag.Explain)",
+		"`flag provided but not defined` line (pkg/tool does it; a tool not on it prints verbflag.Explain)",
 	answerGroup: "`<tool> <group> -h` names the group's verbs on stdout at exit 0, as `usage: <tool> <group> <a|b> [flags]` (a two-word " +
-		"Verb.Name on internal/tool; verbflag.Print reads the group from the banner's usage lines)",
+		"Verb.Name on pkg/tool; verbflag.Print reads the group from the banner's usage lines)",
 	answerDry: "a verb's -h says `effect: inspection|local write|delivery`, and a verb that writes takes --dry-run that writes " +
-		"nothing (Verb.Effect and Verb.DryRun with Call.DryRun on internal/tool)",
+		"nothing (Verb.Effect and Verb.DryRun with Call.DryRun on pkg/tool)",
 }
 
 // The arguments the walk hands a tool: names no tool has.
@@ -158,7 +158,7 @@ func (a *toolAnswers) check(t *testing.T, tools int) {
 		t.Logf("tool-answers: %d of %d tools measured; the ledger is checked only when every tool is", a.settled, tools)
 		return
 	}
-	for _, v := range a.ledger.violations(t, "a tool answers every mistake with the way forward; on internal/tool it does by construction (a row's count only falls)") {
+	for _, v := range a.ledger.violations(t, "a tool answers every mistake with the way forward; on pkg/tool it does by construction (a row's count only falls)") {
 		assert.Fail(t, v)
 	}
 }

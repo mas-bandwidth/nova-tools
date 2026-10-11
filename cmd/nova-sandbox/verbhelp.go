@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 )
 
 // verbDoc is what `<verb> -h` prints beyond the banner's own lines for that verb: every

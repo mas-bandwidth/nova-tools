@@ -10,8 +10,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cireceipt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // receiptTimeout bounds the one XADD, so a store that is down or hung reddens

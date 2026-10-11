@@ -24,7 +24,7 @@ func newPlatformWinPlace() winPlacer { return noWinPlace{} }
 
 // winWallAvailable off windows is a question with one answer: there is no AppContainer on a
 // machine that is not windows, so there is never a windows wall here. The windows body of
-// this function asks internal/sandbox, which is where the answer will change when the
+// this function asks pkg/sandbox, which is where the answer will change when the
 // AppContainer body lands.
 func winWallAvailable() (string, bool) { return "appcontainer", false }
 

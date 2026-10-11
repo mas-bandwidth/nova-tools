@@ -11,7 +11,7 @@ import "os"
 // read 0666 and BOTH checks refused the very file the caller had chmod'ed. On windows-latest
 // every legacy --auth native run died "the auth copy would not be 0600 ... ended mode 0666",
 // exit 2 (issue #915) -- the same class as the execute bit (executable.go) and the key file
-// mode (internal/swarm/key.go, which already answers nothing on windows).
+// mode (pkg/swarm/key.go, which already answers nothing on windows).
 //
 // The platform answer is written where every platform compiles and tests it, so darwin and
 // linux hold the windows answer to its contract: the bug it replaces could not be seen from

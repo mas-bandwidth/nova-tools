@@ -12,11 +12,11 @@ import (
 )
 
 // The help budget (budget_perf.go) fires only where the perf job runs a test, and that
-// job runs by NAME the tests only the perf tag adds (internal/pkgselect.PerfRuns). A
+// job runs by NAME the tests only the perf tag adds (pkg/pkgselect.PerfRuns). A
 // budget reached only through the tools' untagged help tests would run nowhere. So
 // every tool whose help test goes through Check carries, behind the perf tag and only
 // there, TestEveryVerbsHelpIsWithinTheBudget, which runs that help test. This reads the
-// tools' test files; internal/pkgselect's functional test runs the selector itself.
+// tools' test files; pkg/pkgselect's functional test runs the selector itself.
 func TestEveryToolsHelpBudgetHasATestThePerfJobSchedules(t *testing.T) {
 	t.Parallel()
 	const witness = "TestEveryVerbsHelpIsWithinTheBudget"

@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and

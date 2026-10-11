@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -172,7 +172,7 @@ func TestMigrateDryRunPrintsTheLedger(t *testing.T) {
 	assert.Equal(t, n-1, h.store.version, "a dry run applies nothing")
 }
 
-// --json is one object in internal/tool's shape, the same facts as the
+// --json is one object in pkg/tool's shape, the same facts as the
 // lines.
 func TestJSONIsOneObjectOfTheSameResult(t *testing.T) {
 	t.Parallel()

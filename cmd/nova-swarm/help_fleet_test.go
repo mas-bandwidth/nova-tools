@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // memberFlags is member -h's flag lines, by flag name.
@@ -66,7 +66,7 @@ func TestTheMemberExampleParses(t *testing.T) {
 }
 
 // The card template agrees with the no-push-steps rule: no STEP runs a push or gh, since
-// inside a job the shim records a push and the finish is JOB.md's (internal/cardcontract).
+// inside a job the shim records a push and the finish is JOB.md's (pkg/cardcontract).
 func TestTheCardTemplateHasNoPushStep(t *testing.T) {
 	t.Parallel()
 	card := swarmHelp(t, "template", "--name", "card")
