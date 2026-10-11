@@ -468,6 +468,21 @@
     declaration is refused everywhere (witness declared-debt); tla/README.md says the copy was retired."
    :origin "card nt-retire-the-cardmachine-copy-2.w1 (v1.2.12 inventory item T34; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-bus2receipts-read-at-recv" :release "v1.2.12" :status "planned"
+   :title "Bus2Receipts reads the receipt at recv; a give-up and a failed stamp are modelled"
+   :text "The Bus2Receipts model drifted from pkg/bus and pkg/friend: it read the receipt at the take
+    (Bus2Receipts.tla Take), while the code reads it at the recv (Entry.Stage, pkg/bus/bus.go:478,
+    pkg/friend/daemon.go:1126); a message given up is acked with its receipt at \"read\" (daemon.go:1454)
+    but the model's TurnFail never acked; a failed acted stamp is only recorded (daemon.go:1503) but the
+    model had no such action; and the present stamps the backlog delivered (present.go:256) but the model
+    had no present. The module now captures the receipt recv found (seen), gives up a failed message at
+    the bound (acked at \"read\"), adds LoseStamp (an exit-0 turn whose acted stamp failed: recorded, the
+    receipt stays read) and a Present action stamping the backlog delivered. ReceiptNeverMovesBack and
+    ActedImpliesDelivered hold; NoIdActedTwice holds without a crash and fails with one (the known gap,
+    checked by MCBus2ReceiptsKnownGap). The header names pkg/bus/stages.go, pkg/bus/redis.go and
+    pkg/friend/daemon.go. The TLC records are owed (run on a bench)."
+   :origin "card tla-bus2receipts-read-at-recv.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
