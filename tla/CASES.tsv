@@ -140,6 +140,7 @@ MCFriendLaneBrokenLocalEpochLive.cfg	MCFriendLane.tla	temporal	WorkingResolves	i
 MCFriendLaneBrokenKeepOnRefusal.cfg	MCFriendLane.tla	invariant	OneRequestApart	ignore-terminal	friendlane	required	-
 MCFriendLaneBrokenCardOnly.cfg	MCFriendLane.tla	invariant	NoStaleStep	ignore-terminal	friendlane	required	-
 MCFriendLaneBrokenNoGone.cfg	MCFriendLane.tla	temporal	WorkingResolves	ignore-terminal	friendlane	required	-
+MCFriendLaneBrokenKeepOnMismatch.cfg	MCFriendLane.tla	invariant	WorkingOnlyOnTheServersSay	ignore-terminal	friendlane	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
 MCFriendBrokenNoProof.cfg	MCFriend.tla	action	NoTurnBeforeProof	ignore-terminal	friend	required	-
