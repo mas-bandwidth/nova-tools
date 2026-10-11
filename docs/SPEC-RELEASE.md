@@ -764,8 +764,10 @@ batch, as it did before, and the play says so.
 
 After the canary's loops step the play waits on the canary alone. It reads only the canary's own log, the unit's
 journal (`nova-loop-<name>`) on Linux and `~/Library/Logs/nova-loop-<name>.log` on Darwin, for one `finish <id>
-ok=true exit=0` line the canary's member printed after the restart; it polls every 30 s for up to
-`nova_adopt_canary_wait` (default 30 minutes) and then prints `CANARY OK host=<h> card=<id> after <duration>`. A
+ok=true exit=0` line the canary's member printed after the restart: on Linux the journal is read since the
+restart's moment, and on Darwin, where the log appends with no timestamp, only the lines past the log's length at
+the restart's moment are read. It polls every 30 s for up to `nova_adopt_canary_wait` (default 30 minutes) and then
+prints `CANARY OK host=<h> card=<id> after <duration>`, the duration the wait actually took. A
 canary whose member refused, a `finish ... exit=1` line before any ok one, or one that finished nothing within the
 wait, ends the play with `ADOPT REFUSED step=canary host=<h>: <the line or no finish in 30m>`.
 

@@ -938,3 +938,45 @@ func TestInstallPlayCanaryNoneSkipsTheWait(t *testing.T) {
 	assert.True(t, none, "nova_adopt_canary=none does not say the play runs in one batch")
 	assert.True(t, wouldWait, "--check does not name the canary and the wait it would do")
 }
+
+// TestInstallPlayCanaryWaitReadsOnlyLinesAfterTheRestart pins the Darwin half of
+// the wait (docs/SPEC-RELEASE.md, "Adopting a build"): the loop log appends and
+// its lines carry no timestamp, so the wait must read only the lines the
+// restarted member wrote, by snapshotting the log's length at the moment the
+// restart begins, never the whole file. On Darwin a stale `finish ... ok=true
+// exit=0` line from an earlier run would otherwise pass the wait instantly.
+func TestInstallPlayCanaryWaitReadsOnlyLinesAfterTheRestart(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	tasks := flattenTasks(t, tasksOf(t, install))
+
+	before := taskContaining(t, tasks, "the member's log length at the moment the restart begins")
+	beforeRaw := fmt.Sprint(before)
+	assert.Contains(t, beforeRaw, "wc", "the restart's moment does not snapshot the log's length")
+	assert.Contains(t, beforeRaw, "nova-loop-", "the snapshot does not read the member's own loop log")
+	assert.Contains(t, asText(before["when"]), "Darwin", "the snapshot is not the Darwin log, whose lines carry no timestamp")
+
+	wait := taskContaining(t, tasks, "the member's log since the restart")
+	waitRaw := fmt.Sprint(wait)
+	assert.Contains(t, waitRaw, "tail", "the Darwin wait does not read only the lines after the snapshot")
+	assert.Contains(t, waitRaw, "tools_canary_log_before", "the Darwin wait is not bounded by the log length at the restart")
+}
+
+// TestInstallPlayCanaryReportsTheElapsedWait pins the CANARY OK duration
+// (docs/SPEC-RELEASE.md, "Adopting a build"): it names the time the wait
+// actually took, from the moment the restart began to the finish it saw, never
+// the configured bound nova_adopt_canary_wait.
+func TestInstallPlayCanaryReportsTheElapsedWait(t *testing.T) {
+	t.Parallel()
+	install := playNamed(t, readTools(t), "the build in ~/.local/bin on every machine")
+	tasks := flattenTasks(t, tasksOf(t, install))
+
+	seen := taskContaining(t, tasks, "the moment the member's finish was seen")
+	assert.Contains(t, fmt.Sprint(seen), "date", "the wait does not read the clock when the finish was seen")
+
+	ok := taskNamed(t, tasks, "canary: the member finished ok")
+	msg := debugMsg(ok)
+	assert.Contains(t, msg, "tools_canary_at", "the CANARY OK line does not measure from the restart")
+	assert.Contains(t, msg, "tools_canary_ok_at", "the CANARY OK line does not measure to the finish seen")
+	assert.NotContains(t, msg, "nova_adopt_canary_wait", "the CANARY OK line prints the wait bound, not the elapsed wait")
+}

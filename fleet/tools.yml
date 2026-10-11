@@ -458,6 +458,27 @@
         nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
         and not ansible_check_mode
 
+    # On darwin the loop log appends and its lines carry no timestamp (launchd
+    # StandardOutPath), so the whole file holds the finish ok lines of every
+    # earlier run. The wait must read only what the restarted member writes, so
+    # the log's length is snapshotted here, at the moment the restart begins,
+    # and the Darwin read skips those lines (docs/SPEC-RELEASE.md, "Adopting a
+    # build").
+    - name: "canary: the member's log length at the moment the restart begins"
+      ansible.builtin.command:
+        argv: [wc, -l, "{{ nova_home }}/Library/Logs/nova-loop-{{ tools_member_name }}.log"]
+      register: tools_canary_log_before
+      vars:
+        tools_member_name: >-
+          {{ (nova_loops | default([]) | selectattr('name', 'match', '^member') | map(attribute='name') | first) | default('') }}
+      changed_when: false
+      check_mode: false
+      # ignored: a member whose log does not yet exist has none, and the read starts at its first line
+      failed_when: false
+      when: >-
+        nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
+        and ansible_system == 'Darwin' and not ansible_check_mode
+
     # The install replaced a tool on this machine (a fleet host: the seat play
     # restarts the coordinator's own). Every loop member and reader whose binary
     # it replaced is restarted now, drained per loops.yml (bootout + bootstrap on
@@ -640,7 +661,8 @@
               {{ ['journalctl', '--user', '-u', 'nova-loop-' ~ tools_member_name, '--since', '@' ~ (tools_canary_at.stdout | default('0')),
                   '--no-pager']
                  if ansible_system == 'Linux'
-                 else ['cat', nova_home ~ '/Library/Logs/nova-loop-' ~ tools_member_name ~ '.log'] }}
+                 else ['tail', '-n', '+' ~ ((((tools_canary_log_before.stdout | default('0')).split() | first | default('0')) | int) + 1),
+                       nova_home ~ '/Library/Logs/nova-loop-' ~ tools_member_name ~ '.log'] }}
           register: tools_canary_log
           vars:
             tools_member_name: >-
@@ -663,13 +685,19 @@
                  | default('no finish in ' ~ (((nova_adopt_canary_wait | int) / 60) | round(0, 'ceil') | int) ~ 'm') }}
             quiet: true
 
+        - name: "canary: the moment the member's finish was seen"
+          ansible.builtin.command: { argv: [date, -u, "+%s"] }
+          register: tools_canary_ok_at
+          changed_when: false
+          check_mode: false
+
         - name: "canary: the member finished ok"
           ansible.builtin.debug:
             msg: >-
               CANARY OK host={{ inventory_hostname }}
               card={{ (tools_canary_log.stdout_lines | select('search', 'finish .*ok=true exit=0') | list | first)
                      | regex_replace('.*finish ([^ ]+).*', '\\1') }}
-              after {{ ((nova_adopt_canary_wait | int) / 60) | round(0, 'ceil') | int }}m
+              after {{ ((tools_canary_ok_at.stdout | int) - (tools_canary_at.stdout | int)) // 60 }}m{{ ((tools_canary_ok_at.stdout | int) - (tools_canary_at.stdout | int)) % 60 }}s
       rescue:
         - name: "canary: the build fact's version is put back (the rollback install)"
           ansible.builtin.command:
