@@ -508,6 +508,9 @@ type Member struct {
 	// server holds it (the deal gives it nothing, and returns what it was dealt and has not
 	// taken; nova-sprint tla/NoRoom.tla, NeverDealtToDraining)
 	draining atomic.Bool
+	// loadUnmeasured is set while the beat carries 0 for want of any reading of the machine
+	// (Beat), so that is said once and not every beat
+	loadUnmeasured bool
 	// usageStopped is when a launch of this member last ended because its usage source
 	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
 	usageStopped time.Time
@@ -766,10 +769,15 @@ func (m *Member) Stalled() time.Duration {
 // Beat is one beat of this member's presence, apart from the work pass. A member's is
 // `fleet beat <member>`, naming the highest one-second load sample since the last beat
 // written, so the ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md,
-// the fleet) is the highest of the last ten seconds; with no sample it names none and
-// nova-sprint fleet beat measures the machine itself. A reader's is its queue, the verb that
-// is a reader's beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A beat that
-// fails is the error: the next goes at the next interval.
+// the fleet) is the highest of the last ten seconds. A beat always carries its load: the
+// server cannot measure the worker's machine and refuses a beat without one (docs/SPEC-SPRINT.md,
+// the fleet, the beat; nova-sprint v1.2.11), and a member whose beats are refused reads down.
+// With no sample since the last beat (the member's first second, a source that gave none)
+// it carries the one-minute load average over the cores (hostload.Sampler.Load1Percent),
+// and with no reading of the machine at all it carries 0, said once until a reading comes.
+// A reader's is its queue, the verb that is a reader's beat (docs/SPEC-SPRINT.md, the
+// readers), its answer not read. A beat that fails is the error: the next goes at the next
+// interval.
 func (m *Member) Beat() error {
 	m.beatMu.Lock()
 	defer m.beatMu.Unlock()
@@ -785,13 +793,23 @@ func (m *Member) Beat() error {
 		args = []string{"fleet", "beat", m.cfg.As, "--stop-returns", strconv.Itoa(m.OwedStopReturns())}
 		args = append(args, m.noRoomArgs()...)
 		args = append(args, m.drainArgs()...)
+		var pct float64
+		var ok bool
 		if m.cfg.Meter != nil {
-			var pct float64
-			var ok bool
-			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); ok {
-				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
+			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); !ok {
+				pct, ok = m.cfg.Meter.Load1Percent()
 			}
 		}
+		if !ok {
+			pct = 0
+			if !m.loadUnmeasured {
+				m.loadUnmeasured = true
+				fmt.Fprintf(m.out, "NOTE beat: load unmeasured, sent 0\n")
+			}
+		} else {
+			m.loadUnmeasured = false
+		}
+		args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
 	}
 	run := m.sprint.Run
 	if m.cfg.Reader {

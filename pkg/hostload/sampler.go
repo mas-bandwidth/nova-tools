@@ -104,6 +104,21 @@ func (s *Sampler) Peak(since uint64) (pct float64, total uint64, ok bool) {
 	return pct, s.ring.Count(), ok
 }
 
+// Load1Percent is the one-minute load average over the logical cores as a percent
+// (LoadPercent; darwin: vm.loadavg and the core count, Linux: /proc/loadavg), the beat's
+// load when the ring has no new sample: the first second of the member, or a source
+// that gave none. false where the machine has no load average to read.
+func (s *Sampler) Load1Percent() (float64, bool) {
+	if s.src.Load1 == nil {
+		return 0, false
+	}
+	l, ok := s.src.Load1()
+	if !ok {
+		return 0, false
+	}
+	return LoadPercent(l, s.src.NCPU), true
+}
+
 // Run steps once a second until ctx ends. A source that takes its own second sets the
 // pace; one that does not is waited on for the rest of the second.
 func (s *Sampler) Run(ctx context.Context) {

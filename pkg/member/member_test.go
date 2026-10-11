@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -615,7 +616,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
-			require.Equal(t, []string{"fleet beat m --stop-returns 0"}, g.s.lines("beat"))
+			require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"))
 		})
 	}
 }
@@ -1462,8 +1463,8 @@ func secondsOfLoad(pcts ...float64) (s *hostload.Sampler, feed func(...float64))
 // TestBeatCarriesTheHighestSecondSinceTheLastBeat: the beat names the highest of the
 // one-second samples taken since the last beat that was written (so nova-sprint's own
 // ten-second highest over the beats is the highest of the last ten seconds, not of
-// twenty); with no sample it names none and the beat measures; a beat the store did not
-// answer leaves its samples for the next.
+// twenty); a beat the store did not answer leaves its samples for the next. This meter has
+// no load average, so a beat with no sample carries 0 (TestABeatAlwaysCarriesItsLoad has the fallback).
 func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	t.Parallel()
 	meter, feed := secondsOfLoad()
@@ -1475,10 +1476,10 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 		require.NoError(t, g.m.Beat())
 		return strings.Join(g.s.lines("beat"), "|")
 	}
-	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample yet: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 0.0", beat(), "no sample yet and no load average to read: the beat carries 0")
 	feed(10, 70, 20)
 	require.Equal(t, "fleet beat m --stop-returns 0 --load 70.0", beat(), "10, 70, 20 beat 70")
-	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample since: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 0.0", beat(), "no sample since and no load average: the beat carries 0")
 	feed(5, 5, 5)
 	g.s.set("beat", 2, "no store")
 	g.s.reset()
@@ -1488,6 +1489,45 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	require.Equal(t, "fleet beat m --stop-returns 0 --load 5.0", beat(), "the 70 went with the beat that wrote it; the lost beat's samples ride the next")
 	feed(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
 	require.Equal(t, "fleet beat m --stop-returns 0 --load 12.0", beat(), "at most the ten seconds the ring holds")
+}
+
+// TestABeatAlwaysCarriesItsLoad: the server cannot measure the worker's machine and refuses
+// a beat without --load (nova-sprint v1.2.11; superman's 1,619 refusals of 2026-10-11), so a
+// beat always carries one. With no sample since the last beat it carries the one-minute load
+// average over the cores; with no reading of the machine at all it carries 0 and says so once.
+func TestABeatAlwaysCarriesItsLoad(t *testing.T) {
+	t.Parallel()
+	t.Run("no sample yet: the load average over the cores", func(t *testing.T) {
+		t.Parallel()
+		meter := hostload.NewSampler(hostload.Source{
+			NCPU:      16,
+			CPUSecond: func() (float64, error) { return 0, errors.New("iostat gave no second reading") },
+			Load1:     func() (float64, bool) { return 8, true },
+		})
+		_, ok := meter.Step()
+		require.False(t, ok, "the source gave no sample")
+		g := newRig(Config{As: "m", Width: 1, Meter: meter})
+		g.s.set("queue", 0, queueJSON(t, 7))
+		require.NoError(t, g.m.Beat())
+		require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 50.0"}, g.s.lines("beat"), "8 over 16 cores")
+		require.NotContains(t, g.out.String(), "load unmeasured")
+	})
+	t.Run("no reading of the machine at all: 0, said once", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 1, Meter: hostload.NewSampler(hostload.Source{})})
+		g.s.set("queue", 0, queueJSON(t, 7))
+		require.NoError(t, g.m.Beat())
+		require.NoError(t, g.m.Beat())
+		require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0", "fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"))
+		require.Equal(t, 1, strings.Count(g.out.String(), "NOTE beat: load unmeasured, sent 0\n"), "said once, not every beat")
+	})
+	t.Run("no meter at all: 0", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 1})
+		g.s.set("queue", 0, queueJSON(t, 7))
+		require.NoError(t, g.m.Beat())
+		require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"))
+	})
 }
 
 // TestAReaderBeatsNothing: a reader sends no fleet beat and reads no sample; its beat is its
