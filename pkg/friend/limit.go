@@ -472,6 +472,7 @@ func WakeText(nonce string) string {
 // the message goes in; a turn that hits a limit is Deferred too. A passive
 // d is d. A LaneHarness stays one (gatedLanes): its batch Deliver is held,
 // and its lanes are not.
+// tla/Friend.tla NoTurnWhileLimited
 func (l *Limits) Gate(d Deliverer) Deliverer {
 	if _, passive := d.(interface{ Passive() }); passive {
 		return d
