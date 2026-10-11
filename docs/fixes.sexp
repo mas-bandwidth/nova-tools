@@ -364,4 +364,4 @@
   (fix "go-mod-tidy-nightly-jobs" :release "v1.2.11" :status "in-progress"
    :title "Nightly and certification jobs fail on an untidy go.mod"
    :text "The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three."
-   :origin "issue #5497; card go-mod-tidy-nightly-jobs.w5")))
+   :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")))

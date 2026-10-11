@@ -272,7 +272,8 @@ jobs:
         run: make fmt
 
       - name: mod-tidy
-        # go mod tidy -diff: refuses an untidy go.mod or go.sum (issue #5497)
+        # go mod tidy -diff: refuses an untidy go.mod or go.sum (issue #5497),
+        # pinned by TestAnUntidyModuleIsRefusedOnTheCLPath (card go-mod-tidy-nightly-jobs).
         shell: bash
         run: make mod-tidy
 

@@ -1130,22 +1130,17 @@ one entry for the CL tier`.
 **Its narrowings.** Both files are read as text — go.mod carries no YAML library
 and these tests must answer identically on every platform in the matrix — so a
 command assembled in a variable or hidden in a composite action is not seen, and
-the allowlist is matched by prefix.
+ the allowlist is matched by prefix.
 
-### `mod-tidy` — go.mod and go.sum must stay tidy
-
-**The rule.** The lint job of `ci.yml` runs `make mod-tidy` first, where `make
-mod-tidy` runs `go mod tidy -diff`. It exits non-zero with the diff on stderr
-when the module is not tidy, and exits 0 with no output when it is.
-**The mistake it prevents.** An untidy go.mod (a module imported directly but
-listed as indirect or not at all, or a require nothing imports) makes every job
-run under `GOFLAGS=-mod=readonly` exit at `go: updates to go.mod needed` before a
-test runs.
-**The test.** `TestAnUntidyModuleIsRefusedOnTheCLPath` (`internal/ci/modtidy_class_test.go`),
-which parses the Makefile and ci.yml to verify the mod-tidy gate is in place.
-**Its allowlist.** None.
-**Its remedy line.** `Makefile declares no mod-tidy target; add it as a .PHONY target with recipe: $(GO) mod tidy -diff`, and similar for missing prerequisites or ci.yml steps.
-**Its narrowings.** Both files are read as text.
+The lint job also runs `make mod-tidy` first, where `make mod-tidy` runs
+`$(GO) mod tidy -diff`. An untidy go.mod (a module imported directly but listed
+as indirect or not at all, or a require nothing imports) makes every job run
+under `GOFLAGS=-mod=readonly` exit at `go: updates to go.mod needed` before a
+test runs, so the module must be tidy before the lint tier starts.
+`TestAnUntidyModuleIsRefusedOnTheCLPath` (`internal/ci/modtidy_class_test.go`)
+parses the Makefile and `ci.yml` to pin the gate: a phony `mod-tidy` target whose
+recipe runs `mod tidy -diff`, `lint` naming `mod-tidy` as a prerequisite, and the
+lint job of `ci.yml` running `make mod-tidy`.
 
 ### `cache` — no cache step on a self-hosted runner
 
