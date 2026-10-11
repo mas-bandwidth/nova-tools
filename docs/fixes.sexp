@@ -581,7 +581,22 @@
     levelrefuser) and their CASES.tsv and RUNS.tsv rows. The member's push and the one judgment stay; a
     provider finish and a staging refusal are now terminal finishes, and EveryLaunchEnds is restated over
     them. Tests and models only, no product change."
-   :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
+    :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
+
+  (fix "tla-stopcancels-held-cards-and-reads" :release "v1.2.12" :status "planned"
+   :title "The stop-cancels model holds the take, the held card and the reads"
+   :text "StopCancels.tla named its worker's functions internal/member machineStop and
+    internal/friend/stop.go, both gone (pkg/member/member.go, pkg/friend/stop.go); its Return
+    required the word STOPPED where the code sends every owed stop-return whatever the word; its
+    Start took and launched in one step where the code claims a card and holds it before it launches,
+    a held card given up with its return owed when the word turns (releaseHeld); and it had no reads,
+    where stopReads cancels every read under way and owes its return. The module now names pkg/member
+    and pkg/friend, splits Take from Start, gives the held card up on STOP, cancels reads with owed
+    returns, and sends Return in either word, with a reversed witness (heldthrough: a held card
+    launches through the stop, breaking NoLaunchAfterStop). NoLaunchAfterStop still holds. Only lanes
+    and reads are cancelled: a batch turn already running goes on (a dealt-card turn started by
+    startDealt, daemon.go), a v1.2.14 candidate."
+   :origin "the card tla-stopcancels-held-cards-and-reads.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
