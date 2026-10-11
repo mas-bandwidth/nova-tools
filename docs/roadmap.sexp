@@ -81,7 +81,12 @@
   (group "tests" :title "Tests and test tiers"
    :text "Test tiers, test speed and flaky tests.")
   (group "quality" :title "Cleanup, dead code and debt"
-   :text "Shrinking, dead code removal, lint and debt work that waits for the code under it to settle."))
+   :text "Shrinking, dead code removal, lint and debt work that waits for the code under it to settle.")
+  (group "v13-friends" :title "v1.3: friends back, as clients"
+   :text "Third of v1.3. Every friend-lane fix: the verdict a friend reports, reads and holds on a
+    friend's row, finishes, presence and pong, friend daemons and harness lanes, each friend's lane
+    issues, and the one lane protocol they all become clients of. Moved out of the sprint on
+    2026-10-11."))
 
  :items
  (
@@ -1794,4 +1799,272 @@
     unexported code there, documented in SPEC-CI with a reversed witness."
    :date "2026-10-10"
    :release "v1.3"
-   :origin "seat decision after the repository split")))
+   :origin "seat decision after the repository split")
+  (item "a-harness-limit-in-any-wording-pauses-the-lanes" :group "v13-friends"
+   :title "A harness limit in any wording pauses the lanes"
+   :text "Done when: pkg/friend/limit_test.go, red first: the exact weekly-limit line, with its
+    middle dot and ANSI codes, is a weekly limit with its reset parsed; the classifier reads all of
+    stdout and stderr with ANSI stripped; a limit pauses the lanes rather than failing the card.
+    Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card moved out of the sprint (sprint store, 2026-10-11: stream v1214, review)")
+  (item "nova-config-lints-every-stored-friend-row" :group "v13-friends"
+   :title "nova-config lints every stored friend row"
+   :text "Done when: red first: nova-config friend lint (and friend show --lint) exits 1 with one
+    LINT line per bad row and field, its value and its fix, an empty required field included, and
+    prints LINT OK rows=<n> when all pass. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card moved out of the sprint (sprint store, 2026-10-11: stream v1214, working; merging
+    and review earlier the same hour)")
+  (item "nova-friend-install-reads-the-seat-and-refuses-a-self-holding-dir" :group "v13-friends"
+   :title "nova-friend install reads the seat, and run refuses a directory that holds itself"
+   :text "Done when: red first: install writes no --coordinator and refuses one the server
+    contradicts unless forced, and run refuses a --dir equal to, inside or holding a deny-self path,
+    symlinks resolved. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card moved out of the sprint (sprint store, 2026-10-11: stream v1214, review, blocker)")
+  (item "tla-configapply-friend-slots-and-stamp-cas" :group "v13-friends"
+   :title "TLA+ ConfigApply: friend slots and the stamp as a compare-and-set"
+   :text "Done when: ApplyOrder and ConflictRefusesAhead hold with a friend charged to the machine
+    her beat reports and the stamp a compare-and-set; Broken blindstamp fails ConflictRefusesAhead;
+    apply.go and redis.go cite the model. Needs:
+    tla-coverage-names-every-module-in-nova-tools-after-the-retire (landed)."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card moved out of the sprint (sprint store, 2026-10-11: stream v1212, review)")
+  (item "tla-friend-batch-delivery-turns" :group "v13-friends"
+   :title "TLA+ Friend: batch delivery turns"
+   :text "Done when: the present, dealt and idle-wake turns are kinds of a turn, a turn the session
+    cannot take is kept and retried, the delivery invariants hold, and Broken droptturn fails
+    delivery liveness. Needs: tla-friend-link-and-challenge (landed)."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card moved out of the sprint (sprint store, 2026-10-11: stream v1212, working)")
+  (item "tla-friendpresence-daemon-evidence" :group "v13-friends"
+   :title "TLA+ FriendPresence: the daemon's evidence"
+   :text "Done when: any session line is evidence and a recent finish counts, UpHasFreshEvidence
+    holds, and Broken finishforever fails it; the header names the table half as nova-sprint code to
+    move beside SeatHealth. Needs: tla-coverage-names-every-module-in-nova-tools-after-the-retire
+    (landed)."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card moved out of the sprint (sprint store, 2026-10-11: stream v1212, working)")
+  (item "tla-friendstage-every-hand-is-guarded" :group "v13-friends"
+   :title "TLA+ FriendStage: every hand is guarded"
+   :text "Done when: Hand is modelled as the guarded paths have it, stage failures are kept under a
+    key a later success does not clear with an invariant naming what that leaves, handunstaged stays
+    the witness, and stage.go cites the model. Needs: tla-coverage-names-every-module-in-nova-tools
+    (not in the store)."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card moved out of the sprint (sprint store, 2026-10-11: stream v1212, merging)")
+  (item "card-freddy-64-host-binding" :group "v13-friends"
+   :title "Freddy at 64 lanes, bound to mini-m5"
+   :text "Done when: go test -count=1 ./internal/friend -run
+    TestOpenCodeRunsAReadAsOneShotWithTheTiersModel passes; mini-m5 publishes Freddy's presence
+    through its own host publisher, never a hand-written store row, and opencode.json allows the
+    external directories. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/freddy-64/card-freddy-64-host-binding.md, 2026-10-11)")
+  (item "presence-batch-turn-is-modelled-before-5540-lands" :group "v13-friends"
+   :title "The presence check during a batch turn is modelled before #5540 lands"
+   :text "Done when: the presence model covers a check that waits for a running batch turn, each
+    reversed witness breaks the property it names, and TestTLCRecordsCoverCurrentModels passes in
+    ./internal/friend and ./internal/ci. Needs: nothing; it gates nova-tools PR #5540."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/presence-batch-turn-is-modelled-before-5540-lands.md, 2026-10-11)")
+  (item "card-slice-j-nudge-debt" :group "v13-friends"
+   :title "Slice J: durable nudge debt and daemon loop telemetry"
+   :text "Done when: go test -count=1 ./internal/friend -run
+    TestDeferredDealtNudgeIsHeldOnPauseAndResumesWithoutNativeStart passes; staged debt is saved
+    before it leaves memory, a failed save restores the ledger, and each loop pass is recorded.
+    Needs: nothing in its brief (the v1.3 manifest schedules it after card-slice-k-recut-deadlock)."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/slice-j/card-slice-j-nudge-debt.md, 2026-10-11; nova-tools PR #5530 is its open
+    change)")
+  (item "card-slice-k-recut-deadlock" :group "v13-friends"
+   :title "Slice K: a standalone friend never deadlocks on an omitted mode"
+   :text "Done when: go test -count=1 ./cmd/nova-friend -run TestCurrentRowResolutionSemantics
+    passes; an omitted --mode falls back safely and reading the friend row never blocks. Needs:
+    nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/slice-k/card-slice-k-recut-deadlock.md, 2026-10-11; donor 9ed8f6d4)")
+  (item "the-dsh-harness-runs-one-shot-lanes-to-width" :group "v13-friends"
+   :title "The dsh harness runs one-shot lanes to width"
+   :text "Done when: a functional test with a fake dsh proves N lanes run independently to width and
+    a failing lane stops no other, the missing-credential exit is a provider refusal told at once,
+    the docs and help name the mode, and each package's tests stay under one minute. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/the-dsh-harness-runs-one-shot-lanes-to-width.md, 2026-10-11)")
+  (item "nova-friend-test-rig-clock-races-the-daemon" :group "v13-friends"
+   :title "The nova-friend test rig's clock no longer races the daemon"
+   :text "Done when: TestRunRefusesAHarnessThatCannotDeliver, TestCheckExitsOneOnAnyVerdictButOk and
+    the other listed cmd/nova-friend tests pass under go test -race on ubuntu and macos. Needs:
+    nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/next-sprint-cards/nova-friend-test-rig-clock-races-the-daemon.md, 2026-10-11)")
+  (item "a-provider-refusal-on-a-lane-is-a-judgment" :group "v13-friends"
+   :title "A provider refusal on a friend's lane is a judgment, never retried forever"
+   :text "Done when: cmd/nova-friend/refusal_test.go, red first: a refused turn is not retried on a
+    timer; after the second identical refusal the lane is faulted with the refusal line, shown on
+    the beat and in nova-friend status, and one notice goes to the coordinator. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/next-sprint-cards/v1.2.15/a-provider-refusal-on-a-lane-is-a-judgment.md, 2026-10-11; planned
+    for v1.2.15)")
+  (item "pr-5555-harness-limit-episodes" :group "v13-friends"
+   :title "Model harness limit episodes and recovery on the current wake"
+   :text "Done when: the model of a harness limit (down once, up only on its own wake) lands with
+    its reversed witness, and the open change is landed or closed against it. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5555 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5547-friend-lanes-independent" :group "v13-friends"
+   :title "Every friend lane refreshes independently; no batch turn"
+   :text "Done when: one-shot lanes for every harness, each free lane taking the next card at once,
+    with the TLA+ model beside it. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5547 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5540-presence-waits-for-the-turn" :group "v13-friends"
+   :title "A presence check waits for a running batch turn"
+   :text "Done when: the presence bound starts when the turn ends, checked against the model. Needs:
+    presence-batch-turn-is-modelled-before-5540-lands."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5540 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5529-friend-beat-host" :group "v13-friends"
+   :title "A friend's beat reports its host for machine billing"
+   :text "Done when: friend:<name>:beat carries the host the lanes run on, and the bill charges that
+    machine. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5529 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5509-friend-file-before-beat" :group "v13-friends"
+   :title "The beat that carries a file follows the folder check"
+   :text "Done when: a beat naming a delivered file is sent only after the folder check passes; one
+    of the two open changes lands and the other closes. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5509, #5512 (open), moved out of the sprint plan 2026-10-11; two changes
+    with one title")
+  (item "pr-5507-dsh-card-runner" :group "v13-friends"
+   :title "dsh is a card runner and a spender"
+   :text "Done when: nova-friend runs one-shot cards through dsh and reads their cost from the dsh
+    session files. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5507 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5489-antigravity-delivery" :group "v13-friends"
+   :title "Antigravity delivery is refused when unlanded and replayed on a same-session restart"
+   :text "Done when: an unlanded antigravity delivery is refused and a restart in the same session
+    replays it. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5489 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5474-friend-runner-reliability" :group "v13-friends"
+   :title "Friend runner reliability, rows 2 to 4"
+   :text "Done when: a lane refills on the step after it frees, the width has one source, and a late
+    finish is settled. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5474 (open), moved out of the sprint plan 2026-10-11; the base of a stack
+    with #5480, #5481, #5483 and #5484")
+  (item "pr-5480-friend-runner-row-1" :group "v13-friends"
+   :title "Friend runner reliability, row 1: a friend with no sealed key is down with the reason"
+   :text "Done when: no sealed key reads as down with its reason, and a restarted daemon recovers
+    its rows. Needs: pr-5474-friend-runner-reliability."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5480 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5481-owed-message-turns-one-lane" :group "v13-friends"
+   :title "Owed friend message turns stay in one lane"
+   :text "Done when: a message turn the friend owes is retried in the lane that owes it, never
+    another. Needs: pr-5480-friend-runner-row-1."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5481 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5483-recover-live-friend-runs" :group "v13-friends"
+   :title "Verified live friend runs are recovered across daemon restarts"
+   :text "Done when: a run proven live before a restart is adopted after it, not run again. Needs:
+    pr-5481-owed-message-turns-one-lane."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5483 (open), moved out of the sprint plan 2026-10-11")
+  (item "pr-5484-settle-friend-reads" :group "v13-friends"
+   :title "Friend reads are settled durably and recovered"
+   :text "Done when: a friend's read is settled durably and recovered after a restart. Needs:
+    pr-5483-recover-live-friend-runs."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5484 (open), moved out of the sprint plan 2026-10-11")
+  (item "card-functional-tmpdir-socket-limit" :group "tests"
+   :title "Throwaway store sockets fit the kernel's path limit"
+   :text "Done when: go test -tags functional -count=1 ./internal/testredis -run
+    TestThrowawayRedisSocketPathLimit passes: a deeply nested TMPDIR gets a short private socket
+    directory under the 104-byte Darwin and 108-byte Linux limits. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/functional-tier/card-functional-tmpdir-socket-limit.md, 2026-10-11)")
+  (item "card-functional-package-timeout-concurrency" :group "tests"
+   :title "No orphaned store child holds the bench gate lock"
+   :text "Done when: go test -tags functional -count=1 ./internal/testredis -run
+    TestRedisProcessTerminatedOnTestDeadline passes: the lock fd is close-on-exec, the store runs in
+    its own process group, and each functional package stays inside its bound. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/functional-tier/card-functional-package-timeout-concurrency.md, 2026-10-11)")
+  (item "card-slice-l-ci-fixtures" :group "tests"
+   :title "Slice L: hermetic CI fixtures and closed inherited descriptors"
+   :text "Done when: go test -count=1 ./tools/ci -run
+    TestFunctionalRunClosesInheritedGateFDForChildren passes, with the postgres and redis fixture
+    watchdogs waiting for the orphan group before cleanup. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/slice-l/card-slice-l-ci-fixtures.md, 2026-10-11; donors 541550d4 and 17ff357f)")
+  (item "the-functional-ci-package-runs-within-a-minute" :group "tests"
+   :title "The functional internal/ci package runs within a minute"
+   :text "Done when: go test -tags functional ./internal/ci runs under the standing one-minute bound
+    at CI's -p 2, by loading packages once and running the analyzers in process, with no timeout
+    raised and no check skipped. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/the-functional-ci-package-runs-within-a-minute.md, 2026-10-11)")
+  (item "the-adopt-runs-without-a-hand" :group "ops"
+   :title "The adopt runs without a hand"
+   :text "Done when: the adopt window boots out and restores the seat push, friend sync and
+    dashboard loops in every outcome, and the fleet play takes the release directory from the tag's
+    build record and refuses a mismatch (items 2 and 4 of the card; 1 and 3 went to v1.2.1). Needs:
+    nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "card file moved out of the sprint plan (rowan-new
+    tmp/v1.3-cards/the-adopt-runs-without-a-hand.md, 2026-10-11; the owner, 2026-10-09: fix in v1.3)")
+  (item "pr-5525-local-gate-decides-seat-rule" :group "ops"
+   :title "The local gate decides a failed seat-rule check"
+   :text "Done when: a failed seat-rule check is decided by the local gate, as the open change
+    proposes for v1.3. Needs: nothing."
+   :date "2026-10-11"
+   :release "v1.3"
+   :origin "nova-tools PR #5525 (open), moved out of the sprint plan 2026-10-11; titled v1.3 by its
+    author")))
