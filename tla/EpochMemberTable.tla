@@ -1,8 +1,12 @@
 ----------------------- MODULE EpochMemberTable -----------------------
-\* PROPOSED epoch composition. Physical table identity is <<dimension,epoch>>.
-\* MemberEpoch is immutable. The real record's place:<dimension> corresponds
-\* to place[m][<<dimension,MemberEpoch[m]>>]; other generations stay NoPlace.
-\* Advance changes the active namespace only (one INCR), retaining history.
+\* The epoch composition table.lua implements today (pkg/nsprint/fn/lua/table.lua).
+\* Physical table identity is <<dimension,epoch>>. STALE and EPOCHAHEAD refuse an
+\* epoch behind or ahead of the active one (:1159-1164), MEMBEREPOCH refuses a
+\* member record whose epoch differs (:665, :687), and each record's per-table
+\* place:<name> is the epoch-scoped cell represented here (:700); a legacy
+\* epoch-zero record acquires its epoch at first placement (:695-697).
+\* MemberEpoch is immutable. Advance (:68-73) has no counterpart in the code,
+\* which reads the active epoch from an external HGET of epoch_key (:493-495).
 EXTENDS MemberTable
 CONSTANTS Epochs, Dimensions, MemberEpoch
 VARIABLES activeEpoch, seenEpoch
@@ -79,7 +83,7 @@ EpochNext ==
     \/ ReadEpoch(w) \/ Advance(w)
     \/ \E c \in Cells,m \in Members,s \in Scores:EpochAdd(w,c,m,s)
     \/ \E c \in Cells,m \in Members:EpochRemove(w,c,m)
-    \/ \E c,d \in Cells,m \in Members:c[1]=d[1] /\ EpochMove(w,c,d,m)
+    \/ \E c,d \in Cells,m \in Members:c[1]=d[1] /\ c[2]=d[2] /\ EpochMove(w,c,d,m)
     \/ \E t \in Tables:EpochClear(w,t) \/ EpochDrop(w,t) \/ EpochCreate(w,t)
     \/ \E t \in Tables,r \in Rows:EpochRowDelete(w,t,r)
     \/ \E t \in Tables,r \in Rows:

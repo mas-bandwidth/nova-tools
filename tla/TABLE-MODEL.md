@@ -1,12 +1,12 @@
-# nova-table: current implementation model and counterexamples
+# nova-table: the pinned-baseline model and counterexamples
 
 The table implementation is in `pkg/nsprint/fn/lua/table.lua`, with the public-call shape in `pkg/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
 
-**Disposition: the desired ONE PLACE and lossless-bind contract is not implemented.** The model intentionally contains the current behavior. Passing the narrower current-contract suite is not approval of the desired foundation. The default `strict` runner fails on an outstanding invariant; `witnesses` verifies that each named known failure remains reproducible. No assumed repair has been inserted into the model.
+**Disposition: the pinned baseline (`table-pinned.lua`, table.lua at f77458853af46fdbbafd6881a4b46006431f266f) does not implement the ONE PLACE and lossless-bind contract; today's table.lua does (`tla/MemberTable.tla`).** The model intentionally contains the baseline's behavior, and its findings hold only against that pin (`tlacheck witnesses`). Passing the narrower baseline-contract suite is not approval of the desired foundation. The default `strict` runner fails on an outstanding invariant; `witnesses` verifies that each named known failure remains reproducible. No assumed repair has been inserted into the model.
 
 ## What was checked
 
-`tla/TableMachine.tla` models live definitions, row membership, binding targets, physical member/score entries, and two writers choosing interleaved complete operations. Physical entries are separate from visible owned cells: changing metadata can hide a live entry without deleting it. A bound view can name an external set or, in the alias counterexamples, another table cell key.
+`tla/TableMachine.tla` models the pinned baseline `table-pinned.lua` (table.lua at f77458853af46fdbbafd6881a4b46006431f266f): live definitions, row membership, binding targets, physical member/score entries, and two writers choosing interleaved complete operations. Physical entries are separate from visible owned cells: changing metadata can hide a live entry without deleting it. A bound view can name an external set or, in the alias counterexamples, another table cell key.
 
 | Operator | Lua correspondence |
 | --- | --- |

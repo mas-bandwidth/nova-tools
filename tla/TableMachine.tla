@@ -1,7 +1,10 @@
 -------------------------- MODULE TableMachine --------------------------
-\* CURRENT behavior of nova-tools table.lua at f77458853af46fdbbafd6881a4b46006431f266f.
-\* Successful functions are atomic steps. Error preflight is assumed, not
-\* proved here. Duplicate placement and lossy bind are deliberately present.
+\* The baseline of table-pinned.lua (internal/tablemodel/testdata/table-pinned.lua),
+\* the pinned table.lua at f77458853af46fdbbafd6881a4b46006431f266f. Its six
+\* findings hold only against that pin (tlacheck witnesses), not against today's
+\* table.lua, which fixed them. Successful functions are atomic steps. Error
+\* preflight is assumed, not proved here. Duplicate placement and lossy bind are
+\* deliberately present.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Tables, Rows, Columns, Members, Writers, Scores, External,
           MaxSteps, AllowAliases, Seed

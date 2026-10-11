@@ -1,6 +1,6 @@
-# Proposed member placement and epoch protocol
+# Member placement and epoch protocol
 
-This is the **proposed replacement**, separate from `tla/TableMachine.tla`, which still models nova-tools `f77458853af46fdbbafd6881a4b46006431f266f` and still fails its strict gate. The proposal follows SPEC-COORDINATOR section 7 at `599f786b9` (the wording cleanup at `00f6f18` does not change that contract). It has not yet been implemented or independently reviewed. Do not describe these green design checks as proof about deployed Lua.
+This is the member placement and epoch protocol today's `table.lua` implements (pkg/nsprint/fn/lua/table.lua). It is separate from `tla/TableMachine.tla`, which is the baseline of `table-pinned.lua`, the pinned `f77458853af46fdbbafd6881a4b46006431f266f` whose six findings hold only against that pin (`tlacheck witnesses`) and no longer describe today's Lua. The design follows SPEC-COORDINATOR section 7 at `599f786b9` (the wording cleanup at `00f6f18` does not change that contract).
 
 ## State and contract
 
@@ -9,7 +9,7 @@ This is the **proposed replacement**, separate from `tla/TableMachine.tla`, whic
 The added protocol is explicit:
 
 - Add refuses when the member already has a place in that table, including adding again to the same cell. A successful add writes the set and record together.
-- Move requires that the source is the recorded place, both cells are owned, and both belong to the same table. It preserves the source score and changes the record and set together. The proposed enumerated action includes different rows; today's public move only accepts columns of the same row.
+- Move requires that the source is the recorded place, both cells are owned, and both belong to the same table and the same row. It preserves the source score and changes the record and set together; the public move accepts only columns of the same row (table.lua:1619).
 - Remove clears the matching set member and placement together. Removing a member from a different cell changes neither. Explicit row deletion, table drop and successful ordinary table clear clear affected placements with the deleted sets.
 - Bind and row-add refuse any shape that would delete or hide an occupied owned cell. Empty cells can be rebound. Bindings must target external storage, never any potential table-owned key, including one not created yet. This is checked in the operation, not just assumed by the invariant. An explicitly destructive row-delete remains separate from lossless reshape.
 - Ordinary table clear keeps today's whole-operation refusal when any cell is bound; successful clear removes that table's owned rows and placements and retains its definition. Drop leaves external sets intact.

@@ -1,7 +1,12 @@
 -------------------------- MODULE MemberTable --------------------------
-\* PROPOSED protocol, not today's Lua: one record location per table,
-\* updated atomically with the owned cell. Extends the pinned baseline's
-\* concrete state so every extra guard and record write is visible here.
+\* The member placement protocol table.lua implements today
+\* (pkg/nsprint/fn/lua/table.lua): one record location per table, written
+\* atomically with the owned cell. OWNEDALIAS (:891) and OCCUPIED (:917, :921)
+\* refuse a shape that would drop or alias an occupied cell, PLACED (:1636)
+\* refuses a second placement, and DRIFT (:939) refuses a record whose
+\* place:<table> disagrees with its set. Move stays within the row
+\* (table.lua:1619). Extends the pinned baseline's concrete state so every
+\* extra guard and record write is visible here.
 EXTENDS TableMachine
 VARIABLE place
 mvars == <<vars,place>>
@@ -37,7 +42,7 @@ MemberMove(w,c,d,m) ==
  IF Writable(c) /\ Writable(d) /\ place[m][c[1]]=c
  THEN Move(w,c,d,m) /\ place'=[place EXCEPT ![m][c[1]]=d]
  ELSE MemberRefuse(w,"move-refused")
-\* Proposed lossless reshape: every currently owned entry remains owned
+\* Lossless reshape: every currently owned entry remains owned
 \* and visible in the new shape. Deleting an occupied row or rebinding an
 \* occupied cell must first use the explicit member move/remove verb.
 ShapeKeepsOwned(t,rs,bs) ==
@@ -71,7 +76,7 @@ MemberNext ==
  /\ \E w \in Writers :
     \/ \E c \in Cells, m \in Members, s \in Scores : MemberAdd(w,c,m,s)
     \/ \E c \in Cells, m \in Members : MemberRemove(w,c,m)
-    \/ \E c,d \in Cells, m \in Members : c[1]=d[1] /\ MemberMove(w,c,d,m)
+    \/ \E c,d \in Cells, m \in Members : c[1]=d[1] /\ c[2]=d[2] /\ MemberMove(w,c,d,m)
     \/ \E t \in Tables : MemberClear(w,t) \/ MemberDrop(w,t) \/ MemberCreate(w,t)
     \/ \E t \in Tables, r \in Rows : MemberRowDelete(w,t,r)
     \/ \E t \in Tables, r \in Rows :
@@ -79,6 +84,11 @@ MemberNext ==
     \/ \E t \in Tables, keep \in SUBSET Rows :
          \E nb \in BindingChoices({t} \X keep \X Columns) : MemberBind(w,t,keep,nb)
 MemberSpec == MemberInit /\ [][MemberNext \/ (step=MaxSteps /\ UNCHANGED mvars)]_mvars
+
+\* A move that changes a member's place stays in its row (table.lua:1619).
+SameRowMove == [][op' = "move" =>
+  \A m \in Members, t \in Tables :
+    place'[m][t] # place[m][t] => place'[m][t][2] = place[m][t][2]]_mvars
 
 \* Negative control: forgetting the record write during a real cell move
 \* must fail RecordSetLink. It is not an allowed production transition.
@@ -101,4 +111,15 @@ BrokenAliasNext ==
              {b \in binds:b[1] \notin RowCells(t,r)} \cup nb)
        /\ RowAdd(w,t,r,nb) /\ UNCHANGED place
 BrokenAliasSpec == MemberInit /\ [][BrokenAliasNext \/ (step=MaxSteps /\ UNCHANGED mvars)]_mvars
+
+\* Mutation control: removing the same-row guard lets one member move across
+\* rows in one call, which today's Lua refuses (table.lua:1619). SameRowMove
+\* must catch it.
+BrokenCrossRowNext ==
+  /\ (MaxSteps=0 \/ step < MaxSteps)
+  /\ \E w \in Writers, c,d \in Cells, m \in Members :
+       /\ c[1]=d[1] /\ c[2] # d[2] /\ Writable(c) /\ Writable(d)
+       /\ place[m][c[1]]=c
+       /\ Move(w,c,d,m) /\ place'=[place EXCEPT ![m][c[1]]=d]
+BrokenCrossRowSpec == MemberInit /\ [][BrokenCrossRowNext \/ (step=MaxSteps /\ UNCHANGED mvars)]_mvars
 =============================================================================

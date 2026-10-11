@@ -1247,6 +1247,7 @@ func CellRemove(ctx context.Context, c redis.Cmdable, name, row, col, member str
 	return CellsRemove(ctx, c, name, row, col, []string{member}, opts...)
 }
 func CellMove(ctx context.Context, c redis.Cmdable, name, row, from, to, member string, opts ...WriteOptions) (int64, error) {
+	// tla/MemberTable.tla MemberMove
 	return CellsMove(ctx, c, name, row, from, to, []string{member}, opts...)
 }
 
@@ -1261,6 +1262,7 @@ func CellsRemove(ctx context.Context, c redis.Cmdable, name, row, col string, me
 }
 
 // CellsMove keeps scores and refuses the complete list if any member is absent or inconsistent.
+// tla/MemberTable.tla MemberMove
 func CellsMove(ctx context.Context, c redis.Cmdable, name, row, from, to string, members []string, opts ...WriteOptions) (int64, error) {
 	return writeMembers(ctx, c, operation{table: name, row: row, col: from}, FnCellMove, opts, []any{row, from, to}, members)
 }
