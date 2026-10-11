@@ -223,7 +223,7 @@ func (l *loop) outboxStep(now time.Time) {
 	for _, e := range entries {
 		job := e.Name()
 		id, epoch, gen, ok := ParseJob(job)
-		if !e.IsDir() || !ok || !validJob(job) || o.finished[job] || running[job] {
+		if !e.IsDir() || !ok || !validJob(job) || o.finished[job] || l.outboxFly[job] || running[job] {
 			continue
 		}
 		report, there, err := readReport(outbox, job)
@@ -260,6 +260,9 @@ func (l *loop) outboxStep(now time.Time) {
 		if t, ok := o.tried[job]; ok && now.Sub(t) < OutboxRetry {
 			continue
 		}
+		if len(l.outboxFly) >= pushWidth {
+			break // at the width: the rest are due next step, when the drain frees room
+		}
 		// the lane the server says holds it, named on the finish: another lane's card is refused
 		card := Card{ID: id, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(outbox, job), Lane: h.Lane}
 		if h.Lane > 0 {
@@ -277,31 +280,80 @@ func (l *loop) outboxStep(now time.Time) {
 		if branch == "" {
 			_, branch = PushedHead(d.Dir, card)
 		}
-		if why := l.offTip(*h, verdict, head, branch); why != "" {
-			o.tried[job] = now
-			note(job, why+"; read again in "+OutboxRetry.String())
-			continue
-		}
 		argv := OutboxFinishArgv(d.Friend, card, verdict, head, branch, report)
+		l.outboxFly[job] = true
+		l.outboxFinish(*h, job, id, argv, verdict, head, branch, written, now)
+	}
+}
+
+// pushWidth is how many outbox finishes one step starts at once: each is an
+// independent tip check and server finish, one per card, with its own answer and
+// refusal, so they run side by side, bounded, off the loop.
+const pushWidth = 8
+
+// outboxResult is one finish that ended off the loop: the job, whether the server
+// took it (note "" means it did), and what the finished record says. The step
+// applies it, never the goroutine, so o.finished, o.tried, the notes and the
+// records stay single-writer.
+type outboxResult struct {
+	job     string
+	id      string
+	col     string
+	now     time.Time
+	note    string // the finish was left for later, and why ("" when the server took it)
+	written string // the verdict as written, for the finished record
+	words   string // finish=ok|failed ... for the finished record
+}
+
+// outboxFinish runs one due job's tip check and finish off the loop and posts its
+// answer on l.outboxRes for the step to apply. The job is marked in flight
+// (outboxFly) so the next step neither sends it again nor counts it finished.
+func (l *loop) outboxFinish(h HeldCard, job, id string, argv []string, verdict, head, branch, written string, now time.Time) {
+	d := l.d
+	l.finishWG.Add(1)
+	l.work(func() {
+		defer l.finishWG.Done()
+		r := outboxResult{job: job, id: id, col: h.Col, now: now, written: written}
+		if why := l.offTip(h, verdict, head, branch); why != "" {
+			r.note = why + "; read again in " + OutboxRetry.String()
+			queue(l.ctx, l.outboxRes, r)
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
-		err = d.Finish(ctx, argv)
+		err := d.Finish(ctx, argv)
 		cancel()
 		if err != nil {
-			o.tried[job] = now
-			note(job, "its finish was not taken, sent again in "+OutboxRetry.String()+": "+oneLine(err.Error(), 300))
-			continue
+			r.note = "its finish was not taken, sent again in " + OutboxRetry.String() + ": " + oneLine(err.Error(), 300)
+			queue(l.ctx, l.outboxRes, r)
+			return
 		}
-		delete(o.tried, job)
-		o.finished[job] = true
-		words := "finish=ok head=" + head
+		r.words = "finish=ok head=" + head
 		if slices.Contains(argv, "--failed") {
-			words = "finish=failed"
+			r.words = "finish=failed"
 			if fullSha.MatchString(head) {
-				words += " head=" + head
+				r.words += " head=" + head
 			}
 		}
-		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, written, h.Col, words))
+		queue(l.ctx, l.outboxRes, r)
+	})
+}
+
+// applyOutboxResult is the step applying a finish that ended off the loop: one the
+// server did not take is tried again after OutboxRetry, and one it took is marked
+// finished with its record written here, in the loop goroutine.
+func (l *loop) applyOutboxResult(r outboxResult, now time.Time) {
+	d := l.d
+	o := &d.outbox
+	delete(l.outboxFly, r.job)
+	at := r.now.UTC().Format(time.RFC3339)
+	if r.note != "" {
+		o.tried[r.job] = r.now
+		d.Record(fmt.Sprintf("%s outbox: left outbox/%s/REPORT.md: %s", at, r.job, r.note))
+		return
 	}
+	delete(o.tried, r.job)
+	o.finished[r.job] = true
+	d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, r.id, r.job, r.written, r.col, r.words))
 }
 
 // offTip is why a LAND with a full sha Head is not finished at it: its Head is not origin's
