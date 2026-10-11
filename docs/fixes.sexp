@@ -306,4 +306,12 @@
     repositories use it and delete their own copies: this one imports nova-roadmap from nova-sprint and
     deletes internal/roadmap and tools/roadmap. Net fewer lines. Its s-expressions stay importable
     later as a node by nova-work; that import is a v1.3 item, not this one."
-   :origin "the owner, 2026-10-11: v1.2.13 contraction, pass 4 (shared code into modules); nova-roadmap lives in nova-sprint")))
+   :origin "the owner, 2026-10-11: v1.2.13 contraction, pass 4 (shared code into modules); nova-roadmap lives in nova-sprint")
+
+  (fix "brief-boilerplate-into-the-card-contract" :release "v1.2.13" :status "planned"
+   :title "Brief boilerplate moves into the card contract"
+   :text "The RULES, LEDGERS, WALL AND TOOLS and BUDGET blocks, about 6 KB of every 10 to 11 KB brief, are
+    referenced once from the card contract instead of repeated in each brief, and the card lint
+    (pkg/swarm) refuses repeated instruction text in a brief. nova-sprint's briefs-by-reference is the
+    same change on its side."
+   :origin "the owner, 2026-10-11: a lesson from the Cockroach Labs write-up \"Five months treating bugs like patients\" (MOLT Sinai)")))
