@@ -1,6 +1,7 @@
 config	module	expected	property	deadlock	group	gate	debt
 MCBenchRun.cfg	MCBenchRun.tla	pass	-	ignore-terminal	benchrun	required	-
 MCBenchRunBrokenNoRemove.cfg	MCBenchRun.tla	invariant	NothingLeftBehind	ignore-terminal	benchrun	required	-
+MCBenchRunBrokenInterruptRefused.cfg	MCBenchRun.tla	invariant	InterruptedExecRan	ignore-terminal	benchrun	required	-
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
 MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal	cairnstore	required	-
