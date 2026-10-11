@@ -22,7 +22,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (29)
+- [Friends](#friends) (28)
 - [Setup, release and operations](#setup-release-and-operations) (106)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
@@ -304,14 +304,6 @@ On macOS benches cards and their subagents go quiet after minutes and are killed
 Target: v1.3
 
 From: issue #2533; issue #2535; issue #2058; issue #2328
-
-### End a card as asked when its last turn is a question
-
-A headless card whose last turn asks the user a question ends at once as asked instead of holding its slot to the deadline.
-
-Target: v1.3
-
-From: issue #2548
 
 ### Record request timings so a wall names the provider, sandbox or model
 

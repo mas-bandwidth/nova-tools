@@ -44,3 +44,9 @@ The fixes held during the split, the point-release candidates found on 2026-10-1
 - **A friend's new epoch retires her older-epoch items and starts empty** (in-progress). On the sprint's new epoch the daemon moves every older-epoch inbox and outbox item to the retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch empty; on the same signal the lanes forget their sessions and the present is owed, so a full or stale session never carries across a clear. From: the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row).
 - **A friend's lane session full or missing starts a fresh one itself** (in-progress). A provider's context-limit refusal on a lane's session, or a session the harness no longer has, no longer counts the card's turns against it and waits for a hand session plus a restart: the lane starts a fresh session itself, seeded from the friend's own files, its card continues in it (once per card; after that the refusal is the card's business again), and the seat is told once per renewal. From: the owner 2026-10-10: what else is manual that should be automatic from the machine.
 - **The worker brief says never amend, rebase or reset onto origin** (planned). The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds (its add refuses a held rules file that differs), stops children rewriting history, which caused the does-not-descend refusals. A test pins the file's digest in both repositories. From: v1.2.5 candidate list.
+
+## v1.2.9 (planned)
+
+A worker card whose last turn is a question ends as asked instead of holding its slot.
+
+- **End a card as asked when its last turn is a question** (planned). A headless card whose last turn asks the user a question ends at once as asked instead of holding its slot to the deadline. From: issue #2548.
