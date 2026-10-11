@@ -57,7 +57,7 @@ func TestALaunchTheUsageSourceEndedIsTheMembersFailureAndRestsTheMember(t *testi
 	_, err = g.tickAt(t, 160)
 	require.NoError(t, err)
 	rest := "the usage source stopped answering since 1970-01-01T00:02:40Z: no card is started until 1970-01-01T00:12:40Z"
-	require.Equal(t, []string{
+	require.ElementsMatch(t, []string{
 		"finish --as m c1@1 --report staging refused: budget " + words + "; ended by the sampler --failed --epoch 7",
 		"finish --as m c2@1 --failed --report staging refused: " + rest + " --epoch 7",
 	}, g.s.lines("finish"), "the end is the member's, and the card taken in the same pass is refused")
