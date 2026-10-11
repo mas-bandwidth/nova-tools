@@ -491,7 +491,7 @@
     and adds NoStaleStage, which says what the un-cleared key leaves -- a stale failure line, never a stale
     stage. The existing handunstaged witness stays; no clearsonsuccess witness, because the failure key's
     clearing is not what any invariant holds to."
-   :origin "card tla-friendstage-every-hand-is-guarded.w3 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+   :origin "card tla-friendstage-every-hand-is-guarded.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
