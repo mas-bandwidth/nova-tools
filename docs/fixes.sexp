@@ -792,7 +792,7 @@
   (fix "a-friend-lane-gives-the-harness-its-own-tmpdir" :release "v1.2.15" :status "in-progress"
    :title "A friend lane gives its harness its own TMPDIR"
    :text "Every harness run in a friend lane gets a private, writable temp directory inside its own lane: <lane dir>/tmp, made 0700 before the run and removed after it, with TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR all naming it, so no harness ever touches the shared /tmp. The lane wall carries the directory as --tmp and grants nothing outside the lane. A run that ends within five seconds with no REPORT.md and no RESULT.md and whose output names a filesystem error (EEXIST, EACCES, EPERM, ENOENT) on a path outside its lane ends as an environment fault of the friend: the card stays in the lane's hand, its attempt not counted, her lanes pause and the coordinator gets a pushed judgment naming the error line, never a failed attempt of the card."
-   :origin "card a-friend-lane-gives-the-harness-its-own-tmpdir.w2; the seat, 2026-10-11 20:06Z: every claude harness run in a friend lane on the Studio died in about a second with EEXIST mkdir '/tmp/claude-501'")
+   :origin "card a-friend-lane-gives-the-harness-its-own-tmpdir.w2; the seat, 2026-10-11 20:06Z: every claude harness run in a friend lane on the seat's machine died in about a second with EEXIST mkdir '/tmp/claude-501'")
 
   (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
    :title "The claude harness runs the newest model of each tier's class"
