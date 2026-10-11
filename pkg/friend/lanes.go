@@ -790,6 +790,14 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		ln.card, ln.attempts = nil, 0
 		return
 	}
+	// a run within InstantFail with no report whose output names a filesystem error on a
+	// path outside the lane is the friend's environment, never the card's failed attempt:
+	// the card stays in the lane's hand, its attempt not counted, her lanes pause and the
+	// coordinator gets the error line (lane_tmpdir.go)
+	if first, env := LaneEnvironmentFault(now.Sub(t.started), t.tail.String(), card.Report(), card.Result(), ln.job.Dir); env {
+		l.environmentFault(ln, line, first, now)
+		return
+	}
 	// exit 0 and no report: the harness's fault, never the worker's failed attempt; the card
 	// stays in the lane's hand, its attempt not counted, and nothing goes to the sprint server
 	if first, fault := l.harnessFault(r, t, card); fault {
@@ -1080,6 +1088,9 @@ type Wall struct {
 	Jobs      []string // her job directories outside Dir
 	Reads     []string // what her harness reads beyond the system roots and its own directory
 	Deny      []string // the coordinator's self, never written inside the wall (sandbox.LaneProfile.Deny)
+	// Tmp is the lane's private temp directory, <lane dir>/tmp: Exec makes it for the
+	// run and removes it after, and the wall carries it as --tmp (lane_tmpdir.go).
+	Tmp string
 }
 
 // DefaultDenySelf is the coordinator's self a lane wall denies when the daemon was given no
@@ -1114,6 +1125,9 @@ func (w Wall) Args() []string {
 	for _, r := range w.Reads {
 		args = append(args, "--read", r)
 	}
+	if w.Tmp != "" {
+		args = append(args, "--tmp", w.Tmp)
+	}
 	return append(args, "--")
 }
 
@@ -1129,6 +1143,14 @@ func (w Wall) Exec(run Exec) Exec {
 		if len(w.Self) == 0 {
 			return "", 0, fmt.Errorf("a lane's %s cannot be walled: no program runs the wall, and a lane child never runs outside it", name)
 		}
+		// the lane's own temp directory, made 0700 for this run and removed after it: the
+		// wall carries it as --tmp so TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR all name it
+		// and no harness run reaches the shared /tmp (lane_tmpdir.go)
+		w.Tmp = LaneTmpDir(dir)
+		if err := os.MkdirAll(w.Tmp, 0o700); err != nil {
+			return "", 0, fmt.Errorf("a lane's %s cannot run: its temp directory %s cannot be made: %w", name, w.Tmp, err)
+		}
+		defer func() { _ = os.RemoveAll(w.Tmp) }() // ignored: the run is over; a temp left behind is not the card's
 		argv := append(append(append([]string{}, w.Self[1:]...), w.Args()...), name)
 		return run(ctx, dir, w.Self[0], append(argv, args...), stdin)
 	}
@@ -1155,6 +1177,7 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	fs.Var(&deny, "deny", "a path no write inside the wall reaches, the coordinator's self; ~/ is under HOME (repeatable, at least one)")
 	fs.Var(&jobs, "job", "a job directory outside --dir, writable inside the wall (repeatable)")
 	fs.Var(&reads, "read", "a directory the harness reads, beyond the system roots (repeatable)")
+	tmp := fs.String("tmp", "", "the lane's private temp directory: the child's TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR name it")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -1180,6 +1203,9 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	if err != nil {
 		return refused("bad_profile", err.Error())
 	}
+	if *tmp != "" {
+		in.Tmp = *tmp
+	}
 	p, bad := sandbox.Build(in)
 	if len(bad) > 0 {
 		code := sandbox.ExitRefused
@@ -1190,6 +1216,7 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return code
 	}
 	child := append(sandbox.ChildEnv(env, p.Tmp), "HOME="+p.Home)
+	child = append(child, "CLAUDE_CODE_TMPDIR="+p.Tmp) // the claude harness's own scratch, named at the lane's temp (lane_tmpdir.go)
 	if *configDir != "" {
 		child = append(child, "CLAUDE_CONFIG_DIR="+*configDir)
 	}
