@@ -628,6 +628,7 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 			delete(d.stageSaid, "repo "+r.p.Repo)
 			delete(d.stageSaid, "card "+r.p.Card)
 			if r.sha != "" {
+				// tla/FriendStage.tla Hand: only once this stage is recorded is a lane handed the card.
 				d.Record(fmt.Sprintf("%s stage: staged %s/%s/repo (%s at %s, %s, on %s) and its %s", at, JobsDir, r.p.Job, r.p.Repo, r.p.Base, r.sha, r.p.Branch, JobFile))
 			}
 			if line, ok := d.stageDealt[r.p.Job]; ok && l.mode == ModeBatch {
