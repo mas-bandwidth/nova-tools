@@ -90,6 +90,7 @@ Small bug fixes, one concern each, and no model change. They run as cards on v1.
 
 - **The fixes ledger brought level with the code** (in-progress). Fixes marked planned or in-progress that had already landed are marked shipped in the release that carried them (commit 53bc5748c). Landed on dev; ships with v1.2.11. From: card fx-empty-fixes-file-after-the-clear, landed on dev as 7b6cccbc2.
 - **Nightly and certification jobs fail on an untidy go.mod** (in-progress). The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three. From: issue #5497; card go-mod-tidy-nightly-jobs.w6.
+- **The adopt's loops step works on every host** (in-progress). One nova-sprint live manifest command per platform (launchd agents and system-domain LaunchDaemons on Darwin, systemd units on Linux, defined once in group_vars); the loops step succeeds when every member and reader already runs the installed binary and refuses only a manifest with no member or reader; each stale agent restarts through its own target's domain, and the adoption table's disk-free read runs under --check and defaults an empty df. From: card adopt-play-loops-step-works-on-every-host.w2.
 
 ## v1.2.12 (planned, 2026-10-11)
 

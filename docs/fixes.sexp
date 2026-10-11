@@ -424,7 +424,12 @@
    :text "Fixes marked planned or in-progress that had already landed are marked shipped in the release that carried them (commit 53bc5748c). Landed on dev; ships with v1.2.11."
    :origin "card fx-empty-fixes-file-after-the-clear, landed on dev as 7b6cccbc2")
 
-  (fix "go-mod-tidy-nightly-jobs" :release "v1.2.11" :status "in-progress"
-   :title "Nightly and certification jobs fail on an untidy go.mod"
-   :text "The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three."
-   :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")))
+   (fix "go-mod-tidy-nightly-jobs" :release "v1.2.11" :status "in-progress"
+    :title "Nightly and certification jobs fail on an untidy go.mod"
+    :text "The Makefile gains a mod-tidy target that runs go mod tidy -diff and refuses an untidy go.mod or go.sum, lint depends on it so make check catches one, the ci.yml lint job runs make mod-tidy after gofmt, and TestAnUntidyModuleIsRefusedOnTheCLPath pins all three."
+    :origin "issue #5497; card go-mod-tidy-nightly-jobs.w6")
+
+   (fix "adopt-play-loops-step-works-on-every-host" :release "v1.2.11" :status "in-progress"
+    :title "The adopt's loops step works on every host"
+    :text "One nova-sprint live manifest command per platform (launchd agents and system-domain LaunchDaemons on Darwin, systemd units on Linux, defined once in group_vars); the loops step succeeds when every member and reader already runs the installed binary and refuses only a manifest with no member or reader; each stale agent restarts through its own target's domain, and the adoption table's disk-free read runs under --check and defaults an empty df."
+    :origin "card adopt-play-loops-step-works-on-every-host.w2")))
