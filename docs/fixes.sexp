@@ -789,6 +789,11 @@
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
    :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
 
+  (fix "a-friend-lane-gives-the-harness-its-own-tmpdir" :release "v1.2.15" :status "in-progress"
+   :title "A friend lane gives its harness its own TMPDIR"
+   :text "Every harness run in a friend lane gets a private, writable temp directory inside its own lane: <lane dir>/tmp, made 0700 before the run and removed after it, with TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR all naming it, so no harness ever touches the shared /tmp. The lane wall carries the directory as --tmp and grants nothing outside the lane. A run that ends within five seconds with no REPORT.md and no RESULT.md and whose output names a filesystem error (EEXIST, EACCES, EPERM, ENOENT) on a path outside its lane ends as an environment fault of the friend: the card stays in the lane's hand, its attempt not counted, her lanes pause and the coordinator gets a pushed judgment naming the error line, never a failed attempt of the card."
+   :origin "card a-friend-lane-gives-the-harness-its-own-tmpdir.w2; the seat, 2026-10-11 20:06Z: every claude harness run in a friend lane on the Studio died in about a second with EEXIST mkdir '/tmp/claude-501'")
+
   (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
    :title "The claude harness runs the newest model of each tier's class"
    :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
