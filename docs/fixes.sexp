@@ -307,6 +307,13 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "cover-friend-read-lane-step" :release "v1.2.12" :status "planned"
+   :title "Unit tests for the read lane's take step (readLaneStep)"
+   :text "pkg/friend/read_lane_step_test.go covers readLaneStep through the daemon with Take set: the
+    argv sent to Take and Sprint, the harness runs it starts, and the lines it records. Measured
+    readLaneStep 0 of 46 statements before, 100 percent after."
+   :origin "card cover-friend-read-lane-step; tmp/v1.2.12-inventory-2026-10-11.md section 8 item C8")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and

@@ -95,6 +95,7 @@ Small bug fixes, one concern each, and no model change. They run as cards on v1.
 Tests and models only, no product change. More unit and functional tests, and every TLA+ model checked against the code it claims to model (its state, actions and invariants) and run again with TLC on a bench; owed models and stale or timed-out records are made real. The new tests are written against behaviour (the verbs, the store's steps, the wire, the TLA+ invariants), not internals, so the same tests run unchanged against v1.3 and say whether it keeps the behaviour. TLC runs where the cards run first. A real defect a new test finds is written as a v1.2.14 card, never fixed inside a test card.
 
 - **Inventory the tests and models before v1.2.12's first test card** (planned). Coverage per package, the functional tier's state, each TLA+ model against the code it claims to model, and each RUNS.tsv record's age and result. The tests and model cards of v1.2.12 are cut from it. From: the owner, 2026-10-11: the v1.2.12 scope (inventory first).
+- **Unit tests for the read lane's take step (readLaneStep)** (planned). pkg/friend/read_lane_step_test.go covers readLaneStep through the daemon with Take set: the argv sent to Take and Sprint, the harness runs it starts, and the lines it records. Measured readLaneStep 0 of 46 statements before, 100 percent after. From: card cover-friend-read-lane-step; tmp/v1.2.12-inventory-2026-10-11.md section 8 item C8.
 
 ## v1.2.13 (planned, 2026-10-11)
 
