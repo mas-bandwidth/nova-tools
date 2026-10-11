@@ -155,6 +155,7 @@ MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	fr
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
+MCBus2ReceiptsKnownGap.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCFriendNotifications.cfg	MCFriendNotifications.tla	pass	-	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsBadAck.cfg	MCFriendNotifications.tla	invariant	NoLostReady	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsBadDuplicate.cfg	MCFriendNotifications.tla	invariant	ReadyQueueBounded	ignore-terminal	friend-notifications	required	-
