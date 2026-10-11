@@ -307,6 +307,14 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "nt-release-cycle-stubs-written-under-the-fork-lock" :release "v1.2.12" :status "planned"
+   :title "pkg/release's cycle stubs are written under the fork lock"
+   :text "cycle_test.go wrote its fake nova-inventory scripts with os.WriteFile before the code under
+    test exec'd them, so a parallel test's fork inherited the open write descriptor and the exec raced
+    into ETXTBSY, \"text file busy\" (TestCycleStopsOnAFailedBench). The three executable stubs now use
+    testbin.WriteExecutable, which holds syscall.ForkLock for reading while the file is open."
+   :origin "card nt-release-cycle-stubs-written-under-the-fork-lock.w2 (v1.2.12 inventory card A6, section 10 note 5)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
