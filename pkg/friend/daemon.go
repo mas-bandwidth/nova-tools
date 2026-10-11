@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +52,16 @@ const DefaultSilentStop = 20 * time.Minute
 // DefaultBrokenAfter is how many turns in a row the provider must refuse
 // with the same reason before the session is broken (--broken-after).
 const DefaultBrokenAfter = 3
+
+// RefusalRepeats is how many times in a row the server must refuse one verb
+// before the daemon raises it (a down beat and one word to the coordinator),
+// and RefusalDownFor how long her beat says down with it while the server stays
+// refused (a server that answers again clears it at once: docs/SPEC-FRIEND.md,
+// "A refused verb").
+const (
+	RefusalRepeats = 3
+	RefusalDownFor = 15 * time.Minute
+)
 
 // MaxBatch bounds the messages a one-shot lane takes with its card; batch
 // delivery reads every pending message before Envelope applies TextLimit.
@@ -207,6 +218,17 @@ type Daemon struct {
 	// her down with them until then (friend beat --until --reason). Nil: her lanes are
 	// held here alone.
 	FaultDown func(until time.Time, reason string)
+	// RefusalDown marks her row down until until with reason: a server that refused one
+	// of her verbs RefusalRepeats times in a row (inbox.go, "A refused verb"). RefusalUp
+	// clears it when the server answers again. Nil: the refusal is said, never beaten down.
+	RefusalDown func(until time.Time, reason string)
+	RefusalUp   func()
+	// Prove runs the harness's cheapest no-tool turn and answers its terminal reason
+	// (harness_proof.go): "" when the harness can answer, the reason when it cannot. Nil
+	// proves nothing (every harness can answer; a test's world). Until it answers, the
+	// daemon takes no card, beats down with the reason, tells the coordinator once, and
+	// re-proves every ServedEvery (docs/SPEC-FRIEND.md, "A lane proves its harness").
+	Prove func(ctx context.Context) string
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
@@ -561,8 +583,14 @@ type loop struct {
 	refusal      string // the last provider refusal, and how many turns in a row said it
 	streak       int
 	broken, told bool
-	unable       string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
-	unableTries  int    // the turns refused for it since
+	unable       string               // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
+	unableTries  int                  // the turns refused for it since
+	refusedTold  map[string]bool      // verbs whose refusal has been raised, once each (inbox.go, "A refused verb")
+	refusedAt    map[string]time.Time // a verb's last counted refusal: one refusal counted per ServedEvery, never once a beat (inbox.go, "A refused verb")
+	proofReason  string               // the harness proof's last terminal reason, "" when it answers
+	proofAt      time.Time            // when the proof last ran
+	proofTold    bool                 // the harness proof's failure has been told to the coordinator, once
+	instantFails int                  // consecutive card runs that ended with no report within InstantFail (lanes.go, "A lane proves its harness")
 	results      chan result
 	lanes        *laneSet
 	reads        *readSet
@@ -590,17 +618,18 @@ type loop struct {
 // reads a snapshot, so a slow inbox or finish cannot hold the native beat or
 // race a status-file write (docs/SPEC-FRIEND.md, the loop and presence).
 type beatState struct {
-	mu     sync.Mutex
-	active time.Time
-	last   time.Time
-	beats  int
-	err    string
+	mu      sync.Mutex
+	active  time.Time
+	last    time.Time
+	beats   int
+	err     string
+	refused string // why the beat was refused (a server's Refused), "" when it was not
 }
 
-func (b *beatState) snapshot() (active, last time.Time, beats int, err string) {
+func (b *beatState) snapshot() (active, last time.Time, beats int, err, refused string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.active, b.last, b.beats, b.err
+	return b.active, b.last, b.beats, b.err, b.refused
 }
 
 // beatLoop is this daemon's sole production beat caller. A tick waits for the
@@ -619,8 +648,14 @@ func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 		b.active = active
 		if err != nil {
 			b.err = err.Error()
+			var refused *Refused
+			if errors.As(err, &refused) {
+				b.refused = refused.Why
+			} else {
+				b.refused = ""
+			}
 		} else {
-			b.err, b.beats, b.last = "", b.beats+1, now
+			b.err, b.refused, b.beats, b.last = "", "", b.beats+1, now
 		}
 		b.mu.Unlock()
 		select {
@@ -695,6 +730,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		mode, width := l.row(now)
 		proven := l.proof(now)
+		l.harnessProof(now)
 		if d.Session != nil {
 			if s := d.Session(); s != l.session {
 				if l.session != "" {
@@ -749,6 +785,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		switch {
 		case l.broken:
 		case !proven: // the push rule: nothing goes into a session that has not answered
+		case l.mode == ModeOneShot && l.proofReason != "": // the harness proof failed: no card is taken until the harness answers
 		case l.mode == ModeOneShot:
 			if l.presentOwed(now) {
 				l.startPresent(now, false)
@@ -769,9 +806,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
 		}
 		if l.broken && !l.told {
-			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
+			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, d.status.SessionID, d.status.SessionReason), fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
 		} else if l.unable != "" && !l.told {
-			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
+			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, d.status.SessionID, d.status.SessionReason), fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
 		if d.StepBeatForTests {
 			if storeOK {
@@ -780,12 +817,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 				}
 				if err := d.Beat(ctx, d.active); err != nil {
 					d.status.BeatError = err.Error()
+					var refused *Refused
+					if errors.As(err, &refused) {
+						l.refused(FriendBeatVerb, refused.Why, now)
+					}
 				} else {
 					d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
+					l.recovered(FriendBeatVerb, now)
 				}
 			}
 		} else {
-			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError = beats.snapshot()
+			var beatRefused string
+			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError, beatRefused = beats.snapshot()
+			if beatRefused != "" {
+				l.refused(FriendBeatVerb, beatRefused, now)
+			} else if d.status.BeatError == "" {
+				l.recovered(FriendBeatVerb, now)
+			}
 		}
 		if d.HarnessStatus != nil {
 			d.status.HarnessSeen, d.status.HarnessAlive = d.HarnessStatus()
@@ -1643,27 +1691,124 @@ func (l *loop) refusedTurn(t *turn, u SessionRefused, now time.Time) {
 		now.UTC().Format(time.RFC3339), t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), reason, oneLine(u.Detail, 400), RecheckEvery))
 }
 
-// tellBroken sends the coordinator one message that the session is broken:
-// to the seat the last ping named, else Coordinator. It answers whether
-// the word went out, or there was no one to tell (said on the record); a
-// send that fails is tried again the next step.
-func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, why string) bool {
+// tellBroken sends the coordinator one message that the daemon is broken — a
+// broken session, or a server that refused a verb — to the seat the last ping
+// named, else Coordinator. subject names what is broken; why says how to read
+// it. It answers whether the word went out, or there was no one to tell (said
+// on the record); a send that fails is tried again the next step.
+func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, subject, why string) bool {
 	to := d.m.Seat
 	if to == "" {
 		to = d.Coordinator
 	}
-	s := d.status
 	if to == "" {
-		d.Record("session broken, and no coordinator to tell: no ping has named the seat and --coordinator is not set")
+		d.Record("broken, and no coordinator to tell: no ping has named the seat and --coordinator is not set")
 		return true
 	}
-	subject := fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, s.SessionID, s.SessionReason)
 	body := subject + "\n" + why + "\n"
 	if _, err := d.send(ctx, b, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
-		d.status.StoreError = "telling " + to + " the session is broken: " + err.Error()
+		d.status.StoreError = "telling " + to + " it is broken: " + err.Error()
 		return false
 	}
 	return true
+}
+
+// refused observes one refusal of a server verb at now: counted per verb on
+// the status, one per ServedEvery (never once a beat), and the
+// RefusalRepeats-th consecutive one is raised once — a down beat naming the
+// reason (RefusalDown) and one word to the coordinator (tellBroken) — never
+// only logged (docs/SPEC-FRIEND.md, "A refused verb").
+func (l *loop) refused(verb, why string, now time.Time) {
+	d := l.d
+	if l.refusedAt == nil {
+		l.refusedAt = map[string]time.Time{}
+	}
+	if last, ok := l.refusedAt[verb]; ok && now.Sub(last) < ServedEvery {
+		return // one refusal counted per ServedEvery, never once a beat
+	}
+	l.refusedAt[verb] = now
+	if d.status.Refused == nil {
+		d.status.Refused = map[string]int{}
+	}
+	n := d.status.Refused[verb] + 1
+	d.status.Refused[verb] = n
+	d.status.LastRefusal, d.status.LastRefusalAt = verb+": "+oneLine(why, 300), now
+	if n < RefusalRepeats || l.refusedTold[verb] {
+		return
+	}
+	if l.refusedTold == nil {
+		l.refusedTold = map[string]bool{}
+	}
+	l.refusedTold[verb] = true
+	until := now.Add(RefusalDownFor)
+	d.Record(fmt.Sprintf("%s refused: %s refused %d times in a row: %s; her beat says down with it until it answers", now.UTC().Format(time.RFC3339), verb, n, oneLine(why, 300)))
+	if d.RefusalDown != nil {
+		d.RefusalDown(until, why)
+	}
+	d.tellBroken(l.ctx, l.b, fmt.Sprintf("friend %s: the server refused %s", d.Friend, verb), oneLine(why, 400)+"\nHer beat says down with it until the server answers.")
+}
+
+// recovered clears one verb's refusals at now: said once, and the down a
+// refusal set is lifted (RefusalUp; docs/SPEC-FRIEND.md, "A refused verb").
+func (l *loop) recovered(verb string, now time.Time) {
+	d := l.d
+	if d.status.Refused == nil || d.status.Refused[verb] == 0 {
+		return
+	}
+	delete(d.status.Refused, verb)
+	delete(l.refusedTold, verb)
+	delete(l.refusedAt, verb)
+	d.Record(fmt.Sprintf("%s recovered: %s answers again; the down is lifted", now.UTC().Format(time.RFC3339), verb))
+	if d.RefusalUp != nil {
+		d.RefusalUp()
+	}
+}
+
+// harnessProof runs the harness's cheapest no-tool turn at now, once a
+// ServedEvery or after the second instant failure, and answers whether the
+// daemon may take a card: false while the harness cannot answer, with the
+// reason on the status, a down beat naming it, and one word to the
+// coordinator, tried again every ServedEvery until it answers
+// (docs/SPEC-FRIEND.md, "A lane proves its harness").
+func (l *loop) harnessProof(now time.Time) bool {
+	d := l.d
+	if d.Prove == nil {
+		return true
+	}
+	if l.proofReason == "" && !l.proofAt.IsZero() && now.Sub(l.proofAt) < ServedEvery {
+		return true // a pass holds for one ServedEvery: re-proved to catch a harness that lost its login
+	}
+	if l.proofReason != "" && !l.proofAt.IsZero() && now.Sub(l.proofAt) < ServedEvery {
+		return false // re-proved once a ServedEvery, never every loop
+	}
+	reason := d.Prove(l.ctx) // "" when it answers, else the full "harness <h> cannot answer: ..." reason
+	l.proofAt = now
+	if reason == "" {
+		l.proofReason = ""
+		d.status.Proof, d.status.ProofAt = "ok", now
+		d.Record(fmt.Sprintf("%s harness proof: %s answers; cards taken again", now.UTC().Format(time.RFC3339), d.Harness))
+		l.proofTold = false
+		return true
+	}
+	l.proofReason = reason
+	d.status.Proof, d.status.ProofAt = reason, now
+	d.Record(fmt.Sprintf("%s harness proof: %s; no card is taken, re-proved every %s", now.UTC().Format(time.RFC3339), oneLine(reason, 300), ServedEvery))
+	if d.RefusalDown != nil {
+		d.RefusalDown(now.Add(RefusalDownFor), reason)
+	}
+	if !l.proofTold {
+		l.proofTold = true
+		to := l.coordinator()
+		if to == "" {
+			d.Record(now.UTC().Format(time.RFC3339) + " harness proof: no coordinator to tell: " + oneLine(reason, 300))
+		} else {
+			subject := fmt.Sprintf("friend %s: %s", d.Friend, oneLine(reason, 200))
+			if _, err := d.send(l.ctx, l.b, bus.Message{From: d.Friend, To: []string{to}, Kind: bus.KindBlocker, Subject: subject, Body: subject + "\n"}); err != nil {
+				d.Record(now.UTC().Format(time.RFC3339) + " harness proof: telling " + to + " failed: " + err.Error())
+			}
+		}
+	}
+	return false
 }
 
 // seatOf is the seat a ping names, else its sender.
@@ -1690,6 +1835,10 @@ func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, n
 	d.status.LastDaemonPong = now
 }
 
+// statusSame says two statuses are the same, field by field: the refusal map
+// (which makes Status otherwise incomparable) compared entry by entry.
+func statusSame(a, b Status) bool { return reflect.DeepEqual(a, b) }
+
 // flush writes the status when it changed, and every StatusEvery anyway,
 // so a reader tells a live daemon from a dead one by the file's age.
 func (d *Daemon) flush(now time.Time) {
@@ -1712,7 +1861,7 @@ func (d *Daemon) flush(now time.Time) {
 		}
 	}
 	s.At, s.LastBeat, s.Beats = time.Time{}, time.Time{}, 0 // what every beat changes is not a change
-	if s == d.written0 && now.Sub(d.written) < StatusEvery {
+	if statusSame(s, d.written0) && now.Sub(d.written) < StatusEvery {
 		return
 	}
 	d.written0, d.written = s, now
