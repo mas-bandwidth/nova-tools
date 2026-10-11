@@ -166,9 +166,9 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.NoError(t, setupErr8221)
 		_, err := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
 		refusal(err, ErrExists, "machine studio exists")
-		_, setupErr8590 := st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "1", "tiers": "frontier"}), "rowan")
+		_, setupErr8590 := st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "8", "tiers": "frontier"}), "rowan")
 		require.NoError(t, setupErr8590)
-		_, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "1", "tiers": "frontier"}), "rowan")
+		_, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "8", "tiers": "frontier"}), "rowan")
 		refusal(err, ErrExists, "friend rowan exists")
 		_, _, err = st.Update(ctx, KindFriend, "nobody", map[string]string{"slots": "2"}, "rowan")
 		refusal(err, ErrNotFound, "friend nobody not found")
@@ -309,7 +309,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		box := map[string]string{"user": "u", "seat": "box", "slots": "8"}
 		id, err := st.Insert(ctx, KindMachine, mk(machine, "box", box), "t")
 		readBack(KindMachine, "box", OpAdd, box, id, err)
-		who := map[string]string{"slots": "2", "tiers": "frontier"}
+		who := map[string]string{"slots": "8", "tiers": "frontier"}
 		id, err = st.Insert(ctx, KindFriend, mk(friend, "f", who), "t")
 		readBack(KindFriend, "f", OpAdd, who, id, err)
 		cmd := map[string]string{"machine": "box", "argv": `["/bin/x"]`, "every": "5"}

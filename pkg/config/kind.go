@@ -244,14 +244,20 @@ func FriendTokenCap(r Row) int64 {
 	return n
 }
 
-// checkFriend is the friend kind's Check: her width is at least 1, a friend
-// working no job at once being no friend of the sprint's (remove the row
-// instead), her config_dir, when set, is an absolute path, and each stream
-// restriction is a glob the matcher reads. A width that failed its own
-// validation is absent and skipped.
+// checkFriend is the friend kind's Check (docs/SPEC-CONFIG.md, "friend"): her
+// width is at least 1 and no wider than her slots, a friend working no job at
+// once being no friend of the sprint's (remove the row instead), her
+// config_dir, when set, is an absolute path, and each stream restriction is a
+// glob the matcher reads. A width that failed its own validation is absent and
+// skipped.
 func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
+	}
+	if w, ok := r.Fields["width"]; ok && w != "" {
+		if s, ok := r.Fields["slots"]; ok && s != "" && r.Int("width") > r.Int("slots") {
+			return fmt.Errorf("friend %s has width %s and slots %s; a friend's width cannot exceed her slots: want --width <n> <= --slots <n>", r.Name, w, s)
+		}
 	}
 	if d := r.Fields["config_dir"]; d != "" && !filepath.IsAbs(d) {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
