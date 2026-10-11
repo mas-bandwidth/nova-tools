@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // cmdSlots dispatches the slots verb's subcommands: init, take, release, list, run.
@@ -227,7 +227,7 @@ func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// slotsSubdir is the leases directory inside a store. internal/swarm makes it on the first
+// slotsSubdir is the leases directory inside a store. pkg/swarm makes it on the first
 // lease; init makes it up front so that a freshly initialised store LOOKS like a store to
 // the person who just ran the command and goes to see what it made.
 func slotsSubdir(store string) string { return filepath.Join(store, "slots") }

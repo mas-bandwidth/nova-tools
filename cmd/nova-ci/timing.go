@@ -38,7 +38,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/timing"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 const usage = `nova-ci timing: PR-open to all-green, split into queue, setup and test per job (ideas #791)

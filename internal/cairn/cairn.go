@@ -24,7 +24,7 @@
 // and no entries/ directory, log or index appears beside it. The nested record
 // wins when a store holds both for one session.
 //
-// Each entry file is written atomically through internal/atomicfile (an
+// Each entry file is written atomically through pkg/atomicfile (an
 // exclusive temporary file beside the target, an explicit mode, fsync, then
 // rename), so a retry after an interrupted append finishes the pointer line
 // without duplicating the entry and without touching other writers' files. A
@@ -44,8 +44,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 )
 
 // Publish policies name who publishes a checkpoint and when. This package
@@ -305,8 +305,8 @@ func flatLockFile(store, session string) string {
 // write false nothing is written: the result is the plan.
 //
 // An actual write holds an exclusive lock on the sibling lock file around the
-// read-decide-append using internal/filelock (docs/SPEC-CAIRN.md, tla/FileLock.tla;
-// security#73 finding 1). The file is replaced atomically using internal/atomicfile,
+// read-decide-append using pkg/filelock (docs/SPEC-CAIRN.md, tla/FileLock.tla;
+// security#73 finding 1). The file is replaced atomically using pkg/atomicfile,
 // keeping the existing file permissions (docs/SPEC-CAIRN.md; security#73 finding 3).
 // A dry run (write false) neither takes the lock nor creates the file; the
 // duplicate and conflict rules run on the re-read inside the lock.
@@ -706,7 +706,7 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return res, err
 	}
-	// Atomic write per internal/atomicfile model: temporary file created
+	// Atomic write per pkg/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
 	// published by exclusive hard link only where the target is absent.
 	// NoReplace keeps the SPEC-CAIRN rule that the same entry id carrying

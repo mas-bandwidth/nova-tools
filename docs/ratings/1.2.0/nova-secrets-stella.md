@@ -41,8 +41,8 @@ rule-line count; and package documentation that describes the actual interface.
 |---|---|---|---|---|
 | 1 | cmd/nova-secrets/main.go:100-117 | The printed setup says to run `keygen --store ./secrets | ... > .sops.yaml`, but `keygen` refuses because that same store has no `.sops.yaml`; after manually supplying a rule, the printed `first value` command refuses because `ada.yaml` does not exist. The documented bootstrap is circular. | Let the empty-store path create or accept the initial rule and empty seat file, and print one command that makes the first encrypted value. | M |
 | 2 | cmd/nova-secrets/main.go:114-130 | `first value` and every example pass `/opt/homebrew/bin/sops` or `/opt/homebrew/bin/age-keygen`; those paths do not exist on the Linux bench even though real binaries are available on PATH. | Use `"$(command -v sops)"` and `"$(command -v age-keygen)"` in every runnable example. | S |
-| 3 | internal/secrets/keygen.go:15,21-29 | A successful keygen prints three `SECRETS RULE` lines but then says “add these two lines to .sops.yaml”. | Say “add these lines”, or print an exact two-line snippet. | S |
-| 4 | internal/secrets/secret.go:1-3 | The package doc says it provides four verbs, while the help exposes ten top-level verbs and `seat add` and `seat inject`. | Describe the present interface, or describe the package by responsibility rather than a stale verb count. | S |
+| 3 | pkg/secrets/keygen.go:15,21-29 | A successful keygen prints three `SECRETS RULE` lines but then says “add these two lines to .sops.yaml”. | Say “add these lines”, or print an exact two-line snippet. | S |
+| 4 | pkg/secrets/secret.go:1-3 | The package doc says it provides four verbs, while the help exposes ten top-level verbs and `seat add` and `seat inject`. | Describe the present interface, or describe the package by responsibility rather than a stale verb count. | S |
 
 ## Good, keep
 
@@ -58,7 +58,7 @@ rule-line count; and package documentation that describes the actual interface.
 
 | earlier | now | evidence |
 |---|---|---|
-| package documentation said four verbs | STILL THERE | internal/secrets/secret.go:1-3 at Build 4d6372b0556d |
+| package documentation said four verbs | STILL THERE | pkg/secrets/secret.go:1-3 at Build 4d6372b0556d |
 | examples used one platform's fixed executable paths | STILL THERE | cmd/nova-secrets/main.go:114-130 at Build 4d6372b0556d |
 | core commands were expected to keep values out of output | KEPT | real Linux `names`, `check`, and `exec` receipts all succeeded without a value |
 | a stranger needed a reproducible first sitting | WORSE/UNRESOLVED | the exact printed empty-store keygen and first-value commands both refused in the scratch store |

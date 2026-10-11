@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,10 +39,10 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 		mod + "internal/nsprint/land/stream",
 		"./internal/nsprint",
 		"./internal/nsprint/store",
-		mod + "internal/nsprint/verbflag",
+		mod + "pkg/nsprint/verbflag",
 		"./internal/nsprintx",
 		"./cmd/nova-table",
-		mod + "internal/ntable",
+		mod + "pkg/ntable",
 		"./cmd/nova-bus",
 	}, "\n") + "\n"
 	kept := livePackages(t, root, in)
@@ -58,26 +58,26 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 	}
 	want := strings.Join([]string{
 		"./internal/nsprint/store",
-		mod + "internal/nsprint/verbflag",
+		mod + "pkg/nsprint/verbflag",
 		"./internal/nsprintx",
 		"./cmd/nova-table",
-		mod + "internal/ntable",
+		mod + "pkg/ntable",
 		"./cmd/nova-bus",
 	}, " ")
 	assert.Equal(t, want, got, "the deprecated filter kept\n  %s\nwant\n  %s\n(a path in %s drops that package and everything under it; a keep line keeps one; a name that only starts the same is another package)", got, want, pkgselect.DeprecatedFile)
 
 	// every selection point reads its list through the filter
-	sel := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
+	sel := readFile(t, filepath.Join(root, "pkg", "pkgselect", "select.go"))
 	for _, want := range []string{
 		"return Outcome{Packages: s.dep.Live(s.dotted(pkgs))}, nil", // the whole tree
 		"selected = s.dep.Live(selected)",                           // the change's selection
 		"return s.dep.Live(out), nil",                               // the whole tree read from tracked files
 	} {
-		assert.Contains(t, sel, want, "internal/pkgselect/select.go lacks %q: a list that skips the filter would test deprecated packages", want)
+		assert.Contains(t, sel, want, "pkg/pkgselect/select.go lacks %q: a list that skips the filter would test deprecated packages", want)
 	}
-	extras := readFile(t, filepath.Join(root, "internal", "pkgselect", "extras.go"))
-	assert.Contains(t, extras, "return dep.Live(lines(res.Stdout)), nil", "internal/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
-	assert.Contains(t, extras, "!dep.LivePackage(pkg)", "internal/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
+	extras := readFile(t, filepath.Join(root, "pkg", "pkgselect", "extras.go"))
+	assert.Contains(t, extras, "return dep.Live(lines(res.Stdout)), nil", "pkg/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
+	assert.Contains(t, extras, "!dep.LivePackage(pkg)", "pkg/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
 	ci := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	assert.Contains(t, ci, ciRunner+" deal --shards", "ci.yml's hosted deal does not go through `ci deal`, which lists the live tree, so its shards would test deprecated packages")
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_deal.go"))

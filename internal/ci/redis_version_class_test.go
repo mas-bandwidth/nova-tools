@@ -133,11 +133,31 @@ func redisVersionIsWordByte(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }
 
+// redisVersionMayMatch reports whether line holds "redi" in any ASCII case,
+// which redisVersionRe needs ((?i)redis: the folds of r, e, d and i are ASCII
+// only) and redisInstallerPinRe needs (redisSourceVersion). A line without it
+// is passed over before any regexp runs: the sweep reads every line of every
+// text file in the tree, and under -race the regexp on each one was
+// TestRedisIsOneVersionEverywhere's time (13-18 s on three hetzner2 cores, the
+// longest test left in internal/ci once the never-force rule stopped running
+// its regexps on every line).
+func redisVersionMayMatch(line string) bool {
+	for i := 0; i+4 <= len(line); i++ {
+		if line[i]|0x20 == 'r' && line[i+1]|0x20 == 'e' && line[i+2]|0x20 == 'd' && line[i+3]|0x20 == 'i' {
+			return true
+		}
+	}
+	return false
+}
+
 // redisVersionSites reads the versions one file names, by line. rel is the
 // repo-relative path: the installer's redisSourceVersion pin is read only in the installer.
 func redisVersionSites(rel, text string) []redisVersionSite {
 	var out []redisVersionSite
 	for i, line := range strings.Split(text, "\n") {
+		if !redisVersionMayMatch(line) {
+			continue // no "redi": neither redisVersionRe nor the installer's pin can match
+		}
 		for _, m := range redisVersionRe.FindAllStringSubmatchIndex(line, -1) {
 			start, vs, ve := m[0], m[2], m[3]
 			// `go-redis v9.22.0`, `nova-redis 1.0.0`, `--redis 10.0.0.2`: a name
@@ -394,4 +414,23 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 	}
 	p = redisVersionProblems("8.10.2", nil)
 	assert.Empty(t, p, "no places is not a difference (the rule's own floor catches an empty read), got %v", p)
+}
+
+// TestRedisVersionLineFilterIsOnlyAShortcut holds redisVersionMayMatch to
+// dropping only lines no reader could match: every case of "redi" passes, and
+// a line the version regexp matches in any case passes; a line without the
+// word is passed over. TestRedisVersionRuleSeesEachShape runs every shape the
+// rule reads through the filter as well.
+func TestRedisVersionLineFilterIsOnlyAShortcut(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{"redis 8.0.5", "REDIS_VERSION=8.0.5", "Redis server v=8.0.5", "rEdIs-server 8.0.5", `const redisSourceVersion = "8.10.2"`} {
+		assert.True(t, redisVersionMayMatch(line), "the filter drops %q", line)
+		if !strings.HasPrefix(line, "const") {
+			assert.True(t, redisVersionRe.MatchString(line), "the line is in a shape the rule reads: %q", line)
+		}
+	}
+	for _, line := range []string{"", "red", "go 1.26.6", "image: docker.io/library/postgres:16.4.0", "re di s 8.0.5"} {
+		assert.False(t, redisVersionMayMatch(line), "the filter keeps %q", line)
+		assert.False(t, redisVersionRe.MatchString(line), "the regexp matches %q, which the filter drops", line)
+	}
 }

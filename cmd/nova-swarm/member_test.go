@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // resultFixture writes a RESULT.md under a fresh directory and returns its path.
@@ -286,6 +286,21 @@ func TestNativeChildPrintedIsItsLogModTime(t *testing.T) {
 	require.True(t, c.Printed().Equal(at), "Printed = %v, want the log's mtime %v", c.Printed(), at)
 	c = &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log")}
 	require.True(t, c.Printed().IsZero(), "Printed of a log that is not there = %v, want the zero time", c.Printed())
+}
+
+// TestNativeChildResultCarriesTheNativeWall pins that the wall the NATIVE line
+// states reaches Result.Wall, the run's clock Judge reads to tell a first
+// RESULT.md from a finish (cmd/nova-swarm/member.go, nativeSpent; a wall that
+// does not parse leaves 0).
+func TestNativeChildResultCarriesTheNativeWall(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "c1.native.log")
+	write(t, logPath, "NATIVE OK label=c1 job=/j rc=0 wall=62.0s harness=opencode budget=unmetered\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: logPath, done: done}
+	require.Equal(t, 62*time.Second, c.Result().Wall)
 }
 
 // memberFull is every flag of `member` the verb requires, valid.

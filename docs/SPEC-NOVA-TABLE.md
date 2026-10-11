@@ -11,7 +11,7 @@ superfluous chrome or unprompted decoration.
 
 This specification is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line grammar,
-and `internal/oneline` escaping — applies here unchanged.
+and `pkg/oneline` escaping — applies here unchanged.
 
 ---
 

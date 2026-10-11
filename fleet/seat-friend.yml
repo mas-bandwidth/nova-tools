@@ -24,7 +24,10 @@
 
 - name: "friends: {{ seat_friend.friend }} is reinstalled with the flags its plist records"
   ansible.builtin.command:
-    argv: "{{ [nova_bin_dir ~ '/nova-friend'] + seat_friend.install }}"
+    argv: >-
+      {{ [nova_bin_dir ~ '/nova-friend'] + seat_friend.install
+         + (['--deny-self', nova_friend_deny_self] if (nova_friend_deny_self | default('')) and ('--deny-self' not in seat_friend.install) else [])
+         + (['--wall-reads', nova_friend_wall_reads] if (nova_friend_wall_reads | default('')) and ('--wall-reads' not in seat_friend.install) else []) }}
   register: seat_reinstalled
   changed_when: true
   # ignored: read by the assert below, which names the step
@@ -35,7 +38,30 @@
     that: seat_reinstalled.rc == 0
     fail_msg: >-
       ADOPT REFUSED step=friends host={{ inventory_hostname }}: nova-friend install failed for {{ seat_friend.friend }}
-      ({{ (seat_reinstalled.stderr or seat_reinstalled.stdout) | default('') | truncate(300) }})
+      ({{ ((seat_reinstalled.stderr | default('')) or (seat_reinstalled.stdout | default('')) or (seat_reinstalled.msg | default(''))) | default('') }})
+    quiet: true
+
+- name: "friends: {{ seat_friend.friend }}'s acceptance: a lane runs the friend's own program under the real lane wall"
+  ansible.builtin.command:
+    # seat_friend.install[1:]: the plist's recorded flags without its install verb, so the
+    # argv is `nova-friend acceptance --as ...`, never `... acceptance install --as ...`
+    # (docs/SPEC-FRIEND.md, the acceptance run: the flags the daemon runs with).
+    argv: >-
+      {{ [nova_bin_dir ~ '/nova-friend', 'acceptance'] + seat_friend.install[1:]
+         + (['--deny-self', nova_friend_deny_self] if (nova_friend_deny_self | default('')) and ('--deny-self' not in seat_friend.install) else [])
+         + (['--wall-reads', nova_friend_wall_reads] if (nova_friend_wall_reads | default('')) and ('--wall-reads' not in seat_friend.install) else []) }}
+  environment: "{{ seat_env }}"
+  register: seat_acceptance
+  changed_when: false
+  # ignored: a failed_when: false accepts the real exit of the acceptance run; the assert below checks rc and fails the play with the friend's name and exit code
+  failed_when: false
+
+- name: "friends: {{ seat_friend.friend }}'s acceptance: the lane ran"
+  ansible.builtin.assert:
+    that: seat_acceptance.rc == 0
+    fail_msg: >-
+      ADOPT REFUSED step=friends host={{ inventory_hostname }}: {{ seat_friend.friend }}'s acceptance failed with exit code {{ seat_acceptance.rc }}
+      ({{ (seat_acceptance.stderr | default('')) or (seat_acceptance.stdout | default('')) or 'acceptance failed' }})
     quiet: true
 
 - name: "friends: the host's clock after {{ seat_friend.friend }}'s reinstall (its cutoff)"

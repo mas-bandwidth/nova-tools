@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 )
 
 // TestTheHelpReadingExamplesAreWhatTheyPrint runs the help's check, sum and sources lines

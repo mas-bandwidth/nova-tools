@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 )
 
 // redisLedger is the store over a miniredis: the real client, the real commands, no host.

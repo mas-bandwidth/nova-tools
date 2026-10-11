@@ -1,6 +1,6 @@
 // Command notes20261002 writes the notes of 2026-10-02 into nova-config: the
 // reason each route the first real sprint disabled was disabled, and why one
-// machine is held, as the `note` of the row (internal/config, migration 0015;
+// machine is held, as the `note` of the row (pkg/config, migration 0015;
 // docs/SPEC-CONFIG.md, "The note"). The reasons were recorded on nova-tools#5101
 // until the field existed; the numbers below are that issue's comments (ok /
 // total over the day's work and reads), nothing re-measured.
@@ -36,7 +36,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // routeNote is one disabled route and the reason it carries.
@@ -77,7 +77,7 @@ func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Getenv, os.Stdout, os.Stderr, execRunner))
 }
 
-// execRunner is the real runner: the process, bounded by internal/subproc.
+// execRunner is the real runner: the process, bounded by pkg/subproc.
 func execRunner(ctx context.Context, name string, args []string, stdout, stderr io.Writer) (int, error) {
 	cmd := subproc.Context(ctx, name, args...)
 	cmd.Stdout, cmd.Stderr = stdout, stderr

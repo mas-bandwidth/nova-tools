@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,7 +13,7 @@ import (
 // helper struct owning the plumbing): one fake engine and run config per tier
 // run, the synctest bubble every tier run needs, and the checks the tier-run
 // shapes repeat. Each serves at least two of them; the go.mod fixture goes
-// through internal/testkit, and the engine fake stays package-specific as its
+// through pkg/testkit, and the engine fake stays package-specific as its
 // HARNESS.md asks.
 
 type rig struct {

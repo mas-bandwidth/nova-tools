@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/delayproxy"
+	"github.com/mas-bandwidth/nova-tools/pkg/delayproxy"
 )
 
 // farCeiling bounds each read of a socket here, generously: a test that is not
@@ -190,7 +190,7 @@ func lines(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }
 
 // The tool listens where it says, forwards to its target and stops when asked,
 // and says what it held. The target is an echo server the test owns, and the
-// delay is zero: what is held, and for how long, is internal/delayproxy's.
+// delay is zero: what is held, and for how long, is pkg/delayproxy's.
 func TestTheToolListensForwardsAndStopsWhenAsked(t *testing.T) {
 	t.Parallel()
 

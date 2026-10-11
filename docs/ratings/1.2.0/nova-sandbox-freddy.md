@@ -16,7 +16,7 @@ The score is held at 7 by one wall defect: the command directory is added to Opt
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| 1 | internal/sandbox/policy.go:697 | the read/read-noexec overlap check ignores the computed root (the command's directory added to OptRoots with execute at policy.go:229), allowing `--read-noexec D -- D/prog` to run with D readable/executable | refuse when a --read-noexec path equals or contains the command's directory, or grant that root without execute under --read-noexec | S |
+| 1 | pkg/sandbox/policy.go:697 | the read/read-noexec overlap check ignores the computed root (the command's directory added to OptRoots with execute at policy.go:229), allowing `--read-noexec D -- D/prog` to run with D readable/executable | refuse when a --read-noexec path equals or contains the command's directory, or grant that root without execute under --read-noexec | S |
 | 2 | cmd/nova-sandbox/main.go:535 | `SANDBOX OK` shows `read=0` while the command directory is granted read+execute; scripts in that directory can read sibling files | count the computed root on the OK line (e.g. `cmdroot=<dir>`) and in POLICY OK | S |
 | 3 | cmd/nova-sandbox/main.go:167 | help says "Every path is yours and none is guessed" but never mentions the computed command-directory root; only the spec (lines 1332, 1775) does | add one help line: the command's own directory is a read+execute root | S |
 | 4 | cmd/nova-sandbox/main.go:188 | help says 126 is "the command could not be executed", but a command file without execute bit exits 125 reason=not_executable (policy.go:964) | exit 126 for not_executable, or document that not_executable is a 125 refusal | S |

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/hygiene"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

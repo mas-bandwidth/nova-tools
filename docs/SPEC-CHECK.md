@@ -48,7 +48,7 @@ fake-driven and none of them reaches a network, a clock or a bench.
 3. **One line per stream, the four fields first.** `CONVERGENCE <stream> now=<x>
    before=<y> ratio=<r> trend=contracting|flat|widening` and then that stream's own
    `key=value` extras, `measure=` among them. Every value is one whitespace-free token
-   through `internal/oneline`. An integral number prints as an integer, a fractional one
+   through `pkg/oneline`. An integral number prints as an integer, a fractional one
    to two decimals, and a number the verb does not have prints `-`.
 4. **`LANDING` is the batches and what they cost.** `now` is the mean gate rounds per
    integration batch merged in `[--since, now]`; `before` is the same mean over the
@@ -74,7 +74,7 @@ fake-driven and none of them reaches a network, a clock or a bench.
    it, plus those created before it and closed inside the window. Extras: `closed=`,
    `opened=`.
 8. **`EDGES` is the gate, and the rounds that fed it.** `now` is the open edges: a
-   receipt that records an edge (`internal/dogfood`'s rule — not ok, or `Edges:` in the
+   receipt that records an edge (`pkg/dogfood`'s rule — not ok, or `Edges:` in the
    notes) with no issue filed. `before` is the open edges among receipts written before
    `--since`. A round is one `--by` name that wrote a receipt inside the window;
    `--by <name>` (repeatable) narrows the reading to those names. Extras: `rounds=`,
@@ -113,7 +113,7 @@ fake-driven and none of them reaches a network, a clock or a bench.
     interface, and the clock is injected. Each child gets `--timeout <n>` seconds
     (default 60) and is killed and named when it runs past it. A pull request title, a
     body, a log name, a ledger cell and a version stamp are all text from a host: they
-    are counted and printed through `internal/oneline`, never executed and never read as
+    are counted and printed through `pkg/oneline`, never executed and never read as
     an instruction. No verb here writes to `--repo`, `--repo-dir`, `--bin` or the forge.
 14. **The refusals.** A `--since` that is neither RFC3339 nor a Go duration names both
     spellings; a `--since` in the future names the clock; a `--versions` or `--certs`

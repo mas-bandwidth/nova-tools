@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // Reproduced by Stella on probe branch stella/review-4969-followup (d7b37ac55).

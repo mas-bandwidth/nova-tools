@@ -10,14 +10,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // The day file: one file per day, eleven columns, every one written on every row.
 //
 // It is WRITTEN WHOLE every time and never appended to, never edited in place: the write
-// goes through internal/atomicfile to a unique temporary sibling in the same directory
+// goes through pkg/atomicfile to a unique temporary sibling in the same directory
 // and lands by one atomic rename, with best-effort parent-directory fsync. Whole is not
 // the same as recomputed -- a fold recomputes the rows ITS OWN declared sources wrote and
 // carries the rest of the file's rows over unchanged. Unique temporary
@@ -33,7 +33,7 @@ const Version = "nova-tokens v1"
 // TempSuffix is the fixed temp name of the legacy day-file temporary, a file
 // shape check still steps over: a temporary of this shape is a live input, and
 // `check` reads it as a step-over rather than reporting it as a stray. The
-// writer goes through internal/atomicfile and produces unique
+// writer goes through pkg/atomicfile and produces unique
 // `.<day>.tsv.tmp-<rand>` siblings, so nothing this tool writes carries this
 // plain suffix.
 const TempSuffix = ".tsv.tmp"
@@ -112,7 +112,7 @@ func (d *DayFile) Render() string {
 	return strings.Join(rows, "\n") + "\n"
 }
 
-// Save writes the file whole atomically via internal/atomicfile (exclusive
+// Save writes the file whole atomically via pkg/atomicfile (exclusive
 // temporary file beside target, explicit mode, fsync to media, atomic rename).
 // Nothing is appended and nothing is edited in place. It refuses to write a file
 // whose rendered count cell is neither a non-negative integer nor "-" (security#75 finding 1).
@@ -132,7 +132,7 @@ func (d *DayFile) Save(out string) error {
 	if err := checkOutputDirectory(out); err != nil {
 		return err
 	}
-	// Atomic write per internal/atomicfile model: temporary file created
+	// Atomic write per pkg/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
 	// atomic rename over target path.
 	return atomicfile.WriteFile(Path(out, d.Day), []byte(d.Render()), 0o644)

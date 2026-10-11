@@ -1,6 +1,6 @@
 // nova-fuse version: which build is running. A refusal, a green or a pasted
 // line is evidence about a build, so the binary says which one it is. The
-// version is read from the build itself by internal/buildinfo, which holds the
+// version is read from the build itself by pkg/buildinfo, which holds the
 // resolution order and the shape of the line for every tool in this repository,
 // so each answers in one spelling; it is never a constant maintained by hand,
 // which would be wrong at the first commit after a release.
@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 )
 
 // version is empty in an ordinary build and is the one override: a release stamps it

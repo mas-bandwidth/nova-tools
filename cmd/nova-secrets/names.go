@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 func runNamesCLI(args []string, s streams) int {

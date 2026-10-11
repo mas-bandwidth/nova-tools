@@ -11,7 +11,7 @@ package main
 // ONE IMPLEMENTATION, NOT A COPY. The verb owns no selection rule, no go test
 // flag and no budget of its own:
 //
-//   - the packages are internal/pkgselect's answer against the merge base of
+//   - the packages are pkg/pkgselect's answer against the merge base of
 //     --base and HEAD, the selection CI's `test` matrix runs against the
 //     event's base;
 //   - the run is the Makefile's `test` target, the one entry CI's legs call:
@@ -44,12 +44,12 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 const (
@@ -123,7 +123,7 @@ func localCapture(runner localRunner, dir string, env []string, argv ...string) 
 // base and HEAD touches in the checkout at root, as ./<dir>.
 type localSelector func(root, base string) ([]string, error)
 
-// localSelectThrough is internal/pkgselect's selection, its git and go commands
+// localSelectThrough is pkg/pkgselect's selection, its git and go commands
 // started through the verb's own runner: niced, at two cores.
 func localSelectThrough(runner localRunner) localSelector {
 	return func(root, base string) ([]string, error) {

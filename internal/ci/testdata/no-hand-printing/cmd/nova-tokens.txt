@@ -1,3 +1,3 @@
 # no-hand-printing: hand printing in a tool package; each row's count only falls
 # ceiling: 1
-cmd/nova-tokens:flagset 1 one flag set the tool builds itself (newFlagSet): the tool is not on internal/tool, so its verbs parse their own flags until the port
+cmd/nova-tokens:flagset 1 one flag set the tool builds itself (newFlagSet): the tool is not on pkg/tool, so its verbs parse their own flags until the port

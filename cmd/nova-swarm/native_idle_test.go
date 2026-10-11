@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // THE CARD THAT HUNG, AND WHAT IT COST. `js-under-20-bytes` (2026-09-19) took a refusal,
@@ -37,7 +37,7 @@ import (
 // So the idle end is now DELIVERED, not waited for. nativeWatchIdle is the seam (see
 // native.go); a test hands the wait the very IdleEnd the watch would have sent and asserts
 // the ORDER of what follows. Nothing sleeps and compares. What the real watch decides, and
-// when, is internal/swarm's question and internal/swarm's tests answer it under their own
+// when, is pkg/swarm's question and pkg/swarm's tests answer it under their own
 // injected clock.
 
 // idleSeam swaps the three functions the wait reaches the outside world through and records
@@ -117,7 +117,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
 	// The end the watch would have sent for `js-under-20-bytes`: a card still for four
 	// minutes that never moved past a refusal. It is CONSTRUCTED here, because what the
-	// watch decides is internal/swarm's question (TestWatchIdleCarriesTheRefusalTheCard
+	// watch decides is pkg/swarm's question (TestWatchIdleCarriesTheRefusalTheCard
 	// NeverMovedPast) and what the RUN does with the answer is this one's.
 	//
 	// The card is declared idle only once the harness HAS SPOKEN -- it writes `said` the
@@ -186,7 +186,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 // nothing to do with. An end the watch declares with NO refusal in it must therefore say
 // exactly that, on a line that is deliberately not a WALL line.
 //
-// internal/swarm holds the shape of that line (TestCardIdleLineIsNotAWallLine); this
+// pkg/swarm holds the shape of that line (TestCardIdleLineIsNotAWallLine); this
 // holds that the RUN reaches it, which no test could ask before the seam existed: a
 // no-refusal idle end cannot be arranged by a clock and a fixture at all.
 func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {

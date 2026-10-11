@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/stretchr/testify/require"
 )
 

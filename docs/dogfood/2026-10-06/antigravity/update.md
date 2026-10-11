@@ -27,7 +27,7 @@ recorded here and never fixed here.
    `"raw":"faketool 1.3.0"` plain. I expected the text a person reads (or a
    quoted form) in `source=` and `raw=`, the way `path=` and `installed=` stay
    plain. SPEC-UPDATE.md's field
-   law ("a value is one internal/oneline token") is what the escaping serves, and
+   law ("a value is one pkg/oneline token") is what the escaping serves, and
    its grammar writes `raw=<first line, escaped>`, so the spec and the code agree
    here: this is friction for a line reader, not a lie. Grade: NEXT.
 

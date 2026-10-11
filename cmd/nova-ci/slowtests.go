@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
-	"github.com/mas-bandwidth/nova-tools/internal/tty"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/tty"
 )
 
 // hostLoad reads this host's load average for the CI-LOAD line slowtests
@@ -220,7 +220,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 
 // maxRemedy is the second half of the MORE line slowtests prints under --max.
 // A cap with no remedy is censorship; a cap with one is an index
-// (internal/bounded).
+// (pkg/bounded).
 const maxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
 
 // capSlowLines bounds the CI-SLOW finding lines Verdict returns: at most max
@@ -350,7 +350,7 @@ func readRows[R any](path string, parse func(io.Reader) ([]R, error)) ([]R, erro
 
 // isTerminal reports whether r is a terminal: slowtests with nothing piped in
 // would wait for input that never comes, so it refuses instead. A file asks
-// internal/tty, which asks the terminal for its window size: a character
+// pkg/tty, which asks the terminal for its window size: a character
 // device alone is not one (/dev/null is the empty stream). A reader that
 // answers IsTerminal itself is the seam a test hands in.
 func isTerminal(r io.Reader) bool {

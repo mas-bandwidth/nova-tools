@@ -20,7 +20,7 @@ import (
 // `--- PASS:` lines saw a JSON stream instead, called the green run red and
 // reported `red=2 green=0` where the range is `red=1 green=1`. Three legs of
 // integration-4 failed on a tool that was working. Any tool that reads
-// the output of a go command it started has the same hole; internal/goenv is
+// the output of a go command it started has the same hole; pkg/goenv is
 // the one place that closes it, and this checker is what keeps the next site
 // from opening it again.
 //
@@ -43,11 +43,11 @@ const (
 // goEnvPkgDir is the one implementation of the rule. The walk skips it: Clean
 // is where the sanitized environment is built, so reading it against itself
 // would be circular.
-const goEnvPkgDir = "internal/goenv"
+const goEnvPkgDir = "pkg/goenv"
 
 // checkGoEnvDirs are the two trees on the CI path, the same pair the waits and
 // net checkers read.
-var checkGoEnvDirs = []string{"internal", "cmd"}
+var checkGoEnvDirs = []string{"internal", "pkg", "cmd"}
 
 // GoEnvFinding is one child `go` that inherits the caller's environment, with
 // its file, line, the function it stands in and the one thing to do about it.
@@ -105,7 +105,7 @@ func (r GoEnvResult) ExitCode() int {
 // the go commands that inherit the caller's environment, the allowlist entries
 // honored, and any entry that names no offender. The tree comes from the
 // caller, never from a walk of the repository; testdata directories and
-// internal/goenv itself are skipped.
+// pkg/goenv itself are skipped.
 func CheckGoEnv(root, allowlistPath string) (GoEnvResult, error) {
 	return checkGoEnvWith(root, allowlistPath, defaultSourceSeams())
 }
@@ -176,7 +176,7 @@ func matchGoEnvAllow(entries []waitAllow, used []bool, f GoEnvFinding) int {
 
 // walkCIGoFilesWith hands every .go file under root/internal and root/cmd to fn,
 // tests included. testdata, .git and vendor directories are skipped, and so is
-// internal/goenv, which is the rule's own implementation.
+// pkg/goenv, which is the rule's own implementation.
 func walkCIGoFilesWith(root string, seams SourceSeams, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkGoEnvDirs {
 		base := filepath.Join(root, dir)
@@ -262,7 +262,7 @@ func scanGoEnvFileWith(rel string, raw []byte, seams SourceSeams) ([]GoEnvFindin
 }
 
 // goCommandArgv0 reports whether call is exec.Command, exec.CommandContext or
-// one of internal/subproc's constructors with the literal "go" as argv[0], and where that literal stands.
+// one of pkg/subproc's constructors with the literal "go" as argv[0], and where that literal stands.
 func goCommandArgv0(call *ast.CallExpr) (token.Pos, bool) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -278,7 +278,7 @@ func goCommandArgv0(call *ast.CallExpr) (token.Pos, bool) {
 		argv0 = 0
 	case pkg.Name == "exec" && sel.Sel.Name == "CommandContext":
 		argv0 = 1
-	// internal/subproc is the door every child goes through: Command and CommandFor
+	// pkg/subproc is the door every child goes through: Command and CommandFor
 	// take (ctx, kind-or-budget, name, ...), Context and Long take (ctx, name, ...).
 	case pkg.Name == "subproc" && (sel.Sel.Name == "Command" || sel.Sel.Name == "CommandFor"):
 		argv0 = 2

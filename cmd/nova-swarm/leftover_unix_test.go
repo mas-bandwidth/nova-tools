@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 func reapLeftoverPID(pid int) {

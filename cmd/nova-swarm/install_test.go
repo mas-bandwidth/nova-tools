@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/units"
+	"github.com/mas-bandwidth/nova-tools/pkg/units"
 )
 
 // nova-swarm install disk-guard writes the unit for macOS and Linux into a directory
@@ -63,9 +63,9 @@ func TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh(t *testing.T) {
 		assert.NotContains(t, string(b), "zsh")
 		if goos == "darwin" {
 			log := filepath.Join(home, "Library", "Logs", "nova-swarm-disk-guard.log")
-			assert.Equal(t, units.LaunchdPlist(k.Label, args, nil, log, 900), string(b), "the swarm binary writes the same plist internal/units does")
+			assert.Equal(t, units.LaunchdPlist(k.Label, args, nil, log, 900), string(b), "the swarm binary writes the same plist pkg/units does")
 		} else {
-			assert.Equal(t, units.SystemdUnit("nova "+k.Kind+": "+k.What, args, nil, 900), string(b), "the swarm binary writes the same unit internal/units does")
+			assert.Equal(t, units.SystemdUnit("nova "+k.Kind+": "+k.What, args, nil, 900), string(b), "the swarm binary writes the same unit pkg/units does")
 		}
 		assert.Equal(t, []string{goos + " load " + k.File(goos)}, calls)
 

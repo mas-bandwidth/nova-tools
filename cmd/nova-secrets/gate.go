@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
 
 func runGateCLI(args []string, s streams) int {

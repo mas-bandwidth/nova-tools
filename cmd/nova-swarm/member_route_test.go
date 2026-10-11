@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // argsRunner is a nativeRunner whose own executable is a fake harness: a script
@@ -151,16 +151,20 @@ func TestACardWithNoRouteAndNoOverrideIsRefused(t *testing.T) {
 }
 
 // How a launch that did not finish ended, from native's log: the provider, the
-// budget, the deadline; a TERM from outside and an ok run are none of them.
+// budget, the idle reap, the deadline; a TERM from outside and an ok run are none of
+// them. An idle reap is read off native's own mark (`reason=idle-reap`) and said as
+// its own end, because the deadline never fired for a card the watch ended
+// (docs/roadmap.sexp, swarm-idle-reap-verdict: the verdict states idle reaping).
 func TestTheEndOfALaunchIsReadFromNativesLog(t *testing.T) {
 	t.Parallel()
 	for log, want := range map[string]string{
-		"NATIVE PROVIDER-5XX label=c1 ref=- wall=3.00s route=x next=- avoid=x\n":                         member.EndProvider,
-		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=1200/1000 stopped=budget\n":     member.EndBudget,
-		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=12/1000 stopped=unverifiable\n": member.EndUnverifiable,
-		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000\n":             member.EndDeadline,
-		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10 reason=terminated":  "",
-		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000\n":                      "",
+		"NATIVE PROVIDER-5XX label=c1 ref=- wall=3.00s route=x next=- avoid=x\n":                            member.EndProvider,
+		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=1200/1000 stopped=budget\n":        member.EndBudget,
+		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=12/1000 stopped=unverifiable\n":    member.EndUnverifiable,
+		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000\n":                member.EndDeadline,
+		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10 reason=terminated":     "",
+		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000 reason=idle-reap": "idle-reap",
+		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000\n":                         "",
 	} {
 		assert.Equal(t, want, nativeEnd([]byte(log)), log)
 	}

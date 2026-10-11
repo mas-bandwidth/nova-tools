@@ -8,9 +8,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 )
 
 // A FINISHED LAUNCH'S CHECKOUT IS REMOVED (docs/SPEC-SWARM.md, `member`).

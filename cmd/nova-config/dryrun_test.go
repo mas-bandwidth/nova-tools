@@ -4,7 +4,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 )
 
 // TestApplyDryRunTakesTheRealRunsChecks pins that `apply --dry-run` is the

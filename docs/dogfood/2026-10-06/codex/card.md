@@ -11,7 +11,7 @@ Run metadata: source `0bc5f275dcee8fc0b5f4b62f42047b7d4b501588`, branch `sprint/
    ```text
    id	file	test	wave	deps
    serial-tests-internal-nsprint-store-store	internal/nsprint/store/store_test.go	internal/ci TestEveryTestOpensWithTParallel	1	-
-   serial-tests-internal-secrets-place	internal/secrets/place_test.go	internal/ci TestEveryTestOpensWithTParallel	2	serial-tests-internal-nsprint-store-store,serial-tests-internal-nsprint-store-open-sends-no-command
+   serial-tests-internal-secrets-place	pkg/secrets/place_test.go	internal/ci TestEveryTestOpensWithTParallel	2	serial-tests-internal-nsprint-store-store,serial-tests-internal-nsprint-store-open-sends-no-command
    ```
 
    The dry run listed all 13 cards. The help says `--max` is an integer and documents `0` as “all”; it does not define negative values.

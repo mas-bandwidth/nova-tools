@@ -13,7 +13,7 @@ import (
 )
 
 // The compatibility witnesses for the unix snapshot lock across an upgrade. Before
-// internal/filelock, nova-update took a bare flock(LOCK_EX|LOCK_NB) on <snapshot>.lock,
+// pkg/filelock, nova-update took a bare flock(LOCK_EX|LOCK_NB) on <snapshot>.lock,
 // which it opened O_CREATE|O_RDWR 0600 and never wrote. An old binary is staged here as
 // exactly that, on a second descriptor of the same file. The waits use a context that is
 // already done, so nothing waits on the wall clock.

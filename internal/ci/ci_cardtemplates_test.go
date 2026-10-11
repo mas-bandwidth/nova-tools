@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -257,7 +257,7 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 		text, err := swarm.Template(name)
 		require.NoError(t, err)
 		res.Templates++
-		res.Findings = append(res.Findings, scanCardTemplate("internal/swarm/templates.go#"+name, text)...)
+		res.Findings = append(res.Findings, scanCardTemplate("pkg/swarm/templates.go#"+name, text)...)
 	}
 	require.NotZero(t, res.Templates, "no card template was read under %v or from nova-swarm template; the list has gone stale", CardTemplateDirs)
 	for _, f := range res.Findings {

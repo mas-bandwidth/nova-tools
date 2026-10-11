@@ -1,1 +1,0 @@
-the commit trailers read Co-Authored-By: Claude <noreply@anthropic.com> where the card asks for Claude <your model>

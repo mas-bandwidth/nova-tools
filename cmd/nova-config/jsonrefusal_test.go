@@ -14,7 +14,7 @@ import (
 // shape: a verb asked for --json that refuses answers with one JSON object on
 // stdout, status refused, the run's own exit, and nothing of the refusal on
 // stderr (docs/STANDARD.md, "One output structure, two renderings"; the
-// internal/testkit Contract probe).
+// pkg/testkit Contract probe).
 func TestJSONRefusalIsOneObject(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
