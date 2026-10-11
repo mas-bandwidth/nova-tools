@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (27)
-- [Setup, release and operations](#setup-release-and-operations) (102)
+- [Setup, release and operations](#setup-release-and-operations) (101)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -534,14 +534,6 @@ The daily token collation moves into nova-tokens as a verb.
 Target: after v1.4
 
 From: PR #4594
-
-### A cancelled workflow run counts as red for revert-on-red
-
-Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a bad main.
-
-Target: v1.3
-
-From: PR #4600
 
 ### nova-ci prints merge-queue status and detects flaky tests
 

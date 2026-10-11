@@ -202,4 +202,9 @@
    :title "CI runs on card PRs are not cancelled under load"
    :text "CI runs at the head of card PRs are cancelled mid-job when many PRs open together; the
     concurrency rule is fixed so each head gets one full run."
-   :origin "issue #2795")))
+   :origin "issue #2795")
+  (fix "update-revert-on-red-cancelled-run" :release "v1.2.9" :status "in-progress"
+   :title "A cancelled workflow run counts as red for revert-on-red"
+   :text "Revert-on-red treats cancelled runs as failures so a cold-cache cancellation does not leave a
+    bad main."
+   :origin "PR #4600")))

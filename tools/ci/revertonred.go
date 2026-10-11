@@ -13,7 +13,7 @@ func init() {
 		summary: "the mechanical revert of the push that turned main red",
 		help: `usage: go run ./tools/ci revert-on-red --run-attempt N [--push-revert]
 
-Run by revert-on-red.yml on the checked-out head_sha of a failed ci workflow_run
+Run by revert-on-red.yml on the checked-out head_sha of a failed or cancelled ci workflow_run
 on main. On the first attempt of the run it re-runs the run's failed jobs once (a
 flake guard) and stops: the rerun's own completion re-enters the workflow with
 run-attempt 2, and only a rerun that is red too is reverted.
