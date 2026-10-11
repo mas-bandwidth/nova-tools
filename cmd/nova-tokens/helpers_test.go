@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,11 +241,22 @@ func childEnv(extra ...string) []string {
 // reenterTest runs this test function again in a child of this binary, with only it
 // selected (`-test.run`), so its body may set the environment or read the process-wide
 // counter without racing a parallel neighbour. The child's failure fails this test.
+//
+// Under -cover the child is a fresh test binary: given no -test.gocoverdir it makes its
+// own at exit (os.MkdirTemp), which reads TMPDIR -- and a re-entering test here points
+// TMPDIR at bait its own t.TempDir cleanup has already removed, so that teardown fails
+// the child and the parent reads the harness failure as the tool's. Hand the child this
+// process's own coverage directory (the testing package holds it when -cover is on), so
+// its teardown has nothing to create.
 func reenterTest(t *testing.T, name string) {
 	t.Helper()
 	self, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.Command(self, "-test.run=^"+name+"$", "-test.count=1")
+	args := []string{"-test.run=^" + name + "$", "-test.count=1"}
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		args = append(args, "-test.gocoverdir="+f.Value.String())
+	}
+	cmd := exec.Command(self, args...)
 	cmd.Env = childEnv(childTestEnv + "=1")
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()

@@ -307,6 +307,15 @@
     from it."
    :origin "the owner, 2026-10-11: the v1.2.12 scope (inventory first)")
 
+  (fix "nt-tokens-reentered-child-keeps-its-cover-dir" :release "v1.2.12" :status "planned"
+   :title "The re-entered test child keeps its coverage directory, not a bait TMPDIR"
+   :text "TestEveryPathIsAFlagAndNoEnvironmentIsConsulted re-enters its own binary with TMPDIR
+    pointed at bait its t.TempDir cleanup has already removed; under -cover the child's coverage
+    teardown called os.MkdirTemp against that gone TMPDIR and exited non-zero, which the parent
+    read as the tool's failure. reenterTest now hands the child this process's own
+    -test.gocoverdir when -cover is on, so the teardown writes there and creates nothing."
+   :origin "v1.2.12 inventory card A8 (tmp/v1.2.12-inventory-2026-10-11.md), rechecked at dev 7b6cccbc2 on 2026-10-11")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
