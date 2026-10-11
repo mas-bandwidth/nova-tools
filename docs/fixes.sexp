@@ -642,6 +642,18 @@
     check."
    :origin "card tla-coverage-names-every-module-in-nova-tools-after-the-retire.w4 (stream v1212, 2026-10-11; the module walk the retired CardMachine copy left)")
 
+  (fix "tla-bussendonce-first-cases" :release "v1.2.12" :status "planned"
+   :title "BusSendOnce gains an instance, a case and four reversed witnesses"
+   :text "Tests and models only, no product change. BusSendOnce.tla's header named internal/bus/token.go,
+    which this tree does not have; it now names pkg/bus/token.go and pkg/bus/redis.go (AddOnce,
+    :138-169), and says why the model's per-token keying is sound against the code's
+    per-sender-and-token keying (the fingerprint includes From, so the sender is part of the
+    arguments). The new MCBusSendOnce instance checks OneMessageWithinLife and AnswerIsTheOriginal,
+    and four reversed witnesses fail exactly one each: BrokenCheckApart, BrokenNewId and BrokenDropEarly
+    fail OneMessageWithinLife, BrokenNoFingerprint fails AnswerIsTheOriginal. The bus-send-once
+    COVERAGE row is current."
+   :origin "card tla-bussendonce-first-cases.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
