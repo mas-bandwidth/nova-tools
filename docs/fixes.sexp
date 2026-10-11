@@ -188,4 +188,9 @@
   (fix "swarm-hold-zero-findings-malformed" :release "v1.2.9" :status "planned"
    :title "A HOLD report with zero findings is malformed"
    :text "A verdict of HOLD cannot have no findings, so the result check classes it as malformed."
-   :origin "PR #4635")))
+   :origin "PR #4635")
+  (fix "update-adopt-partial-release-dir" :release "v1.2.9" :status "planned"
+   :title "Release adopt does not trust a partial release directory"
+   :text "A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt
+    verifies completeness or uses a temporary dir renamed at the end."
+   :origin "issue #1981")))
