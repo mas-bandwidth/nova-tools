@@ -189,6 +189,16 @@
      lane that never reaches the server, resets the card's turns, or leaves a machine STOP with no
      stop-return for the card. A world with no server keeps the local hand-back."
     :origin "card a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it.w1; the coordinator's 2026-10-11 audit of pkg/friend v1.2.14")
+   (fix "a-failed-acted-receipt-is-written-again" :release "v1.2.14" :status "planned"
+    :title "An acted receipt a failed stamp owes is written again"
+    :text "When a turn ends at exit 0 the daemon stamps its messages acted, then acks them. A stamp the
+     store refused left the receipt at read or delivered, so a daemon restarted before its ack landed
+     pushed the redelivery into a second turn. The daemon now keeps the ids whose acted receipt a failed
+     stamp owes, at most ActedKept, oldest dropped first, and writes them acted again in one stamp
+     before its next read once the store answers; a repeat is harmless, a receipt moving only forward.
+     A failed read stamp is not owed: only acted keeps a message from a second turn. A restart while
+     the store stays down still redelivers, at least once."
+    :origin "card a-failed-acted-receipt-is-written-again.w2; the coordinator's 2026-10-11 audit of nova-tools pkg/friend v1.2.14 (possible double delivery on the bus after a failed stamp, pkg/friend/daemon.go near 1126 and near 1503)")
    (fix "secrets-remedy-names-the-platforms-install" :release "v1.2.14" :status "planned"
     :title "The secrets tool remedies name the platform's install, not always Homebrew"
     :text "CheckSopsVersion and CheckAgeKeygenVersion hard-coded brew in all four of their remedies,
