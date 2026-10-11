@@ -2504,6 +2504,34 @@ card), so today the profile is `run --profile`. A cancelled turn signals the
 wall's group, and the wall passes SIGTERM to the harness's own group; the
 SIGKILL after `KillDelay` reaches the wall only.
 
+### adopt-done-only-when-each-friend-lane-runs-a-card.w1 — the acceptance run (cmd/nova-friend/acceptance.go)
+
+`nova-friend acceptance` is the run the friend step of the seat play makes once
+per friend placed on the host, after its reinstall, so an adopt is called done
+only when one real lane child has run on the host. It is not a copy of the
+wall: `run` and `acceptance` assemble the lane wall through one function
+(`laneWall`, cmd/nova-friend/main.go), from the same flags and the friend's
+row, so the acceptance wall is the daemon's own (buds-in-the-wall-r.w5). The
+play calls it with the flags the plist records (`seat_friend.install`, the list
+the reinstall step passes, plus the `--deny-self` and `--wall-reads` the
+reinstall adds); `acceptance` accepts every flag `run` accepts that the wall
+reads and ignores the rest.
+
+Inside that wall, as a lane child (`friend.LaneContext`), it runs the program
+the friend's lanes start — the adapter's runner, found the way
+`pkg/friend/alive.go` `runnerAlive` looks it up — with a no-cost argument that
+does not call a model, its version flag, one per adapter: `opencode --version`,
+`codex --version`, `claude --version`, `grok --version`, `gemini --version`,
+`dsh --version`, `agentapi --version`. It then writes `RESULT.md` under a probe
+job directory inside the friend's working directory and exits with the wall's
+real code: 125 when the profile will not build, 126 when the program cannot
+execute. No model is called and no server card is taken.
+
+The play fails the host when the run exits non-zero, naming the friend, the
+exit code and the probe's output line. Out of scope here, and next sprint's
+card: a probe card dealt by the sprint server and taken by a lane (the take
+race).
+
 ### delivery-conformance-r.w1 — one delivery check every adapter passes
 
 Every harness adapter makes one promise, and `friend.Conformance`

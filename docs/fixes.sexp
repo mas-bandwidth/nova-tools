@@ -183,10 +183,13 @@
     fleet/tools_test.go pins the check and that no task compiles a tool."
    :origin "dogfood 2026-10-10: after the v1.2.5 adopt one machine's nova-friend reported go1.27.1 while every other tool reported go1.26.6")
   (fix "seat-friend-acceptance-run" :release "v1.2.8" :status "in-progress"
-   :title "The friend acceptance run takes a probe card and reports its result"
-   :text "Each friend placed on the host has an acceptance task: a command runs a probe card under the lane
-    wall and registers its result, followed by a separate assert that checks the exit code. On non-zero
-    exit the play fails the host with the friend's name, the exit code and the log line."
+   :title "The friend acceptance run runs a lane under the real wall"
+   :text "Each friend placed on the host has an acceptance task: nova-friend acceptance runs the friend's own
+    lane program inside the very wall the daemon's lane children run inside, built by the one function run
+    and acceptance share from the plist's recorded flags, writes RESULT.md, and exits with the wall's real
+    code (125 when the profile will not build, 126 when the program cannot execute). A separate assert
+    fails the host on a non-zero exit with the friend's name, the exit code and the output line. No model
+    is called and no card is taken."
    :origin "dogfood 2026-10-10: a friend exit 126 after an adopt reported done")
   (fix "adopt-window-and-dry-run-fixes" :release "v1.2.9" :status "shipped"
    :title "Adopt waits only for agents it stopped and dry-runs honestly"

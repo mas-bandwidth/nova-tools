@@ -41,17 +41,19 @@
       ({{ ((seat_reinstalled.stderr | default('')) or (seat_reinstalled.stdout | default('')) or (seat_reinstalled.msg | default(''))) | default('') }})
     quiet: true
 
-- name: "friends: {{ seat_friend.friend }}'s acceptance: the lane takes a probe card from the server and runs it under the real lane wall"
+- name: "friends: {{ seat_friend.friend }}'s acceptance: a lane runs the friend's own program under the real lane wall"
   ansible.builtin.command:
     argv: >-
-      {{ [nova_bin_dir ~ '/nova-friend', 'acceptance', '--as', seat_friend.friend, '--dir', seat_friend.working_dir] }}
+      {{ [nova_bin_dir ~ '/nova-friend', 'acceptance'] + seat_friend.install
+         + (['--deny-self', nova_friend_deny_self] if (nova_friend_deny_self | default('')) and ('--deny-self' not in seat_friend.install) else [])
+         + (['--wall-reads', nova_friend_wall_reads] if (nova_friend_wall_reads | default('')) and ('--wall-reads' not in seat_friend.install) else []) }}
   environment: "{{ seat_env }}"
   register: seat_acceptance
   changed_when: false
   # ignored: a failed_when: false accepts the real exit of the acceptance run; the assert below checks rc and fails the play with the friend's name and exit code
   failed_when: false
 
-- name: "friends: {{ seat_friend.friend }}'s acceptance: the probe card ran"
+- name: "friends: {{ seat_friend.friend }}'s acceptance: the lane ran"
   ansible.builtin.assert:
     that: seat_acceptance.rc == 0
     fail_msg: >-

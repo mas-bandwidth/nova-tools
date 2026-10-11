@@ -1041,14 +1041,22 @@ read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or
 			},
 			{
 				Name:    "acceptance",
-				Usage:   "acceptance --as <friend> --dir <working_dir>",
-				Effect:  tool.Delivery + ": the acceptance run; one lane takes a probe card from the server, runs it under the real lane wall, writes RESULT.md, and exits 0",
-				Detail: `The acceptance run (docs/SPEC-FRIEND.md, "Acceptance run"): one lane takes a probe card from the server,
-runs it under the real lane wall, writes RESULT.md, and exits 0; the play fails the host otherwise,
-naming the friend, the exit code and the log line.`,
+				Usage:   "acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]",
+				Effect:  tool.Delivery + ": the acceptance run; one lane runs the friend's own program under the real lane wall, writes RESULT.md, and exits with the wall's real code",
+				Detail: `The acceptance run (docs/SPEC-FRIEND.md, the acceptance run): the same wall the daemon's lane
+children run inside, built from the same flags the plist records; the friend's own adapter runner runs
+its no-cost version flag inside it, writes RESULT.md, and the verb exits with the wall's real code (125
+when the profile will not build, 126 when the program cannot execute). No model is called and no card is
+taken. The play fails the host on a non-zero exit, naming the friend, the exit code and the output line.`,
 				Flags: func(f *tool.Flags) {
-					f.Required("as", "the friend name")
-					f.Required("dir", "the friend's working directory")
+					daemonFlags(f) // the friend's own flags, so the play can pass the plist's recorded list whole
+					settingFlags(f)
+					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none: "+strings.Join(sandbox.LaneProfiles, ", "))
+					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
+					f.String("secrets", "", "accepted and ignored: the names of the secrets the daemon's plist records, comma-separated")
+					f.String("seat", "", "accepted and ignored: the machine's nova-secrets seat the daemon's plist records")
+					f.String("launchd-log", "", "accepted and ignored: launchd's stdout and stderr file the daemon's plist records")
+					f.Duration("within", friend.DefaultCheckWithin, "accepted and ignored: the install's delivery-check window")
 				},
 				Run: w.acceptance,
 			},
@@ -1102,6 +1110,30 @@ func (w world) openUntil(ctx context.Context, addr string, record func(string)) 
 	}
 }
 
+// laneWall assembles the lane wall the daemon's lane children run inside, from the flags
+// and the friend's row: the same wall every lane child runs inside (docs/SPEC-FRIEND.md,
+// buds-in-the-wall-r.w5). run and acceptance both call it, so an acceptance run's wall is
+// the daemon's own wall and never one of its own (docs/SPEC-FRIEND.md, the acceptance run).
+// deny names the wall's deny list when --deny-self gives none; rowConfig and rowProfile are
+// the beat's row values, empty in a world with no row.
+func laneWall(c *tool.Call, w world, dir string, deny func() []string, rowConfig, rowProfile func() string) friend.Wall {
+	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
+	if bin, err := w.binary(); err == nil {
+		wall.Self = []string{bin}
+	} // else no Self: a lane's child is refused, never run outside the wall
+	if len(wall.Deny) == 0 {
+		wall.Deny = deny()
+	}
+	if wall.ConfigDir = c.Str("config-dir"); wall.ConfigDir == "" {
+		wall.ConfigDir = rowConfig()
+	}
+	wall.Profile = c.Str("profile")
+	if p := rowProfile(); p != "" {
+		wall.Profile = p
+	}
+	return wall
+}
+
 func (w world) run(c *tool.Call) *tool.Out {
 	if c.Bool("notifications-only") {
 		return w.runNotifications(c)
@@ -1125,10 +1157,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var rowConfigDir atomic.Pointer[string] // her row's config_dir as her beat last answered; read by the lanes' runs and the wall
 	var rowTokenCap atomic.Int64            // her row's per-card token cap as her beat last answered; DefaultTokenCap until it says, 0 none
 	rowTokenCap.Store(friend.DefaultTokenCap)
-	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
-	if bin, err := w.binary(); err == nil {
-		wall.Self = []string{bin}
-	} // else no Self: a lane's child is refused, never run outside the wall
 	var denySeatMu sync.Mutex
 	var denySeatName string
 	var denySeatAt time.Time
@@ -1161,22 +1189,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if w.wall == nil {
 			return w.exec(ctx, d, prog, args, stdin)
 		}
-		wl := wall
-		if len(wl.Deny) == 0 { // none given: the seat's working root, never a wall that denies nothing
-			wl.Deny = friend.DefaultDenySelf(w.home, denySeat(ctx))
-		}
-		// the wall's config directory: --config-dir, else her row's config_dir, else CLAUDE_CONFIG_DIR
-		if wl.ConfigDir = c.Str("config-dir"); wl.ConfigDir == "" {
-			if d := rowConfigDir.Load(); d != nil && *d != "" {
-				wl.ConfigDir = *d
-			} else {
-				wl.ConfigDir = w.getenv("CLAUDE_CONFIG_DIR")
-			}
-		}
-		wl.Profile = c.Str("profile")
-		if p := rowProfile.Load(); p != nil {
-			wl.Profile = *p
-		}
+		wl := laneWall(c, w, dir,
+			func() []string { return friend.DefaultDenySelf(w.home, denySeat(ctx)) }, // none given: the seat's working root, never a wall that denies nothing
+			func() string { // --config-dir first is the shared rule; this closure is her row, then CLAUDE_CONFIG_DIR
+				if d := rowConfigDir.Load(); d != nil && *d != "" {
+					return *d
+				}
+				return w.getenv("CLAUDE_CONFIG_DIR")
+			},
+			func() string {
+				if p := rowProfile.Load(); p != nil {
+					return *p
+				}
+				return ""
+			})
 		return w.wall(wl, w.exec)(ctx, d, prog, args, stdin)
 	}
 	// the lane rules: the flags are the defaults and her row, as her beat answers it, wins

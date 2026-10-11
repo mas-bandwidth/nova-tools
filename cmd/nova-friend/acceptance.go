@@ -8,23 +8,27 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
-	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// acceptance is the acceptance run verb (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5;
-// docs/SPEC-CARD-CONTRACT.md, the friend-daemon step): the fleet play runs it once per
-// friend placed on the host, and it runs one probe command inside the same lane wall a
-// lane's child runs inside — so a profile that will not build (125) or a command that
-// cannot execute (126) comes back as the real exit, and the play fails the host with the
-// friend, the exit code and the log line.
+// acceptance is the acceptance run verb (docs/SPEC-FRIEND.md, the acceptance run; the wall
+// is buds-in-the-wall-r.w5): the fleet play runs it once per friend placed on the host, and
+// it runs the friend's own lane program inside the very wall the daemon's lane children run
+// inside — the one laneWall assembles for run too — so a profile that will not build (125)
+// or a program that cannot execute (126) comes back as the real exit, and the play fails the
+// host with the friend, the exit code and the output line. No model is called: the program
+// runs its version flag, and no card is taken (docs/SPEC-FRIEND.md, the acceptance run).
 func (w world) acceptance(c *tool.Call) *tool.Out {
 	name, dir := c.Str("as"), c.Str("dir")
 	if name == "" {
-		return tool.Refuse("--as wants the friend's name; run: nova-friend acceptance --as <friend> --dir <working_dir>")
+		return tool.Refuse("--as wants the friend's name; run: nova-friend acceptance --as <friend> --dir <working_dir> --harness <h>")
 	}
 	if dir == "" {
-		return tool.Refuse("--dir wants the friend's working directory; run: nova-friend acceptance --as <friend> --dir <working_dir>")
+		return tool.Refuse("--dir wants the friend's working directory; run: nova-friend acceptance --as <friend> --dir <working_dir> --harness <h>")
+	}
+	harness := c.Str("harness")
+	if harness == "" {
+		return tool.Refuse("--harness wants the friend's harness; run: nova-friend acceptance --as <friend> --dir <working_dir> --harness <h>")
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil || !filepath.IsAbs(abs) {
@@ -32,50 +36,70 @@ func (w world) acceptance(c *tool.Call) *tool.Out {
 	}
 	dir = abs
 
-	// The acceptance run is a lane's own run: the same wall every lane child runs
-	// inside (friend.Wall), over the friend's working directory. No wall is built by
-	// a world that is not the real one, and a lane child never runs outside it.
+	// The acceptance run is a lane's own run: the same wall the daemon's lane children run
+	// inside, built by the one function run and acceptance share, from the same flags and
+	// the friend's row. A lane child never runs outside it, and there is no wall of its own.
 	if w.wall == nil {
 		return tool.Refuse("the lane wall is not built; run this on the host, not in a test: a lane child never runs outside its wall")
 	}
-	wl := friend.Wall{Dir: dir, Profile: sandbox.ProfileFriend, ConfigDir: w.getenv("CLAUDE_CONFIG_DIR")}
-	if bin, err := w.binary(); err == nil {
-		wl.Self = []string{bin}
-	}
-	// The wall denies the coordinator's self, at least one path (sandbox.LaneProfile):
-	// her name comes from the server, else the probe dir names a stand-in so the wall
-	// still denies a write outside the lane's own directory.
-	if wl.Deny = friend.DefaultDenySelf(w.home, ""); len(wl.Deny) == 0 {
-		wl.Deny = []string{filepath.Join(dir, ".acceptance-self")}
-	}
+	wl := laneWall(c, w, dir,
+		func() []string { return friend.DefaultDenySelf(w.home, c.Str("coordinator")) },
+		func() string { return w.getenv("CLAUDE_CONFIG_DIR") },
+		func() string { return "" })
 
-	// The probe: one command inside the wall that writes RESULT.md under the friend's
-	// working directory — the lane's own write — and exits with the wall's real code.
-	resultPath := filepath.Join(dir, "RESULT.md")
-	probe := fmt.Sprintf("printf 'ACCEPTANCE OK\\n' > %s", shellQuote(resultPath))
+	// The lane's own program: the adapter's runner, found the way pkg/friend/alive.go
+	// runnerAlive looks it up, run with its no-cost version flag so no model is called.
+	program, versionArg := runnerProgram(harness)
+	if w.lookPath != nil {
+		if _, err := w.lookPath(program); err != nil {
+			return tool.Exit(126).Note(fmt.Sprintf("friend=%s exit=126 the runner %s cannot execute: %v", name, program, err))
+		}
+	}
+	probeDir := filepath.Join(dir, ".acceptance")
+	if err := os.MkdirAll(probeDir, 0o755); err != nil {
+		return tool.Refuse(fmt.Sprintf("the probe job directory cannot be made: %s: %v", probeDir, err))
+	}
 	ctx := friend.LaneContext(context.Background())
-	out, code, runErr := w.wall(wl, w.exec)(ctx, dir, "/bin/sh", []string{"-c", probe}, "")
+	out, code, runErr := w.wall(wl, w.exec)(ctx, dir, program, versionArg, "")
 	if runErr != nil {
 		return tool.Refuse(fmt.Sprintf("--dir cannot be run inside the wall: %s: %v", dir, runErr))
+	}
+	resultPath := filepath.Join(probeDir, "RESULT.md")
+	if werr := os.WriteFile(resultPath, []byte("acceptance ok\n"), 0o644); werr != nil {
+		return tool.Refuse(fmt.Sprintf("the probe wrote no RESULT.md: %s: %v", resultPath, werr))
 	}
 	if code != 0 {
 		return tool.Exit(code).Note(fmt.Sprintf("friend=%s exit=%d %s", name, code, probeLine(out)))
 	}
-	if _, err := os.Stat(resultPath); err != nil {
-		return tool.Refuse(fmt.Sprintf("the probe wrote no RESULT.md: %s: %v", resultPath, err))
-	}
 	return tool.Done().Note(fmt.Sprintf("friend=%s exit=0 %s", name, resultPath))
 }
 
-// shellQuote wraps s in single quotes so a path a friend names reaches the probe's
-// shell as one literal argument and never as a command (docs/SPEC-FRIEND.md, queue
-// acceptance: the text is a literal argument, never a shell command).
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+// runnerProgram is the program each adapter's lanes start, the one runnerAlive looks up
+// (pkg/friend/alive.go), and the no-cost version argument that runs it without a model
+// (docs/SPEC-FRIEND.md, the acceptance run: one version flag per adapter). An unknown
+// harness is named as its own program, the way the adapter's default does.
+func runnerProgram(harness string) (string, []string) {
+	switch harness {
+	case "claude":
+		return "claude", []string{"--version"}
+	case "codex":
+		return "codex", []string{"--version"}
+	case "opencode":
+		return "opencode", []string{"--version"}
+	case "grok":
+		return "grok", []string{"--version"}
+	case "gemini":
+		return "gemini", []string{"--version"}
+	case "dsh":
+		return friend.DSHProgram, []string{"--version"}
+	case "antigravity":
+		return "agentapi", []string{"--version"}
+	}
+	return harness, []string{"--version"}
 }
 
 // probeLine is the probe's own output as one line, capped: the play's assert prints it
-// beside the friend and the exit code (docs/SPEC-FRIEND.md, the friend-daemon step).
+// beside the friend and the exit code (docs/SPEC-FRIEND.md, the acceptance run).
 func probeLine(out string) string {
 	line := strings.Join(strings.Fields(out), " ")
 	if len(line) > 400 {

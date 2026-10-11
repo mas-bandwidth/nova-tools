@@ -675,7 +675,7 @@ func TestSeatFriendAcceptanceRunFailsOnNonZeroExit(t *testing.T) {
 	assert.Equal(t, false, acceptanceTask["failed_when"], "acceptance task should not fail immediately on non-zero exit")
 
 	// There should be a separate assert task that checks the acceptance
-	assertTask := taskContaining(t, tasks, "acceptance: the probe card ran")
+	assertTask := taskContaining(t, tasks, "acceptance: the lane ran")
 	require.NotNil(t, assertTask, "seat-friend.yml has no separate assert for the acceptance run")
 
 	// The assert should have a fail_msg that names the friend, exit code and log line
