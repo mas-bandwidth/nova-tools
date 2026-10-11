@@ -835,7 +835,7 @@
     reason, tip moved) is posted on a channel the step drains and applied by the loop. On shutdown the
     daemon waits for in-flight finishes up to FinishWait and leaves any unanswered to be sent again
     next run."
-   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day,     in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
+   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
 
   (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.15" :status "in-progress"
    :title "A member reports its ended cards side by side"
