@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -373,23 +375,79 @@ func stallingListener(t *testing.T) string {
 	return l.Addr().String()
 }
 
-// The flag governs the wait for the store: a Redis that accepts and never
-// answers is given up at the verb's own deadline, with the timed-out refusal
-// naming the address and the stage (the connection is made by the first
-// read, so the stage is the read).
+// helloAccepted is the RESP3 map a store sends to accept HELLO 3: the
+// handshake pkg/redisconn.Open dials and completes before any read.
+const helloAccepted = "%7\r\n$6\r\nserver\r\n$5\r\nredis\r\n$7\r\nversion\r\n$5\r\n8.0.0\r\n$5\r\nproto\r\n:3\r\n$2\r\nid\r\n:7\r\n$4\r\nmode\r\n$10\r\nstandalone\r\n$4\r\nrole\r\n$6\r\nmaster\r\n$7\r\nmodules\r\n*0\r\n"
+
+// handshakingListener accepts TCP connections and answers the RESP3
+// handshake, so pkg/redisconn.Open returns, then reads and never answers:
+// a store that connects and stalls on the read of the applied state.
+func handshakingListener(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+			go func(c net.Conn) {
+				rd := bufio.NewReader(c)
+				_, _ = rd.ReadString('\n') // the HELLO 3 command
+				_, _ = c.Write([]byte(helloAccepted))
+				_, _ = io.Copy(io.Discard, rd)
+			}(c)
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return l.Addr().String()
+}
+
+// The flag governs the wait for the store: the connection pkg/redisconn.Open
+// makes is a stage of its own, apart from the read of the applied state.
+// A store that accepts and never answers the handshake is given up while
+// connecting; one that completes the handshake and then stalls is given up
+// while reading the applied state. Both refuse at the verb's own deadline,
+// naming the address and the stage.
 func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
 	t.Parallel()
 
-	addr := stallingListener(t)
-	r := newReal(t, false)
-	r.env["NOVA_SPRINT_REDIS"] = addr
-	for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
-		var out, errb bytes.Buffer
-		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
-		want := "nova-config inventory REFUSED: timed out after " + flag + " waiting for the store at " + addr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
-		require.Equal(t, 2, code, "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
-		require.Equal(t, "", out.String(), "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
-		require.Equal(t, want, errb.String(), "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
+	for _, c := range []struct {
+		name  string
+		store func(*testing.T) string
+		stage string
+	}{
+		{"the read of the applied state", handshakingListener, "reading the applied state"},
+		{"the connect", stallingListener, "connecting"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			addr := c.store(t)
+			r := newReal(t, false)
+			r.env["NOVA_SPRINT_REDIS"] = addr
+			for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
+				var out, errb bytes.Buffer
+				code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
+				want := "nova-config inventory REFUSED: timed out after " + flag + " waiting for the store at " + addr + " while " + c.stage + "; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
+				require.Equal(t, 2, code, "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
+				require.Equal(t, "", out.String(), "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
+				require.Equal(t, want, errb.String(), "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
+			}
+		})
 	}
 }
 

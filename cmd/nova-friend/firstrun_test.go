@@ -57,6 +57,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 		"nova-friend wait-pong --from bob --nonce abc123 --timeout 2s",
 		"nova-friend status --as bob --dir ./bob",
+		"nova-friend lanes --as bob --clear-faults",
 	}
 	raw := testkit.ReadFile(t, filepath.Join("..", "..", "docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(raw, "nova-friend")

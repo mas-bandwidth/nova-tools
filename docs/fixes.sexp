@@ -80,7 +80,28 @@
    :title "The cut sets aside a cancelled suite superseded by a later green one"
    :text "A cut refuses only on evidence the commit is red. A whole cancelled suite at the same sha is set aside when a later green suite of the same workflow path covers the same job names, matrix legs included, and its workflow run concluded cancelled; the set-aside runs are named ci-set-aside=<run id>:superseded-by=<run id> and written into the tag annotation and the CHANGELOG section."
    :origin "the v1.2.14 cut, 2026-10-12")
-  (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
+  (fix "nova-hook-prove-meets-the-onboarding-standard" :release "v1.2.14" :status "planned"
+   :title "nova-hook prove and hook take --dry-run"
+   :text "The onboarding standard holds every writing verb to a --dry-run that plans on one read and writes
+    nothing: nova-hook prove and nova-hook hook now take it, proving the functional walk
+    TestEveryCommandMeetsTheOnboardingStandard green. The dry run reads the record and prints what it would
+    prove, or the plan it would take, and writes no proof, lease or record."
+   :origin "the coordinator, 2026-10-12: the v1.2.14 release gate runs the functional tier, and prove was refused for taking no --dry-run")
+   (fix "the-seatcred-fallback-test-brings-its-own-sops" :release "v1.2.14" :status "planned"
+    :title "The seatcred fallback test brings its own sops"
+    :text "TestPathsForFallsBackToTheFleetLayoutUnderHome names its own executable sops stand-in through
+     NOVA_SECRETS_SOPS, so the test passes whether or not sops is installed on the machine that runs it.
+     What it asserts about the store and key layout under HOME is unchanged."
+    :origin "the coordinator, 2026-10-12: the v1.2.14 CI check failed pkg/seatcred's fleet-layout test with no sops on PATH on a runner that has none")
+   (fix "nova-friend-first-run-names-the-clear-faults-example" :release "v1.2.14" :status "planned"
+    :title "The nova-friend first-run transcript names the lanes --clear-faults example"
+    :text "The friend spend-cap work added the `nova-friend lanes --as bob --clear-faults` example to the usage banner and docs/CLI.md but not to the `### First run` transcript of docs/TESTS.md, so TestTESTSFirstRunIsWhatTheToolPrints (functional tier) refused the v1.2.14 stream: the banner's example block, the transcript and the test's list of examples are one list. The transcript now carries the lanes line and its `LANES OK cleared=none` output, in the banner's verb order."
+    :origin "the coordinator, 2026-10-12: the merge queue (run 38247574824, functional 1/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-friend TestTESTSFirstRunIsWhatTheToolPrints; dev's push CI never runs the functional tier")
+   (fix "the-nova-config-timeout-test-stalls-after-the-connection" :release "v1.2.14" :status "planned"
+    :title "The inventory timeout test reaches the applied-state read again"
+    :text "TestInventoryTimeoutFlagGovernsTheConnection parked a raw TCP listener that accepted and never answered, and since nova-config opens its Redis connection through pkg/redisconn.Open (one bounded dial and the HELLO 3 handshake), the verb timed out while connecting and never reached the read of the applied state the test proves. The stalled store now completes the RESP3 handshake and stalls on the read, so the timeout is again `while reading the applied state`; a second case, a store that accepts and never answers the handshake, pins `while connecting`. The product is unchanged: docs/SPEC-CONFIG.md requires pkg/redisconn.Open."
+    :origin "the coordinator, 2026-10-12: dev's merge queue (run 38247574824, functional 4/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-config TestInventoryTimeoutFlagGovernsTheConnection, failing 5 of 5 on dev f1ae69f03")
+   (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."
    :origin "the split, layers L5 to L7; PR #5591")
@@ -1099,6 +1120,34 @@
    :origin "the coordinator, 2026-10-12 ~07:50Z, re-cut after a cold read of 23b82f7: on nova-sprint main the
     finish verb's --harness means the child's harness output, its last 40 lines, but nova-tools' member sent
     the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
+   (fix "nova-tools-dev-is-mod-tidy-clean" :release "v1.2.14" :status "in-progress"
+    :title "The root module's go.mod and go.sum are tidy"
+    :text "CI's lint job runs make mod-tidy, which had gone red because go.mod listed errcheck v1.20.0,
+     golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 as // indirect although they are direct
+     requirements. Running go mod tidy at the repository root with the Go version go.mod names moves the
+     three tool requirements to the direct require block. The one golang.org/x/exp go.sum line is not
+     stale: honnef.co/go/tools requires that module, the root go.work builds in workspace mode, and a
+     missing workspace checksum is written to a fresh go.work.sum, which the tree gate's
+     TestNoTestWritesIntoTheSourceTree flags as a file left in the source tree. Tidy drops the line because
+     no package of the top-level module is imported, so the module is kept required by naming
+     golang.org/x/exp/cmd/txtar as a tool; tidy then keeps its checksum in go.sum and the workspace build
+     writes no go.work.sum."
+    :origin "the coordinator, 2026-10-12 ~11:55Z: CI on nova-tools dev (ab7b6239, run 38232990600) and on
+     the stream PR mas-bandwidth/nova-tools#5627 fails the lint job at make mod-tidy: errcheck v1.20.0,
+     golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 are listed // indirect in go.mod but are direct
+     requirements, and go.sum carries one golang.org/x/exp line tidy removes. Dev's ci and certification runs
+     have been red since ~08:45Z, and the v1.2.14 cut cannot go over a red check.")
+   (fix "nova-friend-run-never-writes-its-output-after-it-returns" :release "v1.2.14" :status "in-progress"
+    :title "nova-friend run never writes its output after it returns"
+    :text "run's output is written through one locked writer (runOut) that every goroutine the run starts
+     shares, and that after shut() turns a write into an error that never reaches the caller's stdout, so no
+     two goroutines write at once (the record and a claude lane's account line) and nothing writes after run
+     returns. The hook loop and the session check's delivery are counted in one WaitGroup that run cancels
+     then joins before it returns, so a hook step can no longer write 'hook: context canceled' after run has
+     ended. A DATA RACE the -race certification caught (run 38205033396, TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir)
+     is gone, and two race-tagged tests pin it: TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce and
+     TestRunNeverWritesItsOutputAfterItReturns."
+    :origin "the v1.2.14 cut, 2026-10-12 ~09:10Z, certification run 38205033396 with -race: DATA RACE, the daemon's beat writes the run's output after (or while) the test reads it (card nova-friend-run-never-writes-its-output-after-it-returns.w8)")
   (fix "a-read-noexec-path-under-an-execute-root-is-refused" :release "v1.2.18" :status "planned"
    :title "A --read-noexec path under an execute-granting root refuses instead of silently executing"
    :text "Landlock's rules are a union: a path is executable when any rule on it or a parent grants
