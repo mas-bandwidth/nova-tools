@@ -1298,4 +1298,8 @@
   (fix "the-temp-dir-class-tests-share-their-walk" :release "v1.2.14" :status "shipped"
    :title "The temp-dir class tests share their walk"
    :text "internal/ci's sharedtemp and testoutpath class tests share one source walk. Tests only."
-   :origin "landing eec4730ec on dev (sprint stream cleanup), 2026-10-12")))
+   :origin "landing eec4730ec on dev (sprint stream cleanup), 2026-10-12")
+    (fix "nova-config-sets-the-sprint-rows-git-identity-and-max-attempts" :release "v1.2.15" :status "planned"
+     :title "nova-config sets the sprint row's git_identity and max_attempts"
+     :text "Blocker for adopting nova-sprint v1.2.14 and later. nova-sprint's lander refuses to commit while sprint:git_identity is empty, and its attempt bound reads sprint:max_attempts, but nova-tools' nova-config, the one setter, declared neither field (nova-config registers only the fields its kind declares), so neither could be set and a fresh store would leave every landing refused. The sprint kind now declares git_identity (default the generic nova-sprint <nova-sprint@example.invalid>, set to the fleet's own with nova-config sprint set --git_identity) and max_attempts (default 4, a whole number from 1 to 100, checked by checkSprint naming the field and the remedy), the same fields as nova-sprint's pkg/config copy, and carries migration 0037 (verbatim nova-sprint's) and 0039 (max_attempts). The two pkg/config copies share one migration sequence; the order is fixed in both repositories: 0037 sprint git_identity, 0038 friend pronouns, 0039 sprint max_attempts. Tests: TestTheSprintRowCarriesTheMachinesGitIdentity, TestTheSprintRowsMaxAttemptsDefaultsToFour, TestCheckSprintHoldsMaxAttemptsToAWholeNumberFromOneToTheCeiling and TestTheSprintFieldsHaveTheirMigrations (pkg/config/sprint_fields_test.go), red before and green after."
+     :origin "the coordinator, 2026-10-12, from a cold read of nova-sprint#147: nova-config could set neither field the sprint reads")))
