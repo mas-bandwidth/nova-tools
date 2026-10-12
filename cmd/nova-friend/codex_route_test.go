@@ -71,4 +71,10 @@ func TestCodexUndrivenPreflightRefusesImplicitRoute(t *testing.T) {
 	t.Parallel()
 	assert.NotNil(t, undriven("codex", "/work", "real-thread", "", "", "nothing was written"))
 	assert.Nil(t, undriven("codex", "/work", "real-thread", "folder", t.TempDir(), "nothing was written"))
+	for _, harness := range []string{"tmux", "dsh", "claude"} {
+		t.Run(harness, func(t *testing.T) {
+			t.Parallel()
+			assert.Nil(t, undriven(harness, t.TempDir(), "", "", "", "nothing was written"))
+		})
+	}
 }
