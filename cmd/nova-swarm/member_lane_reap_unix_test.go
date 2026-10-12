@@ -151,7 +151,7 @@ func laneProcAlive(pid int) bool {
 	return true
 }
 
-func waitForFile(t *testing.T, path string) {
+func waitForLaneReady(t *testing.T, path string) {
 	t.Helper()
 	require.Eventually(t, func() bool { _, err := os.Stat(path); return err == nil }, 30*time.Second, 10*time.Millisecond, "the fake native never started its sleepers")
 }
@@ -180,7 +180,7 @@ func TestALaneEndLeavesNoProcessOfItsCardAlive(t *testing.T) {
 					_ = child.proc.Kill() // ignored: the fake native this test started, gone already when the lane ended
 				}
 			})
-			waitForFile(t, f.ready)
+			waitForLaneReady(t, f.ready)
 			switch c.by {
 			case "stop":
 				require.Positive(t, child.Stop(), "the machine's stop signals the lane's native")
