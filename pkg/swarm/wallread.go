@@ -34,6 +34,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
@@ -273,7 +274,7 @@ const BlockedResultName = "RESULT.md"
 //
 // When kind is empty (idle end with no refusal), the report uses CardIdleLine.
 // When kind is set (idle end after a refusal), the report uses WallRefusedLine.
-func WriteBlockedResult(jobDir, task, kind, path, step, reason string) (string, bool, error) {
+func WriteBlockedResult(jobDir, task, kind, path, step string, idle time.Duration, reason string) (string, bool, error) {
 	if _, found := FindCardResult(jobDir); found {
 		return "", false, nil
 	}
@@ -281,7 +282,7 @@ func WriteBlockedResult(jobDir, task, kind, path, step, reason string) (string, 
 	var statusLine string
 	if kind == "" {
 		// Idle end with no refusal: use CARD IDLE line
-		statusLine = CardIdleLine(task, IdleEnd{Step: step})
+		statusLine = CardIdleLine(task, IdleEnd{Step: step, Idle: idle})
 	} else {
 		// Idle end with a refusal: use WALL REFUSED line
 		statusLine = WallRefusedLine(task, kind, path, step)
