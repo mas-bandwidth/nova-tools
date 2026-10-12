@@ -83,6 +83,19 @@ func (j job) tool(t *testing.T, env []string, args ...string) (int, string, stri
 	return code, out.String(), errb.String()
 }
 
+// probeTool runs a valid probe in its own process: Linux Run owns that process's
+// children and applies a one-way wall (docs/SPEC-SANDBOX.md, "Linux — Landlock, no root").
+func (j job) probeTool(t *testing.T, env []string, args ...string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command(selfExecutable(t), append([]string{"probe"}, args...)...)
+	cmd.Env = env
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	require.NotNil(t, cmd.ProcessState, "probe child never ran: %v; %s", err, errb.String())
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
+}
+
 // main adapts the tool's environment-taking entry point to the shared testkit runner.
 func (j job) main() testkit.Main {
 	return testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -721,12 +734,10 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// TestMain is the half of rule 10's re-exec that lives in the test binary: the probe
-// re-executes os.Executable() with an internal verb, and under `go test` os.Executable()
-// is THIS binary. Dispatching probe-step here makes the test binary the tool for that one
-// verb, so the probe under test is the real re-exec and not a stub of it.
+// TestMain dispatches a dedicated probe and its rule 10 re-exec in the test binary:
+// os.Executable() is this binary, so both paths run the real verbs rather than a stub.
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == "probe-step" {
+	if len(os.Args) > 1 && (os.Args[1] == "probe" || os.Args[1] == "probe-step") {
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
 	}
 	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb {
@@ -1509,7 +1520,7 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 	})
 
 	t.Run("only --write", func(t *testing.T) {
-		code, _, errOut := j.tool(t, j.env(), "probe", "--write", j.write)
+		code, _, errOut := j.probeTool(t, j.env(), "--write", j.write)
 		// --secret is no longer required (issue #881), so the missing one is never
 		// named: a probe without a --secret is a probe, and its refusal (if any) is
 		// about the wall, never about a file the caller's nova-secrets delivery has.
