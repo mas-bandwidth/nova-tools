@@ -18,7 +18,7 @@ const good = `; a comment is text
  :items ((item "i1" :group "g1" :title "One item" :text "What it is." :why "Not a fix." :date "2026-10-09"
           :exists "a/b.go:1 has part" :cards 2)
          (item "i2" :group "g1" :title "Two" :text "More." :why "Later." :date "2026-10-09")
-         (item "i3" :group "g1" :title "Three" :text "From elsewhere." :date "2026-10-10"
+         (item "i3" :group "g1" :title "Three" :text "From elsewhere. Done when: it renders." :date "2026-10-10"
           :origin "issue #7" :release "v1.3")))`
 
 // A good file decodes into its records, and renders the same bytes every time,
@@ -30,7 +30,7 @@ func TestRoadmapDecodesAndRendersTheShape(t *testing.T) {
 	require.Len(t, doc.Items, 3)
 	require.Equal(t, 2, doc.Items[0].Cards)
 	require.Equal(t, map[string]int{"g1": 3}, doc.GroupCount())
-	require.Equal(t, Item{ID: "i3", Group: "g1", Title: "Three", Text: "From elsewhere.", Date: "2026-10-10",
+	require.Equal(t, Item{ID: "i3", Group: "g1", Title: "Three", Text: "From elsewhere. Done when: it renders.", Date: "2026-10-10",
 		Origin: "issue #7", Release: "v1.3"}, doc.Items[2], ":why is optional; :origin and :release decode")
 	page := Render(doc, "x.sexp")
 	require.Equal(t, page, Render(doc, "x.sexp"))
@@ -43,7 +43,7 @@ func TestRoadmapDecodesAndRendersTheShape(t *testing.T) {
 		"### One item\n\nWhat it is.\n\nAlready in the code: a/b.go:1 has part\n\nWhy it waits: Not a fix.\n",
 		"Replaces 2 open sprint cards, each mapped to `i1`.\n",
 		"`make roadmap`",
-		"### Three\n\nFrom elsewhere.\n\nTarget: v1.3\n\nFrom: issue #7\n",
+		"### Three\n\nFrom elsewhere. Done when: it renders.\n\nTarget: v1.3\n\nFrom: issue #7\n",
 	} {
 		require.Contains(t, page, want)
 	}
@@ -66,6 +66,10 @@ func TestRoadmapRefusesEveryShapeProblem(t *testing.T) {
 		"empty string":    {`:title "Two"`, `:title "  "`, ":title wants a non-empty string"},
 		"wrong format":    {`(roadmap "v1"`, `(roadmap "v2"`, `want one (roadmap "v1" ...) form`},
 		"evaluation form": {`:title "Two"`, `:title #.(x)`, "dispatch macro"},
+		"bad release":     {`:release "v1.3"`, `:release "after v1.4"`, `:release "after v1.4" wants v1.2.x, v1.3, v1.4 or later`},
+		"point release":   {`:release "v1.3"`, `:release "v1.2.14"`, `:release "v1.2.14" wants v1.2.x, v1.3, v1.4 or later`},
+		"bad scheduled":   {`:release "v1.3" :title "Moved"`, `:release "v1.5" :title "Moved"`, `:release "v1.5" wants v1.2.x, v1.3, v1.4 or later`},
+		"no acceptance":   {`:text "From elsewhere. Done when: it renders."`, `:text "From elsewhere."`, `a v1.3 item's :text wants a "Done when:" sentence`},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -77,6 +81,22 @@ func TestRoadmapRefusesEveryShapeProblem(t *testing.T) {
 			require.ErrorContains(t, err, c.want)
 			require.ErrorContains(t, err, "bad.sexp")
 		})
+	}
+}
+
+// :release takes exactly the four values, and only a v1.3 item owes the acceptance sentence.
+func TestRoadmapAcceptsTheFourReleases(t *testing.T) {
+	t.Parallel()
+	for _, r := range []string{"v1.2.x", "v1.3", "v1.4", "later"} {
+		src := strings.Replace(good, `:origin "issue #7" :release "v1.3"`, `:origin "issue #7" :release "`+r+`"`, 1)
+		doc, err := Decode("good.sexp", []byte(src))
+		require.NoError(t, err, r)
+		require.Equal(t, r, doc.Items[2].Release)
+		if r != "v1.3" {
+			plain := strings.Replace(src, `:text "From elsewhere. Done when: it renders."`, `:text "From elsewhere."`, 1)
+			_, err := Decode("good.sexp", []byte(plain))
+			require.NoError(t, err, "%s needs no Done when sentence", r)
+		}
 	}
 }
 

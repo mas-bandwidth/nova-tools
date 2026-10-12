@@ -853,19 +853,6 @@
     -race -count=20 ./cmd/nova-friend/ reports no race, so this card adds no code."
    :origin "card nova-friend-test-rig-clock-races-the-daemon.w1; the race was first landed shipped by the v1.2.10 certification fix (PR #5607)")
 
-  (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
-   :title "Extract the roadmap tool into nova-roadmap"
-   :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
-    tools/roadmap (about 1,300 lines with their tests, about 930 without), and in nova-sprint as
-    internal/roadmap, internal/roadmapdoc, tools/roadmap and the nova-work roadmap verbs, with two
-    diverging copies of the generator. Unify the s-expression format first; then one module and one
-    CLI, nova-roadmap, living in the nova-sprint repository (a module and cmd/nova-roadmap there): it
-    reads and writes the data, renders ROADMAP.md and FIXES.md, and runs the sync check. Both
-    repositories use it and delete their own copies: this one imports nova-roadmap from nova-sprint and
-    deletes internal/roadmap and tools/roadmap. Net fewer lines. Its s-expressions stay importable
-    later as a node by nova-work; that import is a v1.3 item, not this one."
-   :origin "the owner, 2026-10-11: v1.2.13 contraction, pass 4 (shared code into modules); nova-roadmap lives in nova-sprint")
-
   (fix "brief-boilerplate-into-the-card-contract" :release "v1.2.13" :status "planned"
    :title "Brief boilerplate moves into the card contract"
    :text "The RULES, LEDGERS, WALL AND TOOLS and BUDGET blocks, about 6 KB of every 10 to 11 KB brief, are
