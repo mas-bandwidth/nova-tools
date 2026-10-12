@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The CLI guard selects the notification-only route before native factories, including
-// startup and dry run (SPEC-FRIEND.md, notifications).
+// The retired notification route refuses before native factories, including
+// startup and dry run (SPEC-FRIEND.md, Codex).
 func TestNotificationRunGuardsNativeFactoriesBeforeStartup(t *testing.T) {
 	t.Parallel()
 	for _, dry := range []bool{false, true} {
@@ -46,14 +46,15 @@ func TestNotificationRunGuardsNativeFactoriesBeforeStartup(t *testing.T) {
 			// Use the existing tool harness so flag validation and early dispatch both run.
 			var out, errs strings.Builder
 			code := run(args, strings.NewReader(""), &out, &errs, w)
-			assert.Zero(t, code, errs.String())
+			assert.Equal(t, 2, code, errs.String())
+			assert.Contains(t, errs.String(), "Codex native push is unavailable")
 			assert.Empty(t, r.beats)
 		})
 	}
 }
 
-// Notification install is separate even when native settings cannot be parsed
-// (SPEC-FRIEND.md, Notifications): dry and real plans skip settings and push proof.
+// Refused notification install preserves settings and both labels even when
+// native settings cannot be parsed (SPEC-FRIEND.md, Codex).
 func TestNotificationInstallPreservesNativeSettingsBinaryAndLabel(t *testing.T) {
 	t.Parallel()
 	for _, dry := range []bool{true, false} {
@@ -82,8 +83,8 @@ func TestNotificationInstallPreservesNativeSettingsBinaryAndLabel(t *testing.T) 
 				args = append(args, "--dry-run")
 			}
 			var out, errs strings.Builder
-			require.Zero(t, run(args, strings.NewReader(""), &out, &errs, w), errs.String())
-			assert.Contains(t, out.String(), "com.nova.friend-notifications-bob")
+			assert.Equal(t, 2, run(args, strings.NewReader(""), &out, &errs, w), errs.String())
+			assert.Contains(t, errs.String(), "Codex native push is unavailable")
 			got, err := r.fs.ReadFile(config)
 			require.NoError(t, err)
 			assert.Equal(t, settings, string(got))
@@ -92,16 +93,8 @@ func TestNotificationInstallPreservesNativeSettingsBinaryAndLabel(t *testing.T) 
 			assert.Equal(t, "fenced native binary", string(got))
 			assert.NoFileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 			plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-notifications-bob.plist")
-			if dry {
-				assert.Empty(t, r.launchctl)
-				assert.NoFileExists(t, plist)
-			} else {
-				got, err = os.ReadFile(plist)
-				require.NoError(t, err)
-				assert.Contains(t, string(got), "nova-friend-notifications-bob.log")
-				assert.Contains(t, string(got), "--notifications-only")
-				assert.Equal(t, []string{"bootout gui/501/com.nova.friend-notifications-bob", "print gui/501/com.nova.friend-notifications-bob", "bootstrap gui/501 " + plist}, r.launchctl, "install waits for launchd to release the label before the bootstrap")
-			}
+			assert.Empty(t, r.launchctl)
+			assert.NoFileExists(t, plist)
 		})
 	}
 }

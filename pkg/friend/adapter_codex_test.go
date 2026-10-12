@@ -100,3 +100,20 @@ func TestCodexHomeIsCodexHomeThenTheUsersDotCodex(t *testing.T) {
 	assert.Equal(t, filepath.Join(h, ".codex"), (&Codex{Env: func(string) string { return "" }}).home())
 	assert.Equal(t, "/given", (&Codex{Home: "/given"}).home())
 }
+
+// SPEC-FRIEND.md, Codex: callers that bypass CLI validation still cannot select
+// queued input or a competing exec-resume through the production factory.
+func TestCodexFactoryHasNoImplicitPushRoute(t *testing.T) {
+	t.Parallel()
+	for _, session := range []string{"", "real-thread"} {
+		t.Run("session="+session, func(t *testing.T) {
+			t.Parallel()
+			fe := &fakeExec{}
+			d, err := NewDeliverer("codex", "/project", session, fe.run, nil)
+			require.ErrorContains(t, err, "Codex native push is unavailable")
+			assert.Contains(t, err.Error(), "active-session tool notifications")
+			assert.Nil(t, d)
+			assert.Empty(t, fe.calls)
+		})
+	}
+}

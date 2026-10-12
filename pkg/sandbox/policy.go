@@ -1002,14 +1002,30 @@ func lookPathIn(name, path string) (string, error) {
 // denies unix sockets outside the write set, which is the wall; unsetting the variables
 // is the fence beside it, so that an honest program does not try and a log does not have
 // to be read to see that it could not.
+//
+// JAVA_TOOL_OPTIONS is the one variable the tool ADDS, and it is the TLA+ rule's own
+// requirement (docs/SPEC-SANDBOX.md, "the TLA+ rule"): TLC unpacks its standard modules
+// (Naturals, Integers, ...) into java.io.tmpdir, which the JVM defaults to /tmp, which the
+// wall denies -- so every `java -cp tla2tools.jar tlc2.TLC` against a spec that EXTENDS one
+// of them dies with FileNotFoundException /tmp/Naturals.tla. The tool points the option at
+// the wall's own temp directory instead, so every TLC call runs unchanged, and it APPENDS
+// to a value the caller set rather than replacing it, with the tool's own option last so it
+// wins the JVM's last-option-wins.
 func ChildEnv(env []string, tmp string) []string {
-	out := make([]string, 0, len(env)+4)
+	out := make([]string, 0, len(env)+5)
+	javaTmp := "-Djava.io.tmpdir=" + tmp
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		switch {
 		case name == "TMPDIR", name == "TMP", name == "TEMP", name == "TMPPREFIX":
 			continue
 		case isAgentVar(name):
+			continue
+		}
+		if name == "JAVA_TOOL_OPTIONS" {
+			if value := strings.TrimSpace(strings.TrimPrefix(kv, "JAVA_TOOL_OPTIONS=")); value != "" {
+				javaTmp = value + " " + javaTmp
+			}
 			continue
 		}
 		out = append(out, kv)
@@ -1019,7 +1035,7 @@ func ChildEnv(env []string, tmp string) []string {
 	// inside the wall, which is a unix one, and filepath.Join would spell it with the
 	// HOST's separator. On the windows leg that wrote TMPPREFIX=\w\.nova-sandbox-tmp\zsh
 	// for the value /w/.nova-sandbox-tmp/zsh -- a name no zsh would ever open.
-	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+path.Join(tmp, "zsh"))
+	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+path.Join(tmp, "zsh"), "JAVA_TOOL_OPTIONS="+javaTmp)
 }
 
 // isAgentVar excludes agent-related variables by exact name, so unrelated variables pass; it uses the

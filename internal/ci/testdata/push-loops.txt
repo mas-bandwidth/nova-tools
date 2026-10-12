@@ -45,7 +45,6 @@ pkg/swarm/nativeidle.go WatchIdle samplers and watchdogs
 # waits on a process, a lock, a file, a server coming up, or a retry backoff
 cmd/nova-friend/main.go realWorld waits and retries
 cmd/nova-friend/main.go world.install waits and retries
-cmd/nova-friend/notifications.go world.installNotifications waits and retries
 cmd/nova-friend/main.go world.openUntil waits and retries
 cmd/nova-friend/wakeping.go world.pingInstall waits and retries
 pkg/friend/launchd.go Install waits and retries
@@ -54,11 +53,13 @@ cmd/nova-sandbox/run.go runInVolume waits and retries
 cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries
 cmd/nova-sandbox/runwin_windows.go winPlace.RemoveTree waits and retries
 cmd/nova-swarm/member.go nativeRunner.Start waits and retries
+cmd/nova-swarm/member.go nativeRunner.endLanes waits and retries
 pkg/nsprint/testutil/pg/pg.go Server.ready waits and retries
 pkg/nsprint/testutil/redis.go startOnce waits and retries
 pkg/sandbox/tree.go Tree.KillAndAwait waits and retries
 pkg/secrets/seal.go sealCarry.carry waits and retries
 pkg/swarm/deadline.go Reap waits and retries
+pkg/swarm/lanereap_unix.go ReapLane waits and retries
 pkg/swarm/providerbudget.go ProviderProxy.takeBudget rate budget waits
 pkg/swarm/providerbudget.go ProviderProxy.serveBudgeted rate budget waits
 pkg/swarm/providerbudget.go ProviderProxy.forwardBudgeted rate budget waits

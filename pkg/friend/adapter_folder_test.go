@@ -33,8 +33,8 @@ func TestFolderRouteRequiresRealCodexSessionAndWatchedDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, &Folder{}, d)
 	defaultRoute, err := SelectDeliverer("bob", "codex", "/work", "real-thread", "", "", nil, nil)
-	require.NoError(t, err)
-	assert.IsType(t, &Codex{}, defaultRoute)
+	require.ErrorContains(t, err, "Codex native push is unavailable")
+	assert.Nil(t, defaultRoute)
 }
 
 func TestFolderConformanceRequiresSessionPongWithCurrentNonce(t *testing.T) {

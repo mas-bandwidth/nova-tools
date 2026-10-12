@@ -11,6 +11,8 @@ import (
 // to answer, so these are the honest no-ops -- the deadline alone ends the run.
 func ownChildGroup(cmd *exec.Cmd) {}
 
+func ownLaneSession(cmd *exec.Cmd) {}
+
 func nativeTermCh() chan os.Signal { return make(chan os.Signal) }
 
 func stopNativeTerm(ch chan os.Signal) {}

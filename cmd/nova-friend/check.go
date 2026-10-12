@@ -78,7 +78,9 @@ func (w world) settingsCheck(c *tool.Call) *tool.Out {
 	for _, s := range drift {
 		o.Item("drift", "harness", s.Harness, "file", s.File, "name", s.Name, "want", tool.Text(s.Want), "have", tool.Text(s.Have))
 	}
-	if len(drift) > 0 {
+	if len(drift) > 0 && c.Str("harness") == "codex" {
+		o.Note("settings repair requires an already watched folder: nova-friend install --as " + c.Str("as") + " --harness codex --dir " + c.Str("dir") + " --adapter folder --session <real-session> --delivery-dir <existing-watched-folder>; implicit Codex delivery is refused")
+	} else if len(drift) > 0 {
 		o.Note("install again writes them: nova-friend install --as " + c.Str("as") + " --harness " + c.Str("harness") + " --dir " + c.Str("dir"))
 	}
 	return o
