@@ -1748,12 +1748,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
 	}
-	if perCard {
+	if c.Str("harness") == "claude" {
 		// a claude lane proves its harness before it takes: claude -p "ok"
 		// --output-format json --max-turns 1 with the row's CLAUDE_CONFIG_DIR,
 		// run by the daemon itself, never through the lane's wall (the proof is
 		// the daemon's own read, not a card child; docs/SPEC-FRIEND.md, "A lane
-		// proves its harness")
+		// proves its harness"). A dsh lane runs no pre-take proof: its harness
+		// answers per card, and a missing credential is a provider refusal told
+		// at once, never a silent failure (adapter_dsh_lanes.go)
 		d.Prove = func(ctx context.Context) string {
 			configDir := c.Str("config-dir")
 			if configDir == "" {
