@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 )
 
 // The onboarding standard (ONBOARDING.md), pinned for this binary. A newcomer's
@@ -158,7 +159,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.Len(t, steps, 3, "the `### First run` block runs %d commands, want 3: one file, the rule document beside it, then the rule document skipped", len(steps))
 
 	dir := t.TempDir()
-	copyDir(t, examplePages, filepath.Join(dir, "pages"))
+	testkit.CopyTree(t, examplePages, filepath.Join(dir, "pages"))
 
 	for _, p := range onboarding.Execute(steps, runDocumentedIn(dir)) {
 		t.Error(p)
@@ -187,7 +188,7 @@ func TestHelpExamplesAreTheFirstRunThroughTheComparator(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, steps, len(linesOfTheBanner), "the first run runs %d commands and the banner's example block %d; they are one list", len(steps), len(linesOfTheBanner))
 	pages := filepath.Join(t.TempDir(), "pages")
-	copyDir(t, examplePages, pages)
+	testkit.CopyTree(t, examplePages, pages)
 	for i, s := range steps {
 		command := "nova-self-talk " + strings.Join(s.Args, " ")
 		require.Equal(t, linesOfTheBanner[i], command, "first-run command %d is %q and the banner's example is %q; they are one list", i+1, command, linesOfTheBanner[i])
@@ -237,23 +238,6 @@ func transcriptDoc(t *testing.T) string {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	return string(raw)
-}
-
-// copyDir copies the fixture pages to where the transcript says they are.
-func copyDir(t *testing.T, from, to string) {
-	t.Helper()
-	entries, err := os.ReadDir(from)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(to, 0o755))
-	for _, e := range entries {
-		if e.IsDir() {
-			copyDir(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(from, e.Name()))
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(to, e.Name()), body, 0o644))
-	}
 }
 
 // TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,

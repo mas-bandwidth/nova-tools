@@ -32,6 +32,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,45 +90,13 @@ func initStLabGolden() {
 	stLabGoldenDir = dir
 }
 
-func copyDir(src, dst string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
-	}
-	for _, e := range entries {
-		s := filepath.Join(src, e.Name())
-		d := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			if err := copyDir(s, d); err != nil {
-				return err
-			}
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(s)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(d, data, info.Mode().Perm()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // stLab is a committed prose repository: one tracked f.md and a clean index,
 // the smallest tree every case below can stage into.
 func stLab(t *testing.T) string {
 	t.Helper()
 	stLabGoldenOnce.Do(initStLabGolden)
 	dir := t.TempDir()
-	require.NoError(t, copyDir(stLabGoldenDir, dir))
+	testkit.CopyTree(t, stLabGoldenDir, dir)
 	return dir
 }
 

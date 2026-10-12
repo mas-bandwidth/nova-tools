@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,21 +24,11 @@ import (
 // on stderr at exit 2.
 func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
-	var out, errOut bytes.Buffer
-	code := cmdVersion(nil, &out, &errOut)
-	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
-	assert.Zero(t, errOut.Len(), "wrote to stderr: %q", errOut.String())
-	line := out.String()
-	require.True(t, strings.HasSuffix(line, "\n"), "want exactly one terminated line, got %q", line)
-	require.Equal(t, 1, strings.Count(line, "\n"), "want exactly one terminated line, got %q", line)
-	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-	require.Len(t, fields, 4, "want 4 fields, got %d: %q", len(fields), line)
-	assert.Equal(t, "nova-swarm", fields[0], "field 1 is the binary's name: got %q", fields[0])
-	assert.NotEmpty(t, fields[1], "field 2 is the build identity and is never empty: %q", line)
-	assert.False(t, strings.ContainsAny(fields[1], " \t"), "field 2 is one token: %q", line)
-	want := runtime.GOOS + "/" + runtime.GOARCH
-	assert.Equal(t, want, fields[2], "field 3: got %q, want %q", fields[2], want)
-	assert.Equal(t, runtime.Version(), fields[3], "field 4: got %q, want %q", fields[3], runtime.Version())
+	testkit.VersionLineShape(t, "nova-swarm", func() (int, string, string) {
+		var out, errOut bytes.Buffer
+		code := cmdVersion(nil, &out, &errOut)
+		return code, out.String(), errOut.String()
+	})
 }
 
 // The stamp is the ONE field of this line that comes from outside the toolchain, and a
