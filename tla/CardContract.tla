@@ -206,28 +206,34 @@ Push(c) ==
        push' = [push EXCEPT ![c] = p]
   /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, nr, stg, answer>>
 
+\* The ok rule: a commit the child made, pushed, with the result's shape and
+\* verdict ok. "today" drops the commit (ok unless the push was refused, which
+\* was said first above), "noshape" drops the shape.
+OkOf(c) ==
+  IF Broken = "today" THEN push[c] # "refused"
+  ELSE IF Broken = "noshape" THEN verdict[c] = "ok" /\ push[c] = "ok"
+  ELSE shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok"
+
 \* THE ONE JUDGMENT (pkg/member/member.go, Judge): three finishes, ok, failed
 \* and reaped, with a refused push said first and a staging refusal, a provider
 \* failure with a reason, and a no-result end as reason prefixes on failed.
+\* Each reversed witness (Broken) differs from the design in its own rule only,
+\* never a replacement judgment: "stagingfailed" skips the staging prefix,
+\* "pushignored" judges ok on the child's word when the push was refused,
+\* "providerfailed" judges a provider failure as failed work, "noresultfailed"
+\* judges a no-result end as failed work, and "today" and "noshape" loosen the
+\* ok rule (OkOf).
 JudgeOf(c) ==
-  CASE Broken = "today" -> IF push[c] = "refused" THEN "failed" ELSE "ok"
-    [] Broken = "noshape" -> IF push[c] = "ok" /\ verdict[c] = "ok" THEN "ok" ELSE "failed"
-    [] Broken = "pushignored" -> IF shape[c] /\ verdict[c] = "ok" /\ commit[c] THEN "ok" ELSE "failed"
-    [] Broken = "providerfailed" ->
-         IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok" ELSE "failed"
-    [] Broken = "noresultfailed" ->
-         IF stg[c] THEN "staging"
-         ELSE IF push[c] = "refused" THEN "failed"
-         ELSE IF prov[c] /\ ~shape[c] THEN "provider"
-         ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
-         ELSE "failed"
-    [] OTHER ->
-         IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
-         ELSE IF push[c] = "refused" THEN "failed"
-         ELSE IF prov[c] /\ ~shape[c] THEN "provider"
-         ELSE IF nr[c] THEN "provider"
-         ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
-         ELSE "failed"
+  IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
+  ELSE IF push[c] = "refused" THEN
+         IF Broken = "pushignored" /\ shape[c] /\ verdict[c] = "ok" /\ commit[c]
+           THEN "ok"
+           ELSE "failed"
+  ELSE IF prov[c] /\ ~shape[c] THEN
+         IF Broken = "providerfailed" THEN "failed" ELSE "provider"
+  ELSE IF nr[c] /\ Broken # "noresultfailed" THEN "provider"
+  ELSE IF OkOf(c) THEN "ok"
+  ELSE "failed"
 
 \* A finish `failed` with no redeal or staging reason opens the failed-work
 \* judgment; a `provider` finish (a provider failure or a no-result end) opens
