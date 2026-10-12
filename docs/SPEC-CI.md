@@ -3031,6 +3031,15 @@ the original failed measurement.
 **Its remedy line.** `nova-sprint lives in mas-bandwidth/nova-sprint; open this change there`, with the paths found.
 **Its narrowings.** Only the listed paths are checked; sprint code added under a new name is not seen here (the `pkg/` class rule, that `pkg/` never imports the sprint, is the other half).
 
+### `aipaths` — every path a tool builds for an AI is under `ai/<name>/`
+
+**The rule.** No non-test Go file under `cmd/`, `internal/`, `pkg/` or `tools/` builds a path by joining an AI name with the literal `-working` at the top level (a join shaped `+\s*"-working[/"]`, as in `name+"-working"` or `home + seat + "-working"`): every path a tool builds for an AI is under `<root>/ai/<name>/`, its working directory `<root>/ai/<name>/working`, and its inbox and outbox under it (docs/FRIENDS.md, the ai/ layout). `friend.AIPath(root, name)` is the one builder.
+**The mistake it prevents.** Seven top-level `<name>-working` directories, one per AI, held the old friend inboxes on a machine's `ai/` volume, so the AI directory was a flat scatter of siblings instead of one directory per AI (the owner, 2026-10-12: "what the fuck happened here in the AI dir? it's all messy. you guys are supposed to keep everything yourselves under ai/[name]/..."). The delivery that wrote them stopped on 2026-10-06 and the code that builds them stayed behind.
+**The test.** `TestNoAISiblingWorkingPaths` (`internal/ci/sprintpaths_class_test.go`): it reads every non-test Go file under the tree and is red on the first line that joins a name with the literal `-working`, naming the file and line.
+**Its allowlist.** None: the tree builds every AI path under `ai/<name>/`.
+**Its remedy line.** `remedy="build the path with friend.AIPath(root, name) (<root>/ai/<name>/working); a top-level <name>-working sibling is never built (docs/FRIENDS.md, the ai/ layout)"`.
+**Its narrowings.** It reads the join's syntax, so a path assembled from a variable suffix or through a format string is not seen; a test file is not read, and a comment naming the old form is not a join.
+
 ### `onewriter` — a worker is a client and does not open the store
 
 **The rule.** One process writes a sprint's state: the run loop, beside the store, which is also the sprint's server (`nova-sprint run --listen`). A worker sends its verbs to it and reads its replies. The packages a worker's machine runs (`cmd/nova-swarm`, `pkg/member`, `pkg/sprintwire`) import, directly or through any package of this module, none of the packages that open the store (`internal/sprint/store`, `pkg/redisconn`, `pkg/ntable`, `internal/nsprint/store`, any `github.com/redis/` module).

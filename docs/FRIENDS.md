@@ -2,10 +2,12 @@
 
 A friend is an AI who works beside the coordinator under her own name: a
 nova-config friend row (docs/SPEC-CONFIG.md, `friend`), a row of the sprint's
-friends table (docs/FLEET.md), and a working directory `~/<name>-working` on
+friends table (docs/FLEET.md), and a working directory `~/ai/<name>/working` on
 the machine she runs on. The coordinator is a friend row too (the sprint row's
 `coordinator` names one), and her own working directory follows the same
-standard. This page is the standard for that directory: how a job arrives, how
+standard. Every path a tool builds for an AI is under `ai/<name>/`: the working
+directory is `ai/<name>/working`, and its inbox and outbox are under it. This
+page is the standard for that directory: how a job arrives, how
 it is reported, where its work lives, and how the work is removed once done.
 
 ## The inbox/outbox standard
@@ -290,7 +292,7 @@ brief to a coordinator's child) carries this line, with the name and the job
 filled in:
 
 ```
-Work in ~/<name>-working/jobs/<job>/: every clone, worktree and build output goes inside it, GOCACHE=~/<name>-working/.cache/go-build, and the report goes to ~/<name>-working/outbox/<job>/REPORT.md.
+Work in ~/ai/<name>/working/jobs/<job>/: every clone, worktree and build output goes inside it, GOCACHE=~/ai/<name>/working/.cache/go-build, and the report goes to ~/ai/<name>/working/outbox/<job>/REPORT.md.
 ```
 
 A clone left inside `inbox/<job>/`, beside its brief (the layout before this
@@ -349,7 +351,7 @@ nova-config loop add seat-push --machine bench-a --argv '["/usr/bin/env","NOVA_S
 
    Its log is the loop's, `~/nova-bench/loops/seat-push.log`. It writes each new
    judgment and note into the holder's inbox directory,
-   `~/<holder>-working/inbox/sprint-judgments/`, and follows the seat when it
+   `~/ai/<holder>/working/inbox/sprint-judgments/`, and follows the seat when it
    moves. It replaces the hand-written launch agent `com.nova.loop.seat-push-<seat>`
    (a zsh script under `nova-secrets exec`).
 
@@ -358,7 +360,7 @@ nova-config loop add seat-push --machine bench-a --argv '["/usr/bin/env","NOVA_S
    `nova-friend` daemon, installed once:
 
 ```
-nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127.0.0.1:6390
+nova-friend install --as ada --harness opencode --dir ~/ai/ada/working --server 127.0.0.1:6390
 ```
 
    It parks on her bus stream, pushes incoming messages into the session, and

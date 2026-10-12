@@ -1523,7 +1523,7 @@ flags:
   --coordinator <string>  who is told of a broken session when no ping has named the seat
   --db <string>  opencode's own database, where a card's tokens are read
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
-  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)
+  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
@@ -1583,7 +1583,7 @@ flags:
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
-  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)
+  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
@@ -1819,7 +1819,7 @@ flags:
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
-  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)
+  --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)

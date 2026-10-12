@@ -397,7 +397,7 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
-		f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)")
+		f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)")
 		f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)")
 		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
@@ -1327,7 +1327,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
-		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
+		if alias := friend.AIPath(w.home, name); fileThere(alias) {
 			oc.Allow = append(oc.Allow, alias)
 		}
 		deliver = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }} // every lane run priced from her own session record, and capped by her row's token_cap

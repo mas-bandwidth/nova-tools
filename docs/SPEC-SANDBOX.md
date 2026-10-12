@@ -1473,7 +1473,7 @@ one profile is `friend` (`LaneProfiles`; any other name is refused):
 | writes | the friend's working directory, her job directories outside it, her config directory (`CLAUDE_CONFIG_DIR`), and nothing else |
 | `HOME` | the config directory, else the working directory |
 | reads | the roots, the harness's own directory, and what the caller names |
-| denied | `LaneProfile.Deny`: the coordinator's self as configuration names it (`nova-friend run --deny-self`, e.g. `~/<coordinator>-working/<self>` and its copy on a shared volume), with their `memory/`, `identity/` and `MEMORY-*.md`; `~/` is the profile's HOME; a profile that denies nothing is refused |
+| denied | `LaneProfile.Deny`: the coordinator's self as configuration names it (`nova-friend run --deny-self`, e.g. `~/ai/<coordinator>/working/<self>` and its copy on a shared volume), with their `memory/`, `identity/` and `MEMORY-*.md`; `~/` is the profile's HOME; a profile that denies nothing is refused |
 | network | `--net-deny`, with `LaneNetPorts` (TCP 443 and 22) opened outbound |
 
 **The deny list is a field of the input** (`Input.Deny`). Both bodies grant
