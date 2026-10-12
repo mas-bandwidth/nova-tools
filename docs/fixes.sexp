@@ -68,7 +68,9 @@
    (release "v1.2.17" :status "planned"
     :text "The next small product fixes, one concern each: apply refuses an enabled route with no price, so no take is priced from an empty sheet.")
    (release "v1.2.18" :status "planned"
-    :text "The next small fixes, one concern each."))
+    :text "The next small fixes, one concern each.")
+   (release "v1.2.16" :status "planned"
+    :text "Every TLA+ model checked against the code."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -661,6 +663,22 @@
     redeal class, a budget-unverifiable end with no result is a staging refusal, and a provider end with no
     Provider is failed work, never a redeal. A new NoResultIsNotFailedWork invariant holds. The model's Judge stays the old atomic one (the claim held, fin and rep set in one step); the member's send, move, then collect (nova-tools #5625) is owed to the v1.2.16 Judge split, and COVERAGE's card-contract row is partial until it lands. The script verifier tests write their Git wrapper through testbin.WriteExecutable, so a parallel fork cannot inherit its open write descriptor and make exec fail with text file busy. Tests and models only, no product change."
    :origin "card tla-cardcontract-judge-against-pkg-member.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11; the first of two CardContract cards)")
+
+  (fix "tla-cardcontract-report-sent-and-collected-apart" :release "v1.2.16" :status "planned"
+   :title "CardContract splits the judgment into a report sent and collected apart"
+   :text "CardContract.tla's Judge set the finish and the report in one step, guarded on the claim being
+    held, while the member now sends a report and collects its result in two steps and a move can happen
+    between them. Judge is split into SendReport (the report sent for a pushed launch whose claim is held)
+    and CollectReport (its result applied against the fresh queue read), with Move enabled between them,
+    and a new answer variable holds the store's answer to the finish verb (accepted, code 0, or refused).
+    A collected result applies only while the claim is still held, else the card is reaped
+    (CollectedAppliesOnlyIfHeld), and an accepted report is never reaped even when that acceptance moved
+    the card to gen+1 (AcceptedIsNeverReaped). Two reversed witnesses: MCCardContractBrokenApplyMoved (a
+    result applied on a moved claim) fails CollectedAppliesOnlyIfHeld, and MCCardContractBrokenReapAccepted
+    (an accepted report reaped) fails AcceptedIsNeverReaped. member.go cites SendReport from reportOne and
+    reportRun and CollectReport from collectReports, applyReport and keepUncertain; keepUncertain's
+    unknown-outcome keep-as-failed is below the module's grain. Tests and models only, no product change."
+   :origin "card tla-cardcontract-report-sent-and-collected-apart.w2 (v1.2.16; the member's report/collect split, nova-tools #5625)")
 
   (fix "tla-friend-one-shot-lanes-and-caps" :release "v1.2.12" :status "planned"
    :title "Friend's one-shot lanes and caps model the code: no limit gate, a fault kept, a cap set aside after one turn"
