@@ -41,12 +41,12 @@ func (hookEnv) Now() time.Time                            { return time.Date(202
 func (hookEnv) ReadFile(string) ([]byte, error)           { return nil, fs.ErrNotExist }
 func (e hookEnv) ReadDir(p string) ([]fs.DirEntry, error) { return os.ReadDir(p) }
 func (hookEnv) Dial(context.Context, string, string) error {
-	return errors.New("the self check opens no socket")
+	return errors.New("the hook check opens no socket")
 }
 
 func (e hookEnv) Exec(_ context.Context, name string, args ...string) (string, error) {
 	if len(args) != 1 || args[0] != "version" {
-		return "", errors.New("the self check asks `version` and nothing else")
+		return "", errors.New("the hook check asks `version` and nothing else")
 	}
 	v, ok := e.versions[filepath.Base(name)]
 	if !ok {
@@ -67,11 +67,14 @@ func hookMachine(t *testing.T, versions map[string]string) hookEnv {
 	return hookEnv{path: bin, home: t.TempDir(), versions: versions}
 }
 
-// runSelf runs only the self check over env, as the binary runs it.
-func runSelf(t *testing.T, env doctor.Env) (int, string, string) {
+// runHook runs the hook check over env in a registry of its own, as the binary
+// runs it at startup.
+func runHook(t *testing.T, env doctor.Env) (int, string, string) {
 	t.Helper()
+	reg := doctor.NewRegistry()
+	reg.Register(hookCheck())
 	var out, errs bytes.Buffer
-	code := doctor.Main(doctor.Default, env, "", []string{"run", "--check", "self"}, strings.NewReader(""), &out, &errs)
+	code := doctor.Main(reg, env, "", []string{"run", "--check", "hook"}, strings.NewReader(""), &out, &errs)
 	return code, out.String(), errs.String()
 }
 
@@ -80,9 +83,9 @@ func runSelf(t *testing.T, env doctor.Env) (int, string, string) {
 // it: without the one way in, no bus, friend or sprint tool can run.
 func TestDoctorFailsWhenNovaHookIsNotInstalled(t *testing.T) {
 	t.Parallel()
-	code, out, errs := runSelf(t, hookMachine(t, map[string]string{"nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}))
+	code, out, errs := runHook(t, hookMachine(t, map[string]string{"nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}))
 	assert.Equal(t, 2, code, out+errs)
-	assert.Contains(t, out, "DOCTOR self fail")
+	assert.Contains(t, out, "DOCTOR hook fail")
 	assert.Contains(t, out, "nova-hook is not on PATH")
 	assert.Contains(t, out, "fix: nova-update apply --file <manifest> nova-hook --version v1.2.0")
 }
@@ -90,18 +93,18 @@ func TestDoctorFailsWhenNovaHookIsNotInstalled(t *testing.T) {
 // With nova-hook on PATH and every tool on the one release, the check is ok.
 func TestDoctorPassesWhenNovaHookIsInstalled(t *testing.T) {
 	t.Parallel()
-	code, out, errs := runSelf(t, hookMachine(t, map[string]string{"nova-hook": "v1.2.0", "nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}))
+	code, out, errs := runHook(t, hookMachine(t, map[string]string{"nova-hook": "v1.2.0", "nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}))
 	assert.Equal(t, 0, code, out+errs)
-	assert.Contains(t, out, "DOCTOR self ok")
+	assert.Contains(t, out, "DOCTOR hook ok")
 }
 
 // A nova-hook whose version differs from the release the other tools report is
 // a fail naming the skew and the command that brings it to the release.
 func TestDoctorFailsWhenNovaHookIsAnotherRelease(t *testing.T) {
 	t.Parallel()
-	code, out, errs := runSelf(t, hookMachine(t, map[string]string{"nova-hook": "v1.1.0", "nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}))
+	code, out, errs := runHook(t, hookMachine(t, map[string]string{"nova-hook": "v1.1.0", "nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}))
 	assert.Equal(t, 2, code, out+errs)
-	assert.Contains(t, out, "DOCTOR self fail")
+	assert.Contains(t, out, "DOCTOR hook fail")
 	assert.Contains(t, out, "nova-hook=v1.1.0")
 	assert.Contains(t, out, "fix: nova-update apply --file <manifest> nova-hook --version v1.2.0")
 }

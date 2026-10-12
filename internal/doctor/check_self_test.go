@@ -55,29 +55,22 @@ func TestSelfCheck(t *testing.T) {
 	}
 	t.Run("one release is ok", func(t *testing.T) {
 		t.Parallel()
-		r := run(selfRig(t, map[string]string{"nova-hook": "v1.2.0", "nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}, "nova-notexec", "other"))
+		r := run(selfRig(t, map[string]string{"nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}, "nova-notexec", "other"))
 		assert.Equal(t, OK, r.Status, r)
-		assert.Equal(t, "3 tools on PATH, all v1.2.0", r.Evidence)
+		assert.Equal(t, "2 tools on PATH, all v1.2.0", r.Evidence)
 		assert.Empty(t, r.Fix)
-	})
-	t.Run("a missing nova-hook is a fail naming the install", func(t *testing.T) {
-		t.Parallel()
-		r := run(selfRig(t, map[string]string{"nova-bus": "v1.2.0", "nova-cairn": "v1.2.0"}))
-		assert.Equal(t, Fail, r.Status, r)
-		assert.Contains(t, r.Evidence, "nova-hook is not on PATH")
-		assert.Contains(t, r.Fix, "nova-update apply --file <manifest> nova-hook --version v1.2.0")
 	})
 	t.Run("a skew is a fail naming the odd one", func(t *testing.T) {
 		t.Parallel()
-		r := run(selfRig(t, map[string]string{"nova-hook": "v1.2.0", "nova-bus": "v1.2.0", "nova-cairn": "v1.2.0", "nova-card": "v1.1.0"}))
+		r := run(selfRig(t, map[string]string{"nova-bus": "v1.2.0", "nova-cairn": "v1.2.0", "nova-card": "v1.1.0"}))
 		assert.Equal(t, Fail, r.Status, r)
-		assert.Contains(t, r.Evidence, "nova-card=v1.1.0 differ from v1.2.0 (3 tools)")
+		assert.Contains(t, r.Evidence, "nova-card=v1.1.0 differ from v1.2.0 (2 tools)")
 		assert.NotContains(t, r.Evidence, "nova-bus=")
 		assert.Equal(t, "nova-update apply --file <manifest> nova-card --version v1.2.0", r.Fix)
 	})
 	t.Run("a tool that does not answer is a fail naming it", func(t *testing.T) {
 		t.Parallel()
-		r := run(selfRig(t, map[string]string{"nova-hook": "v1.2.0", "nova-bus": "v1.2.0", "nova-cairn": ""}))
+		r := run(selfRig(t, map[string]string{"nova-bus": "v1.2.0", "nova-cairn": ""}))
 		assert.Equal(t, Fail, r.Status, r)
 		assert.Contains(t, r.Evidence, "nova-cairn did not answer")
 		assert.NotEmpty(t, r.Fix)
@@ -93,16 +86,15 @@ func TestSelfCheck(t *testing.T) {
 		root := t.TempDir()
 		for _, d := range []string{"a", "b"} {
 			require.NoError(t, os.MkdirAll(filepath.Join(root, d), 0o755))
-			require.NoError(t, os.WriteFile(filepath.Join(root, d, "nova-hook"), nil, 0o755))
 			require.NoError(t, os.WriteFile(filepath.Join(root, d, "nova-bus"), nil, 0o755))
 		}
 		var ran []string
 		r := run(fakeEnv{env: map[string]string{"PATH": "a:b"}, root: root,
 			exec: func(name string, _ ...string) (string, error) {
 				ran = append(ran, name)
-				return buildinfo.Line(filepath.Base(name), "v1.2.0"), nil
+				return buildinfo.Line("nova-bus", "v1.2.0"), nil
 			}})
 		assert.Equal(t, OK, r.Status, r)
-		assert.Equal(t, []string{"a/nova-bus", "a/nova-hook"}, ran)
+		assert.Equal(t, []string{"a/nova-bus"}, ran)
 	})
 }

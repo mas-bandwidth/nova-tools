@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/up"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 )
 
@@ -54,38 +53,13 @@ func checkSelf(ctx context.Context, env Env) Result {
 			Evidence: fmt.Sprintf("%s did not answer `version` with a version line", strings.Join(broken, ", ")),
 			Fix:      "nova-update apply --file <manifest> " + broken[0]}
 	}
-	release := releaseOf(byVersion)
-	// nova-hook is the one way in: a machine or seat without it cannot run a
-	// bus, friend or sprint tool at all, so its absence is a fail, not a warn.
-	if !slices.Contains(names, up.HookBinary) {
-		return Result{Status: Fail,
-			Evidence: fmt.Sprintf("%s is not on PATH (%d nova-* tools on PATH)", up.HookBinary, len(names)),
-			Fix:      fmt.Sprintf("nova-update apply --file <manifest> %s --version %s", up.HookBinary, release)}
-	}
 	if len(byVersion) == 1 {
 		for v := range byVersion {
 			return Result{Status: OK, Evidence: fmt.Sprintf("%d tools on PATH, all %s", len(names), v)}
 		}
 	}
-	var parts []string
-	for v, ns := range byVersion {
-		if v == release {
-			continue
-		}
-		for _, n := range ns {
-			parts = append(parts, n+"="+v)
-		}
-	}
-	slices.Sort(parts)
-	first := strings.SplitN(parts[0], "=", 2)[0]
-	return Result{Status: Fail,
-		Evidence: fmt.Sprintf("the tools are not one release: %s differ from %s (%d tools)", strings.Join(parts, ", "), release, len(byVersion[release])),
-		Fix:      fmt.Sprintf("nova-update apply --file <manifest> %s --version %s", first, release)}
-}
-
-// releaseOf is the version most tools report; ties go to the greater version
-// string, so the answer is the same on every run.
-func releaseOf(byVersion map[string][]string) string {
+	// The release is the version most tools report; ties go to the greater version
+	// string, so the answer is the same on every run.
 	versions := make([]string, 0, len(byVersion))
 	for v := range byVersion {
 		versions = append(versions, v)
@@ -96,7 +70,21 @@ func releaseOf(byVersion map[string][]string) string {
 		}
 		return strings.Compare(b, a)
 	})
-	return versions[0]
+	release, odd := versions[0], versions[1:]
+	var parts []string
+	var first string
+	for _, v := range odd {
+		for _, n := range byVersion[v] {
+			parts = append(parts, n+"="+v)
+			if first == "" {
+				first = n
+			}
+		}
+	}
+	slices.Sort(parts)
+	return Result{Status: Fail,
+		Evidence: fmt.Sprintf("the tools are not one release: %s differ from %s (%d tools)", strings.Join(parts, ", "), release, len(byVersion[release])),
+		Fix:      fmt.Sprintf("nova-update apply --file <manifest> %s --version %s", first, release)}
 }
 
 // toolsOnPath maps each nova-* name to the executable PATH resolves it to.

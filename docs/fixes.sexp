@@ -1083,7 +1083,7 @@
    :text "nova-hook is a binary every machine and every seat has after an adopt, like nova-bus and
     nova-sprint, because it is the one way in: no bus, friend or sprint tool runs until the identity is
     hooked. The binaries step of nova-up requires it on PATH (its missing line names the `cmd/nova-hook`
-    install), and `nova-doctor`'s self check fails, never warns, when nova-hook is absent from PATH or
+    install), and `nova-doctor`'s `hook` check fails, never warns, when nova-hook is absent from PATH or
     answers a version other than the release the other nova tools report, naming the `nova-update apply
     --file <manifest> nova-hook --version <release>` command. The functional image's binaries list
     carries the row with the reason the tier runs no hook command by name."
