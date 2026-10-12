@@ -168,7 +168,7 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		return nil, fmt.Errorf("cannot read check provenance: %w", err)
 	}
 	type provenance struct {
-		SuiteID, ID                             int64
+		SuiteID, ID                              int64
 		HeadSHA, WorkflowPath, HeadBranch, Event string
 	}
 	bySuite := map[int64]provenance{}
