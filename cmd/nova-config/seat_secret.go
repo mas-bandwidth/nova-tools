@@ -36,6 +36,57 @@ func sprintLoginPath(getenv func(string) string) (string, error) {
 // seatPassword is the seat profile's password when its variable is not in the
 // environment: ok false when the variable is set (the environment's wins). A refusal
 // names the seat, the file and the remedy, never a value.
+// sprintStoreLogin is the record nova-sprint seat login writes: the sprint
+// store's address and ACL user, and where the user's password is in
+// nova-secrets. nova-config reads it when no flag and no NOVA_SPRINT_REDIS*
+// variable names the sprint store, so a bare fleet sync and friend sync run
+// with no wrapper (docs/SPEC-CONFIG.md, "Connecting").
+type sprintStoreLogin struct {
+	Redis  string `json:"redis"`
+	User   string `json:"user"`
+	Store  string `json:"store"`
+	As     string `json:"as"`
+	Key    string `json:"key"`
+	Sops   string `json:"sops"`
+	Secret string `json:"secret"`
+}
+
+func (l sprintStoreLogin) secrets() secrets.Login {
+	return secrets.Login{Store: l.Store, As: l.As, Key: l.Key, Sops: l.Sops, Name: l.Secret}
+}
+
+// sprintLoginRecord is the recorded nova-sprint seat login. ok is false when
+// none is recorded. A file that cannot be read or is not a whole login is an
+// error naming it and the remedy, never a login with a field missing
+// (docs/SPEC-CONFIG.md, "Connecting").
+func sprintLoginRecord(getenv func(string) string) (l sprintStoreLogin, path string, ok bool, err error) {
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	path, err = sprintLoginPath(getenv)
+	if err != nil {
+		return l, "", false, err
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return l, path, false, nil
+	}
+	remedy := "; run: nova-sprint seat login --check, then nova-sprint seat login again"
+	if err != nil {
+		return l, path, false, fmt.Errorf("the seat login %s is unreadable: %v%s", path, err, remedy)
+	}
+	if err := json.Unmarshal(b, &l); err != nil {
+		return l, path, false, fmt.Errorf("the seat login %s is not a login: %v%s", path, err, remedy)
+	}
+	if l.Redis == "" || l.User == "" {
+		return l, path, false, fmt.Errorf("the seat login %s names no redis or no user%s", path, remedy)
+	}
+	if m := l.secrets().Missing(); m != "" {
+		return l, path, false, fmt.Errorf("the seat login %s names no %s%s", path, m, remedy)
+	}
+	return l, path, true, nil
+}
+
 func seatPassword(prof seatcred.ConfigProfile, getenv func(string) string) (pw string, ok bool, err error) {
 	if prof.PasswordEnv == "" || getenv(prof.PasswordEnv) != "" {
 		return "", false, nil

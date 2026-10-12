@@ -789,8 +789,19 @@ or `nova-secrets seal --as <seat> --name <NAME>`), and no store is opened
 `TestSeatPasswordEnvStillWinsOverTheSeatRow`).
 
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
-`NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the
-one `internal/nsprint/store.Open` makes. `machine
+`NOVA_REDIS_ADDR`, else the selected seat's address, else the address the
+`nova-sprint seat login` record (`$XDG_CONFIG_HOME/nova-sprint/login.json`, else
+`~/.config/nova-sprint/login.json`) recorded. The Redis connection is opened
+through `pkg/redisconn.Open`, the one way a nova tool opens its Redis
+connection (with the store's disable-maint-notifications settings, so the
+connect is HELLO alone). The login is the one `NOVA_SPRINT_REDIS_USER` names
+when it is set (that user, the variable `NOVA_SPRINT_REDIS_PASSWORD_ENV`
+names, `NOVA_REDIS_BENCH_PASSWORD` when unset); else, when the store opened is
+the recorded address, it is the recorded user with the password read in this
+process through the same `secrets.ReadLogin` path `seat_secret.go` makes,
+served to the connection in memory, never into an environment or an output;
+else the store's default user. `status` names where the Redis address
+came from as `redis-from=<flag|env|seat|seat-login>`. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
 open no store. `--as` is the flag, else `NOVA_FRIEND`, else the friend recorded by
