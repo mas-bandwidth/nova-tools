@@ -1106,4 +1106,11 @@
      sees, instead of surfacing only when a stream PR enters the merge queue."
    :origin "the coordinator, 2026-10-12 ~12:25Z: two functional tests went red on dev and nobody saw it; dev's
      ci workflow skipped the functional job on push, so only the merge queue ran the functional tier, and the
-     v1.2.14 stream PR #5627 was thrown out of the queue for failures already on dev")))
+     v1.2.14 stream PR #5627 was thrown out of the queue for failures already on dev")
+  (fix "nova-tools-refuses-shell-scripts" :release "v1.2.15" :status "planned"
+   :title "The tree refuses any tracked shell script"
+   :text "internal/ci/no_shell_scripts_test.go reads `git ls-files` and refuses any *.sh or *.bash file,
+     naming each, with no exception list; a subtest stages a run.sh in a temporary git tree and shows
+     the same scan refusing it, and docs/SPEC-CI.md indexes the rule."
+   :origin "the owner, 2026-10-12 ~12:45Z: \"I don't want any shell scripts :)\" / \"But let's be pragmatic
+     here\"; card nova-tools-refuses-shell-scripts.w2")))

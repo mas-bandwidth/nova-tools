@@ -11,90 +11,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNoShellScripts tracks the rule that no *.sh or *.bash file is allowed in the
-// repository. It walks git ls-files and fails on any match, with no exception list.
+// shellScriptSuffixes are the name endings the rule refuses, matched without case.
+var shellScriptSuffixes = []string{".sh", ".bash"}
+
+// TestNoShellScripts is the class rule that the repository tracks no *.sh or
+// *.bash file, with no exception list. It reads `git ls-files` and names every
+// match; a subtest shows the same scan refusing a script in a temporary tree.
 func TestNoShellScripts(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	cmd := exec.Command("git", "ls-files", "-z")
-	cmd.Dir = root
-	raw, err := cmd.Output()
-	require.NoError(t, err, "git ls-files in %s", root)
-	tracked := strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
+	tracked := gitTracked(t, root)
 	require.NotEmpty(t, tracked, "an empty tree is not a pass")
 
-	var shellFiles []string
-	for _, p := range tracked {
-		lower := strings.ToLower(p)
-		if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") {
-			shellFiles = append(shellFiles, p)
-		}
+	if got := shellScripts(tracked); len(got) > 0 {
+		assert.Failf(t, "no shell scripts allowed", "the tree tracks %d *.sh or *.bash file(s), and there is no exception list:\n  %s", len(got), strings.Join(got, "\n  "))
 	}
 
-	if len(shellFiles) > 0 {
-		assert.Failf(t, "no shell scripts allowed", "found %d tracked *.sh or *.bash file(s):\n  %s", len(shellFiles), strings.Join(shellFiles, "\n  "))
-	}
+	t.Run("a tracked script is refused", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		runGit(t, dir, "init", "-q")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "run.sh"), []byte("#!/bin/sh\necho hi\n"), 0o755))
+		runGit(t, dir, "add", "run.sh")
+		assert.Equal(t, []string{"run.sh"}, shellScripts(gitTracked(t, dir)), "the rule must name a tracked *.sh file")
+	})
 }
 
-// TestNoShellScriptsFailsOnAddedScript verifies the rule by showing the test fails
-// when a *.sh file is added to a temporary tree.
-func TestNoShellScriptsFailsOnAddedScript(t *testing.T) {
-	t.Parallel()
-
-	// Create a temporary git repository
-	tmp := t.TempDir()
-
-	// Initialize git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmp
-	require.NoError(t, cmd.Run())
-
-	// Configure git for the test
-	cmd = exec.Command("git", "config", "user.email", "test@example.com")
-	cmd.Dir = tmp
-	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "config", "user.name", "Test")
-	cmd.Dir = tmp
-	require.NoError(t, cmd.Run())
-
-	// Create a go.mod to make it a valid go module
-	require.NoError(t, os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/test\ngo 1.22\n"), 0644))
-
-	// Add initial files
-	cmd = exec.Command("git", "add", "go.mod")
-	cmd.Dir = tmp
-	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "commit", "-m", "initial")
-	cmd.Dir = tmp
-	require.NoError(t, cmd.Run())
-
-	// Now create a shell script
-	require.NoError(t, os.WriteFile(filepath.Join(tmp, "run.sh"), []byte("#!/bin/sh\necho hello\n"), 0755))
-
-	cmd = exec.Command("git", "add", "run.sh")
-	cmd.Dir = tmp
-	require.NoError(t, cmd.Run())
-
-	cmd = exec.Command("git", "commit", "-m", "add shell script")
-	cmd.Dir = tmp
-	require.NoError(t, cmd.Run())
-
-	// Run git ls-files and check for shell files
-	cmd = exec.Command("git", "ls-files", "-z")
-	cmd.Dir = tmp
+// gitTracked is the repository-relative paths `git ls-files` reports under dir.
+func gitTracked(t *testing.T, dir string) []string {
+	t.Helper()
+	cmd := exec.Command("git", "ls-files", "-z")
+	cmd.Dir = dir
 	raw, err := cmd.Output()
-	require.NoError(t, err)
-	tracked := strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
+	require.NoError(t, err, "git ls-files in %s", dir)
+	return strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
+}
 
-	var shellFiles []string
-	for _, p := range tracked {
+// shellScripts is the paths whose suffix is a shell script's, in the order given.
+func shellScripts(paths []string) []string {
+	var out []string
+	for _, p := range paths {
 		lower := strings.ToLower(p)
-		if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") {
-			shellFiles = append(shellFiles, p)
+		for _, suffix := range shellScriptSuffixes {
+			if strings.HasSuffix(lower, suffix) {
+				out = append(out, p)
+				break
+			}
 		}
 	}
+	return out
+}
 
-	assert.Equal(t, 1, len(shellFiles), "should find exactly one shell script")
-	assert.Equal(t, "run.sh", shellFiles[0])
+// runGit runs one git command in dir, failing the test on a non-zero exit.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %s in %s: %s", strings.Join(args, " "), dir, out)
 }
