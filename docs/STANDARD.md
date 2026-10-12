@@ -130,11 +130,11 @@ Work expands: a stretch gives every idea code, and the tree grows wider than the
 
 ## 12. Class rules by name
 
-The class-rule names come from **The class tests** in `docs/SPEC-CI.md`. `make map` regenerates it; the committed list is checked against them. An entry gives the rule, the mistake, the allowlist, remedy and narrowings.
+The class-rule names come from **The class tests** in `docs/SPEC-CI.md`. `make map` regenerates it. An entry gives the rule, the mistake, the allowlist, remedy and narrowings.
 
 <!-- class-rules:start -->
 
-`aipaths`, `allowlist`, `cache`, `cap`, `cardtemplates`, `cert-perf-shards`, `cert-race-shards`, `ci-ok`, `ci-receipt`, `ciworkspace`, `classtests`, `darwin-gate`, `deadcode`, `discarded`, `drain-wait-exit`, `errcheck`, `fieldsindex`, `flag-usage`, `fleet-plays`, `functional`, `functional-image`, `generality`, `generality-text`, `gitoperand`, `goenv`, `hosted-shards`, `hostseam`, `make`, `member-units-drain`, `namedpaths`, `net`, `nightly-tags`, `no-hand-printing`, `no-ok-on-failure`, `onboarding`, `one section`, `onewriter`, `outputs`, `parallel`, `pathassert`, `pinned-actions`, `platforms`, `prmerge`, `redis-version`, `refusal-grammar`, `release-legs`, `remedy`, `removeall`, `script-hide`, `seatredis`, `seatwrap`, `selection`, `sharedtemp`, `silent`, `slowtests`, `slowwaits`, `sprint-paths`, `staticcheck`, `subproc`, `templates`, `testbins`, `testify`, `testoutpath`, `tiers`, `tlc`, `tool-answers`, `tool-standard`, `toolchainroots`, `transcripts`, `unit-sockets`, `unitwaits`, `version`, `waits`, `wall clock`, `walltoolchain`, `wholetree`.
+`aipaths`, `allowlist`, `cache`, `cap`, `cardtemplates`, `cert-perf-shards`, `cert-race-shards`, `ci-ok`, `ci-receipt`, `ciworkspace`, `classtests`, `darwin-gate`, `deadcode`, `discarded`, `drain-wait-exit`, `errcheck`, `fieldsindex`, `flag-usage`, `fleet-plays`, `functional`, `functional-image`, `generality`, `generality-text`, `gitoperand`, `goenv`, `hosted-shards`, `hostseam`, `make`, `member-units-drain`, `namedpaths`, `net`, `nightly-tags`, `no-hand-printing`, `no-ok-on-failure`, `onboarding`, `one section`, `one-member`, `onewriter`, `outputs`, `parallel`, `pathassert`, `pinned-actions`, `platforms`, `prmerge`, `redis-version`, `refusal-grammar`, `release-legs`, `remedy`, `removeall`, `script-hide`, `seatredis`, `seatwrap`, `selection`, `sharedtemp`, `silent`, `slowtests`, `slowwaits`, `sprint-paths`, `staticcheck`, `subproc`, `templates`, `testbins`, `testify`, `testoutpath`, `tiers`, `tlc`, `tool-answers`, `tool-standard`, `toolchainroots`, `transcripts`, `unit-sockets`, `unitwaits`, `version`, `waits`, `wall clock`, `walltoolchain`, `wholetree`.
 
 <!-- class-rules:end -->
 

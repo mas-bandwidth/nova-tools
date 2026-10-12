@@ -3022,6 +3022,34 @@ the original failed measurement.
 **Its remedy line.** the assertion names the play, the task and its `until`.
 **Its narrowings.** Only an `until` spelled `.rc != 0` is read; a wait spelled another way is not checked.
 
+### `one-member` — the fleet runs the one member loop, owned by `pkg/member`
+
+**The rule.** A sprint has exactly one member loop — beat, queue, push, judge
+the finish, take to width, each card a child — and it is owned by `pkg/member`
+(docs/one-member-ownership.md). `nova-swarm member` is the thin command over it:
+it builds a `member.Member` and hands it a `Runner`, a `Pusher` and a `Sprint`,
+and carries no loop of its own (`cmd/nova-swarm/member.go`, `memberLoop` drives
+`pkg/member`'s `Tick` and `Beat`). Exactly one package of this module declares a
+member loop — a `Member` struct with a `Tick` method — and it is `pkg/member`.
+**The mistake it prevents.** The 2026-10-05 split copied the shared packages,
+`pkg/member` among them, into nova-sprint's own tree; the two copies drifted, so
+a member fix in one repo never reached the fleet, and nova-sprint's functional
+tests exercised a member the fleet does not run (nova-sprint #112, a ghost read,
+landed there first and had to be ported by hand). A second member loop landed
+back into nova-tools is a refusal on the change that lands it.
+**The test.** `TestOneMemberLoop` (`internal/ci/onemember_class_test.go`) walks
+the module's package graph and is red when any package other than `pkg/member`
+declares a member loop, naming it; `TestFleetCommandConsumesTheOneLoop` pins the
+thin-command half: `cmd/nova-swarm` imports `pkg/member` rather than writing a
+loop of its own, so the loop the fleet runs is the one the guard protects.
+**Its allowlist.** None.
+**Its remedy line.** `the member loop is owned by exactly one package, pkg/member; a second member loop is a refusal, delete the copy and keep the one in pkg/member (docs/one-member-ownership.md)`.
+**Its narrowings.** A loop is read by shape — a struct type named `Member` whose
+non-test file declares a `Tick` method on `*Member` — so a table member
+(`pkg/ntable`, a `Member` type with no `Tick`) is not a loop, and a loop written
+under another name is not seen. The second copy deleted by this rule lives in the
+nova-sprint repository, out of this checkout's reach; the same guard is owed there.
+
 ### `sprint-paths` — nova-sprint's paths are not in this tree
 
 **The rule.** nova-sprint, nova-card and nova-work, and the packages only they import, live in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint) (the split, v1.2.3), which imports this module's building blocks and is imported by none of them. None of their paths (`sprintOnlyPaths`: the three commands' directories under cmd, the sprint, sprintdash, card, cardgen, workfile, workgh and worklang packages under internal, and tools' sprintsize) exists here, as a file or a directory, tracked or not.
