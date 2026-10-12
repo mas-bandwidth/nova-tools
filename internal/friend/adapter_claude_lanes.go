@@ -33,7 +33,7 @@ type CardRunner interface {
 // check goes in by the folder (FolderCheck) for a live session to answer.
 // NewDeliverer answers its batch adapter, the wake file (ClaudeWake);
 // NewClaude is the one that runs cards.
-func RunsCards(harness string) bool { return harness == "claude" }
+func RunsCards(harness string) bool { return harness == "claude" || harness == "dsh" }
 
 // NewClaude is the claude harness's card runner over run, in the friend's
 // directory dir, its runs' output going to out when set.
