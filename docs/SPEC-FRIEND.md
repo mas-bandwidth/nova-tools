@@ -689,8 +689,6 @@ On a match the daemon sends `nova-sprint friend down <friend> --reason 'no credi
 
 A refusal the table does not know is never silently retried: three lanes in a row that end with the same first error line surface to the seat as one judgment, `lanes failing alike: <line>` (`RefusalWatch`, `AlikeLanes`, `friend.LimitAlikeText`), and a different line starts the count again. `TestEveryHarnessCreditRefusalMarksTheFriendDown`, `TestALaneErrorThatIsNotARefusalChangesNothing` and `TestThreeAlikeLanesSurfaceOneJudgmentAndNoDown` pin the table, a non-refusal and the judgment.
 
-**A provider refusal is a lane fault.** When the provider itself refuses a lane's turn -- a content filter, a policy refusal, an authentication or invalid-request error, an account or quota refusal, the guard's "no" (`friend.ProviderRefusal` passes the transient overload and rate limits) -- the denial is terminal, never a retry each minute. The daemon's lane step reads each refused turn's word (`ProviderRefused`), and the second identical refusal on a lane marks the lane faulted with the refusal line, reported as `lane-fault=<n> refusal="<first line>"` on the record (`friend.LaneFaultWatch`, `friend.LaneFaultReport`, `LaneFaultAlike`), and carried to the seat in one judgment (`friend.LaneFaultText`): the notice names the hold verb (`nova-sprint hold <friend> --return`) and the harness check. A faulted lane takes no card until the daemon restarts or a person runs `nova-friend lanes --as <friend> --clear-faults`; the loop steps no lane while it stands (`LaneFaultWatch.Faulted`, `LaneFaultWatch.Clear`) and `nova-friend status` reports it as `lane_fault=<n>` and `refusal="<first line>"` (`friend.LaneFaultParts`). The report rides the daemon's hooks, which the friend's main wires: `Daemon.Fault` and `Daemon.FaultWrite` persist it in the fault file (`LaneFaultFile`, `WriteLaneFault`/`ReadLaneFault`/`ClearLaneFault`) so the clear verb removes it and the loop releases the lane, and `Daemon.FaultExternal` adopts a lane fault the limit detector counted itself (`LaneFaultWatch.Set`), never only logged. `TestASecondIdenticalProviderRefusalFaultsTheLane`, `TestAPolicyRefusalAlsoFaultsTheLane`, `TestATransientProviderErrorIsNotAFault`, `TestADifferentRefusalStartsTheCountAgain`, `TestTheLaneFaultNoticeNamesTheHoldVerb`, `TestAProviderRefusalOnALaneOpenFaultsTheLaneAndStopsTheRetry` and `TestALimitDetectorFaultFeedsTheLaneFaultRecord` pin the bound, the report, the clear, the notice and the detector's feed.
-
 ### The harness check (pkg/friend/alive.go)
 
 Presence is the session's check (above); this one says whether the harness
@@ -2058,6 +2056,37 @@ beat (`sprint.FriendReport` carries them); a Claude lane harness (the
 in a live daemon no lane is paced yet; `nova-friend` setting
 `Limits.Pacing` from the row (the gate paces the batch turn at the default
 until it does); and no TLA+ module models the pacer.
+
+### a-friend-daemon-has-a-spend-cap-and-stops-at-a-provider-refusal.w1 — a spend cap per day and provider, and a stop on refusal
+
+The finding of 2026-10-12: a friend's daemon (harness dsh, DeepSeek) ran about
+22 hours while friends were deferred to v1.3, spent the owner's DeepSeek
+balance of more than $500 down to `QUOTA: Insufficient Balance`, and kept
+checking presence every hour. Nothing capped its spend, and nothing told the
+owner or the seat it was spending while the sprint had no friend work.
+
+Every friend daemon has a spend cap per day and per provider, read from its
+config (`--spend-cap`, `DefaultSpendCapUSD`), $20 a day by default. Spend is
+measured from the harness's own usage report, never estimated (`SpendCap.Spent`,
+`HarnessSpent`): the daemon sums each harness's own record or output
+(`SpentUSD` for DSH, `Spent` for OpenCodePriced and Claude). At the cap the
+daemon stops launching turns and raises one judgment to the seat and the owner
+naming the friend, the provider and the spend (`SpendCap.Gate`, `Judged`;
+`TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`,
+`TestTheDaemonStopsTurnsPastTheCapAndRaisesOneJudgment`). The cap resets when
+the spend day resets (`TestSpendCapResetsOnANewSpendDay`). A provider refusal
+for funds (an insufficient balance, a `402`) stops the daemon's turns at once,
+with the same judgment, rather than retrying hourly; a rate limit still backs
+off (rate-limit-backs-off-not-down.w1, above). A daemon whose friend has no
+dealt work and no live session does not launch turns at all: the daemon's loop
+starts no batch, dealt, wake, lane or read turn when nothing is dealt, and the
+cap's per-step read (`SpendCap.Check`, run from the loop's row hook before every
+step) raises the one judgment and halts the turns even on a step that launches
+nothing; the liveness check is the one turn kept so a dead session stays
+visible. The gate's own idle seam (`SpendCap.Idle`, `SpendCap.Gate`) answers a
+harness that wires one (`TestTheDaemonLaunchesNothingWhenIdle`,
+`TestSpendCapIdleLaunchesNothing`). `TestSpendCapDefaultIsTwentyDollars`,
+`TestSpendCapJudgmentNamesFriendProviderAndSpend`.
 
 ### lane-end-finishes-the-card.w1 — a lane's end is a finish
 

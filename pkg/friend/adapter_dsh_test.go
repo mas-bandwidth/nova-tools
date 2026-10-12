@@ -227,3 +227,30 @@ func TestDSHDeliversIntoTheOpenDesktopSession(t *testing.T) {
 	assert.Equal(t, "push", route)
 	assert.Contains(t, line, "dsh headless --session-id session-zhi")
 }
+
+// A dsh turn's spend is its harness's own usage report: the stream-json result
+// line's total_cost_usd, else a plain cost_usd token; SpentUSD sums them, so a
+// dsh friend is capped on measurement (docs/SPEC-FRIEND.md, spend caps).
+func TestDSHSpentReadsTheHarnessUsageReport(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, out string
+		want      float64
+	}{
+		{"stream-json result", `{"type":"result","total_cost_usd":1.25}`, 1.25},
+		{"plain token", "turn done cost_usd=0.5\n", 0.5},
+		{"no report", "turn taken in session-z: 5 bytes\n", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, dshCost(c.out))
+		})
+	}
+
+	fixed := filepath.Join(t.TempDir(), "fixed")
+	require.NoError(t, os.WriteFile(fixed, nil, 0o600))
+	var turn strings.Builder
+	d := &DSH{Dir: t.TempDir(), Session: "session-z", Run: fakeDSHExec("taken", fixed), Program: os.Args[0], Out: &turn}
+	d.cost = 2.5
+	assert.Equal(t, 2.5, d.SpentUSD(), "the harness's own report is the spend, never an estimate")
+}

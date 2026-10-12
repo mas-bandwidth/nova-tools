@@ -314,6 +314,14 @@ func main() {
 	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, realWorld()))
 }
 
+// spendDay is the harness's total spend at the start of one spend day, so
+// today's spend is the total minus the baseline (docs/SPEC-FRIEND.md, spend
+// caps): a daemon that runs across midnight starts the new day at zero.
+type spendDay struct {
+	day   time.Time
+	total float64
+}
+
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
 	if len(args) > 0 && args[0] == "hook" {
 		if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") {
@@ -406,6 +414,7 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
+		f.Float64("spend-cap", friend.DefaultSpendCapUSD, "the spend cap in USD per day per provider; at the cap turns stop and one judgment is raised (default: $20)")
 		f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)")
 		f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)")
 		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
@@ -972,7 +981,7 @@ example: nova-friend watch --as ada --timeout 10m`,
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= envelope= envelope_bytes= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
-(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=, and a lane faulted on a provider refusal lane_fault=<n> refusal=<first line>)
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
@@ -997,27 +1006,6 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 					redis(f)
 				},
 				Run: w.status,
-			},
-			{
-				Name:    "lanes",
-				Usage:   "lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]",
-				Example: "lanes --as bob --clear-faults",
-				Effect:  tool.LocalWrite + ": clears the one-shot lanes' provider-refusal fault " + friend.LaneFaultFile + " from the state directory",
-				DryRun:  true,
-				Detail: `A guard's denial is terminal (docs/SPEC-FRIEND.md, the lanes): the daemon reads each lane's refused
-turn, and the second identical refusal marks the lane faulted, reported as lane-fault=<n> refusal="<first line>" on its
-beat and in nova-friend status. A faulted lane takes no card until the daemon restarts or a person runs this verb with
---clear-faults, which removes ` + friend.LaneFaultFile + ` from the state directory; the daemon's next step sees the file gone, releases
-the lanes and takes cards again. Without --clear-faults it reads and prints the standing fault and writes nothing
-(--dry-run prints what a clear would do, and writes nothing).`,
-				ExitTable: "0 done (a fault read, or a clear), 2 the fault file cannot be removed.",
-				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name, the friend whose lanes these are")
-					f.Bool("clear-faults", false, "clear the lane fault so the lanes take cards again; writes nothing without it")
-					f.String("dir", "", "the friend's working directory, whose state directory holds the fault (default: found by --as)")
-					stateDir(f)
-				},
-				Run: w.lanes,
 			},
 			{
 				Name:    "refuse-go",
@@ -1485,7 +1473,59 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
 	}
-	laneDeliver := sc.Gate(fl.Gate(deliver)) // the daemon's: her turns, or her card runner
+	// the spend cap per day and provider (docs/SPEC-FRIEND.md, spend caps): read
+	// from --spend-cap, measured from the harness's own usage report, never
+	// estimated. At the cap the daemon stops launching turns and raises one
+	// judgment to the seat and the owner naming the friend, the provider and the
+	// spend; a provider refusal for funds stops the turns at once with the same
+	// judgment.
+	provider, _, _ := strings.Cut(c.Str("model"), "/")
+	if provider == "" {
+		provider = c.Str("harness")
+	}
+	var spendBaseline atomic.Pointer[spendDay]
+	// the daemon's own idle signal is wired after it is built (below); until
+	// then nothing is known idle, and the daemon launches no turn anyway
+	var daemonIdle func() bool
+	spendCap := &friend.SpendCap{
+		Friend:   name,
+		Provider: provider,
+		Now:      w.now,
+		Cap:      func() float64 { return c.Get("spend-cap").(float64) },
+		// a daemon with no dealt work and no live session launches no work turn:
+		// the loop has nothing to batch, wake or deal, and the one turn kept is the
+		// session liveness check, which is not this gate's (docs/SPEC-FRIEND.md, idle)
+		Idle: func() bool { return daemonIdle != nil && daemonIdle() },
+		Spent: func(dayStart time.Time) float64 {
+			total := friend.HarnessSpent(deliver)
+			b := spendBaseline.Load()
+			if b == nil || !b.day.Equal(dayStart) {
+				b = &spendDay{day: dayStart, total: total}
+				spendBaseline.Store(b)
+			}
+			return total - b.total
+		},
+		// the harness's own limit gate takes her down the same way a limit does, so
+		// every turn stops at the cap or a funds refusal, the session checks included
+		Halt: func(reason string, until time.Time) {
+			fl.Refuse(friend.KindCredits, "spend cap: "+reason, until)
+		},
+		Judgment: func(day time.Time, spent, cap float64) string {
+			subject, body := friend.SpendCapJudgmentText(name, provider, spent, cap)
+			tellSeat(subject, body)
+			return subject
+		},
+	}
+	// a provider refusal for funds the harness's own wording names with no reset
+	// to wake at (an insufficient balance, a 402) is handed here by the limit
+	// gate before its Rest retry, so the spend cap raises its judgment and stops
+	// the turns at once (docs/SPEC-FRIEND.md, spend caps)
+	fl.Funds = spendCap.Refuse
+	// the daemon's own turns, or her card runner, under the spend cap; the session
+	// check and the prover keep the ungated chain, so presence.go's under() still
+	// reads the adapter through the harness's limit gate
+	laneDeliver := sc.Gate(fl.Gate(deliver))
+	spendDeliver := spendCap.Gate(laneDeliver)
 	sc.Deliver = laneDeliver
 	if perCard {
 		// the check goes in by the folder, ungated: her lanes hold no turn of the session
@@ -1530,15 +1570,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			tellSeat("friend "+name+": the down verb was refused", DownReason(r)+"\nnova-sprint friend down was refused: "+err.Error()+"\n")
 		}
 	}
-	// a lane fault the limit detector counted itself (lanes failing alike) is
-	// handed to the daemon as the same record a provider's refusal writes, so it
-	// holds the lane's card instead of only logging (docs/SPEC-FRIEND.md, the lanes)
-	var laneFaultPending atomic.Pointer[string]
 	rw.Judge = func(text string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
 		tellSeat(friend.LimitAlikeText(name, text))
-		fault := friend.LaneFaultReport(AlikeLanes, strings.TrimPrefix(text, AlikeJudgmentPrefix))
-		laneFaultPending.Store(&fault)
 	}
 	// the down her lanes' harness faults owe her row (Daemon.FaultDown): her beat says it until it passes
 	type faultHold struct {
@@ -1552,11 +1586,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// stop-returns the lanes owe, carried on each beat (stop.go)
 	var machineStopped atomic.Bool
 	owedStopReturns := func() int { return 0 }
-	currentRow := func() (string, int) {
-		rowMu.Lock()
-		defer rowMu.Unlock()
-		return resolveCurrentRow(c.Str("mode"), rowMode, rowWidth)
-	}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		MachineStopped: machineStopped.Load,
@@ -1566,7 +1595,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return w.finish(ctx, server, argv)
 		},
-		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
+		Store: sc.DaemonStore(), Deliver: spendDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at
@@ -1692,24 +1721,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
 		},
-		Row:       currentRow,
-		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
-		// the lane fault's truth is the file in the state directory: the daemon
-		// writes it when a lane faults and reads it to release the lanes a person
-		// cleared (docs/SPEC-FRIEND.md, the lanes)
-		Fault:      func() string { return friend.ReadLaneFault(state) },
-		FaultWrite: func(report string) error { return friend.WriteLaneFault(state, report) },
-		FaultExternal: func() string {
-			if p := laneFaultPending.Swap(nil); p != nil {
-				return *p // the limit detector's judgment, adopted as the same record
-			}
-			return ""
+		Row: func() (string, int) {
+			// the daemon's loop reads the row before it launches any turn: the cap's
+			// per-step check goes here, so a step with nothing dealt still stops and
+			// raises its one judgment when the spend day is over (docs/SPEC-FRIEND.md,
+			// spend caps)
+			spendCap.Check(w.now())
+			rowMu.Lock()
+			defer rowMu.Unlock()
+			return resolveCurrentRow(c.Str("mode"), rowMode, rowWidth)
 		},
-		Sprint:   gated(dh, w.sprintAsk(server)),
-		Rules:    rules,
-		Model:    c.Str("model"),
-		Load:     w.load1(),
-		LaneHold: func() string { return friend.ReadPause(state) },
+		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		Sprint:    gated(dh, w.sprintAsk(server)),
+		Rules:     rules,
+		Model:     c.Str("model"),
+		Load:      w.load1(),
+		LaneHold:  func() string { return friend.ReadPause(state) },
 		LaneHoldDown: func(_ context.Context, message string) error {
 			return friend.WritePause(state, message, w.now()) // her next beat says her down with it
 		},
@@ -1862,6 +1889,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if w.alive != nil {
 		watch.Alive = w.alive
 	}
+	// the spend cap's idle seam now reads the daemon's own no-dealt-work and
+	// no-live-session signal each step (docs/SPEC-FRIEND.md, idle)
+	daemonIdle = d.Idle
 	if err := d.Run(ctx); err != nil {
 		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
 		return tool.Exit(1)
@@ -2352,10 +2382,6 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
-	// a lane faulted on a provider refusal is terminal: the status says so
-	// (lane_fault=<n> refusal="<first line>") until a person clears it or the
-	// daemon restarts (docs/SPEC-FRIEND.md, the lanes)
-	laneFaultFact(o, friend.ReadLaneFault(state))
 	// her row against her inbox, as the daemon's last reconcile found them (friend.SyncInbox)
 	if s.HeldKnown {
 		o.Fact("held", s.Held).Fact("inbox", s.InboxJobs).Fact("missing", s.Missing)

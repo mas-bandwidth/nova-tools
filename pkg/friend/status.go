@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 )
 
 // A friend's status, from evidence (docs/SPEC-FRIEND.md, "A friend's status,
@@ -133,48 +131,6 @@ func Ago(d time.Duration) string {
 func ReadLimitFile(stateDir string) (l Limit, found bool, err error) {
 	found, err = read(filepath.Join(stateDir, LimitFile), &l)
 	return l, found, err
-}
-
-// LaneFaultFile is the lane's provider-refusal fault report in the state
-// directory (lane-fault=<n> refusal="<first line>"), written by the daemon
-// when a lane faults and removed when the fault is cleared; absent is no fault
-// (docs/SPEC-FRIEND.md, the lanes).
-const LaneFaultFile = "lane-fault"
-
-// WriteLaneFault records a lane's provider-refusal fault report; an empty
-// report removes the file (a clear, or a stale file a restart cleared).
-func WriteLaneFault(stateDir, report string) error {
-	path := filepath.Join(stateDir, LaneFaultFile)
-	if report == "" {
-		err := os.Remove(path)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return err
-	}
-	return atomicfile.WriteFile(path, []byte(report+"\n"), 0o644)
-}
-
-// ReadLaneFault is the lane fault report, or "" when there is none.
-func ReadLaneFault(stateDir string) string {
-	raw, err := os.ReadFile(filepath.Join(stateDir, LaneFaultFile))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(raw))
-}
-
-// ClearLaneFault removes the lane fault file, the person's clear; whether one
-// was there.
-func ClearLaneFault(stateDir string) (bool, error) {
-	err := os.Remove(filepath.Join(stateDir, LaneFaultFile))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 // resultTail is how much of the end of the log LastResult reads.

@@ -188,6 +188,33 @@ or a wake line that arrives after it starts, or for `--timeout`, so the banner
 has no example of it; its `-h` example is run on the in-memory store with an
 injected clock in `cmd/nova-friend/watch_test.go`.
 
+The spend cap per day and per provider (`pkg/friend/spendcap.go`) is pinned in
+`pkg/friend/spendcap_test.go`: `TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`
+(a fake harness reports usage; past the cap a turn is stopped and one judgment
+raised naming the friend, the provider and the spend, once until the day
+resets), `TestSpendCapResetsOnANewSpendDay`, `TestSpendCapDefaultIsTwentyDollars`,
+`TestSpendCapJudgmentNamesFriendProviderAndSpend`,
+`TestSpendCapRefuseTellsTheSeatAndTheOwner` (a provider refusal for funds
+raises the one judgment to the seat and the owner and stops turns at once),
+`TestSpendCapLanesRespectTheCapAndIdle` (the one-shot lanes stop under the cap
+and when idle), `TestSpendCapIdleLaunchesNothing` (a friend with no dealt work
+and no live session launches no turn),
+`TestSpendCapStopsWhenTheLimitGateReadsAFundsRefusal` (the real gate chain —
+the limit gate under the spend cap — reads the incident's wording and a 402
+from a harness turn, hands the funds refusal to the spend cap, and stops with
+the one judgment before the limit's Rest retry). The daemon's wiring (the
+`--spend-cap` flag, the harness's usage report as `Spent`, the judgment to the
+seat) is pinned by `TestTheDaemonStopsTurnsPastTheCapAndRaisesOneJudgment` and
+`TestTheDaemonLaunchesNothingWhenIdle` (`pkg/friend/spendcap_daemon_test.go`):
+a fake harness reports usage past the cap over the daemon's in-process bus
+store, the daemon's own loop drives it, and the gate stops the turn and raises
+one judgment; with the cap reading idle no turn launches and the message stays
+pending. `TestTheDaemonOnAPrivateServerStopsTurnsPastTheCapAndRaisesOneJudgment`
+(`pkg/friend/spendcap_redis_functional_test.go`, the functional tier) runs that
+loop over its own throwaway redis-server (loopback only, nothing kept) with a
+fake harness that reports its usage and no provider secret in the environment,
+so the cap is measured from the harness's own report on the real store.
+
 ### First run
 
 ```text

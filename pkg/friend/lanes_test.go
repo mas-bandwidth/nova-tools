@@ -63,7 +63,6 @@ type lanesHarness struct {
 	reject  map[string]string
 	refuse  map[string]error // session: card — the turn's provider refusal, once
 	missing map[string]bool  // session: card — the turn answers the session is gone, once
-	openErr error            // a session open's provider refusal, every open
 	active  map[string]int
 	maxBusy int
 	block   chan struct{} // when set, a card turn waits for it
@@ -78,9 +77,6 @@ func (h *lanesHarness) OpenSession(_ context.Context, seed string) (string, erro
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.seeds = append(h.seeds, seed)
-	if h.openErr != nil {
-		return "", h.openErr
-	}
 	return "ses_" + laneOfSeed.FindStringSubmatch(seed)[1], nil // named for its lane: the opens race, the names do not
 }
 
@@ -149,61 +145,6 @@ func laneRig(t *testing.T, h *lanesHarness, width int) (*rig, *LaneState) {
 	r.d.LoadLanes = func() (LaneState, error) { return *state, nil }
 	r.d.SaveLanes = func(s LaneState) error { *state = s; return nil }
 	return r, state
-}
-
-// A provider's refusal on a lane's open is terminal, never a retry each
-// minute: the second identical refusal faults the lane, reported as
-// lane-fault=<n> refusal="<first line>" and told to the seat, and the faulted
-// lane opens no more session (docs/SPEC-FRIEND.md, the lanes).
-func TestAProviderRefusalOnALaneOpenFaultsTheLaneAndStopsTheRetry(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
-		h := &lanesHarness{dir: dir, active: map[string]int{},
-			openErr: ProviderRefused{Session: "new", Reason: "content_filter_error: I'm sorry, but I can't help with that request."}}
-		r, _ := laneRig(t, h, 1)
-		r.run(t, 130)
-		_, _, seeds := h.got()
-		assert.Len(t, seeds, 2, "the open is refused once, retried once, then the fault stops it")
-		records := strings.Join(r.records, "\n")
-		assert.Contains(t, records, `lane-fault=2 refusal="content_filter_error: I'm sorry, but I can't help with that request."`, records)
-		assert.Equal(t, 2, strings.Count(records, "tried again in 1m"), "the second refusal's record says so, and no third is ever scheduled: %s", records)
-		got := r.adaGot(t)
-		require.Len(t, got, 1, "one judgment to the seat")
-		assert.Contains(t, got[0], "lane faulted on a provider refusal")
-		assert.Contains(t, got[0], "nova-sprint hold bob --return")
-	})
-}
-
-// A lane fault the limit detector counted itself (lanes failing alike) is
-// adopted as the same record a provider's refusal writes: the report is
-// written to the fault file, the lane holds its card, and the fault is on the
-// record (docs/SPEC-FRIEND.md, the lanes).
-func TestALimitDetectorFaultFeedsTheLaneFaultRecord(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
-		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}}
-		r, _ := laneRig(t, h, 1)
-		stateDir := t.TempDir()
-		r.d.Fault = func() string { return ReadLaneFault(stateDir) }
-		r.d.FaultWrite = func(report string) error { return WriteLaneFault(stateDir, report) }
-		said := false
-		r.d.FaultExternal = func() string {
-			if said {
-				return ""
-			}
-			said = true
-			return `lane-fault=3 refusal="dsh: unknown session id"`
-		}
-		r.run(t, 130)
-		assert.Equal(t, `lane-fault=3 refusal="dsh: unknown session id"`, ReadLaneFault(stateDir), "the detector's fault is written to the file")
-		turns, _, _ := h.got()
-		assert.Empty(t, turns, "a faulted lane takes no card")
-		records := strings.Join(r.records, "\n")
-		assert.Contains(t, records, `lane-fault=3 refusal="dsh: unknown session id"`, records)
-		assert.Contains(t, records, "the lanes take no card until a restart", records)
-	})
 }
 
 // Two lanes, each its own session seeded from the friend's own files, each
