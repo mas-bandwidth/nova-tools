@@ -109,6 +109,23 @@ func TestOutsideHoldsTestsBesideANamedPackage(t *testing.T) {
 	assert.Equal(t, []string{"other/other_test.go"}, Outside([]string{"pkg/member/member.go"}, edit("other/other_test.go"), nil), "another package's test is not the card's")
 }
 
+// Only real Go source carries a package's tests: a PATHS entry in the same directory that is
+// not Go source (a README, a fixture, a glob that names no Go files) does not make the
+// package's other tests the card's, while the package directory, a Go file and a Go-file
+// glob still do (AlwaysInPaths). Red before the fix: pkg/member/README.md authorized
+// pkg/member/unrelated_test.go.
+func TestOutsideHoldsTestsOnlyBesideGoSource(t *testing.T) {
+	t.Parallel()
+	edit := func(p string) string { return "diff --git a/" + p + " b/" + p + "\n@@ -1 +1 @@\n-a\n+b\n" }
+	const test = "pkg/member/unrelated_test.go"
+	for _, paths := range [][]string{{"pkg/member/README.md"}, {"pkg/member/testdata.json"}, {"pkg/member/*.md"}, {"pkg/member/*"}} {
+		assert.Equal(t, []string{test}, Outside(paths, edit(test), nil), "PATHS %v is not Go source: it carries no test", paths)
+	}
+	for _, paths := range [][]string{{"pkg/member"}, {"pkg/member/member.go"}, {"pkg/member/*.go"}} {
+		assert.Empty(t, Outside(paths, edit(test), nil), "PATHS %v is Go source: it carries the package's tests", paths)
+	}
+}
+
 // A rename holds both sides: a PATHS file renamed in its own directory is the card's (a
 // name card, names-02), renamed anywhere else it is not, and a file from outside PATHS
 // moved into the ledgers' directory is not either. Only the class ledgers are every

@@ -137,17 +137,20 @@ var AgentsMapRoots = []string{
 // directory's Go files (cardgen.AlwaysInPathsRule; docs/SPEC-CARD-CONTRACT.md, "Files a
 // change must touch to keep the tree green are always inside PATHS"; docs/SPEC-SPRINT.md
 // section 7, always inside PATHS). A PATHS list that names only test files carries no
-// source, so it carries no other test: the file stays outside.
+// source, so it carries no other test: the file stays outside. Neither does an entry in
+// the directory that is not Go source (a README, a testdata fixture, a glob such as
+// pkg/x/* that does not name Go files): only real Go source carries the package's tests.
 func AlwaysInPaths(paths []string, p string) bool {
 	if !strings.HasSuffix(p, "_test.go") {
 		return false
 	}
 	dir := path.Dir(p)
 	return slices.ContainsFunc(paths, func(g string) bool {
-		if strings.HasSuffix(g, "_test.go") {
-			return false
+		if g == dir {
+			return true // the package directory itself
 		}
-		return g == dir || path.Dir(g) == dir
+		// a Go source file, or a glob naming the directory's Go files (pkg/x/*.go)
+		return path.Dir(g) == dir && strings.HasSuffix(g, ".go") && !strings.HasSuffix(g, "_test.go")
 	})
 }
 
