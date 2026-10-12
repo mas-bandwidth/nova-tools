@@ -1078,6 +1078,23 @@
      NoStream, ReArm, StaleEpoch, Takeover). Adopt in order: install nova-hook, hook each friend and the seat
      in, then upgrade the gated tools, so the release does not lock anyone out."
     :origin "PR #5617, branch fix/bus-and-friend-refuse-until-hooked")
+  (fix "the-card-wall-lets-a-tlc-step-read-the-jar-and-java" :release "v1.2.18" :status "planned"
+   :title "The card wall lets a TLC step read the jar and java"
+   :text "A card's wall names, read-only and never a write, the TLC jar directory (/opt/tla, under the
+    linux /opt read root) and the bench's toolchain root (~/sdk, from pkg/swarm/toolchain.go
+    ToolchainRoots over the bench user's password-database home, never a hard-coded user home), so a
+    STEP runs `java -cp /opt/tla/tla2tools.jar tlc2.TLC` exactly as tla/README.md says. The wall's
+    ChildEnv also sets JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=<the wall's own temp directory>, appended to
+    any value the caller set with the tool's option last, because TLC unpacks its standard modules into
+    java.io.tmpdir, which the JVM defaults to /tmp, which the wall denies: every spec that EXTENDS
+    Naturals died with FileNotFoundException /tmp/Naturals.tla. Tests, red first: pkg/sandbox
+    TestChildEnvSetsJavaTmpDirInsideTheWall, TestChildEnvAppendsJavaTmpDirToAnExistingToolOptions and
+    TestTheTLCRuleKeepsTheJarReadOnly, and the functional TestTheTLCRuleLetsACardRunTLCInsideTheWall,
+    which runs a real spec that EXTENDS Naturals inside the wall."
+   :origin "the coordinator, 2026-10-12: every TLA+ card's STEP came back not-done with \"no tla2tools.jar\" or
+    \"no reach to hetzner2\" while /opt/tla/tla2tools.jar and the bench java exist outside the wall; the wall hid
+    the jar and the toolchain, and TLC's standard-module unpack into /tmp was denied (card
+    the-card-wall-lets-a-tlc-step-read-the-jar-and-java.w2)")
   (fix "every-bench-carries-every-mirror-a-card-can-name" :release "v1.2.14" :status "in-progress"
    :title "Every bench carries every mirror a card can name"
    :text "The mirror set is a converged property of the fleet: `nova-swarm mirror` unions the running

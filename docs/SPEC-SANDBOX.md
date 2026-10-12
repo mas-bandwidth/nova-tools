@@ -223,6 +223,15 @@ The test requirements are listed under **Tests this spec demands**.
    unwritable, and a toolchain whose first scratch write fails looks like a
    broken sandbox rather than a working one. `--tmp <dir>` overrides the temp
    directory and must resolve inside a `--write` path.
+
+   The tool also sets `JAVA_TOOL_OPTIONS` to `-Djava.io.tmpdir=<temp>`, appended
+   to any value the caller already set with the tool's own option last (the JVM
+   keeps the last one). TLC unpacks its standard modules into `java.io.tmpdir`,
+   which the JVM defaults to `/tmp`, and a wall that denies `/tmp` then fails
+   every `java -cp tla2tools.jar tlc2.TLC` run against a spec that `EXTENDS` one
+   of them with `FileNotFoundException /tmp/Naturals.tla`. Pointing the option
+   at the wall's own temp directory keeps the read-only jar and toolchain
+   untouched while the unpack lands inside the wall (the TLA+ rule below).
 9. **The environment passes through minus the agent, and the caller points the
    child's home into the write set.** This is not a secrets tool: the child
    inherits the caller's environment, minus the three temp-directory variables
@@ -1373,6 +1382,27 @@ source, not a string built in three places, and `policy` prints them:
 | darwin | `/`, `/etc`, `/tmp`, `/var` (each the directory or link itself, `(literal ...)`, not a subpath), `/var/db/xcode_select_link` and `/private/var/db/xcode_select_link` (literals on the Xcode-select link, not a subpath on `/private/var/db`), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/private/var/select`, `/dev` (read), the directory of the resolved command, and the directory `/var/db/xcode_select_link` points at when it exists and is not already a root (`Xcode.app/Contents` when Xcode is selected, not `Contents/Developer`); plus **write** on `/dev/null` and `/dev/tty` |
 | linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/run/systemd/resolve`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command, and the directory `/etc/resolv.conf` resolves to (its symlink target's parent: `/run/systemd/resolve` on a systemd machine, `/mnt/wsl` on WSL2); plus **write** on `/dev/null` and `/dev/tty` |
 | windows | Policy data only: `%WINDIR%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, the directory of the resolved command. The bare wrapper refuses; no Windows containment is enforced. |
+
+**The TLA+ rule — two read-only grants, never a write.** The owner's standing
+rule is TLA+ for every state machine, checked with TLC on a record bench
+(tla/README.md, "The record machines"), so a card's STEP runs
+`java -cp /opt/tla/tla2tools.jar tlc2.TLC`. A wall that hides the jar or the
+toolchain makes every TLA+ card fail by construction. The card wall therefore
+names, read-only and never a `--write`, the **TLC jar directory** and the
+**bench's toolchain root**, and neither is a root the tool adds on its own:
+the jar directory (`/opt/tla`, the path `fleet/group_vars/all.yml` names
+`nova_tla_dir`) lies under `/opt`, one of the linux read roots, and the
+toolchain root (`~/sdk`, the tree the toolchains role installs: java, go and
+the others it lists) reaches the wall as `--read` from the one list the
+provisioning standard and the wall share (`pkg/swarm/toolchain.go`,
+`ToolchainRoots`), derived from the bench user's password-database home and
+never a hard-coded user home (`$HOME` is the child's own data home). The
+toolchain's own java is the first the tla play looks for
+(`nova_tla_java_candidates`); on a Mac there is no TLC and no jar, and the
+darwin toolchain roots are the darwin list. TLC's scratch — the standard
+modules it unpacks into `java.io.tmpdir` — lands in the wall's own temp
+directory by the `JAVA_TOOL_OPTIONS` grant in rule 8, never beside the
+read-only jar.
 
 `/` itself and `/dev` are in the darwin list because they were measured to be
 required, not because a document said so: with the previous list `/bin/echo`
