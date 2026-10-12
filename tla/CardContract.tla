@@ -48,7 +48,9 @@
 \*             missing, the stage's timeout), or the child's end was
 \*             budget-unverifiable and left no result (EndUnverifiable)
 
-\* THE REASON PREFIXES. Judge names one of three finishes, ok, failed or reaped
+\* THE REASON PREFIXES (ProviderFailure, the name pkg/member/member.go,
+\* cmd/nova-swarm/nativeprovider.go, their tests and SPEC-CARD-CONTRACT.md
+\* cite). Judge names one of three finishes, ok, failed or reaped
 \* (pkg/member/member.go, Finish), and the failed finish's reason carries the
 \* prefix that classes it. A run that ended with no result and whose provider
 \* failed it with a reason (prov) is failed `provider failure`, after a refused

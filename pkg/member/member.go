@@ -149,7 +149,7 @@ type Result struct {
 	Usage string
 	// Provider is why End is EndProvider, as native read it from the harness's own log
 	// or transcript: the cause, `provider: class=<c> status=<n|-> msg=<words>`
-	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, ProviderFailure).
+	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, THE REASON PREFIXES).
 	// "" when the end was a launch the provider never accepted, which names no reason.
 	Provider string
 	// Staging is why End is EndStaging: the reason of native's STAGE FAIL line, the launch
@@ -242,7 +242,7 @@ const (
 // provider failed that left no result, its push not refused, is failed with the kind
 // `provider failure` and the provider's reason, and only that one: the sprint deals that
 // card again and never judges it; a refused push or a result with the shape is failed work
-// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure). A launch
+// whatever the run's end (tla/CardContract.tla, JudgeOf and THE REASON PREFIXES). A launch
 // refused at staging ran no child: failed with the kind `staging refused` and the stage's
 // reason, the member's failure and never the card's (StageRefused).
 func Judge(r Result, pu Push) (fin Finish, why string) {
