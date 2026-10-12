@@ -122,6 +122,58 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 }
 
+// An enabled route with no price refuses apply and apply --check: the one line
+// names the route and its model, asks for a price with the command that sets
+// it, and carries placeholders where the numbers go, never an invented number
+// (docs/SPEC-CONFIG.md, "route" and "Apply").
+func TestApplyRefusalNamesTheRouteAndAsksForItsPrice(t *testing.T) {
+	t.Parallel()
+
+	h := loopHarness(t)
+	code, _, errs := h.run(t, "route", "add", "pro-mercury3", "--tier", "pro", "--provider", "inception", "--model", "mercury-3-preview-1002", "--deadline", "1800")
+	require.Equal(t, 0, code, errs)
+
+	const asks = "nova-config route set pro-mercury3 --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>"
+	for _, args := range [][]string{
+		{"apply", "--kind", "route", "--check"},
+		{"apply", "--kind", "route"},
+	} {
+		code, out, errs := h.run(t, args...)
+		require.Equal(t, 1, code, "%v: %s", args, errs)
+		assert.Empty(t, out, "%v wrote %q", args, out)
+		assert.Contains(t, errs, "route pro-mercury3 (inception/mercury-3-preview-1002) is enabled with no price", "%v", args)
+		assert.Contains(t, errs, asks, "%v", args)
+		assert.Contains(t, errs, "take it out: --enabled false --note '<why>'", "%v", args)
+		assert.Equal(t, 1, strings.Count(errs, "\n"), "%v: one refusal line", args)
+	}
+	assert.Empty(t, h.redis.log, "a refused apply wrote: %v", h.redis.log)
+}
+
+// A bare every-kind apply refuses an enabled route with no price before any
+// kind is written, so machine/fleet/friend/sprint/loop do not reach Redis
+// first (docs/SPEC-CONFIG.md, "Apply"); apply --check refuses the same.
+func TestApplyRefusesAnEnabledRouteWithNoPriceBeforeAnyKindWritten(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{{"apply"}, {"apply", "--check"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			h := loopHarness(t, "m1")
+			code, _, errs := h.run(t, "fleet", "set", "--coordinator", "m1", "--redis_port", "6380", "--pg_dsn", dsn)
+			require.Equal(t, 0, code, errs)
+			code, _, errs = h.run(t, "route", "add", "pro-mercury3", "--tier", "pro", "--provider", "inception", "--model", "mercury-3-preview-1002", "--deadline", "1800")
+			require.Equal(t, 0, code, errs)
+			code, out, errs := h.run(t, args...)
+			require.Equal(t, 1, code, "%v: %s", args, errs)
+			assert.Empty(t, out, "%v wrote %q", args, out)
+			assert.Contains(t, errs, "route pro-mercury3 (inception/mercury-3-preview-1002) is enabled with no price", "%v", args)
+			assert.Contains(t, errs, "nova-config route set pro-mercury3 --price_input <USD per million>", "%v", args)
+			assert.Equal(t, 1, strings.Count(errs, "\n"), "%v: one refusal line", args)
+			assert.Empty(t, h.redis.log, "a refused apply wrote kinds before the route: %v", h.redis.log)
+		})
+	}
+}
+
 func TestRouteUsageRefusalsOpenNoStore(t *testing.T) {
 	t.Parallel()
 
@@ -160,7 +212,7 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t)
-	code, _, errs := h.run(t, "route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60")
+	code, _, errs := h.run(t, "route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--price_input", "1")
 	require.Equal(t, 0, code, errs)
 
 	code, out, _ := h.run(t, "apply", "--kind", "route", "--check")

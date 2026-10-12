@@ -77,8 +77,8 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	ap, c := redisApplier(t)
 	st := migrated(t)
 	for _, row := range []Row{
-		newRoute(t, "pro-a", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "tokens": "300000", "deadline": "1800"}),
-		newRoute(t, "flash-b", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "tokens": "3"}),
+		newRoute(t, "pro-a", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "tokens": "300000", "deadline": "1800", "price_input": "3.00", "price_output": "15.00"}),
+		newRoute(t, "flash-b", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "tokens": "3", "price_input": "0.5"}),
 	} {
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
@@ -93,8 +93,8 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	want := map[string]string{
 		"name": "pro-a", "tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "harness": "opencode",
 		"tokens": "300000", "usd": "", "deadline": "1800", "enabled": "true", "first": "false", // usd empty: no dollar cap
-		// the price sheet, not set: every price empty, never 0
-		"price_input": "", "price_cache_read": "", "price_cache_write": "", "price_output": "", "reasoning_as_output": "true", "long_context": "0",
+		// the price sheet, in its one spelling
+		"price_input": "3", "price_cache_read": "", "price_cache_write": "", "price_output": "15", "reasoning_as_output": "true", "long_context": "0",
 		"price_input_long": "", "price_output_long": "", "price_request": "", "billing": "metered", "gateway_percent": "", "price_source": "", "price_as_of": "", "note": "",
 	}
 	for f, v := range want {
@@ -142,9 +142,9 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tiers, 3, "migrate makes flash, heavy and pro")
 	for _, row := range []Row{
-		newRoute(t, "flash-a", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600"}),
+		newRoute(t, "flash-a", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "price_input": "1"}),
 		newRoute(t, "flash-off", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "enabled": "false", "note": "off for the test"}),
-		newRoute(t, "pro-a", map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "600"}),
+		newRoute(t, "pro-a", map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "600", "price_input": "1"}),
 	} {
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)

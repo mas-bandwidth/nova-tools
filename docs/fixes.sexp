@@ -64,7 +64,9 @@
    (release "v1.2.14" :status "planned" :date "2026-10-11"
     :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
    (release "v1.2.15" :status "planned"
-    :text "The next small product fixes, one concern each."))
+    :text "The next small product fixes, one concern each.")
+   (release "v1.2.17" :status "planned"
+    :text "The next small product fixes, one concern each: apply refuses an enabled route with no price, so no take is priced from an empty sheet."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -959,4 +961,8 @@
     TestOutsideHoldsTestsOnlyBesideGoSource, and the functional
     TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
     sprint server)."
-   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")))
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")
+  (fix "an-enabled-route-with-no-price-is-refused-at-apply" :release "v1.2.17" :status "planned"
+   :title "An enabled route with no price is refused at apply"
+   :text "apply refuses an enabled route with no price sheet before it plans or writes any kind: the sprint prices a take from the sheet (cardcost.PricesOf(row.Fields).Priced), so an unpriced route records no prediction and a cost of \"-\", or the harness's own $0.00, and the dashboard undercounts. The one refusal names every such route with its provider/model and the command that sets its price (nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>), plus nova-config route prices --refresh --provider <p> when the provider has a list, plus take it out with --enabled false --note '<why>'; a disabled route is never refused for its price, and the tool never sets, guesses or defaults one. apply --check refuses the same, and a bare every-kind apply refuses before any kind is written. Tests, red first: pkg/config TestApplyRefusesAnEnabledRouteWithNoPrice, TestApplyTakesADisabledUnpricedRoute, TestApplyTakesAPricedRoute, and cmd/nova-config TestApplyRefusalNamesTheRouteAndAsksForItsPrice."
+   :origin "the seat, 2026-10-12 03:09Z: routes pro-mercury3 and pro-mercury3-pro (inception/mercury-3-preview-1002) carry no price sheet, so every Mercury 3 take records cost \"-\" (no prediction) or $0.00 (the harness's own zero), and the dashboard's spend undercounts; the owner's rule is that prices are the owner's, never invented")))
