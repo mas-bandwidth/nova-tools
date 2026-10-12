@@ -1098,4 +1098,12 @@
     name, and whose first brief put the fix in nova-sprint's pkg/member, which nothing in production calls."
    :origin "the coordinator, 2026-10-12 ~07:50Z, re-cut after a cold read of 23b82f7: on nova-sprint main the
     finish verb's --harness means the child's harness output, its last 40 lines, but nova-tools' member sent
-    the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")))
+    the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
+  (fix "dev-runs-the-functional-tier-on-every-push" :release "v1.2.15" :status "planned"
+   :title "Dev runs the functional tier on every pull request and push"
+   :text "ci.yml's functional job runs on every pull request to dev and every push to dev, in addition to
+     the merge queue, so a red functional test on a dev push is a red dev the sprint's red-base judgment
+     sees, instead of surfacing only when a stream PR enters the merge queue."
+   :origin "the coordinator, 2026-10-12 ~12:25Z: two functional tests went red on dev and nobody saw it; dev's
+     ci workflow skipped the functional job on push, so only the merge queue ran the functional tier, and the
+     v1.2.14 stream PR #5627 was thrown out of the queue for failures already on dev")))
