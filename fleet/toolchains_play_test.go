@@ -123,49 +123,58 @@ func TestToolchainsPlayRendersEveryPinnedToolchain(t *testing.T) {
 // install path with tiny fixture archives, never a fleet host or live toolchain.
 func TestToolchainsPlayAppliesLocalArchivesAndReplacesDrift(t *testing.T) {
 	t.Parallel()
-	// The four real plays share one budget below certification's 75-second
-	// package bound; a fresh timeout per play does not bound their total.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	ansible, err := exec.LookPath("ansible-playbook")
-	if err != nil {
-		t.Skip("ansible-playbook is not installed on this machine; the shape assertions above still ran")
+	for _, scenario := range []string{"idempotent", "drift", "bad-digest"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			// Each independent fixture runs only its install and one verification play.
+			// Its budget stays below certification's 75-second package bound.
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			ansible, err := exec.LookPath("ansible-playbook")
+			if err != nil {
+				t.Skip("ansible-playbook is not installed on this machine; the shape assertions above still ran")
+			}
+			tmpRoot := filepath.Clean(filepath.Join("..", "..", "tmp"))
+			require.NoError(t, os.MkdirAll(tmpRoot, 0o700))
+			tmp, err := os.MkdirTemp(tmpRoot, "toolchains-apply-")
+			require.NoError(t, err)
+			tmp, err = filepath.Abs(tmp)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+			for _, dir := range []string{"home", "ansible", "local", "remote"} {
+				require.NoError(t, os.MkdirAll(filepath.Join(tmp, dir), 0o700))
+			}
+			archivePath := filepath.Join(tmp, "fixtures.tar.gz")
+			sha := writeToolchainFixtureArchive(t, archivePath)
+			varsPath := filepath.Join(tmp, "toolchains.json")
+			writeToolchainFixtureVars(t, varsPath, tmp, sha)
+
+			first := runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, false)
+			assert.Contains(t, first, "PLAY RECAP")
+			assert.NotContains(t, first, "failed=1", first)
+			assertToolchainFixtureInstall(t, tmp)
+
+			if scenario == "idempotent" {
+				second := runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, false)
+				assert.Regexp(t, `fixture-linux\s+: ok=\d+\s+changed=0\s+unreachable=0\s+failed=0`, second)
+				return
+			}
+			node := filepath.Join(tmp, "sdk", "node-1.0.0", "fixture", "bin", "node")
+			if scenario == "drift" {
+				// Replacement restores a changed executable even when its archive marker
+				// still names the pinned SHA.
+				require.NoError(t, os.WriteFile(node, []byte("tampered"), 0o755))
+				drift := runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, false)
+				assertToolchainFixtureInstall(t, tmp)
+				assert.Contains(t, drift, "changed=")
+				return
+			}
+			// A bad pinned digest refuses the archive before removing the current SDK.
+			writeToolchainFixtureVars(t, varsPath, tmp, strings.Repeat("0", 64))
+			_ = runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, true)
+			assert.FileExists(t, node, "checksum mismatch must preserve the existing install")
+		})
 	}
-	tmpRoot := filepath.Clean(filepath.Join("..", "..", "tmp"))
-	require.NoError(t, os.MkdirAll(tmpRoot, 0o700))
-	tmp, err := os.MkdirTemp(tmpRoot, "toolchains-apply-")
-	require.NoError(t, err)
-	tmp, err = filepath.Abs(tmp)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-	for _, dir := range []string{"home", "ansible", "local", "remote"} {
-		require.NoError(t, os.MkdirAll(filepath.Join(tmp, dir), 0o700))
-	}
-	archivePath := filepath.Join(tmp, "fixtures.tar.gz")
-	sha := writeToolchainFixtureArchive(t, archivePath)
-	varsPath := filepath.Join(tmp, "toolchains.json")
-	writeToolchainFixtureVars(t, varsPath, tmp, sha)
-
-	first := runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, false)
-	assert.Contains(t, first, "PLAY RECAP")
-	assert.NotContains(t, first, "failed=1", first)
-	assertToolchainFixtureInstall(t, tmp)
-
-	second := runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, false)
-	assert.Regexp(t, `fixture-linux\s+: ok=\d+\s+changed=0\s+unreachable=0\s+failed=0`, second)
-
-	// A changed installed executable is detected even when its archive marker
-	// still names the pinned SHA; replacement restores the verified fixture.
-	node := filepath.Join(tmp, "sdk", "node-1.0.0", "fixture", "bin", "node")
-	require.NoError(t, os.WriteFile(node, []byte("tampered"), 0o755))
-	drift := runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, false)
-	assertToolchainFixtureInstall(t, tmp)
-	assert.Contains(t, drift, "changed=")
-
-	// A bad pinned digest refuses the archive before removing the current SDK.
-	writeToolchainFixtureVars(t, varsPath, tmp, strings.Repeat("0", 64))
-	_ = runToolchainsFixturePlay(t, ctx, ansible, tmp, varsPath, false, true)
-	assert.FileExists(t, node, "checksum mismatch must preserve the existing install")
 }
 
 type toolchainFixtureSpec struct {
