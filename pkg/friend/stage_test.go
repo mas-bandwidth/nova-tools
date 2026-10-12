@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,8 +64,17 @@ func TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile(t *testing.T) {
 	r := newRig(t)
 	r.d.Coordinator = "ada"
 	dir := r.d.Dir
+	factsPath := filepath.Join(dir, "host-toolchains.json")
+	facts := map[string]any{"schema": 1, "toolchains": map[string]any{}}
+	toolchains := facts["toolchains"].(map[string]any)
+	for _, name := range []string{"node", "dotnet", "dart", "elixir", "otp", "rust", "jdk", "sbcl", "gh"} {
+		toolchains[name] = map[string]string{"path": "/home/bench/sdk/bin/" + name, "version": "1.2.3"}
+	}
+	factsBytes, err := json.Marshal(facts)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(factsPath, factsBytes, 0o600))
 	urls := map[string]string{"mas-bandwidth/nova-tools": g.Remote, "mas-bandwidth/private": filepath.Join(t.TempDir(), "no-such-repo")}
-	stager := &Stager{Dir: dir, Env: env, URL: func(repo string) string { return urls[repo] }}
+	stager := &Stager{Dir: dir, Env: env, URL: func(repo string) string { return urls[repo] }, ToolchainsFile: factsPath}
 	stages, ended := 0, make(chan struct{}, 16)
 	r.d.Stage = func(ctx context.Context, p Packet) (string, error) {
 		r.mu.Lock()
@@ -121,6 +131,9 @@ func TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile(t *testing.T) {
 		assert.Contains(t, job, "git push -u origin "+c.branch)
 		assert.Contains(t, job, "Finish: write "+filepath.Join(dir, "outbox", c.h.Job, "REPORT.md")+" with 'Verdict: LAND|HOLD|FAIL' and 'Head: <sha>'")
 		assert.Contains(t, job, "RESULT.md beside it")
+		for _, name := range []string{"node", "dotnet", "dart", "elixir", "otp", "rust", "jdk", "sbcl", "gh"} {
+			assert.Contains(t, job, "- "+name+" 1.2.3: /home/bench/sdk/bin/"+name, "%s carries the host's %s toolchain fact", c.h.Card, name)
+		}
 	}
 	mirrors, err := filepath.Glob(filepath.Join(dir, "mirrors", "*", "*"))
 	require.NoError(t, err)

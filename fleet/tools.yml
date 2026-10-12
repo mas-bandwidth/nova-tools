@@ -40,7 +40,7 @@
   roles:
     - role: toolchains
       tags: [toolchains]
-  tags: [toolchains]
+  tags: [toolchains, never]
 
 - name: the platform of every machine
   hosts: all

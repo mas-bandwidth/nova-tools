@@ -7,7 +7,10 @@
     quiet: true
     that:
       - nova_toolchains_platform in nova_toolchain_entry.value.platforms
-      - nova_toolchain_entry.value.platforms[nova_toolchains_platform].url is match('^https://')
+      - >-
+        (nova_toolchain_entry.value.platforms[nova_toolchains_platform].url is match('^https://')) or
+        ((nova_toolchains_allow_local_archives | bool) and
+         (nova_toolchain_entry.value.platforms[nova_toolchains_platform].url is match('^file://')))
       - nova_toolchain_entry.value.platforms[nova_toolchains_platform].sha256 is match('^[0-9a-f]{64}$')
     fail_msg: >-
       toolchains role: {{ nova_toolchain_entry.key }} has no URL and SHA-256 for
@@ -37,20 +40,29 @@
 - name: the installed executable
   ansible.builtin.stat:
     path: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.install_root | default(nova_toolchain_archive.root) }}/{{ nova_toolchain_archive.install_probe | default(nova_toolchain_archive.probe) }}"
+    checksum_algorithm: sha256
   register: nova_toolchain_probe_stat
+
+- name: the installed executable checksum manifest
+  ansible.builtin.stat:
+    path: "{{ nova_toolchain_install_dir }}/.nova-toolchain-probe-sha256"
+  register: nova_toolchain_probe_sha_stat
+
+- name: the installed executable checksum content
+  ansible.builtin.slurp:
+    src: "{{ nova_toolchain_install_dir }}/.nova-toolchain-probe-sha256"
+  register: nova_toolchain_probe_sha
+  when: nova_toolchain_probe_sha_stat.stat.exists
 
 - name: whether this version must be replaced
   ansible.builtin.set_fact:
     nova_toolchain_replace: >-
       {{ not nova_toolchain_manifest_stat.stat.exists or
          (nova_toolchain_manifest.content | default('') | b64decode | trim) != nova_toolchain_archive.sha256 or
-         not nova_toolchain_probe_stat.stat.exists }}
-
-- name: remove the old version before replacing it
-  ansible.builtin.file:
-    path: "{{ nova_toolchain_install_dir }}"
-    state: absent
-  when: nova_toolchain_replace and not ansible_check_mode
+         not nova_toolchain_probe_stat.stat.exists or
+         not (nova_toolchain_probe_stat.stat.executable | default(false)) or
+         not nova_toolchain_probe_sha_stat.stat.exists or
+         (nova_toolchain_probe_sha.content | default('') | b64decode | trim) != (nova_toolchain_probe_stat.stat.checksum | default('')) }}
 
 - name: the check report names the pinned archive that would be installed
   ansible.builtin.debug:
@@ -81,6 +93,19 @@
   register: nova_toolchain_download
   when: nova_toolchain_replace and not ansible_check_mode
 
+- name: remove the old version after verifying its replacement archive
+  ansible.builtin.file:
+    path: "{{ nova_toolchain_install_dir }}"
+    state: absent
+  when: nova_toolchain_replace and not ansible_check_mode
+
+- name: the versioned install directory exists for archive extraction
+  ansible.builtin.file:
+    path: "{{ nova_toolchain_install_dir }}"
+    state: directory
+    mode: "0755"
+  when: nova_toolchain_replace and not ansible_check_mode
+
 - name: unpack the verified toolchain archive
   ansible.builtin.unarchive:
     src: "{{ nova_sdk_home }}/.downloads/{{ nova_toolchain_name }}-{{ nova_toolchain_entry.value.version }}-{{ nova_toolchains_platform }}{{ nova_toolchain_archive_suffix }}"
@@ -99,6 +124,25 @@
     - not ansible_check_mode
     - nova_toolchain_archive.installer_argv is defined
 
+- name: the installed toolchain probe is executable
+  ansible.builtin.stat:
+    path: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.install_root | default(nova_toolchain_archive.root) }}/{{ nova_toolchain_archive.install_probe | default(nova_toolchain_archive.probe) }}"
+    checksum_algorithm: sha256
+  register: nova_toolchain_probe_after_install
+  when: nova_toolchain_replace and not ansible_check_mode
+
+- name: the verified archive installed its pinned toolchain probe
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - nova_toolchain_probe_after_install.stat.exists
+      - nova_toolchain_probe_after_install.stat.executable
+      - nova_toolchain_probe_after_install.stat.checksum is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      toolchains role: {{ nova_toolchain_name }} {{ nova_toolchain_entry.value.version }} archive
+      did not install executable {{ nova_toolchain_archive.install_root | default(nova_toolchain_archive.root) }}/{{ nova_toolchain_archive.install_probe | default(nova_toolchain_archive.probe) }}.
+  when: nova_toolchain_replace and not ansible_check_mode
+
 - name: the versioned executable links
   ansible.builtin.file:
     src: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.install_root | default(nova_toolchain_archive.root) }}/{{ item.path }}"
@@ -112,6 +156,13 @@
     dest: "{{ nova_toolchain_install_dir }}/.nova-toolchain-sha256"
     content: "{{ nova_toolchain_archive.sha256 }}\n"
     mode: "0644"
+
+- name: the executable checksum that now names the installation
+  ansible.builtin.copy:
+    dest: "{{ nova_toolchain_install_dir }}/.nova-toolchain-probe-sha256"
+    content: "{{ nova_toolchain_probe_after_install.stat.checksum }}\n"
+    mode: "0644"
+  when: nova_toolchain_replace and not ansible_check_mode
 
 - name: the host's toolchain path and version fact
   ansible.builtin.set_fact:

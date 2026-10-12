@@ -69,9 +69,10 @@ tools report, and the fix is `nova-update apply --file <manifest> <tool> --versi
 Dependency: the language SDKs installed by the `toolchains` fleet role. Reads
 `~/.config/nova/toolchains.json`, which records one `{path, version}` pair for
 each of `node`, `dotnet`, `dart`, `elixir`, `otp`, `rust`, `jdk`, `sbcl` and
-`gh`. `ok` names the installed versions; `fail` names every required tool whose
-fact is absent or whose path does not exist, and names the tool in the evidence
-(`missing tool=<name>`). The fix is `ansible-playbook fleet/tools.yml --tags toolchains`.
+`gh` under schema 1. `ok` names the installed versions after checking each path
+is absolute and executable; `fail` names every required tool whose fact, version,
+or executable path is absent (`missing tool=<name>`). The fix is
+`ansible-playbook fleet/tools.yml --tags toolchains`.
 
 `nova-up --local` ends by running `nova-doctor --local`.
 

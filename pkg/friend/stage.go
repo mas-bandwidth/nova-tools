@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -176,6 +177,9 @@ type Stager struct {
 	Dir string
 	URL func(repo string) string
 	Env []string
+	// ToolchainsFile is the fleet role's host facts file. Empty reads
+	// ~/.config/nova/toolchains.json under HOME (docs/FLEET.md, Language toolchains).
+	ToolchainsFile string
 
 	mu      sync.Mutex
 	repos   map[string]*sync.Mutex
@@ -591,8 +595,78 @@ func JobText(dir string, p Packet, sha string) string {
 		p.Card, attempt, checkout, p.Repo, p.Base, sha, p.Branch, p.Branch, filepath.Join(outbox, "REPORT.md"))
 }
 
+type stagedToolchainFacts struct {
+	Schema int `json:"schema"`
+	Tools  map[string]struct {
+		Path    string `json:"path"`
+		Version string `json:"version"`
+	} `json:"toolchains"`
+}
+
+type stagedToolchain struct {
+	name, path, version string
+}
+
+// readToolchainFacts reads only the fleet role's path/version records: JOB.md can
+// carry what this bench installed without attempting to run data from that file
+// (docs/FLEET.md, Language toolchains).
+func readToolchainFacts(path string) ([]stagedToolchain, error) {
+	if path == "" {
+		home := os.Getenv("HOME")
+		if home == "" {
+			return nil, nil
+		}
+		path = filepath.Join(home, ".config", "nova", "toolchains.json")
+	}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read bench toolchain facts %s: %w", path, err)
+	}
+	var facts stagedToolchainFacts
+	if err := json.Unmarshal(raw, &facts); err != nil {
+		return nil, fmt.Errorf("decode bench toolchain facts %s: %w", path, err)
+	}
+	if facts.Schema != 1 {
+		return nil, fmt.Errorf("bench toolchain facts %s have schema %d, want 1", path, facts.Schema)
+	}
+	var out []stagedToolchain
+	for name, fact := range facts.Tools {
+		if strings.TrimSpace(name) == "" || !filepath.IsAbs(fact.Path) || strings.TrimSpace(fact.Version) == "" ||
+			strings.ContainsAny(name+fact.Path+fact.Version, "\r\n\t") {
+			return nil, fmt.Errorf("bench toolchain facts %s contain an invalid path or version", path)
+		}
+		out = append(out, stagedToolchain{name: name, path: fact.Path, version: fact.Version})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out, nil
+}
+
+// appendToolchainFacts makes the staged JOB.md a consumer of the bench facts while
+// keeping the facts inert: the worker receives names, versions and absolute paths only
+// (docs/FLEET.md, Language toolchains).
+func appendToolchainFacts(job string, facts []stagedToolchain) string {
+	job += "\nToolchains installed on this bench (from ~/.config/nova/toolchains.json):\n"
+	if len(facts) == 0 {
+		return job + "- No toolchain facts are recorded.\n"
+	}
+	for _, fact := range facts {
+		job += fmt.Sprintf("- %s %s: %s\n", fact.name, fact.version, fact.path)
+	}
+	return job
+}
+
+// writeJob writes the card contract with the fleet facts that name this bench's SDKs
+// (docs/FLEET.md, Language toolchains).
 func (s *Stager) writeJob(p Packet, sha string) error {
-	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(JobText(s.Dir, p, sha)), 0o644, atomicfile.NoReplace())
+	facts, err := readToolchainFacts(s.ToolchainsFile)
+	if err != nil {
+		return err
+	}
+	jobText := appendToolchainFacts(JobText(s.Dir, p, sha), facts)
+	err = atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(jobText), 0o644, atomicfile.NoReplace())
 	if errors.Is(err, fs.ErrExist) {
 		return nil // staged by another hand between the look and the write
 	}

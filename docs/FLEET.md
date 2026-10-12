@@ -309,12 +309,16 @@ it would apply.
 Every Linux and Darwin fleet host installs Node, .NET, Dart, Elixir, Erlang/OTP,
 Rust, JDK, SBCL and GitHub CLI from the versioned, SHA-256-pinned archives in
 `fleet/roles/toolchains/defaults/main.yml`. The login's `~/sdk/<tool>-<version>`
-holds each verified archive; `~/sdk/bin` links the commands, `~/sdk/env.sh` is
-sourced by the login shell, and `~/.config/nova/toolchains.json` records each
-tool's path and version for JOB.md and nova-doctor. A missing binary or a
-changed checksum replaces that versioned install; a mismatched download fails
-the play. The Linux x86_64 and Darwin arm64 archive pairs are explicit, and an
-unsupported host platform is refused before installation.
+contains each extracted toolchain; verified downloads are cached in
+`~/sdk/.downloads`, `~/sdk/bin` links the commands, and `~/sdk/env.sh` is sourced
+by the login shell. `~/.config/nova/toolchains.json` records each tool's path and
+version; nova-doctor checks the paths, and the friend stager renders the same
+facts into each new JOB.md. A missing or changed executable
+or archive digest replaces that versioned install. The role verifies a replacement
+archive before removing the old install, so a download or checksum failure leaves
+the current install intact. The play is opt-in: an untagged tools rollout skips it.
+The Linux x86_64 and Darwin arm64 archive pairs are explicit, and an unsupported
+host platform is refused before installation.
 
 Run the toolchain install with this one command:
 

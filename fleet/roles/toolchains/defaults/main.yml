@@ -3,6 +3,7 @@
 # values together; the role refuses a platform without an explicit pair.
 nova_sdk_home: "{{ nova_home }}/sdk"
 nova_toolchains_fact_file: "{{ nova_home }}/.config/nova/toolchains.json"
+nova_toolchains_allow_local_archives: false
 nova_toolchains_shell_rc: >-
   {{ '.zprofile' if (ansible_facts['user_shell'] | default('')).endswith('/zsh') else '.profile' }}
 nova_toolchains_platform_map:
@@ -37,7 +38,7 @@ nova_toolchains:
         probe: bin/node
   dotnet:
     version: "10.0.401"
-    fact_path: bin/dotnet
+    fact_path: dotnet
     executables:
       - {name: dotnet, path: dotnet}
     platforms:
