@@ -98,11 +98,13 @@ func assertRefusedUnderRootForHome(t *testing.T, wide bool) {
 		require.NoError(t, os.Symlink(fakeHomeReal, rootLink))
 		path, root = filepath.Join(fakeHomeReal, "victim"), rootLink
 	}
-	mustWrite(t, filepath.Join(path, "keep"), "x")
+	keep := filepath.Join(path, "keep")
+	mustWrite(t, keep, "x")
 
 	err = policy.RemoveUnderRoots(path, root)
 	assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", path, root, err)
 	assert.True(t, exists(path), "RemoveUnderRoots deleted %s under %q; a refusal must leave it", path, root)
+	assert.True(t, exists(keep), "RemoveUnderRoots deleted %s, a file below the refused path %q", keep, path)
 }
 
 // RemoveUnder resolves its root through symlinks for the containment test but never
