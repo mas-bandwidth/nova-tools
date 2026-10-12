@@ -605,3 +605,27 @@ func TestAMovedReportIsJudgedByWhatBecameOfItsWriteNotItsExitCode(t *testing.T) 
 		})
 	}
 }
+
+// TestAnExit2RefusalOfAnUnmovedClaimIsARefusalNotANoAnswer pins applyReport's side of the
+// typed answer (the cold reader's read of #5625 at c1052990): nova-sprint's refuse() exits 2
+// for a refusal made before the store is touched (cmd/nova-sprint/main.go refuse, "nova-sprint
+// finish REFUSED: ...; nothing was changed"), as the worker does when nothing answered. With
+// the claim unmoved, the refusal goes down the refusal path (its NOTE, the refused finish
+// remembered for retryFinishes) and is never counted as no answer: the pass returns no
+// store-did-not-answer error and the next pass does not send the finish again at once. Red
+// at a0d0429e: exit 2 was read as no answer, the pass erred and the next pass resent it.
+func TestAnExit2RefusalOfAnUnmovedClaimIsARefusalNotANoAnswer(t *testing.T) {
+	t.Parallel()
+	g, _ := pushRig(t, &fakePusher{def: Push{Sha: fullSha}}, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "0123456", Report: "landed"})
+	g.s.set("finish", 2, "nova-sprint finish REFUSED: a report names the epoch its cards were handed at: --epoch <n>; nothing was changed")
+	_, err := g.m.Tick(time.Unix(0, 0))
+	assert.NoError(t, err, "a refusal is no unanswered verb")
+	require.Len(t, g.s.lines("finish"), 1)
+	assert.Contains(t, g.out.String(), "NOTE finish c1 refused: nova-sprint finish REFUSED:", "the refusal path says the refusal")
+	assert.NotContains(t, g.out.String(), "the store did not answer", "a refusal is never noted as no answer")
+
+	_, err = g.m.Tick(time.Unix(0, 0).Add(time.Second))
+	assert.NoError(t, err)
+	assert.Len(t, g.s.lines("finish"), 1, "the refused finish waits for retryFinishes; it is not resent next pass as no answer")
+	assert.Equal(t, []string{"c1"}, g.r.started(), "the run is never repeated")
+}
