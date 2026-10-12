@@ -10,7 +10,7 @@ import (
 // the one shared helper, so `go test -run` and the docs that name it still find
 // it; the rule's inputs and wants are the testbinsRule row below.
 
-// testbinsRule is the testbins row of ciRules.
+// testbinsRule is the testbins row of the harness.
 var testbinsRule = ciRule{
 	key:           "testbins",
 	prefix:        "CI-TESTBIN",

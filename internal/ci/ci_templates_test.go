@@ -147,10 +147,6 @@ func runNet(root, allow string) (ciRun, error) {
 	return ciRun{tests: r.Tests, allowlisted: r.Allowlisted, refused: r.Refused(), findings: netFindings(r.Findings), stale: netFindings(r.Stale), okLine: r.OKLine(), failLine: r.FailLine(), exit: r.ExitCode(), measured: r.Measured}, nil
 }
 
-// ciRules is the table the shared helpers run over: the four allowlisted
-// source-scan rules of docs/SPEC-CI.md.
-var ciRules = []ciRule{templatesRule, testbinsRule, waitsRule, netRule}
-
 // ruleFixtureTree writes one fixture under <tmp>/internal/fixture/fixture_test.go
 // and returns the tree root, the way a caller hands the checker a --dir.
 func ruleFixtureTree(t *testing.T, rule ciRule, name string) string {
@@ -332,7 +328,7 @@ func ciVerbLineMatchesTheSpec(t *testing.T, rule ciRule) {
 	assert.Contains(t, spec, rule.verbLine, "the %s verb line is not in docs/SPEC-CI.md:\n%s", rule.key, rule.verbLine)
 }
 
-// templatesRule is the templates row of ciRules.
+// templatesRule is the templates row of the harness.
 var templatesRule = ciRule{
 	key:           "templates",
 	prefix:        "CI-TEMPLATES",

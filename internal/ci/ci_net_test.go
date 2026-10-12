@@ -10,7 +10,7 @@ import (
 // the one shared helper, so `go test -run` and the docs that name it still find
 // it; the rule's inputs and wants are the netRule row below.
 
-// netRule is the net row of ciRules.
+// netRule is the net row of the harness.
 var netRule = ciRule{
 	key:           "net",
 	prefix:        "CI-NET",

@@ -10,7 +10,7 @@ import (
 // the one shared helper, so `go test -run` and the docs that name it still find
 // it; the rule's inputs and wants are the waitsRule row below.
 
-// waitsRule is the waits row of ciRules.
+// waitsRule is the waits row of the harness.
 var waitsRule = ciRule{
 	key:           "waits",
 	prefix:        "CI-WAITS",
