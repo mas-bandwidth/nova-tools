@@ -1458,6 +1458,9 @@ runs the `nova-hook prove --as ada --nonce <n>` line it carries within five
 minutes. A friend's daemon (`nova-friend run`) is her hook: it hooks her in at
 its start. `nova-hook status` lists every record; `nova-hook unhook --as <name>`
 ends one, and every tool refuses the name until it hooks in again.
+`nova-hook hook` and `nova-hook prove` take `--dry-run`: each reads the record
+and prints what it would write -- the plan, or the pushes it would prove -- and
+writes nothing.
 
 ## nova-friend
 

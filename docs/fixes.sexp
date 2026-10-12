@@ -80,6 +80,13 @@
    :title "The cut sets aside a cancelled suite superseded by a later green one"
    :text "A cut refuses only on evidence the commit is red. A whole cancelled suite at the same sha is set aside when a later green suite of the same workflow path covers the same job names, matrix legs included, and its workflow run concluded cancelled; the set-aside runs are named ci-set-aside=<run id>:superseded-by=<run id> and written into the tag annotation and the CHANGELOG section."
    :origin "the v1.2.14 cut, 2026-10-12")
+  (fix "nova-hook-prove-meets-the-onboarding-standard" :release "v1.2.14" :status "planned"
+   :title "nova-hook prove and hook take --dry-run"
+   :text "The onboarding standard holds every writing verb to a --dry-run that plans on one read and writes
+    nothing: nova-hook prove and nova-hook hook now take it, proving the functional walk
+    TestEveryCommandMeetsTheOnboardingStandard green. The dry run reads the record and prints what it would
+    prove, or the plan it would take, and writes no proof, lease or record."
+   :origin "the coordinator, 2026-10-12: the v1.2.14 release gate runs the functional tier, and prove was refused for taking no --dry-run")
   (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."
