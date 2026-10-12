@@ -33,9 +33,6 @@ func sprintLoginPath(getenv func(string) string) (string, error) {
 	return filepath.Join(home, ".config", "nova-sprint", "login.json"), nil
 }
 
-// seatPassword is the seat profile's password when its variable is not in the
-// environment: ok false when the variable is set (the environment's wins). A refusal
-// names the seat, the file and the remedy, never a value.
 // sprintStoreLogin is the record nova-sprint seat login writes: the sprint
 // store's address and ACL user, and where the user's password is in
 // nova-secrets. nova-config reads it when no flag and no NOVA_SPRINT_REDIS*
@@ -87,6 +84,9 @@ func sprintLoginRecord(getenv func(string) string) (l sprintStoreLogin, path str
 	return l, path, true, nil
 }
 
+// seatPassword is the seat profile's password when its variable is not in the
+// environment: ok false when the variable is set (the environment's wins). A refusal
+// names the seat, the file and the remedy, never a value.
 func seatPassword(prof seatcred.ConfigProfile, getenv func(string) string) (pw string, ok bool, err error) {
 	if prof.PasswordEnv == "" || getenv(prof.PasswordEnv) != "" {
 		return "", false, nil
