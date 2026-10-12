@@ -18,7 +18,7 @@ import (
 )
 
 // A PROVIDER FAILURE IS NOT THE CARD'S (docs/SPEC-CARD-CONTRACT.md section 4;
-// tla/CardContract.tla, ProviderFailure).
+// tla/CardContract.tla, THE REASON PREFIXES).
 //
 // A run whose provider failed it ends `done rc=0` with no result, and was judged as a
 // card that chose to publish nothing: a pro card's child ended 7.5 minutes in, the
