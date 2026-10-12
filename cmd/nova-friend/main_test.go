@@ -811,6 +811,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		require.NoError(t, os.Symlink(dir, filepath.Join(r.home, "ai", "bob", "working")))
 		var mu sync.Mutex
 		var runs []string
+		cardTurn := false
 		lists := 0
 		checks := 0
 		w.exec = func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
@@ -844,21 +845,30 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 				return `{"messages":[{"info":{"role":"assistant","cost":0.002}}]}`, 0, nil
 			}
 			runs = append(runs, strings.Join(args, " "))
-			return "ok\n", 0, nil
-		}
-		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-			beats++
-			if beats == 12 {
-				cancel()
+			if len(runs) == 2 {
+				cardTurn = true // the opener and the card turn reached the fake harness
 			}
-			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+			return "ok\n", 0, nil
 		}
 		// The daemon writes its record from the run's goroutine and the lane's
 		// open (its price line) from the turn's, so stdout is under a lock.
 		var outMu sync.Mutex
 		out := &lockedBuilder{mu: &outMu}
 		var errb strings.Builder
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+			mu.Lock()
+			turnStarted := cardTurn
+			mu.Unlock()
+			if turnStarted {
+				outMu.Lock()
+				said := out.String()
+				outMu.Unlock()
+				if strings.Contains(said, "lane=1 session=ses_lane1") {
+					cancel() // laneDone recorded the completed card turn before this beat
+				}
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+		}
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		outMu.Lock()
