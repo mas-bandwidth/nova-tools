@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -213,6 +214,19 @@ type Daemon struct {
 	Model        string
 	LaneHold     func() string
 	LaneHoldDown func(ctx context.Context, message string) error
+	// Fault is the lane's provider-refusal fault report in the state directory
+	// (ReadLaneFault), and FaultWrite records or clears it (WriteLaneFault): the
+	// loop's poll sees a fault it holds whose file a person cleared and releases
+	// the lanes, and a stale file a restart cleared. The friend's main wires it
+	// to the state directory; nil (a test's world) leaves the fault in memory
+	// only, cleared by a restart (docs/SPEC-FRIEND.md, the lanes).
+	Fault      func() string
+	FaultWrite func(report string) error
+	// FaultExternal is a lane fault the limit detector counted itself (lanes
+	// failing alike): the loop adopts it as the same record a provider's refusal
+	// writes, then clears it. The friend's main wires it to the detector; nil:
+	// no such fault.
+	FaultExternal func() string
 	// FaultDown marks her row down until until with reason: the same harness fault
 	// FaultRepeats times within FaultWithin on her lanes (lane_parity.go); her beat says
 	// her down with them until then (friend beat --until --reason). Nil: her lanes are
@@ -583,6 +597,7 @@ type loop struct {
 	refusal      string // the last provider refusal, and how many turns in a row said it
 	streak       int
 	broken, told bool
+	laneFault    LaneFaultWatch       // a lane's provider refusals: the second identical one faults it (docs/SPEC-FRIEND.md, the lanes)
 	unable       string               // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
 	unableTries  int                  // the turns refused for it since
 	refusedTold  map[string]bool      // verbs whose refusal has been raised, once each (inbox.go, "A refused verb")
@@ -778,8 +793,40 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		d.status.Mode = l.mode
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
+		// the fault file is the lane fault's truth: a fault the daemon holds
+		// whose file a person cleared is released, and a stale file a restart
+		// cleared is removed (docs/SPEC-FRIEND.md, the lanes).
+		if d.Fault != nil {
+			// a lane fault the limit detector counted itself (lanes failing alike)
+			// is adopted as the same record a provider's refusal writes, then its
+			// pending is cleared (docs/SPEC-FRIEND.md, the lanes).
+			if d.FaultExternal != nil {
+				if fault := d.FaultExternal(); fault != "" {
+					l.laneFault.Set(fault)
+					if d.FaultWrite != nil {
+						if err := d.FaultWrite(fault); err != nil {
+							d.Record(now.UTC().Format(time.RFC3339) + " lane fault: the report cannot be written to the state directory: " + oneLine(err.Error(), 300))
+						}
+					}
+					d.Record(now.UTC().Format(time.RFC3339) + " lane fault: " + fault + "; the lanes take no card until a restart")
+				}
+			}
+			switch file := d.Fault(); {
+			case file == "" && l.laneFault.Faulted():
+				l.laneFault.Clear()
+				d.Record(now.UTC().Format(time.RFC3339) + " lane fault cleared by a person; the lanes take cards again")
+			case file != "" && !l.laneFault.Faulted():
+				if d.FaultWrite != nil {
+					if err := d.FaultWrite(""); err != nil {
+						d.Record(now.UTC().Format(time.RFC3339) + " lane fault: the clear cannot be written to the state directory: " + oneLine(err.Error(), 300))
+					}
+				}
+				d.Record(now.UTC().Format(time.RFC3339) + " lane fault cleared by a restart")
+			}
+		}
 		switch {
 		case l.broken:
+		case l.laneFault.Faulted(): // a faulted lane takes no card until a restart or a clear (docs/SPEC-FRIEND.md, the lanes)
 		case !proven: // the push rule: nothing goes into a session that has not answered
 		case l.mode == ModeOneShot && l.proofReason != "": // the harness proof failed: no card is taken until the harness answers
 		case l.mode == ModeOneShot:
@@ -880,6 +927,16 @@ func (l *loop) drainResults(now time.Time) {
 		case r := <-l.results:
 			l.batchDone(r, now)
 		case r := <-l.lanes.results:
+			// a provider's refusal on a lane's open is terminal too, never a
+			// retry each minute: the second identical one faults the lane, and
+			// the faulted lane opens no more session (docs/SPEC-FRIEND.md, the
+			// lanes). The open's own handling (laneDone) still runs and records
+			// the failure; the loop steps no lane while the fault stands.
+			if r.open {
+				if fault := l.laneFaulted(r.err, now); fault != "" {
+					l.d.Record(now.UTC().Format(time.RFC3339) + fmt.Sprintf(" lane %d: ", r.ln.n) + fault + "; the lane takes no card until a restart")
+				}
+			}
 			l.laneDone(r, now)
 		case r := <-l.reads.results:
 			l.readDone(r, now)
@@ -1502,6 +1559,132 @@ func (l *loop) stampProgress(now time.Time) {
 	}
 }
 
+// LaneFaultAlike is how many identical provider refusals in a row mark the
+// lane faulted: a guard's denial is terminal, never a retry each minute, and
+// the second identical one is the judgment (docs/SPEC-FRIEND.md, the lanes).
+const LaneFaultAlike = 2
+
+// LaneFaultReport is the one line a faulted lane carries on the beat: lane-fault=<n>
+// refusal="<first line>", where n is how many identical refusals faulted it.
+func LaneFaultReport(n int, line string) string {
+	return fmt.Sprintf("lane-fault=%d refusal=%q", n, line)
+}
+
+// LaneFaultParts is LaneFaultReport's inverse, so a reader (nova-friend
+// status, nova-friend lanes) renders the report's count and refusal line as
+// the two fields the card names without re-parsing the wording in two places.
+// ok is false when report is not a LaneFaultReport (docs/SPEC-FRIEND.md, the
+// lanes).
+func LaneFaultParts(report string) (n int, line string, ok bool) {
+	rest, found := strings.CutPrefix(report, "lane-fault=")
+	if !found {
+		return 0, "", false
+	}
+	num, quoted, found := strings.Cut(rest, " refusal=")
+	if !found {
+		return 0, "", false
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil {
+		return 0, "", false
+	}
+	line, err = strconv.Unquote(quoted)
+	if err != nil {
+		return 0, "", false
+	}
+	return n, line, true
+}
+
+// LaneFaultText is the one judgment the coordinator is told when a lane faults
+// on a provider refusal: the subject and body naming the fault, the hold verb
+// that returns the friend's cards, and the harness check (docs/SPEC-FRIEND.md,
+// the lanes).
+func LaneFaultText(friend, fault string) (subject, body string) {
+	subject = fmt.Sprintf("friend %s: a lane faulted on a provider refusal", friend)
+	body = fmt.Sprintf("%s: %s\nA lane's turns were refused by the provider and the denial is terminal: the lane holds its card and runs nothing more until her daemon restarts. Hold her and return her cards: nova-sprint hold %s --return; run the harness check: nova-friend check --as %s\n",
+		subject, fault, friend, friend)
+	return subject, body
+}
+
+// LaneFaultWatch counts one lane's provider refusals: the LaneFaultAlike-th of
+// the same refusal is the fault, with the first refusal line; a different
+// line starts the count again. The zero value is ready.
+type LaneFaultWatch struct {
+	line   string
+	count  int
+	said   bool
+	report string
+}
+
+// Observe adds one provider-refusal line and answers the lane fault on the
+// LaneFaultAlike-th identical one, once per run of alike refusals.
+func (f *LaneFaultWatch) Observe(line string) (string, bool) {
+	if line == "" {
+		return "", false
+	}
+	if line != f.line {
+		f.line, f.count, f.said = line, 0, false
+	}
+	f.count++
+	if f.count == LaneFaultAlike && !f.said {
+		f.said = true
+		f.report = LaneFaultReport(f.count, line)
+		return f.report, true
+	}
+	return "", false
+}
+
+// Faulted answers whether the lane is faulted: after the LaneFaultAlike-th
+// identical provider refusal the lane holds its card; it is released only by
+// a restart or a clear (docs/SPEC-FRIEND.md, the lanes).
+func (f *LaneFaultWatch) Faulted() bool { return f.said }
+
+// Report is the lane-fault report (lane-fault=<n> refusal="<first line>") the
+// lane last faulted on, for the daemon's beat; "" when the lane is not faulted
+// (docs/SPEC-FRIEND.md, the lanes).
+func (f *LaneFaultWatch) Report() string { return f.report }
+
+// Clear clears the lane fault, the release: the lane may take cards again and
+// a fresh run of alike refusals is counted anew. The loop calls it on a
+// restart and when the fault file a person removed is gone (docs/SPEC-FRIEND.md,
+// the lanes).
+func (f *LaneFaultWatch) Clear() {
+	f.line, f.count, f.said, f.report = "", 0, false, ""
+}
+
+// Set marks the lane faulted with report as given, for a detector that counted
+// its own bound (the limit detector's lanes failing alike): the same record a
+// provider refusal's Observe writes, never counted again.
+func (f *LaneFaultWatch) Set(report string) {
+	f.line, f.count, f.said, f.report = "", 0, true, report
+}
+
+// laneFaulted reads a lane's turn's end for a provider's refusal and, on the
+// LaneFaultAlike-th identical one, marks the lane faulted: the report on the
+// record (and, when the friend's main wires the fault file, the status's
+// lane_fault), and the one judgment to the coordinator with the hold verb and
+// the harness check (LaneFaultText). It answers the fault report when the lane
+// just faulted, "" when it did not. The batch session keeps its own broken
+// streak, never this (docs/SPEC-FRIEND.md, the lanes).
+func (l *loop) laneFaulted(err error, now time.Time) string {
+	var refused ProviderRefused
+	if !errors.As(err, &refused) || l.mode != ModeOneShot {
+		return ""
+	}
+	fault, yes := l.laneFault.Observe(refused.Reason)
+	if !yes {
+		return ""
+	}
+	if l.d.FaultWrite != nil {
+		if err := l.d.FaultWrite(fault); err != nil {
+			l.d.Record(now.UTC().Format(time.RFC3339) + " lane fault: the report cannot be written to the state directory: " + oneLine(err.Error(), 300))
+		}
+	}
+	subject, body := LaneFaultText(l.d.Friend, fault)
+	l.tell(subject, body, now)
+	return fault
+}
+
 // settle is what a turn's end does to the messages it carried, and to the
 // session's refusal streak; it answers the record's words for it. Exit 0
 // acks them together; a provider's refusal leaves them pending, counted
@@ -1543,6 +1726,14 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 			l.broken = true
 			d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, refused.Session, oneLine(refused.Reason, 200), now
 			line += " session=broken"
+		}
+		// a guard's denial is terminal, never a retry each minute: on a lane's
+		// turn (one-shot mode) the second identical refusal faults the lane, the
+		// one judgment to the coordinator with the hold verb and the harness
+		// check; the batch session keeps its own broken streak (docs/SPEC-FRIEND.md,
+		// the lanes).
+		if fault := l.laneFaulted(err, now); fault != "" {
+			line += " " + fault
 		}
 	default:
 		l.streak, l.refusal = 0, ""

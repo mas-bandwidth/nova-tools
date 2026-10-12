@@ -1506,6 +1506,7 @@ usage:
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
+  nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
   nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
@@ -1525,6 +1526,7 @@ example:
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
   nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
   nova-friend status --as bob --dir ./bob
+  nova-friend lanes --as bob --clear-faults
 ```
 
 `nova-friend hook -h`:
@@ -1806,6 +1808,24 @@ flags:
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing
+```
+
+`nova-friend lanes -h`:
+
+```
+usage: nova-friend lanes [flags]
+from `nova-friend help`:
+  nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]
+  nova-friend lanes --as bob --clear-faults
+flags:
+  --as <string>  your name, the friend whose lanes these are (required)
+  --clear-faults  clear the lane fault so the lanes take cards again; writes nothing without it
+  --dir <string>  the friend's working directory, whose state directory holds the fault (default: found by --as)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
+exit codes: 0 done (a fault read, or a clear), 2 the fault file cannot be removed.
+effect: local write: writes files on this machine: clears the one-shot lanes' provider-refusal fault lane-fault from the state directory
 ```
 
 `nova-friend resume -h`:

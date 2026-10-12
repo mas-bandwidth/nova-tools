@@ -150,9 +150,14 @@ func DownArgv(friend string, r Refusal) []string {
 	return []string{"friend", "down", friend, "--reason", DownReason(r), "--until", r.Until.UTC().Format(time.RFC3339)}
 }
 
+// AlikeJudgmentPrefix opens AlikeJudgment; the first error line follows. It is
+// exported so the daemon's wiring reads the line back out of the judgment
+// without spelling the prefix a second time.
+const AlikeJudgmentPrefix = "lanes failing alike: "
+
 // AlikeJudgment is the one judgment the seat is told when lanes fail alike.
 func AlikeJudgment(line string) string {
-	return "lanes failing alike: " + line
+	return AlikeJudgmentPrefix + line
 }
 
 // alikeLanes counts lanes ending with the same first error line: the third
