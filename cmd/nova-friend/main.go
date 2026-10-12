@@ -407,7 +407,7 @@ func friendTool(w world) *tool.Tool {
 		f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
 		f.Required("dir", "the friend's working directory: the session's, and where the state files live")
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)")
-		f.String("adapter", "", "delivery route: folder for an existing watched Codex session (default: the harness adapter)")
+		f.String("adapter", "", "delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused")
 		f.String("delivery-dir", "", "existing folder watched by that Codex session when --adapter folder")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
@@ -417,7 +417,7 @@ func friendTool(w world) *tool.Tool {
 		f.Float64("spend-cap", friend.DefaultSpendCapUSD, "the spend cap in USD per day per provider; at the cap turns stop and one judgment is raised (default: $20)")
 		f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)")
 		f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)")
-		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
+		f.Bool("notifications-only", false, "unavailable: the retired Codex queue receiver refuses; use active-session tool notifications")
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
 		f.Duration("notify-window", friend.NotificationWindow, "global card-delivery burst window and minimum wake interval; urgent messages bypass it")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
@@ -1346,7 +1346,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// push a turn into: its session check goes in by the folder instead (friend.FolderCheck), and
 	// its beat is never held back on the answer (docs/SPEC-FRIEND.md, The push proof)
 	_, perCard := deliver.(friend.CardRunner)
-	if o := undriven(c.Str("harness"), dir, "the daemon did not start"); o != nil && !perCard {
+	if o := undriven(c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), "the daemon did not start"); o != nil && !perCard {
 		return o
 	}
 	if dry {
@@ -2124,7 +2124,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 	// a harness nothing pushes into is refused before anything is written (friend.PushProof); one that
 	// runs each card as a process of its own (claude) proves by the folder (friend.FolderCheck) and is not
 	if !friend.RunsCards(c.Str("harness")) {
-		if o := undriven(c.Str("harness"), c.Str("dir"), "nothing was written or loaded"); o != nil {
+		if o := undriven(c.Str("harness"), c.Str("dir"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), "nothing was written or loaded"); o != nil {
 			return o
 		}
 	}
@@ -2218,12 +2218,12 @@ func (w world) install(c *tool.Call) *tool.Out {
 
 // undriven is the refusal of a harness whose adapter has no deliver command
 // (friend.Undriven), with the adapter card as its remedy and what was left
-// undone; nil for a harness that has one, or an unknown one (the flag check
-// names it).
-func undriven(harness, dir, undone string) *tool.Out {
-	d, err := friend.NewDeliverer(harness, dir, "", nil, nil)
+// undone; nil for a supported route (SPEC-FRIEND.md, Codex). Factory errors
+// are refusals here too, independent of the earlier flag validation.
+func undriven(harness, dir, session, adapter, deliveryDir, undone string) *tool.Out {
+	d, err := friend.SelectDeliverer("", harness, dir, session, adapter, deliveryDir, nil, nil)
 	if err != nil {
-		return nil
+		return tool.Refuse(err.Error() + "; " + undone)
 	}
 	why, remedy, ok := friend.Undriven(d, harness)
 	if !ok {

@@ -21,7 +21,7 @@ func TestCodexRefusedInstallPreservesSettingsAndInspectionNamesDrift(t *testing.
 	cli.Do(t, "check", "--settings", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(1).
 		Err("CHECK DRIFT harness=codex settings=3 drift=1",
 			`CHECK DRIFT harness=codex file=`+config+` name=sandbox_workspace_write.writable_roots want="/w/bob" have="[]"`,
-			"Codex native push is unavailable")
+			"settings repair requires an already watched folder", "--adapter folder --session <real-session> --delivery-dir <existing-watched-folder>")
 	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--dry-run").Exit(2).
 		Err("Codex native push is unavailable")
 	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(2).

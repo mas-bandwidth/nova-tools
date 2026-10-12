@@ -64,3 +64,11 @@ func TestCodexImplicitDeliveryRefusesBeforeAnySideEffect(t *testing.T) {
 		}
 	}
 }
+
+// The install/run preflight refuses even without the CLI flag check; an explicit
+// folder remains a supported route (SPEC-FRIEND.md, Codex).
+func TestCodexUndrivenPreflightRefusesImplicitRoute(t *testing.T) {
+	t.Parallel()
+	assert.NotNil(t, undriven("codex", "/work", "real-thread", "", "", "nothing was written"))
+	assert.Nil(t, undriven("codex", "/work", "real-thread", "folder", t.TempDir(), "nothing was written"))
+}
