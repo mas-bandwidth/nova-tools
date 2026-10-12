@@ -51,8 +51,8 @@ type world struct {
 	nonce    func() string
 	holder   string        // who holds the pushes this process holds, as the lease shows it
 	tick     time.Duration // one blocking read of the loop
-	forFor   string // --for duration, causes hook to exit before harness bound
-	hooksDir string // directory for hook state files
+	forFor   string        // --for duration, causes hook to exit before harness bound
+	hooksDir string        // directory for hook state files
 }
 
 func realWorld() world {
