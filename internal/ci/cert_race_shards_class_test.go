@@ -40,13 +40,14 @@ var certRaceMinShards = map[string]int{
 // internal/sprint/refmodel 60.236, cmd/nova-swarm 44.763 and internal/docs 18.834
 // together. Its completed legs also measure internal/sprint 15.951 s,
 // pkg/redisconn 18.169, pkg/config 17.741 and pkg/secrets 15.577.
+// Fleet reaches 75.035 s under concurrent Ansible fixtures in run 38270878216.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
 	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
 	"internal/update", "cmd/nova-secrets",
 	"cmd/nova-swarm",
 	"internal/docs", "pkg/redisconn", "pkg/config",
-	"pkg/secrets",
+	"pkg/secrets", "nova-tools/fleet",
 }
 
 const certRaceDealStep = "deal this shard's packages"
