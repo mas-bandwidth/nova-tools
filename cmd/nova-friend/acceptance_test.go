@@ -49,56 +49,67 @@ func TestAcceptanceAndRunAssembleTheSameWall(t *testing.T) {
 	// time: the lane's daemon parks on a clock, which the bubble drives.
 	t.Run("run's wall", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			r := newRig(t, "ada", "bob")
-			w := r.world()
-			var cancel context.CancelFunc
-			w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
-				ctx, cancel = context.WithCancel(ctx)
-				return ctx, cancel
-			}
-			w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
-			require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
-			var mu sync.Mutex
-			var runWall friend.Wall
-			w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
-				return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
-					if friend.InLane(ctx) {
-						mu.Lock()
-						runWall = wl
-						mu.Unlock()
-						out := filepath.Join(dir, "outbox", "c1~15")
-						if err := os.MkdirAll(out, 0o755); err != nil {
-							return "", 0, err
-						}
-						for _, f := range []string{"REPORT.md", "RESULT.md"} {
-							if err := os.WriteFile(filepath.Join(out, f), []byte("done\n"), 0o644); err != nil {
-								return "", 0, err
-							}
-						}
-					}
-					return `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0125,"session_id":"s1","result":"ok"}` + "\n", 0, nil
-				}
-			}
-			beats := 0
-			w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-				beats++
-				if beats == 12 {
-					cancel()
-				}
-				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
-			}
-			var out, errb strings.Builder
-			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, flags...),
-				strings.NewReader(""), &out, &errb, w)
-			require.Equal(t, 0, code, errb.String())
-			mu.Lock()
-			defer mu.Unlock()
-			require.NotEmpty(t, runWall.Args(), "the lane ran in no wall\n%s", out.String())
-			assert.Equal(t, accWall.Args(), runWall.Args(), "acceptance and run built different walls from the same flags and row")
+			runWall, out := runOneShotLane(t, dir, "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", flags...)
+			assert.Equal(t, accWall.Args(), runWall.Args(), "acceptance and run built different walls from the same flags and row\n%s", out)
 		})
 	})
+}
+
+// runOneShotLane runs one `run` of a one-shot claude lane over dir inside the
+// current synctest bubble and returns the wall the lane ran under and the run's
+// output. The daemon parks on the injected clock, which the bubble drives; the
+// lane ends after the twelfth beat. beatReply is what the beat answers, so the
+// caller can vary the row's profile, and extra are the flags the caller adds.
+func runOneShotLane(t *testing.T, dir, beatReply string, extra ...string) (friend.Wall, string) {
+	t.Helper()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+	var mu sync.Mutex
+	var runWall friend.Wall
+	w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
+		return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+			if friend.InLane(ctx) {
+				mu.Lock()
+				runWall = wl
+				mu.Unlock()
+				out := filepath.Join(dir, "outbox", "c1~15")
+				if err := os.MkdirAll(out, 0o755); err != nil {
+					return "", 0, err
+				}
+				for _, f := range []string{"REPORT.md", "RESULT.md"} {
+					if err := os.WriteFile(filepath.Join(out, f), []byte("done\n"), 0o644); err != nil {
+						return "", 0, err
+					}
+				}
+			}
+			return `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0125,"session_id":"s1","result":"ok"}` + "\n", 0, nil
+		}
+	}
+	beats := 0
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		beats++
+		if beats == 12 {
+			cancel()
+		}
+		return beatReply, nil
+	}
+	var out, errb strings.Builder
+	code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, extra...),
+		strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, errb.String())
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, runWall.Args(), "the lane ran in no wall\n%s", out.String())
+	return runWall, out.String()
 }
 
 // A lane program that exits 126 inside the wall makes acceptance exit 126 and
@@ -192,54 +203,7 @@ func TestAcceptanceRunsTheAntigravityAdapterPath(t *testing.T) {
 func TestRunEmptyRowProfileOverridesTheProfileFlag(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		r := newRig(t, "ada", "bob")
-		w := r.world()
-		var cancel context.CancelFunc
-		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
-			ctx, cancel = context.WithCancel(ctx)
-			return ctx, cancel
-		}
-		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
-		dir := t.TempDir()
-		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
-		var mu sync.Mutex
-		var runWall friend.Wall
-		w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
-			return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
-				if friend.InLane(ctx) {
-					mu.Lock()
-					runWall = wl
-					mu.Unlock()
-					out := filepath.Join(dir, "outbox", "c1~15")
-					if err := os.MkdirAll(out, 0o755); err != nil {
-						return "", 0, err
-					}
-					for _, f := range []string{"REPORT.md", "RESULT.md"} {
-						if err := os.WriteFile(filepath.Join(out, f), []byte("done\n"), 0o644); err != nil {
-							return "", 0, err
-						}
-					}
-				}
-				return `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0125,"session_id":"s1","result":"ok"}` + "\n", 0, nil
-			}
-		}
-		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-			beats++
-			if beats == 12 {
-				cancel()
-			}
-			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_profile=", nil
-		}
-		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--profile", "strict"},
-			strings.NewReader(""), &out, &errb, w)
-		require.Equal(t, 0, code, errb.String())
-		mu.Lock()
-		defer mu.Unlock()
-		require.NotEmpty(t, runWall.Args(), "the lane ran in no wall\n%s", out.String())
+		runWall, _ := runOneShotLane(t, t.TempDir(), "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_profile=", "--profile", "strict")
 		assert.Equal(t, "", runWall.Profile, "an empty row_profile= must override --profile, the behaviour run had before the shared assembly")
 	})
 }

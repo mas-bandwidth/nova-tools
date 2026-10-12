@@ -70,36 +70,41 @@ func TestRemoveUnderRootsRefusesAnUnsafeRoot(t *testing.T) {
 
 func TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome(t *testing.T) {
 	t.Parallel()
-	fakeHome := t.TempDir()
-	policy := Policy{UserHomeDir: func() (string, error) { return fakeHome, nil }}
-	fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
-	require.NoError(t, err, "could not resolve the fixture's fake home: %v", err)
-	victim := filepath.Join(fakeHomeReal, "victim")
-	mustWrite(t, filepath.Join(victim, "keep"), "x")
-
-	elsewhere := t.TempDir()
-	rootLink := filepath.Join(elsewhere, "home-link")
-	require.NoError(t, os.Symlink(fakeHomeReal, rootLink))
-
-	err = policy.RemoveUnderRoots(victim, rootLink)
-	assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", victim, rootLink, err)
-	assert.True(t, exists(victim), "RemoveUnderRoots deleted %s through a root that is a symlink to the fixture's home", victim)
+	assertRefusedUnderRootForHome(t, false)
 }
 
 func TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot(t *testing.T) {
 	t.Parallel()
+	assertRefusedUnderRootForHome(t, true)
+}
+
+// assertRefusedUnderRootForHome pins that RemoveUnderRoots refuses a root that
+// resolves to the fixture's home and leaves the path below it alone. wide spells
+// the root as the home's parent (HOME under a wider root); otherwise the root is
+// a symlink to the home. The two refusals share the same arrange block, so it
+// lives here once.
+func assertRefusedUnderRootForHome(t *testing.T, wide bool) {
+	t.Helper()
 	fakeHome := t.TempDir()
 	policy := Policy{UserHomeDir: func() (string, error) { return fakeHome, nil }}
 	fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
 	require.NoError(t, err, "could not resolve the fixture's fake home: %v", err)
-	marker := filepath.Join(fakeHomeReal, "marker")
-	mustWrite(t, marker, "x")
 
-	parent := filepath.Dir(fakeHomeReal)
+	var path, root string
+	if wide {
+		path, root = fakeHomeReal, filepath.Dir(fakeHomeReal)
+	} else {
+		rootLink := filepath.Join(t.TempDir(), "home-link")
+		require.NoError(t, os.Symlink(fakeHomeReal, rootLink))
+		path, root = filepath.Join(fakeHomeReal, "victim"), rootLink
+	}
+	keep := filepath.Join(path, "keep")
+	mustWrite(t, keep, "x")
 
-	err = policy.RemoveUnderRoots(fakeHomeReal, parent)
-	assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", fakeHomeReal, parent, err)
-	assert.True(t, exists(marker), "RemoveUnderRoots deleted %s, the fixture's stand-in home, under a wider root", fakeHomeReal)
+	err = policy.RemoveUnderRoots(path, root)
+	assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", path, root, err)
+	assert.True(t, exists(path), "RemoveUnderRoots deleted %s under %q; a refusal must leave it", path, root)
+	assert.True(t, exists(keep), "RemoveUnderRoots deleted %s, a file below the refused path %q", keep, path)
 }
 
 // RemoveUnder resolves its root through symlinks for the containment test but never

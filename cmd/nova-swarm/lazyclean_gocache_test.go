@@ -22,6 +22,10 @@ import (
 // a round. The rounds are explicit calls on a fixed clock; nothing here waits.
 
 // buildEntry writes one Go build cache output entry of size bytes, last used at.
+// It is the same writer as gocache.cacheEntry and is kept verbatim here: sharing
+// would need an exported helper in a non-test file of pkg/gocache, which is
+// outside this card's PATHS (test files only) and would add a test helper to the
+// package's public API; the copy is ten lines and both sides pin the same format.
 func buildEntry(t *testing.T, dir, seed string, size int, at time.Time) string {
 	t.Helper()
 	sum := sha256.Sum256([]byte(seed))

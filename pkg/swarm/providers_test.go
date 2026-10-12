@@ -45,70 +45,42 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 	}
 
 	for _, p := range providers {
-		t.Run(p.Name+"/linux", func(t *testing.T) {
-			argv, err := LaunchArgv(p.Name, "linux")
-			require.NoError(t, err, "LaunchArgv(%q, linux): %v", p.Name, err)
-			require.NotEmpty(t, argv, "LaunchArgv(%q, linux) returned empty argv", p.Name)
+		// linux and darwin differ only in the GOOS handed to LaunchArgv, so
+		// the table is the OS.
+		for _, goos := range []string{"linux", "darwin"} {
+			t.Run(p.Name+"/"+goos, func(t *testing.T) {
+				argv, err := LaunchArgv(p.Name, goos)
+				require.NoError(t, err, "LaunchArgv(%q, %s): %v", p.Name, goos, err)
+				require.NotEmpty(t, argv, "LaunchArgv(%q, %s) returned empty argv", p.Name, goos)
 
-			harness := argv[0]
-			assert.False(t, isBespokeScript(harness), "LaunchArgv(%q, linux) harness %q is a bespoke per-provider script; want the one launcher", p.Name, harness)
-			assert.True(t, standardLaunchers[harness], "LaunchArgv(%q, linux) harness %q is not a recognized standard launcher", p.Name, harness)
+				harness := argv[0]
+				assert.False(t, isBespokeScript(harness), "LaunchArgv(%q, %s) harness %q is a bespoke per-provider script; want the one launcher", p.Name, goos, harness)
+				assert.True(t, standardLaunchers[harness], "LaunchArgv(%q, %s) harness %q is not a recognized standard launcher", p.Name, goos, harness)
 
-			args := argv[1:]
-			argsJSON, _ := json.Marshal(args)
-			t.Logf("LaunchArgv(%q, linux): %s %s", p.Name, harness, string(argsJSON))
+				args := argv[1:]
+				argsJSON, _ := json.Marshal(args)
+				t.Logf("LaunchArgv(%q, %s): %s %s", p.Name, goos, harness, string(argsJSON))
 
-			if p.HarnessArgs != "" {
-				var expectedArgs []string
-				err = json.Unmarshal([]byte(p.HarnessArgs), &expectedArgs)
-				require.NoError(t, err, "parse harness_args for %q: %v", p.Name, err)
-				// The model placeholder should be expanded to the table's model.
-				for _, a := range expectedArgs {
-					if a == "{model}" {
-						found := false
-						for _, actual := range args {
-							if actual == p.Model {
-								found = true
-								break
+				if p.HarnessArgs != "" {
+					var expectedArgs []string
+					err = json.Unmarshal([]byte(p.HarnessArgs), &expectedArgs)
+					require.NoError(t, err, "parse harness_args for %q: %v", p.Name, err)
+					// The model placeholder should be expanded to the table's model.
+					for _, a := range expectedArgs {
+						if a == "{model}" {
+							found := false
+							for _, actual := range args {
+								if actual == p.Model {
+									found = true
+									break
+								}
 							}
+							assert.True(t, found, "LaunchArgv(%q, %s) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, goos, args, p.Model)
 						}
-						assert.True(t, found, "LaunchArgv(%q, linux) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
 					}
 				}
-			}
-		})
-
-		t.Run(p.Name+"/darwin", func(t *testing.T) {
-			argv, err := LaunchArgv(p.Name, "darwin")
-			require.NoError(t, err, "LaunchArgv(%q, darwin): %v", p.Name, err)
-			require.NotEmpty(t, argv, "LaunchArgv(%q, darwin) returned empty argv", p.Name)
-
-			harness := argv[0]
-			assert.False(t, isBespokeScript(harness), "LaunchArgv(%q, darwin) harness %q is a bespoke per-provider script; want the one launcher", p.Name, harness)
-			assert.True(t, standardLaunchers[harness], "LaunchArgv(%q, darwin) harness %q is not a recognized standard launcher", p.Name, harness)
-
-			args := argv[1:]
-			argsJSON, _ := json.Marshal(args)
-			t.Logf("LaunchArgv(%q, darwin): %s %s", p.Name, harness, string(argsJSON))
-
-			if p.HarnessArgs != "" {
-				var expectedArgs []string
-				err = json.Unmarshal([]byte(p.HarnessArgs), &expectedArgs)
-				require.NoError(t, err, "parse harness_args for %q: %v", p.Name, err)
-				for _, a := range expectedArgs {
-					if a == "{model}" {
-						found := false
-						for _, actual := range args {
-							if actual == p.Model {
-								found = true
-								break
-							}
-						}
-						assert.True(t, found, "LaunchArgv(%q, darwin) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
-					}
-				}
-			}
-		})
+			})
+		}
 
 		t.Run(p.Name+"/os-diff", func(t *testing.T) {
 			linuxArgv, errL := LaunchArgv(p.Name, "linux")

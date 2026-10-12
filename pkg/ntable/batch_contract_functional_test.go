@@ -35,44 +35,8 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 
 	// 2. Successful ApplyBatch creating m1 and m2
 	rev1 := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	manifest1 := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev1,
-		OperationID:           "op-create-1",
-		Actor:                 "builder",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID: "m1",
-				Expect: &ntable.MemberExpect{
-					Absent: true,
-				},
-				Create: &ntable.MemberCreateOp{
-					Row:   "build",
-					Col:   "ready",
-					Score: 10,
-				},
-				Set: map[string]string{
-					"definition": "job-1",
-				},
-			},
-			{
-				ID: "m2",
-				Expect: &ntable.MemberExpect{
-					Absent: true,
-				},
-				Create: &ntable.MemberCreateOp{
-					Row:   "build",
-					Col:   "ready",
-					Score: 20,
-				},
-				Set: map[string]string{
-					"definition": "job-2",
-				},
-			},
-		},
-	}
+	manifest1 := createTwoMembers(rev1, "op-create-1", "builder", 10,
+		map[string]string{"definition": "job-1"}, 20, map[string]string{"definition": "job-2"})
 
 	rcpt1, err := ntable.ApplyBatch(ctx, c, manifest1)
 	require.NoError(t, err, "ApplyBatch create")
@@ -374,28 +338,8 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	initTableRev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
 	// 1. First batch: create m1 and m2
-	manifest1 := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: initTableRev,
-		OperationID:           "op-create-m1-m2",
-		Actor:                 "builder-1",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID:     "m1",
-				Expect: &ntable.MemberExpect{Absent: true},
-				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 10},
-				Set:    map[string]string{"env": "linux", "status": "pending"},
-			},
-			{
-				ID:     "m2",
-				Expect: &ntable.MemberExpect{Absent: true},
-				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 20},
-				Set:    map[string]string{"env": "darwin"},
-			},
-		},
-	}
+	manifest1 := createTwoMembers(initTableRev, "op-create-m1-m2", "builder-1", 10,
+		map[string]string{"env": "linux", "status": "pending"}, 20, map[string]string{"env": "darwin"})
 
 	raw1, err := json.Marshal(manifest1)
 	require.NoError(t, err, "marshal manifest1")
@@ -572,28 +516,8 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 	// Sequence of batches applied on store 1:
 	// Batch 1: Create m1 and m2
 	rev1 := c1.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	m1 := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev1,
-		OperationID:           "op-s1-1",
-		Actor:                 "worker-a",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID:     "m1",
-				Expect: &ntable.MemberExpect{Absent: true},
-				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 100},
-				Set:    map[string]string{"flavor": "vanilla", "priority": "high"},
-			},
-			{
-				ID:     "m2",
-				Expect: &ntable.MemberExpect{Absent: true},
-				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 200},
-				Set:    map[string]string{"flavor": "chocolate"},
-			},
-		},
-	}
+	m1 := createTwoMembers(rev1, "op-s1-1", "worker-a", 100,
+		map[string]string{"flavor": "vanilla", "priority": "high"}, 200, map[string]string{"flavor": "chocolate"})
 	_, err := ntable.ApplyBatch(ctx, c1, m1)
 	require.NoError(t, err, "batch 1 on c1")
 
@@ -2121,6 +2045,34 @@ func TestBatchAcceptedOmittedRevisionAfterWriterAdvanceWitness(t *testing.T) {
 	require.Equal(t, uint64(4), m1W3.Revision, "expected m1 at revision 4 after writer3, got %+v", m1W3)
 	require.Equal(t, "step3", m1W3.Fields["status"], "expected m1 at revision 4 after writer3, got %+v", m1W3)
 	require.Equal(t, "accepted", m1W3.Fields["wire"], "expected m1 at revision 4 after writer3, got %+v", m1W3)
+}
+
+// createTwoMembers is the batch manifest that creates m1 and m2 at build:ready in
+// table demo under table revision rev, with each member's score and fields. Three
+// contracts build this same shape, so it lives here once.
+func createTwoMembers(rev, opID, actor string, score1 float64, set1 map[string]string, score2 float64, set2 map[string]string) ntable.BatchManifest {
+	return ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           opID,
+		Actor:                 actor,
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: score1},
+				Set:    set1,
+			},
+			{
+				ID:     "m2",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: score2},
+				Set:    set2,
+			},
+		},
+	}
 }
 
 // requirePlacedMember reads the member id from rs and requires it to be placed

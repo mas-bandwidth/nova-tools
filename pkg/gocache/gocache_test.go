@@ -20,6 +20,10 @@ import (
 
 // cacheEntry writes one build cache entry (an output, -d) of size bytes in the cache's
 // subdirectory for its hash, last used at; it returns its path.
+// It is the same writer as cmd/nova-swarm's buildEntry and is kept verbatim here:
+// sharing would need an exported helper in a non-test file of this package, which is
+// outside this card's PATHS (test files only) and would add a test helper to the
+// public API; the copy is ten lines and both sides pin the same format.
 func cacheEntry(t *testing.T, dir, seed string, size int, at time.Time) string {
 	t.Helper()
 	sum := sha256.Sum256([]byte(seed))
