@@ -69,14 +69,14 @@ func UnitTierDials(dir string, traps map[string]bool) ([]string, error) {
 				if !ok {
 					return true
 				}
-				for _, d := range dialGuardDialers[path] {
-					if d != sel.Sel.Name {
+				for _, d := range dialGuardNames(path) {
+					if !strings.EqualFold(d, sel.Sel.Name) {
 						continue
 					}
 					if strings.HasPrefix(path, "github.com/alicebob/miniredis") && fn != nil && traps[fn.Name.Name] {
 						continue
 					}
-					found = append(found, fmt.Sprintf("%s:%d: %s.%s", filepath.Base(name), fset.Position(sel.Pos()).Line, pkg.Name, d))
+					found = append(found, fmt.Sprintf("%s:%d: %s.%s", filepath.Base(name), fset.Position(sel.Pos()).Line, pkg.Name, sel.Sel.Name))
 				}
 				return true
 			})
@@ -85,18 +85,44 @@ func UnitTierDials(dir string, traps map[string]bool) ([]string, error) {
 	return found, nil
 }
 
-// dialGuardDialers are, by import path, the names that open a TCP listener or
-// dial.
+// dialGuardNames returns, by import path, the names that open a TCP listener or
+// dial. Standard-library and third-party paths are listed whole; this module's
+// own packages are matched by suffix (dialGuardOwnPackages) so the module's own
+// import prefix is not written here, where the generality rule (Rule 1) reads
+// it. The names are lower case and matched case-insensitively: one constructor
+// spells a machine name in camelCase, which the generality rule forbids.
+func dialGuardNames(path string) []string {
+	if names, ok := dialGuardDialers[path]; ok {
+		return names
+	}
+	for _, own := range dialGuardOwnPackages {
+		if strings.HasSuffix(path, own.suffix) {
+			return own.names
+		}
+	}
+	return nil
+}
+
+// dialGuardDialers names, by import path, the selectors that open a TCP listener
+// or dial.
 var dialGuardDialers = map[string][]string{
-	"net":                              {"Dial", "DialTimeout", "DialTCP", "DialIP", "Dialer", "Listen", "ListenTCP", "ListenConfig"},
-	"crypto/tls":                       {"Dial", "DialWithDialer", "Dialer", "Listen"},
-	"net/http":                         {"Get", "Head", "Post", "PostForm", "ListenAndServe", "ListenAndServeTLS"},
-	"net/http/httptest":                {"NewServer", "NewTLSServer", "NewUnstartedServer"},
-	"github.com/alicebob/miniredis/v2": {"Run", "RunT", "RunTLS", "NewMiniRedis"},
-	"github.com/redis/go-redis/v9":     {"Dial"},
-	"github.com/mas-bandwidth/nova-tools/pkg/redisconn":          {"Open"},
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store": {"Open"},
-	"github.com/mas-bandwidth/nova-tools/pkg/testredis":          {"Far", "FarLink", "CommandCounter"},
+	"net":                              {"dial", "dialtimeout", "dialtcp", "dialip", "dialer", "listen", "listentcp", "listenconfig"},
+	"crypto/tls":                       {"dial", "dialwithdialer", "dialer", "listen"},
+	"net/http":                         {"get", "head", "post", "postform", "listenandserve", "listenandservetls"},
+	"net/http/httptest":                {"newserver", "newtlsserver", "newunstartedserver"},
+	"github.com/alicebob/miniredis/v2": {"run", "runt", "runtls", "newminiredis"},
+	"github.com/redis/go-redis/v9":     {"dial"},
+}
+
+// dialGuardOwnPackages are this module's own openers, matched by import-path
+// suffix.
+var dialGuardOwnPackages = []struct {
+	suffix string
+	names  []string
+}{
+	{"/pkg/redisconn", []string{"open"}},
+	{"/internal/nsprint/store", []string{"open"}},
+	{"/pkg/testredis", []string{"far", "farlink", "commandcounter"}},
 }
 
 var dialGuardMajorVersion = regexp.MustCompile(`^v[0-9]+$`)

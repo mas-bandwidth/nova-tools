@@ -31,6 +31,7 @@ func PipeStore(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 		},
 	})
 	t.Cleanup(func() {
+		// ignored: a best-effort close of the in-memory client; the test's own assertions are the check that matters, and cleanup has nothing to report it to
 		_ = client.Close()
 		assert.Equal(t, piped.Load(), int64(mr.TotalConnectionCount()), "the fake took a TCP connection beside its pipes")
 	})
