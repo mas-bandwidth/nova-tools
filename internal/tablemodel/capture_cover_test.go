@@ -220,108 +220,87 @@ func TestCaptureCoverCloneEventCopiesEvent(t *testing.T) {
 	tassert.NotEqual(t, e["verb"], c["verb"], "modifying clone should not affect original")
 }
 
-// TestCaptureCoverJsonListParsesJSONList tests jsonList.
-func TestCaptureCoverJsonListParsesJSONList(t *testing.T) {
+// TestCaptureCoverJSONParses holds every JSON-array reader to its cases: a
+// valid list parses, an empty list parses to empty, and a non-list, an element
+// of the wrong type or a malformed document refuses with the reader's own
+// message. Each old test is a case, named so `go test -run` still finds it
+// under this table's name.
+func TestCaptureCoverJSONParses(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name   string
-		input  string
-		want   []any
-		refuse bool
-	}{
-		{"valid array", `[1, "two", true]`, []any{float64(1), "two", true}, false},
-		{"empty array", `[]`, []any{}, false},
-		{"nested array", `[[1,2], [3,4]]`, []any{[]any{float64(1), float64(2)}, []any{float64(3), float64(4)}}, false},
-		{"object not array refuses", `{"key": "value"}`, nil, true},
-		{"string not array refuses", `"not an array"`, nil, true},
-		{"invalid JSON refuses", `[1, 2,`, nil, true},
-		{"number not array refuses", `42`, nil, true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			err := guard(func() {
-				got := jsonList(tc.input)
-				if !tc.refuse {
-					tassert.Equal(t, tc.want, got, "jsonList(%q) = %v", tc.input, got)
-				}
-			})
-			if tc.refuse {
-				tassert.Error(t, err, "jsonList should refuse for %s", tc.name)
-				tassert.ErrorContains(t, err, "not a JSON list", "error should mention not a JSON list")
-			} else {
-				tassert.NoError(t, err, "jsonList failed unexpectedly for %s: %v", tc.name, err)
-			}
-		})
-	}
-}
 
-// TestCaptureCoverJsonStringsParsesJSONStringArray tests jsonStrings.
-func TestCaptureCoverJsonStringsParsesJSONStringArray(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
+	type jsonParseCase struct {
 		name   string
 		input  string
-		want   []string
+		want   any
 		refuse bool
+	}
+	parsers := []struct {
+		name      string
+		parse     func(string) any
+		refuseErr string
+		cases     []jsonParseCase
 	}{
-		{"valid string array", `["a", "b", "c"]`, []string{"a", "b", "c"}, false},
-		{"empty array", `[]`, []string{}, false},
-		{"single element", `["only"]`, []string{"only"}, false},
-		{"non-string element refuses", `["a", 1, "c"]`, nil, true},
-		{"object not array refuses", `{"key": "value"}`, nil, true},
-		{"string not array refuses", `"not an array"`, nil, true},
-		{"invalid JSON refuses", `["a", "b"`, nil, true},
+		{
+			name:      "TestCaptureCoverJsonListParsesJSONList",
+			parse:     func(s string) any { return jsonList(s) },
+			refuseErr: "not a JSON list",
+			cases: []jsonParseCase{
+				{"valid array", `[1, "two", true]`, []any{float64(1), "two", true}, false},
+				{"empty array", `[]`, []any{}, false},
+				{"nested array", `[[1,2], [3,4]]`, []any{[]any{float64(1), float64(2)}, []any{float64(3), float64(4)}}, false},
+				{"object not array refuses", `{"key": "value"}`, nil, true},
+				{"string not array refuses", `"not an array"`, nil, true},
+				{"invalid JSON refuses", `[1, 2,`, nil, true},
+				{"number not array refuses", `42`, nil, true},
+			},
+		},
+		{
+			name:      "TestCaptureCoverJsonStringsParsesJSONStringArray",
+			parse:     func(s string) any { return jsonStrings(s) },
+			refuseErr: "not a JSON list of strings",
+			cases: []jsonParseCase{
+				{"valid string array", `["a", "b", "c"]`, []string{"a", "b", "c"}, false},
+				{"empty array", `[]`, []string{}, false},
+				{"single element", `["only"]`, []string{"only"}, false},
+				{"non-string element refuses", `["a", 1, "c"]`, nil, true},
+				{"object not array refuses", `{"key": "value"}`, nil, true},
+				{"string not array refuses", `"not an array"`, nil, true},
+				{"invalid JSON refuses", `["a", "b"`, nil, true},
+			},
+		},
+		{
+			name:      "TestCaptureCoverJsonStrings2ParsesJSONStringArray",
+			parse:     func(s string) any { return jsonStrings2(s) },
+			refuseErr: "not a list of strings",
+			cases: []jsonParseCase{
+				{"valid string array", `["r1:c1", "r1:c2"]`, []string{"r1:c1", "r1:c2"}, false},
+				{"empty array", `[]`, []string{}, false},
+				{"single element", `["only"]`, []string{"only"}, false},
+				{"non-string element refuses", `["a", 1]`, nil, true},
+				{"object not array refuses", `{"key": "value"}`, nil, true},
+				{"invalid JSON refuses", `["a", "b"`, nil, true},
+			},
+		},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, p := range parsers {
+		t.Run(p.name, func(t *testing.T) {
 			t.Parallel()
-			err := guard(func() {
-				got := jsonStrings(tc.input)
-				if !tc.refuse {
-					tassert.Equal(t, tc.want, got, "jsonStrings(%q) = %v", tc.input, got)
-				}
-			})
-			if tc.refuse {
-				tassert.Error(t, err, "jsonStrings should refuse for %s", tc.name)
-				tassert.ErrorContains(t, err, "not a JSON list of strings", "error should mention not a JSON list of strings")
-			} else {
-				tassert.NoError(t, err, "jsonStrings failed unexpectedly for %s: %v", tc.name, err)
-			}
-		})
-	}
-}
-
-// TestCaptureCoverJsonStrings2ParsesJSONStringArray tests jsonStrings2.
-func TestCaptureCoverJsonStrings2ParsesJSONStringArray(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		input  string
-		want   []string
-		refuse bool
-	}{
-		{"valid string array", `["r1:c1", "r1:c2"]`, []string{"r1:c1", "r1:c2"}, false},
-		{"empty array", `[]`, []string{}, false},
-		{"single element", `["only"]`, []string{"only"}, false},
-		{"non-string element refuses", `["a", 1]`, nil, true},
-		{"object not array refuses", `{"key": "value"}`, nil, true},
-		{"invalid JSON refuses", `["a", "b"`, nil, true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			err := guard(func() {
-				got := jsonStrings2(tc.input)
-				if !tc.refuse {
-					tassert.Equal(t, tc.want, got, "jsonStrings2(%q) = %v", tc.input, got)
-				}
-			})
-			if tc.refuse {
-				tassert.Error(t, err, "jsonStrings2 should refuse for %s", tc.name)
-				tassert.ErrorContains(t, err, "not a list of strings", "error should mention not a list of strings")
-			} else {
-				tassert.NoError(t, err, "jsonStrings2 failed unexpectedly for %s: %v", tc.name, err)
+			for _, tc := range p.cases {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					err := guard(func() {
+						got := p.parse(tc.input)
+						if !tc.refuse {
+							tassert.Equal(t, tc.want, got, "%s(%q) = %v", p.name, tc.input, got)
+						}
+					})
+					if tc.refuse {
+						tassert.Error(t, err, "%s should refuse for %s", p.name, tc.name)
+						tassert.ErrorContains(t, err, p.refuseErr, "error should mention %s", p.refuseErr)
+					} else {
+						tassert.NoError(t, err, "%s failed unexpectedly for %s: %v", p.name, tc.name, err)
+					}
+				})
 			}
 		})
 	}
