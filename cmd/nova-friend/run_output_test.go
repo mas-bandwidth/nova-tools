@@ -48,9 +48,18 @@ func (h *holdingCmd) EvalSha(ctx context.Context, sha string, keys []string, arg
 	return h.Cmdable.EvalSha(ctx, sha, keys, args...)
 }
 
-// overlapWriter fails the test when two goroutines are inside Write at once:
-// it holds each write open long enough that a second writer overlaps it. With
-// the fix every write goes through the one locked writer, so no two overlap.
+// laneLineHold is how long the overlapWriter keeps the lane's account line in
+// flight: long enough that the daemon's next record (its spend line, written
+// from the beat goroutine a beat or two after the lane ends) overlaps it on
+// dev, where account writes with no lock. With the fix both go through the one
+// locked writer, so the record blocks behind the held line and never overlaps.
+const laneLineHold = time.Second
+
+// overlapWriter fails the test when two goroutines are inside Write at once.
+// It holds only the lane's account line open (the one the bug writes with no
+// lock): a record write from another goroutine that lands while it is open is
+// the overlap. With the fix every write goes through the one locked writer, so
+// no two overlap.
 type overlapWriter struct {
 	mu      sync.Mutex
 	active  bool
@@ -59,16 +68,22 @@ type overlapWriter struct {
 }
 
 func (o *overlapWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "claude: run=") {
+		o.mu.Lock()
+		o.active = true
+		o.mu.Unlock()
+		time.Sleep(laneLineHold) // hold the lane's account line open so a concurrent record overlaps it
+		o.mu.Lock()
+		n, err := o.inner.Write(p)
+		o.active = false
+		o.mu.Unlock()
+		return n, err
+	}
 	o.mu.Lock()
 	if o.active {
 		o.overlap.Store(true)
 	}
-	o.active = true
-	o.mu.Unlock()
-	time.Sleep(5 * time.Millisecond) // keep the write open so a concurrent writer overlaps it
-	o.mu.Lock()
 	n, err := o.inner.Write(p)
-	o.active = false
 	o.mu.Unlock()
 	return n, err
 }
@@ -80,8 +95,11 @@ func (o *overlapWriter) String() string {
 }
 
 // noLateWriter fails the test when a write reaches it after returned is set:
-// the test flips returned as run returns, so any later write is the bug.
+// the test flips returned as run returns, so any later write is the bug. Every
+// write still lands in inner, so the test can wait for a specific line before
+// it judges late.
 type noLateWriter struct {
+	mu       sync.Mutex
 	returned atomic.Bool
 	late     atomic.Bool
 	inner    strings.Builder
@@ -90,9 +108,16 @@ type noLateWriter struct {
 func (w *noLateWriter) Write(p []byte) (int, error) {
 	if w.returned.Load() {
 		w.late.Store(true)
-		return len(p), nil
 	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.inner.Write(p)
+}
+
+func (w *noLateWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.inner.String()
 }
 
 // TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce runs a one-shot claude
@@ -142,6 +167,7 @@ func TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce(t *testing.T) {
 	var errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
+	require.True(t, strings.Contains(out.String(), "claude: run="), "the lane never wrote its account line\n%s", out.String())
 	require.False(t, out.overlap.Load(), "two goroutines wrote run's output at once\n%s", out.String())
 }
 
@@ -198,6 +224,13 @@ func TestRunNeverWritesItsOutputAfterItReturns(t *testing.T) {
 		// run is waiting on the hook step: the fix.
 	}
 	close(release)
+	// wait for the hook's post-cancel line to land before judging: on dev the
+	// run has already returned, so the line arrives late and flips late; with
+	// the fix run is still joined to the hook loop and the line lands before it
+	// returns.
+	require.Eventually(t, func() bool {
+		return strings.Contains(out.String(), "hook: ")
+	}, 5*time.Second, 10*time.Millisecond, "the daemon hook never wrote its line\n%s", out.String())
 	<-done
 
 	require.False(t, out.late.Load(), "a write reached run's output after it returned")
