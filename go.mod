@@ -2,8 +2,13 @@ module github.com/mas-bandwidth/nova-tools
 
 go 1.26.6
 
+// golang.org/x/exp is honnef.co/go/tools' requirement, and the root module
+// builds the linters in the workspace (go.work) alongside the nested modules,
+// so its checksum must stay in go.sum where the workspace build reads it;
+// naming a command from it keeps the module required and the checksum tidy.
 tool (
 	github.com/kisielk/errcheck
+	golang.org/x/exp/cmd/txtar
 	golang.org/x/tools/cmd/deadcode
 	honnef.co/go/tools/cmd/staticcheck
 )
@@ -38,6 +43,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260908163034-4bcc4b2ee518 // indirect

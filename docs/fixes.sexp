@@ -1110,9 +1110,14 @@
     :title "The root module's go.mod and go.sum are tidy"
     :text "CI's lint job runs make mod-tidy, which had gone red because go.mod listed errcheck v1.20.0,
      golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 as // indirect although they are direct
-     requirements, and go.sum carried one golang.org/x/exp line tidy removes. Running go mod tidy at the
-     repository root with the Go version go.mod names moves the three tool requirements to the direct require
-     block and drops the stale go.sum line."
+     requirements. Running go mod tidy at the repository root with the Go version go.mod names moves the
+     three tool requirements to the direct require block. The one golang.org/x/exp go.sum line is not
+     stale: honnef.co/go/tools requires that module, the root go.work builds in workspace mode, and a
+     missing workspace checksum is written to a fresh go.work.sum, which the tree gate's
+     TestNoTestWritesIntoTheSourceTree flags as a file left in the source tree. Tidy drops the line because
+     no package of the top-level module is imported, so the module is kept required by naming
+     golang.org/x/exp/cmd/txtar as a tool; tidy then keeps its checksum in go.sum and the workspace build
+     writes no go.work.sum."
     :origin "the coordinator, 2026-10-12 ~11:55Z: CI on nova-tools dev (ab7b6239, run 38232990600) and on
      the stream PR mas-bandwidth/nova-tools#5627 fails the lint job at make mod-tidy: errcheck v1.20.0,
      golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 are listed // indirect in go.mod but are direct
