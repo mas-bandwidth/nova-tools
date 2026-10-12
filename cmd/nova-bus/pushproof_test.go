@@ -37,7 +37,7 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	cli.Do(t, "recv", "--as", "bob", "--dry-run").Exit(0).Out("RECV OK pending=0 new=1", "RECV NOTE push=none for bob")
 	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id="+first, "RECV NOTE push=none for bob: no proven push since never")
 	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob", "RECV NOTE push=none for bob")
-	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=ada push=none age=never harness=-", "NAMES NAME name=bob push=none age=never")
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=ada push=none age=never harness=-", "NAMES NAME name=bob push=none age=never")
 
 	// a batch and a loop say it once, on the first result; a cc is a recipient too
 	cli.OK(t, send...)
@@ -56,13 +56,13 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	r.prove(start, true, "bob")
 	mid := id(t, cli.Do(t, send...).Exit(0).NotOut("SEND NOTE").Stdout)
 	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id=" + mid).NotOut("RECV NOTE")
-	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=2", "NAMES NAME name=ada push=proven age=", "harness=claude")
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2 proven=2", "NAMES NAME name=ada push=proven age=", "harness=claude")
 
 	// a proof the daemon stopped renewing goes stale at ten minutes: still advice
 	r.store.Advance(bus.PushFresh)
 	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=stale for ada: no proven push since 10m", "last renewed it", "SEND NOTE push=stale for bob: no proven push since 10m")
 	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK", "RECV NOTE push=stale for bob: no proven push since 10m")
-	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=bob push=stale age=10m")
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=bob push=stale age=10m")
 
 	// renewed, then the session stops answering its check: down at once
 	now := start.Add(bus.PushFresh + time.Minute)
@@ -70,7 +70,7 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	r.prove(now, true, "ada")
 	r.prove(now, false, "bob")
 	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=down for bob: no proven push since", "holds no answered SESSION CHECK from the session (no session answer)").NotOut("for ada")
-	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=1", "NAMES NAME name=ada push=proven", "NAMES NAME name=bob push=down age=", "harness=claude")
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2 proven=1", "NAMES NAME name=ada push=proven", "NAMES NAME name=bob push=down age=", "harness=claude")
 	assert.Equal(t, 8, r.store.Len(bus.LogKey), "every send landed")
 }
 

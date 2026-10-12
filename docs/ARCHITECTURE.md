@@ -43,6 +43,11 @@ merge and friends ([SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint
 under a consumer group, one log, pending until acknowledged, run by `nova-bus`
 ([SPEC-BUS.md](SPEC-BUS.md)).
 
+**hook** — whether an identity is hooked in: the pushes its role needs (the
+bus, the sprint, its work), each live while its holder renews a lease in the
+bus Redis and proven while a proof stands; every bus, friend and sprint tool
+refuses an identity that is not, run by `nova-hook` ([SPEC-HOOK.md](SPEC-HOOK.md)).
+
 **seat** — a named identity on a machine. A machine row's `seat` field names
 the secrets-store seat that machine opens its credentials from; a seat can
 decrypt the files its rules name and no other, and the coordinator's store
@@ -74,6 +79,7 @@ names it opens, and whether it runs every n seconds or is kept alive
 | tool | role | contract |
 | --- | --- | --- |
 | `nova-bus` | messages between AIs over Redis streams: sent once, delivered until acknowledged | [SPEC-BUS.md](SPEC-BUS.md) |
+| `nova-hook` | hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs | [SPEC-HOOK.md](SPEC-HOOK.md) |
 | `nova-cairn` | a session's words, kept durably as plain files you can come back to | [SPEC-CAIRN.md](SPEC-CAIRN.md) |
 | `nova-card` | writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help (pre-alpha) | [SPEC-CARD-CONTRACT.md](SPEC-CARD-CONTRACT.md) |
 | `nova-check` | checks over markdown records and repositories, each finding named by file and line | [SPEC-CHECK.md](SPEC-CHECK.md) |

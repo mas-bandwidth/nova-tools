@@ -83,6 +83,7 @@ help:
 	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
 	@echo "make tlc-groups  JSON list of required model groups"
 	@echo "make tlc-test    the runner and checker tests: no Java, no Redis, no network"
+	@echo "make test-hook   the hook module's own tests (hook/ is a nested module: ./... from the root never names it)"
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
@@ -139,6 +140,13 @@ tlc-test:
 
 tlc-groups:
 	@$(GO) run ./tools/tlacheck groups --root .
+
+# The hook module (hook/, docs/SPEC-HOOK.md) is a nested module of its own, so
+# `go list ./...` from the root never names it and no PKGS shard carries its
+# tests; ci.yml's test legs that test a package importing it run this target.
+.PHONY: test-hook
+test-hook:
+	cd hook && $(GO) test -count=1 -timeout 100s ./...
 
 
 new-rule:

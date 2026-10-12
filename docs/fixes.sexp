@@ -1042,4 +1042,14 @@
     admission because its paths (internal/nsprint/testutil/pg, internal/testredis) are gone from dev; its
     donor, nova-tools PR #5503, closed unmerged 2026-10-10T17:53Z. Of its parts, the Redis sentry and the
     104-byte socket bound are on dev (pkg/testredis/sentry.go, pkg/testredis/testredis.go); the postgres
-    watchdog is not. Card a-throwaway-postgres-dies-with-its-test-binary.w1")))
+     watchdog is not. Card a-throwaway-postgres-dies-with-its-test-binary.w1")
+   (fix "every-bus-and-friend-verb-refuses-until-hooked" :release "v1.2.18" :status "planned"
+    :title "Every bus and friend verb refuses until hooked in"
+    :text "The hook module (hook/, its own go.mod, Redis-backed: holder, lease, epoch, expiry, takeover), the
+     nova-hook command (hook, prove, unhook, status) and pkg/hookgate, the one gate every tool calls: nova-bus
+     and nova-friend gate every verb on the hook record, so a caller whose pushes are not hooked in is refused
+     with a breadcrumb that prints the exact commands to hook in. The machine is tla/Hook.tla, with its
+     coordinator and friend instances and eight reversed witnesses (NoEpoch, NoExpire, NoLease, NoRole,
+     NoStream, ReArm, StaleEpoch, Takeover). Adopt in order: install nova-hook, hook each friend and the seat
+     in, then upgrade the gated tools, so the release does not lock anyone out."
+    :origin "PR #5617, branch fix/bus-and-friend-refuse-until-hooked")))

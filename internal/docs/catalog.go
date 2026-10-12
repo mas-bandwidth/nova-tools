@@ -11,7 +11,7 @@ package docs
 
 // DefaultCatalog is the master catalog for nova-tools.
 var DefaultCatalog = []Entry{
-	E(".github", "CI workflows and automation", "go test ./internal/ci", "make test"),
+	E(".github", "CI workflows", "go test ./internal/ci", "make test"),
 	E("assets", "static assets and schemas", "none", "none"),
 	E("fleet", "fleet loop units and bench templates", "none", "none"),
 	Page("cmd", "17 nova command-line tools", "nova-ci local", "make build"),
@@ -19,13 +19,15 @@ var DefaultCatalog = []Entry{
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("pkg", "public packages", "nova-ci local", "make test"),
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
-	E("tla", "the TLA+ models of the state machines and their runners", "go test ./pkg/tlc", "make tlc-test"),
-	E("profiles", "the darwin sandbox profile template pkg/sandbox embeds, and its check (tools/sandboxcheck)", "go test ./pkg/sandbox", "go test ./pkg/sandbox"),
-	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
+	E("tla", "the TLA+ models and their runners", "go test ./pkg/tlc", "make tlc-test"),
+	E("profiles", "pkg/sandbox's darwin profile and its check", "go test ./pkg/sandbox", "go test ./pkg/sandbox"),
+	E("hook", "the hook module (own go.mod)", "cd hook && go test .", "cd hook && go test ."),
+	E("testdata", "shared test fixtures", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/
 	E("cmd/nova-bus", "messages between AIs over Redis streams: one stream per recipient under a consumer group, one log, pending until acked", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
+	E("cmd/nova-hook", "hooks an identity in: the pushes its role needs, live and proven; no bus, friend or sprint tool runs until they are", "go test ./cmd/nova-hook", "go test -tags functional ./cmd/nova-hook"),
 	E("cmd/nova-friend", "what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon", "go test ./cmd/nova-friend", "go test -tags functional ./cmd/nova-friend"),
 	E("cmd/nova-cairn", "session checkpoints: a session's exact words kept as plain files, with an index and receipts", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
 	E("cmd/nova-decide", "typed decisions with probabilities through a backend, recorded and calibrated against their outcomes", "go test ./cmd/nova-decide", "go test ./cmd/nova-decide"),
@@ -53,6 +55,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/bench", "the one bench runner: copy a tree to a per-run directory on the Linux bench, run one command there under nice with the bench cache, remove the directory it made, fall back when the host does not answer", "go test ./pkg/bench", "go test ./pkg/bench"),
 	E("pkg/binstamp", "a binary file's stamp: a loop stops when its own binary was replaced", "go test ./pkg/binstamp", "go test ./pkg/binstamp"),
 	E("pkg/buildinfo", "binary identity and version info", "go test ./pkg/buildinfo", "go test ./pkg/buildinfo"),
+	E("pkg/hookgate", "the hook gate as a nova-tools verb meets it: the hook module's Gate over a bus store, its no as the verb's result", "go test ./pkg/hookgate", "go test ./pkg/hookgate"),
 	E("pkg/bus", "the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake", "go test ./pkg/bus", "go test -tags functional ./pkg/bus"),
 	E("internal/cairn", "the cairn store: session records, entries, the index and receipts, nested and flat", "go test ./internal/cairn", "go test ./internal/cairn"),
 	E("pkg/cardcontract", "the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile", "go test ./pkg/cardcontract", "go test -tags functional ./pkg/cardcontract"),

@@ -118,14 +118,44 @@ $ nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ACK OK acked=0 asked=1 login=none
 ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
-$ nova-bus log --max 5
+$ nova-bus log --as bob --max 5
 LOG OK total=1
 LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
 
-$ nova-bus names
+$ nova-bus names --as bob
 NAMES OK count=2 proven=2
 NAMES NAME name=ada push=proven age=0s harness=claude
 NAMES NAME name=bob push=proven age=0s harness=claude
+```
+
+## nova-hook
+
+Run by `cmd/nova-hook/firstrun_test.go` on a throwaway redis-server, its address
+in `NOVA_BUS_REDIS`, so the lines read as a reader types them. The sitting is a
+machine's record: m1 is not hooked in, so `status` refuses with the command of
+each role that hooks it in; `hook --once` as a member arms the record, holds no
+push (a member's work push is its loop's) and says so, naming the holder; and
+`unhook` ends it, its epoch moved on. Nothing in it is run-owned.
+
+### First run
+
+```
+$ nova-hook status --as m1
+! STATUS FAILED name=m1 state=none role=- epoch=0 reason=unhooked: m1 is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is; run: nova-hook status --as m1
+! STATUS NOTE hook in as comms (on the bus, taking no sprint work): nova-hook hook --as m1 --role comms
+! STATUS NOTE hook in as friend (a friend working the sprint): nova-hook hook --as m1 --role friend
+! STATUS NOTE hook in as coordinator (the seat): nova-hook hook --as m1 --role coordinator
+! STATUS NOTE hook in as member (a machine's member loop): nova-hook hook --as m1 --role member
+! STATUS NOTE hook in as reader (a machine's reader loop): nova-hook hook --as m1 --role reader
+! STATUS NOTE unhook: nova-hook unhook --as m1
+
+$ nova-hook hook --as m1 --role member --once
+! HOOK FAILED as=m1 role=member epoch=1 joined=false hold=- state=expired reason=unhooked: m1 is armed as member and not proven: state=expired role=member epoch=1 work=down; run: nova-hook status --as m1
+! HOOK NOTE the work push is held by: the member loop, nova-swarm member --as m1 (it hooks in at start)
+
+$ nova-hook unhook --as m1
+UNHOOK OK as=m1 was=hooked epoch=2
+UNHOOK NOTE hook in again: nova-hook hook --as m1 --role member
 ```
 
 ## nova-friend

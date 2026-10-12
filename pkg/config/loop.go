@@ -28,7 +28,7 @@ import (
 // command is added here, or that test is red.
 var NovaTools = []string{
 	"nova-bus", "nova-cairn", "nova-check", "nova-ci", "nova-config", "nova-decide",
-	"nova-doctor", "nova-friend", "nova-fuse", "nova-local", "nova-memory", "nova-redis",
+	"nova-doctor", "nova-friend", "nova-fuse", "nova-hook", "nova-local", "nova-memory", "nova-redis",
 	"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-swarm", "nova-table",
 	"nova-tokens", "nova-up", "nova-update", "nova-version",
 }

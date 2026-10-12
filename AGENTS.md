@@ -32,9 +32,7 @@ This is the standard every tool and module in this repository is built to, and t
 
 **When writing tests.** testify (require in setup, assert in rows), rigs as helper structs or the package's testkit, named cases under `t.Run`, `t.Parallel()` in every test, no sockets and few ports, one minute on average and two minutes at most per shard. The proof a test is worth its lines is a mutation it catches; a copy of a neighbour with one value changed is a table row. Check: `testify`, `TestEveryTestOpensWithTParallel` (`parallel`), `TestUnitTierRefusesRedisServer` (`tiers`), `cap`.
 
-**When working in the tree.** One owner per package at a time; a package in an open PR is off the table until that PR lands. A PR is one small piece that merges with the base at landing, never later; landings go one at a time in order, each merging the tip first. Every PR gets a cold read with probes before it lands; a friend's or an author's yes alone never lands one. Builds and tests run niced on the machine that hosts runners, or on a bench, one test stream per machine. When the merge queue backs up, stop starting new work: backpressure is the coordinator's job, and a PR that cannot merge is closed with its reason and re-cut later.
-
-**After every expansion, contract (section 11).**
+**When working in the tree.** One owner per package at a time; a package in an open PR is off the table until that PR lands. A PR is one small piece that merges with the base at landing, never later; landings go one at a time in order, each merging the tip first. Every PR gets a cold read with probes before it lands; a friend's or an author's yes alone never lands one. Builds and tests run niced on the machine that hosts runners, or on a bench, one test stream per machine. When the merge queue backs up, stop starting new work: backpressure is the coordinator's job, and a PR that cannot merge is closed with its reason and re-cut later. **After every expansion, contract (section 11).**
 
 ### 1. Working in the tree
 
@@ -156,15 +154,16 @@ After a site is fixed, `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` lowers it
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
-| `.github/` | CI workflows and automation | `go test ./internal/ci` | `make test` |
+| `.github/` | CI workflows | `go test ./internal/ci` | `make test` |
 | `assets/` | static assets and schemas | none | none |
 | [cmd/](cmd/AGENTS.md) | 17 nova command-line tools | `nova-ci local` | `make build` |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
 | `fleet/` | fleet loop units and bench templates | none | none |
+| `hook/` | the hook module (own go.mod) | `cd hook && go test .` | `cd hook && go test .` |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `nova-ci local` | `make test` |
 | [pkg/](pkg/AGENTS.md) | public packages | `nova-ci local` | `make test` |
-| `profiles/` | the darwin sandbox profile template pkg/sandbox embeds, and its check (tools/sandboxcheck) | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |
-| `testdata/` | shared test fixtures and data | `go test ./internal/ci` | `make test` |
-| `tla/` | the TLA+ models of the state machines and their runners | `go test ./pkg/tlc` | `make tlc-test` |
+| `profiles/` | pkg/sandbox's darwin profile and its check | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |
+| `testdata/` | shared test fixtures | `go test ./internal/ci` | `make test` |
+| `tla/` | the TLA+ models and their runners | `go test ./pkg/tlc` | `make tlc-test` |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `nova-ci local` | `make map` |

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
@@ -31,7 +32,8 @@ import (
 // the store's time) and its at, named from the one shared table.
 
 // firstRunStore is a throwaway redis-server whose roster names ada and bob,
-// each with a proven inbox push as its friend daemon writes it (bus.PushKey).
+// each with a proven inbox push as its friend daemon writes it (bus.PushKey),
+// and each hooked in, its bus push live and proven (the hook record).
 // The proofs are stamped a minute past the store's time, so names reads
 // age=0s for the whole sitting however long the steps take.
 func firstRunStore(t *testing.T) string {
@@ -47,6 +49,11 @@ func firstRunStore(t *testing.T) string {
 		raw, err := json.Marshal(bus.PushProof{Name: n, Harness: "claude", Nonce: "first-run", Proven: now, Up: true, At: now.Add(time.Minute).UTC()})
 		require.NoError(t, err)
 		require.NoError(t, c.HSet(ctx, bus.PushKey, n, string(raw)).Err())
+		// hooked in (docs/SPEC-HOOK.md): every verb runs only for a name whose
+		// bus push is live and proven, as its daemon holds it
+		h := &hook.Holder{Store: hook.Store{C: c}, Name: n, Role: hook.Comms, Pushes: []hook.Push{hook.Bus}, By: "first-run"}
+		require.NoError(t, h.Start(ctx))
+		require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
 	}
 	return addr
 }
@@ -79,8 +86,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-bus peek --as bob",
 		"nova-bus recv --as bob --exec true",
 		"nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
-		"nova-bus log --max 5",
-		"nova-bus names",
+		"nova-bus log --as bob --max 5",
+		"nova-bus names --as bob",
 	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)

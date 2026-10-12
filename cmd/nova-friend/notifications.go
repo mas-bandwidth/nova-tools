@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
@@ -46,6 +47,10 @@ func (w world) runNotifications(c *tool.Call) *tool.Out {
 		return tool.Exit(0)
 	}
 	defer closeStore()
+	// the receiver is her hook as comms (docs/SPEC-HOOK.md, holders; hook.go): it holds her
+	// bus push while it runs and reads her stream; she takes no sprint work in this mode
+	dh := w.newDaemonHook(st, name, hook.Comms, roundTripProof(st), record) // its own round trip on her stream's store proves the push
+	go dh.loop(ctx, w.sleep)
 	d := &friend.Daemon{Friend: name, Harness: c.Str("harness"), Dir: dir, Store: st, Deliver: cx, Now: w.now, Pause: w.sleep, Record: record,
 		Coordinator: c.Str("coordinator"), NotificationOnly: true, NotificationStateDir: state,
 		Notifications: &friend.NotificationPolicy{Kinds: commaList(c.Str("notify-kinds")), Window: c.Dur("notify-window")},
