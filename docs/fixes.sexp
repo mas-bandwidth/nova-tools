@@ -1043,6 +1043,23 @@
      names a dropped card. The friend spend cap (pkg/friend/spendcap.go, landed 2026-10-12) is a new
      rule, outside the Friend module: the Friend note names it and it is proposed as a new card."
     :origin "card tla-pass-nova-tools-coverage-rows.w7 (the TLA+ pass over tla/COVERAGE.tsv rows 1-9, v1.2.16)")
+  (fix "tla-pass-nova-tools-coverage-rows-10-18" :release "v1.2.16" :status "in-progress"
+   :title "Every TLA+ model checked against the code"
+   :text "The TLA+ pass reads tla/COVERAGE.tsv rows 10-18 against the code each column names at the
+    current dev. Every code column names files that exist; every CASES.tsv case of the four current
+    modules (BenchRun, BenchStage, FileLock, Bus2Receipts) has a current TLC record (tlacheck groups
+    --stale prints []), so no case is stale and no model edit was owed. The 2026-10-11 fixes that
+    changed these machines are read and accounted for: the acted receipt a failed stamp owes again
+    (ceacb9508) is modelled by MCBus2ReceiptsKnownGap (Broken = \"losestamp\"), and the step's drain of
+    every ended result and the outbox's finishes off the loop are named below the Bus2Receipts grain;
+    the only changes to BenchStage and FileLock are a citation and package-comment wording (ecec608fd).
+    The rows owed to other cards on the table keep their ids and are not redone: nova-table
+    (tla-table-layer-headers-name-table-lua), card-contract (the CardContract cards:
+    tla-cardcontract-judge-against-pkg-member, tla-cardcontract-report-sent-and-collected-apart and
+    tla-cardcontract-retire-the-sprint-actions) and config (tla-configapply-friend-slots-and-stamp-cas).
+    The missing rows propose cards and name no dropped card: secrets (tla-secrets) and decide-record
+    (tla-decide-record)."
+   :origin "card tla-pass-nova-tools-coverage-rows-10-18.w1 (the TLA+ pass over tla/COVERAGE.tsv rows 10-18, v1.2.16)")
   (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "planned"
    :title "The real-clock delay proxy test reads the write counts after Stop"
    :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
