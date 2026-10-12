@@ -355,6 +355,57 @@ func TestAMovedClaimWhileReportingIsReapedNotApplied(t *testing.T) {
 	assert.Equal(t, []string{"c1:false"}, rn.endedLaunches(), "reaped: nobody's result")
 }
 
+// TestAnUnansweredReportWhoseClaimMovedKeepsTheRunAsFailed pins STEP (4)'s third case
+// (Stella's follow-up on #5625): a report the store did not answer (exit 2) may or may not
+// have been committed; the store may have taken a failed finish and redealt the card at
+// gen+1, every reply lost on the way back. The collecting pass then sees the claim moved,
+// and the outcome is unknown: the run is kept as failed (its directory stays for a person)
+// and never reaped as "the claim moved", which would forget it as clean. Red before the
+// fix: any non-zero exit with a moved claim was reaped, Ended(c1, failed=false).
+func TestAnUnansweredReportWhoseClaimMovedKeepsTheRunAsFailed(t *testing.T) {
+	t.Parallel()
+	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
+	rn, out := newRunner(), &bytes.Buffer{}
+	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+
+	old := pk("c1") // gen 1, epoch 7
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	<-m.Wake() // the background start posted
+	_, err = m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.NotNil(t, rn.child("c1"), "the child started")
+
+	rn.child("c1").end(Result{Ran: true, OK: false, Shaped: true, Verdict: "notdone", Head: "0123456", Report: "not done"})
+	_, err = m.Tick(time.Unix(0, 0)) // the end begins (its push runs)
+	require.NoError(t, err)
+	<-m.Wake() // the end posted
+
+	_, err = m.Tick(time.Unix(0, 0)) // the finish report, held on the gate
+	require.NoError(t, err)
+	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
+
+	// the store commits the failed finish and redeals the card at gen 2, and every reply
+	// is lost: the member sees no answer (exit 2) and then the moved claim
+	redealt := pk("c1")
+	redealt.Gen = 2
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 2, &redealt)))
+	gs.set("finish", 2, "the store did not answer")
+
+	close(gs.release)
+	<-m.Wake() // the report posted
+	_, err = m.Tick(time.Unix(0, 0))
+	require.Error(t, err, "the collecting pass says the store did not answer")
+
+	assert.Contains(t, out.String(), "finish c1 ok=false exit=2", "the unanswered report's own line")
+	assert.Contains(t, out.String(), "the outcome is unknown, so the run is kept as failed", "the uncertainty is said")
+	assert.NotContains(t, out.String(), "reaped c1", "an unanswered report is never reaped as a moved claim")
+	assert.Contains(t, rn.endedLaunches(), "c1:true", "the run is kept as failed")
+	assert.NotContains(t, rn.endedLaunches(), "c1:false", "the run is never forgotten as clean")
+	assert.Len(t, gs.lines("finish"), 1, "the finish is not sent again to a claim that is gone")
+}
+
 // TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved pins the other side of STEP (4): a
 // report the store ACCEPTED is applied, never reaped, though the queue the collecting pass
 // reads lists the card at a new generation. The store's finish refuses a stale claim

@@ -1441,6 +1441,30 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 	return 1
 }
 
+// keepUncertain settles a report the store did not answer whose claim moved before the
+// collecting pass read the queue: the store may have taken it (and moved the claim itself,
+// a failed finish redealt at gen+1) or not, and a resend names a claim that is gone. The
+// result line and the no-answer note are said as applyReport says them, and the run is
+// kept as failed (Ender: its directory stays for a person to inspect), never reaped as
+// clean. It returns how many cards it acted on.
+// RULE (docs/SPEC-SPRINT.md, the fleet member): only a definite refusal reaps a moved
+// report; an unknown outcome keeps the run.
+func (m *Member) keepUncertain(id string, l launch, ro *reportOut, epoch uint64, gen, attempt int) int {
+	verb := ro.verb + " " + id
+	if ro.returnNoVerdict {
+		verb = "read --return " + id
+		fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, ro.code, ro.returnReason)
+	} else {
+		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", ro.verb, id, ro.ok, ro.code, routeWords(l.packet))
+	}
+	if ro.code == 2 {
+		m.passNoAnswer(verb, ro.out)
+	}
+	fmt.Fprintf(m.out, "NOTE %s: the store did not answer and the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d); the outcome is unknown, so the run is kept as failed and not sent again\n", verb, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
+	m.forget(id, true)
+	return 1
+}
+
 // takeVerb is the verb a take is: a reader's is read --begin.
 func (m *Member) takeVerb() string {
 	if m.cfg.Reader {
@@ -1740,20 +1764,29 @@ func (m *Member) collect() (acted int) {
 			m.running[card] = l
 			fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", card, l.attempt, l.gen, m.Running(), m.width, routeWords(l.packet))
 		case po.report != nil:
-			// a report the store refused or did not answer, whose claim moved while it
-			// ran, is nobody's: it is reaped here, in the pass goroutine, exactly as the
-			// in-pass moved check reaps a launch (Tick). The queue the collecting pass
-			// just read is consulted (queueRead), so a report that posts in a later pass
-			// than the one that launched it is still reaped when its claim moved (STEP 4).
-			// A report the store ACCEPTED (exit 0) is applied, never reaped: the store's
-			// finish refuses a stale claim, so an accepted one was the card's claim when it
-			// landed, and a move seen after it is the store acting on that report (a
-			// failed finish redealt at gen+1). Reaping it would forget a failed run as
-			// clean and remove the directory a person may want to inspect (forget, Ender).
+			// The queue the collecting pass just read is consulted (queueRead), so a
+			// report that posts in a later pass than the one that launched it is judged
+			// against the claim as it stands now (STEP 4). What a moved claim means turns
+			// on what the store said:
+			//   - exit 1, a definite refusal: the store did not take the report (its
+			//     finish refuses a stale claim, nova-sprint finishPlan liveGen), so the
+			//     result is nobody's and is reaped, exactly as the in-pass moved check
+			//     reaps a launch (Tick);
+			//   - exit 0, accepted: applied, never reaped (below): an accepted finish was
+			//     the card's claim when it landed, and the move is the store acting on it
+			//     (a failed finish redealt at gen+1);
+			//   - any other exit, no answer (2): the store may or may not have taken it,
+			//     and the move may be its own doing. The outcome is unknown, so the run is
+			//     kept as failed (forget failed=true: its directory stays for a person),
+			//     never reaped as clean, and never sent again to a claim that is gone.
 			if c, listed := m.queueCards[card]; listed && po.report.code != 0 && m.moved(l, c) {
 				epoch, gen, attempt := m.claim(c)
-				fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, card, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
-				m.forget(card, false)
+				if po.report.code == 1 {
+					fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, card, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
+					m.forget(card, false)
+					continue
+				}
+				acted += m.keepUncertain(card, l, po.report, epoch, gen, attempt)
 				continue
 			}
 			// a report that ran apart from the pass is applied here, in the pass
