@@ -30,7 +30,11 @@ import (
 type fakeForge struct {
 	head    map[string]string
 	checks  map[string][]CheckRun
-	tags    []string
+	// checksSuites is the richer read the superseding gate uses: check runs
+	// with their suite's provenance (docs/SPEC-RELEASE.md section 19). When
+	// nil, checkRunsWithSuites falls back to wrapping checks with no suites.
+	checksSuites map[string][]checkRun
+	tags         []string
 	commits map[string][]Commit
 	// files is what the compare endpoint names as touched, keyed the same way
 	// as commits: `cut` classifies the range against the sensitive list and
@@ -62,6 +66,19 @@ func (f *fakeForge) HeadSHA(_ context.Context, _, branch string) (string, error)
 }
 func (f *fakeForge) CheckRuns(_ context.Context, _, sha string) ([]CheckRun, error) {
 	return f.checks[sha], nil
+}
+func (f *fakeForge) checkRunsWithSuites(_ context.Context, _, sha string) ([]checkRun, error) {
+	if f.checksSuites != nil {
+		if runs, ok := f.checksSuites[sha]; ok {
+			return runs, nil
+		}
+	}
+	runs := f.checks[sha]
+	out := make([]checkRun, len(runs))
+	for i := range runs {
+		out[i] = checkRun{CheckRun: runs[i]}
+	}
+	return out, nil
 }
 func (f *fakeForge) Tags(_ context.Context, _ string) ([]string, error) { return f.tags, nil }
 func (f *fakeForge) Compare(_ context.Context, _, base, head string) ([]Commit, error) {

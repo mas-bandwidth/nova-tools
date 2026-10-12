@@ -128,24 +128,64 @@ func (g *GH) HeadSHA(ctx context.Context, repo, branch string) (string, error) {
 // this repository runs more than a page of them on a self-hosted fleet and a
 // first page read as the whole set is a green nobody checked.
 func (g *GH) CheckRuns(ctx context.Context, repo, sha string) ([]CheckRun, error) {
+	runs, err := checkRuns(ctx, repo, sha, g.api)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CheckRun, len(runs))
+	for i := range runs {
+		out[i] = runs[i].CheckRun
+	}
+	return out, nil
+}
+
+// checkRunsWithSuites is the forge's richer read for the cut: the check runs
+// with their suite's provenance, so a whole cancelled suite can be set aside
+// when a later green suite supersedes it (docs/SPEC-RELEASE.md section 19). The
+// Forge seam still exposes only CheckRuns; cut reads this through a type
+// assertion and falls back to CheckRuns when a forge does not offer it.
+func (g *GH) checkRunsWithSuites(ctx context.Context, repo, sha string) ([]checkRun, error) {
 	return checkRuns(ctx, repo, sha, g.api)
+}
+
+// checkRun is a check run with its suite's provenance (docs/SPEC-RELEASE.md
+// section 19). The suite fields live here rather than on CheckRun so the public
+// forge seam keeps its one shape; they are read by the cut's superseding gate
+// and discarded by CheckRuns. SuiteID groups runs into suites; WorkflowConclusion
+// is the workflow run's own conclusion (an aggregate job such as certification-ok
+// reports failure only because its needs were cancelled, while the run concluded
+// cancelled); UpdatedAt is when the run last updated (a green suite supersedes a
+// cancelled one only when it completed later); SupersededBy names the later green
+// suite that set this run aside, or zero for a release-tag set-aside.
+type checkRun struct {
+	CheckRun
+	SuiteID            int64
+	WorkflowConclusion string
+	UpdatedAt          time.Time
+	SupersededBy       int64
 }
 
 // checkRuns joins by suite and exact commit, never by a job's display name
 // (docs/SPEC-RELEASE.md section 19). Both reads are paginated; unmatched or
 // conflicting provenance leaves the check subject to the ordinary CI gate.
-func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, ...string) (string, error)) ([]CheckRun, error) {
+//
+// Provenance is attached to every run whose suite has an unambiguous workflow
+// run at this exact commit, not only to cancelled ones: a later green suite
+// must be recognised beside the cancelled suite it supersedes, so the workflow
+// run's conclusion and update time are read and carried too.
+func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, ...string) (string, error)) ([]checkRun, error) {
 	out, err := api(ctx, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/check-runs",
 		"--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, SuiteID:.check_suite.id, HeadSHA:.head_sha}")
 	if err != nil {
 		return nil, err
 	}
-	var runs []CheckRun
+	var runs []checkRun
 	suites := map[int64][]int{}
+	allSuites := map[int64]bool{}
 	dec := json.NewDecoder(strings.NewReader(out))
 	for {
 		var r struct {
-			CheckRun
+			checkRun
 			SuiteID int64
 			HeadSHA string
 		}
@@ -154,22 +194,27 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		} else if err != nil {
 			return nil, fmt.Errorf("cannot read gh's check runs: %w", err)
 		}
+		r.checkRun.SuiteID = r.SuiteID
+		if r.SuiteID > 0 && r.HeadSHA == sha {
+			allSuites[r.SuiteID] = true
+		}
 		if r.Status == "completed" && r.Conclusion == "cancelled" && r.SuiteID > 0 && r.HeadSHA == sha {
 			suites[r.SuiteID] = append(suites[r.SuiteID], len(runs))
 		}
-		runs = append(runs, r.CheckRun)
+		runs = append(runs, r.checkRun)
 	}
 	if len(suites) == 0 {
 		return runs, nil
 	}
 	out, err = api(ctx, "api", "--paginate", "repos/"+repo+"/actions/runs?head_sha="+url.QueryEscape(sha)+"&per_page=100",
-		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event}")
+		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, UpdatedAt:.updated_at}")
 	if err != nil {
 		return nil, fmt.Errorf("cannot read check provenance: %w", err)
 	}
 	type provenance struct {
-		SuiteID, ID                              int64
-		HeadSHA, WorkflowPath, HeadBranch, Event string
+		SuiteID, ID                                          int64
+		HeadSHA, WorkflowPath, HeadBranch, Event, Conclusion string
+		UpdatedAt                                            string
 	}
 	bySuite := map[int64]provenance{}
 	ambiguous := map[int64]bool{}
@@ -181,7 +226,7 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		} else if err != nil {
 			return nil, fmt.Errorf("cannot read gh's workflow runs: %w", err)
 		}
-		if r.HeadSHA != sha || len(suites[r.SuiteID]) == 0 {
+		if r.HeadSHA != sha || !allSuites[r.SuiteID] {
 			continue
 		}
 		if previous, ok := bySuite[r.SuiteID]; ok && previous != r {
@@ -199,18 +244,38 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 			break
 		}
 	}
-	for suite, indexes := range suites {
-		if ambiguous[suite] {
+	for i := range runs {
+		suite := runs[i].SuiteID
+		if suite == 0 || ambiguous[suite] {
 			continue
 		}
-		r := bySuite[suite]
-		for _, i := range indexes {
-			runs[i].ID = r.ID
-			runs[i].WorkflowPath, runs[i].HeadBranch, runs[i].Event = r.WorkflowPath, r.HeadBranch, r.Event
-			runs[i].TagPush = tagPush && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push"
+		r, ok := bySuite[suite]
+		if !ok {
+			continue
 		}
+		runs[i].ID = r.ID
+		runs[i].WorkflowPath, runs[i].HeadBranch, runs[i].Event = r.WorkflowPath, r.HeadBranch, r.Event
+		runs[i].WorkflowConclusion = r.Conclusion
+		runs[i].UpdatedAt = parseUpdatedAt(r.UpdatedAt)
+		runs[i].TagPush = tagPush && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push"
 	}
 	return runs, nil
+}
+
+// parseUpdatedAt reads a workflow run's updated_at as an RFC 3339 instant, and
+// a zero time when the field is absent or unparsable. A zero time sorts before
+// every real one, so a cancelled suite with no update time is never superseded
+// and a green suite with no update time supersedes nothing (docs/SPEC-RELEASE.md
+// section 19).
+func parseUpdatedAt(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // releaseTagPush reads the workflow at the checked commit, not at a mutable

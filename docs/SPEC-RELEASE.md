@@ -730,6 +730,20 @@ conflicting provenance leaves the check in the gate; an unreadable forge respons
 the cut. If exclusion leaves no checks, the commit remains unjudged. The waiver records only
 the checks retained by this same gate.
 
+A whole cancelled suite is set aside too, but only when a later green suite of the same
+workflow path at the same commit supersedes it. The cancelled suite qualifies when every run
+in it is completed and the workflow run's own conclusion is `cancelled`: an aggregate job such
+as `certification-ok` that reports failure only because its needs were cancelled is part of
+the cancelled suite, told apart by the workflow run's conclusion rather than the job's. The
+superseding suite qualifies when it shares the cancelled suite's workflow path, completed
+later than it, every one of its runs is `success`, `skipped` or `neutral`, and it has a run
+for every job name the cancelled suite has, matrix legs included. Only that combination is set
+aside: a failed (not cancelled) suite still refuses, as do a cancelled suite with no later
+green suite of its workflow, a later suite that is itself red or pending, and a later suite
+missing a job name the cancelled suite had. Each set-aside run is named on the cut's line as
+`ci-set-aside=<run id>:superseded-by=<run id>`, and the set-aside is written into the tag
+annotation and the CHANGELOG section as `CI set aside: <run id>:superseded-by=<run id>, ...`.
+
 ```
 RELEASE CUT REFUSED: CI is not green on this commit: ci=failure; fix the red and cut again; a tag cannot be amended
 RELEASE CUT REFUSED: no check run has judged this commit; dispatch CI on this commit and cut again when it is green
@@ -751,7 +765,10 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 `adopt`'s, and a waived CI says nothing about a machine's certificate. **An empty value refuses**
 (`--waive-ci ""` is not a waiver), and **a green CI refuses a waiver** with `cut without it; nothing here needs waiving`, because a waiver of nothing is a lie in the release's permanent record.
 
-*Tests: `TestACutWithAWaiverRecordsItInTheTag`, `TestACutIgnoresThePreviousTagsCancelledReleaseRun`.*
+*Tests: `TestACutWithAWaiverRecordsItInTheTag`, `TestACutIgnoresThePreviousTagsCancelledReleaseRun`,
+`TestACancelledCertificationSuiteSupersededByAGreenOneIsSetAside`, `TestAFailedSuiteIsNeverSetAside`,
+`TestACancelledSuiteWithNoGreenSuccessorStillRefuses`, `TestAGreenSuccessorMissingAJobDoesNotSupersede`,
+`TestAnEarlierGreenSuiteDoesNotSupersedeALaterCancelledOne`.*
 
 ## 20. A release requires a completed certification run on its sha
 A cut refuses until the commit it tags has a **completed** certification run. The sha must be vouched for by the

@@ -140,15 +140,15 @@ func TestCheckRunsJoinsProvenanceBySuiteAndSHAInOnePaginatedRead(t *testing.T) {
 	runs, err := checkRuns(context.Background(), "o/n", "abc123", f.read)
 	require.NoError(t, err)
 	require.Len(t, runs, 4)
-	assert.Equal(t, []CheckRun{
-		{Name: "validate", Status: "completed", Conclusion: "cancelled", WorkflowPath: ".github/workflows/pr-check.yml", HeadBranch: "dev", Event: "push"},
-		{Name: "validate", Status: "completed", Conclusion: "cancelled", WorkflowPath: ".github/workflows/required.yml", HeadBranch: "dev", Event: "push"},
-		{Name: "lint", Status: "completed", Conclusion: "cancelled", WorkflowPath: ".github/workflows/pr-check.yml", HeadBranch: "dev", Event: "push"},
-		{Name: "validate", Status: "completed", Conclusion: "cancelled"},
+	assert.Equal(t, []checkRun{
+		{CheckRun: CheckRun{Name: "validate", Status: "completed", Conclusion: "cancelled", WorkflowPath: ".github/workflows/pr-check.yml", HeadBranch: "dev", Event: "push"}, SuiteID: 17},
+		{CheckRun: CheckRun{Name: "validate", Status: "completed", Conclusion: "cancelled", WorkflowPath: ".github/workflows/required.yml", HeadBranch: "dev", Event: "push"}, SuiteID: 18},
+		{CheckRun: CheckRun{Name: "lint", Status: "completed", Conclusion: "cancelled", WorkflowPath: ".github/workflows/pr-check.yml", HeadBranch: "dev", Event: "push"}, SuiteID: 17},
+		{CheckRun: CheckRun{Name: "validate", Status: "completed", Conclusion: "cancelled"}, SuiteID: 19},
 	}, runs)
 	assert.Equal(t, [][]string{
 		{"api", "--paginate", "repos/o/n/commits/abc123/check-runs", "--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, SuiteID:.check_suite.id, HeadSHA:.head_sha}"},
-		{"api", "--paginate", "repos/o/n/actions/runs?head_sha=abc123&per_page=100", "--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event}"},
+		{"api", "--paginate", "repos/o/n/actions/runs?head_sha=abc123&per_page=100", "--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, UpdatedAt:.updated_at}"},
 	}, f.calls, "all checks share one paginated workflow-run query for the exact commit")
 }
 
@@ -178,7 +178,7 @@ func TestCheckRunsLeavesUnprovedOrAmbiguousProvenanceBlank(t *testing.T) {
 			runs, err := checkRuns(context.Background(), "o/n", "abc123", f.read)
 			require.NoError(t, err)
 			require.Len(t, runs, 1)
-			want := CheckRun{Name: "validate", Status: "completed", Conclusion: "cancelled"}
+			want := checkRun{CheckRun: CheckRun{Name: "validate", Status: "completed", Conclusion: "cancelled"}, SuiteID: 17}
 			if tc.proved {
 				want.WorkflowPath, want.HeadBranch, want.Event = ".github/workflows/pr-check.yml", "dev", "push"
 			}
