@@ -70,9 +70,7 @@
    (release "v1.2.17" :status "planned"
     :text "The next small product fixes, one concern each: apply refuses an enabled route with no price, so no take is priced from an empty sheet.")
    (release "v1.2.18" :status "planned"
-    :text "The next small fixes, one concern each.")
-   (release "v1.2.16" :status "planned"
-    :text "Every TLA+ model checked against the code."))
+    :text "The next small fixes, one concern each."))
  :items
   ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.15" :status "planned"
    :title "Certification on dev never cancels on later pushes"
@@ -1041,9 +1039,10 @@
     (tla-friend-link-and-challenge, tla-friendstage-every-hand-is-guarded,
     tla-bus2-names-pkg-bus-and-the-idle-claim, tla-cairnstore-no-gap-ledger-and-reopen,
     tla-table-layer-headers-name-table-lua), the missing rows keep tla-presence-and-leases,
-    tla-merge-tree-promotion and install-rollback-on-missed-ticks, and UpdateApply is current; none
-    names a dropped card."
-   :origin "card tla-pass-nova-tools-coverage-rows.w4 (the TLA+ pass over tla/COVERAGE.tsv rows 1-9, v1.2.16)")
+     tla-merge-tree-promotion and install-rollback-on-missed-ticks, and UpdateApply is current; none
+     names a dropped card. The friend spend cap (pkg/friend/spendcap.go, landed 2026-10-12) is a new
+     rule, outside the Friend module: the Friend note names it and it is proposed as a new card."
+    :origin "card tla-pass-nova-tools-coverage-rows.w7 (the TLA+ pass over tla/COVERAGE.tsv rows 1-9, v1.2.16)")
   (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "planned"
    :title "The real-clock delay proxy test reads the write counts after Stop"
    :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
