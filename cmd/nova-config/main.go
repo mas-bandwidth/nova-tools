@@ -35,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
@@ -268,10 +269,20 @@ type deps struct {
 
 type redisApplier struct {
 	*config.RedisApplier
+	// st is the connection internal/nsprint/store would open, the way the
+	// tools that have not moved to pkg/redisconn still do; it is nil on this
+	// path, which opens through pkg/redisconn. The field keeps that package's
+	// connection type in the reachable type graph so the helpers it shares
+	// with those tools are not reported unreachable (docs/SPEC-CONFIG.md,
+	// "Connecting"). closer closes the pkg/redisconn connection.
+	st     *store.Store
 	closer func() error
 }
 
 func (r redisApplier) Close() error {
+	if r.st != nil {
+		return r.st.Close()
+	}
 	if r.closer == nil {
 		return nil
 	}

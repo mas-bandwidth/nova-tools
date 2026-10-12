@@ -1,11 +1,14 @@
 package store
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -159,5 +162,85 @@ func TestStoreCoverIsNoAuth(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tc.want, isNoAuth(tc.err))
 		})
+	}
+}
+
+// TestStoreCoverPipelineHMGet covers the batch read: no reads is no work, a
+// read without a key or fields is refused before anything is sent, and a
+// batch returns every reply in order.
+func TestStoreCoverPipelineHMGet(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no reads is no work", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := (&Store{}).PipelineHMGet(context.Background(), nil)
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+
+	t.Run("a read without a key or fields is refused", func(t *testing.T) {
+		t.Parallel()
+
+		s := &Store{client: redis.NewClient(&redis.Options{Addr: "store.test:6379"})}
+		defer func() { _ = s.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
+		_, err := s.PipelineHMGet(context.Background(), []HashRead{{Key: "", Fields: []string{"f"}}})
+		require.ErrorContains(t, err, "needs a key and fields")
+		_, err = s.PipelineHMGet(context.Background(), []HashRead{{Key: "k"}})
+		require.ErrorContains(t, err, "needs a key and fields")
+	})
+
+	t.Run("a batch returns every reply in order", func(t *testing.T) {
+		t.Parallel()
+
+		replies := []string{
+			"*2\r\n$4\r\nopen\r\n$6\r\nstella\r\n",
+			"*2\r\n$6\r\nqueued\r\n$3\r\nada\r\n",
+		}
+		s, err := openWith(context.Background(), "store.test:6379", &seatcred.Selection{}, func(o *redis.Options) {
+			o.PoolSize, o.Dialer = 1, scriptedDial(replies)
+		})
+		require.NoError(t, err)
+		defer func() { _ = s.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
+		got, err := s.PipelineHMGet(context.Background(), []HashRead{
+			{Key: "task:1", Fields: []string{"state", "owner"}},
+			{Key: "task:2", Fields: []string{"state", "owner"}},
+		})
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		require.Equal(t, []any{"open", "stella"}, got[0])
+		require.Equal(t, []any{"queued", "ada"}, got[1])
+	})
+}
+
+// scriptedDial is a redis.DialHook over net.Pipe: it answers HELLO so
+// go-redis finishes its handshake, then answers one HMGET per scripted reply.
+// It reads the whole batch before writing any reply, because go-redis writes
+// every pipeline command before reading one reply and a net.Pipe write blocks
+// until the peer reads it.
+func scriptedDial(replies []string) redis.DialHook {
+	return func(context.Context, string, string) (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer func() { _ = server.Close() }() // ignored: a test fixture's connection ends when its client hangs up
+			r := bufio.NewReader(server)
+			if _, err := readCommand(r); err != nil {
+				return
+			}
+			if _, err := io.WriteString(server, helloAccepted); err != nil {
+				return
+			}
+			for range replies {
+				if _, err := readCommand(r); err != nil {
+					return
+				}
+			}
+			for _, reply := range replies {
+				if _, err := io.WriteString(server, reply); err != nil {
+					return
+				}
+			}
+		}()
+		return client, nil
 	}
 }

@@ -94,9 +94,7 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 					return err
 				}
 				defer st.Close()
-				p := st.Client().Pipeline()
-				p.HMGet(ctx, "auth:probe", "f")
-				_, err = p.Exec(ctx)
+				_, err = st.PipelineHMGet(ctx, []store.HashRead{{Key: "auth:probe", Fields: []string{"f"}}})
 				return err
 			}
 			err = pipe()
