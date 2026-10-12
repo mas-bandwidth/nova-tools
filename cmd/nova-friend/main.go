@@ -972,7 +972,7 @@ example: nova-friend watch --as ada --timeout 10m`,
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= envelope= envelope_bytes= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
-(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=, and a lane faulted on a provider refusal lane_fault=<n> refusal=<first line>)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
