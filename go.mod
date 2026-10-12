@@ -13,6 +13,7 @@ require (
 	github.com/client9/misspell v0.3.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mas-bandwidth/nova-tools/hook v0.1.0
+	github.com/mas-bandwidth/nova-tools/pkg/oneline v0.0.0-00010101000000-000000000000
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/stretchr/testify v1.12.1
@@ -45,3 +46,9 @@ require (
 // The hook module lives in this repository (hook/, its own go.mod) and is
 // tagged hook/vX.Y.Z for the repositories that require it; here it is the tree.
 replace github.com/mas-bandwidth/nova-tools/hook => ./hook
+
+// The oneline formatter lives in this repository (pkg/oneline/, its own
+// go.mod, no imports beyond the standard library) and is tagged
+// pkg/oneline/vX.Y.Z for the repositories that require it; here it is
+// ./pkg/oneline.
+replace github.com/mas-bandwidth/nova-tools/pkg/oneline => ./pkg/oneline
