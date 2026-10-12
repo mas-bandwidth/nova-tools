@@ -60,9 +60,9 @@ import (
 //     hook/hooktest.New and pkg/testkit.PipeStore (a miniredis served over
 //     net.Pipe, whose cleanup fails the test that made a TCP connection), is
 //     the remedy, not an offence: no byte of the test crosses a socket. That
-//     shape is read, not named (miniredisTraps): a start whose function hands
-//     the client net.Pipe, or whose Cleanup asserts on that same server's
-//     TotalConnectionCount and closes it, is a trap; a count read and
+//     shape is read, not named (miniredisTraps): a Cleanup asserts that the same
+//     server's TotalConnectionCount is zero or fails on a nonzero count,
+//     and the server is closed. A pipe call alone, a count read and
 //     discarded, another server's count, or an assertion outside a Cleanup
 //     proves nothing and the start is a socket;
 //   - wait: OUTSIDE cmd/ internal/ pkg/ tools/, unitwaits' own list;
@@ -266,102 +266,172 @@ func inRanges(n ast.Node, ranges [][2]token.Pos) bool {
 	return false
 }
 
-// miniredisTraps are the miniredis.Run* calls of the file that start a trap:
-// the shape of the tree's fakes (hook/hooktest.New, pkg/testkit.PipeStore,
-// cmd/nova-redis's newHarness), whose server no byte of the test reaches over
-// TCP. A start `mr := miniredis.RunT(t)` (or Run, RunTLS) is a trap only when,
-// in the same function, EITHER the client is given net.Pipe as its transport
-// (a call of net.Pipe in that function) OR a Cleanup registered there asserts
-// on THAT server's TotalConnectionCount (a testify assertion, or t.Errorf /
-// Fatalf / Error / Fatal, whose arguments read `mr.TotalConnectionCount()`),
-// and the server is closed at the test's end (RunT does that itself; a Run or
-// RunTLS needs `mr.Close()` in a Cleanup too). A count read and discarded, a
-// count of another server, or an assertion outside a Cleanup proves nothing,
-// and that start is a socket, dialled over its loopback listener.
+// miniredisCount is the locally bound server whose count e reads directly.
+// The parser's object binding distinguishes a shadowed variable of the same name.
+func miniredisCount(e ast.Expr) *ast.Object {
+	call, ok := e.(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 {
+		return nil
+	}
+	recv, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || recv.Sel.Name != "TotalConnectionCount" {
+		return nil
+	}
+	if id, ok := recv.X.(*ast.Ident); ok {
+		return id.Obj
+	}
+	return nil
+}
+
+// literalZero is the literal zero used by the narrow no-TCP guard shapes.
+func literalZero(e ast.Expr) bool {
+	v, ok := e.(*ast.BasicLit)
+	return ok && v.Kind == token.INT && v.Value == "0"
+}
+
+// nonzeroCountGuard is a direct count != 0 condition, optionally using the
+// count bound in this if's initializer. Other comparisons prove no zero bound.
+func nonzeroCountGuard(s *ast.IfStmt) *ast.Object {
+	cond, ok := s.Cond.(*ast.BinaryExpr)
+	if !ok || cond.Op != token.NEQ {
+		return nil
+	}
+	count, zero := cond.X, cond.Y
+	if literalZero(count) {
+		count, zero = zero, count
+	}
+	if !literalZero(zero) {
+		return nil
+	}
+	if id, ok := count.(*ast.Ident); ok {
+		init, ok := s.Init.(*ast.AssignStmt)
+		if !ok || len(init.Lhs) != 1 || len(init.Rhs) != 1 {
+			return nil
+		}
+		bound, ok := init.Lhs[0].(*ast.Ident)
+		if !ok || id.Obj != bound.Obj {
+			return nil
+		}
+		count = init.Rhs[0]
+	}
+	return miniredisCount(count)
+}
+
+// testingFailure is a direct Error/Fatal call on a locally bound *testing.T.
+func testingFailure(call *ast.CallExpr, testingName string) bool {
+	recv, method := selName(call.Fun)
+	if !slices.Contains([]string{"Error", "Errorf", "Fatal", "Fatalf"}, method) || recv == "" {
+		return false
+	}
+	id := call.Fun.(*ast.SelectorExpr).X.(*ast.Ident)
+	if id.Obj == nil {
+		return false
+	}
+	field, ok := id.Obj.Decl.(*ast.Field)
+	if !ok {
+		return false
+	}
+	ptr, ok := field.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	pkg, typ := selName(ptr.X)
+	return testingName != "" && pkg == testingName && typ == "T"
+}
+
+// miniredisTraps recognizes a same-server zero-count Cleanup assertion or
+// nonzero-count failure guard, plus closure (RunT closes itself). A pipe call
+// alone proves no transport ownership. Libraries considered: go/ast inspection,
+// go/parser's local bindings, and the existing selName/importName helpers; no
+// whole-program dataflow or helper-name exemption is inferred.
 func miniredisTraps(file *ast.File, testify map[string]bool) map[*ast.CallExpr]bool {
 	name := importName(file, "github.com/alicebob/miniredis/v2")
 	if name == "" {
 		return nil
 	}
-	netName := importName(file, "net")
 	out := map[*ast.CallExpr]bool{}
 	for _, d := range file.Decls {
 		fn, ok := d.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
 			continue
 		}
-		// the starts, by the variable each is bound to
-		starts := map[string]*ast.CallExpr{}
-		selfClosing := map[string]bool{}
-		var cleanups [][2]token.Pos
-		piped := false
+		starts := map[*ast.Object]*ast.CallExpr{}
+		selfClosing := map[*ast.Object]bool{}
+		rebound := map[*ast.Object]bool{}
+		var cleanups []*ast.FuncLit
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.AssignStmt:
+				for _, lhs := range x.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && id.Obj != nil && id.Obj.Decl != x {
+						rebound[id.Obj] = true
+					}
+				}
 				if len(x.Lhs) == 0 || len(x.Rhs) != 1 {
 					return true
 				}
 				call, ok := x.Rhs[0].(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				id, ok := x.Lhs[0].(*ast.Ident)
-				if !ok {
+				id, bound := x.Lhs[0].(*ast.Ident)
+				if !ok || !bound || id.Obj == nil {
 					return true
 				}
 				if pkg, sel := selName(call.Fun); pkg == name && (sel == "Run" || sel == "RunT" || sel == "RunTLS") {
-					starts[id.Name] = call
-					selfClosing[id.Name] = sel == "RunT"
+					starts[id.Obj] = call
+					selfClosing[id.Obj] = sel == "RunT"
 				}
 			case *ast.CallExpr:
-				if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Cleanup" {
+				if _, sel := selName(x.Fun); sel == "Cleanup" {
 					for _, a := range x.Args {
-						cleanups = append(cleanups, [2]token.Pos{a.Pos(), a.End()})
-					}
-				}
-				if pkg, sel := selName(x.Fun); netName != "" && pkg == netName && sel == "Pipe" {
-					piped = true
-				}
-			}
-			return true
-		})
-		if len(starts) == 0 {
-			continue
-		}
-		// what the function's Cleanups assert, and close
-		asserted, closed := map[string]bool{}, map[string]bool{}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || !inRanges(call, cleanups) {
-				return true
-			}
-			pkg, sel := selName(call.Fun)
-			if recv, ok := call.Fun.(*ast.SelectorExpr); ok && sel == "Close" {
-				if id, ok := recv.X.(*ast.Ident); ok {
-					closed[id.Name] = true
-				}
-			}
-			if !testify[pkg] && sel != "Errorf" && sel != "Fatalf" && sel != "Error" && sel != "Fatal" {
-				return true
-			}
-			for _, a := range call.Args {
-				ast.Inspect(a, func(m ast.Node) bool {
-					c, ok := m.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					if s, ok := c.Fun.(*ast.SelectorExpr); ok && s.Sel.Name == "TotalConnectionCount" {
-						if id, ok := s.X.(*ast.Ident); ok {
-							asserted[id.Name] = true
+						if lit, ok := a.(*ast.FuncLit); ok {
+							cleanups = append(cleanups, lit)
 						}
 					}
-					return true
-				})
+				}
 			}
 			return true
 		})
+		asserted, closed := map[*ast.Object]bool{}, map[*ast.Object]bool{}
+		for _, cleanup := range cleanups {
+			ast.Inspect(cleanup.Body, func(n ast.Node) bool {
+				if _, ok := n.(*ast.FuncLit); ok {
+					return false // an uncalled function inside Cleanup proves nothing
+				}
+				if guard, ok := n.(*ast.IfStmt); ok {
+					if server := nonzeroCountGuard(guard); server != nil {
+						for _, stmt := range guard.Body.List {
+							if expr, ok := stmt.(*ast.ExprStmt); ok {
+								if call, ok := expr.X.(*ast.CallExpr); ok && testingFailure(call, importName(file, "testing")) {
+									asserted[server] = true
+								}
+							}
+						}
+					}
+				}
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				pkg, sel := selName(call.Fun)
+				if recv, ok := call.Fun.(*ast.SelectorExpr); ok && sel == "Close" {
+					if id, ok := recv.X.(*ast.Ident); ok && id.Obj != nil {
+						closed[id.Obj] = true
+					}
+				}
+				if testify[pkg] && len(call.Args) >= 2 && (sel == "Zero" || sel == "Zerof") {
+					asserted[miniredisCount(call.Args[1])] = true
+				}
+				if testify[pkg] && len(call.Args) >= 3 && (sel == "Equal" || sel == "Equalf") {
+					if literalZero(call.Args[1]) {
+						asserted[miniredisCount(call.Args[2])] = true
+					} else if literalZero(call.Args[2]) {
+						asserted[miniredisCount(call.Args[1])] = true
+					}
+				}
+				return true
+			})
+		}
 		for v, call := range starts {
-			if piped || (asserted[v] && (selfClosing[v] || closed[v])) {
+			if !rebound[v] && asserted[v] && (selfClosing[v] || closed[v]) {
 				out[call] = true
 			}
 		}
@@ -411,8 +481,7 @@ func unitRuleSitesIn(fset *token.FileSet, rel string, file *ast.File) []unitRule
 			pkg, name := selName(x.Fun)
 			switch {
 			case pkg != "" && pkg == miniredisName && slices.Contains(sockets[pkg], name) && traps[x]:
-				// a trap: the fake served over net.Pipe, or whose cleanup asserts
-				// that no TCP connection reached it (miniredisTraps)
+				// a trap: its own cleanup guards zero TCP connections (miniredisTraps)
 			case unitRuleEventually[sel.Sel.Name] && (testify[pkg] || pkg == "" || !isImportName(file, pkg)):
 				// a testify package's function, or a method of an assertion
 				// object or a suite: the same poll on the real clock
@@ -807,11 +876,13 @@ import (
 
 func TestArgs(t *testing.T) {
 	var c net.Conn
-	synctest.Test(t, mk(req.Eventually(t, func() bool { return true }, time.Second, time.Millisecond)))
-	synctest.Test(t, mk(c.SetDeadline(time.Now().Add(time.Second))))
+	synctest.Test(t, func() func(*testing.T) { req.Eventually(t, func() bool { return true }, time.Second, time.Millisecond); return func(*testing.T) {} }())
+	synctest.Test(t, func() func(*testing.T) { _ = c.SetDeadline(time.Now().Add(time.Second)); return func(*testing.T) {} }())
 	synctest.Test(t, func(t *testing.T) { req.Eventually(t, func() bool { return true }, time.Second, time.Millisecond) })
 	synctest.Test(t, inBubble)
 }
+
+func inBubble(t *testing.T) {}
 `
 	assert.Equal(t, []string{"14 eventually req.Eventually", "15 deadline c.SetDeadline(time.Now()...)"}, scan("pkg/p/args_test.go", bubbleArgs), "a synctest call's arguments are read; its function literal is not; a named function passed to it is read where it is written")
 
@@ -834,8 +905,8 @@ func TestDot(t *testing.T) {
 
 	// A miniredis is a trap only on proof: a count read and discarded, another
 	// server's count, an assertion outside a Cleanup, and a Run that nothing
-	// closes are each a socket; the pipe and the asserted-and-closed starts are
-	// not.
+	// closes are each a socket. Only a same-server zero guard proves a trap;
+	// even a pipe served by the fake needs that proof.
 	const notTraps = `package p
 
 import (
@@ -886,8 +957,61 @@ func runClosedAndAsserted(t *testing.T) *miniredis.Miniredis {
 	})
 	return mr
 }
+
+func positiveCount(t *testing.T) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	t.Cleanup(func() { assert.NotZero(t, mr.TotalConnectionCount()) })
+	return mr
+}
+
+func positiveEqual(t *testing.T) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	t.Cleanup(func() { assert.Equal(t, 1, mr.TotalConnectionCount()) })
+	return mr
+}
+
+func unusedPipe(t *testing.T) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	near, far := net.Pipe()
+	near.Close()
+	far.Close()
+	return mr
+}
+
+func wrongServerWithPipe(t *testing.T) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	other := miniredis.RunT(t)
+	near, far := net.Pipe()
+	other.Server().ServeConn(far)
+	t.Cleanup(func() { near.Close(); assert.Zero(t, other.TotalConnectionCount()) })
+	return mr
+}
+
+func conditionalZeroGuard(t *testing.T) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	t.Cleanup(func() {
+		if got := mr.TotalConnectionCount(); got != 0 {
+			t.Errorf("a TCP connection reached the fake: %d", got)
+		}
+	})
+	return mr
+}
+
+func zeroEqualGuard(t *testing.T) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	t.Cleanup(func() { assert.Equal(t, 0, mr.TotalConnectionCount()) })
+	return mr
+}
+
+func reboundServer(t *testing.T) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	other := miniredis.RunT(t)
+	mr = other
+	t.Cleanup(func() { assert.Zero(t, mr.TotalConnectionCount()); assert.Zero(t, other.TotalConnectionCount()) })
+	return mr
+}
 `
-	assert.Equal(t, []string{"12 socket miniredis.RunT", "18 socket miniredis.RunT", "25 socket miniredis.RunT", "31 socket miniredis.Run"}, scan("pkg/p/traps_test.go", notTraps), "a miniredis is a trap only when its client is piped or its own count is asserted in a Cleanup and it is closed; the other server's RunT (line 19), the piped start (37) and the closed, asserted Run (44) are traps")
+	assert.Equal(t, []string{"12 socket miniredis.RunT", "18 socket miniredis.RunT", "25 socket miniredis.RunT", "31 socket miniredis.Run", "37 socket miniredis.RunT", "53 socket miniredis.RunT", "59 socket miniredis.RunT", "65 socket miniredis.RunT", "73 socket miniredis.RunT", "98 socket miniredis.RunT"}, scan("pkg/p/traps_test.go", notTraps), "a miniredis needs a same-server zero-count Cleanup guard and closure; positive assertions and unrelated pipes prove nothing")
 
 	base := map[string]int{"pkg/p/p_test.go:eventually": 2, "pkg/p/q_test.go:socket": 1}
 	assert.Empty(t, unitRuleGrowth(base, map[string]int{"pkg/p/p_test.go:eventually": 1}), "a lowered count and a dropped row are the burn-down shrinking")

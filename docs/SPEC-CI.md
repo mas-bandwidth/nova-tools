@@ -768,10 +768,16 @@ imports: a wait or a socket inside the subject (a `Timeout` field, a helper in
 another package, a method value) is not seen. Inside a `synctest.Test` or
 `synctest.Run` bubble package time is the fake clock, so the time shapes are not
 read there (a socket or a service in a bubble still is). A `miniredis.Run*` is a trap, not a socket, only on proof in its own function:
-the client is handed `net.Pipe`, or a `Cleanup` there asserts on that same
-server's `TotalConnectionCount` and the server is closed (`RunT` closes itself);
-a count read and discarded, another server's count or an assertion outside a
-`Cleanup` proves nothing, and that start is a socket. Only the function literal
+a literal `Cleanup` there asserts that the locally bound server's direct
+`TotalConnectionCount()` is zero (`Zero` or `Equal` to literal `0`), or a direct
+`count != 0` condition fails its `*testing.T` with Error/Fatal; the server is
+closed (`RunT` closes itself). A count bound in that if's initializer is read.
+Local parser bindings distinguish shadowed server variables; a reassigned
+server variable proves no stable instance. A `net.Pipe`
+anywhere in the function, a positive-count assertion, another server's count,
+a discarded count or an assertion outside Cleanup proves nothing. Uncertain
+transport/count helpers remain counted socket sites; no interprocedural or
+whole-function control-flow proof is inferred. Only the function literal
 handed to `synctest.Test`/`Run` is a bubble: the call's other arguments are read. `time.Now()` passed on into the subject as a
 timestamp (`run(args, ..., time.Now())`) is data, not a verdict, and is not read.
 The tier decision reuses `unitTierFile`.
