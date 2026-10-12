@@ -171,3 +171,42 @@ func TestTheClientSendsABatchInOneRequest(t *testing.T) {
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// RunAnswer says what became of a write, which the exit code alone cannot: nova-sprint's
+// refuse() exits 2 as a worker whose server never answered does, and a cut operation exits
+// 1 as a refused card does. Each of nova-sprint's answers is read from the server's own
+// result, whole, before Failed shapes it (cmd/nova-sprint/main.go refuse; verbs.go stepExit
+// and report; internal/sprint/store engine.go ErrUnknown and CutError, epoch.go ClearedError;
+// serve.go's worker-verb refusal).
+func TestRunAnswerTellsARefusalFromAnUnknownOutcome(t *testing.T) {
+	t.Parallel()
+	shaped := func([]byte, []byte) []byte { return []byte("capped") }
+	for _, tc := range []struct {
+		name   string
+		answer Result
+		fail   int
+		want   Answer
+	}{
+		{"accepted", Result{Stdout: "MOVED 1\nFINISH OK moved=1 refused=0 notes=0\n"}, 0, Accepted},
+		{"a card refused, exit 1", Result{Code: 1, Stderr: "REFUSED s1-1.w1@1: not the live generation (2)\nFINISH FAILED moved=0 refused=1 notes=0\n"}, 0, Refused},
+		{"refuse(), exit 2", Result{Code: 2, Stderr: "nova-sprint finish REFUSED: a report names the epoch its cards were handed at: --epoch <n>; nothing was changed\n"}, 0, Refused},
+		{"the server's worker-verb refusal, exit 2", Result{Code: 2, Stderr: "nova-sprint server: finish: names no --as; nothing was changed\n"}, 0, Refused},
+		{"a pending operation, exit 1", Result{Code: 1, Stderr: "FINISH FAILED moved=0 refused=0 notes=0 changed=no\nnova-sprint finish: operation o1 is pending: x; run: nova-sprint repair\n"}, 0, Refused},
+		{"the store did not confirm, exit 2", Result{Code: 2, Stderr: "FINISH FAILED moved=0 refused=0 notes=0 changed=unknown\nnova-sprint finish: the store did not confirm the write (changed=unknown)\n"}, 0, Unknown},
+		{"an operation cut, exit 1", Result{Code: 1, Stderr: "FINISH FAILED moved=0 refused=0 notes=0 changed=no\nnova-sprint finish: operation o1 cut at table cards: write failed; run: nova-sprint repair\n"}, 0, Unknown},
+		{"a finish a clear closed, exit 1", Result{Code: 1, Stderr: "nova-sprint finish: the sprint was cleared at 12:00 as this step finished: its moves stand at epoch 7\n"}, 0, Unknown},
+		{"no answer, the worker's own exit 2", Result{}, Tries, Unknown},
+	} {
+		r := &recorder{answer: tc.answer, fail: tc.fail}
+		code, out, answer := (&Worker{Send: r.send, Failed: shaped}).RunAnswer("finish", "--as", "m1", "s1-1.w1@1")
+		assert.Equal(t, tc.want, answer, tc.name)
+		if tc.fail >= Tries {
+			assert.Equal(t, 2, code, tc.name)
+		} else {
+			assert.Equal(t, tc.answer.Code, code, tc.name)
+		}
+		if code != 0 {
+			assert.Equal(t, "capped", string(out), "%s: the log line is Failed's; the answer was read before it", tc.name)
+		}
+	}
+}

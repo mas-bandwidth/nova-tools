@@ -421,18 +421,26 @@ func TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
 	require.Equal(t, 1, strings.Count(g.out.String(), "recover "), "one line for the one card left:\n%s", g.out)
 	require.Contains(t, g.out.String(), "recover c3 deferred: width 2 full\n")
 
-	// When c1 finishes and is reported, the freed slot allows c3 to be recovered.
+	// When c1 finishes it is reported; its lane stays busy until the report is
+	// collected, so the pass after the report recovers c3.
 	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "head-1", Report: "done c1"})
 	g.s.reset()
 	// Next pass: queue still reports working cards until sprint processes finish.
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
 	acted, err = g.tick(t)
 	require.NoError(t, err)
-	require.Equal(t, 2, acted, "one finish and one start")
-	require.Equal(t, 2, g.m.Running())
+	require.Equal(t, 1, acted, "the report alone: the lane is busy until it is collected")
 	finishes := g.s.lines("finish")
 	require.Len(t, finishes, 1)
 	require.Contains(t, finishes[0], "c1@1")
+
+	// c1 is reported and gone: the next pass recovers c3 in the freed lane.
+	g.s.set("queue", 0, queueJSON(t, 7, working("c2", 1, &p2), working("c3", 1, &p3)))
+	g.s.reset()
+	acted, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, acted, "the recovered card")
+	require.Equal(t, 2, g.m.Running())
 	require.Equal(t, []string{"c1", "c2", "c3"}, g.r.started())
 }
 
@@ -450,17 +458,25 @@ func TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T)
 	require.Equal(t, 1, g.m.Running())
 	require.Equal(t, []string{"r1"}, g.r.started())
 
-	// When r1 finishes with a verdict, reporting it frees the slot for r2.
+	// When r1 finishes with a verdict, reporting it frees the slot for r2 only
+	// once the report is collected: the pass after the report recovers r2.
 	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
 	g.s.reset()
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
 	acted, err = g.tick(t)
 	require.NoError(t, err)
-	require.Equal(t, 2, acted, "one report and one start")
-	require.Equal(t, 1, g.m.Running())
+	require.Equal(t, 1, acted, "the report alone: the lane is busy until it is collected")
 	reports := g.s.lines("report")
 	require.Len(t, reports, 1)
 	require.Contains(t, reports[0], "r1")
+
+	// r1 is reported and gone: the next pass recovers r2 in the freed lane.
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r2", &r2)))
+	g.s.reset()
+	acted, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, acted, "the recovered read")
+	require.Equal(t, 1, g.m.Running())
 	require.Equal(t, []string{"r1", "r2"}, g.r.started())
 }
 
@@ -515,7 +531,8 @@ func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 		"read --as r --ok r1 --finding clean --epoch 7",
 		"read --as r --broken r2 --finding main.go:12: the merge is wrong --epoch 7",
 	}
-	require.Equal(t, want, g.s.lines("report"), "report lines")
+	// the two reports run side by side (reportRun), so they land in any order
+	require.ElementsMatch(t, want, g.s.lines("report"), "report lines")
 	require.Equal(t, 0, g.m.Running(), "running=%d after both reads were reported", g.m.Running())
 }
 
@@ -583,12 +600,21 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "r"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2")))
 	g.s.set("take", 1, "the sprint is stopped")
+	// the pass reports c1; its lane is busy until the report is collected, so no
+	// take is attempted this pass
 	acted, err := g.tick(t)
 	require.NoError(t, err, "a refusal is not an error: %v", err)
 	require.Equal(t, 1, acted, "acted=%d, want the one finish", acted)
-	require.Contains(t, g.out.String(), "take refused: the sprint is stopped", "the refusal was not printed")
-	g.s.set("take", 0, takeJSON(t, pk("c2")))
+	require.NotContains(t, g.out.String(), "take refused: the sprint is stopped", "no take while the report runs")
+
+	// the freed lane is taken next pass, and the refused take is printed then
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c2")))
+	acted, err = g.tick(t)
+	require.NoError(t, err, "a refusal is not an error: %v", err)
+	require.Zero(t, acted, "a refused take acts on nothing")
+	require.Contains(t, g.out.String(), "take refused: the sprint is stopped", "the refusal was not printed")
+
+	g.s.set("take", 0, takeJSON(t, pk("c2")))
 	acted, err = g.tick(t)
 	require.NoError(t, err, "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
 	require.Equal(t, 1, acted, "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
@@ -940,6 +966,9 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 	require.NoError(t, err)
 	for i := range ps {
 		g.r.child(ps[i].Card).end(Result{Ran: false, Report: "STAGE FAIL no bench mirror"})
+		// the pass that reports the return holds the lane while its report is in
+		// flight, so the next read is begun by the pass after (reportRun; step 5
+		// takes before the reports are collected)
 		cards := []queueCard{reading(ps[i].Card, &ps[i])}
 		if i+1 < len(ps) {
 			cards = append(cards, asked(ps[i+1].Card, &ps[i+1]))
@@ -948,6 +977,11 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 		_, err := g.tick(t)
 		require.NoError(t, err)
 		assert.LessOrEqual(t, g.m.Running(), 1, "after return %d", i+1)
+		if i+1 < len(ps) {
+			g.s.set("queue", 0, queueJSON(t, 7, asked(ps[i+1].Card, &ps[i+1])))
+			_, err := g.tick(t)
+			require.NoError(t, err)
+		}
 	}
 	assert.Len(t, g.s.lines("return"), 3)
 	assert.Equal(t, []string{"read --as r --begin r2@0 --epoch 7", "read --as r --begin r3@0 --epoch 7"}, g.s.lines("begin"))
@@ -1783,12 +1817,14 @@ func TestAMemberWhosePassIsHungStopsBeating(t *testing.T) {
 	assert.Contains(t, out.String(), "NOTE beat resumed: the work pass advanced\n")
 }
 
-// TestALaneThatFinishesIsRefilledInTheSamePass pins the member's side of
+// TestALaneThatFinishesIsRefilledNextPass pins the member's side of
 // DealAhead (internal/sprint/width.go): a member at its width with a card
-// ready behind it reports the child that ended and takes the ready card in
-// the one pass, so the lane is refilled at once and never waits for the
-// sprint's next tick: finish, then take --limit 1, then the start.
-func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
+// ready behind it reports the child that ended in one pass, the reporting
+// launch holding its lane while its report runs (reportRun), and takes the
+// ready card in the next pass, which a Background member runs as soon as the
+// report posts (it wakes the loop): finish, then take --limit 1, then the
+// start, never waiting for the sprint's next tick.
+func TestALaneThatFinishesIsRefilledNextPass(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 1})
 	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
@@ -1803,13 +1839,26 @@ func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), ready("c2")))
 	g.s.set("take", 0, takeJSON(t, p2))
 	g.s.reset()
+	// the pass that reports c1 holds its lane while the report runs (reportRun),
+	// so the take is not attempted: the freed lane is filled by the next pass
 	acted, err := g.tick(t)
 	require.NoError(t, err)
 	assert.Len(t, g.s.lines("finish"), 1, "the ended child is reported")
-	assert.Equal(t, []string{"take --as m --limit 1 --json --epoch 7"}, g.s.lines("take"), "the freed lane is taken in the same pass")
-	assert.Equal(t, []string{"c1", "c2"}, g.r.started(), "the ready card is started in the same pass")
+	assert.Empty(t, g.s.lines("take"), "the reporting launch still holds its lane")
+	assert.Equal(t, []string{"c1"}, g.r.started(), "no start while the report runs")
+	assert.Equal(t, 0, g.m.Running(), "the report is collected at the pass's end")
+	assert.Equal(t, 1, acted, "one report")
+
+	// the next pass fills the freed lane
+	g.s.set("queue", 0, queueJSON(t, 7, ready("c2")))
+	g.s.set("take", 0, takeJSON(t, p2))
+	g.s.reset()
+	acted, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"take --as m --limit 1 --json --epoch 7"}, g.s.lines("take"), "the freed lane is taken next pass")
+	assert.Equal(t, []string{"c1", "c2"}, g.r.started(), "the ready card is started next pass")
 	assert.Equal(t, 1, g.m.Running(), "the member runs at most its width")
-	assert.Equal(t, 2, acted, "one report and one start")
+	assert.Equal(t, 1, acted, "one start")
 }
 
 // TestPassReportsCompletedChildWhenQueueReadFails pins that a completed child

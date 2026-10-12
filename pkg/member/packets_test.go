@@ -214,14 +214,19 @@ func TestAReaderAsksForThePacketsOfItsFreeLanesOnly(t *testing.T) {
 	assert.Zero(t, s.lastHanded())
 	assert.Len(t, g.r.started(), 8, "nothing more begun")
 
-	// a read ends: the pass that reports it begins the next in the lane it frees
+	// a read ends: the pass that reports it holds its lane while the report runs, so
+	// the lane it frees begins the next read on the pass after
 	g.r.child(first[0]).end(Result{Ran: true, OK: true, Verdict: "ok", Report: "fine"})
 	s.forget()
 	_, err = g.tick(t)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"queue --as r --json --packets 1 --have " + strings.Join(first, ",")}, s.queues())
-	assert.Equal(t, 1, s.lastHanded())
-	assert.Len(t, g.r.started(), 9, "the freed lane began a read in the same pass")
+	assert.Zero(t, s.lastHanded(), "the reporting lane is busy: no packet asked")
+	assert.Len(t, g.r.started(), 8, "nothing begun while the report runs")
+
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, 1, s.lastHanded(), "the freed lane asks for one packet")
+	assert.Len(t, g.r.started(), 9, "the freed lane began a read the next pass")
 	assert.Equal(t, 8, g.m.Running())
 	t.Logf("the reader's answers, by pass: %d, %d, %d bytes", s.answers[0], s.answers[1], s.answers[2])
 }
@@ -242,16 +247,27 @@ func TestAReadReturnedAMomentAgoTakesNoLaneOfTheAsk(t *testing.T) {
 	require.Equal(t, []string{"p000.r1.r", "p001.r1.r"}, g.r.started())
 
 	g.r.child("p000.r1.r").end(Result{Ran: false, Report: "no verdict"})
-	_, err = g.tick(t)
+	_, err = g.tick(t) // the pass that reports the return holds its lane while the report runs
 	require.NoError(t, err)
 	require.Contains(t, g.out.String(), "read p000.r1.r: returned")
+	require.Equal(t, []string{"p000.r1.r", "p001.r1.r"}, g.r.started(), "no read begun while the report runs")
+
+	_, err = g.tick(t) // the freed lane is filled the pass after
+	require.NoError(t, err)
 	require.Equal(t, []string{"p000.r1.r", "p001.r1.r", "p002.r1.r"}, g.r.started())
 
 	g.r.child("p001.r1.r").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "fine"})
 	s.forget()
-	_, err = g.tick(t)
+	_, err = g.tick(t) // report p001
 	require.NoError(t, err)
-	assert.Equal(t, []string{"queue --as r --json --packets 1 --have p000.r1.r,p001.r1.r,p002.r1.r"}, s.queues())
+	_, err = g.tick(t) // the freed lane begins the next read, not the returned one
+	require.NoError(t, err)
+	// the read returned a moment ago stays in --have on both passes, so the ask sends no
+	// packet for it and its lane goes to the next read
+	assert.Equal(t, []string{
+		"queue --as r --json --packets 0 --have p000.r1.r,p001.r1.r,p002.r1.r",
+		"queue --as r --json --packets 1 --have p000.r1.r,p002.r1.r",
+	}, s.queues())
 	assert.Equal(t, []string{"p000.r1.r", "p001.r1.r", "p002.r1.r", "p003.r1.r"}, g.r.started(), "the freed lane began the next read, not the returned one")
 }
 

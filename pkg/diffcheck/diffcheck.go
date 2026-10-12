@@ -131,9 +131,33 @@ var AgentsMapRoots = []string{
 	"tools/AGENTS.md",
 }
 
+// AlwaysInPaths says p is one of the files a change must touch to keep the tree green,
+// always inside PATHS whatever the brief names: a package's Go test, when the PATHS name
+// a Go source file in its directory, the directory itself, or a glob naming the
+// directory's Go files (cardgen.AlwaysInPathsRule; docs/SPEC-CARD-CONTRACT.md, "Files a
+// change must touch to keep the tree green are always inside PATHS"; docs/SPEC-SPRINT.md
+// section 7, always inside PATHS). A PATHS list that names only test files carries no
+// source, so it carries no other test: the file stays outside. Neither does an entry in
+// the directory that is not Go source (a README, a testdata fixture, a glob such as
+// pkg/x/*.md that names no Go file): only real Go source carries the package's tests.
+func AlwaysInPaths(paths []string, p string) bool {
+	if !strings.HasSuffix(p, "_test.go") {
+		return false
+	}
+	dir := path.Dir(p)
+	return slices.ContainsFunc(paths, func(g string) bool {
+		if g == dir {
+			return true // the package directory itself
+		}
+		// a Go source file, or a glob naming the directory's Go files (pkg/x/*.go)
+		return path.Dir(g) == dir && strings.HasSuffix(g, ".go") && !strings.HasSuffix(g, "_test.go")
+	})
+}
+
 // Outside is every file the diff changes that the card may not (E12); nil when paths is
 // empty (a card that names no PATHS is held to none). A file is the card's when its
-// PATHS globs name it or it is a ledger (Ledger). A rename holds both sides: the file it
+// PATHS globs name it, it is a ledger (Ledger), or it is always inside PATHS
+// (AlwaysInPaths). A rename holds both sides: the file it
 // moves from is the card's, and the file it moves to is the card's too or stays in the
 // directory it was in (a name card renames a file in place). A rename out of a PATHS
 // file to anywhere else, and a file moved into the ledgers' directory, are outside.
@@ -158,7 +182,7 @@ func Outside(paths []string, diff string, trackedBefore []string) []string {
 	named := func(p string) bool {
 		return slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, p) })
 	}
-	mine := func(p string) bool { return named(p) || Ledger(p) }
+	mine := func(p string) bool { return named(p) || Ledger(p) || AlwaysInPaths(paths, p) }
 	var out []string
 	for _, f := range files {
 		if catalogExempt(f, dirs) || len(dirs) > 0 && f.Old == f.New && AgentsMap(f.New) {

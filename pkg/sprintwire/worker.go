@@ -1,6 +1,7 @@
 package sprintwire
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -36,12 +37,70 @@ type Worker struct {
 const Tries = 3
 
 // Run sends one verb and returns its exit code and output; 2, with why, when
-// the server did not answer.
+// the server did not answer. The server's own refusals may exit 2 as well
+// (nova-sprint's refuse() returns 2, and serve passes the code through), so the
+// code alone does not say what became of the write: RunAnswer does.
 func (w *Worker) Run(args ...string) (int, []byte) {
+	code, out, _ := w.RunAnswer(args...)
+	return code, out
+}
+
+// Answer is what a verb's run says became of its write, beside its exit code.
+type Answer int
+
+const (
+	// Accepted is exit 0: the server answered and the verb did what it named.
+	Accepted Answer = iota
+	// Refused is a non-zero exit the server answered for a write that did not
+	// happen: a card refused (stepExit 1), a usage or epoch refusal before the
+	// store was touched (refuse(), exit 2, "nova-sprint <verb> REFUSED:"), a
+	// worker verb the server will not serve, a pending operation, a cleared
+	// epoch that changed nothing.
+	Refused
+	// Unknown is a write whose outcome is not known: no try reached the server
+	// (the 2 is this worker's own), or the server answered that the store did not
+	// confirm it (ErrUnknown, changed=unknown), that its operation was cut after
+	// an earlier manifest applied (CutError, fenced for nova-sprint repair), or
+	// that it finished at an epoch a clear closed.
+	Unknown
+)
+
+// The words nova-sprint prints for the answers whose write may have happened
+// (nova-sprint cmd/nova-sprint/verbs.go report and internal/sprint/store):
+// ErrUnknown's sentence and the status line's changed=unknown; CutError's
+// "operation <op> cut at table"; ClearedError's "as this step finished".
+var unknownMarks = []string{
+	"changed=unknown",
+	"the store did not confirm the write",
+	" cut at table ",
+	"as this step finished",
+}
+
+// Classify is the Answer of a verb that exited code having printed stdout and
+// stderr, answered saying whether the server answered it at all.
+func Classify(code int, stdout, stderr []byte, answered bool) Answer {
+	switch {
+	case !answered:
+		return Unknown
+	case code == 0:
+		return Accepted
+	}
+	for _, m := range unknownMarks {
+		if bytes.Contains(stderr, []byte(m)) || bytes.Contains(stdout, []byte(m)) {
+			return Unknown
+		}
+	}
+	return Refused
+}
+
+// RunAnswer is Run with what became of the write (Classify): the server's own
+// result read whole, before Failed shapes it for the log, so a capped log line
+// never decides it.
+func (w *Worker) RunAnswer(args ...string) (code int, out []byte, answer Answer) {
 	args = slices.Clone(args)
 	if len(args) >= 2 && args[0] == "fleet" && args[1] == "beat" {
 		if args = w.beat(args); args == nil {
-			return 1, []byte("beat not sent: this machine's load has no sample yet, and the server cannot measure it; the next beat names one")
+			return 1, []byte("beat not sent: this machine's load has no sample yet, and the server cannot measure it; the next beat names one"), Refused
 		}
 	}
 	if len(args) > 0 && (args[0] == "take" || args[0] == "finish" || args[0] == "read") {
@@ -60,12 +119,13 @@ func (w *Worker) Run(args ...string) (int, []byte) {
 			continue
 		}
 		r := res[0]
+		answer = Classify(r.Code, []byte(r.Stdout), []byte(r.Stderr), true)
 		if r.Code != 0 {
-			return r.Code, w.failed([]byte(r.Stdout), []byte(r.Stderr))
+			return r.Code, w.failed([]byte(r.Stdout), []byte(r.Stderr)), answer
 		}
-		return 0, []byte(r.Stdout)
+		return 0, []byte(r.Stdout), answer
 	}
-	return 2, w.failed(nil, []byte(err.Error()))
+	return 2, w.failed(nil, []byte(err.Error())), Unknown
 }
 
 func (w *Worker) failed(stdout, stderr []byte) []byte {

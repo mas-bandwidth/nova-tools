@@ -94,6 +94,39 @@ func TestOutsideNamesFilesBeyondPaths(t *testing.T) {
 	assert.Nil(t, Outside(nil, fixture(t, "negd-42"), nil))
 }
 
+// A file a change must touch to keep the tree green is always inside PATHS, whatever the
+// brief names, and a package's tests are that file: a test beside a Go source file the card
+// names (or a package its glob names) is the card's (cardgen.AlwaysInPathsRule;
+// docs/SPEC-CARD-CONTRACT.md, "Files a change must touch to keep the tree green are always
+// inside PATHS"; docs/SPEC-SPRINT.md section 7, always inside PATHS). A PATHS list that
+// names only test files carries no source, so it does not carry the package's other tests.
+func TestOutsideHoldsTestsBesideANamedPackage(t *testing.T) {
+	t.Parallel()
+	edit := func(p string) string { return "diff --git a/" + p + " b/" + p + "\n@@ -1 +1 @@\n-a\n+b\n" }
+	assert.Empty(t, Outside([]string{"pkg/member/member.go", "pkg/member/member_test.go"}, edit("pkg/member/packets_test.go"), nil))
+	assert.Empty(t, Outside([]string{"pkg/member/*.go"}, edit("pkg/member/packets_test.go"), nil), "a package glob carries its tests")
+	assert.Equal(t, []string{"internal/bus/named_test.go"}, Outside([]string{"internal/bus/one_test.go"}, edit("internal/bus/named_test.go"), nil), "tests only, no source, carry nothing")
+	assert.Equal(t, []string{"other/other_test.go"}, Outside([]string{"pkg/member/member.go"}, edit("other/other_test.go"), nil), "another package's test is not the card's")
+}
+
+// Only real Go source carries a package's tests: a PATHS entry in the same directory that is
+// not Go source (a README, a fixture, a glob that names no Go files) does not make the
+// package's other tests the card's, while the package directory, a Go file and a Go-file
+// glob still do (AlwaysInPaths). Red before the fix: pkg/member/README.md authorized
+// pkg/member/unrelated_test.go.
+func TestOutsideHoldsTestsOnlyBesideGoSource(t *testing.T) {
+	t.Parallel()
+	edit := func(p string) string { return "diff --git a/" + p + " b/" + p + "\n@@ -1 +1 @@\n-a\n+b\n" }
+	const test = "pkg/member/unrelated_test.go"
+	// (a glob such as pkg/member/* names the test itself, so its PATHS hold it outright)
+	for _, paths := range [][]string{{"pkg/member/README.md"}, {"pkg/member/testdata.json"}, {"pkg/member/*.md"}} {
+		assert.Equal(t, []string{test}, Outside(paths, edit(test), nil), "PATHS %v is not Go source: it carries no test", paths)
+	}
+	for _, paths := range [][]string{{"pkg/member"}, {"pkg/member/member.go"}, {"pkg/member/*.go"}} {
+		assert.Empty(t, Outside(paths, edit(test), nil), "PATHS %v is Go source: it carries the package's tests", paths)
+	}
+}
+
 // A rename holds both sides: a PATHS file renamed in its own directory is the card's (a
 // name card, names-02), renamed anywhere else it is not, and a file from outside PATHS
 // moved into the ledgers' directory is not either. Only the class ledgers are every
