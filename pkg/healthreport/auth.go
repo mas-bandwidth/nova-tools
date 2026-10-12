@@ -4,6 +4,8 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +20,7 @@ const (
 // events, receipts and formatted diagnostics. It authenticates only Enrollment.
 type Capability struct {
 	enrollment Enrollment
-	secret     [32]byte
+	secret     *[32]byte
 }
 
 // NewCapability accepts a canonical unpadded base64url encoding of 32 random
@@ -34,17 +36,22 @@ func NewCapability(e Enrollment, encoded string) (*Capability, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
-	var empty [32]byte
-	c := &Capability{enrollment: e}
-	copy(c.secret[:], raw)
-	if c.secret == empty {
+	var key, empty [32]byte
+	copy(key[:], raw)
+	if key == empty {
 		return nil, errors.New("health capability secret is empty")
 	}
-	return c, nil
+	return &Capability{enrollment: e, secret: &key}, nil
 }
 
 func (c Capability) String() string   { return "health capability (secret redacted)" }
 func (c Capability) GoString() string { return c.String() }
+
+// Format prevents fmt's numeric/other verbs from recursively inspecting the
+// secret array when String/GoString would not be used. Every verb is redacted.
+func (c Capability) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, c.String()) // ignored: fmt.Formatter cannot return errors; only the constant redacted label is written
+}
 
 // Principal is a successfully authenticated owner grant. Request bodies cannot
 // construct one; its zero value is not authorized. The receiver still checks
@@ -70,7 +77,7 @@ func (p Principal) ParseEvent(raw []byte) (Event, error) {
 // activation/replay fences remain mandatory at the receiver's commit boundary.
 func (c *Capability) Authenticate(h http.Header) (Principal, error) {
 	denied := errors.New("health capability refused")
-	if c == nil {
+	if c == nil || c.secret == nil {
 		return Principal{}, denied
 	}
 	id, epoch, auth := h.Values(HeaderID), h.Values(HeaderEpoch), h.Values("Authorization")

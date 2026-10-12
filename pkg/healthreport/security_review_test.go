@@ -51,3 +51,30 @@ func TestDefaultLoginMustBeExplicitInTheDescriptorAndEvent(t *testing.T) {
 	_, err = ParseEvent([]byte(raw), e)
 	require.Error(t, err)
 }
+
+func TestCapabilityRedactsNumericAndOtherFormattingVerbs(t *testing.T) {
+	t.Parallel()
+	c, err := NewCapability(enrolled("https://127.0.0.1:8443"+Path), secret())
+	require.NoError(t, err)
+	for _, value := range []any{c, *c} {
+		for _, format := range []string{"%d", "%x", "%#x", "%b", "%q", "%s", "%e", "%g", "%f", "%.2v"} {
+			assert.Equal(t, "health capability (secret redacted)", fmt.Sprintf(format, value))
+		}
+	}
+}
+
+func TestCapabilityTypeAndPointerFormatsNeverExposeSecretBytes(t *testing.T) {
+	t.Parallel()
+	c, err := NewCapability(enrolled("https://127.0.0.1:8443"+Path), secret())
+	require.NoError(t, err)
+	numeric := fmt.Sprint(*c.secret)
+	hexadecimal := fmt.Sprintf("%x", *c.secret)
+	for _, value := range []any{c, *c} {
+		for _, format := range []string{"%p", "%T", "%w"} {
+			got := fmt.Sprintf(format, value)
+			assert.NotContains(t, got, secret())
+			assert.NotContains(t, got, numeric)
+			assert.NotContains(t, got, hexadecimal)
+		}
+	}
+}

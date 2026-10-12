@@ -27,7 +27,7 @@ type Client struct {
 // checked IP itself dialed to prevent a second DNS lookup changing the boundary.
 // A caller cannot substitute a transport that logs headers or disables TLS.
 func NewClient(c *Capability, roots *x509.CertPool) (*Client, error) {
-	if c == nil {
+	if c == nil || c.secret == nil {
 		return nil, errors.New("health capability is required")
 	}
 	if roots != nil {
