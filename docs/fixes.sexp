@@ -899,7 +899,12 @@
     reason, tip moved) is posted on a channel the step drains and applied by the loop. On shutdown the
     daemon waits for in-flight finishes up to FinishWait and leaves any unanswered to be sent again
     next run."
-   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
+    :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
+
+  (fix "a-cut-ignores-the-previous-tags-cancelled-release-run" :release "v1.2.15" :status "planned"
+   :title "A cut ignores a previous tag's cancelled release run and names what it set aside"
+   :text "The release cut reads every check run on the commit it tags and refuses when any is not success, skipped or neutral, so a second cut from the same commit (which lockstep demands whenever nova-sprint moves and nova-tools does not) found the previous tag's cancelled release.yml runs and needed a CI waiver. The cut now sets aside only a cancelled release.yml run of an older tag on the same commit (the publish recipe cancels it when the cut publishes its own assets), names what it set aside in the RELEASE CUT line as ci-set-aside=<run id>@<tag>,..., refuses --waive-ci when only the set-aside runs are non-green (\"the previous tag's release run is set aside; no waiver is needed\"), and still refuses a waiver of a green commit. A cancelled run whose head branch is the release branch or the version being cut stays a stop."
+   :origin "card a-cut-ignores-the-previous-tags-cancelled-release-run.w5; the seat, 2026-10-11 ~20:00Z: cutting nova-tools v1.2.11 from the v1.2.10 commit 2314d437f was refused build=cancelled, certified=cancelled, release=cancelled, the three checks of the v1.2.10 tag's release.yml run, cancelled on purpose by the v1.2.10 publish step")
 
   (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "in-progress"
    :title "A member reports its ended cards side by side"
