@@ -37,7 +37,7 @@ A push is held by the process that receives it:
 |---|---|---|
 | `bus` of a session | `nova-hook hook --as <name> --role <role>`, under the session's Monitor | the session answers the hook's challenge: `nova-hook prove --as <name> --nonce <n>` |
 | `bus` of a friend | her daemon, `nova-friend run` (or its notifications receiver) | a session harness: her session answered the daemon's session check this run, and is present now or was within `BusGrace` (10 min, one check cadence); a per-card harness (claude, whose cards run as processes of their own, so no interactive session holds the push): the daemon's own round trip on her bus store; the notifications receiver: its own round trip |
-| `sprint` | `nova-sprint hook --as <name>` | its own subscription's challenge, answered |
+| `sprint` | the seat's push loop, `nova-sprint inbox --wait --push seat` (the unit `nova-sprint seat install` writes), which holds the connection across the seat's sessions; or `nova-sprint hook --actor <name>` under a session's Monitor | its connection's challenge, answered by the session: the loop delivers it into the seat's inbox and the session answers over the loop's socket (`nova-sprint hook --prove <c> --actor <name>`); the loop answers none (nova-sprint `docs/SPEC-SPRINT.md`, "The hook"; `tla/SeatHookHolder.tla` there) |
 | `work` of a friend | her daemon's lanes | the sprint server answered her daemon's beat inside a lease |
 | `work` of a member or reader | its loop, `nova-swarm member` | the loop's own round trip to the sprint server |
 
@@ -112,8 +112,9 @@ A sprint's clear does not touch the hook keys: a hook is the bus's, not the spri
   begin nothing, and her beat says her down with the reason `unhooked: <why>`, so the server deals her
   nothing. Each round trip of the daemon's hook step is bounded on its own (`hook.Store.Timeout`).
 - The coordinator's verbs (`ping`, `ping --to-friends`, `serve`, `watch`, `reach`) gate `--as` on the
-  `bus` push and on the role: `coordinator`, or `comms` until nova-sprint hook ships with nova-sprint
-  PR #93 (until then a coordinator cannot be proven). A role that merely carries the bus push is not
+  `bus` push and on the role: `coordinator`, or `comms` (the interim role from before `nova-sprint hook`
+  shipped, nova-sprint v1.2.12 and its PR #93; the sprint push's holder is now the seat's push loop,
+  above). A role that merely carries the bus push is not
   enough: a name hooked in as `friend` (the seat's own friend daemon arming it) opens none of them
   (`hook.Want.Roles`).
 - `nova-friend beat`, the hand canary, gates `--as` as a `friend` on the `work` push: it sends no beat
@@ -133,8 +134,9 @@ Every line of it runs as printed: no elision for the reader to fill in.
   `nova-hook hook --as <name> --role <role>`, and a line per push that is not proven names its holder:
   the friend daemon's service (`com.nova.friend-<name>`, or `com.nova.friend-notifications-<name>` for
   comms) with the line that restarts it on this machine (`launchctl kickstart -k gui/$(id -u)/<label>` on macOS, `systemctl --user restart <label>` on Linux); the session's
-  `nova-hook hook` under its Monitor; for the sprint push, `nova-sprint hook --as <name>`, which ships
-  with nova-sprint PR #93, and until then `--role comms`.
+  `nova-hook hook` under its Monitor; for the sprint push, the seat's push loop (`nova-sprint seat
+  install`, whose loop holds it and delivers its challenge into the seat's inbox) or `nova-sprint hook
+  --actor <name>` under a Monitor (nova-sprint v1.2.12, PR #93).
 - With no role known (a `nova-bus` verb run as a name never hooked in), the breadcrumb never guesses
   one: the remedy is `nova-hook status --as <name>`, and the lines offer each role that carries the
   push, comms first, then friend, then coordinator.
@@ -178,8 +180,7 @@ The module is tagged `hook/vX.Y.Z` in this repository.
 Every caller below acts on the bus as a name, so from this change it is refused until that name is
 hooked in. The refusal is the breadcrumb at exit 1; nothing is silenced.
 
-- `com.nova.loop.friend-ping-<seat>`, the hand loop on the keeper: `nova-friend ping --as <seat> --to <each>`. It needs the seat's name hooked in as `coordinator`, or as `comms` until nova-sprint PR #93
-  ships: `nova-hook hook --as <seat> --role comms` under the seat's Monitor, its challenges answered.
+- `com.nova.loop.friend-ping-<seat>`, the hand loop on the keeper: `nova-friend ping --as <seat> --to <each>`. It needs the seat's name hooked in as `coordinator` (the seat's push loop holding the sprint push and the seat answering its challenge; the bus push's record is the one nova-sprint's hook arms, `sprint-hook:<name>`, until this module replaces it), or as `comms`: `nova-hook hook --as <seat> --role comms` under the seat's Monitor, its challenges answered.
 - `nova-update`'s receipts, sent as the machine: `internal/update/report.go:184` (`redisSend`'s
   `nova-bus send --as <machine>`, which the snapshot report sends through) and
   `internal/update/adopt.go:199` (the adoption receipt, through the same send). Decision: these sends are to be exempt, by the identity's nova-config row kind (`machine`),
