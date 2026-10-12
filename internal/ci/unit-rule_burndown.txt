@@ -1,0 +1,36 @@
+# The unit-rule allowlist (internal/ci/unitrule_class_test.go): the unit-tier test
+# files that still use real time, a real socket or an external service, one counted
+# row per file and kind: <file>:<kind> <sites> <reason>. It only shrinks, to zero.
+# A row is a ceiling, not a grandfathering of its file: one more site in a listed
+# file is red, as is a site in a file with no row, a row above or below its file's
+# count, a stale row, and, against the change's base (the pull request's base, else
+# origin/dev), an added row or a raised count. The tree as it stands is green; a NEW
+# offender is red.
+# Seeded 2026-10-12 (v1.2.16, A13) from every site the rule found on sprint/comfort.
+# Each row is allowed until moved, v1.3: the moves are the draft PR beside this one,
+# which empties this file (the owner, 2026-10-12: v1.2.16 takes surgical fixes only).
+# ceiling: 24
+cmd/nova-config/looprun_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
+cmd/nova-sandbox/main_test.go:deadline 1 allowed until moved, v1.3 (2026-10-12): c.SetReadDeadline(time.Now()...)
+cmd/nova-sandbox/main_test.go:service 1 allowed until moved, v1.3 (2026-10-12): exec.LookPath("nc")
+cmd/nova-swarm/member_lane_reap_unix_test.go:eventually 4 allowed until moved, v1.3 (2026-10-12): require.Eventually
+cmd/nova-swarm/member_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
+cmd/nova-swarm/slots_run_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
+cmd/nova-tokens/token_ledger_test.go:socket 1 allowed until moved, v1.3 (2026-10-12): miniredis.RunT
+fleet/toolchains_play_test.go:service 1 allowed until moved, v1.3 (2026-10-12): exec.LookPath("ansible-playbook")
+hook/redis_test.go:clock 1 allowed until moved, v1.3 (2026-10-12): assert.Less over the wall clock
+internal/update/timing_logic_test.go:clock 1 allowed until moved, v1.3 (2026-10-12): require.Equal over the wall clock
+pkg/config/redis_cover_test.go:socket 1 allowed until moved, v1.3 (2026-10-12): miniredis.RunT
+pkg/delayproxy/rig_test.go:deadline 4 allowed until moved, v1.3 (2026-10-12): c.SetDeadline(time.Now()...); c.SetReadDeadline(time.Now()...); client.SetDeadline(time.Now()...); watch.SetReadDeadline(time.Now()...)
+pkg/friend/inbox_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
+pkg/friend/lane_wall_test.go:socket 1 allowed until moved, v1.3 (2026-10-12): net.Dialer{}
+pkg/friend/presence_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
+pkg/friend/stage_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
+pkg/member/meter_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
+pkg/nsprint/testutil/github_test.go:http 1 allowed until moved, v1.3 (2026-10-12): http.Get
+pkg/redisconn/open_test.go:deadline 1 allowed until moved, v1.3 (2026-10-12): spy.SetWriteDeadline(time.Now()...)
+pkg/release/adopt_one_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
+pkg/sandbox/policy_netallow_darwin_test.go:service 1 allowed until moved, v1.3 (2026-10-12): exec.LookPath("nc")
+pkg/swarm/lanereap_unix_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
+pkg/testredis/far_test.go:deadline 2 allowed until moved, v1.3 (2026-10-12): c.SetDeadline(time.Now()...)
+tools/fardelay/main_test.go:deadline 1 allowed until moved, v1.3 (2026-10-12): c.SetDeadline(time.Now()...)
