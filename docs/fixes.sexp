@@ -889,7 +889,7 @@
     next run."
    :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
 
-  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.15" :status "in-progress"
+  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "in-progress"
    :title "A member reports its ended cards side by side"
    :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
     verb that may wait on the wire, so a lane stayed held after its child ended for the length of the report lag.
@@ -900,5 +900,9 @@
     its reports, so it is still one step. A report whose claim moved while it ran is collected as reaped, never
     applied: its post is applied only once the collecting pass has read the queue, so the moved re-check consults
     the queue that pass just read, never the previous pass's. The lander's diffcheck now holds a package's tests
-    always inside PATHS (cardgen.AlwaysInPathsRule), so the tests this changes beside the member source are in scope."
+    always inside PATHS (cardgen.AlwaysInPathsRule), so the tests this changes beside the member source are in scope.
+    Tests, red first: pkg/member/report_side_by_side_test.go (TestReportsRunSideBySideInOnePass,
+    TestTakeRunsBeforeTheReportsReturn, TestAMovedClaimWhileReportingIsReapedNotApplied and the refusal, no-answer,
+    retry and stop cases) and the functional TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane
+    (cmd/nova-swarm, a real member process over a sprint server)."
    :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")))
