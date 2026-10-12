@@ -45,8 +45,31 @@ func fakeDSH(mode string) int {
 		fmt.Printf("dsh: session %q runs under agent preset \"minimal\", which the one-shot runner does not compose\n", session)
 	case "credential":
 		fmt.Printf("dsh: provider deepseek: MISSING_CREDENTIAL (DEEPSEEK_API_KEY=%s rejected)\n", fakeDSHKey)
+	case "funds":
+		fmt.Println("QUOTA: Insufficient Balance; 402 Payment Required")
 	}
 	return 0
+}
+
+func TestDSHFundsRefusalIsTypedForTheDaemonSpendStop(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	d := &DSH{Dir: t.TempDir(), Session: "session-funds", Run: func(context.Context, string, string, []string, string) (string, int, error) {
+		calls++
+		return "QUOTA: Insufficient Balance; 402 Payment Required", 0, nil
+	}}
+	spend := &SpendCap{Friend: "zhi", Provider: "deepseek", Spent: func(time.Time) float64 { return 3.10 }}
+	gated := spend.Gate(d)
+	_, err := gated.Deliver(context.Background(), "one turn")
+	var funds OutOfFunds
+	require.ErrorAs(t, err, &funds, "DSH's QUOTA/insufficient-balance output reaches the shared spend stop")
+	assert.Contains(t, funds.Reason, "Insufficient Balance")
+	_, err = gated.Deliver(context.Background(), "retry")
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred, "the same funds refusal holds later DSH turns")
+	assert.Contains(t, deferred.Reason, "deepseek")
+	assert.Contains(t, deferred.Reason, "3.10")
+	assert.Equal(t, 1, calls, "DSH is not retried after the provider refused funds")
 }
 
 // fakeDSHExec runs this test binary as the fake dsh in mode; fixed is the

@@ -147,6 +147,18 @@ func laneRig(t *testing.T, h *lanesHarness, width int) (*rig, *LaneState) {
 	return r, state
 }
 
+func TestOneShotLanesDoNotOpenAnIdleSessionWithoutADealtCard(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		r.run(t, 8)
+		_, _, seeds := h.got()
+		assert.Empty(t, seeds, "an idle friend launches no harness turn just to open a lane session")
+	})
+}
+
 // Two lanes, each its own session seeded from the friend's own files, each
 // handed one card per turn: a card whose turn writes its RESULT.md is done and
 // the lane takes the next; a card without one is handed again once, then set

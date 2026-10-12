@@ -124,10 +124,11 @@ func (r *rig) world() world {
 			}
 			return "", errors.New("executable file not found in ")
 		},
-		random:   func() string { return "r4nd0m" },
-		alive:    r.alive,
-		exec:     r.opencode,
-		settings: r.fs,
+		random:     func() string { return "r4nd0m" },
+		alive:      r.alive,
+		exec:       r.opencode,
+		settings:   r.fs,
+		spendUsage: func(friend.Deliverer, time.Time) (float64, bool) { return 0, true },
 	}
 }
 
@@ -795,6 +796,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		r := newRig(t, "ada", "bob")
 		r.onPath = map[string]string{"nova-bus": "/opt/nova/bin/nova-bus"}
 		w := r.world()
+		w.spendUsage = nil // exercise the real OpenCodePriced usage report through daemon wiring
 		var cancel context.CancelFunc
 		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
 			ctx, cancel = context.WithCancel(ctx)
@@ -878,6 +880,13 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.Equal(t, "one-shot", s.Mode)
 		assert.Contains(t, said, "lane=1 session=ses_lane1")
 		assert.Contains(t, said, "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
+		var ledger struct {
+			Spend map[string]float64 `json:"spend_usd"`
+		}
+		ledgerRaw, err := os.ReadFile(filepath.Join(friend.StateDirIn(dir), friend.SpendLedgerFile))
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(ledgerRaw, &ledger))
+		assert.Equal(t, 0.002, ledger.Spend["opencode/2026-10-04"], "the real daemon config path persists the measured lane cost")
 	})
 }
 

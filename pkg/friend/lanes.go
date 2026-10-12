@@ -545,19 +545,6 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if paused {
 			continue
 		}
-		if ln.session == "" && !perCard {
-			if now.Before(ln.openAt) {
-				continue
-			}
-			ln.opening, ln.openFrom = true, now
-			agents, memory := d.identity()
-			seed := LaneSeed(d.Friend, ln.n, width, agents, memory)
-			l.work(func() {
-				id, err := lh.OpenSession(LaneContext(l.ctx), seed)
-				queue(l.ctx, s.results, laneResult{ln: ln, open: true, session: id, err: err})
-			})
-			continue
-		}
 		if ln.card == nil {
 			if d.machineStopped() {
 				continue // the word read right before the take, before any claim (NoLaunchAfterStop)
@@ -624,6 +611,21 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.base, ln.baseOK = l.baseTokens(ln.session)
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
+		}
+		// Do not launch an empty session merely to discover that there is no
+		// dealt work. First find and claim a card, then open its lane session.
+		if ln.session == "" && !perCard {
+			if now.Before(ln.openAt) {
+				continue
+			}
+			ln.opening, ln.openFrom = true, now
+			agents, memory := d.identity()
+			seed := LaneSeed(d.Friend, ln.n, width, agents, memory)
+			l.work(func() {
+				id, err := lh.OpenSession(LaneContext(l.ctx), seed)
+				queue(l.ctx, s.results, laneResult{ln: ln, open: true, session: id, err: err})
+			})
+			continue
 		}
 		if d.machineStopped() {
 			// the word turned between the claim and the start: the card is given up, owed
@@ -715,7 +717,8 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	var rate RateLimited
 	var funds OutOfFunds
 	var usage UsageLimited
-	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage)) && !t.stopped && !t.capped
+	var spendCap SpendCapReached
+	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage) || errors.As(r.err, &spendCap)) && !t.stopped && !t.capped
 	if limited && exists(ln.card.Result()) {
 		r.err, limited = nil, false // the card is done: the words were the card's, not the provider's answer
 	}
@@ -920,8 +923,11 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	var funds OutOfFunds
 	var usage UsageLimited
+	var spendCap SpendCapReached
 	if errors.As(r.err, &funds) {
 		line += fmt.Sprintf(" out_of_funds=%q", funds.Reason)
+	} else if errors.As(r.err, &spendCap) {
+		line += fmt.Sprintf(" spend_cap=%q", spendCap.Reason)
 	} else if errors.As(r.err, &usage) {
 		line += fmt.Sprintf(" usage_limited=%q until=%s", usage.Reason, usage.Until.UTC().Format(time.RFC3339))
 	} else {
@@ -970,8 +976,19 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 	var rate RateLimited
 	var funds OutOfFunds
 	var usage UsageLimited
+	var spendCap SpendCapReached
 	stop, stopped := d.laneRules().ProviderStop(err)
 	switch {
+	case errors.As(err, &spendCap):
+		if spendCap.Until.IsZero() {
+			if s.gov.Hold(spendCap.Reason) {
+				l.holdDown(stop, now)
+				d.Record(fmt.Sprintf("%s spend cap: lanes held because usage cannot be measured: %s", at, oneLine(spendCap.Reason, 200)))
+			}
+		} else if line := s.gov.PauseUntil(spendCap.Until, spendCap.Reason, now); line != "" {
+			d.Record(at + " " + line)
+		}
+		return true
 	case stopped && errors.As(err, &rate):
 		// the row says a rate limit holds her down too (row_pause_on=any): as out of funds does
 		if s.gov.Hold(rate.Reason) {

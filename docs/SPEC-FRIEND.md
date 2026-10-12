@@ -2066,18 +2066,26 @@ Balance`, and kept checking presence every hour. Nothing capped its spend, and
 nothing told the owner or the seat it was spending while the sprint had no
 friend work.
 
-Every friend daemon has a spend cap per day and per provider, read from its
-config, $20 a day by default (`DefaultSpendCapUSD`). Spend is measured from the
-harness's own usage report, never estimated (`SpendCap.Spent`). At the cap the
-daemon stops launching turns and raises one judgment to the seat and the owner
-naming the friend, the provider and the spend (`SpendCap.Gate`, `Judged`;
-`TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`). The cap resets when
-the spend day resets (`TestSpendCapResetsOnANewSpendDay`). A provider refusal
-for funds (an insufficient balance, a `402`) stops the daemon's turns at once,
-with the same judgment, rather than retrying hourly; a rate limit still backs
-off (rate-limit-backs-off-not-down.w1, above). A daemon whose friend has no
-dealt work and no live session does not launch turns at all.
-`TestSpendCapDefaultIsTwentyDollars`, `TestSpendCapJudgmentNamesFriendProviderAndSpend`.
+Every friend daemon has a per-provider, per-UTC-day spend cap, $20 by default
+(`DefaultSpendCapUSD`) and overridable by `--spend-cap-usd`. Claude stream-json
+and OpenCode session exports supply measured amounts; their daily totals and
+stop reasons are atomically saved in the daemon state directory
+(`SpendLedgerFile`) and survive restart. A corrupt ledger, failed ledger write,
+or harness without a measured usage reporter fails closed: cost is never
+estimated. DSH `QUOTA: Insufficient Balance` and `402` output is classified as
+`OutOfFunds`; after a refusal the persisted stop prevents retries even after
+restart. Unsupported harnesses (including DSH) therefore do not launch turns
+until they can provide measured usage, but their funds refusal path is tested
+through the real DSH adapter. At the cap one judgment names friend, provider,
+and spend once for that provider and spend day. Idle one-shot lanes first look
+for a dealt card and open a session only when work exists.
+`TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`,
+`TestSpendCapPersistsMeasuredCapAcrossRestartAndUTCDayRollover`,
+`TestSpendCapPersistsProviderRefusalAcrossRestart`,
+`TestSpendCapLedgerReadFailureFailsClosed`,
+`TestSpendCapUnknownUsageFailsClosedOnLaneHarness`,
+`TestDSHFundsRefusalIsTypedForTheDaemonSpendStop`,
+`TestOneShotLanesDoNotOpenAnIdleSessionWithoutADealtCard`.
 
 ### lane-end-finishes-the-card.w1 — a lane's end is a finish
 

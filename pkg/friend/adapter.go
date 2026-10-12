@@ -388,6 +388,12 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
+	if err == nil {
+		if limit := ProviderLimit(id, out); limit != nil {
+			o.turns.saw(id, exit, limit)
+			return exit, limit
+		}
+	}
 	exit, err = refused(id, out, exit, err)
 	o.turns.saw(id, exit, err)
 	return exit, err

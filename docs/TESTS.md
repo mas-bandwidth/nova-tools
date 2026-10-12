@@ -162,8 +162,14 @@ The spend cap per day and per provider (`pkg/friend/spendcap.go`) is pinned in
 `pkg/friend/spendcap_test.go`: `TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`
 (a fake harness reports usage; past the cap a turn is stopped and one judgment
 raised naming the friend, the provider and the spend, once until the day
-resets), `TestSpendCapResetsOnANewSpendDay`, `TestSpendCapDefaultIsTwentyDollars`,
-`TestSpendCapJudgmentNamesFriendProviderAndSpend`.
+resets), `TestSpendCapResetsOnANewSpendDay`,
+`TestSpendCapPersistsMeasuredCapAcrossRestartAndUTCDayRollover`,
+`TestSpendCapPersistsProviderRefusalAcrossRestart`,
+`TestSpendCapLedgerReadFailureFailsClosed`,
+`TestSpendCapUnknownUsageFailsClosedOnLaneHarness`,
+`TestDSHFundsRefusalIsTypedForTheDaemonSpendStop`,
+`TestOneShotLanesDoNotOpenAnIdleSessionWithoutADealtCard`,
+`TestSpendCapDefaultIsTwentyDollars`, `TestSpendCapJudgmentNamesFriendProviderAndSpend`.
 
 ### First run
 

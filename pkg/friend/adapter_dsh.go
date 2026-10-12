@@ -107,6 +107,10 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	out, exit, err := d.Run(ctx, d.Dir, program, DSHArgs(id), text)
 	if err == nil {
+		if limit := ProviderLimit(id, out); limit != nil {
+			d.turns.saw(id, exit, limit)
+			return exit, limit
+		}
 		if r, ok := DSHRefusal(id, d.Dir, out); ok {
 			d.turns.saw(id, 0, r)
 			return 0, r // the output is not kept: a credential's name and its lookup stay off the record

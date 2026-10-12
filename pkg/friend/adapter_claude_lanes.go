@@ -63,11 +63,13 @@ type Claude struct {
 	// it (TokenCapOf; 0 none); nil is DefaultTokenCap (tokencap.go).
 	TokenCap func() int64
 
-	mu    sync.Mutex
-	runs  int      // the runs priced so far
-	cost  float64  // every run's cost so far, in US dollars
-	usage Usage    // the last usage a run measured
-	cards cardRuns // each card's tokens over its finished runs
+	mu       sync.Mutex
+	runs     int     // the runs priced so far
+	cost     float64 // every run's cost so far, in US dollars
+	daily    map[string]float64
+	dayKnown map[string]bool
+	usage    Usage    // the last usage a run measured
+	cards    cardRuns // each card's tokens over its finished runs
 }
 
 func (c *Claude) program() string {
@@ -125,6 +127,11 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 			return LaneTurn{Exit: exit}, limited
 		}
 	}
+	if err == nil {
+		if limited := ProviderLimit(card.ID, out); limited != nil {
+			return LaneTurn{Exit: exit}, limited
+		}
+	}
 	if exit, err = refused("claude -p", out, exit, err); err != nil {
 		return LaneTurn{Exit: exit}, err
 	}
@@ -138,4 +145,16 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 		return LaneTurn{Exit: exit, FirstError: HarnessFirstError(out)}, NoReport{Run: "claude -p", Exit: exit, Outbox: card.Outbox, Lacks: missing}
 	}
 	return LaneTurn{Exit: exit}, nil
+}
+
+// SpendOn is this daemon's measured harness-reported spend for the UTC day.
+// No provider price is inferred when a run reports no cost.
+func (c *Claude) SpendOn(day time.Time) (float64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := day.UTC().Format("2006-01-02")
+	if known, found := c.dayKnown[key]; found {
+		return c.daily[key], known
+	}
+	return 0, true // no daemon turn has run in this UTC day yet
 }

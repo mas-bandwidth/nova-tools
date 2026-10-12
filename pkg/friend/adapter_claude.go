@@ -62,8 +62,9 @@ type claudeResult struct {
 
 // runCost is the cost of the run whose stream-json is out: its result line's
 // total_cost_usd; 0 when it printed none.
-func runCost(out string) float64 {
+func runCost(out string) (float64, bool) {
 	cost := 0.0
+	found := false
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, `"result"`) {
 			continue
@@ -71,9 +72,10 @@ func runCost(out string) float64 {
 		var r claudeResult
 		if json.Unmarshal([]byte(line), &r) == nil && r.Type == "result" {
 			cost = r.TotalCost
+			found = true
 		}
 	}
-	return cost
+	return cost, found
 }
 
 // account prices the run whose stream-json is out (docs/SPEC-FRIEND.md,
@@ -83,11 +85,24 @@ func runCost(out string) float64 {
 // lanes stop taking until then (LaneGovernor.PauseUntil) with no script and
 // no guessed time; nil otherwise.
 func (c *Claude) account(id, out string) error {
-	cost := runCost(out)
+	cost, measured := runCost(out)
 	lim, found := ReadLimit(out, c.now())
 	c.mu.Lock()
 	c.runs++
 	c.cost += cost
+	if c.daily == nil {
+		c.daily = map[string]float64{}
+	}
+	if c.dayKnown == nil {
+		c.dayKnown = map[string]bool{}
+	}
+	day := c.now().UTC().Format("2006-01-02")
+	if measured {
+		c.daily[day] += cost
+		c.dayKnown[day] = true
+	} else if _, recorded := c.dayKnown[day]; !recorded {
+		c.dayKnown[day] = false
+	}
 	total := c.cost
 	if found && !lim.Usage.At.IsZero() {
 		c.usage = lim.Usage

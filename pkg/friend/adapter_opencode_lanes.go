@@ -313,16 +313,19 @@ type OpenCodePriced struct {
 	// TokenCap is the friend row's per-card token cap as the daemon last read
 	// it (TokenCapOf; 0 none); nil is DefaultTokenCap.
 	TokenCap func() int64
+	Now      func() time.Time
 	// Tick is the clock a running turn's usage is polled on (every TokenPoll);
 	// a real ticker when nil.
 	Tick func(time.Duration) (<-chan time.Time, func())
 
-	mu    sync.Mutex
-	seen  map[string]float64 // each session's cost when last read
-	cost  float64
-	runs  int       // the runs priced so far
-	until time.Time // the reset of the last run's usage limit; zero when it ran unlimited
-	cards cardRuns  // each card's tokens over its finished turns
+	mu       sync.Mutex
+	seen     map[string]float64 // each session's cost when last read
+	cost     float64
+	daily    map[string]float64
+	dayKnown map[string]bool
+	runs     int       // the runs priced so far
+	until    time.Time // the reset of the last run's usage limit; zero when it ran unlimited
+	cards    cardRuns  // each card's tokens over its finished turns
 }
 
 // Spent is the cost of every run priced so far, in US dollars.
@@ -330,6 +333,17 @@ func (p *OpenCodePriced) Spent() float64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.cost
+}
+
+// SpendOn is the daemon's measured OpenCode export cost for one UTC day.
+func (p *OpenCodePriced) SpendOn(day time.Time) (float64, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := day.UTC().Format("2006-01-02")
+	if known, found := p.dayKnown[key]; found {
+		return p.daily[key], known
+	}
+	return 0, true // no daemon turn has run in this UTC day yet
 }
 
 // SpendLine is every run's cost so far and, when the last run stopped at a
@@ -417,6 +431,16 @@ func (p *OpenCodePriced) price(ctx context.Context, id string) {
 		now, err = SessionCost(out)
 	}
 	if err != nil {
+		p.mu.Lock()
+		if p.dayKnown == nil {
+			p.dayKnown = map[string]bool{}
+		}
+		priceAt := time.Now()
+		if p.Now != nil {
+			priceAt = p.Now()
+		}
+		p.dayKnown[priceAt.UTC().Format("2006-01-02")] = false
+		p.mu.Unlock()
 		if p.Out != nil {
 			fmt.Fprintf(p.Out, "opencode: session=%s cost=- (its record was not read: %v)\n", id, err)
 		}
@@ -430,6 +454,19 @@ func (p *OpenCodePriced) price(ctx context.Context, id string) {
 	run := max(now-p.seen[id], 0)
 	p.seen[id] = now
 	p.cost += run
+	if p.daily == nil {
+		p.daily = map[string]float64{}
+	}
+	if p.dayKnown == nil {
+		p.dayKnown = map[string]bool{}
+	}
+	priceAt := time.Now()
+	if p.Now != nil {
+		priceAt = p.Now()
+	}
+	day := priceAt.UTC().Format("2006-01-02")
+	p.daily[day] += run
+	p.dayKnown[day] = true
 	total := p.cost
 	p.mu.Unlock()
 	if p.Out != nil {

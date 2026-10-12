@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -91,14 +92,15 @@ type world struct {
 	copy           friend.CopyFile              // places a removable-volume binary under home; nil refuses it
 	lookPath       func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random         func() string
-	alive          friend.Aliver                       // the harness check, when set (a test's fake harness); nil watches the adapter
-	launch         []string                            // host: the launch command after "--"
-	settings       friend.SettingsFS                   // where a harness's own settings are read and written (install, check --settings)
-	argv           []string                            // this run's arguments after the program's name: what the plist drift is read against
-	wake           *wakeFS                             // watch: the wake file's reads; nil reads the disk
-	stepBeat       bool                                // deterministic fake clock in CLI tests; never set by realWorld
-	checkGo        func(func())                        // optional test scheduler for a fake-clock session check
-	reachPermitted func(context.Context) (bool, error) // reach window permission; nil checks the platform without prompting
+	alive          friend.Aliver                                     // the harness check, when set (a test's fake harness); nil watches the adapter
+	launch         []string                                          // host: the launch command after "--"
+	settings       friend.SettingsFS                                 // where a harness's own settings are read and written (install, check --settings)
+	argv           []string                                          // this run's arguments after the program's name: what the plist drift is read against
+	wake           *wakeFS                                           // watch: the wake file's reads; nil reads the disk
+	stepBeat       bool                                              // deterministic fake clock in CLI tests; never set by realWorld
+	checkGo        func(func())                                      // optional test scheduler for a fake-clock session check
+	reachPermitted func(context.Context) (bool, error)               // reach window permission; nil checks the platform without prompting
+	spendUsage     func(friend.Deliverer, time.Time) (float64, bool) // fake measured harness usage; realWorld reads adapter reports directly
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -397,6 +399,7 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
+		f.String("spend-cap-usd", "20", "maximum measured harness spend per UTC day in USD (default: $20; harnesses without usage reports are held safely)")
 		f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/<seat>-working, the seat being --coordinator, else the sprint server's seat holder)")
 		f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)")
 		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
@@ -1151,6 +1154,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server := c.Str("as"), c.Str("dir"), c.Str("server")
+	spendCapUSD, err := strconv.ParseFloat(c.Str("spend-cap-usd"), 64)
+	if err != nil || spendCapUSD < 0 || math.IsNaN(spendCapUSD) || math.IsInf(spendCapUSD, 0) {
+		return tool.Refuse("--spend-cap-usd must be a non-negative USD amount")
+	}
 	// every path a lane names is absolute, its working directory first: a model that reads a
 	// path relative must never be handed one (friend.LaneJobOf, docs/SPEC-FRIEND.md)
 	abs, err := filepath.Abs(dir)
@@ -1316,7 +1323,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
 			oc.Allow = append(oc.Allow, alias)
 		}
-		deliver = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }} // every lane run priced from her own session record, and capped by her row's token_cap
+		deliver = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }, Now: w.now} // every lane run priced from her own session record, and capped by its tokens and daily spend
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
@@ -1438,7 +1445,36 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
 	}
-	laneDeliver := sc.Gate(fl.Gate(deliver)) // the daemon's: her turns, or her card runner
+	provider := c.Str("harness")
+	if c.Str("harness") == "dsh" {
+		provider = "deepseek"
+	} else if model := c.Str("model"); model != "" {
+		if p, _, ok := strings.Cut(model, "/"); ok {
+			provider = p
+		}
+	}
+	spend := &friend.SpendCap{
+		Friend: name, Provider: provider, StateDir: state,
+		Cap: func() float64 { return spendCapUSD },
+		Usage: func(day time.Time) (float64, bool) {
+			if w.spendUsage != nil {
+				return w.spendUsage(deliver, day)
+			}
+			switch d := deliver.(type) {
+			case *friend.Claude:
+				return d.SpendOn(day)
+			case *friend.OpenCodePriced:
+				return d.SpendOn(day)
+			default:
+				return 0, false // no harness usage report: no estimated cost and no turns
+			}
+		},
+		OnJudgment: func(text string) {
+			record(w.now().UTC().Format(time.RFC3339) + " spend cap: " + text)
+			tellSeat("friend "+name+": spend cap", text+"\n")
+		},
+	}
+	laneDeliver := sc.Gate(fl.Gate(spend.Gate(deliver))) // session proof, harness limit, measured spend cap
 	sc.Deliver = laneDeliver
 	if perCard {
 		// the check goes in by the folder, ungated: her lanes hold no turn of the session
