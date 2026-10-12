@@ -4,7 +4,6 @@ package friend
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,7 +97,8 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 // with the ANSI colour codes the CLI adds, is that limit, not a failed
 // attempt: the run is UsageLimited until the reset the line names, in the
 // zone it names, so the lane keeps the card and counts nothing (docs/SPEC-
-// FRIEND.md, a harness at its limit).
+// FRIEND.md, a harness at its limit). The run's error is nil: RealExec answers
+// a nonzero exit with its code, an empty error (adapter.go).
 func TestClaudeLaneWeeklyLimitIsUsageLimitedNotAFailedAttempt(t *testing.T) {
 	t.Parallel()
 	ny, err := time.LoadLocation("America/New_York")
@@ -108,9 +108,10 @@ func TestClaudeLaneWeeklyLimitIsUsageLimitedNotAFailedAttempt(t *testing.T) {
 	brief := filepath.Join(dir, "inbox", "c1~15", "BRIEF.md")
 	require.NoError(t, os.WriteFile(brief, []byte("the task\n"), 0o644))
 	c := Card{ID: "c1", Brief: brief, Outbox: filepath.Join(dir, "outbox", "c1~15")}
-	out := "\x1b[31mYou've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\x1b[0m\n"
+	// the CLI colours the words, so the codes sit between them
+	out := "\x1b[31mYou've hit your \x1b[1mweekly limit\x1b[0m \x1b[31m· resets Oct 16 at 3am (America/New_York)\x1b[0m\n"
 	run := func(context.Context, string, string, []string, string) (string, int, error) {
-		return out, 1, errors.New("exit status 1")
+		return out, 1, nil
 	}
 	cl := &Claude{Stub: Stub{Harness: "claude"}, Friend: "bob", Dir: filepath.Dir(dir), Run: run, ConfigDir: func() string { return "/accounts/heavy-a" }, Now: func() time.Time { return now }}
 	_, err = cl.RunCard(context.Background(), c)

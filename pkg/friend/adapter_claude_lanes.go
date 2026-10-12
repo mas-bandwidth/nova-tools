@@ -120,11 +120,10 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 		}
 		return LaneTurn{Exit: exit}, e
 	}
-	// a harness at its limit reads it whatever the exit: a nonzero exit is no
-	// failed attempt when the output says the limit (docs/SPEC-FRIEND.md, a
-	// harness at its limit)
-	if limited := c.account(card.ID, out); limited != nil {
-		return LaneTurn{Exit: exit}, limited
+	if err == nil {
+		if limited := c.account(card.ID, out); limited != nil {
+			return LaneTurn{Exit: exit}, limited
+		}
 	}
 	if exit, err = refused("claude -p", out, exit, err); err != nil {
 		return LaneTurn{Exit: exit}, err
