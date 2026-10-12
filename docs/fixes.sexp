@@ -887,4 +887,40 @@
     reason, tip moved) is posted on a channel the step drains and applied by the loop. On shutdown the
     daemon waits for in-flight finishes up to FinishWait and leaves any unanswered to be sent again
     next run."
-   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")))
+   :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
+
+  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "in-progress"
+   :title "A member reports its ended cards side by side"
+   :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
+    verb that may wait on the wire, so a lane stayed held after its child ended for the length of the report lag.
+    The pass now runs up to pushWidth reports side by side (reportGate), each still one verb with its own refusal
+    contract, and posts its exit code and output for the pass goroutine's collect to apply; a launch being reported
+    is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
+    reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
+    its reports, so it is still one step. What a report's write came to is read from the store's answer, never the exit code
+    alone (nova-sprint's refuse() exits 2 as a lost answer does, and a cut operation exits 1 as a refused card does):
+    sprintwire.Worker.RunAnswer classifies the server's whole result as Accepted, Refused or Unknown (no answer,
+    changed=unknown, an operation cut for nova-sprint repair, a finish a clear closed). A Refused report whose claim
+    moved while it ran, whatever its exit code, is collected as reaped, never applied: its post is applied only once
+    the collecting pass has read the queue, so the moved re-check consults the queue that pass just read, never the
+    previous pass's. An Unknown one whose claim moved (the store may have committed it and moved the claim itself)
+    keeps the run as failed for a person and is not sent again, never reaped as clean. A report the
+    store accepted is applied, never reaped: nova-sprint's finish refuses a stale claim (internal/sprint
+    steps_work.go finishPlan, liveGen), so an accepted finish was the card's claim when it landed, and a move seen
+    after it is the store acting on that report (a failed finish redealt at gen+1, kept as failed). The lander's
+    diffcheck now holds a package's tests always inside PATHS (cardgen.AlwaysInPathsRule) when the PATHS name real
+    Go source in its directory (a .go file, the directory, or a Go-file glob), so the tests this changes beside the
+    member source are in scope and a README or fixture authorizes no test. DEBT, explicit: tla/CardContract.tla
+    models Judge and Move as one atomic step (the finish and the report together, guarded on the held claim), while
+    the member now sends a report and collects it apart, a move possible in between, including a move the member's
+    own accepted report causes; this change makes no formal coverage claim for that interval. The model card is in
+    v1.2.16; until it lands, the interval is held by TestAMovedClaimWhileReportingIsReapedNotApplied,
+    TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved, TestAnUnansweredReportWhoseClaimMovedKeepsTheRunAsFailed,
+    TestAMovedReportIsJudgedByWhatBecameOfItsWriteNotItsExitCode, sprintwire
+    TestRunAnswerTellsARefusalFromAnUnknownOutcome and the store's liveGen check. Tests, red first:
+    pkg/member/report_side_by_side_test.go (TestReportsRunSideBySideInOnePass, TestTakeRunsBeforeTheReportsReturn,
+    the two above, and the refusal, no-answer, retry and stop cases), pkg/diffcheck
+    TestOutsideHoldsTestsOnlyBesideGoSource, and the functional
+    TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
+    sprint server)."
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")))
