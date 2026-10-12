@@ -39,7 +39,7 @@ func Check(t *testing.T, fleetRoot, scenario string) {
 		require.NoError(t, os.MkdirAll(filepath.Join(tmp, dir), 0o700))
 	}
 	archivePath := filepath.Join(tmp, "fixtures.tar.gz")
-	sha := writeToolchainFixtureArchive(t, archivePath)
+	sha := writeToolchainFixtureArchive(t, archivePath, "fixture")
 	varsPath := filepath.Join(tmp, "toolchains.json")
 	writeToolchainFixtureVars(t, varsPath, tmp, sha)
 
@@ -68,7 +68,9 @@ func Check(t *testing.T, fleetRoot, scenario string) {
 		assert.Contains(t, drift, "changed=")
 		return
 	}
-	// A bad pinned digest refuses the archive before removing the current SDK.
+	// A different replacement archive with a bad pinned digest must be refused
+	// before removing the current SDK; byte equality detects an accidental replacement.
+	_ = writeToolchainFixtureArchive(t, archivePath, "replacement")
 	writeToolchainFixtureVars(t, varsPath, tmp, strings.Repeat("0", 64))
 	_ = runToolchainsFixturePlay(t, ctx, ansible, fleetRoot, tmp, varsPath, false, true)
 	assert.FileExists(t, node, "checksum mismatch must preserve the existing install")
@@ -95,7 +97,7 @@ var toolchainFixtureSpecs = map[string]toolchainFixtureSpec{
 	"gh":     {"1.0.0", "bin/gh", []string{"bin/gh"}},
 }
 
-func writeToolchainFixtureArchive(t *testing.T, path string) string {
+func writeToolchainFixtureArchive(t *testing.T, path, label string) string {
 	t.Helper()
 	f, err := os.Create(path)
 	require.NoError(t, err)
@@ -104,7 +106,7 @@ func writeToolchainFixtureArchive(t *testing.T, path string) string {
 	tw := tar.NewWriter(gz)
 	for _, spec := range toolchainFixtureSpecs {
 		for _, name := range spec.paths {
-			body := []byte(fmt.Sprintf("#!/bin/sh\nprintf 'fixture-%s\\n'\n", name))
+			body := []byte(fmt.Sprintf("#!/bin/sh\nprintf '%s-%s\\n'\n", label, name))
 			err := tw.WriteHeader(&tar.Header{Name: filepath.ToSlash(filepath.Join("fixture", name)), Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg})
 			require.NoError(t, err)
 			_, err = tw.Write(body)
