@@ -469,8 +469,33 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 	}
 	assert.Equal(t, 1, home[mod+"/cmd/nova-swarm"], "the heavy packages are on shards 1 and 2")
 	assert.Equal(t, 2, home[mod+"/internal/heavy2"])
-	// the first other package takes the shard after the heavy ones, then round robin
-	assert.Equal(t, []int{3, 4, 1, 2}, []int{home[mod+"/cmd/p01"], home[mod+"/cmd/p02"], home[mod+"/cmd/p03"], home[mod+"/cmd/p04"]}, "round robin after the heavy: p01..p04")
+	// the other packages go round-robin over the shards no heavy package took
+	// (3 and 4 here): a heavy package's shard is its own, so its test binary has
+	// the runner to itself.
+	assert.Equal(t, []int{3, 4, 3, 4}, []int{home[mod+"/cmd/p01"], home[mod+"/cmd/p02"], home[mod+"/cmd/p03"], home[mod+"/cmd/p04"]}, "round robin over the free shards: p01..p04")
+	for _, p := range pkgs {
+		if p != mod+"/cmd/nova-swarm" && p != mod+"/internal/heavy2" {
+			assert.GreaterOrEqual(t, home[p], 3, "%s is dealt beside a heavy package (shard %d)", p, home[p])
+		}
+	}
+
+	// When the heavy packages fill every shard there is no free shard: the
+	// round-robin continues over all of them after the heavy ones, as before.
+	seen, home = map[string]int{}, map[string]int{}
+	for i := 1; i <= 2; i++ {
+		got, err := Deal(pkgs, heavy, 2, i)
+		require.NoError(t, err)
+		for _, p := range got {
+			seen[p]++
+			home[p] = i
+		}
+	}
+	for _, p := range pkgs {
+		assert.Equal(t, 1, seen[p], "two shards: %s dealt %d times", p, seen[p])
+	}
+	assert.Equal(t, 1, home[mod+"/cmd/nova-swarm"])
+	assert.Equal(t, 2, home[mod+"/internal/heavy2"])
+	assert.Equal(t, []int{1, 2, 1, 2}, []int{home[mod+"/cmd/p01"], home[mod+"/cmd/p02"], home[mod+"/cmd/p03"], home[mod+"/cmd/p04"]}, "two shards, both heavy: round robin over both")
 }
 
 func TestDealMatchesOnAPathSuffixNotASubstring(t *testing.T) {

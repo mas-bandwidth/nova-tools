@@ -411,11 +411,22 @@ func TestDealVerbWritesThisShardsLine(t *testing.T) {
 		}
 		all = append(all, strings.Fields(out)...)
 	}
-	if got := selRead(t, gh); got != "HOSTED_PKGS="+selMod+"/cmd/nova-swarm "+selMod+"/internal/b "+selMod+"/internal/d \nHOSTED_PKGS="+selMod+"/cmd/a "+selMod+"/cmd/c \n" {
+	// The heavy package has shard 1 to itself; every other live package goes
+	// round-robin over the shards without one (here the one shard 2).
+	if got := selRead(t, gh); got != "HOSTED_PKGS="+selMod+"/cmd/nova-swarm \nHOSTED_PKGS="+selMod+"/cmd/a "+selMod+"/internal/b "+selMod+"/cmd/c "+selMod+"/internal/d \n" {
 		t.Errorf("GITHUB_ENV = %q", got)
 	}
 	if len(all) != 5 {
 		t.Errorf("the two shards dealt %v, want the five live packages once each", all)
+	}
+
+	// When the heavy packages fill every shard there is no shard to keep free,
+	// and the round-robin continues over all of them: one shard holds the tree.
+	gh1 := filepath.Join(t.TempDir(), "env1")
+	code, out, errb := selRun(func(e env, a []string) int { return dealVerb(e, a, f.host()) }, repo,
+		map[string]string{"GITHUB_ENV": gh1}, "--shards", "1", "--shard", "1", "--heavy", "cmd/nova-swarm")
+	if code != 0 || errb != "" || len(strings.Fields(out)) != 5 {
+		t.Errorf("one shard: exit %d, stdout %q, stderr %q; want the five live packages", code, out, errb)
 	}
 }
 
