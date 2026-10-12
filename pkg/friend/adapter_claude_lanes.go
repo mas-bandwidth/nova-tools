@@ -90,7 +90,7 @@ func (c *Claude) Refusal() string {
 	if c.configDir() != "" {
 		return ""
 	}
-	return fmt.Sprintf("friend %s is a claude friend in one-shot mode with no config_dir, and a lane runs only as her own account (CLAUDE_CONFIG_DIR); run: nova-config friend set %s --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>", c.Friend, c.Friend)
+	return fmt.Sprintf("friend %s is a claude friend in one-shot mode with no config_dir, and a lane runs only as the friend's own account (CLAUDE_CONFIG_DIR); run: nova-config friend set %s --config_dir <the account's absolute config directory>, or nova-friend run --config-dir <dir>", c.Friend, c.Friend)
 }
 
 func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {

@@ -54,7 +54,7 @@ func TestTheDaemonStopsTurnsPastTheCapAndRaisesOneJudgment(t *testing.T) {
 		Cap:      func() float64 { return 20 },
 		Spent:    func(time.Time) float64 { return h.SpentUSD() },
 		Judgment: func(_ time.Time, spent, limit float64) string {
-			subject, _ := SpendCapJudgmentText("bob", "deepseek", spent, limit)
+			subject, _ := SpendCapJudgmentText("bob", DefaultPronouns, "deepseek", spent, limit)
 			mu.Lock()
 			judged = append(judged, subject)
 			mu.Unlock()

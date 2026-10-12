@@ -97,10 +97,10 @@ func (l *loop) environmentFault(ln *lane, line, first string, now time.Time) {
 	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d reason=%q", ln.attempts, CardTurns, reason))
 	until := now.Add(FaultDownFor)
 	s.gov.PauseUntil(until, reason, now)
-	d.Record(fmt.Sprintf("%s harness environment fault: her lanes pause until %s: %s", now.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339), oneLine(reason, 300)))
+	d.Record(d.sayf("%s harness environment fault: {their} lanes pause until %s: %s", now.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339), oneLine(reason, 300)))
 	if d.FaultDown != nil {
 		d.FaultDown(until, reason)
 	}
-	subject, body := FaultDownText(d.Friend, reason, until)
+	subject, body := FaultDownText(d.Friend, d.Pro.Get(), reason, until)
 	l.tellKind(bus.KindBlocker, subject, body, now)
 }

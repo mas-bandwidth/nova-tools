@@ -91,5 +91,5 @@ func (f *FolderCheck) Deliver(_ context.Context, text string) (int, error) {
 // FolderCheckLine is the NOTE install and run print for a claude friend: where
 // her session check lands, and what a live session runs to answer it.
 func FolderCheckLine(friend, dir, state string) string {
-	return "the session check: the daemon writes " + SessionCheckFile(dir, "<nonce>") + " (one at a time); a live session watches that folder and answers the file it shows: nova-friend pong --as " + friend + " --nonce <nonce> --state-dir " + state + "; with no live session her cards' finishes are her presence, and nova-bus still delivers to her"
+	return "the session check: the daemon writes " + SessionCheckFile(dir, "<nonce>") + " (one at a time); a live session watches that folder and answers the file it shows: nova-friend pong --as " + friend + " --nonce <nonce> --state-dir " + state + "; with no live session the friend's cards' finishes are the friend's presence, and nova-bus still delivers to the friend"
 }

@@ -173,7 +173,7 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 			wait = "its outbox holds a run's RESULT.md or a REPORT.md with no Verdict, which no outbox step finishes: the lane finishes it failed after " + ReportWait.String()
 		}
 	case !exists(c.Brief):
-		wait = "its brief is not in her inbox yet (written from the server's friend cards)"
+		wait = d.say("its brief is not in {their} inbox yet (written from the server's friend cards)")
 	case ok && d.stageOwed(held):
 		wait = "its job is being staged"
 	}
@@ -302,9 +302,9 @@ func (l *loop) laneCheck(now time.Time) {
 			if exists(ln.card.Result()) || exists(ln.card.Report()) {
 				continue // its own report: the outbox step finished it
 			}
-			l.laneDrop(ln, "the card left her row on the server", now)
+			l.laneDrop(ln, d.say("the card left {their} row on the server"), now)
 		case h.Col != "working":
-			l.laneDrop(ln, "the server has the card "+dash(h.Col)+" on her row, not working", now)
+			l.laneDrop(ln, "the server has the card "+dash(h.Col)+d.say(" on {their} row, not working"), now)
 		case h.Lane != 0 && h.Lane != ln.n:
 			l.laneDrop(ln, fmt.Sprintf("the server says lane %d holds it", h.Lane), now)
 		}
@@ -332,9 +332,9 @@ func (l *loop) batchTake(now time.Time) {
 	d.batchTakeAt = now.Add(BatchTakeEvery)
 	at := now.UTC().Format(time.RFC3339)
 	if epoch == 0 { // the server refuses a take that names no epoch: none is sent, never a guessed 0
-		if why := "no ready card on her row carries an epoch"; why != d.batchTakeSaid {
+		if why := d.say("no ready card on {their} row carries an epoch"); why != d.batchTakeSaid {
 			d.batchTakeSaid = why
-			d.Record(fmt.Sprintf("%s take: her %d ready card(s) not taken: %s; asked again in %s", at, ready, why, BatchTakeEvery))
+			d.Record(d.sayf("%s take: {their} %d ready card(s) not taken: %s; asked again in %s", at, ready, why, BatchTakeEvery))
 		}
 		return
 	}
@@ -344,7 +344,7 @@ func (l *loop) batchTake(now time.Time) {
 	if err != nil {
 		if why := oneLine(err.Error(), 300); why != d.batchTakeSaid {
 			d.batchTakeSaid = why
-			d.Record(fmt.Sprintf("%s take: her %d ready card(s) not taken: %s; asked again in %s", at, ready, why, BatchTakeEvery))
+			d.Record(d.sayf("%s take: {their} %d ready card(s) not taken: %s; asked again in %s", at, ready, why, BatchTakeEvery))
 		}
 		return
 	}

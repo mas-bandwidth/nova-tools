@@ -172,7 +172,7 @@ func TestANoReportExitIsAHarnessFaultAndThreeMarkTheRowDownOnce(t *testing.T) {
 		assert.Equal(t, reason, downs[0].reason)
 		at := downs[0].until.Add(-FaultDownFor)
 		assert.True(t, at.After(t0), "until is fifteen minutes after the third fault")
-		assert.Contains(t, records, "harness fault: 3 alike within 10m0s: her row down until "+downs[0].until.UTC().Format(time.RFC3339)+", her lanes held: "+reason)
+		assert.Contains(t, records, "harness fault: 3 alike within 10m0s: their row down until "+downs[0].until.UTC().Format(time.RFC3339)+", their lanes held: "+reason)
 		got := r.adaGot(t)
 		var judgments []string
 		for _, g := range got {

@@ -265,18 +265,18 @@ func (g *LaneGovernor) Hold(reason string) bool {
 
 // RateJudgmentText is what the coordinator is told when a friend's lane cap
 // was lowered RateJudgeAfter times within RateJudgeWithin: one judgment.
-func RateJudgmentText(friend string, cap, width int, reason string) (subject, body string) {
+func RateJudgmentText(friend string, p Pronouns, cap, width int, reason string) (subject, body string) {
 	subject = fmt.Sprintf("friend %s: lane cap lowered %d times in %s by rate limits, now %d of %d", friend, RateJudgeAfter, RateJudgeWithin, cap, width)
-	body = fmt.Sprintf("Her provider rate-limited her lanes %d times within %s; the last: %s. The daemon pauses and lowers the cap by itself and raises it one lane per clean %s, with no hold. A judgment: keep her row's width, lower it (nova-config friend set %s --width %d), or move her to another route.\n",
+	body = p.Sprintf("{Their} provider rate-limited {their} lanes %d times within %s; the last: %s. The daemon pauses and lowers the cap by itself and raises it one lane per clean %s, with no hold. A judgment: keep {their} row's width, lower it (nova-config friend set %s --width %d), or move {them} to another route.\n",
 		RateJudgeAfter, RateJudgeWithin, oneLine(reason, 200), RateRaiseEvery, friend, cap)
 	return subject, body
 }
 
 // FundsJudgmentText is what the coordinator is told when a friend's
 // provider is out of funds: one judgment.
-func FundsJudgmentText(friend, reason string) (subject, body string) {
+func FundsJudgmentText(friend string, p Pronouns, reason string) (subject, body string) {
 	subject = fmt.Sprintf("friend %s: out of funds: %s", friend, oneLine(reason, 160))
-	body = fmt.Sprintf("Her provider refused a lane for want of funds or credit: %s. Her lanes start nothing more until her daemon restarts; every card stays in its lane's hand, none set aside. A payment is the owner's. To show it on her row: nova-sprint friend down %s --reason %s. Once paid, restart her daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).\n",
+	body = p.Sprintf("{Their} provider refused a lane for want of funds or credit: %s. {Their} lanes start nothing more until {their} daemon restarts; every card stays in its lane's hand, none set aside. A payment is the owner's. To show it on {their} row: nova-sprint friend down %s --reason %s. Once paid, restart {their} daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).\n",
 		oneLine(reason, 200), friend, shellQuote("out of funds: "+oneLine(reason, 120)), friend)
 	return subject, body
 }

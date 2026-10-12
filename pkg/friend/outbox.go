@@ -246,7 +246,7 @@ func (l *loop) outboxStep(now time.Time) {
 			note(job, refusal(id, job))
 			continue
 		case h.Col != "working":
-			note(job, "card "+id+" is "+dash(h.Col)+" on her row, not working")
+			note(job, "card "+id+" is "+dash(h.Col)+d.say(" on {their} row, not working"))
 			continue
 		case h.Kind == "read":
 			note(job, "card "+id+" is a read, finished by its verdict, not by a report")
@@ -353,7 +353,7 @@ func (l *loop) applyOutboxResult(r outboxResult, now time.Time) {
 	}
 	delete(o.tried, r.job)
 	o.finished[r.job] = true
-	d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, r.id, r.job, r.written, r.col, r.words))
+	d.Record(d.sayf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on {their} row): %s sent=server", at, r.id, r.job, r.written, r.col, r.words))
 }
 
 // offTip is why a LAND with a full sha Head is not finished at it: its Head is not origin's
@@ -508,8 +508,8 @@ func NotHers(card, job, friend string, running func() map[string]string) string 
 	}
 	switch {
 	case holder != "" && holder != friend:
-		return "refused: card " + card + " is not on her row, no longer hers; " + holder + " holds it now"
+		return "refused: card " + card + " is not on the friend's row, no longer the friend's; " + holder + " holds it now"
 	default:
-		return "refused: card " + card + " is not on her row, no longer hers; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"
+		return "refused: card " + card + " is not on the friend's row, no longer the friend's; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"
 	}
 }

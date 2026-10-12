@@ -431,9 +431,9 @@ func (l *Limits) BeatOrDown(beat func(ctx context.Context) error, down func(ctx 
 // LimitDownText is what the seat is told when friend's harness hits its
 // limit: the subject, and a body with the line that shows why and until when
 // on her row (nova-sprint friend down --reason --until).
-func LimitDownText(friend string, until time.Time, reason string) (subject, body string) {
-	subject = fmt.Sprintf("friend %s down: her harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
-	body = fmt.Sprintf("%s: %s\nHer daemon beats down with that reset and reason and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
+func LimitDownText(friend string, p Pronouns, until time.Time, reason string) (subject, body string) {
+	subject = p.Sprintf("friend %s down: {their} harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
+	body = p.Sprintf("%s: %s\n{Their} daemon beats down with that reset and reason and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on {their} row: nova-sprint friend down %s --reason %s --until %s\n",
 		subject, reason, friend, shellQuote("harness limit: "+reason), until.UTC().Format(time.RFC3339))
 	return subject, body
 }
@@ -441,12 +441,12 @@ func LimitDownText(friend string, until time.Time, reason string) (subject, body
 // LimitUnreadText is the one judgment the coordinator is told when friend's
 // harness refused at its limit with a text that names no reset this reads:
 // the text, the rest she is held for, and the line that sets the true reset.
-func LimitUnreadText(friend string, rest time.Duration, text string) (subject, body string) {
+func LimitUnreadText(friend string, p Pronouns, rest time.Duration, text string) (subject, body string) {
 	if rest <= 0 {
 		rest = DefaultLimitWait
 	}
-	subject = fmt.Sprintf("friend %s held: her harness is at its limit and its message names no reset I can read", friend)
-	body = fmt.Sprintf("%s: %q\nHer daemon holds her and tries a wake every %s until one is answered; this is said once until then. A judgment: read the reset from the text and set it (nova-sprint friend down %s --reason %s --until <RFC3339>), and add the text to pkg/friend/testdata/limits.tsv so the next one is read.\n",
+	subject = p.Sprintf("friend %s held: {their} harness is at its limit and its message names no reset I can read", friend)
+	body = p.Sprintf("%s: %q\n{Their} daemon holds {them} and tries a wake every %s until one is answered; this is said once until then. A judgment: read the reset from the text and set it (nova-sprint friend down %s --reason %s --until <RFC3339>), and add the text to pkg/friend/testdata/limits.tsv so the next one is read.\n",
 		subject, text, rest, friend, shellQuote("harness limit: "+text))
 	return subject, body
 }
@@ -456,18 +456,18 @@ func LimitUnreadText(friend string, rest time.Duration, text string) (subject, b
 // credit or quota refusal the daemon's table knows (cmd/nova-friend/limit.go,
 // RefusalWatch): the line, so the wording is added or the cause is found,
 // never a silent fourth retry.
-func LimitAlikeText(friend, line string) (subject, body string) {
-	subject = fmt.Sprintf("friend %s: her lanes are failing alike", friend)
-	body = fmt.Sprintf("%s: %q\nThree lanes in a row ended with that first error line and none names a limit or a credit wording I know. Her daemon holds it to this one judgment, never a silent fourth retry. Read the line, fix the cause or add its wording to cmd/nova-friend/limit.go, then let her go on: nova-sprint friend up %s\n",
+func LimitAlikeText(friend string, p Pronouns, line string) (subject, body string) {
+	subject = p.Sprintf("friend %s: {their} lanes are failing alike", friend)
+	body = p.Sprintf("%s: %q\nThree lanes in a row ended with that first error line and none names a limit or a credit wording I know. {Their} daemon holds it to this one judgment, never a silent fourth retry. Read the line, fix the cause or add its wording to cmd/nova-friend/limit.go, then let {them} go on: nova-sprint friend up %s\n",
 		subject, line, friend)
 	return subject, body
 }
 
 // LimitUpText is what the seat is told when friend's session answered the
 // wake after the reset.
-func LimitUpText(friend string) (subject, body string) {
-	subject = fmt.Sprintf("friend %s back: her harness answered the wake after its reset", friend)
-	body = fmt.Sprintf("%s\nHer daemon beats and delivers again. If you held her with friend down: nova-sprint friend up %s\n", subject, friend)
+func LimitUpText(friend string, p Pronouns) (subject, body string) {
+	subject = p.Sprintf("friend %s back: {their} harness answered the wake after its reset", friend)
+	body = p.Sprintf("%s\n{Their} daemon beats and delivers again. If you held {them} with friend down: nova-sprint friend up %s\n", subject, friend)
 	return subject, body
 }
 

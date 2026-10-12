@@ -61,7 +61,7 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 		Up:   func(string) { ups = append(ups, "up") },
 		Unread: func(text string) {
 			judged = append(judged, text)
-			subject, body := LimitUnreadText("bob", time.Hour, text)
+			subject, body := LimitUnreadText("bob", DefaultPronouns, time.Hour, text)
 			_, err := (&bus.Bus{Store: coord}).Send(context.Background(), bus.Message{From: "bob", To: []string{"coord"}, Subject: subject, Body: body})
 			require.NoError(t, err)
 		},

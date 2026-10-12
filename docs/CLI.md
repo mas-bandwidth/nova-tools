@@ -1575,6 +1575,7 @@ flags:
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --pause-on <string>  funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)
   --profile <string>  the wall profile every lane child runs inside when the friend row names none (row_profile=): friend
+  --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --refuse-go  put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
@@ -1632,6 +1633,7 @@ flags:
   --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
+  --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets
   --secrets <string>  the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec
@@ -1888,6 +1890,7 @@ flags:
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --profile <string>  the wall profile every lane child runs inside when the friend row names none: friend
+  --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  accepted and ignored: the machine's nova-secrets seat the daemon's plist records
   --secrets <string>  accepted and ignored: the names of the secrets the daemon's plist records, comma-separated
@@ -3440,7 +3443,7 @@ nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the 
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
 ```
 
-`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (slots, tiers, roles, width: the jobs she works at once, 8 by default, mode: one-shot always, how her daemon hands her work; batch is retired), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash, pro or heavy tier: tier, provider, model, harness, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash, pro and heavy, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (slots, tiers, roles, width: the jobs the friend works at once, 8 by default, mode: one-shot always, how the daemon hands the friend work; batch is retired), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash, pro or heavy tier: tier, provider, model, harness, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash, pro and heavy, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
 ### First run
 
