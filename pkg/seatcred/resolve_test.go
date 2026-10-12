@@ -48,6 +48,18 @@ func seatEnv(t *testing.T, home string, extra map[string]string) func(string) st
 	return func(k string) string { return m[k] }
 }
 
+// standInSops writes an executable sops stand-in into its own t.TempDir and
+// returns its path. A test that reads the fleet layout under HOME names it with
+// SopsEnv, so the test passes whether or not sops is installed on the host.
+func standInSops(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "sops")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // credHas says whether the secret holds want, without printing it.
 func credHas(s secrets.Secret, want string) bool {
 	got := false
@@ -80,17 +92,18 @@ func TestPathsForTakesTheOverridesOverHome(t *testing.T) {
 		"PathsFor = %+v %v; want the overrides", p, err)
 }
 
-// TestPathsForFallsBackToTheFleetLayoutUnderHome: with no overrides, the store
-// and key are the fleet layout under HOME and sops is the one on PATH.
+// TestPathsForFallsBackToTheFleetLayoutUnderHome: with no store or key
+// override, they are the fleet layout under HOME; the sops is the test's own
+// stand-in, named with SopsEnv, so the host need not have sops installed.
 func TestPathsForFallsBackToTheFleetLayoutUnderHome(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	p, err := seatcred.PathsFor("studio", envOf(map[string]string{"HOME": home}))
+	p, err := seatcred.PathsFor("studio", envOf(map[string]string{"HOME": home, seatcred.SopsEnv: standInSops(t)}))
 	require.NoError(t, err, "PathsFor = %+v %v; want the layout under HOME", p, err)
 	require.Equal(t, filepath.Join(home, seatcred.DefaultStore), p.Store, "PathsFor store = %q; want the layout under HOME", p.Store)
 	require.Equal(t, filepath.Join(home, seatcred.DefaultKeyDir, "studio.key"), p.Key, "PathsFor key = %q; want the layout under HOME", p.Key)
-	require.NotEmpty(t, p.Sops, "PathsFor sops = %q; want the sops on PATH", p.Sops)
+	require.NotEmpty(t, p.Sops, "PathsFor sops = %q; want the stand-in sops", p.Sops)
 }
 
 // TestPathsForTakesBothOverridesWhenHomeIsUnset: with both store and key

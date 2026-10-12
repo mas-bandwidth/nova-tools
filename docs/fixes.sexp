@@ -87,7 +87,13 @@
     TestEveryCommandMeetsTheOnboardingStandard green. The dry run reads the record and prints what it would
     prove, or the plan it would take, and writes no proof, lease or record."
    :origin "the coordinator, 2026-10-12: the v1.2.14 release gate runs the functional tier, and prove was refused for taking no --dry-run")
-  (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
+   (fix "the-seatcred-fallback-test-brings-its-own-sops" :release "v1.2.14" :status "planned"
+    :title "The seatcred fallback test brings its own sops"
+    :text "TestPathsForFallsBackToTheFleetLayoutUnderHome names its own executable sops stand-in through
+     NOVA_SECRETS_SOPS, so the test passes whether or not sops is installed on the machine that runs it.
+     What it asserts about the store and key layout under HOME is unchanged."
+    :origin "the coordinator, 2026-10-12: the v1.2.14 CI check failed pkg/seatcred's fleet-layout test with no sops on PATH on a runner that has none")
+   (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."
    :origin "the split, layers L5 to L7; PR #5591")
