@@ -1176,7 +1176,7 @@ func harnessOutputTail(job string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only log needs no close result
 	fi, err := f.Stat()
 	if err != nil {
 		return ""
