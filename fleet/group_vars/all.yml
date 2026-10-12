@@ -8,6 +8,7 @@
 # Where a machine keeps the tools and the fleet's files: its login's home.
 nova_home: "{{ ansible_env.HOME }}"
 nova_bin_dir: "{{ nova_home }}/.local/bin"
+nova_sdk_home: "{{ nova_home }}/sdk"
 nova_release_dir: "{{ nova_home }}/nova-bench/release"
 # The installed build is recorded here, one line: the version tools.yml last
 # installed (the machine's nova_build fact).
@@ -140,7 +141,7 @@ nova_adopt_canary_wait: 1800
 nova_tla_dir: /opt/tla
 nova_tla_jar: "{{ nova_tla_dir }}/tla2tools.jar"
 nova_tla_sha256_file: "{{ playbook_dir }}/../tla/tla2tools.sha256"
-nova_tla_java_candidates: ["{{ nova_home }}/sdk/bin/java", /usr/bin/java, /usr/local/bin/java]
+nova_tla_java_candidates: ["{{ nova_sdk_home }}/bin/java", /usr/bin/java, /usr/local/bin/java]
 
 # The seat play of tools.yml (the coordinator machine adopts the build): the
 # dashboard binary links that name the installed nova-sprint (empty: none),
