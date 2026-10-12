@@ -768,6 +768,18 @@
     COVERAGE row is current."
    :origin "card tla-bussendonce-first-cases.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "friend-test-rig-clock-rechecked" :release "v1.2.12" :status "in-progress"
+   :title "The cmd/nova-friend test rig's fake clock is synchronized"
+   :text "Tests only, no code change. The card re-reported the fake-clock race in
+    cmd/nova-friend/main_test.go (both sides (*rig).world's now closure: the daemon's beat in
+    daemon.go:772 and each lane's work goroutine in daemon.go:1285). The v1.2.10 certification fix
+    (certification-bus-and-friend-test-rigs) already synchronized it: the clock's now and sleep take
+    r.mu across answerChecks and the one-second advance, the answered record bob's session writes takes
+    answeredMu, and stopAfter re-wraps the guarded clock, so every caller sees one advance and the rig
+    is safe for the daemon's concurrent callers. Rechecked at dev f78071c2a6 on 2026-10-12: go test
+    -race -count=20 ./cmd/nova-friend/ reports no race, so this card adds no code."
+   :origin "card nova-friend-test-rig-clock-races-the-daemon.w1; the race was first landed shipped by the v1.2.10 certification fix (PR #5607)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
