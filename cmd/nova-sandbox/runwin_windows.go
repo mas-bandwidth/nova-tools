@@ -713,13 +713,17 @@ func stdioHandles(spec winStartSpec) (in, out, errh syscall.Handle, closeAll fun
 	return inh, outh, errhh, closeAll, nil
 }
 
-// readerHandle is the child's stdin. The second return is a handle THIS process must close
-// after CreateProcessW, and is nil when the caller's own file was used.
-func readerHandle(r io.Reader) (syscall.Handle, *os.File, error) {
-	if r == nil {
+// childHandle is the one body readerHandle and writerHandle share: the child's stdin (a
+// pipeRead end) or stdout/stderr (a pipeWrite end). The second return is a handle THIS
+// process must close after CreateProcessW, and is nil when the caller's own file was used.
+// A caller's *os.File is used directly -- which is what production does, with this
+// process's own stdio -- and anything else gets a pipe with a pump, which is what a test
+// and the probe need.
+func childHandle(end pipeEnd, rw any) (syscall.Handle, *os.File, error) {
+	if rw == nil {
 		return 0, nil, nil
 	}
-	if f, ok := r.(*os.File); ok {
+	if f, ok := rw.(*os.File); ok {
 		h := syscall.Handle(f.Fd())
 		return h, nil, inheritable(h)
 	}
@@ -727,35 +731,49 @@ func readerHandle(r io.Reader) (syscall.Handle, *os.File, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	go func() {
-		defer pw.Close()
-		// ignored: a pipe pump; the child sees EOF when it ends, and its exit code is the report
-		_, _ = io.Copy(pw, r)
-	}()
-	h := syscall.Handle(pr.Fd())
-	return h, pr, inheritable(h)
+	switch end {
+	case pipeRead:
+		r := rw.(io.Reader)
+		go func() {
+			defer pw.Close()
+			// ignored: a pipe pump; the child sees EOF when it ends, and its exit code is the report
+			_, _ = io.Copy(pw, r)
+		}()
+		h := syscall.Handle(pr.Fd())
+		return h, pr, inheritable(h)
+	default:
+		w := rw.(io.Writer)
+		go func() {
+			defer pr.Close()
+			// ignored: a pipe pump; the child's exit code is the report
+			_, _ = io.Copy(w, pr)
+		}()
+		h := syscall.Handle(pw.Fd())
+		return h, pw, inheritable(h)
+	}
+}
+
+// pipeEnd names which end of a stdio pipe the child holds, and therefore which way the
+// pump copies.
+type pipeEnd int
+
+const (
+	// pipeRead is the read end: the child reads its stdin from it, and this process
+	// copies the caller's reader into the write end.
+	pipeRead pipeEnd = iota
+	// pipeWrite is the write end: the child writes its output into it, and this process
+	// copies it out of the read end into the caller's writer.
+	pipeWrite
+)
+
+// readerHandle is the child's stdin.
+func readerHandle(r io.Reader) (syscall.Handle, *os.File, error) {
+	return childHandle(pipeRead, r)
 }
 
 // writerHandle is the child's stdout or stderr, under the same rule as readerHandle.
 func writerHandle(w io.Writer) (syscall.Handle, *os.File, error) {
-	if w == nil {
-		return 0, nil, nil
-	}
-	if f, ok := w.(*os.File); ok {
-		h := syscall.Handle(f.Fd())
-		return h, nil, inheritable(h)
-	}
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		return 0, nil, err
-	}
-	go func() {
-		defer pr.Close()
-		// ignored: a pipe pump; the child's exit code is the report
-		_, _ = io.Copy(w, pr)
-	}()
-	h := syscall.Handle(pw.Fd())
-	return h, pw, inheritable(h)
+	return childHandle(pipeWrite, w)
 }
 
 func inheritable(h syscall.Handle) error {

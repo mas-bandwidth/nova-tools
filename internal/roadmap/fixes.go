@@ -1,7 +1,6 @@
 package roadmap
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -47,20 +46,7 @@ var statuses = map[string]bool{"shipped": true, "in-progress": true, "planned": 
 // DecodeFixes reads one fixes file and returns it, or every shape problem of the
 // file together in one error.
 func DecodeFixes(file string, data []byte) (*Fixes, error) {
-	top, err := sexp.Read(file, data, Limits)
-	if err != nil {
-		var r *sexp.Refusal
-		if errors.As(err, &r) {
-			return nil, fmt.Errorf("fixes: file=%s: %s", file, strings.ReplaceAll(r.Reason, "a plan is data", "the fixes file is data"))
-		}
-		return nil, err
-	}
-	d := &decoder{file: file}
-	fx := d.fixes(top)
-	if len(d.probs) > 0 {
-		return nil, errors.Join(d.probs...)
-	}
-	return fx, nil
+	return decode(file, data, "fixes", "the fixes file is data", (*decoder).fixes)
 }
 
 func (d *decoder) status(at string, vals map[string]sexp.Form) string {
