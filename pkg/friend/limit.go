@@ -103,10 +103,11 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 		tail = tail[len(tail)-LimitTail:]
 	}
 	for _, line := range strings.Split(tail, "\n") {
+		line = stripANSI(line) // the CLI colours the words: strip before matching, not only before the reset
 		if !limitWords.MatchString(line) {
 			continue
 		}
-		if until, ok := resetOfText(stripANSI(line), now); ok {
+		if until, ok := resetOfText(line, now); ok {
 			lim = Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
 			found = true
 		}

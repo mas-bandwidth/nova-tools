@@ -906,6 +906,20 @@
    :text "The release cut reads every check run on the commit it tags and refuses when any is not success, skipped or neutral, so a second cut from the same commit (which lockstep demands whenever nova-sprint moves and nova-tools does not) found the previous tag's cancelled release.yml runs and needed a CI waiver. The cut now sets aside only a cancelled release.yml run of an older tag on the same commit (the publish recipe cancels it when the cut publishes its own assets), names what it set aside in the RELEASE CUT line as ci-set-aside=<run id>@<tag>,..., refuses --waive-ci when only the set-aside runs are non-green (\"the previous tag's release run is set aside; no waiver is needed\"), and still refuses a waiver of a green commit. A cancelled run whose head branch is the release branch or the version being cut stays a stop."
    :origin "card a-cut-ignores-the-previous-tags-cancelled-release-run.w5; the seat, 2026-10-11 ~20:00Z: cutting nova-tools v1.2.11 from the v1.2.10 commit 2314d437f was refused build=cancelled, certified=cancelled, release=cancelled, the three checks of the v1.2.10 tag's release.yml run, cancelled on purpose by the v1.2.10 publish step")
 
+  (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.15" :status "in-progress"
+   :title "A harness limit in any wording pauses the lanes"
+   :text "pkg/friend ReadLimit read a harness's limit only when the wording's words stood unbroken in the raw
+    line, then stripped the ANSI colour codes only for the reset beside it; Claude Code colours the words of
+    its weekly-limit banner, so the codes sit between them ('hit your <esc>weekly<esc> limit') and the wording
+    no longer matched. ReadLimit now strips the codes before matching and for the line it records. The banner
+    'You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)' with those codes therefore reads
+    as a weekly limit until the reset the line names, in the zone it names, so the lane is UsageLimited (the
+    existing pause path) and keeps the card without counting an attempt. Tests: limit_test.go
+    TestEveryLimitWordingClassifiesWithItsResetInTheNamedZone (each wording, the codes between the words) and
+    adapter_claude_lanes_unix_test.go TestClaudeLaneWeeklyLimitIsUsageLimitedNotAFailedAttempt (the whole
+    RunCard path returns UsageLimited, not NoReport), red first at base."
+   :origin "card a-harness-limit-in-any-wording-pauses-the-lanes.w2; the seat, 2026-10-11 20:16Z: claude -p prints You've hit your weekly limit for every model, and the daemon records each lane as a failed attempt of the card; the classifier must read the whole stdout and stderr, strips ANSI codes before matching, and in any wording the harness prints the limit pauses the lanes until the reset, never a failed attempt. Attempt 1 changed pkg/friend/adapter_claude_lanes.go, outside this card's PATHS (E12); this attempt fixes the classifier in pkg/friend/limit.go.")
+
   (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "in-progress"
    :title "A member reports its ended cards side by side"
    :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
