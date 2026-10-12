@@ -897,9 +897,11 @@
     contract, and posts its exit code and output for the pass goroutine's collect to apply; a launch being reported
     is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
     reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
-    its reports, so it is still one step. A report the store refused or did not answer, whose claim moved while it
-    ran, is collected as reaped, never applied: its post is applied only once the collecting pass has read the
-    queue, so the moved re-check consults the queue that pass just read, never the previous pass's. A report the
+    its reports, so it is still one step. A report the store refused (a definite refusal, exit 1), whose claim moved
+    while it ran, is collected as reaped, never applied: its post is applied only once the collecting pass has read
+    the queue, so the moved re-check consults the queue that pass just read, never the previous pass's. A report the
+    store did not answer whose claim moved has an unknown outcome (the store may have committed it and moved the
+    claim itself): the run is kept as failed for a person and not sent again, never reaped as clean. A report the
     store accepted is applied, never reaped: nova-sprint's finish refuses a stale claim (internal/sprint
     steps_work.go finishPlan, liveGen), so an accepted finish was the card's claim when it landed, and a move seen
     after it is the store acting on that report (a failed finish redealt at gen+1, kept as failed). The lander's
@@ -910,7 +912,8 @@
     the member now sends a report and collects it apart, a move possible in between, including a move the member's
     own accepted report causes; this change makes no formal coverage claim for that interval. The model card is in
     v1.2.16; until it lands, the interval is held by TestAMovedClaimWhileReportingIsReapedNotApplied,
-    TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved and the store's liveGen check. Tests, red first:
+    TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved, TestAnUnansweredReportWhoseClaimMovedKeepsTheRunAsFailed
+    and the store's liveGen check. Tests, red first:
     pkg/member/report_side_by_side_test.go (TestReportsRunSideBySideInOnePass, TestTakeRunsBeforeTheReportsReturn,
     the two above, and the refusal, no-answer, retry and stop cases), pkg/diffcheck
     TestOutsideHoldsTestsOnlyBesideGoSource, and the functional
