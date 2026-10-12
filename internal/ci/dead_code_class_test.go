@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,15 +84,14 @@ func deadcodeRoots(ctx context.Context, root, targetOS string) ([]string, error)
 }
 
 // runDeadcode runs deadcode on every production main for targetOS using the host tool binary.
-func runDeadcode(t *testing.T, ctx context.Context, bin, root, targetOS string) ([]deadcodePackage, error) {
-	t.Helper()
+func runDeadcode(ctx context.Context, bin, root, targetOS string) ([]deadcodePackage, error) {
 	roots, err := deadcodeRoots(ctx, root, targetOS)
 	if err != nil {
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"-json"}, roots...)...)
 	cmd.Dir = root
-	cmd.Env = append(goenv.Clean(os.Environ()), "GOOS="+targetOS)
+	cmd.Env = append(append(goenv.Clean(os.Environ()), "GOOS="+targetOS), "GOFLAGS=-mod=readonly")
 	cmd.WaitDelay = 5 * time.Second
 
 	var stdout, stderr bytes.Buffer
@@ -109,30 +109,57 @@ func runDeadcode(t *testing.T, ctx context.Context, bin, root, targetOS string) 
 	return pkgs, nil
 }
 
-// findDeadCodeUnion runs deadcode on linux, taking the union of dead functions per package.
-// deadcode is a static analyzer; running once is sufficient.
+// findDeadCodeUnion runs deadcode across linux, darwin, and windows, taking the
+// union of dead functions per package. A function dead on any one GOOS is dead:
+// a build-tagged file can be the only live reference on one platform, so a
+// single-GOOS walk would over-report (docs/SPEC-CI.md, "deadcode"). The three
+// GOOS walks are independent subprocesses, each resolving its own GOOS package
+// set, so they run in parallel on the two cores the functional leg allows; the
+// speed is from that parallelism, never from dropping an OS.
 func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[string]int, map[string][]string, error) {
 	t.Helper()
 	bin := deadcodeToolBinary(t, ctx)
-	union := make(map[string]map[string]bool)
+	oses := []string{"linux", "darwin", "windows"}
 	modulePrefix := "github.com/mas-bandwidth/nova-tools/"
-	pkgs, err := runDeadcode(t, ctx, bin, root, "linux")
-	if err != nil {
-		return nil, nil, err
+
+	var (
+		mu    sync.Mutex
+		union = make(map[string]map[string]bool)
+	)
+	errs := make([]error, len(oses))
+	var wg sync.WaitGroup
+	for i, goos := range oses {
+		wg.Add(1)
+		go func(i int, goos string) {
+			defer wg.Done()
+			pkgs, err := runDeadcode(ctx, bin, root, goos)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, pkg := range pkgs {
+				p := strings.TrimPrefix(pkg.Path, modulePrefix)
+				if !deadCodeCounted(p) {
+					continue
+				}
+				for _, fn := range pkg.Funcs {
+					if fn.Marker || fn.Generated {
+						continue
+					}
+					if union[p] == nil {
+						union[p] = make(map[string]bool)
+					}
+					union[p][fn.Name] = true
+				}
+			}
+		}(i, goos)
 	}
-	for _, pkg := range pkgs {
-		p := strings.TrimPrefix(pkg.Path, modulePrefix)
-		if !deadCodeCounted(p) {
-			continue
-		}
-		for _, fn := range pkg.Funcs {
-			if fn.Marker || fn.Generated {
-				continue
-			}
-			if union[p] == nil {
-				union[p] = make(map[string]bool)
-			}
-			union[p][fn.Name] = true
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -231,7 +258,7 @@ func TestDeadCodeIncludesToolMains(t *testing.T) {
 	assert.Contains(t, roots, "./cmd/...")
 	assert.Contains(t, roots, "example.com/deadfixture/tools/check")
 	assert.NotContains(t, roots, "example.com/deadfixture/tools/library")
-	pkgs, err := runDeadcode(t, ctx, deadcodeToolBinary(t, ctx), root, "linux")
+	pkgs, err := runDeadcode(ctx, deadcodeToolBinary(t, ctx), root, "linux")
 	require.NoError(t, err)
 	var dead []string
 	for _, pkg := range pkgs {

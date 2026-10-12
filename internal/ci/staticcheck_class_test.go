@@ -5,14 +5,17 @@ package ci
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/kisielk/errcheck/errcheck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/analysis"
@@ -134,7 +137,7 @@ func buildModuleTool(t *testing.T, _ context.Context, pkg string) string {
 			bin := filepath.Join(dir, filepath.Base(p))
 			cmd := exec.Command("go", "build", "-o", bin, p)
 			cmd.Dir = repoRoot(t)
-			cmd.Env = goenv.Clean(os.Environ())
+			cmd.Env = append(goenv.Clean(os.Environ()), "GOFLAGS=-mod=readonly")
 			lintGoLock.Lock()
 			out, err := cmd.CombinedOutput()
 			lintGoLock.Unlock()
@@ -195,18 +198,96 @@ func staticcheckAnalyzers() []*analysis.Analyzer {
 	return as
 }
 
-// staticcheckSites runs staticcheck's default checks over dir in process,
-// loading and checking ./... with honnef.co/go/tools (already a module
-// dependency) rather than spawning the `tool` binary, and returns every finding
-// under `<package>:<check>`. U1000 is a whole-program result carried on the
-// runner's unused set, not a per-package diagnostic, so it is emitted from the
-// unused objects that no package marks used.
-func staticcheckSites(t *testing.T, ctx context.Context, dir string) map[string][]string {
+// errcheckAnalyzer runs github.com/kisielk/errcheck's checker as an
+// analysis.Analyzer, so it shares staticcheck's one whole-tree packages.Load
+// instead of loading ./... a second time (docs/SPEC-CI.md, `errcheck`; the
+// functional internal/ci package ran past its 100 s bound loading the tree once
+// per linter). The checker reads a *packages.Package; the pass hands it the same
+// Syntax, TypesInfo and Fset, so one is rebuilt and each unchecked error is
+// reported under this analyzer's name. It declares no facts, so the runner runs
+// it only on the ./... packages, never on their dependencies.
+var errcheckAnalyzer = &analysis.Analyzer{
+	Name: "errcheck",
+	Doc:  "report unchecked errors (docs/SPEC-CI.md, `errcheck`)",
+	Run: func(pass *analysis.Pass) (any, error) {
+		checker := errcheck.Checker{
+			Exclusions: errcheck.Exclusions{
+				Symbols:          append(append([]string{}, errcheck.DefaultExcludedSymbols...), errcheckExcludeSymbols()...),
+				BlankAssignments: true,
+				TypeAssertions:   true,
+			},
+		}
+		pkg := &packages.Package{TypesInfo: pass.TypesInfo, Fset: pass.Fset, Syntax: pass.Files}
+		for _, ue := range checker.CheckPackage(pkg).UncheckedErrors {
+			pass.Report(analysis.Diagnostic{Pos: positionOf(pass.Fset, ue.Pos), Message: ue.Line})
+		}
+		return nil, nil
+	},
+}
+
+// positionOf returns the token.Pos in fset for the byte offset of p, or
+// token.NoPos when fset holds no such file. errcheck returns token.Position
+// values (filename/offset), while an analyzer reports token.Pos; this maps the
+// one back to the other in the same file set errcheck read.
+func positionOf(fset *token.FileSet, p token.Position) token.Pos {
+	var file *token.File
+	fset.Iterate(func(f *token.File) bool {
+		if f.Name() == p.Filename {
+			file = f
+			return false
+		}
+		return true
+	})
+	if file == nil {
+		return token.NoPos
+	}
+	return file.Pos(p.Offset)
+}
+
+// wholeTreeLint is the one whole-tree lint run shared by the two whole-tree
+// ledger tests (staticcheck and errcheck): one packages.Load of ./... and one
+// pass of both analyzer sets, instead of one load per linter. Only the module
+// root shares it; a planted fixture module (the ReadItsChecks / ReadsItsShapes
+// tests) is far smaller and lints its own tree.
+var wholeTreeLint struct {
+	once sync.Once
+	sc   map[string][]string
+	ec   map[string][]string
+	err  error
+}
+
+// lintTree runs staticcheck's default checks and errcheck over dir in one
+// in-process pass, loading and checking ./... once, and returns each linter's
+// findings under `<package>:<check>`. The two whole-tree ledger tests share the
+// one run (load the packages once for all the linters); a fixture dir gets its
+// own run.
+func lintTree(t *testing.T, ctx context.Context, dir string) (map[string][]string, map[string][]string) {
 	t.Helper()
+	if dir == repoRoot(t) {
+		wholeTreeLint.once.Do(func() {
+			wholeTreeLint.sc, wholeTreeLint.ec, wholeTreeLint.err = lintTreeRun(ctx, dir)
+		})
+		require.NoError(t, wholeTreeLint.err)
+		return wholeTreeLint.sc, wholeTreeLint.ec
+	}
+	sc, ec, err := lintTreeRun(ctx, dir)
+	require.NoError(t, err)
+	return sc, ec
+}
+
+// lintTreeRun loads ./... and runs staticcheck's default checks plus errcheck
+// over it in one pass, returning each linter's sites. U1000 is a whole-program
+// result carried on the runner's unused set, not a per-package diagnostic, so
+// it is emitted from the unused objects no package marks used.
+func lintTreeRun(ctx context.Context, dir string) (map[string][]string, map[string][]string, error) {
 	c, err := cache.Default()
-	require.NoError(t, err)
+	if err != nil {
+		return nil, nil, err
+	}
 	r, err := runner.New(config.Config{Checks: []string{"all"}}, c)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, nil, err
+	}
 	cfg := &packages.Config{
 		Context: ctx,
 		Mode:    packages.LoadAllSyntax | packages.NeedModule,
@@ -215,35 +296,49 @@ func staticcheckSites(t *testing.T, ctx context.Context, dir string) map[string]
 		Tests:   true,
 	}
 	lintGoLock.Lock()
-	results, err := r.Run(cfg, staticcheckAnalyzers(), []string{"./..."})
+	results, err := r.Run(cfg, append(staticcheckAnalyzers(), errcheckAnalyzer), []string{"./..."})
 	lintGoLock.Unlock()
-	require.NoError(t, err)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	sites := map[string][]string{}
+	sc := map[string][]string{}
+	ec := map[string][]string{}
 	seen := map[string]bool{}
-	add := func(file, code, message string, line, col int) {
+	scAdd := func(file, code, message string, line, col int) error {
 		// One finding per (file, line, column, check, message): the same source
 		// file sits in both a package and its test variant and each reports the
 		// finding once, so staticcheck's printer collapses them; this does the same.
 		dk := fmt.Sprintf("%s\x00%d\x00%d\x00%s\x00%s", file, line, col, code, message)
 		if seen[dk] {
-			return
+			return nil
 		}
 		seen[dk] = true
 		pkg, err := packageOf(dir, file)
-		require.NoError(t, err)
+		if err != nil {
+			return err
+		}
 		key := pkg + ":" + code
-		sites[key] = append(sites[key], fmt.Sprintf("%s/%s:%d: %s", pkg, filepath.Base(file), line, message))
+		sc[key] = append(sc[key], fmt.Sprintf("%s/%s:%d: %s", pkg, filepath.Base(file), line, message))
+		return nil
 	}
 
-	type unusedKey struct{ pkgPath, base, name string; line int }
-	type unusedPair struct{ key unusedKey; obj unused.Object }
+	type unusedKey struct {
+		pkgPath, base, name string
+		line                int
+	}
+	type unusedPair struct {
+		key unusedKey
+		obj unused.Object
+	}
 	used := map[unusedKey]bool{}
 	var unuseds []unusedPair
 	for _, res := range results {
 		if res.Failed {
 			for _, e := range res.Errors {
-				require.NoError(t, e, "staticcheck failed on %s", res.Package)
+				if e != nil {
+					return nil, nil, e
+				}
 			}
 			continue
 		}
@@ -251,9 +346,16 @@ func staticcheckSites(t *testing.T, ctx context.Context, dir string) map[string]
 			continue
 		}
 		resd, err := res.Load()
-		require.NoError(t, err)
+		if err != nil {
+			return nil, nil, err
+		}
 		for _, diag := range resd.Diagnostics {
-			add(diag.Position.Filename, diag.Category, diag.Message, diag.Position.Line, diag.Position.Column)
+			if diag.Category == errcheckAnalyzer.Name {
+				continue
+			}
+			if err := scAdd(diag.Position.Filename, diag.Category, diag.Message, diag.Position.Line, diag.Position.Column); err != nil {
+				return nil, nil, err
+			}
 		}
 		for _, obj := range resd.Unused.Used {
 			used[unusedKey{res.Package.PkgPath, filepath.Base(obj.Position.Filename), obj.Name, obj.Position.Line}] = true
@@ -270,9 +372,62 @@ func staticcheckSites(t *testing.T, ctx context.Context, dir string) map[string]
 		if used[uo.key] {
 			continue
 		}
-		add(uo.obj.DisplayPosition.Filename, "U1000", fmt.Sprintf("%s %s is unused", uo.obj.Kind, uo.obj.Name), uo.obj.DisplayPosition.Line, uo.obj.DisplayPosition.Column)
+		if err := scAdd(uo.obj.DisplayPosition.Filename, "U1000", fmt.Sprintf("%s %s is unused", uo.obj.Kind, uo.obj.Name), uo.obj.DisplayPosition.Line, uo.obj.DisplayPosition.Column); err != nil {
+			return nil, nil, err
+		}
 	}
-	return sites
+
+	// errcheck: the shared run reported each unchecked error under the errcheck
+	// analyzer's name; here they are re-read with the discarded rule's reason
+	// (reasonedAt) applied, and a line that carries `// ignored: <reason>` on it
+	// or the line above is not a finding.
+	sources := map[string][]string{}
+	ecSeen := map[string]bool{}
+	for _, res := range results {
+		if res.Failed || res.Skipped || !res.Initial {
+			continue
+		}
+		resd, err := res.Load()
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, diag := range resd.Diagnostics {
+			if diag.Category != errcheckAnalyzer.Name {
+				continue
+			}
+			file, line := diag.Position.Filename, diag.Position.Line
+			dk := fmt.Sprintf("%s\x00%d\x00%s", file, line, diag.Message)
+			if ecSeen[dk] {
+				continue
+			}
+			ecSeen[dk] = true
+			if sources[file] == nil {
+				src, err := os.ReadFile(file)
+				if err != nil {
+					return nil, nil, err
+				}
+				sources[file] = strings.Split(string(src), "\n")
+			}
+			if reasonedAt(sources[file], line) {
+				continue
+			}
+			pkg, err := packageOf(dir, file)
+			if err != nil {
+				return nil, nil, err
+			}
+			key := pkg + ":unchecked"
+			ec[key] = append(ec[key], pkg+"/"+filepath.Base(file)+":"+strconv.Itoa(line)+": "+diag.Message)
+		}
+	}
+	return sc, ec, nil
+}
+
+// staticcheckSites returns staticcheck's findings over dir, sharing the one
+// whole-tree run with errcheck (lintTree).
+func staticcheckSites(t *testing.T, ctx context.Context, dir string) map[string][]string {
+	t.Helper()
+	sc, _ := lintTree(t, ctx, dir)
+	return sc
 }
 
 // TestStaticcheckFindings holds staticcheck's findings over the tree to the

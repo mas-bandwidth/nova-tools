@@ -4,18 +4,11 @@ package ci
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/kisielk/errcheck/errcheck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/tools/go/packages"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 )
 
 const (
@@ -38,56 +31,15 @@ func errcheckExcludeSymbols() []string {
 	return syms
 }
 
-// uncheckedErrorSites runs errcheck over dir in process, loading and checking
-// ./... with the errcheck library (github.com/kisielk/errcheck/errcheck,
-// already a module dependency) rather than spawning the `tool` binary, and
+// uncheckedErrorSites runs errcheck over dir in process, sharing staticcheck's
+// one whole-tree load (lintTree) rather than loading ./... a second time, and
 // returns every unchecked error under `<package>:unchecked`, except a line that
 // carries `// ignored: <reason>` on it or on the line above, the discarded
 // rule's reason (reasonedAt).
 func uncheckedErrorSites(t *testing.T, ctx context.Context, dir string) map[string][]string {
 	t.Helper()
-	checker := errcheck.Checker{
-		Exclusions: errcheck.Exclusions{
-			Symbols:          append(append([]string{}, errcheck.DefaultExcludedSymbols...), errcheckExcludeSymbols()...),
-			BlankAssignments: true,
-			TypeAssertions:   true,
-		},
-	}
-	cfg := &packages.Config{
-		Context: ctx,
-		Mode:    packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-		Tests:   true,
-		Dir:     dir,
-		Env:     append(append(goenv.Clean(os.Environ()), lintTarget...), "GOFLAGS=-mod=readonly"),
-	}
-	lintGoLock.Lock()
-	pkgs, err := packages.Load(cfg, "./...")
-	lintGoLock.Unlock()
-	require.NoError(t, err)
-	var result errcheck.Result
-	for _, pkg := range pkgs {
-		require.Emptyf(t, pkg.Errors, "loading %s: %v", pkg.ID, pkg.Errors)
-		result.Append(checker.CheckPackage(pkg))
-	}
-	result = result.Unique()
-	sources := map[string][]string{}
-	sites := map[string][]string{}
-	for _, ue := range result.UncheckedErrors {
-		file, line := ue.Pos.Filename, ue.Pos.Line
-		if sources[file] == nil {
-			src, err := os.ReadFile(file)
-			require.NoError(t, err)
-			sources[file] = strings.Split(string(src), "\n")
-		}
-		if reasonedAt(sources[file], line) {
-			continue
-		}
-		pkg, err := packageOf(dir, file)
-		require.NoError(t, err)
-		key := pkg + ":unchecked"
-		sites[key] = append(sites[key], pkg+"/"+filepath.Base(file)+":"+strconv.Itoa(line)+": "+ue.Line)
-	}
-	return sites
+	_, ec := lintTree(t, ctx, dir)
+	return ec
 }
 
 // TestUncheckedErrors holds errcheck's unchecked errors over the tree to the
