@@ -161,41 +161,90 @@ func checkWaitsWith(root, allowlistPath string, seams SourceSeams) (WaitsResult,
 	if err != nil {
 		return res, err
 	}
-	matched := make([]bool, len(entries))
+	out, err := runAllowlistedScan(root, seams, entries,
+		walkCITestFilesWith,
+		scanWaitFileWith,
+		matchWaitAllow,
+		func(e waitAllow) WaitFinding {
+			return WaitFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: WaitRemedyAllow}
+		},
+		func(f WaitFinding) string { return FileLineKey(f.File, f.Line, f.Kind) },
+		func() { res.Tests++ },
+	)
+	if err != nil {
+		return res, err
+	}
+	res.Findings = out.findings
+	res.Stale = out.stale
+	res.Allowlisted = out.allowlisted
+	res.Measured = out.measured
+	return res, nil
+}
 
-	err = walkCITestFilesWith(root, seams, func(rel string, raw []byte) error {
-		res.Tests++
-		findings, ok := scanWaitFileWith(rel, raw, seams)
+// scanOutcome is the result of runAllowlistedScan: the findings the rule must
+// refuse, the stale allowlist rows, the count of honored rows, and the measured
+// key set the allowlist must hold.
+type scanOutcome[F any] struct {
+	findings    []F
+	stale       []F
+	allowlisted int
+	measured    map[string]bool
+}
+
+// runAllowlistedScan is the shared frame of the five allowlisted source-scan
+// rules this package holds -- waits, goenv, net, templates and testbins. Each
+// rule reads its allowlist, walks its sources through the seams, splits its
+// findings into allowed and new, and reports the stale allowlist rows; the
+// frame was written once per rule until it was folded here. The rule passes
+// its walk, its per-file scanner, its matcher, the constructor of a stale row
+// from an allowlist entry, the key of a finding, and the closure that counts
+// one walked file; the frame leaves every printed line, exit code and error
+// text exactly as the duplicated copies produced.
+func runAllowlistedScan[F any](
+	root string,
+	seams SourceSeams,
+	entries []waitAllow,
+	walk func(string, SourceSeams, func(string, []byte) error) error,
+	scan func(string, []byte, SourceSeams) ([]F, bool),
+	match func([]waitAllow, []bool, F) int,
+	fresh func(waitAllow) F,
+	key func(F) string,
+	count func(),
+) (scanOutcome[F], error) {
+	var out scanOutcome[F]
+	matched := make([]bool, len(entries))
+	err := walk(root, seams, func(rel string, raw []byte) error {
+		count()
+		fs, ok := scan(rel, raw, seams)
 		if ok {
-			res.Findings = append(res.Findings, findings...)
+			out.findings = append(out.findings, fs...)
 		}
 		return nil
 	})
 	if err != nil {
-		return res, err
+		return out, err
 	}
-
-	var remaining []WaitFinding
-	for _, f := range res.Findings {
-		if i := matchWaitAllow(entries, matched, f); i >= 0 {
+	var remaining []F
+	for _, f := range out.findings {
+		if i := match(entries, matched, f); i >= 0 {
 			matched[i] = true
-			res.Allowlisted++
+			out.allowlisted++
 			continue
 		}
 		remaining = append(remaining, f)
 	}
-	res.Findings = remaining
-	res.Measured = usedRowKeys(entries, matched)
+	out.findings = remaining
+	out.measured = usedRowKeys(entries, matched)
 	for i, e := range entries {
 		if matched[i] {
 			continue
 		}
-		res.Stale = append(res.Stale, WaitFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: WaitRemedyAllow})
+		out.stale = append(out.stale, fresh(e))
 	}
-	for _, f := range res.Findings {
-		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
+	for _, f := range out.findings {
+		out.measured[key(f)] = true
 	}
-	return res, nil
+	return out, nil
 }
 
 // waitAllow is one allowlist row: the offender it names. The date and the

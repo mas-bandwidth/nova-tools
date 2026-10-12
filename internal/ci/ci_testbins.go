@@ -114,72 +114,62 @@ func checkTestbinsWith(root, allowlistPath string, seams SourceSeams) (TestbinsR
 	if err != nil {
 		return res, err
 	}
-	matched := make([]bool, len(entries))
-
-	for _, dir := range checkTestbinDirs {
-		base := filepath.Join(root, dir)
-		if _, statErr := os.Stat(base); statErr != nil {
-			if os.IsNotExist(statErr) {
-				continue
-			}
-			return res, statErr
-		}
-		err = seams.walk(base, func(path string, d os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if d.IsDir() {
-				switch d.Name() {
-				case "testdata", ".git", "vendor":
-					return filepath.SkipDir
+	walk := func(root string, seams SourceSeams, fn func(string, []byte) error) error {
+		for _, dir := range checkTestbinDirs {
+			base := filepath.Join(root, dir)
+			if _, statErr := os.Stat(base); statErr != nil {
+				if os.IsNotExist(statErr) {
+					continue
 				}
-				return nil
+				return statErr
 			}
-			if !strings.HasSuffix(path, "_test.go") {
-				return nil
+			err := seams.walk(base, func(path string, d os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if d.IsDir() {
+					switch d.Name() {
+					case "testdata", ".git", "vendor":
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if !strings.HasSuffix(path, "_test.go") {
+					return nil
+				}
+				raw, readErr := seams.readFile(path)
+				if readErr != nil {
+					return readErr
+				}
+				rel, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					return relErr
+				}
+				return fn(filepath.ToSlash(rel), raw)
+			})
+			if err != nil {
+				return err
 			}
-			raw, readErr := seams.readFile(path)
-			if readErr != nil {
-				return readErr
-			}
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				return relErr
-			}
-			rel = filepath.ToSlash(rel)
-			res.Tests++
-			findings, ok := scanTestbinFileWith(rel, raw, seams)
-			if !ok {
-				return nil
-			}
-			res.Findings = append(res.Findings, findings...)
-			return nil
-		})
-		if err != nil {
-			return res, err
 		}
+		return nil
 	}
-
-	var remaining []TestbinFinding
-	for _, f := range res.Findings {
-		if i := matchTestbinAllow(entries, matched, f); i >= 0 {
-			matched[i] = true
-			res.Allowlisted++
-			continue
-		}
-		remaining = append(remaining, f)
+	out, err := runAllowlistedScan(root, seams, entries,
+		walk,
+		scanTestbinFileWith,
+		matchTestbinAllow,
+		func(e waitAllow) TestbinFinding {
+			return TestbinFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: TestbinRemedyAllow}
+		},
+		func(f TestbinFinding) string { return FileLineKey(f.File, f.Line, f.Kind) },
+		func() { res.Tests++ },
+	)
+	if err != nil {
+		return res, err
 	}
-	res.Findings = remaining
-	res.Measured = usedRowKeys(entries, matched)
-	for i, e := range entries {
-		if matched[i] {
-			continue
-		}
-		res.Stale = append(res.Stale, TestbinFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: TestbinRemedyAllow})
-	}
-	for _, f := range res.Findings {
-		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
-	}
+	res.Findings = out.findings
+	res.Stale = out.stale
+	res.Allowlisted = out.allowlisted
+	res.Measured = out.measured
 	return res, nil
 }
 

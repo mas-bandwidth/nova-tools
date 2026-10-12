@@ -109,40 +109,23 @@ func checkNetWith(root, allowlistPath string, seams SourceSeams) (NetResult, err
 	if err != nil {
 		return res, err
 	}
-	matched := make([]bool, len(entries))
-
-	err = walkCITestFilesWith(root, seams, func(rel string, raw []byte) error {
-		res.Tests++
-		findings, ok := scanNetFileWith(rel, raw, seams)
-		if ok {
-			res.Findings = append(res.Findings, findings...)
-		}
-		return nil
-	})
+	out, err := runAllowlistedScan(root, seams, entries,
+		walkCITestFilesWith,
+		scanNetFileWith,
+		matchNetAllow,
+		func(e waitAllow) NetFinding {
+			return NetFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: NetRemedyAllow}
+		},
+		func(f NetFinding) string { return FileLineKey(f.File, f.Line, f.Kind) },
+		func() { res.Tests++ },
+	)
 	if err != nil {
 		return res, err
 	}
-
-	var remaining []NetFinding
-	for _, f := range res.Findings {
-		if i := matchNetAllow(entries, matched, f); i >= 0 {
-			matched[i] = true
-			res.Allowlisted++
-			continue
-		}
-		remaining = append(remaining, f)
-	}
-	res.Findings = remaining
-	res.Measured = usedRowKeys(entries, matched)
-	for i, e := range entries {
-		if matched[i] {
-			continue
-		}
-		res.Stale = append(res.Stale, NetFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: NetRemedyAllow})
-	}
-	for _, f := range res.Findings {
-		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
-	}
+	res.Findings = out.findings
+	res.Stale = out.stale
+	res.Allowlisted = out.allowlisted
+	res.Measured = out.measured
 	return res, nil
 }
 
