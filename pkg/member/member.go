@@ -454,9 +454,18 @@ type Config struct {
 	// Now is the clock the work pass's progress is read on (BeatLoop); nil is time.Now.
 	Now func() time.Time
 	// Meter is the machine's one-second CPU samples, taken by a goroutine of the caller
-	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat
-	// measures the machine itself.
+	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat falls
+	// back to the load average, and with no reading at all carries 0 (never omitting --load).
 	Meter *hostload.Sampler
+	// LoadUnmeasured reports whether the installed nova-sprint's `fleet beat -h` lists the
+	// --load-unmeasured flag (the caller probes once at start and hands the answer here), so
+	// a beat that carries 0 for want of a reading of the machine also says so; nil means the
+	// flag is never sent and the beat carries a plain --load 0.
+	LoadUnmeasured func() bool
+	// Status marks this member's own status file with a word ("beat-refused" while a beat
+	// the server refused stands, "" once a beat is taken), so doctor and the dashboard row
+	// can show it (nova-sprint reads the status); nil writes nothing.
+	Status func(word string) error
 	// Sleep waits between two harness starts (StartGap); nil starts them back to back
 	// (the tests' member). Clock is the time it measures the gap by; nil is time.Now.
 	Sleep func(time.Duration)
@@ -583,6 +592,16 @@ type Member struct {
 	// loadUnmeasured is set while the beat carries 0 for want of any reading of the machine
 	// (Beat), so that is said once and not every beat
 	loadUnmeasured bool
+	// loadUnmeasuredFlag says the installed nova-sprint's `fleet beat -h` lists
+	// --load-unmeasured (Config.LoadUnmeasured, probed once at New), so a beat that carries 0
+	// for want of a reading also says so.
+	loadUnmeasuredFlag bool
+	// lastBeatRefusal is when the member last logged a beat the server refused (exit 2),
+	// so a refusal is logged at most once a minute (Beat)
+	lastBeatRefusal time.Time
+	// beatRefused is set while the member has marked its own status file "beat-refused"
+	// (Beat), cleared when a beat is taken, so the mark is written once, on the change
+	beatRefused bool
 	// usageStopped is when a launch of this member last ended because its usage source
 	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
 	usageStopped time.Time
@@ -695,11 +714,26 @@ type decided struct {
 	err      error
 }
 
+// NewMeter is the member's one-second CPU sampler for its beat's load: the
+// machine's busy percent read in-process (Linux from /proc/stat, darwin from
+// top's CPU usage line over a second; hostload.Local), one sample a second
+// (hostload.Sampler.Run). A
+// beat always carries --load (docs/SPEC-SPRINT.md, the fleet, the beat), so the
+// sampler is the member's one meter, run apart from the pass.
+func NewMeter() *hostload.Sampler {
+	return hostload.NewSampler(hostload.Local())
+}
+
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
 		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), reportGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}, finishRefused: map[string]*refusedFinish{}}
+	// the --load-unmeasured probe is the caller's one ask at start (Config.LoadUnmeasured),
+	// so it runs here, once, never on a later beat (Beat reads the flag it set)
+	if cfg.LoadUnmeasured != nil && !cfg.Reader {
+		m.loadUnmeasuredFlag = cfg.LoadUnmeasured()
+	}
 	m.advanced() // a member begins with its pass going on
 	return m
 }
@@ -894,10 +928,12 @@ func (m *Member) Stalled() time.Duration {
 // the fleet, the beat; nova-sprint v1.2.11), and a member whose beats are refused reads down.
 // With no sample since the last beat (the member's first second, a source that gave none)
 // it carries the one-minute load average over the cores (hostload.Sampler.Load1Percent),
-// and with no reading of the machine at all it carries 0, said once until a reading comes.
-// A reader's is its queue, the verb that is a reader's beat (docs/SPEC-SPRINT.md, the
-// readers), its answer not read. A beat that fails is the error: the next goes at the next
-// interval.
+// and with no reading of the machine at all it carries 0, said once until a reading comes,
+// with --load-unmeasured beside the 0 when the installed sprint's `fleet beat -h` lists that
+// flag (Config.LoadUnmeasured). A beat the server refuses (exit 2) is logged with the exact
+// argv it sent, at most once a minute (sayBeatRefused). A reader's is its queue, the verb
+// that is a reader's beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A beat
+// that fails is the error: the next goes at the next interval.
 func (m *Member) Beat() error {
 	m.beatMu.Lock()
 	defer m.beatMu.Unlock()
@@ -926,6 +962,9 @@ func (m *Member) Beat() error {
 				m.loadUnmeasured = true
 				fmt.Fprintf(m.out, "NOTE beat: load unmeasured, sent 0\n")
 			}
+			if m.loadUnmeasuredFlag {
+				args = append(args, "--load-unmeasured")
+			}
 		} else {
 			m.loadUnmeasured = false
 		}
@@ -939,10 +978,51 @@ func (m *Member) Beat() error {
 	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
 		m.beaten = total
 	}
+	if code == 2 && !m.cfg.Reader {
+		m.sayBeatRefused(args, out)
+		m.markBeatRefused(true)
+	} else if code == 0 && !m.cfg.Reader {
+		m.markBeatRefused(false)
+	}
 	if code != 0 {
 		return fmt.Errorf("beat: exit %d: %s", code, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// sayBeatRefused logs a beat the server refused (exit 2) with the exact argv the member
+// sent it, at most once a minute (Beat; docs/SPEC-SPRINT.md, the fleet, the beat): the
+// refusal is loud, so a member whose beats are all refused reads down visibly in its own
+// log rather than silently.
+func (m *Member) sayBeatRefused(args []string, out []byte) {
+	now := m.clock()
+	if now.Sub(m.lastBeatRefusal) < time.Minute {
+		return
+	}
+	m.lastBeatRefusal = now
+	fmt.Fprintf(m.out, "BEAT REFUSED: %s: %s\n", strings.Join(args, " "), strings.TrimSpace(string(out)))
+}
+
+// markBeatRefused marks this member's own status file (Config.Status) "beat-refused" while
+// a beat the server refused stands and clears it once a beat is taken, writing only on the
+// change, so doctor and the dashboard row show the member reads down (docs/SPEC-SPRINT.md,
+// the fleet, the beat; a-doctor-probes-the-member-beat-form).
+func (m *Member) markBeatRefused(refused bool) {
+	if m.cfg.Status == nil {
+		return
+	}
+	if refused == m.beatRefused {
+		return
+	}
+	word := ""
+	if refused {
+		word = "beat-refused"
+	}
+	if err := m.cfg.Status(word); err != nil {
+		fmt.Fprintf(m.out, "NOTE status: %s\n", err)
+		return
+	}
+	m.beatRefused = refused
 }
 
 // BeatLoop beats at every tick of every until ctx ends, while the work pass is going on:

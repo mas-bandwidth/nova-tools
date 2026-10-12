@@ -10,8 +10,8 @@
 // vm.loadavg with sysctl, in Go. Elsewhere only a given value is known.
 //
 // A member does not measure at its beat: a Sampler takes the busy percent once a
-// second (Linux: /proc/stat counters, a read of a file; darwin: iostat, which takes
-// its own second at about 4 ms of CPU, where top costs 300) and a Ring keeps
+// second (Linux: /proc/stat counters, a read of a file; darwin: top's CPU usage
+// line over a second, read as two samples a second apart) and a Ring keeps
 // the last ten, so the beat can carry the highest of them.
 //
 // Every read of the machine is a Source function, so a caller measures with
@@ -75,7 +75,7 @@ type Source struct {
 	// Top is the output of top's one-sample header (darwin).
 	Top func() (string, error)
 	// CPUSecond is the busy percent over the next second, taking that second
-	// (darwin: iostat). The Sampler's source where there is no ProcStat.
+	// itself. The Sampler's source where there is no ProcStat.
 	CPUSecond func() (float64, error)
 	// Load1 is the one-minute load average.
 	Load1 func() (float64, bool)
@@ -111,6 +111,16 @@ func Measure(src Source, prev State, now time.Time) (pct float64, how string, ne
 		if p, good := src.Given(); good {
 			return capped(p), HowGiven, next, true
 		}
+	case src.Top != nil:
+		if !prev.TopAt.IsZero() && now.Sub(prev.TopAt) >= 0 && now.Sub(prev.TopAt) < TopEvery {
+			return capped(prev.TopPct), HowCPU, next, true
+		}
+		if text, err := src.Top(); err == nil {
+			if p, good := ParseTopCPU(text); good {
+				next.TopAt, next.TopPct = now, p
+				return capped(p), HowCPU, next, true
+			}
+		}
 	case src.ProcStat != nil:
 		if text, err := src.ProcStat(); err == nil {
 			if cur, good := ParseProcStat(text); good {
@@ -120,16 +130,6 @@ func Measure(src Source, prev State, now time.Time) (pct float64, how string, ne
 						return capped(p), HowCPU, next, true
 					}
 				}
-			}
-		}
-	case src.Top != nil:
-		if !prev.TopAt.IsZero() && now.Sub(prev.TopAt) >= 0 && now.Sub(prev.TopAt) < TopEvery {
-			return capped(prev.TopPct), HowCPU, next, true
-		}
-		if text, err := src.Top(); err == nil {
-			if p, good := ParseTopCPU(text); good {
-				next.TopAt, next.TopPct = now, p
-				return capped(p), HowCPU, next, true
 			}
 		}
 	}
@@ -211,18 +211,41 @@ func ParseProcStat(s string) (Ticks, bool) {
 // busy is 100 minus idle.
 func ParseTopCPU(s string) (float64, bool) {
 	for _, line := range strings.Split(s, "\n") {
-		if !strings.HasPrefix(line, "CPU usage:") {
-			continue
+		if p, ok := parseTopCPULine(line); ok {
+			return p, true
 		}
-		for _, part := range strings.Split(strings.TrimPrefix(line, "CPU usage:"), ",") {
-			f := strings.Fields(part)
-			if len(f) == 2 && f[1] == "idle" {
-				idle, good := topPercent(f[0])
-				if !good || idle > 100 {
-					return 0, false
-				}
-				return 100 - idle, true
+	}
+	return 0, false
+}
+
+// ParseTopCPUInterval is darwin top's busy percent over the last sample: with
+// `top -l 2` the second "CPU usage:" line is the interval between the two
+// readings, where the first is the average since boot, so the last line is the
+// one that is a second.
+func ParseTopCPUInterval(s string) (float64, bool) {
+	pct, ok := 0.0, false
+	for _, line := range strings.Split(s, "\n") {
+		if p, good := parseTopCPULine(line); good {
+			pct, ok = p, true
+		}
+	}
+	return pct, ok
+}
+
+// parseTopCPULine is one "CPU usage: a% user, b% sys, c% idle" line's busy
+// percent, false when the line is not one (or its idle is not a valid percent).
+func parseTopCPULine(line string) (float64, bool) {
+	if !strings.HasPrefix(line, "CPU usage:") {
+		return 0, false
+	}
+	for _, part := range strings.Split(strings.TrimPrefix(line, "CPU usage:"), ",") {
+		f := strings.Fields(part)
+		if len(f) == 2 && f[1] == "idle" {
+			idle, good := topPercent(f[0])
+			if !good || idle > 100 {
+				return 0, false
 			}
+			return 100 - idle, true
 		}
 	}
 	return 0, false

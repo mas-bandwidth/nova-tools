@@ -176,7 +176,6 @@ var secretOpeners = map[string]any{
 // secretExempt are the functions the rule finds and does not drive, each with
 // the reason; a row is held to the same two-way comparison as the table.
 var secretExempt = map[string]string{
-	"pkg/hostload.ParseIostat":            "built on darwin only, so a test binary on another platform cannot name it",
 	"pkg/hostload.ParseProcLoadavg":       "built on linux only, so a test binary on another platform cannot name it",
 	"pkg/hostload.ParseFileNr":            "built on linux only, so a test binary on another platform cannot name it",
 	"pkg/hostload.ParseLsof":              "built on darwin only, so a test binary on another platform cannot name it",

@@ -2,13 +2,13 @@ package hostload
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"golang.org/x/sys/unix"
 )
 
 // topTimeout bounds one run of top.
@@ -24,26 +24,31 @@ func localSource() Source {
 			out, err := subproc.Context(ctx, "/usr/bin/top", "-l", "1", "-n", "0", "-s", "0").Output()
 			return string(out), err
 		},
-		// The busy percent of the next second: iostat's own two readings a second
-		// apart (about 4 ms of CPU), where top costs about 300.
+		// The busy percent of the next second: top's second of two samples a second
+		// apart, the first the average since boot and the second the interval. top's
+		// "CPU usage:" line is the same on arm64 and amd64, where iostat's columns
+		// differed and its second reading gave no sample on amd64, so every beat
+		// carried no load (docs/SPEC-SPRINT.md, the fleet, the beat).
 		CPUSecond: func() (float64, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), topTimeout)
 			defer cancel()
-			out, err := subproc.Context(ctx, "/usr/sbin/iostat", "-c", "2", "-w", "1", "-n", "0").Output()
+			out, err := subproc.Context(ctx, "/usr/bin/top", "-l", "2", "-n", "0", "-s", "1").Output()
 			if err != nil {
 				return 0, err
 			}
-			if p, ok := ParseIostat(string(out)); ok {
+			if p, ok := ParseTopCPUInterval(string(out)); ok {
 				return p, nil
 			}
-			return 0, errors.New("iostat gave no second reading")
+			return 0, fmt.Errorf("top gave no CPU usage line")
 		},
+		// The one-minute load average, the binary sysctl read raw: syscall.Sysctl
+		// cuts a trailing NUL and ParseVMLoadavg reads the whole struct.
 		Load1: func() (float64, bool) {
-			s, err := syscall.Sysctl("vm.loadavg")
+			b, err := unix.SysctlRaw("vm.loadavg")
 			if err != nil {
 				return 0, false
 			}
-			return ParseVMLoadavg([]byte(s))
+			return ParseVMLoadavg(b)
 		},
 		// The system's open files: two sysctl calls, in Go.
 		OpenFiles: func() (int, int, error) {

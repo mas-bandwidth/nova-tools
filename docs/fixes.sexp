@@ -392,6 +392,17 @@
     is unchanged; deepseek is not seeded."
    :origin "the card tmp/next-sprint-cards/inception-behind-the-limiter-proxy.md (the seat, 2026-10-11 ~02:55Z: the first Mercury 3 take on a limited route logged that inception had no http baseURL and the rpm bucket stayed at in_use=0)")
 
+  (fix "a-member-beat-always-carries-its-load" :release "v1.2.12" :status "in-progress"
+   :title "A member's beat always carries its load"
+   :text "nova-sprint v1.2.11 refuses a beat without --load (the server cannot measure the worker's
+    machine), so a member's beat always carries one: the last sample it had, else 0. A beat is never
+    sent without --load. On darwin the meter never sampled (the amd64 path's Peak reported !ok), so
+    every beat was refused and the host read down; the meter now reads top's CPU usage line over a
+    second, which returns a sample on both arm64 and amd64.
+    A refused beat is loud: logged once a minute with the exact argv, and marked beat-refused in
+    the member's status file so doctor and the dashboard row can show it."
+   :origin "the card a-member-beat-always-carries-its-load.w13, attempt 13 of the card (earlier attempts .w3-.w12; the seat, 2026-10-11 ~18:35Z: after the fleet adopt of v1.2.11, two darwin/amd64 hosts went down within four minutes: every beat was refused with `a beat sent to the server is fleet beat <member> --stop-returns <n> --load <percent> and nothing more: the server cannot measure the worker's machine`)")
+
   (fix "v1-2-12-inventory" :release "v1.2.12" :status "planned"
    :title "Inventory the tests and models before v1.2.12's first test card"
    :text "Coverage per package, the functional tier's state, each TLA+ model against the code it claims
