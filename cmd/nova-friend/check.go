@@ -78,7 +78,9 @@ func (w world) settingsCheck(c *tool.Call) *tool.Out {
 	for _, s := range drift {
 		o.Item("drift", "harness", s.Harness, "file", s.File, "name", s.Name, "want", tool.Text(s.Want), "have", tool.Text(s.Have))
 	}
-	if len(drift) > 0 {
+	if len(drift) > 0 && c.Str("harness") == "codex" {
+		o.Note(friend.CodexPushUnavailable)
+	} else if len(drift) > 0 {
 		o.Note("install again writes them: nova-friend install --as " + c.Str("as") + " --harness " + c.Str("harness") + " --dir " + c.Str("dir"))
 	}
 	return o

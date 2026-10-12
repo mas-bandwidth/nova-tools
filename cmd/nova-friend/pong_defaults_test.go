@@ -42,7 +42,7 @@ func TestGeneratedPongCommandQuotesSpacedWorkingDirectory(t *testing.T) {
 	assert.NotContains(t, line, "--dir /work/project one")
 	state := t.TempDir()
 	var out, errs strings.Builder
-	code := run([]string{"check", "--as", "bob", "--harness", "codex", "--dir", "/work/project one", "--state-dir", state, "--to", "ada", "--dry-run"}, strings.NewReader(""), &out, &errs, w)
+	code := run([]string{"check", "--as", "bob", "--harness", "dsh", "--dir", "/work/project one", "--state-dir", state, "--to", "ada", "--dry-run"}, strings.NewReader(""), &out, &errs, w)
 	require.Zero(t, code, errs.String())
 	assert.Contains(t, out.String(), "--dir '/work/project one'")
 }

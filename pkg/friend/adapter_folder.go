@@ -31,6 +31,9 @@ var folderNonce = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // delivery route. The target must already be watched; the daemon never makes it.
 func CheckFolderRoute(harness, session, adapter, deliveryDir string) error {
 	if adapter == "" && deliveryDir == "" {
+		if harness == "codex" {
+			return errors.New(CodexPushUnavailable)
+		}
 		return nil
 	}
 	if adapter != "folder" || harness != "codex" || session == "" || deliveryDir == "" {
@@ -47,7 +50,7 @@ func CheckFolderRoute(harness, session, adapter, deliveryDir string) error {
 }
 
 // SelectDeliverer chooses the explicit folder route, or the harness's
-// existing adapter. Default Codex queue and exec-resume behavior is unchanged.
+// supported adapter. Codex has no implicit delivery route (SPEC-FRIEND.md, Codex).
 func SelectDeliverer(friendName, harness, dir, session, adapter, deliveryDir string, run Exec, out io.Writer) (Deliverer, error) {
 	if err := CheckFolderRoute(harness, session, adapter, deliveryDir); err != nil {
 		return nil, err

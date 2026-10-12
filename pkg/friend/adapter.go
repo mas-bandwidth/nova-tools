@@ -229,7 +229,7 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	case "opencode":
 		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "codex":
-		return &Codex{Dir: dir, Session: session, Run: run, Out: out}, nil
+		return nil, errors.New(CodexPushUnavailable)
 	case "grok":
 		return &Grok{Dir: dir, Wake: session, Run: run, Out: out}, nil
 	case "antigravity":

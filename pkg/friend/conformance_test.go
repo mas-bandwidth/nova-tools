@@ -255,6 +255,11 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 		t.Run(harness, func(t *testing.T) {
 			t.Parallel()
 			d, err := NewDeliverer(harness, t.TempDir(), "", nil, nil)
+			if harness == "codex" {
+				require.ErrorContains(t, err, "Codex native push is unavailable")
+				assert.Nil(t, d)
+				return
+			}
 			require.NoError(t, err)
 			if stub, passive := d.(Stub); passive {
 				r := newConformanceRig(t, harness)

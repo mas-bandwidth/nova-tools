@@ -425,11 +425,8 @@ func friendTool(w world) *tool.Tool {
 			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
 				c.Problem(err.Error())
 			}
-			if c.Bool("notifications-only") && c.Str("adapter") != "" {
-				c.Problem("--notifications-only uses the Codex app queue; omit --adapter folder for this separate receiver")
-			}
-			if c.Bool("notifications-only") && c.Str("harness") != "codex" {
-				c.Problem("--notifications-only wants --harness codex: queued notifications into the existing app")
+			if c.Bool("notifications-only") {
+				c.Problem("--notifications-only is unavailable: " + friend.CodexPushUnavailable)
 			}
 			if why := bus.CheckKinds(commaList(c.Str("notify-kinds"))...); why != "" {
 				c.Problem(why)
@@ -749,8 +746,10 @@ example: nova-friend check --as ada bob`,
 					stateDir(f)
 					redis(f)
 					f.Check(func(c *tool.Call) {
-						if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
-							c.Problem(err.Error())
+						if !c.Bool("settings") || c.Str("adapter") != "" || c.Str("delivery-dir") != "" {
+							if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
+								c.Problem(err.Error())
+							}
 						}
 						callArgs.Store(c, f.Args())
 						if c.Bool("settings") && c.Str("harness") == "" {

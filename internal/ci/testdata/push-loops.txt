@@ -45,7 +45,6 @@ pkg/swarm/nativeidle.go WatchIdle samplers and watchdogs
 # waits on a process, a lock, a file, a server coming up, or a retry backoff
 cmd/nova-friend/main.go realWorld waits and retries
 cmd/nova-friend/main.go world.install waits and retries
-cmd/nova-friend/notifications.go world.installNotifications waits and retries
 cmd/nova-friend/main.go world.openUntil waits and retries
 cmd/nova-friend/wakeping.go world.pingInstall waits and retries
 pkg/friend/launchd.go Install waits and retries

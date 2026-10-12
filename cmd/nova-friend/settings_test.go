@@ -9,10 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// install writes the harness's settings before the agent, refuses a
-// symlinked directory with nothing written or loaded, and check --settings
-// names the drift (docs/SPEC-FRIEND.md, Harness settings).
-func TestInstallWritesTheHarnessSettingsAndCheckNamesTheDrift(t *testing.T) {
+// Codex delivery refusal precedes settings writes; read-only settings checks
+// still name drift (docs/SPEC-FRIEND.md, Codex).
+func TestCodexRefusedInstallPreservesSettingsAndInspectionNamesDrift(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	r.env["CODEX_HOME"] = "/w/codex"
@@ -22,27 +21,17 @@ func TestInstallWritesTheHarnessSettingsAndCheckNamesTheDrift(t *testing.T) {
 	cli.Do(t, "check", "--settings", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(1).
 		Err("CHECK DRIFT harness=codex settings=3 drift=1",
 			`CHECK DRIFT harness=codex file=`+config+` name=sandbox_workspace_write.writable_roots want="/w/bob" have="[]"`,
-			"NOTE install again writes them: nova-friend install --as bob --harness codex --dir /w/bob")
-	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--dry-run").Exit(0).
-		Out(`INSTALL PLAN command="write ` + config + ` sandbox_workspace_write.writable_roots=/w/bob"`)
+			"Codex native push is unavailable")
+	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--dry-run").Exit(2).
+		Err("Codex native push is unavailable")
+	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(2).
+		Err("Codex native push is unavailable")
 	_, err := r.fs.ReadFile(config)
-	require.ErrorIs(t, err, os.ErrNotExist, "a dry run writes nothing")
-
-	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(0).
-		Out(`INSTALL WROTE harness=codex file=` + config + ` name=sandbox_workspace_write.writable_roots value="/w/bob"`)
-	raw, err := r.fs.ReadFile(config)
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), `writable_roots = ["/w/bob"]`)
-	cli.Do(t, "check", "--settings", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(0).
-		Out("CHECK OK harness=codex settings=3 drift=0")
-
-	// a symlinked directory: refused, nothing written, no agent loaded
-	r.fs.Symlink("/Volumes/nova/ai/carol", "/w/carol")
-	r.launchctl = nil
-	cli.Do(t, "install", "--as", "carol", "--harness", "codex", "--dir", "/w/carol").Exit(2).
-		Err("INSTALL REFUSED", "not a real directory", `/w/carol (dir) is symlink to /Volumes/nova/ai/carol`)
+	require.ErrorIs(t, err, os.ErrNotExist, "a refused install writes no harness settings")
 	assert.Empty(t, r.launchctl)
-	assert.NoFileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-carol.plist"))
+	assert.NoFileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
+	// Inspection remains available without selecting an unavailable delivery route.
+	r.fs.Symlink("/Volumes/nova/ai/carol", "/w/carol")
 	cli.Do(t, "check", "--settings", "--as", "carol", "--harness", "codex", "--dir", "/w/carol").Exit(1).
 		Err(`CHECK DRIFT harness=codex file=/w/carol name=dir want="directory" have="symlink to /Volumes/nova/ai/carol"`)
 }
