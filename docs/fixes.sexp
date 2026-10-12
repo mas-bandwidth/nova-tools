@@ -76,7 +76,16 @@
     :text "A friend's texts say the friend's configured pronouns, with the matching sprint sync and beat
      producer; sandbox process-table reads and valid test probes preserve each command's wait."))
  :items
-  ((fix "sandbox-table-reads-preserve-command-waits" :release "v1.2.16" :status "in-progress"
+  ((fix "the-verb-scaffold-compiles-only-its-generated-tests" :release "v1.2.16" :status "planned"
+    :title "The verb scaffold compiles only its generated tests"
+    :text "The new-verb integration fixture copies the real CLI's production packages and embedded files,
+     then builds, vets, tests the generated probe, runs its Makefile target and checks its printed
+     dispatch case. It excludes the existing CLI tests and their test-only dependencies, which each
+     scratch-module test command compiled again despite selecting only the generated probe. The
+     new-rule fixture retains the existing class-test helpers its generated rule needs. The outer
+     package's tests and the certification package and job time limits remain unchanged."
+    :origin "Certification run 38292554491, attempt 1: the macOS cmd/nova-ci shard passes its tests but exceeds the two-minute job limit")
+  (fix "sandbox-table-reads-preserve-command-waits" :release "v1.2.16" :status "in-progress"
     :title "Sandbox process-table reads preserve other commands' waits"
     :text "The Linux process-table reader waited on every zombie child except the wall's command,
      stealing parallel exec.Cmd exit statuses. Table reads now only observe. The wall's dedicated

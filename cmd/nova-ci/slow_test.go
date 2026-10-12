@@ -24,7 +24,7 @@ import (
 // SLOW: 11.3 s on hetzner at dev 64b9bec48, over the five-second line.
 func TestNewRuleYieldsABuildingTestingSkeleton(t *testing.T) {
 	t.Parallel()
-	_, bin, tree := scaffoldTree(t, "./internal/ci")
+	_, bin, tree := scaffoldTree(t, "./internal/ci", true)
 
 	// Run new-rule verb
 	out := runScaffoldCmd(t, bin, "new-rule", "--root", tree, "sample")
