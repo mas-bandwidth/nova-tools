@@ -232,41 +232,17 @@ func resolveRoot(rootAbs, root string) (string, error) {
 	return rootReal, nil
 }
 
-// refuseUnsafeRoot refuses a root that is the whole disk or the user's home: those are
-// not a boundary, they are the absence of one, and a mistake under either is the disk.
-func (p Policy) refuseUnsafeRoot(root string) error {
-	if isDisk, err := p.sameDir(root, string(os.PathSeparator)); err != nil {
-		return fmt.Errorf("%w: the root %q cannot be identified: %v", ErrUnsafe, root, err)
-	} else if isDisk {
-		return fmt.Errorf("%w: the root is %q, the whole disk", ErrUnsafe, root)
-	}
-	homeFn := p.UserHomeDir
-	if homeFn == nil {
-		homeFn = os.UserHomeDir
-	}
-	home, err := homeFn()
-	if err != nil {
-		return fmt.Errorf("%w: the user's home could not be identified: %v", ErrUnsafe, err)
-	}
-	if strings.TrimSpace(home) == "" {
-		return fmt.Errorf("%w: the user's home could not be identified: the answer is blank", ErrUnsafe)
-	}
-	if isHome, err := p.sameDir(root, home); err != nil {
-		return fmt.Errorf("%w: the root %q could not be compared with the user's home: %v", ErrUnsafe, root, err)
-	} else if isHome {
-		return fmt.Errorf("%w: the root is the user's home %q", ErrUnsafe, root)
-	}
-	return nil
-}
-
-// refuseUnsafePath refuses a resolved path that is the whole disk or the user's home,
-// even when it is technically below the root: the home directory is never a directory
-// this tool computed, and deleting it is the bug that matters most.
-func (p Policy) refuseUnsafePath(path string) error {
+// refuseUnsafe is the one check refuseUnsafeRoot and refuseUnsafePath share: the named
+// directory must not be the whole disk or the user's home, because those are not a
+// boundary, they are the absence of one, and a mistake under either is the disk. noun is
+// how the refusal names the directory ("root" or "path"), and copula is how it reaches
+// the unsafe directory in the sentence ("is" or "resolves to"). The refusal texts are the
+// callers' contract: a caller reads them back, so the tests pin them byte for byte.
+func (p Policy) refuseUnsafe(noun, copula, path string) error {
 	if isDisk, err := p.sameDir(path, string(os.PathSeparator)); err != nil {
-		return fmt.Errorf("%w: the path %q cannot be identified: %v", ErrUnsafe, path, err)
+		return fmt.Errorf("%w: the %s %q cannot be identified: %v", ErrUnsafe, noun, path, err)
 	} else if isDisk {
-		return fmt.Errorf("%w: the path resolves to %q, the whole disk", ErrUnsafe, path)
+		return fmt.Errorf("%w: the %s %s %q, the whole disk", ErrUnsafe, noun, copula, path)
 	}
 	homeFn := p.UserHomeDir
 	if homeFn == nil {
@@ -280,11 +256,24 @@ func (p Policy) refuseUnsafePath(path string) error {
 		return fmt.Errorf("%w: the user's home could not be identified: the answer is blank", ErrUnsafe)
 	}
 	if isHome, err := p.sameDir(path, home); err != nil {
-		return fmt.Errorf("%w: the path %q could not be compared with the user's home: %v", ErrUnsafe, path, err)
+		return fmt.Errorf("%w: the %s %q could not be compared with the user's home: %v", ErrUnsafe, noun, path, err)
 	} else if isHome {
-		return fmt.Errorf("%w: the path resolves to the user's home %q", ErrUnsafe, path)
+		return fmt.Errorf("%w: the %s %s the user's home %q", ErrUnsafe, noun, copula, path)
 	}
 	return nil
+}
+
+// refuseUnsafeRoot refuses a root that is the whole disk or the user's home: those are
+// not a boundary, they are the absence of one, and a mistake under either is the disk.
+func (p Policy) refuseUnsafeRoot(root string) error {
+	return p.refuseUnsafe("root", "is", root)
+}
+
+// refuseUnsafePath refuses a resolved path that is the whole disk or the user's home,
+// even when it is technically below the root: the home directory is never a directory
+// this tool computed, and deleting it is the bug that matters most.
+func (p Policy) refuseUnsafePath(path string) error {
+	return p.refuseUnsafe("path", "resolves to", path)
 }
 
 // Refused is why a path was not removed: the path and the one reason.

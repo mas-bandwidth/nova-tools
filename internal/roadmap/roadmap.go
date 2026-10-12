@@ -78,23 +78,33 @@ type Item struct {
 
 var datePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// Decode reads one roadmap file and returns it, or every shape problem of the file
-// together in one error.
-func Decode(file string, data []byte) (*Doc, error) {
+// decode is the one s-expression read Decode and DecodeFixes share: the file is data,
+// never evaluated, so a *sexp.Refusal is reworded with the noun's prefix and the reader's
+// "a plan is data" phrase becomes reword, and every shape problem the decoder collects is
+// refused whole as one joined error. dec is the caller's top-form decoder, the only thing
+// that differs between the two files.
+func decode[T any](file string, data []byte, noun, reword string, dec func(*decoder, sexp.Form) T) (out T, err error) {
 	top, err := sexp.Read(file, data, Limits)
 	if err != nil {
 		var r *sexp.Refusal
 		if errors.As(err, &r) {
-			return nil, fmt.Errorf("roadmap: file=%s: %s", file, strings.ReplaceAll(r.Reason, "a plan is data", "a roadmap is data"))
+			return out, fmt.Errorf("%s: file=%s: %s", noun, file, strings.ReplaceAll(r.Reason, "a plan is data", reword))
 		}
-		return nil, err
+		return out, err
 	}
 	d := &decoder{file: file}
-	doc := d.doc(top)
+	out = dec(d, top)
 	if len(d.probs) > 0 {
-		return nil, errors.Join(d.probs...)
+		var zero T
+		return zero, errors.Join(d.probs...)
 	}
-	return doc, nil
+	return out, nil
+}
+
+// Decode reads one roadmap file and returns it, or every shape problem of the file
+// together in one error.
+func Decode(file string, data []byte) (*Doc, error) {
+	return decode(file, data, "roadmap", "a roadmap is data", (*decoder).doc)
 }
 
 type decoder struct {
