@@ -1072,6 +1072,24 @@
     The missing rows propose cards and name no dropped card: secrets (tla-secrets) and decide-record
     (tla-decide-record)."
    :origin "card tla-pass-nova-tools-coverage-rows-10-18.w2 (the TLA+ pass over tla/COVERAGE.tsv rows 10-18, v1.2.16)")
+  (fix "tla-pass-nova-tools-coverage-rows-19-27" :release "v1.2.16" :status "in-progress"
+   :title "Every TLA+ model checked against the code (rows 19-27)"
+   :text "The TLA+ pass reads tla/COVERAGE.tsv rows 19-27 against the code each column names at the
+    current dev. Every code column names files that exist; every CASES.tsv case has a current TLC
+    record (tlacheck groups --stale prints []), so no case is stale and no model edit was owed.
+    FriendEnvelope, WakeCursor, FriendLane, FriendNotifications, FriendNotificationsCapacity, Reach,
+    LoopRedial, BusSendOnce and Delivery are current, each with its reversed witnesses passing the
+    violations they name. friend-notifications and friend-reach were partial in the base, but their
+    modules already model the features the notes named outside: the deal-notice withdrawal,
+    coalescing and the wake ping (tla/FriendNotifications.tla Withdraw, Coalesce, WakePing), and the
+    --from suffix, the at-once push climb, the in-bound proof and the refused window (tla/Reach.tla
+    From, ClimbAtOnce, Prove, Refuse), so both rows are current here. The 2026-10-11 fixes that
+    changed these machines are read and accounted for: the step's drain of every ended result, the
+    outbox's finishes off the loop and the refusal raise through tellBroken are the loop's pacing,
+    below the grain of FriendEnvelope and Delivery and already named in their notes. The one partial
+    row (friend-presence) keeps its card id (tla-friendpresence-daemon-evidence); none names a
+    dropped card."
+   :origin "card tla-pass-nova-tools-coverage-rows-19-27.w2 (the TLA+ pass over tla/COVERAGE.tsv rows 19-27, v1.2.16)")
   (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "planned"
    :title "The real-clock delay proxy test reads the write counts after Stop"
    :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
