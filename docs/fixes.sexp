@@ -69,9 +69,17 @@
      runs, apply's refusal of an unpriced route, and the test, model and contraction work landed beside
      them. This record is in-progress until the tag; the cut turns it shipped.")
    (release "v1.2.15" :status "in-progress"
-    :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only."))
+    :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only,
+     and Codex friend delivery refuses routes that queue input or require a Steer click."))
  :items
-  ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.14" :status "shipped"
+  ((fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
+    :title "Codex friend delivery refuses unproved queue routes"
+    :text "The implicit Codex delivery route refuses at factory, check, install, run and reach until a
+     supported session push route is proved. Notification-only delivery does not type into a session
+     or queue a prompt. The refusal preserves the installed launch configuration. This guard prevents
+     queued Steer regressions; it does not claim idle wake or permanent native push is implemented."
+    :origin "PR #5628, reviewed head aa0dcec2aca2805426197129c6767527a07e07d8; assembled into sprint/comfort for v1.2.15")
+  (fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.14" :status "shipped"
    :title "Certification on dev never cancels on later pushes"
    :text "Each pushed sha gets its own certification run to completion. Certification triggers on push to dev and release/** and on workflow_dispatch."
    :origin "the owner, 2026-10-12")

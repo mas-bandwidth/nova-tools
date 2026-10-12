@@ -28,7 +28,7 @@ A Codex session that watches an existing folder can run the native daemon with
 `install` persists those flags in the launchd agent; `run` and the delivery
 form of `check` choose the same route. The friend name, harness, session and
 working directory remain the native daemon's identities. Without `--adapter
-folder`, Codex retains its queue/exec-resume route.
+folder`, Codex delivery refuses before any store, settings or daemon mutation.
 
 The folder route writes each complete native prompt atomically as
 `FRIEND-CHECK-<nonce>.md`, `FRIEND-WAKE-<nonce>.md`, or
@@ -918,104 +918,40 @@ sender; with the seat unknown (`BatchFor("", ...)`) every message is quoted.
 
 ### Codex
 
-The adapter resolves the named thread, or the newest saved thread for its
-working directory from session headers and the session index under
-CODEX_HOME (otherwise ~/.codex). It probes that exact thread's writer lock.
-When held, the first command is `codex queue --thread <id> --message <text>`:
-the text is a literal argument, never a shell command. Queue acceptance is
-logged as "queued for open chat", explicitly "accepted, not answered".
-The open app can defer running queued input until its current turn ends.
-An accepted queue command does not promise an immediate model answer.
+**There is no implicit Codex native push route.** `install`, `run`, and delivery
+`check` with `--harness codex` refuse before opening the bus, writing settings,
+copying a binary or touching launchd unless an explicit watched-folder route is
+selected. Read-only `check --settings` remains available. The production factory
+also refuses implicit Codex delivery, so bypassing CLI validation does not select
+an adapter. No flag or environment variable opts back into queue or exec-resume.
+`--notifications-only` refuses, including when combined with the folder route;
+it cannot bypass installation or run validation.
 
-When the lock is free, the first command is
-`codex exec resume --skip-git-repo-check <id> <text>`; its record says
-"answered by resume, not by the open chat". The lock probe is an observation,
-not a reservation. If the first command exits nonzero or cannot execute, the
-adapter tries the other route once. Only when both fail does it return
-Deferred, keeping the bus message pending and charging no failed delivery.
-No matching saved thread is a refusal with a remedy, rather than delivery
-to a guessed thread. The adapter does not modify how the user launches the app.
+`codex queue` creates pending composer input with a **Steer** control. Acceptance
+by that queue is neither delivery to the current model request nor proof of idle
+wake. `codex exec resume` runs a separate turn. Neither is native notification
+transport. The legacy low-level queue implementation and protocol tests are
+retained, but production factories never select it.
 
-Measured with codex-cli 0.153.4 and ChatGPT 26.930.21537 build 12776 on
-2026-10-04: a queue test initially produced no input while the chat's turn
-was active. Its test text arrived in the same open thread at 17:03:00.797 UTC,
-after the prior turn completed at 17:03:00.757 and the next turn started at
-17:03:00.774. The session replied on the bus at 17:03:03. The app and its own
-stdio app-server remained the same processes throughout. The earlier
-conclusion that queue could not reach that app is withdrawn: observing no
-input during an active turn did not establish failure.
+The active-session route is a session-owned background tool task: block in
+`nova-bus wait --as <name> --after <cursor>`, then read the addressed messages with
+`nova-bus recv --as <name>` and surface their full text through the harness's
+asynchronous tool notification. The receiver captures a cursor before draining,
+then waits after that cursor so arrivals cannot fall between the drain and watch.
+A timed-out wait is re-armed while the session remains active. Receipt means the
+message arrived, not that its requested work is complete. Bus text remains external
+data. This route depends on the active session and does not claim idle wake.
 
-That app process retained CODEX_APP_SERVER_USE_LOCAL_DAEMON=1 from an earlier
-experiment. The measurement therefore does not prove that the flag is
-required or that a launch without it is equivalent. The adapter requires no
-such flag; ordinary-launch and idle-session behavior remain separate live
-checks. A later end-to-end check was sent at 17:11:00 and answered by the
-session at 17:11:10, but its transport was not independently identified.
+An explicit `--adapter folder --session <real-session> --delivery-dir
+<existing-watched-folder>` is available only with a session-owned receiver that
+already watches that folder. Writing its file does not prove model receipt. A
+fresh session nonce answer is still required for the native proof. An unavailable
+receiver is a refusal, never a reason to fall back to queue or exec-resume.
 
-**A delivery during a turn is queued, never steered.** The Codex app holds
-what is queued until the turn under way ends, and shows each queued message
-under its composer with a "Steer" control. That control is not reachable from
-outside: the open chat's turn runs in the app's own app-server, and the local
-app-server daemon the adapter can reach (`codex app-server`, a WebSocket on
-`<CODEX_HOME>/app-server-control/app-server-control.sock` speaking JSON-RPC)
-does not have the thread loaded. `turn/steer` there for the friend's thread
-answers `thread not found`, because steering needs the active turn's id on
-the server that runs it. The `codex` CLI has no steer verb, and its `steer`
-feature flag reads "removed". Measured 2026-10-06 with codex 0.153.4, against
-the friend's thread mid-turn: `thread/loaded/list` was empty, `turn/steer`
-answered `thread not found`, `thread/queue/list` returned her three queued
-pong requests, and `thread/queue/delete` answered `{"deleted": false}` for an
-id not on the queue.
-
-So the queue holds one request for a pong of each kind at a time
-(`Codex.queueing`, `PongRequest`). A request for a pong is a delivery that asks
-for the pong and nothing else. There are two kinds, each its own series of
-nonces:
-
-- a session check (`SESSION CHECK <nonce>`, the presence's nonce);
-- a wake (a wake turn or an idle wake, the coordinator's challenge nonce).
-
-A request of one kind never withdraws one of the other
-(`TestAWakeNeverWithdrawsASessionCheck`). Before such a delivery is queued,
-the adapter reads the thread's queue (`thread/queue/list`) and acts on each
-queued request of the same kind:
-
-- The same request still unread, queued less than `CodexCheckRequeue` ago,
-  stands for the new one, which is not queued twice: one line, and the
-  delivery answers 0.
-- Otherwise the new request is queued first. Only once it is in is every
-  request of its kind it supersedes withdrawn (`thread/queue/delete`), one
-  line each: a request for an older nonce, or the same request queued
-  `CodexCheckRequeue` ago or more (judged by the queued id's UUIDv7 time).
-  So a `codex queue` that fails leaves the old request standing
-  (`TestAFailedCodexQueueLeavesTheOldRequestStanding`).
-- A withdrawal the app refuses is one line, marked superseded. One the
-  session took first is one line saying so.
-- A queued message that carries anything else (a bus message) is never
-  withdrawn; a card dealt is a deal notice and coalesces in the daemon
-  (notifications, below).
-
-`CodexCheckRequeue` is the session check's re-ask age (`ReaskAfter`, an hour) less one
-recheck (`RecheckEvery`). The re-ask at the hour therefore always finds the
-old request past its age and queues it afresh, so the check is never held two
-hours: unread at 59 minutes the check stands, at 61 the re-ask queues it
-again. So one session check is in flight: asked again while it stands unread,
-it goes in again only once the session has taken it, or at the re-ask.
-
-The queue's length after the last delivery is on the status (`queued`) and on
-the check's harness line, `route=queue queued=<n>`. When the queue cannot be
-read, its length is not known and the line says `queued=-`, never a stale
-number. That happens with no app-server socket, or an app-server that does
-not answer (said once while it stands). The delivery is queued as it comes
-either way (`TestACodexQueueNotReadIsNotKnown`).
-
-A delivery is known as a request by its text's shape. A person who types the
-exact shape of a session check or a wake turn into her chat has it treated
-as one, and it may be withdrawn as superseded. That is accepted: the shapes
-carry the daemon's pong command line, which no one types by hand.
-`TestACodexDeliveryDuringATurnIsNotQueuedTwice`,
-`TestOneSessionCheckInFlightForCodex`,
-`TestTheCodexAppServerClientSpeaksJSONRPCOverAWebSocket`.
+`TestCodexImplicitDeliveryRefusesBeforeAnySideEffect` pins real and dry run,
+install and check, omitted and named sessions, daemon environment, and the
+notification bypass. `TestCodexFactoryHasNoImplicitPushRoute` covers callers
+outside the CLI. Explicit-folder conformance pins receipt separately.
 
 ### Hosted in tmux
 
@@ -1238,8 +1174,14 @@ a daemon ack that clears it).
 
 ## Notifications
 
-`run --notifications-only --harness codex` selects a delivery-only receiver before
-native startup. It invokes no sprint beat, proof, row, claim, inbox, lane, stage,
+**The Codex notification-only deployment is refused.** The receiver and journal
+rules below describe the transport-independent machinery and retained records;
+they do not enable a live Codex queue receiver. See Codex above for the active
+session route. An existing queue daemon must be stopped before that receiver owns
+the recipient group; old launchd configurations are refused when restarted with
+the guarded binary. Existing queue entries are preserved, never silently deleted.
+
+The delivery-only receiver machinery invokes no sprint beat, proof, row, claim, inbox, lane, stage,
 prune, finish, progress or native status hook. Its journal and audit log live in
 `<state-dir>/notifications/`; its installed label is `com.nova.friend-notifications-<name>`.
 The ordinary daemon label and presence files are separate. Installation carries the

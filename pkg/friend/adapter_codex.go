@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// CodexPushUnavailable is the refusal for implicit Codex delivery (SPEC-FRIEND.md,
+// Codex). No flag or environment variable enables queue or exec-resume as push.
+const CodexPushUnavailable = "Codex native push is unavailable: queue creates pending Steer prompts and exec resume is a separate turn; use active-session tool notifications from nova-bus wait --as <name> --after <cursor>, then nova-bus recv --as <name>; only use --adapter folder --session <real-session> --delivery-dir <existing-watched-folder> with a session-owned receiver; neither route proves idle wake"
+
+// Codex is the legacy queue implementation, retained for its protocol tests.
+// Production factories refuse this adapter; it is not native push.
 // Codex uses the writer lock to choose its first delivery route. An open chat
 // receives codex queue; a closed chat uses exec resume. A failed route tries
 // the other once, then defers without losing the message (SPEC-FRIEND.md,

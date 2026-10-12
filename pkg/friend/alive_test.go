@@ -102,6 +102,10 @@ func TestEveryAdapterAnswersTheHarnessCheck(t *testing.T) {
 	t.Parallel()
 	for _, h := range Harnesses {
 		d, err := NewDeliverer(h, t.TempDir(), "", nil, nil)
+		if h == "codex" {
+			require.ErrorContains(t, err, "Codex native push is unavailable")
+			continue
+		}
 		require.NoError(t, err, h)
 		_, ok := d.(Aliver)
 		assert.True(t, ok, "%s answers Alive", h)

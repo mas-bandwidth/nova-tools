@@ -1552,7 +1552,7 @@ usage: nova-friend run [flags]
 from `nova-friend help`:
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
 flags:
-  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
+  --adapter <string>  delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)
@@ -1570,7 +1570,7 @@ flags:
   --load-width <int>  the lanes that run while the load is above --load-max
   --mode <string>  override the friend row's delivery mode, one-shot, for a test (default: one-shot; batch is retired)
   --model <string>  the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)
-  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --pause-on <string>  funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)
@@ -1615,7 +1615,7 @@ from `nova-friend help`:
   nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 flags:
-  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
+  --adapter <string>  delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
@@ -1629,7 +1629,7 @@ flags:
   --launchd-log <string>  launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)
-  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
@@ -1870,7 +1870,7 @@ usage: nova-friend acceptance [flags]
 from `nova-friend help`:
   nova-friend acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]
 flags:
-  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
+  --adapter <string>  delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
@@ -1884,7 +1884,7 @@ flags:
   --launchd-log <string>  accepted and ignored: launchd's stdout and stderr file the daemon's plist records
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)
-  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --profile <string>  the wall profile every lane child runs inside when the friend row names none: friend

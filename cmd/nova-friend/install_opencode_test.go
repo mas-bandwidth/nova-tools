@@ -27,7 +27,7 @@ func TestInstallRequiresModelForOpencode(t *testing.T) {
 
 	t.Run("other harnesses do not require model", func(t *testing.T) {
 		t.Parallel()
-		for _, harness := range []string{"codex", "grok"} {
+		for _, harness := range []string{"grok"} {
 			harness := harness
 			t.Run(harness, func(t *testing.T) {
 				t.Parallel()
