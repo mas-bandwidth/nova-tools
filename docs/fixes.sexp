@@ -1111,7 +1111,24 @@
     name, and whose first brief put the fix in nova-sprint's pkg/member, which nothing in production calls."
    :origin "the coordinator, 2026-10-12 ~07:50Z, re-cut after a cold read of 23b82f7: on nova-sprint main the
     finish verb's --harness means the child's harness output, its last 40 lines, but nova-tools' member sent
-    the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
+     the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
+   (fix "nova-tools-dev-is-mod-tidy-clean" :release "v1.2.14" :status "in-progress"
+    :title "The root module's go.mod and go.sum are tidy"
+    :text "CI's lint job runs make mod-tidy, which had gone red because go.mod listed errcheck v1.20.0,
+     golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 as // indirect although they are direct
+     requirements. Running go mod tidy at the repository root with the Go version go.mod names moves the
+     three tool requirements to the direct require block. The one golang.org/x/exp go.sum line is not
+     stale: honnef.co/go/tools requires that module, the root go.work builds in workspace mode, and a
+     missing workspace checksum is written to a fresh go.work.sum, which the tree gate's
+     TestNoTestWritesIntoTheSourceTree flags as a file left in the source tree. Tidy drops the line because
+     no package of the top-level module is imported, so the module is kept required by naming
+     golang.org/x/exp/cmd/txtar as a tool; tidy then keeps its checksum in go.sum and the workspace build
+     writes no go.work.sum."
+    :origin "the coordinator, 2026-10-12 ~11:55Z: CI on nova-tools dev (ab7b6239, run 38232990600) and on
+     the stream PR mas-bandwidth/nova-tools#5627 fails the lint job at make mod-tidy: errcheck v1.20.0,
+     golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 are listed // indirect in go.mod but are direct
+     requirements, and go.sum carries one golang.org/x/exp line tidy removes. Dev's ci and certification runs
+     have been red since ~08:45Z, and the v1.2.14 cut cannot go over a red check.")
    (fix "nova-friend-run-never-writes-its-output-after-it-returns" :release "v1.2.14" :status "in-progress"
     :title "nova-friend run never writes its output after it returns"
     :text "run's output is written through one locked writer (runOut) that every goroutine the run starts
