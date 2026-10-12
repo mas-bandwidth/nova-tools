@@ -447,6 +447,10 @@ func procRows(self, child int) ([]procRow, error) {
 // read subset, and every --write gets the whole handled set, the remove rights included
 // (writeRuleMask, "deletes-in-every-write-root").
 func addRules(rulesetFd int, p *Policy, abi int) error {
+	if r := noExecUnderExecRoot(p); r != nil {
+		return *r
+	}
+
 	read := uint64(fsReadSubset)
 
 	// The roots, read-only, skipped if absent. linuxRoots is the static table plus the
@@ -479,18 +483,56 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 			return refuse("sandbox_failed", "--read %s could not be added to the landlock ruleset: %v", dir, err)
 		}
 	}
-	// The no-exec read set: the same treatment as the caller's paths above, minus EXECUTE.
-	for _, dir := range p.ReadsNoExec {
-		if err := addPathRule(rulesetFd, dir, uint64(fsReadNoExecSubset)); err != nil {
-			return refuse("sandbox_failed", "--read-noexec %s could not be added to the landlock ruleset: %v", dir, err)
-		}
-	}
 	for _, dir := range writePaths(p) {
 		if err := addPathRule(rulesetFd, dir, writeRuleMask(p, dir, abi)); err != nil {
 			return refuse("sandbox_failed", "--write %s could not be added to the landlock ruleset: %v", dir, err)
 		}
 	}
+	// The no-exec read set: READ_FILE|READ_DIR only, no EXECUTE. Landlock's rules are a
+	// union, not ordered, so adding it after the write set changes nothing; what makes
+	// this grant mean what it says is the refusal above, which has already turned away
+	// a --read-noexec path under any execute-granting root. What reaches this loop is
+	// enforceable, and Landlock itself denies execution beneath it (EACCES).
+	for _, dir := range p.ReadsNoExec {
+		if err := addPathRule(rulesetFd, dir, uint64(fsReadNoExecSubset)); err != nil {
+			return refuse("sandbox_failed", "--read-noexec %s could not be added to the landlock ruleset: %v", dir, err)
+		}
+	}
 	return nil
+}
+
+// noExecUnderExecRoot is the refusal addRules answers for a --read-noexec path that
+// sits under a root the wall grants EXECUTE. Landlock's rules are a union: a no-exec
+// rule on the path cannot take EXECUTE back from a parent rule that grants it (a
+// static root, an optional root -- the command's own directory among them -- a --read,
+// or a --write). Refusing is the only honest answer; a wall that silently let the
+// execution through is the hole TestWallAReadNoexecBinaryCannotBeExecuted is red
+// about.
+func noExecUnderExecRoot(p *Policy) *Refusal {
+	roots := execRoots(p)
+	for _, dir := range p.ReadsNoExec {
+		for _, root := range roots {
+			if Inside(dir, root) {
+				r := refuse("sandbox_failed", "--read-noexec %s sits under %s, a root the wall grants execute; landlock's rules are a union, so the no-exec grant cannot take execute back from a parent that grants it. Name a directory no execute-granting root covers", dir, root)
+				return &r
+			}
+		}
+	}
+	return nil
+}
+
+// execRoots is every root the wall grants EXECUTE on, in the order addRules applies them:
+// the static roots (with the resolver's directory), the optional roots (the command's own
+// directory among them), every --read, and every --write (with the temp and the cwd). A
+// --read-noexec path beneath any of them is executable in spite of its own rule, because
+// Landlock's rules are additive, not ordered; addRules refuses that policy rather than
+// build a wall that does not mean what --read-noexec says.
+func execRoots(p *Policy) []string {
+	out := append([]string{}, linuxRoots()...)
+	out = append(out, p.OptRoots...)
+	out = append(out, p.Reads...)
+	out = append(out, writePaths(p)...)
+	return out
 }
 
 // writePaths is every directory the policy grants writing in: the --write set, plus the
