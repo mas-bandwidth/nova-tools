@@ -113,7 +113,9 @@ func VersionLineShape(t *testing.T, tool string, run VersionLineRun) {
 	require.True(t, strings.HasSuffix(line, "\n"), "want exactly one terminated line, got %q", line)
 	require.Equal(t, 1, strings.Count(line, "\n"), "want exactly one terminated line, got %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-	require.Len(t, fields, 4, "want 4 fields, got %d: %q", len(fields), line)
+	if len(fields) != 4 {
+		t.Fatalf("want 4 fields, got %d: %q", len(fields), line)
+	}
 	assert.Equal(t, tool, fields[0], "field 1 is the binary's name: got %q", fields[0])
 	assert.NotEmpty(t, fields[1], "field 2 is the build identity and is never empty: %q", line)
 	assert.False(t, strings.ContainsAny(fields[1], " \t"), "field 2 is one token: %q", line)
