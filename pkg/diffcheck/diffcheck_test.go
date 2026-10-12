@@ -118,7 +118,8 @@ func TestOutsideHoldsTestsOnlyBesideGoSource(t *testing.T) {
 	t.Parallel()
 	edit := func(p string) string { return "diff --git a/" + p + " b/" + p + "\n@@ -1 +1 @@\n-a\n+b\n" }
 	const test = "pkg/member/unrelated_test.go"
-	for _, paths := range [][]string{{"pkg/member/README.md"}, {"pkg/member/testdata.json"}, {"pkg/member/*.md"}, {"pkg/member/*"}} {
+	// (a glob such as pkg/member/* names the test itself, so its PATHS hold it outright)
+	for _, paths := range [][]string{{"pkg/member/README.md"}, {"pkg/member/testdata.json"}, {"pkg/member/*.md"}} {
 		assert.Equal(t, []string{test}, Outside(paths, edit(test), nil), "PATHS %v is not Go source: it carries no test", paths)
 	}
 	for _, paths := range [][]string{{"pkg/member"}, {"pkg/member/member.go"}, {"pkg/member/*.go"}} {

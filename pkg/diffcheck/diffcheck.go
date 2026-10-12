@@ -139,7 +139,7 @@ var AgentsMapRoots = []string{
 // section 7, always inside PATHS). A PATHS list that names only test files carries no
 // source, so it carries no other test: the file stays outside. Neither does an entry in
 // the directory that is not Go source (a README, a testdata fixture, a glob such as
-// pkg/x/* that does not name Go files): only real Go source carries the package's tests.
+// pkg/x/*.md that names no Go file): only real Go source carries the package's tests.
 func AlwaysInPaths(paths []string, p string) bool {
 	if !strings.HasSuffix(p, "_test.go") {
 		return false
