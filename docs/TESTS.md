@@ -623,6 +623,24 @@ $ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
 
 `1s` exactly is accepted — the floor is inclusive — and the ceiling is exclusive.
 
+### A child's exit code and harness ride the finish
+
+A child that ends at a non-zero exit code — 134 an abort, 137 a kill — is an environment
+death, never a no-result: the member carries the child's real code and the harness that ran
+it on the finish and the read return as `--exit <n> --harness <name>`, so the store tells
+the death from a no-result and never spends a redeal on one it could have named
+(nova-sprint #129, `finish --exit/--harness`; [SPEC-CARD-CONTRACT.md](SPEC-CARD-CONTRACT.md),
+the finish). A server from before those flags refuses them by name, and the member drops
+them and sends the same finish again, so it sends no flag its server lacks.
+
+`TestAChildThatExits134IsReportedWithItsExitAndHarness` (`pkg/member/child_exit_test.go`)
+pins the flags a 134 finish names, and
+`TestARealMemberReportsAChildThatExits134WithItsExitAndHarness`
+(`cmd/nova-swarm/member_child_exit_functional_test.go`, functional tier) runs a real
+`nova-swarm member` process over its own `--server` with a scrubbed environment and a child
+that aborts: the read return the server holds carries `--exit 134` and the harness that ran
+it.
+
 ### First run
 
 ```
