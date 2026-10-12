@@ -420,7 +420,7 @@ func TestTheAgentCarriesDenySelfOnlyWhenSetAndTheDefaultIsTheSeatsWorkingRoot(t 
 	assert.Equal(t, "/seat/self,/vol/self", args[i+1])
 	assert.Contains(t, a.Plist(), "<string>--deny-self</string>")
 
-	assert.Equal(t, []string{"/home/u/ada-working"}, DefaultDenySelf("/home/u", "ada"))
+	assert.Equal(t, []string{"/home/u/ai/ada/working"}, DefaultDenySelf("/home/u", "ada"))
 	assert.Nil(t, DefaultDenySelf("/home/u", ""), "no seat known: the wall refuses as it did")
 	assert.Nil(t, DefaultDenySelf("/home/u", "../x"), "a seat that is no plain name names no path")
 	assert.Nil(t, DefaultDenySelf("", "ada"))

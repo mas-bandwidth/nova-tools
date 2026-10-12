@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 )
 
 func init() {
@@ -32,7 +34,7 @@ func checkFriendWall(ctx context.Context, env Env) Result {
 		}
 		if self == "" {
 			if coord := argValue(d.Argv, "--coordinator"); coord != "" {
-				self = filepath.Join(home, coord+"-working")
+				self = friend.AIPath(home, coord)
 			}
 		}
 		if self == "" {
