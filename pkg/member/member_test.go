@@ -1804,6 +1804,11 @@ func TestAMemberWhosePassIsHungStopsBeating(t *testing.T) {
 	ticks, out, stop := beats(m)
 	after(BeatStall + time.Second)
 	ticks <- time.Time{}
+	// the send above returns once the loop has taken the tick, not once it has read the
+	// clock for it (BeatLoop, Stalled): moving the clock now let the first tick read the
+	// second's time and say 6m0s (certification run 38273976881, macos-latest). This tick,
+	// silent while the beat is stopped, is taken only once the first is done.
+	ticks <- time.Time{}
 	after(BeatStall + time.Minute)
 	ticks <- time.Time{}
 	ticks <- time.Time{} // taken only once the tick before it is done
