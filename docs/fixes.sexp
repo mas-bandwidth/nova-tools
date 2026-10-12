@@ -65,12 +65,12 @@
     :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
    (release "v1.2.15" :status "planned"
     :text "The next small product fixes, one concern each.")
+   (release "v1.2.16" :status "planned"
+    :text "Every TLA+ model checked against the code.")
    (release "v1.2.17" :status "planned"
     :text "The next small product fixes, one concern each: apply refuses an enabled route with no price, so no take is priced from an empty sheet.")
    (release "v1.2.18" :status "planned"
-    :text "The next small fixes, one concern each.")
-   (release "v1.2.16" :status "planned"
-    :text "Every TLA+ model checked against the code."))
+    :text "The next small fixes, one concern each."))
  :items
   ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.15" :status "planned"
    :title "Certification on dev never cancels on later pushes"
@@ -1027,6 +1027,22 @@
     TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
     sprint server)."
    :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")
+  (fix "tla-pass-nova-tools-coverage-rows" :release "v1.2.16" :status "in-progress"
+   :title "Every TLA+ model checked against the code"
+   :text "The TLA+ pass reads tla/COVERAGE.tsv rows 1-9 against the code each column names at the
+    current dev. Every code column names files that exist; every CASES.tsv case has a current TLC
+    record (tlacheck groups --stale prints []), so no case is stale and no model edit was owed. The
+    2026-10-11 fixes that changed these machines are read and accounted for: the step's drain of every
+    ended result, the outbox's finishes off the loop and the refusal raise through tellBroken are named
+    below the grain of Friend and FriendStage; the limit's ANSI strip and the lane beyond the cap are
+    already in the Friend note. The partial rows keep the card ids their owed_by already names
+    (tla-friend-link-and-challenge, tla-friendstage-every-hand-is-guarded,
+    tla-bus2-names-pkg-bus-and-the-idle-claim, tla-cairnstore-no-gap-ledger-and-reopen,
+    tla-table-layer-headers-name-table-lua), the missing rows keep tla-presence-and-leases,
+     tla-merge-tree-promotion and install-rollback-on-missed-ticks, and UpdateApply is current; none
+     names a dropped card. The friend spend cap (pkg/friend/spendcap.go, landed 2026-10-12) is a new
+     rule, outside the Friend module: the Friend note names it and it is proposed as a new card."
+    :origin "card tla-pass-nova-tools-coverage-rows.w7 (the TLA+ pass over tla/COVERAGE.tsv rows 1-9, v1.2.16)")
   (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "planned"
    :title "The real-clock delay proxy test reads the write counts after Stop"
    :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
