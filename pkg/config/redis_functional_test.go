@@ -346,7 +346,7 @@ func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
 	assertionMsg255 := []any{"nobody to charge: %v", err}
 	require.Error(t, err, assertionMsg255...)
 	require.True(t, Refused(err), assertionMsg255...)
-	require.ErrorContains(t, err, "friend rowan has no beat naming a machine and the fleet names no coordinator machine to charge her slots to; run: nova-config fleet set --coordinator <machine>", assertionMsg255...)
+	require.ErrorContains(t, err, "friend rowan has no beat naming a machine and the fleet names no coordinator machine to charge the friend's slots to; run: nova-config fleet set --coordinator <machine>, then apply", assertionMsg255...)
 	require.False(t, c.SIsMember(ctx, FriendsKey, "rowan").Val(), "a refused friend was registered")
 }
 

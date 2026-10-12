@@ -765,7 +765,7 @@ func TestOffends(t *testing.T) {
 	mr := miniredis.RunT(t)
 	_, _ = http.Get("https://example.invalid")
 	cl := http.DefaultClient
-	_ = exec.Command("redis-server", "--port", "0")
+	_ = exec.Command("postgres", "--port", "0")
 	_ = exec.CommandContext(context.Background(), "/usr/bin/ansible-playbook", "x.yml")
 	_, _ = exec.LookPath("docker")
 	_ = exec.Command("git", "clone", "https://remote.invalid/x/y.git")
@@ -855,7 +855,7 @@ func TestUsesFakes(t *testing.T) {
 		"29 socket miniredis.RunT",
 		"30 http http.Get",
 		"31 http http.DefaultClient",
-		"32 service exec.Command(\"redis-server\")",
+		"32 service exec.Command(\"postgres\")",
 		"33 service exec.CommandContext(\"/usr/bin/ansible-playbook\")",
 		"34 service exec.LookPath(\"docker\")",
 		"35 git-remote git https://remote.invalid/x/y.git",
@@ -870,6 +870,14 @@ func TestUsesFakes(t *testing.T) {
 	assert.Empty(t, scan("pkg/p/fake_test.go", fake), "the same test through fakes breaks no rule: a fake clock, a channel, net.Pipe, a recorder, a timestamp handed to the subject, and a synctest bubble")
 	assert.Empty(t, scan("fleet/fake_test.go", fake), "the same test through fakes breaks no rule outside the older rules' directories")
 	assert.Empty(t, scan("pkg/p/p_functional_test.go", "//go:build functional\n\n"+offending), "a functional-tagged file is not a unit file")
+	for _, program := range []string{"redis-server", "postgres"} {
+		src := fmt.Sprintf(`package p
+import ("os/exec"; "testing")
+func TestService(t *testing.T) {
+	_ = exec.Command(%q, "--port", "0")
+}`, program)
+		assert.Equal(t, []string{fmt.Sprintf("4 service exec.Command(%q)", program)}, scan("pkg/p/service_test.go", src), "the service fixture is parsed, never launched")
+	}
 
 	// Only the function literal is the bubble: the call's other arguments are
 	// evaluated before it, on the real clock.
