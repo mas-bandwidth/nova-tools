@@ -175,6 +175,28 @@ func TestALimitLineIsReadOnlyWithItsResetAndNeverFromTheBodyOfAReply(t *testing.
 	assert.True(t, errors.As(Deferred{Reason: "x"}, new(Deferred)))
 }
 
+// Every furthest wording the harnesses have printed classifies, with the ANSI
+// colour codes the CLI adds stripped and the reset read in the zone the line
+// names (docs/SPEC-FRIEND.md, a harness at its limit).
+func TestEveryLimitWordingClassifiesWithItsResetInTheNamedZone(t *testing.T) {
+	t.Parallel()
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 16, 2, 30, 0, 0, ny)
+	for _, tc := range []struct{ text, until string }{
+		{"\x1b[31mYou've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\x1b[0m\n", "2026-10-16T03:00:00-04:00"},
+		{"You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\n", "2026-10-16T03:00:00-04:00"},
+		{"You've hit your limit · resets 8pm (America/New_York)\n", "2026-10-16T20:00:00-04:00"},
+	} {
+		lim, found := ReadLimit(tc.text, now)
+		require.True(t, found, tc.text)
+		assert.True(t, lim.Limited, tc.text)
+		want, err := time.Parse(time.RFC3339, tc.until)
+		require.NoError(t, err)
+		assert.True(t, want.Equal(lim.Until), "%s: until %s, want %s", tc.text, lim.Until.Format(time.RFC3339), tc.until)
+	}
+}
+
 func ftoa(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 func itoa(n int64) string   { return strconv.FormatInt(n, 10) }
 

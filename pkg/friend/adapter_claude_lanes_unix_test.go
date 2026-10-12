@@ -4,10 +4,12 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,4 +92,30 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 			assert.Contains(t, out.String(), "nothing here is read", "the output goes to the record, and only there")
 		})
 	}
+}
+
+// A claude one-shot lane whose run exits nonzero printing the weekly limit,
+// with the ANSI colour codes the CLI adds, is that limit, not a failed
+// attempt: the run is UsageLimited until the reset the line names, in the
+// zone it names, so the lane keeps the card and counts nothing (docs/SPEC-
+// FRIEND.md, a harness at its limit).
+func TestClaudeLaneWeeklyLimitIsUsageLimitedNotAFailedAttempt(t *testing.T) {
+	t.Parallel()
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 16, 2, 30, 0, 0, ny)
+	dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+	brief := filepath.Join(dir, "inbox", "c1~15", "BRIEF.md")
+	require.NoError(t, os.WriteFile(brief, []byte("the task\n"), 0o644))
+	c := Card{ID: "c1", Brief: brief, Outbox: filepath.Join(dir, "outbox", "c1~15")}
+	out := "\x1b[31mYou've hit your weekly limit · resets Oct 16 at 3am (America/New_York)\x1b[0m\n"
+	run := func(context.Context, string, string, []string, string) (string, int, error) {
+		return out, 1, errors.New("exit status 1")
+	}
+	cl := &Claude{Stub: Stub{Harness: "claude"}, Friend: "bob", Dir: filepath.Dir(dir), Run: run, ConfigDir: func() string { return "/accounts/heavy-a" }, Now: func() time.Time { return now }}
+	_, err = cl.RunCard(context.Background(), c)
+	var usage UsageLimited
+	require.ErrorAs(t, err, &usage, "the weekly limit pauses the lane, never a failed attempt")
+	assert.Contains(t, usage.Reason, "weekly limit")
+	assert.True(t, time.Date(2026, 10, 16, 3, 0, 0, 0, ny).Equal(usage.Until), "until the reset the line names, in the zone it names: %s", usage.Until.Format(time.RFC3339))
 }
