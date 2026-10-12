@@ -92,7 +92,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		line += fmt.Sprintf(" %s=%d %s_rev=%d", k.Name, counts[k.Name], k.Name, rev)
 		o.Fact(k.Name, counts[k.Name]).Fact(k.Name+"_rev", rev)
 	}
-	addr, addrErr := redisAddress(*redisFlag, d.getenv)
+	addr, redisFrom, addrErr := redisAddressFrom(*redisFlag, d.getenv)
 	if addrErr != nil {
 		line += " redis=-"
 		o.Fact("redis", "")
@@ -103,8 +103,8 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		return refuse(stderr, verb, err.Error())
 	}
 	defer func() { _ = rs.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
-	line += " redis=" + config.Value(addr)
-	o.Fact("redis", addr)
+	line += " redis=" + config.Value(addr) + " redis-from=" + redisFrom
+	o.Fact("redis", addr).Fact("redis-from", redisFrom)
 	behind := 0
 	for _, k := range config.Kinds {
 		_, applied, err := rs.Read(ctx, k.Name)
