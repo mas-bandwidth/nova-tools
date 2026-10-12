@@ -1,7 +1,9 @@
 package member
 
 import (
+	"bytes"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,6 +59,75 @@ func TestABeatProbesForTheFlagOnce(t *testing.T) {
 		"fleet beat m --stop-returns 0 --load-unmeasured --load 0.0",
 		"fleet beat m --stop-returns 0 --load-unmeasured --load 0.0",
 	}, g.s.lines("beat"))
+}
+
+// overlapWriter is an out that says whether two writes were ever inside it at once. Its
+// first write waits inside, up to holdFor, for a second to arrive: a member that writes
+// one line at a time keeps the second outside until the first returns, so it never does.
+type overlapWriter struct {
+	inside  atomic.Int32
+	overlap atomic.Bool
+	first   sync.Once
+	second  sync.Once
+	entered chan struct{} // closed once the first write is inside
+	arrived chan struct{} // closed once a write came in while another was inside
+	mu      sync.Mutex
+	b       bytes.Buffer
+}
+
+// holdFor bounds the first write's wait only so a passing run ends: a second write that
+// came later than it would read as no overlap (a false pass), never as a false red.
+const holdFor = time.Second
+
+func newOverlapWriter() *overlapWriter {
+	return &overlapWriter{entered: make(chan struct{}), arrived: make(chan struct{})}
+}
+
+func (w *overlapWriter) Write(p []byte) (int, error) {
+	if w.inside.Add(1) > 1 {
+		w.overlap.Store(true)
+		w.second.Do(func() { close(w.arrived) })
+	}
+	defer w.inside.Add(-1)
+	isFirst := false
+	w.first.Do(func() { isFirst = true; close(w.entered) })
+	if isFirst {
+		select {
+		case <-w.arrived:
+		case <-time.After(holdFor):
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+func (w *overlapWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
+
+// TestTheBeatAndThePassSayThingsOneAtATime: the beat goes on its own goroutine apart from
+// the pass (BeatLoop), and both say things on the member's one out, so the member writes
+// it one line at a time whatever writer it was given (oneWriter). Beat's load note is held
+// inside the writer while the pass's room refusal is said: a member that wrote the
+// caller's writer as given lets the second line in beside the first, on every run (under
+// -race the same two writes on a bytes.Buffer were TestAMemberWhosePassIsHungStopsBeating's
+// data race, 1 run in 50 on dev 274339741).
+func TestTheBeatAndThePassSayThingsOneAtATime(t *testing.T) {
+	t.Parallel()
+	out := newOverlapWriter()
+	m := New(Config{As: "m", Width: 1, Room: func() (bool, string) { return false, "the disk is under its floor" }}, newScript(), newRunner(), &fakePusher{}, out)
+	var both sync.WaitGroup
+	both.Add(2)
+	go func() { defer both.Done(); _ = m.Beat() }()            // no meter: "NOTE beat: load unmeasured", its first line
+	<-out.entered                                              // the beat's line is inside the writer
+	go func() { defer both.Done(); m.room(time.Unix(0, 0)) }() // no room: "take REFUSED"
+	both.Wait()
+	require.False(t, out.overlap.Load(), "the pass's line went into the writer while the beat's was inside it")
+	require.Contains(t, out.String(), "NOTE beat: load unmeasured, sent 0\n")
+	require.Contains(t, out.String(), "take REFUSED: the disk is under its floor\n")
 }
 
 // TestARefusedBeatIsLoggedOncePerMinute: a beat the server refuses (exit 2) is loud: the
