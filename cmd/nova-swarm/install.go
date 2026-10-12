@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
-	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/units"
 )
 
 func init() {
@@ -59,7 +58,7 @@ func unitLoad(goos, op, path string) error {
 	if swarmUnits.load != nil {
 		return swarmUnits.load(goos, op, path)
 	}
-	return loadSwarmUnit(goos, op, path)
+	return units.Load(goos, op, path)
 }
 
 // install and uninstall of the units nova-swarm owns (card every-unit-installed-by-a-verb).
@@ -67,9 +66,8 @@ func unitLoad(goos, op, path string) error {
 // mirror verb for that unit to run. The unit runs this binary directly. A test gives
 // --dir and its own loader, so nothing is loaded on the machine the test runs on.
 //
-// The shared unit text lives in pkg/units. This binary does not import that
-// package: its oneline import list is cmd/nova-swarm/audit_test.go, which this card
-// cannot change. The text written here is the same plist and unit pkg/units
+// The shared unit text lives in pkg/units, which also owns the loader this binary
+// drives (units.Load); the text written here is the same plist and unit pkg/units
 // writes, and TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh reads both.
 
 const (
@@ -482,46 +480,4 @@ func removeUnit(path string, unload func(string) error) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-// loadSwarmUnit loads or unloads the unit at path. Under NOVA_TEST_NO_HOST it
-// refuses before any service manager is started. A test passes its own loader.
-func loadSwarmUnit(goos, op, path string) error {
-	if os.Getenv("NOVA_TEST_NO_HOST") != "" {
-		return errors.New("NOVA_TEST_NO_HOST is set: no service is loaded or unloaded on this machine")
-	}
-	ctx := context.Background()
-	run := func(name string, args ...string) error {
-		cmd, cancel := subproc.Command(ctx, subproc.Tool, name, args...)
-		defer cancel()
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-		}
-		return nil
-	}
-	if goos == "linux" {
-		unit := filepath.Base(path)
-		if op == "unload" {
-			return run("systemctl", "--user", "disable", "--now", unit)
-		}
-		if err := run("systemctl", "--user", "daemon-reload"); err != nil {
-			return err
-		}
-		if err := run("systemctl", "--user", "enable", unit); err != nil {
-			return err
-		}
-		return run("systemctl", "--user", "restart", unit)
-	}
-	service := "gui/" + strconv.Itoa(os.Getuid()) + "/" + strings.TrimSuffix(filepath.Base(path), ".plist")
-	loaded := run("launchctl", "print", service) == nil
-	if loaded {
-		if err := run("launchctl", "bootout", service); err != nil {
-			return err
-		}
-	}
-	if op == "unload" {
-		return nil
-	}
-	return run("launchctl", "bootstrap", "gui/"+strconv.Itoa(os.Getuid()), path)
 }

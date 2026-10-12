@@ -355,6 +355,13 @@ var swarmAudit = audit.Config{
 		// the next command, never the value. The package holds no writer of
 		// this binary's stream.
 		`"github.com/mas-bandwidth/nova-tools/pkg/secrets"`,
+		// units (units.go, install.go) owns the loader this binary drives for the
+		// install and uninstall verbs: units.Load runs systemctl or launchctl
+		// children whose output is captured into their error's words, so nothing
+		// it does writes to this binary's streams. It writes files only through
+		// the caller's loader, and its text writers return strings this package
+		// prints through oneline.
+		`"github.com/mas-bandwidth/nova-tools/pkg/units"`,
 	},
 	MinClassified: 40,
 }

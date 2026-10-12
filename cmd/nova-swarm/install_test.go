@@ -91,4 +91,18 @@ func TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh(t *testing.T) {
 	code, _, errb := runSwarm(t, "install", "store", "--dir", t.TempDir())
 	assert.Equal(t, 2, code, errb)
 	assert.Contains(t, errb, "nova-redis install store")
+
+	// The default loader is units.Load: with the fake removed, installing reaches
+	// the loader's host guard and refuses, so unitLoad's delegate (install.go:61)
+	// is exercised here, where this test already owns the swarmUnits global. A
+	// second parallel test would race that global; NOVA_TEST_NO_HOST is set by
+	// make and by every card run.
+	if os.Getenv("NOVA_TEST_NO_HOST") != "" {
+		swarmUnits.goos = "linux"
+		swarmUnits.load = nil
+		dir := t.TempDir()
+		code, _, errb = runSwarm(t, "install", "disk-guard", "--dir", dir, "--every", "15m", "--root", "/srv/run", "--scan", "/srv/scan")
+		assert.Equal(t, 1, code, errb)
+		assert.Contains(t, errb, "NOVA_TEST_NO_HOST is set: no service is loaded or unloaded on this machine")
+	}
 }
