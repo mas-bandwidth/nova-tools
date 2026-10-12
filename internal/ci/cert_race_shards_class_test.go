@@ -21,11 +21,14 @@ import (
 // 36357522017, 36357749379 and 36360296846 (2026-09-27).
 
 // certRaceMinShards is the shard count floor per hosted OS: at least one shard
-// for each certRaceHeavy package, nineteen with the three isolated toolchain
-// lifecycle packages; the round-robin shards retain their capacity.
+// for each certRaceHeavy package, and seven round-robin shards for the rest:
+// twenty-three with cmd/nova-ci heavy beside the three isolated toolchain
+// lifecycle packages. Seven, because on run 38273976881 a round-robin shard of
+// 32 packages ran green on macos-latest and was still cancelled by the
+// two-minute job cap; about 23 packages a shard finishes with room.
 var certRaceMinShards = map[string]int{
-	"ubuntu-latest": 19,
-	"macos-latest":  19,
+	"ubuntu-latest": 23,
+	"macos-latest":  23,
 }
 
 // certRaceHeavy are the packages the race deal places first, one per shard:
@@ -42,6 +45,12 @@ var certRaceMinShards = map[string]int{
 // together. Its completed legs also measure internal/sprint 15.951 s,
 // pkg/redisconn 18.169, pkg/config 17.741 and pkg/secrets 15.577.
 // Fleet reaches 75.035 s under concurrent Ansible fixtures in run 38270878216.
+// cmd/nova-ci's scaffold test builds, vets and tests a copied tree through the go
+// command; on a round-robin macos-latest shard of 32 it starved past the 75 s
+// -timeout on every run (38270081216, 38271306374, 38272526102: 75.0xx s) and
+// 73.441 s on 38277806324. Alone on its own hosted shard it is 42.466 s (run
+// 38277334996), 6 s at GOMAXPROCS=3 under -race on linux/amd64: heavy by its
+// need for the machine, not its own time.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
 	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
@@ -52,6 +61,7 @@ var certRaceHeavy = []string{
 	"nova-tools/fleet/toolchainapply/idempotent",
 	"nova-tools/fleet/toolchainapply/drift",
 	"nova-tools/fleet/toolchainapply/baddigest",
+	"cmd/nova-ci",
 }
 
 const certRaceDealStep = "deal this shard's packages"

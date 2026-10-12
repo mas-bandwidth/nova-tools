@@ -30,13 +30,16 @@ import (
 // writes a file the walk can see -- so nothing invalidates the cache, and the
 // second walk was never buying anything.
 //
-// On parse mode: the tree is parsed with mode 0, because every rule that reads
-// it walks declarations and expressions and none of them reads a comment. The
-// production checkers that DO want comments (the net checker, which reads
-// `// net-ok:` reasons) take a caller-supplied root and are not tests, so they
-// keep their own walk; if a rule here ever needs comments, cache a second
-// variant keyed by parser.Mode rather than widening this one, so that changing
-// the mode can never change what an existing rule sees.
+// On parse mode: the tree is parsed once, with comments (parser.ParseComments)
+// and with object resolution, and that one parse is shared by every reader:
+// the rules that walk declarations and expressions read past the comment
+// groups (no checker reads Doc or Comments through the tree, and none is a
+// literal, call or identifier they match), and the one checker that asks for
+// the comments (ci_net.go, for the file's build constraint) is answered from
+// the same parse instead of a second full parse of every _test.go, which is
+// what it cost on the hosted macOS leg. treeParseSource serves any mode within
+// ParseComments|SkipObjectResolution from the tree; a mode outside that set is
+// parsed once per name and mode in treeParses.
 //
 // Rules filter the tree themselves rather than asking for a pre-filtered list,
 // because the filters differ in ways that matter: some rules read testdata (the
@@ -59,8 +62,9 @@ type treeFile struct {
 	// .github/ and for docs/*.md, which are the files the rules read as text;
 	// for anything else it is nil and only the path is indexed.
 	Src []byte
-	// AST is the parsed file (mode 0), and ParseErr what go/parser said if it
-	// refused. Both are nil for a file that is not .go.
+	// AST is the parsed file, parsed once with its comments (parser.ParseComments)
+	// and shared by every reader, and ParseErr what go/parser said if it refused.
+	// Both are nil for a file that is not .go.
 	AST      *ast.File
 	ParseErr error
 }
@@ -414,10 +418,11 @@ func (x *repoTreeIndex) dirEntries() map[string][]treeEntry {
 }
 
 // treeParseSource is parseSource for this test binary. Bytes that ARE a tree
-// file's bytes (the same array treeSourceFile handed out) are parsed once per
-// name and mode -- mode 0 is the tree's own parse -- and the FileSet and file
-// shared; the checkers only read them. Any other bytes -- a fixture's -- are
-// parsed afresh every time.
+// file's bytes (the same array treeSourceFile handed out) are answered from the
+// tree's one parse (with comments and object resolution) for any mode within
+// ParseComments|SkipObjectResolution, and parsed once per name and mode for any
+// other; the FileSet and file are shared, and the checkers only read them. Any
+// other bytes -- a fixture's -- are parsed afresh every time.
 func treeParseSource(name string, src []byte, mode parser.Mode) (*token.FileSet, *ast.File, error) {
 	idx, err := sharedRepoTree()
 	if err != nil || len(src) == 0 {

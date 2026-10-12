@@ -17,12 +17,90 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
 // redisInstallerSource is the Go the workflows' redisInstallCall (toolsci_build_test.go) runs.
 const redisInstallerSource = "tools/ci/installredis.go"
+
+// certRedisExemptPrefix is the one package prefix whose shards do not wait for
+// redis-server in certification.yml's test job: the fleet toolchain apply packages, which
+// have no redis package in their test dependencies. A shard is exempt only when its
+// package line is exactly one package under the prefix (each is heavy, so dealt alone).
+const certRedisExemptPrefix = "github.com/mas-bandwidth/nova-tools/fleet/toolchainapply/"
+
+// certRedisWaitIf is the install step's condition, word for word: wait unless the line
+// starts under the prefix and names no second package (the deal writes `pkg pkg ... `, a
+// space after each). Any other text, a widened prefix or a dropped second clause, fails.
+const certRedisWaitIf = "!(startsWith(env.HOSTED_PKGS, '" + certRedisExemptPrefix + "') && !contains(env.HOSTED_PKGS, ' github.com/'))"
+
+// certRedisWaitSkipped is certRedisWaitIf's meaning over one package line, for the
+// witnesses: true when the step does not run.
+func certRedisWaitSkipped(hostedPkgs string) bool {
+	return strings.HasPrefix(hostedPkgs, certRedisExemptPrefix) && !strings.Contains(hostedPkgs, " github.com/")
+}
+
+// TestCertificationWaitsForRedisUnlessToolchainApplyAlone narrows #3113's rule by one
+// exemption and keeps it a rule. Every certification test shard waits for redis-server
+// (the install step runs the installer) unless its package line is one fleet toolchain
+// apply package: the condition is read from the workflow and must be certRedisWaitIf
+// exactly, its meaning is held to witnesses, and every heavy package under the prefix is
+// shown to have no redis package in its test dependencies. The wait was 36 s of the
+// ubuntu drift shard's setup on run 38280521819, which crossed the two-minute job cap
+// with the package green at 50 s.
+func TestCertificationWaitsForRedisUnlessToolchainApplyAlone(t *testing.T) {
+	t.Parallel()
+
+	jobs, _ := certJobs(t)
+	job, ok := jobs["test"]
+	require.True(t, ok, "certification.yml has no test job")
+	at := stepIndex(job, "install redis-server")
+	require.GreaterOrEqual(t, at, 0, "certification.yml test has no %q step", "install redis-server")
+	step := job.Steps[at]
+	assert.Contains(t, step.Run, redisInstallCall, "certification.yml test's install step does not run the installer")
+	assert.Equal(t, certRedisWaitIf, step.If, "certification.yml test's install step runs under %q; the only exemption is one package under %s (certRedisWaitIf)", step.If, certRedisExemptPrefix)
+
+	for _, w := range []struct {
+		line string
+		skip bool
+	}{
+		{certRedisExemptPrefix + "drift ", true},
+		{certRedisExemptPrefix + "idempotent ", true},
+		{certRedisExemptPrefix + "baddigest ", true},
+		{"github.com/mas-bandwidth/nova-tools/fleet ", false},
+		{"github.com/mas-bandwidth/nova-tools/fleet/internal/toolchainfixture ", false},
+		{"github.com/mas-bandwidth/nova-tools/fleet/toolchainapplyx/drift ", false},
+		{"github.com/mas-bandwidth/nova-tools/internal/ci ", false},
+		{certRedisExemptPrefix + "drift github.com/mas-bandwidth/nova-tools/pkg/config ", false},
+		{"github.com/mas-bandwidth/nova-tools/pkg/config " + certRedisExemptPrefix + "drift ", false},
+		{"", false},
+	} {
+		assert.Equal(t, w.skip, certRedisWaitSkipped(w.line), "package line %q: skipped=%v, want %v", w.line, !w.skip, w.skip)
+	}
+
+	var exempt []string
+	for _, h := range certRaceHeavy {
+		if p := "github.com/mas-bandwidth/" + h; strings.HasPrefix(p, certRedisExemptPrefix) {
+			exempt = append(exempt, p)
+		}
+	}
+	require.NotEmpty(t, exempt, "no heavy package is under %s; the exemption names nothing and goes", certRedisExemptPrefix)
+	for _, p := range exempt {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-test", "-f", "{{.ImportPath}}", p)
+		cmd.Dir = repoRoot(t)
+		cmd.Env = goenv.Clean(os.Environ())
+		cmd.WaitDelay = 5 * time.Second
+		out, err := cmd.Output()
+		cancel()
+		require.NoError(t, err, "go list -deps -test %s: %v", p, err)
+		for _, dep := range strings.Fields(string(out)) {
+			assert.NotContains(t, strings.ToLower(dep), "redis", "%s's tests depend on %s; a shard of it must wait for redis-server, and the exemption must go", p, dep)
+		}
+	}
+}
 
 // TestRedisBackedTestsDoNotSkipUnderCI is #3113. With NOVA_CI=1 and
 // redis-server on PATH, a redis-backed control runs (in the functional tier,
