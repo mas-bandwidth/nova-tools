@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -522,7 +523,7 @@ func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]s
 		err := s.pruneJob(ctx, f.mirror, f.job)
 		lock.Unlock()
 		if err != nil {
-			firstErr = cmpErr(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
+			firstErr = cmp.Or(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
 			continue
 		}
 		pruned = append(pruned, f.job)
