@@ -1,0 +1,122 @@
+---
+# A matching manifest and executable make reruns offline and unchanged. A new
+# checksum, missing manifest, or missing executable replaces the versioned tree
+# after get_url verifies the archive (docs/FLEET.md, "Language toolchains").
+- name: the toolchain archive is pinned for this host
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - nova_toolchains_platform in nova_toolchain_entry.value.platforms
+      - nova_toolchain_entry.value.platforms[nova_toolchains_platform].url is match('^https://')
+      - nova_toolchain_entry.value.platforms[nova_toolchains_platform].sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      toolchains role: {{ nova_toolchain_entry.key }} has no URL and SHA-256 for
+      {{ nova_toolchains_platform }}; add the pinned platform archive to defaults/main.yml.
+
+- name: the toolchain's install paths
+  ansible.builtin.set_fact:
+    nova_toolchain_name: "{{ nova_toolchain_entry.key }}"
+    nova_toolchain_install_dir: "{{ nova_sdk_home }}/{{ nova_toolchain_entry.key }}-{{ nova_toolchain_entry.value.version }}"
+    nova_toolchain_archive: "{{ nova_toolchain_entry.value.platforms[nova_toolchains_platform] }}"
+    nova_toolchain_archive_suffix: >-
+      {{ nova_toolchain_entry.value.platforms[nova_toolchains_platform].archive_suffix |
+         default('.zip' if nova_toolchain_entry.value.platforms[nova_toolchains_platform].url.endswith('.zip') else
+                 '.tar.xz' if nova_toolchain_entry.value.platforms[nova_toolchains_platform].url.endswith('.tar.xz') else '.tar.gz') }}
+
+- name: the installed toolchain manifest
+  ansible.builtin.stat:
+    path: "{{ nova_toolchain_install_dir }}/.nova-toolchain-sha256"
+  register: nova_toolchain_manifest_stat
+
+- name: the installed toolchain manifest content
+  ansible.builtin.slurp:
+    src: "{{ nova_toolchain_install_dir }}/.nova-toolchain-sha256"
+  register: nova_toolchain_manifest
+  when: nova_toolchain_manifest_stat.stat.exists
+
+- name: the installed executable
+  ansible.builtin.stat:
+    path: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.install_root | default(nova_toolchain_archive.root) }}/{{ nova_toolchain_archive.install_probe | default(nova_toolchain_archive.probe) }}"
+  register: nova_toolchain_probe_stat
+
+- name: whether this version must be replaced
+  ansible.builtin.set_fact:
+    nova_toolchain_replace: >-
+      {{ not nova_toolchain_manifest_stat.stat.exists or
+         (nova_toolchain_manifest.content | default('') | b64decode | trim) != nova_toolchain_archive.sha256 or
+         not nova_toolchain_probe_stat.stat.exists }}
+
+- name: remove the old version before replacing it
+  ansible.builtin.file:
+    path: "{{ nova_toolchain_install_dir }}"
+    state: absent
+  when: nova_toolchain_replace and not ansible_check_mode
+
+- name: the check report names the pinned archive that would be installed
+  ansible.builtin.debug:
+    msg: >-
+      TOOLCHAINS WOULD-INSTALL host={{ inventory_hostname }}
+      tool={{ nova_toolchain_name }} version={{ nova_toolchain_entry.value.version }}
+      url={{ nova_toolchain_archive.url }} sha256={{ nova_toolchain_archive.sha256 }}
+  when: ansible_check_mode and nova_toolchain_replace
+
+- name: a pull token for the public Homebrew bottle
+  ansible.builtin.uri:
+    url: "{{ nova_toolchains_registry_token_url }}"
+    return_content: true
+    status_code: 200
+  register: nova_toolchain_registry_token
+  no_log: true
+  when: nova_toolchain_replace and not ansible_check_mode and (nova_toolchain_archive.registry_auth | default(false))
+
+- name: download the pinned toolchain archive
+  ansible.builtin.get_url:
+    url: "{{ nova_toolchain_archive.url }}"
+    dest: "{{ nova_sdk_home }}/.downloads/{{ nova_toolchain_name }}-{{ nova_toolchain_entry.value.version }}-{{ nova_toolchains_platform }}{{ nova_toolchain_archive_suffix }}"
+    checksum: "sha256:{{ nova_toolchain_archive.sha256 }}"
+    mode: "0644"
+    headers: >-
+      {{ {'Authorization': 'Bearer ' ~ nova_toolchain_registry_token.json.token}
+         if (nova_toolchain_archive.registry_auth | default(false)) else {} }}
+  register: nova_toolchain_download
+  when: nova_toolchain_replace and not ansible_check_mode
+
+- name: unpack the verified toolchain archive
+  ansible.builtin.unarchive:
+    src: "{{ nova_sdk_home }}/.downloads/{{ nova_toolchain_name }}-{{ nova_toolchain_entry.value.version }}-{{ nova_toolchains_platform }}{{ nova_toolchain_archive_suffix }}"
+    dest: "{{ nova_toolchain_install_dir }}"
+    remote_src: true
+    creates: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.root }}/{{ nova_toolchain_archive.probe }}"
+  when: nova_toolchain_replace and not ansible_check_mode
+
+- name: install a prebuilt OTP or Rust archive into the SDK prefix
+  ansible.builtin.command:
+    argv: "{{ nova_toolchain_archive.installer_argv | map('replace', '{prefix}', nova_toolchain_install_dir) | list }}"
+    chdir: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.root }}"
+    creates: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.install_probe }}"
+  when:
+    - nova_toolchain_replace
+    - not ansible_check_mode
+    - nova_toolchain_archive.installer_argv is defined
+
+- name: the versioned executable links
+  ansible.builtin.file:
+    src: "{{ nova_toolchain_install_dir }}/{{ nova_toolchain_archive.install_root | default(nova_toolchain_archive.root) }}/{{ item.path }}"
+    dest: "{{ nova_sdk_home }}/bin/{{ item.name }}"
+    state: link
+    force: true
+  loop: "{{ nova_toolchain_entry.value.executables }}"
+
+- name: the archive checksum that now names the installation
+  ansible.builtin.copy:
+    dest: "{{ nova_toolchain_install_dir }}/.nova-toolchain-sha256"
+    content: "{{ nova_toolchain_archive.sha256 }}\n"
+    mode: "0644"
+
+- name: the host's toolchain path and version fact
+  ansible.builtin.set_fact:
+    nova_toolchains_facts: >-
+      {{ nova_toolchains_facts | combine({nova_toolchain_name: {
+           'path': nova_sdk_home ~ '/' ~ nova_toolchain_name ~ '-' ~ nova_toolchain_entry.value.version ~ '/' ~
+                   (nova_toolchain_archive.install_root | default(nova_toolchain_archive.root)) ~ '/' ~ nova_toolchain_entry.value.fact_path,
+           'version': nova_toolchain_entry.value.version}}) }}

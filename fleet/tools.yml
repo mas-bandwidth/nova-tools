@@ -33,6 +33,15 @@
 # and starts them again; --check runs `nova-redis fn check` there and builds
 # and installs nothing. `--tags seat` runs only what adopts the seat: the
 # candidate checks and the seat play.
+- name: pinned language toolchains on every fleet host
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - role: toolchains
+      tags: [toolchains]
+  tags: [toolchains]
+
 - name: the platform of every machine
   hosts: all
   gather_facts: true

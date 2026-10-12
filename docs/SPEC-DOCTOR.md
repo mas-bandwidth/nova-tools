@@ -64,6 +64,15 @@ tool does not answer with a version line (named), when none is on PATH, or when 
 versions differ: the evidence names every tool that differs from the version most of the
 tools report, and the fix is `nova-update apply --file <manifest> <tool> --version <release>`.
 
+### toolchains
+
+Dependency: the language SDKs installed by the `toolchains` fleet role. Reads
+`~/.config/nova/toolchains.json`, which records one `{path, version}` pair for
+each of `node`, `dotnet`, `dart`, `elixir`, `otp`, `rust`, `jdk`, `sbcl` and
+`gh`. `ok` names the installed versions; `fail` names every required tool whose
+fact is absent or whose path does not exist, and names the tool in the evidence
+(`missing tool=<name>`). The fix is `ansible-playbook fleet/tools.yml --tags toolchains`.
+
 `nova-up --local` ends by running `nova-doctor --local`.
 
 ### The friend checks
