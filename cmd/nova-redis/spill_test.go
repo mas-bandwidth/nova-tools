@@ -12,19 +12,18 @@ package main
 import (
 	"bytes"
 	"context"
-	"net"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 )
 
 // fakeClock is the controlled clock: it reads t and only moves when a test
@@ -60,31 +59,6 @@ func newHarness(t *testing.T) *harness {
 		}
 	})
 	return h
-}
-
-// pipeStore is a miniredis fake reached in memory: the client's dialer hands
-// it one end of a net.Pipe and the fake serves the other (ServeConn), so no
-// TCP connection is made. miniredis binds a loopback listener when it starts;
-// the cleanup fails the test when anything dialled it.
-func pipeStore(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
-	t.Helper()
-	mr := miniredis.RunT(t)
-	var piped atomic.Int64
-	client := redis.NewClient(&redis.Options{
-		Addr:            "127.0.0.1:0", // never dialled (Dialer is the transport); an IP so nothing resolves it
-		DisableIdentity: true,
-		Dialer: func(context.Context, string, string) (net.Conn, error) {
-			near, far := net.Pipe()
-			piped.Add(1)
-			mr.Server().ServeConn(far)
-			return near, nil
-		},
-	})
-	t.Cleanup(func() {
-		_ = client.Close()
-		assert.Equal(t, piped.Load(), int64(mr.TotalConnectionCount()), "the fake took a TCP connection beside its pipes")
-	})
-	return mr, client
 }
 
 // run drives run() with --redis pointed at the fake instance.
@@ -246,7 +220,7 @@ func TestSpillRefusedWithoutTTL(t *testing.T) {
 func TestScratchKeepsEveryKeyOwnedAndBoundedWithoutASocket(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	mr, client := pipeStore(t)
+	mr, client := testkit.PipeStore(t)
 	trips := redisconn.CountTrips(client)
 	clock := &fakeClock{t: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)}
 	s := &scratch{rdb: client, now: clock.now}
