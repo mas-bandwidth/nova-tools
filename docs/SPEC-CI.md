@@ -772,12 +772,14 @@ a literal `Cleanup` there asserts that the locally bound server's direct
 `TotalConnectionCount()` is zero (`Zero` or `Equal` to literal `0`), or a direct
 `count != 0` condition fails its `*testing.T` with Error/Fatal; the server is
 closed (`RunT` closes itself). A count bound in that if's initializer is read.
-Local parser bindings distinguish shadowed server variables; a reassigned
+Partial local `go/types` bindings distinguish shadowed server variables; a reassigned
 server variable proves no stable instance. A `net.Pipe`
 anywhere in the function, a positive-count assertion, another server's count,
 a discarded count or an assertion outside Cleanup proves nothing. Uncertain
 transport/count helpers remain counted socket sites; no interprocedural or
-whole-function control-flow proof is inferred. Only the function literal
+whole-function control-flow proof is inferred. Partial checking reads local
+bindings without loading imports or other package files; an unresolved binding
+grants no exemption. Only the function literal
 handed to `synctest.Test`/`Run` is a bubble: the call's other arguments are read. `time.Now()` passed on into the subject as a
 timestamp (`run(args, ..., time.Now())`) is data, not a verdict, and is not read.
 The tier decision reuses `unitTierFile`.

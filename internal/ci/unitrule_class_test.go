@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
@@ -267,8 +268,8 @@ func inRanges(n ast.Node, ranges [][2]token.Pos) bool {
 }
 
 // miniredisCount is the locally bound server whose count e reads directly.
-// The parser's object binding distinguishes a shadowed variable of the same name.
-func miniredisCount(e ast.Expr) *ast.Object {
+// Partial type-info bindings distinguish a shadowed variable of the same name.
+func miniredisCount(e ast.Expr, info *types.Info) types.Object {
 	call, ok := e.(*ast.CallExpr)
 	if !ok || len(call.Args) != 0 {
 		return nil
@@ -278,7 +279,7 @@ func miniredisCount(e ast.Expr) *ast.Object {
 		return nil
 	}
 	if id, ok := recv.X.(*ast.Ident); ok {
-		return id.Obj
+		return info.ObjectOf(id)
 	}
 	return nil
 }
@@ -291,7 +292,7 @@ func literalZero(e ast.Expr) bool {
 
 // nonzeroCountGuard is a direct count != 0 condition, optionally using the
 // count bound in this if's initializer. Other comparisons prove no zero bound.
-func nonzeroCountGuard(s *ast.IfStmt) *ast.Object {
+func nonzeroCountGuard(s *ast.IfStmt, info *types.Info) types.Object {
 	cond, ok := s.Cond.(*ast.BinaryExpr)
 	if !ok || cond.Op != token.NEQ {
 		return nil
@@ -309,62 +310,71 @@ func nonzeroCountGuard(s *ast.IfStmt) *ast.Object {
 			return nil
 		}
 		bound, ok := init.Lhs[0].(*ast.Ident)
-		if !ok || id.Obj != bound.Obj {
+		if !ok || info.ObjectOf(id) != info.ObjectOf(bound) {
 			return nil
 		}
 		count = init.Rhs[0]
 	}
-	return miniredisCount(count)
+	return miniredisCount(count, info)
 }
 
 // testingFailure is a direct Error/Fatal call on a locally bound *testing.T.
-func testingFailure(call *ast.CallExpr, testingName string) bool {
+func testingFailure(call *ast.CallExpr, testingParams map[types.Object]bool, info *types.Info) bool {
 	recv, method := selName(call.Fun)
 	if !slices.Contains([]string{"Error", "Errorf", "Fatal", "Fatalf"}, method) || recv == "" {
 		return false
 	}
 	id := call.Fun.(*ast.SelectorExpr).X.(*ast.Ident)
-	if id.Obj == nil {
-		return false
-	}
-	field, ok := id.Obj.Decl.(*ast.Field)
-	if !ok {
-		return false
-	}
-	ptr, ok := field.Type.(*ast.StarExpr)
-	if !ok {
-		return false
-	}
-	pkg, typ := selName(ptr.X)
-	return testingName != "" && pkg == testingName && typ == "T"
+	return testingParams[info.ObjectOf(id)]
 }
 
 // miniredisTraps recognizes a same-server zero-count Cleanup assertion or
 // nonzero-count failure guard, plus closure (RunT closes itself). A pipe call
 // alone proves no transport ownership. Libraries considered: go/ast inspection,
-// go/parser's local bindings, and the existing selName/importName helpers; no
+// go/types partial bindings, and the existing selName/importName helpers; no
 // whole-program dataflow or helper-name exemption is inferred.
-func miniredisTraps(file *ast.File, testify map[string]bool) map[*ast.CallExpr]bool {
+func miniredisTraps(fset *token.FileSet, file *ast.File, testify map[string]bool) map[*ast.CallExpr]bool {
 	name := importName(file, "github.com/alicebob/miniredis/v2")
 	if name == "" {
 		return nil
 	}
+	info := &types.Info{Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}}
+	config := types.Config{Error: func(error) {}}
+	// A single test file and parse-only fixtures need not type-check without their
+	// imports and other package files. Keep partial local bindings; an unresolved
+	// binding never grants an exemption. No package/import loader is needed.
+	_, _ = config.Check(file.Name.Name, fset, []*ast.File{file}, info)
+	testingParams := map[types.Object]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if field, ok := n.(*ast.Field); ok {
+			if ptr, ok := field.Type.(*ast.StarExpr); ok {
+				if pkg, typ := selName(ptr.X); pkg == importName(file, "testing") && pkg != "" && typ == "T" {
+					for _, id := range field.Names {
+						if obj := info.ObjectOf(id); obj != nil {
+							testingParams[obj] = true
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
 	out := map[*ast.CallExpr]bool{}
 	for _, d := range file.Decls {
 		fn, ok := d.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
 			continue
 		}
-		starts := map[*ast.Object]*ast.CallExpr{}
-		selfClosing := map[*ast.Object]bool{}
-		rebound := map[*ast.Object]bool{}
+		starts := map[types.Object]*ast.CallExpr{}
+		selfClosing := map[types.Object]bool{}
+		rebound := map[types.Object]bool{}
 		var cleanups []*ast.FuncLit
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.AssignStmt:
 				for _, lhs := range x.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && id.Obj != nil && id.Obj.Decl != x {
-						rebound[id.Obj] = true
+					if id, ok := lhs.(*ast.Ident); ok && info.ObjectOf(id) != nil && info.Defs[id] == nil {
+						rebound[info.ObjectOf(id)] = true
 					}
 				}
 				if len(x.Lhs) == 0 || len(x.Rhs) != 1 {
@@ -372,12 +382,12 @@ func miniredisTraps(file *ast.File, testify map[string]bool) map[*ast.CallExpr]b
 				}
 				call, ok := x.Rhs[0].(*ast.CallExpr)
 				id, bound := x.Lhs[0].(*ast.Ident)
-				if !ok || !bound || id.Obj == nil {
+				if !ok || !bound || info.ObjectOf(id) == nil {
 					return true
 				}
 				if pkg, sel := selName(call.Fun); pkg == name && (sel == "Run" || sel == "RunT" || sel == "RunTLS") {
-					starts[id.Obj] = call
-					selfClosing[id.Obj] = sel == "RunT"
+					starts[info.ObjectOf(id)] = call
+					selfClosing[info.ObjectOf(id)] = sel == "RunT"
 				}
 			case *ast.CallExpr:
 				if _, sel := selName(x.Fun); sel == "Cleanup" {
@@ -390,17 +400,17 @@ func miniredisTraps(file *ast.File, testify map[string]bool) map[*ast.CallExpr]b
 			}
 			return true
 		})
-		asserted, closed := map[*ast.Object]bool{}, map[*ast.Object]bool{}
+		asserted, closed := map[types.Object]bool{}, map[types.Object]bool{}
 		for _, cleanup := range cleanups {
 			ast.Inspect(cleanup.Body, func(n ast.Node) bool {
 				if _, ok := n.(*ast.FuncLit); ok {
 					return false // an uncalled function inside Cleanup proves nothing
 				}
 				if guard, ok := n.(*ast.IfStmt); ok {
-					if server := nonzeroCountGuard(guard); server != nil {
+					if server := nonzeroCountGuard(guard, info); server != nil {
 						for _, stmt := range guard.Body.List {
 							if expr, ok := stmt.(*ast.ExprStmt); ok {
-								if call, ok := expr.X.(*ast.CallExpr); ok && testingFailure(call, importName(file, "testing")) {
+								if call, ok := expr.X.(*ast.CallExpr); ok && testingFailure(call, testingParams, info) {
 									asserted[server] = true
 								}
 							}
@@ -413,18 +423,18 @@ func miniredisTraps(file *ast.File, testify map[string]bool) map[*ast.CallExpr]b
 				}
 				pkg, sel := selName(call.Fun)
 				if recv, ok := call.Fun.(*ast.SelectorExpr); ok && sel == "Close" {
-					if id, ok := recv.X.(*ast.Ident); ok && id.Obj != nil {
-						closed[id.Obj] = true
+					if id, ok := recv.X.(*ast.Ident); ok && info.ObjectOf(id) != nil {
+						closed[info.ObjectOf(id)] = true
 					}
 				}
 				if testify[pkg] && len(call.Args) >= 2 && (sel == "Zero" || sel == "Zerof") {
-					asserted[miniredisCount(call.Args[1])] = true
+					asserted[miniredisCount(call.Args[1], info)] = true
 				}
 				if testify[pkg] && len(call.Args) >= 3 && (sel == "Equal" || sel == "Equalf") {
 					if literalZero(call.Args[1]) {
-						asserted[miniredisCount(call.Args[2])] = true
+						asserted[miniredisCount(call.Args[2], info)] = true
 					} else if literalZero(call.Args[2]) {
-						asserted[miniredisCount(call.Args[1])] = true
+						asserted[miniredisCount(call.Args[1], info)] = true
 					}
 				}
 				return true
@@ -468,7 +478,7 @@ func unitRuleSitesIn(fset *token.FileSet, rel string, file *ast.File) []unitRule
 	}
 	timeName, httpName, execName := importName(file, "time"), importName(file, "net/http"), importName(file, "os/exec")
 	miniredisName := importName(file, "github.com/alicebob/miniredis/v2")
-	traps := miniredisTraps(file, testify)
+	traps := miniredisTraps(fset, file, testify)
 	calls := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch x := n.(type) {
