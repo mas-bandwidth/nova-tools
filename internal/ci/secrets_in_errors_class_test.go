@@ -24,6 +24,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 	"github.com/mas-bandwidth/nova-tools/pkg/fleet"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/healthreport"
 	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 	nslog "github.com/mas-bandwidth/nova-tools/pkg/log"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
@@ -85,6 +86,7 @@ func secretFiles(files []*treeFile) []secretcheck.File {
 // `<repo-relative package directory>.<Name>`. TestNoSecretReachesAnError holds
 // it complete against the tree.
 var secretOpeners = map[string]any{
+	"pkg/healthreport.NewCapability":              healthreport.NewCapability,
 	"pkg/buildinfo.Parse":                         buildinfo.Parse,
 	"pkg/bus/bustest.NewFake":                     bustest.NewFake,
 	"pkg/cardcost.ParseSpend":                     cardcost.ParseSpend,

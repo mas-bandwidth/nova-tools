@@ -87,6 +87,7 @@ pkg/gocache	0.3	@local	-
 pkg/goenv	0.0	@run37411066588	self-hosted
 pkg/harness	0.1	@local	-
 pkg/hookgate	0.0	@local	-
+pkg/healthreport	0.0	@local	-
 pkg/hostload	1.1	@local	-
 pkg/hygiene	0.5	@run37411066588	self-hosted
 pkg/keyshape	0.0	@run37411066588	self-hosted
