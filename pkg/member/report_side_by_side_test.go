@@ -532,7 +532,7 @@ func reportWithMovedClaim(t *testing.T, gs *gateSprint, sp Sprint, code int, out
 	rn.child("c1").end(Result{Ran: true, OK: false, Shaped: true, Verdict: "notdone", Head: "0123456", Report: "not done"})
 	_, err = m.Tick(time.Unix(0, 0)) // the end begins (its push runs)
 	require.NoError(t, err)
-	<-m.Wake() // the end posted
+	<-m.Wake()                       // the end posted
 	_, err = m.Tick(time.Unix(0, 0)) // the finish report, held on the gate
 	require.NoError(t, err)
 	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
