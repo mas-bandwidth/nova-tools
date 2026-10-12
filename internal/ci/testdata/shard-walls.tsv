@@ -110,7 +110,6 @@ pkg/redisacl	0.2	@local	-
 pkg/redisconn	0.6	@run37411066588	self-hosted
 pkg/redisfn	0.3	@run37411066588	self-hosted
 pkg/release	0.1	@run37411066588	self-hosted
-pkg/safepath	0.0	@run37411066588	self-hosted
 pkg/sandbox	0.3	@local	-
 pkg/sandbox/darwincheck	0.2	@local	-
 internal/scaffold	0.0	@run37411066588	self-hosted

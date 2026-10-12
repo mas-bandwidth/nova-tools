@@ -840,6 +840,16 @@ jobs:
         shell: bash
         run: make test-subproc
 
+      - name: test the safepath module
+        # pkg/safepath/ is a nested module of its own (pkg/safepath/go.mod): `go list
+        # ./...` from the root never names it, so no leg's package list carries its
+        # tests. The safe-path removal guard is imported by 13 packages across the
+        # tools, so a leg that tests any of them runs the module's own tests too,
+        # sub-second, with the same refusing redis-server first on PATH.
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
+        shell: bash
+        run: make test-safepath
+
   functional:
     # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,
     # and are built to be frugal and avoid wasting resources.

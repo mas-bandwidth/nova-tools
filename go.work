@@ -5,4 +5,5 @@ use (
 	./hook
 	./pkg/oneline
 	./pkg/subproc
+	./pkg/safepath
 )

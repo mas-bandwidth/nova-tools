@@ -14,6 +14,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mas-bandwidth/nova-tools/hook v0.1.0
 	github.com/mas-bandwidth/nova-tools/pkg/oneline v0.0.0-00010101000000-000000000000
+	github.com/mas-bandwidth/nova-tools/pkg/safepath v0.0.0-00010101000000-000000000000
 	github.com/mas-bandwidth/nova-tools/pkg/subproc v0.0.0-00010101000000-000000000000
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/rogpeppe/go-internal v1.16.0
@@ -59,3 +60,9 @@ replace github.com/mas-bandwidth/nova-tools/pkg/oneline => ./pkg/oneline
 // pkg/subproc/vX.Y.Z for the repositories that require it; here it is
 // ./pkg/subproc.
 replace github.com/mas-bandwidth/nova-tools/pkg/subproc => ./pkg/subproc
+
+// The safe-path removal guard lives in this repository (pkg/safepath/, its
+// own go.mod, no imports beyond the standard library) and is tagged
+// pkg/safepath/vX.Y.Z for the repositories that require it; here it is
+// ./pkg/safepath.
+replace github.com/mas-bandwidth/nova-tools/pkg/safepath => ./pkg/safepath

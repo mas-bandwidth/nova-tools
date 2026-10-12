@@ -12,8 +12,8 @@ GO ?= go
 PKGS ?= ./...
 export PKGS
 # MODULES is every nested Go module in this repository: the directories with
-# their own go.mod beside the root (hook/, pkg/oneline/ and pkg/subproc/),
-# named in go.work.
+# their own go.mod beside the root (hook/, pkg/oneline/, pkg/safepath/ and
+# pkg/subproc/), named in go.work.
 # A directory with a go.mod of its own is NOT reached by `go list ./...`,
 # `go test ./...` or `go vet ./...` run at the root, with or without go.work
 # (measured with go 1.26.6). So every target that tests or vets the whole tree
@@ -21,7 +21,7 @@ export PKGS
 # package set carries their packages too. A new nested module joins this list:
 # internal/ci's TestEveryNestedModuleIsTested reads go.work and fails when a
 # used module is missing from MODULES.
-MODULES ?= ./hook ./pkg/oneline ./pkg/subproc
+MODULES ?= ./hook ./pkg/oneline ./pkg/safepath ./pkg/subproc
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
 # `go run ./tools/ci select-packages --all` lists every package under cmd/,
 # internal/ and tools/ and drops the ones pkg/pkgselect/DEPRECATED names (a
@@ -97,6 +97,7 @@ help:
 	@echo "make tlc-test    the runner and checker tests: no Java, no Redis, no network"
 	@echo "make test-hook   the hook module's own tests (hook/ is a nested module: ./... from the root never names it)"
 	@echo "make test-oneline the oneline module's own tests (pkg/oneline/ is a nested module: ./... from the root never names it)"
+	@echo "make test-safepath the safepath module's own tests (pkg/safepath/ is a nested module: ./... from the root never names it)"
 	@echo "make test-subproc the subproc module's own tests (pkg/subproc/ is a nested module: ./... from the root never names it)"
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
@@ -169,6 +170,14 @@ test-hook:
 .PHONY: test-oneline
 test-oneline:
 	cd pkg/oneline && $(GO) test -count=1 -timeout 100s ./...
+
+# pkg/safepath is a nested module of its own (pkg/safepath/go.mod): `go list
+# ./...` from the root never names it and no PKGS shard carries its tests.
+# ci.yml's test legs run this target, sub-second, on the legs whose package
+# list imports it.
+.PHONY: test-safepath
+test-safepath:
+	cd pkg/safepath && $(GO) test -count=1 -timeout 100s ./...
 
 # pkg/subproc is a nested module of its own (pkg/subproc/go.mod): `go list
 # ./...` from the root never names it and no PKGS shard carries its tests.
