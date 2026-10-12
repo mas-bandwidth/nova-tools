@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/update"
 	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,42 +19,12 @@ import (
 // directory: the manifest path the example lines name is resolved under
 // t.TempDir(), so nothing is written into the checkout and the process working
 // directory is never changed. t.TempDir for a path is the seam the serial-tests
-// ledger names (internal/ci/testdata/serial-tests_allowlist.txt).
+// ledger names (internal/ci/testdata/serial-tests_allowlist.txt). The body is
+// shared with nova-version's identical test in pkg/testkit.
 func TestExecutableFirstRun(t *testing.T) {
 	t.Parallel()
 
-	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	require.NoError(t, err, err)
-	dir := t.TempDir()
-	var banner bytes.Buffer
-	update.Main("nova-update", []string{"help"}, "", &banner, &banner)
-	examples, err := onboarding.ExampleLines(banner.String(), "nova-update")
-	require.NoError(t, err, err)
-	for _, line := range examples {
-		var out, errs bytes.Buffer
-		code := update.Main("nova-update", firstRunArgs(strings.Fields(line)[1:], dir), "", &out, &errs)
-		require.NotEqual(t, 2, code, "%s refused: %s", line, errs.String())
-	}
-	transcript, err := onboarding.FirstRun(string(doc), "nova-update")
-	require.NoError(t, err, err)
-	var wanted, actual []string
-	var out, errs bytes.Buffer
-	for _, line := range transcript {
-		if strings.HasPrefix(line, "$ ") {
-			{
-				c := update.Main("nova-update", firstRunArgs(strings.Fields(line)[2:], dir), "", &out, &errs)
-				require.Equal(t, 0, c, "first run: %d %s", c, errs.String())
-			}
-		} else if s := firstRunShape(line); s != "" {
-			wanted = append(wanted, s)
-		}
-	}
-	for _, line := range strings.Split(out.String(), "\n") {
-		if s := firstRunShape(line); s != "" {
-			actual = append(actual, s)
-		}
-	}
-	require.Equal(t, strings.Join(wanted, "\n"), strings.Join(actual, "\n"), "document shape %v differs from run %v", wanted, actual)
+	testkit.ExecutableFirstRun(t, "nova-update", update.Main)
 }
 func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 	t.Parallel()
@@ -179,6 +150,3 @@ func repoRoot(t *testing.T) string {
 	}
 	return root
 }
-
-// firstRunShape is a line's event and field names, its values dropped.
-func firstRunShape(line string) string { return onboarding.Shape(line) }

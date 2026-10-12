@@ -215,69 +215,65 @@ func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }
 // The unlistable-DIRECTORY seam at the CLI. Issue #30's first item asked for a
 // named failure with the walk continuing; SPEC.md:348-353 (links) and 622-630
 // (nocode) say a directory in the walk that cannot be listed is a REFUSAL and
-// that a walk error stops the run without reporting partial findings. This
-// pins the specified behaviour at the seam a caller actually sees: exit 2, the
-// directory named on stderr, and NO FAILED line -- the broken link beside it is
-// deliberately not reported. Whether that is the right trade is open on #30.
-func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
+// that a walk error stops the run without reporting partial findings. One table
+// over the verb, because the two walks take the same seam and print the same
+// one-line refusal, differing only in the fixture's machinery and the FAILED
+// word a refusal must not print. This pins the specified behaviour at the seam a
+// caller actually sees: exit 2, the directory named on stderr, and NO FAILED
+// line -- the broken link beside it is deliberately not reported. Whether that
+// is the right trade is open on #30.
+func TestUnlistableDirRefusesAtTheCLI(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	cases := []struct {
+		name   string
+		verb   string
+		files  map[string]string
+		failed string
+	}{
+		{
+			name:   "TestLinksUnlistableDirRefusesAtTheCLI",
+			verb:   "links",
+			files:  map[string]string{"broken.md": "[gone](missing.md)\n", "locked/inside.md": "text\n"},
+			failed: "LINKS FAILED",
+		},
+		{
+			name:   "TestNoCodeUnlistableDirRefusesAtTheCLI",
+			verb:   "nocode",
+			files:  map[string]string{"a.md": "prose\n", "locked/run.py": "print(1)\n"},
+			failed: "NOCODE FAILED",
+		},
 	}
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
-	}
-	dir := t.TempDir()
-	mustWrite(t, dir, "broken.md", "[gone](missing.md)\n")
-	mustWrite(t, dir, "locked/inside.md", "text\n")
-	locked := filepath.Join(dir, "locked")
-	require.NoError(t, os.Chmod(locked, 0o000))
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	var stdout, stderr bytes.Buffer
-	{
-		got := run([]string{"links", "--dir", dir}, &stdout, &stderr)
-		require.EqualValues(t, 2, got, "exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
-	}
-	assert.Contains(t, stderr.String(), "locked", "stderr does not name the directory: %s", brief(stderr.String()))
-	assert.NotContains(t, stderr.String(), "LINKS FAILED", "a refusal must not report partial findings: %s", brief(stderr.String()))
-	{
-		lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1
-		assert.EqualValues(t, 1, lines, "refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
-	}
-}
+			if runtime.GOOS == "windows" {
+				t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+			}
+			if os.Geteuid() == 0 {
+				t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+			}
+			dir := t.TempDir()
+			for rel, body := range tc.files {
+				mustWrite(t, dir, rel, body)
+			}
+			locked := filepath.Join(dir, "locked")
+			require.NoError(t, os.Chmod(locked, 0o000))
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-// The same seam for nocode.
-func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
-	t.Parallel()
-
-	if runtime.GOOS == "windows" {
-		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
-	}
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
-	}
-	dir := t.TempDir()
-	mustWrite(t, dir, "a.md", "prose\n")
-	mustWrite(t, dir, "locked/run.py", "print(1)\n")
-	locked := filepath.Join(dir, "locked")
-	require.NoError(t, os.Chmod(locked, 0o000))
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
-
-	var stdout, stderr bytes.Buffer
-	{
-		got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr)
-		require.EqualValues(t, 2, got, "exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
-	}
-	assert.Contains(t, stderr.String(), "locked", "stderr does not name the directory: %s", brief(stderr.String()))
-	assert.NotContains(t, stderr.String(), "NOCODE FAILED", "a refusal must not report partial findings: %s", brief(stderr.String()))
-	// Reviewer (#66, finding 3): the links twin pins the one-line guarantee and
-	// this seam did not. SPEC.md:230-232: a refusal is "this tool's own one-line
-	// refusal ... and nothing else -- at exit 2".
-	{
-		lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1
-		assert.EqualValues(t, 1, lines, "refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
+			var stdout, stderr bytes.Buffer
+			{
+				got := run([]string{tc.verb, "--dir", dir}, &stdout, &stderr)
+				require.EqualValues(t, 2, got, "exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
+			}
+			assert.Contains(t, stderr.String(), "locked", "stderr does not name the directory: %s", brief(stderr.String()))
+			assert.NotContains(t, stderr.String(), tc.failed, "a refusal must not report partial findings: %s", brief(stderr.String()))
+			{
+				lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1
+				assert.EqualValues(t, 1, lines, "refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
+			}
+		})
 	}
 }
 
