@@ -199,6 +199,9 @@ func NoteWith(abiFn func() (int, bool)) string {
 // its walled steps uses the same policy, the nested domain is the same wall again.
 // Anything a caller must do UNWALLED it must do before the first Run -- which is exactly
 // why the probe verb runs write_outside_control first.
+// Run requires a dedicated process that owns all its children; sequential calls are
+// supported, unrelated concurrent exec.Cmd children are not. Its subreaper collects
+// adopted descendants even when they exit before a count sees their original parent.
 func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okLine func()) (int, error) {
 	// The wall is for an ordinary user, and a policy applied by a root process is a
 	// different thing than the one this spec describes.
@@ -298,7 +301,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 		return ExitNotExecuted, refuse("sandbox_failed", "%s could not be started inside the wall: %v", p.Command, err)
 	}
 	self := os.Getpid()
-	tree := &Tree{top: self, pgid: syscall.Getpgrp(), list: func() ([]procRow, error) { return procRows(self, cmd.Process.Pid) }}
+	tree := &Tree{top: self, pgid: syscall.Getpgrp(), list: func() ([]procRow, error) { return runProcRows(self, cmd.Process.Pid) }}
 	stopWatch := p.Watch(p.Tick, tree.Usage, func() { tree.KillAndAwait() })
 
 	sigs := make(chan os.Signal, 4)
@@ -403,11 +406,9 @@ func GroupUsage(pgid int) (Usage, error) {
 }
 
 // procRows is the process table read from /proc with no fork, for the tree count: a
-// count taken while the tree is forking must not need a fork. It also collects the
-// zombies the subreaper inherited (children of self that are not the command, whose
-// wait is the command's own Wait): an orphan that dies is the tool's to reap, and a
-// long run must not pile them up.
-func procRows(self, child int) ([]procRow, error) {
+// count taken while the tree is forking must not need a fork. It only reads: a child
+// of this process may belong to another exec.Cmd, which alone owns that child's wait.
+func procRows() ([]procRow, error) {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, err
@@ -433,12 +434,26 @@ func procRows(self, child int) ([]procRow, error) {
 		r.pgid, _ = strconv.Atoi(f[2])
 		rss, _ := strconv.ParseInt(f[21], 10, 64)
 		r.rss = rss * page
-		if r.zombie && r.ppid == self && pid != child {
-			var ws unix.WaitStatus
-			// ignored: a zombie reaped here or by no one is out of the count either way
-			_, _ = unix.Wait4(pid, &ws, unix.WNOHANG, nil)
-		}
 		rows = append(rows, r)
+	}
+	return rows, nil
+}
+
+// runProcRows collects adopted zombies only within Run's dedicated-process boundary
+// (docs/SPEC-SANDBOX.md, "Linux — Landlock, no root"). Every child there belongs to
+// the wall, including an orphan never observed before adoption. The command itself
+// remains exclusively cmd.Wait's to collect. General process-table readers never reap.
+func runProcRows(self, child int) ([]procRow, error) {
+	rows, err := procRows()
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if r.zombie && r.ppid == self && r.pid != child {
+			var ws unix.WaitStatus
+			// ignored: a zombie reaped here or already gone is out of the live count either way
+			_, _ = unix.Wait4(r.pid, &ws, unix.WNOHANG, nil)
+		}
 	}
 	return rows, nil
 }

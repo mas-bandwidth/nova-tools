@@ -71,9 +71,20 @@
    (release "v1.2.15" :status "in-progress"
     :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only,
      Codex friend delivery refuses routes that queue input or require a Steer click, and a member lane
-     ends every process its card started."))
+     ends every process its card started.")
+   (release "v1.2.16" :status "in-progress"
+    :text "The next comfort fixes, including process-table reads that preserve each command's wait."))
  :items
-  ((fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
+  ((fix "sandbox-table-reads-preserve-command-waits" :release "v1.2.16" :status "in-progress"
+    :title "Sandbox process-table reads preserve other commands' waits"
+    :text "The Linux process-table reader waited on every zombie child except the wall's command,
+     stealing parallel exec.Cmd exit statuses. Table reads now only observe. The wall's dedicated
+     process collects adopted zombies explicitly, including descendants orphaned before any count,
+     while its primary command retains its own wait. Run requires a process owning all its children;
+     this fix does not support unrelated concurrent commands inside that process. Deterministic
+     WNOWAIT regressions pin the unrelated command's wait and unseen adopted-descendant cleanup."
+    :origin "the sandbox probe-step stolen wait, 2026-10-12")
+   (fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
     :title "Codex friend delivery refuses unproved queue routes"
     :text "The implicit Codex delivery route refuses at factory, check, install, run and reach until a
      supported session push route is proved. Notification-only delivery does not type into a session
