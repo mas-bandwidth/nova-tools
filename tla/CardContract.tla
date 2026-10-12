@@ -58,7 +58,8 @@
 \* ended by itself with no result (nr: no shape at all, or only its first
 \* RESULT.md, not-done with nothing committed) is failed `no result`. Both are
 \* redeal classes: the sprint treats the finish as an ended take (nova-sprint's
-\* providerEnded; tla/DirtyTick.tla RedealsAreEndedTakes) and deals the card
+\* internal/sprint/steps_work.go IsProviderFailure and IsNoResult;
+\* tla/DirtyTick.tla RedealsAreEndedTakes) and deals the card
 \* again without judging it: the redeal and the retire at the bound are the
 \* sprint's side, outside this model. A provider end with no reason
 \* (EndProvider, empty Provider), and a run its budget or deadline ended with no
