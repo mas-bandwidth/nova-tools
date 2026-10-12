@@ -73,7 +73,9 @@ func inHermeticChild(t *testing.T) bool {
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1")
 	// The missing store is refused before sops runs; the test binary supplies an inert path.
-	cmd.Env = []string{marker + "=" + t.Name(), "HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH"), seatcred.SopsEnv + "=" + os.Args[0]}
+	// TMPDIR is passed through so a run under -cover writes its coverage temp dir inside it,
+	// never in /tmp, which a sandbox refuses.
+	cmd.Env = []string{marker + "=" + t.Name(), "HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH"), seatcred.SopsEnv + "=" + os.Args[0], "TMPDIR=" + t.TempDir()}
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "the hermetic child failed:\n%s", out)
 	return false
