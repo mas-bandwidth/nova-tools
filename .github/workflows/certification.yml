@@ -308,6 +308,14 @@ jobs:
         # This job is the hosted full suite on `ubuntu-latest` and `macos-latest`. The controls
         # spawn redis-server; they do not dial a bench. Finishes (or waits on) the background
         # install started earlier in the job.
+        # The one exemption: a shard whose package line is exactly one package under
+        # fleet/toolchainapply/ (each is heavy, so alone) does not wait. No redis package is in
+        # those packages' test dependencies, and the wait was 36 s of the ubuntu drift shard's
+        # setup on run 38280521819, which then crossed the two-minute cap with the package
+        # green at 50 s. Two or more packages, or any other package, waits as before. The
+        # background install still runs. internal/ci TestCertificationWaitsForRedisUnlessToolchainApplyAlone
+        # holds the condition to this exact text and the exemption to those packages' deps.
+        if: "!(startsWith(env.HOSTED_PKGS, 'github.com/mas-bandwidth/nova-tools/fleet/toolchainapply/') && !contains(env.HOSTED_PKGS, ' github.com/'))"
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
