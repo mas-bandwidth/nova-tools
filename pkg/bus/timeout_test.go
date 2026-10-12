@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -15,28 +14,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stalled is a store that accepts every connection and never answers: an
-// in-process pipe, no port. words counts the commands named by word that
-// were written to it (SPEC-BUS.md, the deadlines).
+// stalled is a store that answers the connection handshake and then never
+// answers a command: every read after the handshake returns a timeout at once.
+// The test drives the stall, never the wall clock, so the deadline it asserts
+// is the one the code names and not the runner's load (SPEC-BUS.md, the
+// deadlines). words counts the commands named by word that were written to it.
 type stalled struct {
 	dials atomic.Int32
 	words map[string]*atomic.Int32
 }
 
-// counting counts the commands as the client writes them, before the write
-// returns, so a test reads the count without waiting on the server's side.
-type counting struct {
-	net.Conn
-	s *stalled
+// stalledTimeout is the store's answer to a command it never reads: a timeout,
+// the shape a real store's read deadline takes.
+type stalledTimeout struct{}
+
+func (stalledTimeout) Error() string   { return "i/o timeout" }
+func (stalledTimeout) Timeout() bool   { return true }
+func (stalledTimeout) Temporary() bool { return true }
+
+// stalledAddr is the stalled store's address; nothing is dialled at it.
+type stalledAddr struct{}
+
+func (stalledAddr) Network() string { return "stalled" }
+func (stalledAddr) String() string  { return "bus.test:6379" }
+
+// stalledConn is the client's half of the stalled store. Write counts the
+// commands as the client writes them, before the write returns, so a test
+// reads the count without waiting on the store's side. The first Read answers
+// the handshake (go-redis falls back to RESP2 on the refusal); every read
+// after it is the stall, and it never touches the wall clock, which is what
+// makes the retry count deterministic.
+type stalledConn struct {
+	s         *stalled
+	handshake bool
 }
 
-func (c counting) Write(p []byte) (int, error) {
+func (c *stalledConn) Write(p []byte) (int, error) {
 	lower := bytes.ToLower(p) // go-redis writes the command names in lower case
 	for w, k := range c.s.words {
 		k.Add(int32(bytes.Count(lower, bytes.ToLower([]byte(w)))))
 	}
-	return c.Conn.Write(p)
+	return len(p), nil
 }
+
+func (c *stalledConn) Read(p []byte) (int, error) {
+	if !c.handshake {
+		c.handshake = true
+		return copy(p, "-ERR unknown command 'hello'\r\n"), nil
+	}
+	return 0, stalledTimeout{}
+}
+
+func (c *stalledConn) Close() error                     { return nil }
+func (c *stalledConn) LocalAddr() net.Addr              { return stalledAddr{} }
+func (c *stalledConn) RemoteAddr() net.Addr             { return stalledAddr{} }
+func (c *stalledConn) SetDeadline(time.Time) error      { return nil }
+func (c *stalledConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *stalledConn) SetWriteDeadline(time.Time) error { return nil }
 
 func newStalled(t *testing.T, words ...string) (*stalled, *redis.Client) {
 	t.Helper()
@@ -49,17 +83,7 @@ func newStalled(t *testing.T, words ...string) (*stalled, *redis.Client) {
 		Protocol: 2,
 		Dialer: func(context.Context, string, string) (net.Conn, error) {
 			s.dials.Add(1)
-			client, server := net.Pipe()
-			go func() {
-				defer func() { _ = server.Close() }() // ignored: a test server closing at the end of the test
-				// The handshake is answered (go-redis falls back to RESP2 on
-				// the refusal); every command after it is read and never
-				// answered. ignored: the stall discards what it reads.
-				_, _ = server.Read(make([]byte, 512))
-				_, _ = server.Write([]byte("-ERR unknown command 'hello'\r\n"))
-				_, _ = io.Copy(io.Discard, server)
-			}()
-			return counting{Conn: client, s: s}, nil
+			return &stalledConn{s: s}, nil
 		},
 		ContextTimeoutEnabled: true,
 		MaxRetries:            -1,
