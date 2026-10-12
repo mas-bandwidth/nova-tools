@@ -120,7 +120,6 @@ pkg/secrets	0.7	@run37411066588	self-hosted
 internal/selftalk	0.0	@run37411066588	self-hosted
 internal/shippedsmoke	0.0	@local	-
 pkg/sprintwire	0.2	@local	-
-pkg/subproc	0.6	@local	-
 pkg/swarm	5.1	@run37518625834	self-hosted
 internal/tablemodel	0.3	@local	-
 pkg/testbin	0.0	@run37411066588	self-hosted
