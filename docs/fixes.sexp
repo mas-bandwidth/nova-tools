@@ -72,10 +72,14 @@
    (release "v1.2.16" :status "planned"
     :text "Every TLA+ model checked against the code."))
  :items
- ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.15" :status "planned"
+  ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.15" :status "planned"
    :title "Certification on dev never cancels on later pushes"
    :text "Each pushed sha gets its own certification run to completion. Certification triggers on push to dev and release/** and on workflow_dispatch."
    :origin "the owner, 2026-10-12")
+  (fix "the-cut-sets-aside-a-certification-suite-a-later-push-cancelled" :release "v1.2.15" :status "planned"
+   :title "The cut sets aside a cancelled suite superseded by a later green one"
+   :text "A cut refuses only on evidence the commit is red. A whole cancelled suite at the same sha is set aside when a later green suite of the same workflow path covers the same job names, matrix legs included, and its workflow run concluded cancelled; the set-aside runs are named ci-set-aside=<run id>:superseded-by=<run id> and written into the tag annotation and the CHANGELOG section."
+   :origin "the v1.2.14 cut, 2026-10-12")
   (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."

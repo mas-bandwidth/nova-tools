@@ -120,19 +120,26 @@ func green(runs []CheckRun) error {
 
 // sourceChecks excludes only a cancelled publication of an existing older
 // release tag (cmd/nova-update/README.md, release cut; docs/SPEC-RELEASE.md
-// section 19). All other checks, including unknown provenance, remain evidence
-// the ordinary CI gate must judge. It returns the set-aside runs too, so the
-// cut's record can name what it ignored and why.
-func sourceChecks(runs []CheckRun, tags []string, version string) (kept, setAside []CheckRun) {
+// section 19), and a whole cancelled suite superseded by a later green suite of
+// the same workflow path. All other checks, including unknown provenance,
+// remain evidence the ordinary CI gate must judge. It returns the set-aside
+// runs too, so the cut's record can name what it ignored and why.
+func sourceChecks(runs []checkRun, tags []string, version string) (kept, setAside []checkRun) {
 	older := map[string]bool{}
 	for _, tag := range tags {
 		if ValidVersion(tag) == nil && semver.IsValid(tag) && semver.IsValid(version) && semver.Compare(tag, version) < 0 {
 			older[tag] = true
 		}
 	}
-	kept = make([]CheckRun, 0, len(runs))
-	for _, r := range runs {
+	aside := supersedingSuites(runs)
+	kept = make([]checkRun, 0, len(runs))
+	for i, r := range runs {
 		if r.Status == "completed" && r.Conclusion == "cancelled" && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push" && r.TagPush && older[r.HeadBranch] {
+			setAside = append(setAside, r)
+			continue
+		}
+		if by, ok := aside[i]; ok {
+			r.SupersededBy = by
 			setAside = append(setAside, r)
 			continue
 		}
@@ -141,10 +148,94 @@ func sourceChecks(runs []CheckRun, tags []string, version string) (kept, setAsid
 	return kept, setAside
 }
 
-// ciSetAside names the release-workflow runs a cut set aside, each as its run
-// id and the older tag it published, for the RELEASE CUT line's ci-set-aside
-// field (cmd/nova-update/README.md, release cut).
-func ciSetAside(runs []CheckRun) string {
+// supersedingSuites finds every run that belongs to a cancelled suite S with a
+// later green suite T of the same workflow path covering the same job names,
+// and answers that run's index mapped to T's workflow run ID (the superseding
+// run). S qualifies only when every run in it is completed and the workflow
+// run's own conclusion is cancelled: an aggregate job such as certification-ok
+// that reports failure only because its needs were cancelled is part of the
+// cancelled suite, told apart by the workflow run's conclusion rather than the
+// job's. T qualifies only when every run in it is completed with a success,
+// skipped or neutral conclusion, it completed later than S, and it has a run
+// for every job name S has, matrix legs included (docs/SPEC-RELEASE.md section
+// 19).
+func supersedingSuites(runs []checkRun) map[int]int64 {
+	bySuite := map[int64][]int{}
+	for i := range runs {
+		if runs[i].SuiteID > 0 {
+			bySuite[runs[i].SuiteID] = append(bySuite[runs[i].SuiteID], i)
+		}
+	}
+	type suite struct {
+		path       string
+		updated    time.Time
+		runID      int64
+		names      map[string]bool
+		completed  bool
+		allGreen   bool
+		cancelled  bool
+		supersedes int64
+	}
+	infos := make(map[int64]*suite, len(bySuite))
+	for id, indexes := range bySuite {
+		s := &suite{names: map[string]bool{}, completed: true, allGreen: true}
+		// Every run in a suite carries the same workflow provenance; read the
+		// suite's conclusion and update time from the first run's copy.
+		first := runs[indexes[0]]
+		s.path, s.updated, s.runID = first.WorkflowPath, first.UpdatedAt, first.ID
+		s.cancelled = first.WorkflowConclusion == "cancelled"
+		for _, i := range indexes {
+			r := runs[i]
+			s.names[r.Name] = true
+			if r.Status != "completed" {
+				s.completed = false
+			}
+			if r.Conclusion != "success" && r.Conclusion != "skipped" && r.Conclusion != "neutral" {
+				s.allGreen = false
+			}
+		}
+		s.cancelled = s.cancelled && s.completed && s.runID != 0
+		infos[id] = s
+	}
+	for id, s := range infos {
+		if !s.cancelled {
+			continue
+		}
+		for tid, t := range infos {
+			if tid == id || !t.allGreen || t.path == "" || t.path != s.path || !t.updated.After(s.updated) || !covers(t.names, s.names) {
+				continue
+			}
+			s.supersedes = t.runID
+			break
+		}
+	}
+	out := map[int]int64{}
+	for id, s := range infos {
+		if s.cancelled && s.supersedes != 0 {
+			for _, i := range bySuite[id] {
+				out[i] = s.supersedes
+			}
+		}
+	}
+	return out
+}
+
+// covers reports whether every job name in s appears in t. Matrix legs are part
+// of the job name, so a missing matrix leg is a missing job name.
+func covers(t, s map[string]bool) bool {
+	for name := range s {
+		if !t[name] {
+			return false
+		}
+	}
+	return true
+}
+
+// ciSetAside names the runs a cut set aside, each as its run id and the reason:
+// the older tag it published, or the later green suite's run id that superseded
+// it, for the RELEASE CUT line's ci-set-aside field (cmd/nova-update/README.md,
+// release cut).
+func ciSetAside(runs []checkRun) string {
 	if len(runs) == 0 {
 		return ""
 	}
@@ -153,9 +244,61 @@ func ciSetAside(runs []CheckRun) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, "%d@%s", r.ID, r.HeadBranch)
+		if r.SupersededBy != 0 {
+			fmt.Fprintf(&b, "%d:superseded-by=%d", r.ID, r.SupersededBy)
+		} else {
+			fmt.Fprintf(&b, "%d@%s", r.ID, r.HeadBranch)
+		}
 	}
 	return b.String()
+}
+
+// CIAsidePrefix opens the line that names what a cut set aside, written into
+// the tag annotation and the CHANGELOG section so the record of what was
+// ignored travels with the release (docs/SPEC-RELEASE.md section 19).
+const CIAsidePrefix = "CI set aside: "
+
+// ciAsideRecord is the set-aside record as the tag annotation and the CHANGELOG
+// section carry it, and the empty string when nothing was set aside. It names
+// each set-aside run and the reason it was set aside, in the same shape the cut
+// line prints.
+func ciAsideRecord(runs []checkRun) string {
+	if len(runs) == 0 {
+		return ""
+	}
+	return CIAsidePrefix + ciSetAside(runs) + "\n"
+}
+
+// readCheckRuns reads the check runs with their suite provenance where the forge
+// offers it; a forge that only satisfies CheckRuns is read without suites, and
+// the superseding gate then has nothing to judge (docs/SPEC-RELEASE.md section
+// 19). The richer read is behind a type assertion rather than the Forge
+// interface, so the public seam keeps its one shape.
+func readCheckRuns(ctx context.Context, forge Forge, repo, sha string) ([]checkRun, error) {
+	if f, ok := forge.(interface {
+		checkRunsWithSuites(context.Context, string, string) ([]checkRun, error)
+	}); ok {
+		return f.checkRunsWithSuites(ctx, repo, sha)
+	}
+	runs, err := forge.CheckRuns(ctx, repo, sha)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]checkRun, len(runs))
+	for i := range runs {
+		out[i] = checkRun{CheckRun: runs[i]}
+	}
+	return out, nil
+}
+
+// asCheckRuns is a checkRun slice as the plain CheckRun slice the green gate and
+// its waiver read: the suite fields are the cut's own and do not reach green.
+func asCheckRuns(runs []checkRun) []CheckRun {
+	out := make([]CheckRun, len(runs))
+	for i := range runs {
+		out[i] = runs[i].CheckRun
+	}
+	return out
 }
 
 // ciNotGreen reads the runs once and answers the checks green() would refuse
@@ -631,7 +774,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read %s of %s: %w (check --repo and --from, and that gh is authenticated)", o.from, o.repo, err))
 	}
 	progress(errs, "reading the check runs on %s", sha)
-	runs, err := forge.CheckRuns(ctx, o.repo, sha)
+	runs, err := readCheckRuns(ctx, forge, o.repo, sha)
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the checks on %s: %w (ask again when the forge answers)", sha, err))
 	}
@@ -640,7 +783,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the tags of %s: %w (ask again when the forge answers)", o.repo, err))
 	}
-	var setAside []CheckRun
+	var setAside []checkRun
 	runs, setAside = sourceChecks(runs, tags, o.version)
 	// THE GREEN GATE, AND THE ONE WAY PAST IT. A waiver with an empty value is
 	// not a waiver, and a waiver of a green commit is a lie in the tag's
@@ -651,13 +794,14 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "CUT", refuse(`name who waives the CI and when: --waive-ci "<who, when>"`,
 			"--waive-ci wants a person and a date, and was given an empty value"))
 	}
+	plain := asCheckRuns(runs)
 	ciWaive := ""
-	if err := green(runs); err != nil {
+	if err := green(plain); err != nil {
 		if waive == "" {
 			return refusal(errs, "CUT", err)
 		}
-		ciWaive = ciWaiver(runs, waive)
-		fmt.Fprintf(out, "RELEASE CUT CI WAIVED waived=%s checks=%s\n", field(waive), field(ciWaivedChecks(runs)))
+		ciWaive = ciWaiver(plain, waive)
+		fmt.Fprintf(out, "RELEASE CUT CI WAIVED waived=%s checks=%s\n", field(waive), field(ciWaivedChecks(plain)))
 	} else if waive != "" {
 		if len(setAside) > 0 {
 			return refusal(errs, "CUT", refuse("cut without it; nothing here needs waiving",
@@ -665,6 +809,13 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		return refusal(errs, "CUT", refuse("cut without it; nothing here needs waiving",
 			"--waive-ci waives a red or missing CI, and every check on %s is green", sha))
+	}
+	// The set-aside record travels with the release beside the waiver: a person
+	// asking in six months why a cancelled suite did not block the cut reads the
+	// answer in the tag and the changelog (docs/SPEC-RELEASE.md section 19).
+	ciRecord := ciWaive
+	if aside := ciAsideRecord(setAside); aside != "" {
+		ciRecord += aside
 	}
 	// THE PROMISED RECOVERY JOURNEYS, once the revision is known: evidence is
 	// proof about one revision, and this is the one the tag will name.
@@ -726,7 +877,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
 		}
 	}
-	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs, ciWaive)
+	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs, ciRecord)
 	aside := ""
 	if len(setAside) > 0 {
 		aside = " ci-set-aside=" + field(ciSetAside(setAside))
@@ -741,7 +892,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "CUT", fmt.Errorf("cannot write %s: %w (name a writable --changelog)", o.changelog, err))
 	}
 	progress(errs, "tagging %s at %s, annotated with the digest adopt will check", o.version, sha)
-	if err := forge.Tag(ctx, o.repo, o.version, sha, Annotation(o.version, sha, sumsDigest, ciWaive)); err != nil {
+	if err := forge.Tag(ctx, o.repo, o.version, sha, Annotation(o.version, sha, sumsDigest, ciRecord)); err != nil {
 		// The changelog is already written; say so, because the remedy is to
 		// tag by hand or to cut again, not to wonder which half happened.
 		fmt.Fprintf(errs, "CUT FAILED version=%s sha=%s: %s (the changelog section is written at %s; create the tag by hand or delete the section and cut again)\n",
