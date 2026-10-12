@@ -107,6 +107,7 @@ var tools = []program{
 	novaTool("nova-secrets"),
 	novaTool("nova-redis"),
 	novaTool("nova-bus"),
+	novaTool(HookBinary),
 }
 
 // path is the program's path on PATH, or its bare name when it is not there

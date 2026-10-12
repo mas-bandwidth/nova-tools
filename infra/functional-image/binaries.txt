@@ -58,6 +58,7 @@ taskkill	absent	Windows only; a Linux container has no Windows tasks
 top	absent	macOS only; the process tests that read it are darwin tests
 
 [unscanned]
+nova-hook	absent	the functional tier runs no verb that execs nova-hook by name; cmd/nova-hook drives its own tests against a faked hook store, and an adopted machine or seat carries the released binary
 initdb	apt	postgresql-16
 postgres	apt	postgresql-16
 redis-cli	source	redis-build

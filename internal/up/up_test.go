@@ -294,6 +294,8 @@ func TestUpLocalStopsOnWhatItCannotProvide(t *testing.T) {
 			"UP binaries missing sops,nova-bus not on PATH or not answering its version; install: brew install sops && go install "},
 		{"a program on linux", "linux", []string{"redis-server"},
 			"UP binaries missing redis-server not on PATH or not answering its version; install: sudo apt-get install -y redis-server"},
+		{"the way in, on darwin", "darwin", []string{"nova-hook"},
+			"UP binaries missing nova-hook not on PATH or not answering its version; install: go install "},
 		{"an unsupported system", "windows", nil,
 			"UP platform missing windows is not supported; nova-up --local runs on darwin or linux (on windows: wsl --install, then run it inside)"},
 	} {
@@ -304,8 +306,10 @@ func TestUpLocalStopsOnWhatItCannotProvide(t *testing.T) {
 			assert.Equal(t, 1, code, out+errs)
 			assert.Contains(t, errs, "\n"+c.line)
 			assert.Contains(t, errs, "nothing was applied")
-			if slices.Contains(c.absent, "nova-bus") {
-				assert.Regexp(t, `go install (\S+/cmd/nova-bus@latest|\./cmd/nova-bus )`, errs, "a tool of this repository installs from its cmd/")
+			for _, tool := range c.absent {
+				if tool == "nova-bus" || tool == "nova-hook" {
+					assert.Regexp(t, `go install (\S+/cmd/`+tool+`@latest|\./cmd/`+tool+` )`, errs, "a tool of this repository installs from its cmd/")
+				}
 			}
 			assert.Empty(t, tree(t, f.home), "nothing half-applied")
 			assert.Empty(t, f.writes())

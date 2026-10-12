@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// HookBinary is the one way in: nova-hook, the binary every machine and every
+// seat has after an adopt. The binaries step requires it (layout.go) and
+// nova-doctor fails without it (internal/doctor, "self").
+const HookBinary = "nova-hook"
+
 // The binaries step: every program the later steps run is on PATH and
 // answers its version. nova-up installs nothing: a program that is not
 // there is missing, with the command that installs it, and the run stops

@@ -1078,6 +1078,18 @@
      NoStream, ReArm, StaleEpoch, Takeover). Adopt in order: install nova-hook, hook each friend and the seat
      in, then upgrade the gated tools, so the release does not lock anyone out."
     :origin "PR #5617, branch fix/bus-and-friend-refuse-until-hooked")
+  (fix "the-adopt-installs-nova-hook-everywhere" :release "v1.2.18" :status "planned"
+   :title "The adopt installs nova-hook everywhere"
+   :text "nova-hook is a binary every machine and every seat has after an adopt, like nova-bus and
+    nova-sprint, because it is the one way in: no bus, friend or sprint tool runs until the identity is
+    hooked. The binaries step of nova-up requires it on PATH (its missing line names the `cmd/nova-hook`
+    install), and `nova-doctor`'s self check fails, never warns, when nova-hook is absent from PATH or
+    answers a version other than the release the other nova tools report, naming the `nova-update apply
+    --file <manifest> nova-hook --version <release>` command. The functional image's binaries list
+    carries the row with the reason the tier runs no hook command by name."
+   :origin "the owner, 2026-10-12 ~12:25Z: nova-hook is a module backed by Redis on tailscale, the
+    client/server version of presence, and the one way in; the coordinator's machine had no nova-hook at
+    all that morning, so the hook could not be run (card the-adopt-installs-nova-hook-everywhere.w1)")
   (fix "every-bench-carries-every-mirror-a-card-can-name" :release "v1.2.14" :status "in-progress"
    :title "Every bench carries every mirror a card can name"
    :text "The mirror set is a converged property of the fleet: `nova-swarm mirror` unions the running
