@@ -163,6 +163,16 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 						assert.Equal(t, TokenPoll, d)
 						return ticks, func() {}
 					}}
+				// The clock ticks a bounded number of times, tokenCapTicks: each tick is one
+				// export read, and the lane takes them as fast as it reads, so an unbounded
+				// clock ticks as often as the lane can read before the harness's exit is seen.
+				// The over-the-cap cases reach their cap at the third tick. Under the cap each
+				// read grows the session by 200 tokens, and the cap is 5001 reads away: an
+				// unbounded clock reached it on a loaded hosted runner (run 38268825121,
+				// macos-latest shard 16, 25 packages a shard after the deal change) while the
+				// child's exit was still being collected, and the test held the card at a cap
+				// it never meant to reach.
+				const tokenCapTicks = 8
 				go func() {
 					<-started // the clock ticks once the turn's harness runs
 					if fd, err := syscall.Open(ready, syscall.O_RDONLY, 0); err == nil {
@@ -170,12 +180,14 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 						// the fd stays open there until it is stopped or finishes
 						_ = syscall.Close(fd)
 					}
-					for at := time.Unix(0, 0); ; at = at.Add(TokenPoll) {
+					at := time.Unix(0, 0)
+					for range tokenCapTicks {
 						select {
 						case ticks <- at:
 						case <-stop:
 							return
 						}
+						at = at.Add(TokenPoll)
 					}
 				}()
 				lt, err = p.DeliverTo(ctx, "ses_1", CardText(LaneJob{Card: c}, 1, 1, "nova-bus send ...", "", "", "", nil))

@@ -1041,7 +1041,12 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 // coordinator was told: the harness hits its limit, the friend is down until the reset, a wake turn
 // brings it back.
 func holdAHarnessAtItsLimit(t *testing.T, extra ...string) string {
-	t.Parallel()
+	t.Helper()
+	return holdAHarnessAtItsLimitWithRow(t, "", extra...)
+}
+
+func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...string) string {
+	t.Helper()
 	r := newRig(t, "ada", "bob")
 	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
 	require.NoError(t, err)
@@ -1082,7 +1087,11 @@ func holdAHarnessAtItsLimit(t *testing.T, extra ...string) string {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
+		answer := "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1"
+		if rowPronouns != "" {
+			answer += " row_pronouns=" + rowPronouns
+		}
+		return answer, nil
 	}
 	type downBeat struct {
 		at, until time.Time
@@ -1187,12 +1196,14 @@ func holdAHarnessAtItsLimit(t *testing.T, extra ...string) string {
 
 // The default (the row names none) is they/them.
 func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
+	t.Parallel()
 	all := holdAHarnessAtItsLimit(t)
 	assert.Contains(t, all, "friend bob down: their harness is at its limit until ", "the coordinator is told the friend is down")
 }
 
 // --pronouns names the friend's pronouns and the coordinator is told in them (made-up friend bob).
 func TestRunTellsTheCoordinatorOfALimitInTheFriendsPronouns(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ flag, want string }{
 		{"she/her", "friend bob down: her harness is at its limit until "},
 		{"he/him", "friend bob down: his harness is at its limit until "},
@@ -1200,6 +1211,23 @@ func TestRunTellsTheCoordinatorOfALimitInTheFriendsPronouns(t *testing.T) {
 	} {
 		t.Run(tc.flag, func(t *testing.T) {
 			assert.Contains(t, holdAHarnessAtItsLimit(t, "--pronouns", tc.flag), tc.want)
+		})
+	}
+}
+
+// The synced row overrides the startup flag through the actual beat callback and
+// changes the coordinator's report, without a daemon restart or a store read.
+func TestRunUsesTheSyncedRowsPronounsForItsLimitReport(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ row, flag, possessive string }{
+		{"she/her", "he/him", "her"},
+		{"he/him", "they/them", "his"},
+		{"they/them", "she/her", "their"},
+	} {
+		t.Run(tc.row, func(t *testing.T) {
+			t.Parallel()
+			all := holdAHarnessAtItsLimitWithRow(t, tc.row, "--pronouns", tc.flag)
+			assert.Contains(t, all, "friend bob down: "+tc.possessive+" harness is at its limit until ")
 		})
 	}
 }

@@ -130,6 +130,7 @@ var secretOpeners = map[string]any{
 	"pkg/friend.ParseLimit":                       friend.ParseLimit,
 	"pkg/friend.ParsePing":                        friend.ParsePing,
 	"pkg/friend.ParsePong":                        friend.ParsePong,
+	"pkg/friend.ParsePronouns":                    friend.ParsePronouns,
 	"pkg/friend.ParseProfile":                     friend.ParseProfile,
 	"pkg/friend.ParseMachine":                     friend.ParseMachine,
 	"pkg/friend.ParseReadQueue":                   friend.ParseReadQueue,

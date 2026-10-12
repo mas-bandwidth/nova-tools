@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // personalPronoun is a pronoun for a person. A friend's pronouns are the
@@ -41,21 +44,18 @@ var pronounGuardAllowed = map[string][]string{
 // pronoun: a text about a friend says {their} and the like through Pronouns.Say,
 // or names the friend, or says "the friend's".
 func TestNoStringLiteralCallsAFriendHerOrHim(t *testing.T) {
+	t.Parallel()
 	var found []string
 	fset := token.NewFileSet()
 	for _, root := range pronounGuardRoots {
 		files, err := filepath.Glob(filepath.Join(root, "*.go"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, file := range files {
 			if strings.HasSuffix(file, "_test.go") {
 				continue
 			}
 			f, err := parser.ParseFile(fset, file, nil, 0)
-			if err != nil {
-				t.Fatalf("parse %s: %v", file, err)
-			}
+			require.NoError(t, err, "parse %s", file)
 			allowed := pronounGuardAllowed[filepath.Base(file)]
 			ast.Inspect(f, func(n ast.Node) bool {
 				lit, ok := n.(*ast.BasicLit)
@@ -80,7 +80,5 @@ func TestNoStringLiteralCallsAFriendHerOrHim(t *testing.T) {
 		}
 	}
 	sort.Strings(found)
-	if len(found) > 0 {
-		t.Fatalf("%d string literal(s) carry a personal pronoun; say {their}/{them}/{they} through Pronouns.Say (pkg/friend/pronouns.go), name the friend, or say \"the friend's\":\n%s", len(found), strings.Join(found, "\n"))
-	}
+	assert.Empty(t, found, "%d string literal(s) carry a personal pronoun; say {their}/{them}/{they} through Pronouns.Say (pkg/friend/pronouns.go), name the friend, or say \"the friend's\":\n%s", len(found), strings.Join(found, "\n"))
 }

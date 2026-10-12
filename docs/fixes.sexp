@@ -84,7 +84,7 @@
     :title "A friend's texts say the friend's own pronouns"
     :text "nova-friend and nova-config called every friend her and she (found by the owner, 2026-10-11). A
      friend row now carries a pronouns setting, she/her, he/him or they/them, they/them when not stated
-     and never it (nova-config friend add/set --pronouns, migration 0037, the desired hash field
+     and never it (nova-config friend add/set --pronouns, migration 0038, the desired hash field
      pronouns), and the daemon learns it from nova-friend run/install --pronouns (written into the
      launchd agent) or the beat's row_pronouns=. Every text the daemon writes about the friend, the
      limit, rate, funds, spend-cap, fault and lane-fault judgments to the seat and the records of the

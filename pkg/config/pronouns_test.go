@@ -30,7 +30,7 @@ func TestAFriendRowNamesItsPronounsOneOfThreeAndGoesByTheyThemWhenNone(t *testin
 	row, err := friend.NewRow("pat", map[string]string{"slots": "8", "tiers": "flash"})
 	require.NoError(t, err)
 	assert.Equal(t, "they/them", row.Fields["pronouns"], "a row that names none goes by they/them")
-	assert.Equal(t, "they/them", FriendPronouns(Row{Name: "pat", Fields: map[string]string{}}), "a stored row from before migration 0037 has none: they/them")
+	assert.Equal(t, "they/them", FriendPronouns(Row{Name: "pat", Fields: map[string]string{}}), "a stored row from before migration 0038 has none: they/them")
 }
 
 func TestAFriendRowRefusesPronounsThatAreNotOneOfTheThree(t *testing.T) {

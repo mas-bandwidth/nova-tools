@@ -17,6 +17,7 @@ import (
 // TestSayRendersEachPronounSetAndTheDefault holds the one helper: the three sets
 // a row may name, and the set a row that names none (the zero value) goes by.
 func TestSayRendersEachPronounSetAndTheDefault(t *testing.T) {
+	t.Parallel()
 	const text = "{They}/{they}/{them}/{their}/{theirs}/{themself}; {Their} lane, {Them}, {Theirs}, {Themself}"
 	for _, tc := range []struct {
 		name string
@@ -39,6 +40,7 @@ func TestSayRendersEachPronounSetAndTheDefault(t *testing.T) {
 }
 
 func TestParsePronounsReadsTheThreeSetsAndNeverGuesses(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in   string
 		want Pronouns
@@ -60,6 +62,7 @@ func TestParsePronounsReadsTheThreeSetsAndNeverGuesses(t *testing.T) {
 }
 
 func TestTheBeatsAnswerNamesTheRowsPronouns(t *testing.T) {
+	t.Parallel()
 	p, ok := RowPronouns("BEAT OK row_mode=one-shot row_width=2 row_pronouns=he/him row_config_dir=/x")
 	assert.True(t, ok)
 	assert.Equal(t, HeHim, p)
@@ -75,6 +78,7 @@ func TestTheBeatsAnswerNamesTheRowsPronouns(t *testing.T) {
 // TestPronounSetsMatchConfig holds the two lists equal: the sets nova-config
 // accepts on a friend row and the sets this package renders.
 func TestPronounSetsMatchConfig(t *testing.T) {
+	t.Parallel()
 	var got []string
 	for _, p := range AllPronouns {
 		got = append(got, string(p))
@@ -85,6 +89,7 @@ func TestPronounSetsMatchConfig(t *testing.T) {
 }
 
 func TestAPronounsRefIsTheDefaultUntilSetAndNilSafe(t *testing.T) {
+	t.Parallel()
 	var nilRef *PronounsRef
 	assert.Equal(t, TheyThem, nilRef.Get())
 	nilRef.Set(HeHim) // a nil ref sets nothing and does not panic
@@ -117,6 +122,7 @@ func wordsOf(s string) map[string]bool {
 // the text carries that set's words, never another set's, and no
 // placeholder is left unsaid.
 func TestTheTextsAboutAFriendSayTheFriendsPronouns(t *testing.T) {
+	t.Parallel()
 	until := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
 	texts := map[string]func(p Pronouns) (string, string){
 		"limit down":   func(p Pronouns) (string, string) { return LimitDownText("pat", p, until, "usage limit") },
@@ -165,6 +171,7 @@ func TestTheTextsAboutAFriendSayTheFriendsPronouns(t *testing.T) {
 }
 
 func TestADaemonSaysItsPronounsThroughTheOneHelper(t *testing.T) {
+	t.Parallel()
 	d := &Daemon{Friend: "pat"}
 	assert.Equal(t, "their row", d.say("{their} row"), "no pronouns held: they/them")
 	d.Pro = NewPronounsRef(HeHim)
@@ -174,6 +181,7 @@ func TestADaemonSaysItsPronounsThroughTheOneHelper(t *testing.T) {
 }
 
 func TestTheLaunchdAgentCarriesThePronounsOnlyWhenSet(t *testing.T) {
+	t.Parallel()
 	a := Agent{Friend: "pat", Harness: "claude", Dir: "/d"}
 	assert.NotContains(t, strings.Join(a.Args(), " "), "--pronouns")
 	a.Pronouns = "he/him"
@@ -196,6 +204,7 @@ func indexOf(s []string, v string) int {
 // each pronoun set on the daemon: the line it sends the seat says that set's
 // possessive, and the default (no pronouns held) says their.
 func TestTheSeatIsToldOnTheBusInTheFriendsOwnPronouns(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		pro  *PronounsRef
