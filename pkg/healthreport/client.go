@@ -11,9 +11,9 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 )
+
+var tailnet = netip.MustParsePrefix("100.64.0.0/10")
 
 // Client reports immutable events to its enrolled TLS audience. It owns no
 // source queue, retry loop, acceptance ledger or alarm-delivery state.
@@ -118,7 +118,7 @@ func privateIPs(ips []netip.Addr) bool {
 	}
 	for _, ip := range ips {
 		ip = ip.Unmap()
-		if !ip.IsLoopback() && !bus.Tailnet.Contains(ip) {
+		if !ip.IsLoopback() && !tailnet.Contains(ip) {
 			return false
 		}
 	}

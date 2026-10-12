@@ -19,15 +19,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 )
 
 const (
 	Path       = "/health/v1/bus-fault"
 	MaxEvent   = 4096
 	MaxReceipt = 512
+	// Wire classes match bus send alarms; they grant no store privilege.
+	ClassAuth       = "auth"
+	ClassConnection = "connection"
 )
+
+var grantName = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 
 var word = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
@@ -53,7 +56,7 @@ func (e Enrollment) Validate() error {
 	if e.Version != 1 || e.Epoch == 0 || !word.MatchString(e.ID) {
 		return errors.New("invalid health capability version, identifier or epoch")
 	}
-	if bus.CheckName(e.Friend) != "" || bus.CheckName(e.Coordinator) != "" {
+	if !grantName.MatchString(e.Friend) || !grantName.MatchString(e.Coordinator) {
 		return errors.New("invalid health capability friend or coordinator")
 	}
 	if !plain(e.User, 128) || !envName.MatchString(e.SecretEnv) {
@@ -127,7 +130,7 @@ func (v Event) Validate(e Enrollment) error {
 	if v.Friend != e.Friend || v.Store != e.Store || v.User != e.User || v.Coordinator != e.Coordinator || v.Audience != e.Audience {
 		return errors.New("health event does not match its enrollment")
 	}
-	if v.Sequence == 0 || !word.MatchString(v.Episode) || v.FailedAt.IsZero() || (v.Class != bus.AlarmAuth && v.Class != bus.AlarmConnection) || v.Reason == "" || !plain(v.Reason, 200) {
+	if v.Sequence == 0 || !word.MatchString(v.Episode) || v.FailedAt.IsZero() || (v.Class != ClassAuth && v.Class != ClassConnection) || v.Reason == "" || !plain(v.Reason, 200) {
 		return errors.New("invalid health fault observation")
 	}
 	switch v.Transition {

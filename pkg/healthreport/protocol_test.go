@@ -170,4 +170,33 @@ func TestEveryResolvedAddressMustRemainPrivate(t *testing.T) {
 	assert.False(t, privateIPs([]netip.Addr{local, public}), "mixed DNS must be refused before the first dial")
 	assert.False(t, privateIPs(nil))
 	assert.False(t, privateIPs([]netip.Addr{{}}))
+	assert.False(t, privateIPs([]netip.Addr{netip.AddrFrom4([4]byte{100, 63, 255, 255})}))
+	assert.True(t, privateIPs([]netip.Addr{netip.AddrFrom4([4]byte{100, 127, 255, 255})}))
+	assert.False(t, privateIPs([]netip.Addr{netip.AddrFrom4([4]byte{100, 128, 0, 0})}))
+}
+
+func TestEnrollmentUsesCanonicalFriendNamesAndAlarmWireClasses(t *testing.T) {
+	t.Parallel()
+	e := enrolled("https://127.0.0.1:8443" + Path)
+	for _, row := range []struct {
+		name  string
+		valid bool
+	}{
+		{"bob-1", true}, {strings.Repeat("a", 64), true},
+		{"", false}, {"Bob", false}, {"friend.bob", false}, {"bob_one", false}, {strings.Repeat("a", 65), false},
+	} {
+		grant := e
+		grant.Friend = row.name
+		if row.valid {
+			assert.NoError(t, grant.Validate())
+		} else {
+			assert.Error(t, grant.Validate())
+		}
+	}
+	for _, class := range []string{"auth", "connection"} {
+		v := failed(e)
+		v.Class = class
+		_, err := ParseEvent(encoded(t, v), e)
+		require.NoError(t, err, "existing send-alarm class remains a valid wire observation")
+	}
 }
