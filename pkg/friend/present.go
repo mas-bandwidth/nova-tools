@@ -327,7 +327,7 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 		}
 	}
 	if !withTurn {
-		d.Record(line + d.say(" (one-shot: no batch session; the lanes hand {their} cards)"))
+		d.Record(line + d.say(" (one-shot: no batch session; the lanes hand {them} cards)"))
 		l.tellSuperseded(plan, backlog, reason, storeNow, now)
 		return
 	}

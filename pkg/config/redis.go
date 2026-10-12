@@ -473,7 +473,7 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	if writeKinds { // her optional KIND restriction, a plain field beside streams
 		pipe.HSet(ctx, "friend:"+f+":desired", "kinds", row.Fields["kinds"])
 	}
-	if writePronouns { // the pronouns the friend goes by, a plain field beside kinds; read by nova-friend install and run
+	if writePronouns { // the configured pronouns mirrored in the desired hash; sprint sync reads the config store and supplies row_pronouns on beats
 		pipe.HSet(ctx, "friend:"+f+":desired", "pronouns", row.Fields["pronouns"])
 	}
 	if writeRoles {

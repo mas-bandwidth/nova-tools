@@ -337,15 +337,31 @@ func TestAPresentCarriesTheNewestNoteAcrossPreviousRunPending(t *testing.T) {
 
 func TestAOneShotStartSupersedesTheNewestNoteToo(t *testing.T) {
 	t.Parallel()
-	r := presentRig(t)
-	r.send(t, "ada", "old note", "obsolete coordinator note\n")
-	r.d.m = Start(t0)
-	l := &loop{d: r.d, b: r.bus, ctx: context.Background(), presentDue: true,
-		inHand: map[string]bool{}, answered: map[string]bool{}, failed: map[string]int{}}
-	l.startPresent(t0, false)
-	r.streamEmpty(t)
-	assert.Empty(t, r.delivered)
-	assert.Contains(t, r.recordText(), "skipped 0 deals, 0 pings, 1 notes")
+	for _, tc := range []struct {
+		name   string
+		pro    *PronounsRef
+		object string
+	}{
+		{"she/her", NewPronounsRef(SheHer), "her"},
+		{"he/him", NewPronounsRef(HeHim), "him"},
+		{"they/them", NewPronounsRef(TheyThem), "them"},
+		{"default", nil, "them"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := presentRig(t)
+			r.d.Pro = tc.pro
+			r.send(t, "ada", "old note", "obsolete coordinator note\n")
+			r.d.m = Start(t0)
+			l := &loop{d: r.d, b: r.bus, ctx: context.Background(), presentDue: true,
+				inHand: map[string]bool{}, answered: map[string]bool{}, failed: map[string]int{}}
+			l.startPresent(t0, false)
+			r.streamEmpty(t)
+			assert.Empty(t, r.delivered)
+			assert.Contains(t, r.recordText(), "skipped 0 deals, 0 pings, 1 notes")
+			assert.Contains(t, r.recordText(), "the lanes hand "+tc.object+" cards")
+		})
+	}
 }
 
 func TestTheDaemonRefusesAReportWhoseCardAnotherFriendHolds(t *testing.T) {
