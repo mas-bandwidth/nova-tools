@@ -36,10 +36,10 @@
      red, and the doctor checks the running executable.")
    (release "v1.2.10" :status "shipped" :date "2026-10-11"
     :text "Cut from dev between sprint releases, paired with nova-sprint v1.2.10: the limited inception route behind the global rate budget, a draining member that says so on its beat, nova-friend acceptance --dry-run, and the queue and certification fixes.")
-   (release "v1.2.11" :status "planned" :date "2026-10-11"
+   (release "v1.2.11" :status "shipped" :date "2026-10-11"
     :text "Small bug fixes, one concern each, and no model change. They run as cards on v1.2.10 once it is
      adopted, so the sprint dogfoods the release it just cut.")
-   (release "v1.2.12" :status "planned" :date "2026-10-11"
+   (release "v1.2.12" :status "shipped" :date "2026-10-11"
     :text "Tests and models only, no product change. More unit and functional tests, and every TLA+ model
      checked against the code it claims to model (its state, actions and invariants) and run again with
      TLC on a bench; owed models and stale or timed-out records are made real. The new tests are written
@@ -47,7 +47,7 @@
      the same tests run unchanged against v1.3 and say whether it keeps the behaviour. TLC runs where the
      cards run first. A real defect a new test finds is written as a v1.2.14 card, never fixed inside a
      test card.")
-   (release "v1.2.13" :status "planned" :date "2026-10-11"
+   (release "v1.2.13" :status "shipped" :date "2026-10-11"
     :text "Contraction: fewer lines, no behaviour change, with v1.2.12's tests and checked models as the net
      under it. Passes in this order, one writer per package: remove dead and stale code; adopt the Go
      standard library or established packages where they replace hand-rolled code; run go fix (and gopls
@@ -61,43 +61,40 @@
      the nova-roadmap extraction and the brief boilerplate moving into the card contract. Measured as
      lines per repository and package, product against test, from a baseline taken before the first
      pass.")
-   (release "v1.2.14" :status "planned" :date "2026-10-11"
-    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
-   (release "v1.2.15" :status "planned"
-    :text "The next small product fixes, one concern each.")
-   (release "v1.2.17" :status "planned"
-    :text "The next small product fixes, one concern each: apply refuses an enabled route with no price, so no take is priced from an empty sheet.")
-   (release "v1.2.18" :status "planned"
-    :text "The next small fixes, one concern each.")
-   (release "v1.2.16" :status "planned"
-    :text "Every TLA+ model checked against the code."))
+   (release "v1.2.14" :status "in-progress" :date "2026-10-12"
+    :text "The next small fixes, one concern each, including the defects v1.2.12's tests find: everything
+     landed on dev after the v1.2.13 tag, whatever stream it came in on. The hook gate (every bus and friend
+     verb refuses until hooked in), the canary adopt, the member's side-by-side reports and the read it runs
+     again, the friend daemon's spend cap, lane faults and limit wording, the cut's handling of cancelled
+     runs, apply's refusal of an unpriced route, and the test, model and contraction work landed beside
+     them. This record is in-progress until the tag; the cut turns it shipped."))
  :items
-  ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.15" :status "planned"
+  ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.14" :status "shipped"
    :title "Certification on dev never cancels on later pushes"
    :text "Each pushed sha gets its own certification run to completion. Certification triggers on push to dev and release/** and on workflow_dispatch."
    :origin "the owner, 2026-10-12")
-  (fix "the-cut-sets-aside-a-certification-suite-a-later-push-cancelled" :release "v1.2.15" :status "planned"
+  (fix "the-cut-sets-aside-a-certification-suite-a-later-push-cancelled" :release "v1.2.14" :status "shipped"
    :title "The cut sets aside a cancelled suite superseded by a later green one"
    :text "A cut refuses only on evidence the commit is red. A whole cancelled suite at the same sha is set aside when a later green suite of the same workflow path covers the same job names, matrix legs included, and its workflow run concluded cancelled; the set-aside runs are named ci-set-aside=<run id>:superseded-by=<run id> and written into the tag annotation and the CHANGELOG section."
    :origin "the v1.2.14 cut, 2026-10-12")
-  (fix "nova-hook-prove-meets-the-onboarding-standard" :release "v1.2.14" :status "planned"
+  (fix "nova-hook-prove-meets-the-onboarding-standard" :release "v1.2.14" :status "shipped"
    :title "nova-hook prove and hook take --dry-run"
    :text "The onboarding standard holds every writing verb to a --dry-run that plans on one read and writes
     nothing: nova-hook prove and nova-hook hook now take it, proving the functional walk
     TestEveryCommandMeetsTheOnboardingStandard green. The dry run reads the record and prints what it would
     prove, or the plan it would take, and writes no proof, lease or record."
    :origin "the coordinator, 2026-10-12: the v1.2.14 release gate runs the functional tier, and prove was refused for taking no --dry-run")
-   (fix "the-seatcred-fallback-test-brings-its-own-sops" :release "v1.2.14" :status "planned"
+   (fix "the-seatcred-fallback-test-brings-its-own-sops" :release "v1.2.14" :status "shipped"
     :title "The seatcred fallback test brings its own sops"
     :text "TestPathsForFallsBackToTheFleetLayoutUnderHome names its own executable sops stand-in through
      NOVA_SECRETS_SOPS, so the test passes whether or not sops is installed on the machine that runs it.
      What it asserts about the store and key layout under HOME is unchanged."
     :origin "the coordinator, 2026-10-12: the v1.2.14 CI check failed pkg/seatcred's fleet-layout test with no sops on PATH on a runner that has none")
-   (fix "nova-friend-first-run-names-the-clear-faults-example" :release "v1.2.14" :status "planned"
+   (fix "the-nova-friend-first-run-test-names-the-clear-faults-example" :release "v1.2.14" :status "shipped"
     :title "The nova-friend first-run transcript names the lanes --clear-faults example"
     :text "The friend spend-cap work added the `nova-friend lanes --as bob --clear-faults` example to the usage banner and docs/CLI.md but not to the `### First run` transcript of docs/TESTS.md, so TestTESTSFirstRunIsWhatTheToolPrints (functional tier) refused the v1.2.14 stream: the banner's example block, the transcript and the test's list of examples are one list. The transcript now carries the lanes line and its `LANES OK cleared=none` output, in the banner's verb order."
     :origin "the coordinator, 2026-10-12: the merge queue (run 38247574824, functional 1/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-friend TestTESTSFirstRunIsWhatTheToolPrints; dev's push CI never runs the functional tier")
-   (fix "the-nova-config-timeout-test-stalls-after-the-connection" :release "v1.2.14" :status "planned"
+   (fix "the-nova-config-timeout-test-stalls-after-the-connection" :release "v1.2.14" :status "shipped"
     :title "The inventory timeout test reaches the applied-state read again"
     :text "TestInventoryTimeoutFlagGovernsTheConnection parked a raw TCP listener that accepted and never answered, and since nova-config opens its Redis connection through pkg/redisconn.Open (one bounded dial and the HELLO 3 handshake), the verb timed out while connecting and never reached the read of the applied state the test proves. The stalled store now completes the RESP3 handshake and stalls on the read, so the timeout is again `while reading the applied state`; a second case, a store that accepts and never answers the handshake, pins `while connecting`. The product is unchanged: docs/SPEC-CONFIG.md requires pkg/redisconn.Open."
     :origin "the coordinator, 2026-10-12: dev's merge queue (run 38247574824, functional 4/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-config TestInventoryTimeoutFlagGovernsTheConnection, failing 5 of 5 on dev f1ae69f03")
@@ -153,21 +150,21 @@
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
-  (fix "the-adopt-starts-with-one-canary-member" :release "v1.2.14" :status "planned"
+  (fix "the-adopt-starts-with-one-canary-member" :release "v1.2.14" :status "shipped"
    :title "The adopt starts with one canary member"
    :text "The build no longer lands on every fleet host at once: the install play runs one canary host first and
     every other fleet host after it, stops on the canary's failure, waits on the canary's own member log for one
     finish ok line, and rolls the canary back alone to the version its build fact held. A canary whose build fact
     held no version is not rolled back, and nova_adopt_canary=none installs every host in one batch as before."
    :origin "tmp/next-sprint-cards/TOOLING-FROM-THE-SEAT-2026-10-11.md item 12 (the owner, 2026-10-11)")
-  (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
+  (fix "worker-writes-result-before-deadline" :release "v1.2.12" :status "shipped"
    :title "A child ended at its deadline with a commit and no result gets a report"
    :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
     to the deadline anyway, the run now writes a RESULT.md naming the branch, the commit count and the
     head when the deadline ended it with commits in the repository and no report of its own.
     The report has no findings head, so it is never scored as the child's own work."
    :origin "fault 9, 2026-10-10")
-  (fix "push-gate-names-the-staged-commit-it-wants" :release "v1.2.14" :status "in-progress"
+  (fix "push-gate-names-the-staged-commit-it-wants" :release "v1.2.12" :status "shipped"
    :title "The push gate names the staged commit it wants"
    :text "A refusal that the result's head does not descend from the staged commit now tells three cases
     apart: the staged commit held by no branch or HEAD of the checkout (the branch was cut again or
@@ -176,7 +173,7 @@
     own \"Not a valid commit name\", and the first two say to put the commits on top of the staged
     commit and finish again."
    :origin "seat inbox pass 2026-10-11 ~03:38Z, epoch 16: 32 push refusals in an hour read \"the result's head X does not descend from the staged commit S: fatal: Not a valid commit name S\"; re-scoped against nova-tools dev 2314d43 on 2026-10-11")
-   (fix "swarm-lint-reads-quoted-code-as-quoted" :release "v1.2.14" :status "planned"
+   (fix "swarm-lint-reads-quoted-code-as-quoted" :release "v1.2.12" :status "shipped"
     :title "The card lint reads a Go module arrow as an arrow, and no fenced scratch"
     :text "no-parent-path reads a `>` as a shell redirect only where it is not the second half of
      `=>` or `->`, so the `> ` of a pasted Go module `replace tblfu1 => ../fu1` line is an arrow,
@@ -184,7 +181,7 @@
      block, for the word and for the line it names, so a bare variable named `scratch` in quoted
      code is no longer refused as a relative scratch path (issues #1994, #2302, #3470)."
     :origin "the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11: swarm-lint false refusals; code read at nova-tools dev 2314d43")
-   (fix "nova-friend-raises-a-refused-verb-and-proves-its-harness-first" :release "v1.2.14" :status "planned"
+   (fix "nova-friend-raises-a-refused-verb-and-proves-its-harness-first" :release "v1.2.12" :status "shipped"
     :title "A refused verb is raised, and a lane proves its harness before it takes"
     :text "A sprint server that refuses a friend verb (friend cards, friend beat) is counted per verb; the
      third consecutive refusal raises it once — a down beat naming the reason and one word to the
@@ -230,19 +227,19 @@
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
    :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
-   (fix "fleet-loops-refuses-version-mismatch" :release "v1.2.14" :status "planned"
+   (fix "fleet-loops-refuses-version-mismatch" :release "v1.2.12" :status "shipped"
     :title "A fleet loops play refuses when its checkout version differs from the adopted release"
     :text "Fleet plays run only from the checkout of the adopted release, and refuse when the
      checkout's version differs from the release installed on the host."
     :origin "dogfood 2026-10-10 evening: fleet-only restart")
-   (fix "a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it" :release "v1.2.14" :status "planned"
+   (fix "a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it" :release "v1.2.12" :status "shipped"
     :title "A lane beyond the cap keeps the card the server gave it"
     :text "With server lanes a lane past the live cap a rate limit lowered keeps the card it holds
      between turns, counting its turns, and says so once; it no longer logs a hand-back to another
      lane that never reaches the server, resets the card's turns, or leaves a machine STOP with no
      stop-return for the card. A world with no server keeps the local hand-back."
     :origin "card a-lane-beyond-the-cap-keeps-the-card-the-server-gave-it.w1; the coordinator's 2026-10-11 audit of pkg/friend v1.2.14")
-   (fix "a-failed-acted-receipt-is-written-again" :release "v1.2.14" :status "planned"
+   (fix "a-failed-acted-receipt-is-written-again" :release "v1.2.12" :status "shipped"
     :title "An acted receipt a failed stamp owes is written again"
     :text "When a turn ends at exit 0 the daemon stamps its messages acted, then acks them. A stamp the
      store refused left the receipt at read or delivered, so a daemon restarted before its ack landed
@@ -252,7 +249,7 @@
      A failed read stamp is not owed: only acted keeps a message from a second turn. A restart while
      the store stays down still redelivers, at least once."
     :origin "card a-failed-acted-receipt-is-written-again.w2; the coordinator's 2026-10-11 audit of nova-tools pkg/friend v1.2.14 (possible double delivery on the bus after a failed stamp, pkg/friend/daemon.go near 1126 and near 1503)")
-   (fix "secrets-remedy-names-the-platforms-install" :release "v1.2.14" :status "planned"
+   (fix "secrets-remedy-names-the-platforms-install" :release "v1.2.12" :status "shipped"
     :title "The secrets tool remedies name the platform's install, not always Homebrew"
     :text "CheckSopsVersion and CheckAgeKeygenVersion hard-coded brew in all four of their remedies,
      so a Linux reader short of sops or age-keygen was told to run a command the platform does not
@@ -260,7 +257,7 @@
      the platform, copying internal/up/layout.go's tools table: brew on darwin, go install for sops
      elsewhere, apt for age-keygen on linux."
     :origin "issue #5016; the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11")
-   (fix "a-member-runs-again-a-read-whose-stage-failed" :release "v1.2.14" :status "planned"
+   (fix "a-member-runs-again-a-read-whose-stage-failed" :release "v1.2.14" :status "shipped"
     :title "nova-swarm member runs a read whose stage failed again, never holds it as a ghost"
     :text "Blocker. On the live v1.2.13 sprint about 20 of 42 cards in review each held one read card
      working for up to an hour with no member process running it (schema-c-t04-versions.r8.b2 since
@@ -693,7 +690,7 @@
     them. Tests and models only, no product change."
    :origin "card tla-cardcontract-retire-the-sprint-actions.w2 (v1.2.12; drift read at dev 2314d437f, 2026-10-11; the second CardContract card)")
 
-  (fix "tla-cardcontract-judge-against-pkg-member" :release "v1.2.14" :status "planned"
+  (fix "tla-cardcontract-judge-against-pkg-member" :release "v1.2.14" :status "shipped"
    :title "CardContract's Judge names the pkg paths, the three finishes and the reason prefixes"
    :text "The module's header cited internal/member, cmd/nova-swarm, internal/swarm and internal/sprint, none
     of which this tree has; it now names pkg/member/member.go and pkg/cardcontract (contract.go, gate.go), and
@@ -702,9 +699,9 @@
     no-result end as reason prefixes on failed, as member.Judge does: a no-result end (EndNoResult) is now a
     redeal class, a budget-unverifiable end with no result is a staging refusal, and a provider end with no
     Provider is failed work, never a redeal. A new NoResultIsNotFailedWork invariant holds. The model's Judge stays the old atomic one (the claim held, fin and rep set in one step); the member's send, move, then collect (nova-tools #5625) is owed to the v1.2.16 Judge split, and COVERAGE's card-contract row is partial until it lands. The script verifier tests write their Git wrapper through testbin.WriteExecutable, so a parallel fork cannot inherit its open write descriptor and make exec fail with text file busy. Tests and models only, no product change."
-   :origin "card tla-cardcontract-judge-against-pkg-member.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11; the first of two CardContract cards)")
+   :origin "card tla-cardcontract-judge-against-pkg-member.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11; the first of two CardContract cards); landed on dev as finish-nova-tools-pr-5623-t (a8c67f25c, 2026-10-12)")
 
-  (fix "tla-cardcontract-report-sent-and-collected-apart" :release "v1.2.16" :status "planned"
+  (fix "tla-cardcontract-report-sent-and-collected-apart" :release "v1.2.14" :status "shipped"
    :title "CardContract splits the judgment into a report sent and collected apart"
    :text "CardContract.tla's Judge set the finish and the report in one step, guarded on the claim being
     held, while the member now sends a report and collects its result in two steps and a move can happen
@@ -917,7 +914,7 @@
    :text "One nova-sprint live manifest command per platform (launchd agents and system-domain LaunchDaemons on Darwin, systemd units on Linux, defined once in group_vars); the loops step succeeds when every member and reader already runs the installed binary and refuses only a manifest with no member or reader; each stale agent restarts through its own target's domain, and the adoption table's disk-free read runs under --check and defaults an empty df."
    :origin "card adopt-play-loops-step-works-on-every-host.w4")
 
-  (fix "a-run-that-ends-at-its-first-result-is-not-a-finish" :release "v1.2.14" :status "planned"
+  (fix "a-run-that-ends-at-its-first-result-is-not-a-finish" :release "v1.2.12" :status "shipped"
    :title "A run that ends at its first RESULT.md is a no-result finish"
    :text "A child whose harness stopped soon after it wrote the early RESULT.md its brief asks for (verdict not-done, nothing committed) was judged failed work, spending an attempt, while the same run with no RESULT.md was judged no result and dealt again. member.Judge now classes a shaped not-done run under FirstResultWall (two minutes), with nothing committed and no gate, as the same no-result kind, with a reason that keeps the \"no result:\" prefix so nova-sprint's IsNoResult routes it."
    :origin "the seat, 2026-10-11: fx-hosted-tests-green-on-mainc attempt 10, ran 62s, wrote an early RESULT.md (starting: will run ...) and stopped; re-scoped against nova-tools dev 2314d43; card a-run-that-ends-at-its-first-result-is-not-a-finish")
@@ -934,7 +931,7 @@
     forgotten as today."
    :origin "the coordinator, 2026-10-11: the v1.2.10 nova-sprint server refused every ok finish, the member forgot each refused card and reran the generation, and the second push was rejected non-fast-forward; card a-refused-finish-never-reruns-a-pushed-generation.w1")
 
-  (fix "a-start-scheduled-before-stop-launches-no-child" :release "v1.2.14" :status "planned"
+  (fix "a-start-scheduled-before-stop-launches-no-child" :release "v1.2.12" :status "shipped"
    :title "A start scheduled before STOP launches no child"
    :text "The member read the machine's word (queueOut.Machine) only at the head of the pass, so a
     start already queued behind startMu when STOP arrived still launched its child after the stop.
@@ -945,32 +942,32 @@
     stop-return, never finished."
    :origin "the audit defect \"a background start after STOP launches a child\" (nova-tools pkg/member staggerStart / scriptOrStart), confirmed by reading nova-tools dev 2314d43 on 2026-10-11; card a-start-scheduled-before-stop-launches-no-child.w2")
 
-  (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.14" :status "planned"
+  (fix "doctor-checks-every-friend-daemons-setup" :release "v1.2.12" :status "shipped"
    :title "nova-doctor checks every friend daemon's setup"
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
    :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
 
-  (fix "the-stalled-store-timeout-test-drives-the-stall" :release "v1.2.14" :status "planned"
+  (fix "the-stalled-store-timeout-test-drives-the-stall" :release "v1.2.14" :status "shipped"
    :title "bus: the stalled-store timeout test no longer races the wall clock"
    :text "TestARedisCallThatStallsFailsWithinTheNamedTimeout failed on macos-latest under -race: the call's 20ms deadline covered go-redis's connection handshake and its command write, so a loaded runner let the deadline fire before the pipeline was written, and the SMEMBERS retry count came out short. The stalled store answers the handshake and then returns a controlled timeout on every later read, so the retry count is deterministic and the declared deadline is the one the test asserts."
-   :origin "card a-stalled-redis-call-test-is-deterministic-on-macos.w2; certification run 38199136941, job test (macos-latest, 13), failed TestARedisCallThatStallsFailsWithinTheNamedTimeout at pkg/bus/timeout_test.go:81")
+   :origin "card a-stalled-redis-call-test-is-deterministic-on-macos.w2, landed on dev under that id (8c7276953, 2026-10-12); certification run 38199136941, job test (macos-latest, 13), failed TestARedisCallThatStallsFailsWithinTheNamedTimeout at pkg/bus/timeout_test.go:81")
 
-  (fix "the-exec-cover-test-retries-text-file-busy" :release "v1.2.14" :status "planned"
+  (fix "the-exec-cover-test-retries-text-file-busy" :release "v1.2.14" :status "shipped"
    :title "The exec cover test retries a text-file-busy exec"
    :text "TestExecUnixCoverReplaceProcessReachesExecOnAResolvedPath wrote a file that is not a program with os.WriteFile and exec'd it at once through replaceProcess; a fork in another parallel test's goroutine between the write's open-for-write and its close handed the child a copy of the write descriptor, so the exec failed syscall.ETXTBSY, \"text file busy\", until the child's own exec closed it (golang/go#22315). The test now retries the exec while the error is ETXTBSY, bounded, and keeps its assertion of the exec-format error; any other error ends the loop, so a real regression still fails. Test only, no product change."
    :origin "card the-exec-cover-test-retries-text-file-busy.w1; certification run 38186891630 (dev ea3d700c9), job test (ubuntu-latest, 11), failed TestExecUnixCoverReplaceProcessReachesExecOnAResolvedPath at pkg/secrets/exec_unix_cover_test.go:59; reproduced at dev 8c9b33f69 with go test -race -count=30 ./pkg/secrets/")
 
-  (fix "a-friend-lane-gives-the-harness-its-own-tmpdir" :release "v1.2.15" :status "in-progress"
+  (fix "a-friend-lane-gives-the-harness-its-own-tmpdir" :release "v1.2.13" :status "shipped"
    :title "A friend lane gives its harness its own TMPDIR"
    :text "Every harness run in a friend lane gets a private, writable temp directory inside its own lane: <lane dir>/tmp, made 0700 before the run and removed after it, with TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR all naming it, so no harness ever touches the shared /tmp. The lane wall carries the directory as --tmp and grants nothing outside the lane. A run that ends within five seconds with no REPORT.md and no RESULT.md and whose output names a filesystem error (EEXIST, EACCES, EPERM, ENOENT) on a path outside its lane ends as an environment fault of the friend: the card stays in the lane's hand, its attempt not counted, her lanes pause and the coordinator gets a pushed judgment naming the error line, never a failed attempt of the card."
    :origin "card a-friend-lane-gives-the-harness-its-own-tmpdir.w2; the seat, 2026-10-11 20:06Z: every claude harness run in a friend lane on the seat's machine died in about a second with EEXIST mkdir '/tmp/claude-501'")
 
-  (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
+  (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.12" :status "shipped"
    :title "The claude harness runs the newest model of each tier's class"
    :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
    :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")
 
-  (fix "a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop" :release "v1.2.15" :status "planned"
+  (fix "a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop" :release "v1.2.13" :status "shipped"
    :title "A friend step drains every ended result and finishes off the loop"
    :text "Each daemon step took at most one ended result from the batch, lane and read channels, so k
     lanes that ended together were seen over k beats and their lanes stayed held that long; the step now
@@ -984,22 +981,22 @@
     next run."
     :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
 
-  (fix "a-provider-refusal-on-a-lane-is-a-judgment" :release "v1.2.15" :status "planned"
+  (fix "a-provider-refusal-on-a-lane-is-a-judgment" :release "v1.2.14" :status "shipped"
    :title "A provider refusal on a lane is a judgment"
    :text "A guard's denial is terminal: a lane whose turn the provider refused (a content filter, a policy refusal, an account or quota refusal, matched as the daemon already classifies limits) is no longer retried each minute. The second identical refusal marks the lane faulted with the refusal line, reported as lane-fault=<n> refusal=\"<first line>\" on the beat and in the status, and one notice goes to the coordinator with the actions hold <friend> --return and the harness check. A faulted lane takes no card until the daemon restarts or nova-friend lanes --clear-faults <friend> runs; the limit detector (lanes failing alike) feeds the same record instead of only logging."
    :origin "the owner, 2026-10-11 ~12:20-12:45 PM ET, after a daemon on a bench logged 1,489 provider-refusal retries across its lanes over days and finished no card in 74 hours: \"I shouldn't need to tell you this... Fix the fucking gaps in push notifications\"; card a-provider-refusal-on-a-lane-is-a-judgment.w1")
 
-  (fix "the-fleet-play-installs-every-language-toolchain" :release "v1.2.15" :status "planned"
+  (fix "the-fleet-play-installs-every-language-toolchain" :release "v1.2.14" :status "shipped"
    :title "The fleet play installs every language toolchain"
    :text "The [toolchains] play in fleet/tools.yml installs pinned Node, .NET, Dart, Elixir, Erlang/OTP, Rust, JDK, SBCL and GitHub CLI archives under each host login's ~/sdk, verifies SHA-256 on download, links the executables, configures the login shell and writes each tool's path and version to ~/.config/nova/toolchains.json on the host. Nothing reads that fact file yet; a nova-doctor check that reads it and names a missing tool is owed."
    :origin "card the-fleet-play-installs-every-language-toolchain.w14; the owner, 2026-10-11 ~12:20-12:45 PM ET. nova_sdk_home is one variable (fleet/group_vars/all.yml) and every install, link and idempotency path derives from it. The per-tool install lives in tasks/main.yml alone: the loop vars and the register correlation are inlined there because the lander refused tasks/install.yml as outside PATHS (E12), and a second converge run changes nothing. The nine selectattr lookups name nova_toolchain_spec.key, not item, because the loops set loop_var: nova_toolchain_spec; both play tests run green against ansible-core 2.16.19.")
 
-  (fix "a-cut-ignores-the-previous-tags-cancelled-release-run" :release "v1.2.15" :status "planned"
+  (fix "a-cut-ignores-the-previous-tags-cancelled-release-run" :release "v1.2.14" :status "shipped"
    :title "A cut ignores a previous tag's cancelled release run and names what it set aside"
    :text "The release cut reads every check run on the commit it tags and refuses when any is not success, skipped or neutral, so a second cut from the same commit (which lockstep demands whenever nova-sprint moves and nova-tools does not) found the previous tag's cancelled release.yml runs and needed a CI waiver. The cut now sets aside only a cancelled release.yml run of an older tag on the same commit (the publish recipe cancels it when the cut publishes its own assets), names what it set aside in the RELEASE CUT line as ci-set-aside=<run id>@<tag>,..., refuses --waive-ci when only the set-aside runs are non-green (\"the previous tag's release run is set aside; no waiver is needed\"), and still refuses a waiver of a green commit. A cancelled run whose head branch is the release branch or the version being cut stays a stop."
    :origin "card a-cut-ignores-the-previous-tags-cancelled-release-run.w5; the seat, 2026-10-11 ~20:00Z: cutting nova-tools v1.2.11 from the v1.2.10 commit 2314d437f was refused build=cancelled, certified=cancelled, release=cancelled, the three checks of the v1.2.10 tag's release.yml run, cancelled on purpose by the v1.2.10 publish step")
 
-  (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.15" :status "in-progress"
+  (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.14" :status "shipped"
    :title "A harness limit in any wording pauses the lanes"
    :text "pkg/friend ReadLimit read a harness's limit only when the wording's words stood unbroken in the raw
     line, then stripped the ANSI colour codes only for the reset beside it; Claude Code colours the words of
@@ -1013,7 +1010,7 @@
     RunCard path returns UsageLimited, not NoReport), red first at base."
    :origin "card a-harness-limit-in-any-wording-pauses-the-lanes.w2; the seat, 2026-10-11 20:16Z: claude -p prints You've hit your weekly limit for every model, and the daemon records each lane as a failed attempt of the card; the classifier must read the whole stdout and stderr, strips ANSI codes before matching, and in any wording the harness prints the limit pauses the lanes until the reset, never a failed attempt. Attempt 1 changed pkg/friend/adapter_claude_lanes.go, outside this card's PATHS (E12); this attempt fixes the classifier in pkg/friend/limit.go.")
 
-  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "in-progress"
+  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "shipped"
    :title "A member reports its ended cards side by side"
    :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
     verb that may wait on the wire, so a lane stayed held after its child ended for the length of the report lag.
@@ -1048,7 +1045,7 @@
     TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
     sprint server)."
    :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")
-  (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "planned"
+  (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "shipped"
    :title "The real-clock delay proxy test reads the write counts after Stop"
    :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
     bytes came back to the client, but the proxy counts a write after it: forward calls up.Write and only
@@ -1062,11 +1059,11 @@
     forwarding half and is unchanged; the product code is unchanged, for a write is counted only once the
     target has taken all of it."
    :origin "certification run 38185824966 (macos-latest, job 6, dev 8929db2ba), failed TestTheRealClockHoldsAWriteForAtLeastTheDelay at pkg/delayproxy/delayproxy_test.go:367; reproduced on the bench at dev 8c9b33f69, go test -race -count=200 failed 3 of 200")
-  (fix "an-enabled-route-with-no-price-is-refused-at-apply" :release "v1.2.17" :status "planned"
+  (fix "an-enabled-route-with-no-price-is-refused-at-apply" :release "v1.2.14" :status "shipped"
    :title "An enabled route with no price is refused at apply"
    :text "apply refuses an enabled route with no price sheet before it plans or writes any kind: the sprint prices a take from the sheet (cardcost.PricesOf(row.Fields).Priced), so an unpriced route records no prediction and a cost of \"-\", or the harness's own $0.00, and the dashboard undercounts. The one refusal names every such route with its provider/model and the command that sets its price (nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>), plus nova-config route prices --refresh --provider <p> when the provider has a list, plus take it out with --enabled false --note '<why>'; a disabled route is never refused for its price, and the tool never sets, guesses or defaults one. apply --check refuses the same, and a bare every-kind apply refuses before any kind is written. Tests, red first: pkg/config TestApplyRefusesAnEnabledRouteWithNoPrice, TestApplyTakesADisabledUnpricedRoute, TestApplyTakesAPricedRoute, and cmd/nova-config TestApplyRefusalNamesTheRouteAndAsksForItsPrice."
    :origin "the seat, 2026-10-12 03:09Z: routes pro-mercury3 and pro-mercury3-pro (inception/mercury-3-preview-1002) carry no price sheet, so every Mercury 3 take records cost \"-\" (no prediction) or $0.00 (the harness's own zero), and the dashboard's spend undercounts; the owner's rule is that prices are the owner's, never invented")
-  (fix "a-throwaway-postgres-dies-with-its-test-binary" :release "v1.2.18" :status "planned"
+  (fix "a-throwaway-postgres-dies-with-its-test-binary" :release "v1.2.14" :status "shipped"
    :title "A throwaway Postgres dies with its test binary"
    :text "pkg/nsprint/testutil/pg's StartServer ran the postmaster through `pg_ctl start`, which detaches
     it from the caller, so a test binary that died without its cleanups (a timeout, os.Exit, a panic off
@@ -1089,7 +1086,7 @@
     donor, nova-tools PR #5503, closed unmerged 2026-10-10T17:53Z. Of its parts, the Redis sentry and the
     104-byte socket bound are on dev (pkg/testredis/sentry.go, pkg/testredis/testredis.go); the postgres
      watchdog is not. Card a-throwaway-postgres-dies-with-its-test-binary.w1")
-   (fix "every-bus-and-friend-verb-refuses-until-hooked" :release "v1.2.18" :status "planned"
+   (fix "every-bus-and-friend-verb-refuses-until-hooked" :release "v1.2.14" :status "shipped"
     :title "Every bus and friend verb refuses until hooked in"
     :text "The hook module (hook/, its own go.mod, Redis-backed: holder, lease, epoch, expiry, takeover), the
      nova-hook command (hook, prove, unhook, status) and pkg/hookgate, the one gate every tool calls: nova-bus
@@ -1098,8 +1095,8 @@
      coordinator and friend instances and eight reversed witnesses (NoEpoch, NoExpire, NoLease, NoRole,
      NoStream, ReArm, StaleEpoch, Takeover). Adopt in order: install nova-hook, hook each friend and the seat
      in, then upgrade the gated tools, so the release does not lock anyone out."
-    :origin "PR #5617, branch fix/bus-and-friend-refuse-until-hooked")
-  (fix "every-bench-carries-every-mirror-a-card-can-name" :release "v1.2.14" :status "in-progress"
+    :origin "PR #5617, branch fix/bus-and-friend-refuse-until-hooked; landed on dev as finish-nova-tools-pr-5617 (74e8c9ee0, 2026-10-12)")
+  (fix "every-bench-carries-every-mirror-a-card-can-name" :release "v1.2.14" :status "shipped"
    :title "Every bench carries every mirror a card can name"
    :text "The mirror set is a converged property of the fleet: `nova-swarm mirror` unions the running
     sprint's stream repos (--repos) with the fixed set every bench carries (swarm.MirrorSetRepos), and
@@ -1110,7 +1107,7 @@
     a member seat, \"no bench mirror for https://github.com/mas-bandwidth/nova-sprint.git\"; the push list in
     the coordinator's bench.yml named only some benches, so what each bench carried drifted. Attempt 2
     wires the helpers attempt 1 left dead (card every-bench-carries-every-mirror-a-card-can-name.w2)")
-  (fix "a-member-sends-the-harness-output-not-its-name" :release "v1.2.15" :status "planned"
+  (fix "a-member-sends-the-harness-output-not-its-name" :release "v1.2.14" :status "shipped"
    :title "A member's finish sends the child's harness output, not its name"
    :text "The member's finish carried the harness name on `--harness`, but nova-sprint's finish `--harness`
     means the child's harness output, its last 40 lines. `member.deathFlags` now sends those last 40
@@ -1120,7 +1117,7 @@
    :origin "the coordinator, 2026-10-12 ~07:50Z, re-cut after a cold read of 23b82f7: on nova-sprint main the
     finish verb's --harness means the child's harness output, its last 40 lines, but nova-tools' member sent
     the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
-   (fix "nova-tools-dev-is-mod-tidy-clean" :release "v1.2.14" :status "in-progress"
+   (fix "nova-tools-dev-is-mod-tidy-clean" :release "v1.2.14" :status "shipped"
     :title "The root module's go.mod and go.sum are tidy"
     :text "CI's lint job runs make mod-tidy, which had gone red because go.mod listed errcheck v1.20.0,
      golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 as // indirect although they are direct
@@ -1137,7 +1134,7 @@
      golang.org/x/tools v0.50.0 and honnef.co/go/tools v0.8.1 are listed // indirect in go.mod but are direct
      requirements, and go.sum carries one golang.org/x/exp line tidy removes. Dev's ci and certification runs
      have been red since ~08:45Z, and the v1.2.14 cut cannot go over a red check.")
-   (fix "nova-friend-run-never-writes-its-output-after-it-returns" :release "v1.2.14" :status "in-progress"
+   (fix "nova-friend-run-never-writes-its-output-after-it-returns" :release "v1.2.14" :status "shipped"
     :title "nova-friend run never writes its output after it returns"
     :text "run's output is written through one locked writer (runOut) that every goroutine the run starts
      shares, and that after shut() turns a write into an error that never reaches the caller's stdout, so no
@@ -1148,7 +1145,7 @@
      is gone, and two race-tagged tests pin it: TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce and
      TestRunNeverWritesItsOutputAfterItReturns."
     :origin "the v1.2.14 cut, 2026-10-12 ~09:10Z, certification run 38205033396 with -race: DATA RACE, the daemon's beat writes the run's output after (or while) the test reads it (card nova-friend-run-never-writes-its-output-after-it-returns.w8)")
-  (fix "a-read-noexec-path-under-an-execute-root-is-refused" :release "v1.2.18" :status "planned"
+  (fix "a-read-noexec-path-under-an-execute-root-is-refused" :release "v1.2.14" :status "shipped"
    :title "A --read-noexec path under an execute-granting root refuses instead of silently executing"
    :text "Landlock's rules are a union: a path is executable when any rule on it or a parent grants
     fsExecute, so a --read-noexec directory that sat under a root the wall grants execute (a static
@@ -1157,4 +1154,97 @@
     silently letting the execution through, and TestWallAReadNoexecBinaryCannotBeExecuted pins it."
    :origin "the seat's unit-coverage survey of nova-tools dev, 2026-10-12: pkg/sandbox/wrap_linux.go's
     addRules added the no-exec read set last, but the command's own directory is already an execute
-    root, so the no-exec wall silently ran a script under --read-noexec")))
+    root, so the no-exec wall silently ran a script under --read-noexec; landed on dev with
+    the-linux-sandbox-wall-is-unit-tested-on-a-landlock-kernel (f1ae69f03, 2026-10-12)")
+  (fix "a-friend-daemon-has-a-spend-cap-and-stops-at-a-provider-refusal" :release "v1.2.14" :status "shipped"
+   :title "A friend daemon has a spend cap and stops at a provider refusal"
+   :text "The friend daemon carries a spend cap (pkg/friend/spendcap.go, read by the daemon's step and by the dsh adapter) and stops its lanes at a provider refusal, building on the lane-fault record; the idle signal is read after the step's lane work. docs/SPEC-FRIEND.md and the nova-friend README say so, and the spendcap tests (unit, daemon and the Redis functional one) pin it."
+   :origin "landing ea30f415a on dev (sprint stream v1215), 2026-10-12")
+  (fix "a-member-reports-a-childs-exit-and-harness" :release "v1.2.14" :status "shipped"
+   :title "A member reports a child's exit and harness"
+   :text "A real member's finish names how the child ended, its exit code (134 in the functional test) and its harness, pinned by cmd/nova-swarm's member_child_exit tests and pkg/member/child_exit_test.go. Corrected by a-member-sends-the-harness-output-not-its-name, which sends the harness output rather than its name."
+   :origin "landing eb68c7120 on dev (sprint stream v1215), 2026-10-12")
+  (fix "an-unused-field-in-the-ntable-bounds-test" :release "v1.2.14" :status "shipped"
+   :title "An unused field leaves the ntable bounds test"
+   :text "pkg/ntable/batch_bounds_functional_test.go drops the unused actorPad field of boundCase. Tests only, no behaviour change."
+   :origin "landing 17f97eade on dev (sprint stream cleanup), 2026-10-12")
+  (fix "card-slice-k-recut-deadlock" :release "v1.2.14" :status "shipped"
+   :title "nova-friend reads an omitted daemon row mode as batch"
+   :text "cmd/nova-friend reads a daemon row that names no mode as batch, through currentRow, so a row with no mode no longer stalls the daemon; cmd/nova-friend/standalone_mode_test.go pins it."
+   :origin "landing 979d55022 on dev (sprint stream v13-slice-k), 2026-10-12")
+  (fix "every-ai-path-is-under-ai-name" :release "v1.2.14" :status "shipped"
+   :title "Every AI path is under one ai/<name> root"
+   :text "The friend layout puts every AI's files under one ai/<name> root: pkg/friend's inbox, lanes and launchd paths, the swarm templates and the doctor's friend-wall check read the one layout (pkg/friend/ai_layout_functional_test.go). The CLI reference is regenerated, the class rule internal/ci/sprintpaths_class_test.go is indexed, and the docs that showed the old layout are fixed."
+   :origin "landing 4246b086f on dev (sprint stream v1215), 2026-10-12")
+  (fix "nova-config-reads-the-seat-login" :release "v1.2.14" :status "shipped"
+   :title "nova-config reads the recorded sprint seat login"
+   :text "nova-config reads the recorded nova-sprint seat login for the sprint store (cmd/nova-config/seat_secret.go), status shows it, and the store code pkg/redisconn superseded is dropped; seat_login_redis_test.go and its functional twin pin it, and docs/SPEC-CONFIG.md says so."
+   :origin "landing 31f27082c on dev (sprint stream comfort), 2026-10-12")
+  (fix "one-case-folding-probe-for-sandbox-and-swarm" :release "v1.2.14" :status "shipped"
+   :title "One case-folding probe for sandbox and swarm"
+   :text "pkg/pathcase holds the one case-folding probe and its boundary fixture (boundary.go); pkg/sandbox and pkg/swarm call it instead of each keeping a copy. Contraction, no behaviour change."
+   :origin "landing 543cb9ff9 on dev (sprint stream cleanup), 2026-10-12")
+  (fix "one-member-implementation-the-fleet-runs-what-the-tests-test" :release "v1.2.14" :status "shipped"
+   :title "One member implementation: the fleet runs what the tests test"
+   :text "docs/one-member-ownership.md names the one member implementation and internal/ci/onemember_class_test.go holds it: the member the fleet runs is the one the tests test, indexed in AGENTS.md, docs/SPEC-CI.md and docs/STANDARD.md."
+   :origin "landing de402040a on dev (sprint stream v1215), 2026-10-12")
+  (fix "one-run-frame-for-the-ci-and-ghrelease-tools" :release "v1.2.14" :status "shipped"
+   :title "One run frame for the ci and ghrelease tools"
+   :text "tools/internal/runframe is the one verb-dispatch frame tools/ci and tools/ghrelease run from, recorded in the CL shard walls. Contraction, no behaviour change."
+   :origin "landing 7e2ce59be on dev (sprint stream cleanup), 2026-10-12")
+  (fix "one-scan-frame-for-the-ci-allowlist-rules" :release "v1.2.14" :status "shipped"
+   :title "One scan frame for the ci allowlist rules"
+   :text "internal/ci's allowlist rules (goenv, net, templates, testbins, waits) share one source scan frame, and ci_scan_frame_test.go pins the folded frame's walk-error return. Contraction, no behaviour change."
+   :origin "landing afa07c242 on dev (sprint stream cleanup), 2026-10-12")
+  (fix "pkg-oneline-is-its-own-module" :release "v1.2.14" :status "shipped"
+   :title "pkg/oneline is its own module"
+   :text "pkg/oneline has its own go.mod and go.sum, joined through go.work; the workspace checksum rides in go.sum, not go.work.sum, and the nested-modules class test, the Makefile, ci.yml and TESTING.md know the module."
+   :origin "landing ab7b62394 on dev (sprint stream cleanup), 2026-10-12")
+  (fix "seatcred-resolves-paths-profiles-and-config-rows-under-unit-test" :release "v1.2.14" :status "shipped"
+   :title "seatcred resolves paths, profiles and config rows under unit test"
+   :text "pkg/seatcred's path resolution, config profiles and config-row reads, and the last unit refusals a caller reads, are covered by unit tests (configprofile_test.go, resolve_test.go, seatcred_test.go). Tests only."
+   :origin "landing 583753457 on dev (sprint stream v1219), 2026-10-12")
+  (fix "small-twin-functions-in-safepath-sandbox-and-roadmap" :release "v1.2.14" :status "shipped"
+   :title "Three twin-function pairs fold into one helper each"
+   :text "pkg/safepath, cmd/nova-sandbox (runwin_windows.go) and internal/roadmap each had a pair of near-identical functions; each pair is one helper now, with internal/roadmap/decode_reword_test.go and pkg/safepath/refuse_text_test.go pinning the wording. Contraction, no behaviour change."
+   :origin "landing a12d51bcf on dev (sprint stream cleanup), 2026-10-12")
+  (fix "the-ci-rule-tests-run-from-one-harness" :release "v1.2.14" :status "shipped"
+   :title "The ci rule tests run from one harness"
+   :text "internal/ci's net, templates, testbins and waits rule tests run from one harness, and the unused ciRules table staticcheck found is dropped. Tests only."
+   :origin "landing 3862b567c on dev (sprint stream cleanup), 2026-10-12")
+  (fix "the-close-cover-test-waits-for-its-own-interrupt" :release "v1.2.14" :status "shipped"
+   :title "The redis cover Close test waits for its own interrupt"
+   :text "internal/tablemodel/redis_cover_test.go: Close waits for its own interrupt before the signal stop, so the cover test no longer races the stop on a loaded runner. Tests only."
+   :origin "landing 81a16f625 on dev (sprint stream v1214-blocker), 2026-10-12")
+  (fix "the-dial-guard-and-pipe-store-test-helpers-are-shared" :release "v1.2.14" :status "shipped"
+   :title "The dial-guard and pipe-store test helpers are shared"
+   :text "pkg/testkit holds the dial guard and the pipe store test helpers (dialguard.go, pipestore.go) that cmd/nova-redis and internal/update each kept; the shared helpers pass the tree gate. Tests only."
+   :origin "landing 5725438b4 on dev (sprint stream cleanup), 2026-10-12")
+  (fix "the-docs-tablemodel-and-links-tests-are-tables" :release "v1.2.14" :status "shipped"
+   :title "The docs, tablemodel and links test repeats are one table each"
+   :text "internal/docs' stranger tests, internal/tablemodel's capture cover test and internal/check's links test each fold their repeated cases into one table. Tests only."
+   :origin "landing 06f2b2540 on dev (sprint stream cleanup), 2026-10-12")
+  (fix "the-first-run-and-version-tests-share-one-helper" :release "v1.2.14" :status "shipped"
+   :title "The first-run and version tests share one helper"
+   :text "pkg/testkit holds the first-run transcript helper and the version-line shape (firstrun.go, copytree.go) that nova-check, nova-self-talk, nova-swarm, nova-update and nova-version each kept, and VersionLineShape guards its field indexes with a length check. Tests only."
+   :origin "landing 305037d70 on dev (sprint stream cleanup), 2026-10-12")
+  (fix "the-functional-ci-package-runs-within-a-minute" :release "v1.2.14" :status "shipped"
+   :title "The functional internal/ci package runs within a minute"
+   :text "internal/ci's functional-tier class tests (classtests, dead code, errcheck, staticcheck) share one whole-tree load, and the deadcode walk keeps its three-OS union, so the package fits the functional job's bound. Tests only."
+   :origin "landing 8e9d4c6c9 on dev (sprint stream v13-misc), 2026-10-12")
+  (fix "the-linux-sandbox-wall-is-unit-tested-on-a-landlock-kernel" :release "v1.2.14" :status "shipped"
+   :title "The Linux sandbox wall is unit-tested on a Landlock kernel"
+   :text "pkg/sandbox/run_linux_test.go runs the wall under unit test on a Landlock kernel, the net-denial wall test folded in and profile_test.go beside it; the --read-noexec refusal it found is a-read-noexec-path-under-an-execute-root-is-refused."
+   :origin "landing f1ae69f03 on dev (sprint stream v1219), 2026-10-12")
+  (fix "the-provider-acceptance-and-cache-tests-are-tables" :release "v1.2.14" :status "shipped"
+   :title "The provider acceptance and cache test repeats are tables"
+   :text "cmd/nova-friend's acceptance test, cmd/nova-swarm's lazyclean gocache test, pkg/gocache, pkg/ntable's batch contract, pkg/safepath's unsafe roots and pkg/swarm's providers tests fold their repeats into tables, and the file below a refused home root surviving the refusal is pinned. Tests only."
+   :origin "landing f3ebd9108 on dev (sprint stream cleanup), 2026-10-12")
+  (fix "the-swarm-install-calls-the-units-loader" :release "v1.2.14" :status "shipped"
+   :title "The swarm install calls the units loader"
+   :text "cmd/nova-swarm install loads its units through pkg/units.Load (the unitLoad delegate) instead of its own loadSwarmUnit, and units.Load's host guard is pinned in pkg/units/load_test.go."
+   :origin "landing 20004685f on dev (sprint stream cleanup), 2026-10-12")
+  (fix "the-temp-dir-class-tests-share-their-walk" :release "v1.2.14" :status "shipped"
+   :title "The temp-dir class tests share their walk"
+   :text "internal/ci's sharedtemp and testoutpath class tests share one source walk. Tests only."
+   :origin "landing eec4730ec on dev (sprint stream cleanup), 2026-10-12")))
