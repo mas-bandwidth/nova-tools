@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -245,18 +246,19 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	require.NoError(t, err, "onboarding.Steps worktree: %v", err)
 	require.Len(t, wtSteps, 3, "worktree section has %d steps, want 3", len(wtSteps))
 
+	// The worktree steps run on this test's own seams (worktreeSeams: the fake git, the fake
+	// forge and the fixed guid), never by assigning the package-level defaults: this test is
+	// parallel, and every other worktree test reads those defaults through
+	// prodWorktreeSeams() as it starts, so a swap here is a data race with each of them
+	// (run 38268825121, shard 3: "race detected during execution of test" on seven
+	// tests of this package, the write at this test and the read at newWJob). The verb is
+	// reached as run() reaches it, one `case "worktree"` down.
 	j := newWJob(t)
 	g := newFakeGit(j.repo)
-	oldGit, oldFactory := worktreeGit, worktreeForgeFactory
-	t.Cleanup(func() { worktreeGit, worktreeForgeFactory = oldGit, oldFactory })
-	worktreeGit = g.run
+	j.useFakeGit(g)
 	sha := "0123456789abcdef0123456789abcdef01234567"
-	forge := &fakeForge{byID: map[int]worktreePR{123: {Head: sha, Base: "main", State: "open"}}}
-	worktreeForgeFactory = func(repo string, env []string) worktreeForge { return forge }
-
-	oldGUID := worktreeGUID
-	worktreeGUID = func() string { return "1f450ab70c635e66f675ff8a4e395760" }
-	t.Cleanup(func() { worktreeGUID = oldGUID })
+	j.useForge(&fakeForge{byID: map[int]worktreePR{123: {Head: sha, Base: "main", State: "open"}}})
+	j.ws.GUID = func() string { return "1f450ab70c635e66f675ff8a4e395760" }
 
 	docScratch := "/path/to/workdir/scratch"
 	docRepo := "/path/to/workdir"
@@ -275,12 +277,16 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 		}
 		return runArgs
 	}
+	worktreeStep := func(args []string, stdout, stderr io.Writer) int {
+		require.Equal(t, "worktree", args[0], "a documented worktree step runs the worktree verb: %q", args)
+		return j.ws.worktreeVerb(args[1:], stdout, stderr, nil)
+	}
 
 	// Step 3 (create): $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
 	{
 		step := wtSteps[0]
 		var out, errb bytes.Buffer
-		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
+		code := worktreeStep(localizeArgs(step.Args), &out, &errb)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		norms := []onboarding.Norm{onboarding.Path(docScratch, j.scratch)}
 		for _, p := range onboarding.Compare(step, res, norms) {
@@ -292,7 +298,7 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	{
 		step := wtSteps[1]
 		var out, errb bytes.Buffer
-		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
+		code := worktreeStep(localizeArgs(step.Args), &out, &errb)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		norms := []onboarding.Norm{onboarding.Path(docScratch, j.scratch)}
 		for _, p := range onboarding.Compare(step, res, norms) {
@@ -304,7 +310,7 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	{
 		step := wtSteps[2]
 		var out, errb bytes.Buffer
-		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
+		code := worktreeStep(localizeArgs(step.Args), &out, &errb)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		for _, p := range onboarding.Compare(step, res, nil) {
 			t.Errorf("worktree prune: %s", p)

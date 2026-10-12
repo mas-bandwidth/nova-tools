@@ -239,7 +239,7 @@ func helperReadsTree(t *testing.T, root string, fset *token.FileSet, files []*tr
 		}
 	}
 
-	r := listResolver{lists: lists, packageDirs: packageDirs, consts: consts, funcs: funcs}
+	r := listResolver{lists: lists, packageDirs: packageDirs, consts: consts, funcs: funcs, calls: indexCallSites(funcs)}
 	loaded := map[string]bool{}
 	var raw []string
 	for _, fn := range funcs {
@@ -316,7 +316,35 @@ type listResolver struct {
 	packageDirs map[string]bool
 	consts      map[string]string
 	funcs       map[string]*ast.FuncDecl
+	calls       map[string][]callSite
 	activeLocal map[resolverLocalKey]bool
+}
+
+// callSite is one call of a function spelled by name (callName), and the function
+// whose body makes it.
+type callSite struct {
+	caller *ast.FuncDecl
+	call   *ast.CallExpr
+}
+
+// indexCallSites reads every function body once and files each call under the name
+// it spells, so a parameter is resolved through its callers by one lookup. Before
+// this every parameter resolution walked every body of the package again, and
+// internal/ci's own read sites made TestEveryAllowlistIsReadThroughTheOneHelper a 9 s
+// single-lane tail of the package run under -race.
+func indexCallSites(funcs map[string]*ast.FuncDecl) map[string][]callSite {
+	sites := map[string][]callSite{}
+	for _, caller := range funcs {
+		ast.Inspect(caller.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if name := callName(call.Fun); name != "" {
+					sites[name] = append(sites[name], callSite{caller: caller, call: call})
+				}
+			}
+			return true
+		})
+	}
+	return sites
 }
 
 func (r listResolver) resolve(fn *ast.FuncDecl, e ast.Expr, depth int) []string {
@@ -487,16 +515,21 @@ func (r listResolver) local(fn *ast.FuncDecl, name string, depth int) []string {
 	if idx < 0 {
 		return out
 	}
-	for _, caller := range r.funcs {
-		ast.Inspect(caller.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if ok && callName(call.Fun) == fn.Name.Name && idx < len(call.Args) {
-				out = append(out, r.resolve(caller, call.Args[idx], depth+1)...)
-			}
-			return true
-		})
+	for _, site := range r.callSites(fn.Name.Name) {
+		if idx < len(site.call.Args) {
+			out = append(out, r.resolve(site.caller, site.call.Args[idx], depth+1)...)
+		}
 	}
 	return out
+}
+
+// callSites is every call of name in the package: the index when the resolver was
+// built with one, else read now from every body (a resolver a test builds by hand).
+func (r listResolver) callSites(name string) []callSite {
+	if r.calls == nil {
+		return indexCallSites(r.funcs)[name]
+	}
+	return r.calls[name]
 }
 
 // TestPackageShardGuardRecognizesConsumptionAndRawReads pins the syntactic
