@@ -50,6 +50,40 @@ func isHomeLogPath(path string) bool {
 	return false
 }
 
+// walkLaunchdLogHomeSources visits non-test sources that name a launchd log path,
+// skipping the generated root bin directory.
+func walkLaunchdLogHomeSources(root string, visit func(rel string, raw []byte)) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel == "bin" {
+				return filepath.SkipDir
+			}
+			switch d.Name() {
+			case ".git", "_cache", "vendor", "testdata", "docs":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(rel, "_test.go") || strings.HasSuffix(rel, ".md") {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil || !reLaunchdKey.Match(raw) {
+			return nil
+		}
+		visit(rel, raw)
+		return nil
+	})
+}
+
 // TestEveryLaunchdAgentLogsUnderTheHome reads every non-test source that names
 // StandardOutPath or StandardErrorPath: a literal value must be under the home,
 // and a Go source, which builds the value from a variable, must be a writer pinned in
@@ -67,29 +101,7 @@ func TestEveryLaunchdAgentLogsUnderTheHome(t *testing.T) {
 
 	seenWriters := map[string]bool{}
 	literals := 0
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "_cache", "vendor", "testdata", "docs":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if strings.HasSuffix(rel, "_test.go") || strings.HasSuffix(rel, ".md") {
-			return nil
-		}
-		b, err := os.ReadFile(path)
-		if err != nil || !reLaunchdKey.Match(b) {
-			return nil
-		}
+	err := walkLaunchdLogHomeSources(root, func(rel string, b []byte) {
 		var matches [][]string
 		if !strings.HasSuffix(rel, ".go") {
 			matches = reLaunchdPath.FindAllStringSubmatch(string(b), -1)
@@ -104,11 +116,42 @@ func TestEveryLaunchdAgentLogsUnderTheHome(t *testing.T) {
 		} else {
 			assert.NotEmpty(t, matches, "%s names StandardOutPath/StandardErrorPath with no literal <string> value (and is no pinned Go writer); its log cannot be checked: pin it in goPlistWriters", rel)
 		}
-		return nil
 	})
 	require.NoError(t, err)
 	assert.Positive(t, literals, "at least one literal launchd log path must be read")
 	for rel := range goPlistWriters {
 		assert.True(t, seenWriters[rel], "%s is pinned in goPlistWriters but no longer writes a launchd log path", rel)
 	}
+}
+
+func TestLaunchdLogHomeSourceWalkSkipsOnlyRootBin(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	write := func(rel string, raw []byte) {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, raw, 0o644))
+	}
+	bad := []byte("<key>StandardOutPath</key><string>/Volumes/nova/not-a-log</string>")
+	binary := append([]byte{0}, bad...)
+	binary = append(binary, 0)
+	write("bin/nova-tool", binary)
+	write("outside.plist", bad)
+	write("nested/bin/agent.plist", bad)
+	write("valid.plist", []byte("<key>StandardOutPath</key><string>$HOME/Library/Logs/nova.log</string>"))
+
+	seen := map[string]bool{}
+	invalid := map[string]bool{}
+	err := walkLaunchdLogHomeSources(root, func(rel string, raw []byte) {
+		seen[rel] = true
+		for _, m := range reLaunchdPath.FindAllStringSubmatch(string(raw), -1) {
+			if !isHomeLogPath(m[2]) {
+				invalid[rel] = true
+			}
+		}
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, seen, "bin/nova-tool", "the generated root bin is not a plist source")
+	assert.Equal(t, map[string]bool{"outside.plist": true, "nested/bin/agent.plist": true}, invalid, "invalid literals outside root bin remain visible, while a valid home path passes")
 }
