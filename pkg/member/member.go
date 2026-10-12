@@ -1234,6 +1234,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 // pass is still one step: what the goroutines found is collected before the pass returns.
 // RULE (docs/SPEC-SPRINT.md, the fleet member): a pass's reports run side by side up to
 // pushWidth, and a non-background pass collects them after the take, so it is still one step.
+// tla/CardContract.tla CollectReport
 func (m *Member) collectReports() int {
 	// the lap opens before the wait, so spent.Report is the report's own wall time,
 	// the wait for the goroutines included, as the pass's other parts count their wait
@@ -1250,6 +1251,7 @@ func (m *Member) collectReports() int {
 // reportOne reports one ended launch whose result is ready. It returns how many cards it
 // acted on in the pass goroutine (a read run again here and now): a report it hands to
 // reportRun is counted when its result is collected (applyReport), so it returns 0 for it.
+// tla/CardContract.tla SendReport
 func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet) int {
 	r := *l.res
 	if r.End == EndUnverifiable {
@@ -1391,6 +1393,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet) 
 // RULE (docs/SPEC-SPRINT.md, the fleet member): the cards a pass reports go out side by
 // side, bounded by pushWidth, exactly as its ends do (endEnded), so the member spends the
 // process spawn and the wire wait of each report at once instead of one after another.
+// tla/CardContract.tla SendReport
 func (m *Member) reportRun(id string, args []string, ro reportOut) bool {
 	l, ours := m.running[id]
 	if !ours {
@@ -1418,6 +1421,7 @@ func (m *Member) reportRun(id string, args []string, ro reportOut) bool {
 // RULE (docs/SPEC-SPRINT.md, the fleet member): only the pass goroutine applies a report's
 // result (reportRun runs only the verb), so the running, forget and returned-at state moves
 // in one goroutine and a launch being reported stays busy until its result is collected.
+// tla/CardContract.tla CollectReport
 func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 	if ro.returnNoVerdict {
 		fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, ro.code, ro.returnReason)
@@ -1485,6 +1489,7 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 // clean. It returns how many cards it acted on.
 // RULE (docs/SPEC-SPRINT.md, the fleet member): only a definite refusal reaps a moved
 // report; an unknown outcome keeps the run.
+// tla/CardContract.tla CollectReport
 func (m *Member) keepUncertain(id string, l launch, ro *reportOut, epoch uint64, gen, attempt int) int {
 	verb := ro.verb + " " + id
 	if ro.returnNoVerdict {

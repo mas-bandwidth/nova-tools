@@ -7,7 +7,8 @@
 \* THE STATE, per card.
 \*   ph        the launch: new, running (staged, the child at work), ended
 \*             (the child's end is written), pushed (the member's push is
-\*             made), done (judged or reaped)
+\*             made), reported (the report is sent, its result not yet
+\*             collected), done (judged or reaped)
 \*   att       the attempt: 1, 2 or 3 (a rework of the attempts before)
 \*   earlier   the earlier attempts whose head reached origin (each finished
 \*             ok, its push landed), whatever the attempts between them did
@@ -47,6 +48,14 @@
 \*             child ran (native's STAGE FAIL: no bench mirror, the pushed head
 \*             missing, the stage's timeout), or the child's end was
 \*             budget-unverifiable and left no result (EndUnverifiable)
+\*   answer    the store's answer to the report (the finish verb): none (no
+\*             report collected yet), accepted (code 0, the store took it:
+\*             the finish was the card's claim when it landed, so a move seen
+\*             after is the store acting on it, a failed finish redealt at
+\*             gen+1), refused (the store did not take it: the result is
+\*             nobody's). An unknown outcome (no answer, changed=unknown,
+\*             keepUncertain) keeps the run as failed and is below this
+\*             model's grain
 
 \* THE REASON PREFIXES (ProviderFailure, the name pkg/member/member.go,
 \* cmd/nova-swarm/nativeprovider.go, their tests and SPEC-CARD-CONTRACT.md
@@ -89,8 +98,9 @@
 \* staged at the bare tip with no word that the work must be redone: the
 \* pushed work lost in silence), "providerfailed" (a provider failure judged as
 \* failed work), "noresultfailed" (a no-result end judged as failed work),
-\* "stagingfailed" (a staging refusal judged as failed work). "none" is the
-\* design.
+\* "stagingfailed" (a staging refusal judged as failed work), "applymoved"
+\* (a report applied on a moved claim), "reapaccepted" (an accepted report
+\* reaped). "none" is the design.
 
 \* ONE CARD IS THE INSTANCE. Every action touches one card and no invariant relates
 \* two, so the cards are independent: an invariant of the form "for every card"
@@ -109,10 +119,10 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg
+          prov, nr, stg, answer
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg>>
+          prov, nr, stg, answer>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -130,6 +140,7 @@ Init ==
   /\ prov = [c \in Cards |-> FALSE]
   /\ nr = [c \in Cards |-> FALSE]
   /\ stg = [c \in Cards |-> FALSE]
+  /\ answer = [c \in Cards |-> "none"]
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
 
@@ -154,7 +165,7 @@ Stage(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "running"]
   /\ \E f \in StageFroms(c) : from' = [from EXCEPT ![c] = f]
-  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg>>
+  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, answer>>
 
 \* The member's machine refuses the launch at staging (native's STAGE
 \* FAIL): nothing is staged and no child runs, so there is no commit and no result.
@@ -162,7 +173,7 @@ StageRefused(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, answer>>
 
 \* The child ends: any commit, any result, any verdict, and the run's end class:
 \* a provider failure with a reason (prov), a no-result end (nr), or a
@@ -184,7 +195,7 @@ ChildEnds(c) ==
        /\ (IF f THEN 1 ELSE 0) + (IF n THEN 1 ELSE 0) + (IF u THEN 1 ELSE 0) <= 1
        /\ n => (~s \/ (v = "notdone" /\ ~k))
        /\ u => ~s
-  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep>>
+  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, answer>>
 
 \* The member's push (gitPusher.Push): a commit is pushed or
 \* refused; no commit is nothing to push.
@@ -193,7 +204,7 @@ Push(c) ==
   /\ ph' = [ph EXCEPT ![c] = "pushed"]
   /\ \E p \in IF commit[c] THEN {"ok", "refused"} ELSE {"nocommit"} :
        push' = [push EXCEPT ![c] = p]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, nr, stg>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, nr, stg, answer>>
 
 \* THE ONE JUDGMENT (pkg/member/member.go, Judge): three finishes, ok, failed
 \* and reaped, with a refused push said first and a staging refusal, a provider
@@ -220,19 +231,51 @@ JudgeOf(c) ==
 
 \* A finish `failed` with no redeal or staging reason opens the failed-work
 \* judgment; a `provider` finish (a provider failure or a no-result end) opens
-\* none; a `staging` finish opens none.
-Judge(c) ==
+\* none; a `staging` finish opens none. JudgeOf names the finish.
+
+\* THE SPLIT (pkg/member/member.go, reportOne/reportRun and collectReports/
+\* applyReport): the member sends the report (the finish verb) and collects its
+\* result in two steps, and the claim can move between them. SendReport sends
+\* the report for a pushed launch whose claim is held; CollectReport applies
+\* the result against the fresh queue read. A result applies (fin and rep are
+\* set to the judgment) only while the claim is still held, or when the store
+\* accepted the report (code 0): an accepted finish was the card's claim when
+\* it landed, so a move seen after is the store acting on it (a failed finish
+\* redealt at gen+1). A refused report whose claim moved is reaped: the result
+\* is nobody's.
+SendReport(c) ==
   /\ ph[c] = "pushed" /\ claim[c] = "held"
+  /\ ph' = [ph EXCEPT ![c] = "reported"]
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, answer>>
+
+\* What a collected report comes to: applied (the judgment, said to the
+\* sprint) when the claim is still held, or when the store accepted it; else
+\* reaped (the moved claim's result is nobody's). Broken names the reversed
+\* witnesses: "applymoved" applies on a moved claim whatever the answer,
+\* "reapaccepted" reaps an accepted report.
+CollectOf(c, a) ==
+  IF Broken = "applymoved" THEN "apply"
+  ELSE IF Broken = "reapaccepted" THEN (IF claim[c] = "held" THEN "apply" ELSE "reap")
+  ELSE IF claim[c] = "held" \/ a = "accepted" THEN "apply"
+  ELSE "reap"
+
+CollectReport(c) ==
+  /\ ph[c] = "reported"
+  /\ \E a \in {"accepted", "refused"} :
+       /\ answer' = [answer EXCEPT ![c] = a]
+       /\ IF CollectOf(c, a) = "apply"
+            THEN /\ fin' = [fin EXCEPT ![c] = JudgeOf(c)]
+                 /\ rep' = [rep EXCEPT ![c] = JudgeOf(c)]
+          ELSE /\ fin' = [fin EXCEPT ![c] = "reaped"]
+               /\ rep' = [rep EXCEPT ![c] = "none"]
   /\ ph' = [ph EXCEPT ![c] = "done"]
-  /\ fin' = [fin EXCEPT ![c] = JudgeOf(c)]
-  /\ rep' = [rep EXCEPT ![c] = JudgeOf(c)]
   /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg>>
 
-\* The claim moves under the launch at any time before it is judged.
+\* The claim moves under the launch at any time before its report is collected.
 Move(c) ==
-  /\ claim[c] = "held" /\ ph[c] \in {"running", "ended", "pushed"}
+  /\ claim[c] = "held" /\ ph[c] \in {"running", "ended", "pushed", "reported"}
   /\ claim' = [claim EXCEPT ![c] = "moved"]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg, answer>>
 
 \* REAPED is its own finish (pkg/member/member.go, FinishReaped): the child has
 \* ended, its claim is gone, and nothing is reported.
@@ -241,15 +284,15 @@ Reap(c) ==
   /\ ph' = [ph EXCEPT ![c] = "done"]
   /\ fin' = [fin EXCEPT ![c] = "reaped"]
   /\ rep' = IF Broken = "reapreported" THEN [rep EXCEPT ![c] = "failed"] ELSE rep
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, answer>>
 
-Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ Judge(c) \/ Move(c) \/ Reap(c)
+Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ SendReport(c) \/ CollectReport(c) \/ Move(c) \/ Reap(c)
                           \/ StageRefused(c)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
 TypeOK ==
-  /\ ph \in [Cards -> {"new", "running", "ended", "pushed", "done"}]
+  /\ ph \in [Cards -> {"new", "running", "ended", "pushed", "reported", "done"}]
   /\ from \in [Cards -> [k : {"none", "base", "head", "branch", "carry", "tip"}, n : 0..2]]
   /\ push \in [Cards -> {"none", "ok", "refused", "nocommit"}]
   /\ fin \in [Cards -> {"none", "ok", "failed", "reaped", "provider", "staging"}]
@@ -257,6 +300,7 @@ TypeOK ==
   /\ prov \in [Cards -> BOOLEAN]
   /\ nr \in [Cards -> BOOLEAN]
   /\ stg \in [Cards -> BOOLEAN]
+  /\ answer \in [Cards -> {"none", "accepted", "refused"}]
 
 \* Ok => PushedHead /\ Shape: an ok finish is a commit the child made, on
 \* origin by the member's push, with the result's shape and verdict ok.
@@ -303,6 +347,20 @@ NoResultIsNotFailedWork ==
 \* A staging refusal never opens a failed-work judgment: a launch refused at staging ran no
 \* child, and is never finished `failed`.
 StagingIsNotFailedWork == \A c \in Cards : fin[c] = "failed" => ~stg[c]
+
+\* A collected result applies only if the claim is still held at the fresh
+\* queue read, otherwise the card is reaped: what the sprint is told is set
+\* only when the claim was held, or when the store accepted the report (the
+\* move seen after an acceptance is the store acting on it, a failed finish
+\* redealt at gen+1, never an independent move).
+CollectedAppliesOnlyIfHeld ==
+  \A c \in Cards : rep[c] # "none" => claim[c] = "held" \/ answer[c] = "accepted"
+
+\* A collected result whose report the store accepted (code 0) is never
+\* reaped, even when that acceptance moved the card to gen+1: an accepted
+\* finish was the card's claim when it landed.
+AcceptedIsNeverReaped ==
+  \A c \in Cards : answer[c] = "accepted" => fin[c] # "reaped"
 
 \* Every launch ends judged, reaped, or finished provider (a run the provider failed, the
 \* sprint's redeal outside this model) or staging (a launch refused at staging, the sprint's
