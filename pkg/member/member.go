@@ -40,12 +40,40 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // Sprint runs one sprint verb and returns its exit code and stdout.
 type Sprint interface {
 	Run(args ...string) (code int, out []byte)
+}
+
+// AnswerSprint is a Sprint that also says what became of a verb's write
+// (sprintwire.Worker.RunAnswer, the member's own): the exit code alone cannot,
+// since nova-sprint's refuse() exits 2 as the worker does when nothing answered,
+// and a cut operation exits 1 as a refused card does.
+type AnswerSprint interface {
+	RunAnswer(args ...string) (code int, out []byte, answer sprintwire.Answer)
+}
+
+// RefusedMarker is the word nova-sprint puts on every refusal it prints ("REFUSED <card>:
+// ...", "nova-sprint <verb> REFUSED: ...", the server's "...; nothing was changed").
+const RefusedMarker = "REFUSED"
+
+// runAnswer runs one verb and says what became of its write: the Sprint's own word when
+// it is an AnswerSprint (production), otherwise read from what it printed by the same rule
+// (sprintwire.Classify), an exit 2 counted as answered only when it carries the store's
+// refusal (RefusedMarker, or "nothing was changed").
+func (m *Member) runAnswer(args ...string) (code int, out []byte, answer sprintwire.Answer) {
+	if a, ok := m.sprint.(AnswerSprint); ok {
+		code, out, answer = a.RunAnswer(args...)
+		m.advanced()
+		return code, out, answer
+	}
+	code, out = m.run(args...)
+	answered := code != 2 || bytes.Contains(out, []byte(RefusedMarker)) || bytes.Contains(out, []byte("nothing was changed"))
+	return code, out, sprintwire.Classify(code, out, nil, answered)
 }
 
 // Runner starts a card as a child and reports how it ended.
@@ -642,6 +670,9 @@ type reportOut struct {
 	now             time.Time
 	code            int
 	out             []byte
+	// answer is what became of the write (runAnswer): the exit code alone does not say
+	// whether the store refused it, took it, or may have
+	answer sprintwire.Answer
 }
 
 // decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
@@ -1372,9 +1403,9 @@ func (m *Member) reportRun(id string, args []string, ro reportOut) bool {
 	go func() {
 		defer m.longs.Done()
 		m.reportGate <- struct{}{}
-		code, out := m.run(args...)
+		code, out, answer := m.runAnswer(args...)
 		<-m.reportGate
-		ro.code, ro.out = code, out
+		ro.code, ro.out, ro.answer = code, out, answer
 		m.post(id, post{report: &ro})
 	}()
 	return true
@@ -1393,7 +1424,10 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 	} else {
 		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", ro.verb, id, ro.ok, ro.code, routeWords(l.packet))
 	}
-	if ro.code == 2 {
+	if ro.code == 2 && ro.answer == sprintwire.Unknown {
+		// a write whose outcome is unknown (no answer, or changed=unknown) is sent again by
+		// the next pass. A refusal the store answered with exit 2 (refuse(): usage, epoch,
+		// the server's own) is a refusal, below, never counted as no answer.
 		// the no-answer note names the verb the store did not answer: a read that reached no
 		// verdict is returned as `read --return`, exactly as reportOne labeled it. It is
 		// noted against the collecting pass (m.passNoAnswer), never the launching one, so a
@@ -1441,9 +1475,11 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 	return 1
 }
 
-// keepUncertain settles a report the store did not answer whose claim moved before the
-// collecting pass read the queue: the store may have taken it (and moved the claim itself,
-// a failed finish redealt at gen+1) or not, and a resend names a claim that is gone. The
+// keepUncertain settles a report whose write's outcome is unknown (sprintwire.Unknown: no
+// answer, changed=unknown, an operation cut for repair, a finish a clear closed) and whose
+// claim moved before the collecting pass read the queue: the store may have taken it (and
+// moved the claim itself, a failed finish redealt at gen+1) or not, and a resend names a
+// claim that is gone. The
 // result line and the no-answer note are said as applyReport says them, and the run is
 // kept as failed (Ender: its directory stays for a person to inspect), never reaped as
 // clean. It returns how many cards it acted on.
@@ -1460,7 +1496,7 @@ func (m *Member) keepUncertain(id string, l launch, ro *reportOut, epoch uint64,
 	if ro.code == 2 {
 		m.passNoAnswer(verb, ro.out)
 	}
-	fmt.Fprintf(m.out, "NOTE %s: the store did not answer and the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d); the outcome is unknown, so the run is kept as failed and not sent again\n", verb, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
+	fmt.Fprintf(m.out, "NOTE %s: the store did not answer or did not confirm the write, and the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d); the outcome is unknown, so the run is kept as failed and not sent again\n", verb, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
 	m.forget(id, true)
 	return 1
 }
@@ -1767,21 +1803,25 @@ func (m *Member) collect() (acted int) {
 			// The queue the collecting pass just read is consulted (queueRead), so a
 			// report that posts in a later pass than the one that launched it is judged
 			// against the claim as it stands now (STEP 4). What a moved claim means turns
-			// on what the store said:
-			//   - exit 1, a definite refusal: the store did not take the report (its
-			//     finish refuses a stale claim, nova-sprint finishPlan liveGen), so the
-			//     result is nobody's and is reaped, exactly as the in-pass moved check
-			//     reaps a launch (Tick);
-			//   - exit 0, accepted: applied, never reaped (below): an accepted finish was
-			//     the card's claim when it landed, and the move is the store acting on it
-			//     (a failed finish redealt at gen+1);
-			//   - any other exit, no answer (2): the store may or may not have taken it,
-			//     and the move may be its own doing. The outcome is unknown, so the run is
-			//     kept as failed (forget failed=true: its directory stays for a person),
-			//     never reaped as clean, and never sent again to a claim that is gone.
-			if c, listed := m.queueCards[card]; listed && po.report.code != 0 && m.moved(l, c) {
+			// on what became of the write (reportOut.answer, sprintwire.Answer), never on the
+			// exit code alone: nova-sprint's refuse() exits 2 as a lost answer does, and a cut
+			// operation exits 1 as a refused card does.
+			//   - Refused, a definite refusal whatever its code (a card refused: the store's
+			//     finish refuses a stale claim, nova-sprint finishPlan liveGen; a usage or
+			//     epoch refusal before the store was touched): the store did not take the
+			//     report, so the result is nobody's and is reaped, exactly as the in-pass
+			//     moved check reaps a launch (Tick);
+			//   - Accepted: applied, never reaped (below): an accepted finish was the card's
+			//     claim when it landed, and the move is the store acting on it (a failed
+			//     finish redealt at gen+1);
+			//   - Unknown (no answer, changed=unknown, an operation cut for repair, a finish
+			//     a clear closed): the store may or may not have taken it, and the move may be
+			//     its own doing, so the run is kept as failed (forget failed=true: its
+			//     directory stays for a person), never reaped as clean, never sent again to a
+			//     claim that is gone (keepUncertain).
+			if c, listed := m.queueCards[card]; listed && po.report.answer != sprintwire.Accepted && m.moved(l, c) {
 				epoch, gen, attempt := m.claim(c)
-				if po.report.code == 1 {
+				if po.report.answer == sprintwire.Refused {
 					fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, card, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
 					m.forget(card, false)
 					continue

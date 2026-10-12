@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 )
 
 // barrierSprint is the package's scriptSprint with a finish that holds every call until
@@ -494,4 +496,112 @@ func TestABackgroundReportNoAnswerIsTheCollectingPassesError(t *testing.T) {
 	require.Error(t, err, "the collecting pass returns the store-did-not-answer error")
 	assert.Contains(t, out.String(), "NOTE finish c1: the store did not answer",
 		"the no-answer note names the verb the store did not answer")
+}
+
+// answerGate is gateSprint as the member's sprintwire.Worker is: an AnswerSprint that says
+// what became of the finish (finishAnswer) apart from its exit code.
+type answerGate struct {
+	*gateSprint
+	finishAnswer sprintwire.Answer
+}
+
+func (g *answerGate) RunAnswer(args ...string) (int, []byte, sprintwire.Answer) {
+	code, out := g.gateSprint.Run(args...)
+	if verbOf(args) == "finish" {
+		return code, out, g.finishAnswer
+	}
+	return code, out, sprintwire.Classify(code, out, nil, true)
+}
+
+// reportWithMovedClaim runs a Background member's failed finish through the gate, moves the
+// claim to gen 2 while it is in flight, has the finish exit code with out, and collects it
+// in the next pass: it returns what the member printed, its ended launches and that pass's
+// error. sp is the Sprint the member is given (gs itself, or gs wrapped).
+func reportWithMovedClaim(t *testing.T, gs *gateSprint, sp Sprint, code int, out string) (string, []string, error) {
+	t.Helper()
+	rn, buf := newRunner(), &bytes.Buffer{}
+	m := New(Config{As: "m", Width: 1, Background: true}, sp, rn, &fakePusher{def: Push{Sha: fullSha}}, buf)
+	old := pk("c1") // gen 1, epoch 7
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	<-m.Wake() // the background start posted
+	_, err = m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.NotNil(t, rn.child("c1"), "the child started")
+	rn.child("c1").end(Result{Ran: true, OK: false, Shaped: true, Verdict: "notdone", Head: "0123456", Report: "not done"})
+	_, err = m.Tick(time.Unix(0, 0)) // the end begins (its push runs)
+	require.NoError(t, err)
+	<-m.Wake() // the end posted
+	_, err = m.Tick(time.Unix(0, 0)) // the finish report, held on the gate
+	require.NoError(t, err)
+	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
+	moved := pk("c1")
+	moved.Gen = 2
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
+	gs.set("finish", code, out)
+	close(gs.release)
+	<-m.Wake() // the report posted
+	_, err = m.Tick(time.Unix(0, 0))
+	return buf.String(), rn.endedLaunches(), err
+}
+
+// TestAMovedReportIsJudgedByWhatBecameOfItsWriteNotItsExitCode pins collect's three classes
+// on a moved claim, each from nova-sprint's own answers (sprintwire.Classify), never the exit
+// code alone (Stella's read of #5625 at a0d0429e; the cold reader's CutError):
+//   - a definite refusal is reaped, even when it exits 2 (cmd/nova-sprint/main.go refuse(),
+//     "nova-sprint finish REFUSED: ...; nothing was changed");
+//   - an unknown outcome keeps the run as failed: no answer (the worker's own 2), the store
+//     not confirming the write (exit 2, changed=unknown), an operation cut after an earlier
+//     manifest applied (exit 1, "cut at table", fenced for nova-sprint repair);
+//   - an accepted finish is applied (TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved).
+//
+// The typed answer (an AnswerSprint, the member's sprintwire.Worker) decides when the Sprint
+// gives one; the printed words decide for one that does not. Red at a0d0429e: the exit-2
+// refusal was kept as uncertain ("the outcome is unknown"), and the cut, exit 1, was reaped.
+func TestAMovedReportIsJudgedByWhatBecameOfItsWriteNotItsExitCode(t *testing.T) {
+	t.Parallel()
+	const (
+		refused2 = "nova-sprint finish REFUSED: a report names the epoch its cards were handed at: --epoch <n>; nothing was changed"
+		unknown2 = "FINISH FAILED moved=0 refused=0 notes=0 changed=unknown; nova-sprint finish: the store did not confirm the write (changed=unknown)"
+		cut1     = "FINISH FAILED moved=0 refused=0 notes=0 changed=no; nova-sprint finish: operation o1 cut at table cards: write failed; run: nova-sprint repair"
+	)
+	for _, tc := range []struct {
+		name   string
+		code   int
+		out    string
+		typed  bool
+		answer sprintwire.Answer
+		reaped bool
+	}{
+		{"a refusal that exits 2, read from its words", 2, refused2, false, 0, true},
+		{"a refusal that exits 2, the typed answer", 2, refused2, true, sprintwire.Refused, true},
+		{"no answer, the worker's own 2, typed", 2, "the sprint server did not answer", true, sprintwire.Unknown, false},
+		{"the store did not confirm, exit 2", 2, unknown2, false, 0, false},
+		{"an operation cut, exit 1", 1, cut1, false, 0, false},
+		{"an operation cut, exit 1, typed", 1, cut1, true, sprintwire.Unknown, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
+			var sp Sprint = gs
+			if tc.typed {
+				sp = &answerGate{gateSprint: gs, finishAnswer: tc.answer}
+			}
+			out, ended, err := reportWithMovedClaim(t, gs, sp, tc.code, tc.out)
+			if tc.reaped {
+				assert.NoError(t, err, "a refusal is no unanswered verb")
+				assert.Contains(t, out, "reaped c1: the claim moved", "a definite refusal is reaped")
+				assert.NotContains(t, out, "the outcome is unknown", "a definite refusal is no unknown outcome")
+				assert.Equal(t, []string{"c1:false"}, ended, "reaped: nobody's result")
+				return
+			}
+			assert.NotContains(t, out, "reaped c1", "an unknown outcome is never reaped")
+			assert.Contains(t, out, "the outcome is unknown, so the run is kept as failed", "the uncertainty is said")
+			assert.Equal(t, []string{"c1:true"}, ended, "the run is kept as failed")
+			if tc.code == 2 {
+				assert.Error(t, err, "the collecting pass says the store did not answer or confirm")
+			}
+		})
+	}
 }
