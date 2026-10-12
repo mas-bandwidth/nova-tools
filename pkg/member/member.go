@@ -1740,12 +1740,17 @@ func (m *Member) collect() (acted int) {
 			m.running[card] = l
 			fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", card, l.attempt, l.gen, m.Running(), m.width, routeWords(l.packet))
 		case po.report != nil:
-			// a report whose claim moved while it ran is nobody's: it is reaped here,
-			// in the pass goroutine, exactly as the in-pass moved check reaps a launch
-			// (Tick). The last queue answer is consulted, so a report that posts in a
-			// later pass than the one that launched it is still reaped when its claim
-			// moved (STEP 4).
-			if c, listed := m.queueCards[card]; listed && m.moved(l, c) {
+			// a report the store refused or did not answer, whose claim moved while it
+			// ran, is nobody's: it is reaped here, in the pass goroutine, exactly as the
+			// in-pass moved check reaps a launch (Tick). The queue the collecting pass
+			// just read is consulted (queueRead), so a report that posts in a later pass
+			// than the one that launched it is still reaped when its claim moved (STEP 4).
+			// A report the store ACCEPTED (exit 0) is applied, never reaped: the store's
+			// finish refuses a stale claim, so an accepted one was the card's claim when it
+			// landed, and a move seen after it is the store acting on that report (a
+			// failed finish redealt at gen+1). Reaping it would forget a failed run as
+			// clean and remove the directory a person may want to inspect (forget, Ender).
+			if c, listed := m.queueCards[card]; listed && po.report.code != 0 && m.moved(l, c) {
 				epoch, gen, attempt := m.claim(c)
 				fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, card, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
 				m.forget(card, false)

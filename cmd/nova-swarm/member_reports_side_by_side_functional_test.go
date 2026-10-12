@@ -37,6 +37,7 @@ type sideSprint struct {
 	next     member.Packet   // the fifth, taken into a lane a report freed
 	dealt    bool
 	took     bool            // the fifth read was taken
+	tookCh   chan struct{}   // closed when the fifth read is taken
 	returned map[string]bool // each read whose `read --return` the server answered
 	inFlight int
 	most     int
@@ -94,6 +95,7 @@ func (s *sideSprint) take() sprintwire.Result {
 		packets = s.reads
 	case !s.took && len(s.returned) > 0:
 		s.took = true
+		close(s.tookCh)
 		s.heldAtTake = s.held != "" && !s.returned[s.held]
 		packets = []member.Packet{s.next}
 	}
@@ -182,7 +184,7 @@ func TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane(t *testing.
 		}
 	}
 	sp := &sideSprint{reads: []member.Packet{read(1), read(2), read(3), read(4)}, next: read(5),
-		returned: map[string]bool{}, allIn: make(chan struct{}), release: make(chan struct{})}
+		returned: map[string]bool{}, allIn: make(chan struct{}), release: make(chan struct{}), tookCh: make(chan struct{})}
 	srv := httptest.NewServer(sp)
 	defer srv.Close()
 	var releaseOnce sync.Once
@@ -229,15 +231,9 @@ func TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane(t *testing.
 
 	// the four reads fail staging, wait ReadStageRetry, fail again and are handed back; the
 	// fifth is taken once a lane is free, all within the retry and a few one-second passes
-	deadline := time.Now().Add(SideBySideBound)
-	for time.Now().Before(deadline) {
-		sp.mu.Lock()
-		took := sp.took
-		sp.mu.Unlock()
-		if took {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	select {
+	case <-sp.tookCh:
+	case <-time.After(SideBySideBound):
 	}
 	sp.mu.Lock()
 	dealt, hit, most, took, heldAtTake, held := sp.dealt, sp.hit, sp.most, sp.took, sp.heldAtTake, sp.held

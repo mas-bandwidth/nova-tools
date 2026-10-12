@@ -1817,11 +1817,13 @@ func TestAMemberWhosePassIsHungStopsBeating(t *testing.T) {
 	assert.Contains(t, out.String(), "NOTE beat resumed: the work pass advanced\n")
 }
 
-// TestALaneThatFinishesIsRefilledInTheSamePass pins the member's side of
+// TestALaneThatFinishesIsRefilledNextPass pins the member's side of
 // DealAhead (internal/sprint/width.go): a member at its width with a card
-// ready behind it reports the child that ended and takes the ready card in
-// the one pass, so the lane is refilled at once and never waits for the
-// sprint's next tick: finish, then take --limit 1, then the start.
+// ready behind it reports the child that ended in one pass, the reporting
+// launch holding its lane while its report runs (reportRun), and takes the
+// ready card in the next pass, which a Background member runs as soon as the
+// report posts (it wakes the loop): finish, then take --limit 1, then the
+// start, never waiting for the sprint's next tick.
 func TestALaneThatFinishesIsRefilledNextPass(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 1})

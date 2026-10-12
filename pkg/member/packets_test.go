@@ -262,6 +262,12 @@ func TestAReadReturnedAMomentAgoTakesNoLaneOfTheAsk(t *testing.T) {
 	require.NoError(t, err)
 	_, err = g.tick(t) // the freed lane begins the next read, not the returned one
 	require.NoError(t, err)
+	// the read returned a moment ago stays in --have on both passes, so the ask sends no
+	// packet for it and its lane goes to the next read
+	assert.Equal(t, []string{
+		"queue --as r --json --packets 0 --have p000.r1.r,p001.r1.r,p002.r1.r",
+		"queue --as r --json --packets 1 --have p000.r1.r,p002.r1.r",
+	}, s.queues())
 	assert.Equal(t, []string{"p000.r1.r", "p001.r1.r", "p002.r1.r", "p003.r1.r"}, g.r.started(), "the freed lane began the next read, not the returned one")
 }
 

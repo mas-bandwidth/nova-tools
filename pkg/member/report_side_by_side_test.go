@@ -334,10 +334,14 @@ func TestAMovedClaimWhileReportingIsReapedNotApplied(t *testing.T) {
 	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
 
 	// the claim moves while the report runs: the queue shows gen 2, and the report
-	// posts before any pass has read that queue (no Tick in between)
+	// posts before any pass has read that queue (no Tick in between). The store refuses
+	// the finish for gen 1 as its live-generation check does (nova-sprint
+	// internal/sprint/steps_work.go finishPlan, liveGen: a finish whose <card>@<gen> is
+	// not the live generation is refused)
 	moved := pk("c1")
 	moved.Gen = 2
 	gs.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
+	gs.set("finish", 1, "REFUSED finish: c1@1 is not the live generation (2)")
 
 	close(gs.release)
 	<-m.Wake()                       // the report posted
@@ -346,7 +350,60 @@ func TestAMovedClaimWhileReportingIsReapedNotApplied(t *testing.T) {
 
 	assert.Contains(t, out.String(), "reaped c1: the claim moved", "the moved report is reaped")
 	assert.NotContains(t, out.String(), "finish c1 ok=true", "a moved claim's report is never applied")
+	assert.NotContains(t, out.String(), "refused:", "a reaped report's refusal is neither said nor remembered for a retry")
 	assert.Empty(t, m.running, "the reaped launch is forgotten")
+	assert.Equal(t, []string{"c1:false"}, rn.endedLaunches(), "reaped: nobody's result")
+}
+
+// TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved pins the other side of STEP (4): a
+// report the store ACCEPTED is applied, never reaped, though the queue the collecting pass
+// reads lists the card at a new generation. The store's finish refuses a stale claim
+// (nova-sprint finishPlan, liveGen), so an accepted finish was the card's claim when it
+// landed, and a move seen after it is the store acting on that very report: a failed finish
+// is redealt at gen+1 (nova-sprint redeal) before the member's next queue read. Red before
+// the fix: the reap ran on every report whatever its exit code, so the accepted failed
+// finish was reaped as "the claim moved" and its run forgotten as clean (Ended failed=false),
+// losing the failed run's directory a person may want to inspect.
+func TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved(t *testing.T) {
+	t.Parallel()
+	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
+	rn, out := newRunner(), &bytes.Buffer{}
+	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+
+	old := pk("c1") // gen 1, epoch 7
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	<-m.Wake() // the background start posted
+	_, err = m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.NotNil(t, rn.child("c1"), "the child started")
+
+	// the run fails: a notdone verdict is finished failed
+	rn.child("c1").end(Result{Ran: true, OK: false, Shaped: true, Verdict: "notdone", Head: "0123456", Report: "not done"})
+	_, err = m.Tick(time.Unix(0, 0)) // the end begins (its push runs)
+	require.NoError(t, err)
+	<-m.Wake() // the end posted
+
+	_, err = m.Tick(time.Unix(0, 0)) // the finish report, held on the gate
+	require.NoError(t, err)
+	require.Equal(t, "finish", <-gs.began, "the finish report is in flight")
+
+	// the store accepts the failed finish (exit 0) and redeals the card to this member at
+	// gen 2 before the member's next queue read
+	redealt := pk("c1")
+	redealt.Gen = 2
+	gs.set("queue", 0, queueJSON(t, 7, working("c1", 2, &redealt)))
+
+	close(gs.release)
+	<-m.Wake()                       // the report posted
+	_, err = m.Tick(time.Unix(0, 0)) // collect: apply, never reap
+	require.NoError(t, err)
+
+	assert.Contains(t, out.String(), "finish c1 ok=false exit=0", "the accepted finish is applied")
+	assert.NotContains(t, out.String(), "reaped c1", "an accepted report is never reaped")
+	assert.Contains(t, rn.endedLaunches(), "c1:true", "the failed run is kept as failed")
+	assert.NotContains(t, rn.endedLaunches(), "c1:false", "the failed run is never forgotten as clean")
 }
 
 // TestABackgroundReportNoAnswerIsTheCollectingPassesError pins STEP (4)/finding (2): a
