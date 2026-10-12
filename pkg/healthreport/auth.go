@@ -43,8 +43,8 @@ func NewCapability(e Enrollment, encoded string) (*Capability, error) {
 	return c, nil
 }
 
-func (c *Capability) String() string   { return "health capability (secret redacted)" }
-func (c *Capability) GoString() string { return c.String() }
+func (c Capability) String() string   { return "health capability (secret redacted)" }
+func (c Capability) GoString() string { return c.String() }
 
 // Principal is a successfully authenticated owner grant. Request bodies cannot
 // construct one; its zero value is not authorized. The receiver still checks

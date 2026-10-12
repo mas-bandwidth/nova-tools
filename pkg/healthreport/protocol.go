@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -187,6 +188,34 @@ func decode(raw []byte, limit int, dst any) error {
 	if err != nil || open != json.Delim('{') {
 		return errors.New("body is not an object")
 	}
+	// encoding/json matches tag names case-insensitively. Enforce the exact
+	// schema spelling before it can overwrite a logical field via an alias.
+	typ := reflect.TypeOf(dst)
+	if typ.Kind() != reflect.Pointer || typ.Elem().Kind() != reflect.Struct {
+		return errors.New("invalid schema")
+	}
+	allowed := map[string]bool{}
+	required := map[string]bool{}
+	for i := 0; i < typ.Elem().NumField(); i++ {
+		field := typ.Elem().Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		tag := strings.Split(field.Tag.Get("json"), ",")
+		if tag[0] == "" || tag[0] == "-" {
+			continue
+		}
+		allowed[tag[0]] = true
+		optional := false
+		for _, option := range tag[1:] {
+			if option == "omitempty" || option == "omitzero" {
+				optional = true
+			}
+		}
+		if !optional {
+			required[tag[0]] = true
+		}
+	}
 	seen := map[string]bool{}
 	for d.More() {
 		key, err := d.Token()
@@ -194,7 +223,7 @@ func decode(raw []byte, limit int, dst any) error {
 			return err
 		}
 		k, ok := key.(string)
-		if !ok || seen[k] {
+		if !ok || !allowed[k] || seen[k] {
 			return errors.New("duplicate or invalid field")
 		}
 		seen[k] = true
@@ -204,6 +233,11 @@ func decode(raw []byte, limit int, dst any) error {
 		}
 		if bytes.Equal(value, []byte("null")) || (len(value) > 0 && (value[0] == '{' || value[0] == '[')) {
 			return errors.New("field is not a scalar")
+		}
+	}
+	for key := range required {
+		if !seen[key] {
+			return errors.New("missing field")
 		}
 	}
 	if _, err := d.Token(); err != nil {
