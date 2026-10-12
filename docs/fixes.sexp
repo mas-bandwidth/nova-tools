@@ -897,12 +897,23 @@
     contract, and posts its exit code and output for the pass goroutine's collect to apply; a launch being reported
     is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
     reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
-    its reports, so it is still one step. A report whose claim moved while it ran is collected as reaped, never
-    applied: its post is applied only once the collecting pass has read the queue, so the moved re-check consults
-    the queue that pass just read, never the previous pass's. The lander's diffcheck now holds a package's tests
-    always inside PATHS (cardgen.AlwaysInPathsRule), so the tests this changes beside the member source are in scope.
-    Tests, red first: pkg/member/report_side_by_side_test.go (TestReportsRunSideBySideInOnePass,
-    TestTakeRunsBeforeTheReportsReturn, TestAMovedClaimWhileReportingIsReapedNotApplied and the refusal, no-answer,
-    retry and stop cases) and the functional TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane
-    (cmd/nova-swarm, a real member process over a sprint server)."
+    its reports, so it is still one step. A report the store refused or did not answer, whose claim moved while it
+    ran, is collected as reaped, never applied: its post is applied only once the collecting pass has read the
+    queue, so the moved re-check consults the queue that pass just read, never the previous pass's. A report the
+    store accepted is applied, never reaped: nova-sprint's finish refuses a stale claim (internal/sprint
+    steps_work.go finishPlan, liveGen), so an accepted finish was the card's claim when it landed, and a move seen
+    after it is the store acting on that report (a failed finish redealt at gen+1, kept as failed). The lander's
+    diffcheck now holds a package's tests always inside PATHS (cardgen.AlwaysInPathsRule) when the PATHS name real
+    Go source in its directory (a .go file, the directory, or a Go-file glob), so the tests this changes beside the
+    member source are in scope and a README or fixture authorizes no test. DEBT, explicit: tla/CardContract.tla
+    models Judge and Move as one atomic step (the finish and the report together, guarded on the held claim), while
+    the member now sends a report and collects it apart, a move possible in between, including a move the member's
+    own accepted report causes; this change makes no formal coverage claim for that interval. The model card is in
+    v1.2.16; until it lands, the interval is held by TestAMovedClaimWhileReportingIsReapedNotApplied,
+    TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved and the store's liveGen check. Tests, red first:
+    pkg/member/report_side_by_side_test.go (TestReportsRunSideBySideInOnePass, TestTakeRunsBeforeTheReportsReturn,
+    the two above, and the refusal, no-answer, retry and stop cases), pkg/diffcheck
+    TestOutsideHoldsTestsOnlyBesideGoSource, and the functional
+    TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
+    sprint server)."
    :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")))
