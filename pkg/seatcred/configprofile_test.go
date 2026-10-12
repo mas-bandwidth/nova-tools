@@ -54,6 +54,20 @@ func TestLoadConfigProfileEmptyFileWrapsErrNoProfileRow(t *testing.T) {
 	require.Contains(t, err.Error(), path, "LoadConfigProfile of an empty file = %v; want %s", err, path)
 }
 
+// TestLoadConfigProfileRefusesAPathItCannotRead: a path that opens but cannot
+// be read (a directory) is refused naming the seat and the path, not as a
+// missing row.
+func TestLoadConfigProfileRefusesAPathItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	_, err := LoadConfigProfile(dir, "coordinator")
+	require.Error(t, err, "LoadConfigProfile of a directory = %v; want a refusal naming the path", err)
+	require.NotErrorIs(t, err, ErrNoProfileRow, "LoadConfigProfile of a directory = %v; want a read refusal, not a missing row", err)
+	require.Contains(t, err.Error(), "seat coordinator", "LoadConfigProfile of a directory = %v; want the seat", err)
+	require.Contains(t, err.Error(), dir, "LoadConfigProfile of a directory = %v; want %s", err, dir)
+}
+
 // TestLoadConfigProfileRefusesMalformedRows: one and four columns, a bad
 // password env, a bad seat name and an empty DSN are refused, each naming the
 // file and the physical line number.

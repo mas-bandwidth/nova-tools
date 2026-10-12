@@ -187,6 +187,38 @@ func TestResolveRefusesAStoreThatDoesNotExist(t *testing.T) {
 	hides(t, err.Error(), resolveCoordPW, resolveBenchPW)
 }
 
+// TestResolveRefusesWhenHomeAndTheOverridesAreUnset: Resolve reaches the store
+// through PathsFor, so with HOME unset and neither override set, the refusal a
+// coordinator reads names the seat, StoreEnv and KeyEnv, never a value.
+func TestResolveRefusesWhenHomeAndTheOverridesAreUnset(t *testing.T) {
+	t.Parallel()
+
+	_, err := seatcred.Resolve("studio", envOf(nil))
+	require.Error(t, err, "Resolve with no HOME and no overrides = %v; want the path refusal", err)
+	require.Contains(t, err.Error(), "seat studio", "Resolve with no HOME and no overrides = %v", err)
+	require.Contains(t, err.Error(), seatcred.StoreEnv, "Resolve with no HOME and no overrides = %v; want %s", err, seatcred.StoreEnv)
+	require.Contains(t, err.Error(), seatcred.KeyEnv, "Resolve with no HOME and no overrides = %v; want %s", err, seatcred.KeyEnv)
+	hides(t, err.Error(), resolveCoordPW, resolveBenchPW)
+}
+
+// TestActiveResolvesThroughTheLookupFromArgsRecorded: a Selection FromArgs was
+// given resolves on first use through that getenv, not this process's own
+// environment, so the store its refusal names is the one under the fixture's
+// HOME, never a real one.
+func TestActiveResolvesThroughTheLookupFromArgsRecorded(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	s := new(seatcred.Selection)
+	_, err := s.FromArgs([]string{"--seat=studio"}, envOf(map[string]string{"HOME": home, seatcred.SopsEnv: seattest.Sops(t)}))
+	require.NoError(t, err, "FromArgs = %v; want studio selected", err)
+	c, ok, err := s.Active()
+	require.True(t, ok, "Active = %v %v %v; want the seat selected", c, ok, err)
+	require.Error(t, err, "Active with no store = %v; want the store refusal through the recorded lookup", err)
+	require.Contains(t, err.Error(), filepath.Join(home, seatcred.DefaultStore), "Active with no store = %v; want the store under the recorded HOME", err)
+	hides(t, err.Error(), resolveCoordPW, resolveBenchPW)
+}
+
 // TestResolveReadsTheCoordinatorPasswordByUsersOrder: both passwords sealed,
 // no UserEnv, and Users' first user -- coordinator -- is the login. The
 // formatted Cred never prints the password.
