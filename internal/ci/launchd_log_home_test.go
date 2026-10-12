@@ -153,5 +153,6 @@ func TestLaunchdLogHomeSourceWalkSkipsOnlyRootBin(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.NotContains(t, seen, "bin/nova-tool", "the generated root bin is not a plist source")
+	assert.Contains(t, seen, "valid.plist")
 	assert.Equal(t, map[string]bool{"outside.plist": true, "nested/bin/agent.plist": true}, invalid, "invalid literals outside root bin remain visible, while a valid home path passes")
 }
