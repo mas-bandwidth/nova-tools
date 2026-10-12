@@ -18,8 +18,9 @@ const darwinZombie = 5
 // session sid (sid > 0, getsid), and those whose environment holds the entry LaneEnv=mark
 // (mark != "", the environment half of sysctl kern.procargs2, one exact entry, never the
 // command line before it). A zombie is not live. A process whose records this user may not
-// read is not listed.
-func laneProcs(sid int, mark string) ([]laneProcess, bool) {
+// read is not listed. stuck is unused here: a sysctl copies the record out and never waits
+// on the process.
+func laneProcs(sid int, mark string, stuck map[int]bool) ([]laneProcess, bool) {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return nil, false
@@ -64,8 +65,12 @@ func procargsEnvHolds(pid int, want []byte) bool {
 // scanLaneProcs lists every live process other than this one with its birth, its session
 // (getsid) and the lane entries of its environment (kern.procargs2's environment half), for
 // ReapOrphanLanes. A zombie is not live; a process whose records this user may not read is
-// listed with no lane entries.
-func scanLaneProcs() ([]laneProcInfo, bool) {
+// listed with no lane entries. The birth is read FIRST: a pid the kernel reuses between the
+// birth and the session reads would otherwise be listed with the old process's session and
+// its own birth, which the check before each signal (signalLaneProcess) could not tell apart;
+// read first, a reuse after it changes the birth, and the signal is refused. stuck is unused
+// here: a sysctl copies the record out and never waits on the process.
+func scanLaneProcs(stuck map[int]bool) ([]laneProcInfo, bool) {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return nil, false
@@ -77,11 +82,12 @@ func scanLaneProcs() ([]laneProcInfo, bool) {
 		if pid <= 1 || pid == self || procs[i].Proc.P_stat == darwinZombie {
 			continue
 		}
+		started := LaneStartStamp(pid)
 		sid, err := unix.Getsid(pid)
 		if err != nil {
 			continue
 		}
-		p := laneProcInfo{pid: pid, started: LaneStartStamp(pid), sid: sid}
+		p := laneProcInfo{pid: pid, started: started, sid: sid}
 		p.mark, p.owner = laneEntries(procargsEnv(pid))
 		out = append(out, p)
 	}

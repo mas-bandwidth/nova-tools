@@ -124,6 +124,110 @@ func TestARestartedMemberEndsTheLanesAKilledMemberLeft(t *testing.T) {
 	require.True(t, laneProcAlive(otherSlots.Process.Pid), "a lane of a member of this name under another slots directory is never touched")
 }
 
+// ONE MEMBER OF A NAME PER SLOTS DIRECTORY (memberlock.go). A real member m1 runs a read whose
+// harness blocks, its lane alive: native, the harness, a sleeper in a session of its own. A
+// second `nova-swarm member --as m1` is started over the same root while the first lives (two
+// daemons by mistake, a hand-run `member --once`, a card's own test reusing a fleet machine's
+// name and root). It is refused before it reaps anything: it exits non-zero within the bound,
+// its one REFUSED line names the member that runs and the way out, it says no MEMBER ORPHANS,
+// and the first member's lane is alive after it: the sleeper, the harness and native. The lock
+// is the first member's alone: its open files hold the lock, native's hold no link to it. Red
+// before the lock: the second member took the first's running lane for an orphan and ended it,
+// its MEMBER ORPHANS line said so, and it ran on as a second member of the name.
+func TestASecondMemberOfTheSameNameIsRefusedAndTheFirstKeepsItsLanes(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, buildShared(), "building the binaries these tests run")
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid (util-linux) is not installed: the escaping sleeper cannot be started")
+	}
+	e := newCaseEnv(t, false)
+	head := pushedWork(t, e)
+	pids := filepath.Join(e.dir, "pids")
+	require.NoError(t, os.MkdirAll(pids, 0o755))
+	harnessPID, sleeperPID, ready := filepath.Join(pids, "harness"), filepath.Join(pids, "sleeper"), filepath.Join(pids, "ready")
+	harness := e.script(t, "[ -n \"$"+swarm.LaneEnv+"\" ] || exit 0\n"+
+		"echo $$ > '"+harnessPID+"'\n"+
+		"setsid sleep 600 </dev/null >/dev/null 2>&1 &\necho $! > '"+sleeperPID+"'\n"+
+		": > '"+ready+"'\nexec sleep 600")
+
+	root, home, xdg := t.TempDir(), t.TempDir(), t.TempDir()
+	slots := filepath.Join(root, "slots")
+	require.NoError(t, os.MkdirAll(slots, 0o755))
+	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
+	var lanePIDs []int
+	t.Cleanup(func() {
+		for _, pid := range lanePIDs {
+			killIfLaneUnder(pid, slots)
+		}
+	})
+
+	first := &ghostSprint{read: member.Packet{
+		Card: "a-1.r1.m1", Kind: "read", As: "m1", Primary: "a-1", Worker: "m2",
+		Attempt: 1, Gen: 1, Epoch: 1, Head: head, WorkBranch: "sprint/a-1.w1",
+		Brief: "a-1: a read whose harness blocks\nREPO: " + e.repoURL + "\n",
+	}}
+	srv1 := httptest.NewServer(first)
+	defer srv1.Close()
+	m1, out1 := startOrphanMember(t, srv1.URL, harness, root, home, xdg)
+	started := func() bool { _, err := os.Stat(ready); return err == nil }
+	for until := time.Now().Add(90 * time.Second); !started() && time.Now().Before(until); {
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, started(), "the read's harness never started its sleeper\nstdout:\n%s", out1.String())
+	sleeper, harnessP, native := readLanePID(sleeperPID), readLanePID(harnessPID), nativePID(t, slots)
+	lanePIDs = append(lanePIDs, sleeper, harnessP, native)
+	require.Positive(t, sleeper)
+	require.Positive(t, harnessP)
+	require.Positive(t, native)
+
+	// a second member of the same name over the same root, while the first lives
+	srv2 := httptest.NewServer(quietSprint{epoch: 2})
+	defer srv2.Close()
+	m2, out2 := startOrphanMember(t, srv2.URL, harness, root, home, xdg)
+	exited := make(chan error, 1)
+	go func() { exited <- m2.Wait() }()
+	select {
+	case err := <-exited:
+		require.Error(t, err, "the second member of the name exits non-zero, refused\nits output:\n%s", out2.String())
+	case <-time.After(30 * time.Second):
+		_ = m2.Process.Kill() // ignored: only this test's own process, by its pid
+		<-exited
+		require.Fail(t, "a second member of the same name ran on",
+			"it ran for 30s instead of refusing to start; the first member's lane after it: sleeper %d alive=%v, harness %d alive=%v, native %d alive=%v\nits output:\n%s",
+			sleeper, laneProcAlive(sleeper), harnessP, laneProcAlive(harnessP), native, laneProcAlive(native), out2.String())
+	}
+	require.Contains(t, out2.String(), "nova-swarm member REFUSED: a member named m1 is running over "+slots+" already", "the refusal names the member that runs\n%s", out2.String())
+	require.Contains(t, out2.String(), "stop the one that runs, or give this one its own --as or --root", "the refusal says the way out")
+	require.NotContains(t, out2.String(), "MEMBER ORPHANS", "a refused member reaps nothing")
+	require.True(t, laneProcAlive(sleeper), "the first member's sleeper is alive after the second was refused")
+	require.True(t, laneProcAlive(harnessP), "the first member's harness is alive after the second was refused")
+	require.True(t, laneProcAlive(native), "the first member's native is alive after the second was refused")
+
+	// the lock is the member's alone: the member's open files hold it, native's hold no link to it
+	lockPath := filepath.Join(slots, ".member-m1.lock") // spelt out: memberLockPath in the tree with the lock, so this test builds in the red tree too
+	require.True(t, holdsOpen(t, m1.Process.Pid, lockPath), "the running member holds its lock file open")
+	require.False(t, holdsOpen(t, native, lockPath), "the lane's native inherits no lock descriptor: the lock is close-on-exec and native is started with its stdio alone")
+
+	// the first member is this test's own process: ended by its pid now, as the first test ends
+	// its member, so the cleanup does not wait the drain's thirty seconds on a harness that
+	// blocks; the lane it leaves is ended by the cleanup above, by its mark
+	require.NoError(t, m1.Process.Kill())
+	_ = m1.Wait() // ignored: killed, its exit status is the SIGKILL
+}
+
+// holdsOpen is whether pid has path among its open files (/proc/<pid>/fd).
+func holdsOpen(t *testing.T, pid int, path string) bool {
+	t.Helper()
+	ents, err := os.ReadDir("/proc/" + strconv.Itoa(pid) + "/fd")
+	require.NoError(t, err, "listing the open files of pid %d", pid)
+	for _, e := range ents {
+		if target, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/fd/" + e.Name()); err == nil && target == path {
+			return true
+		}
+	}
+	return false
+}
+
 // laneOwnerEnvName is the environment name a member writes its own name under in each lane
 // (swarm.LaneOwnerEnv), spelt out here so this test also builds against a tree without it, the
 // red run's; pkg/swarm TestLaneOwnerEnvIsItsWireName holds the two equal.

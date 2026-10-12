@@ -3,6 +3,7 @@ package swarm
 import (
 	"bytes"
 	"path/filepath"
+	"time"
 )
 
 // A LANE ENDS EVERYTHING ITS CARD STARTED (v1.2.15).
@@ -85,4 +86,25 @@ func laneEntries(ents [][]byte) (mark, owner string) {
 		}
 	}
 	return mark, owner
+}
+
+// readWithin runs read and waits for it until expired fires: what it read and ok=true, or nil
+// and ok=false when expired fired first. A read that never returns (/proc/<pid>/environ of a
+// process stuck holding its memory map's lock) keeps its goroutine, and the thread it blocks,
+// until the kernel lets it go, so a caller that met the bound remembers not to ask again.
+func readWithin(read func() ([]byte, error), expired <-chan time.Time) ([]byte, bool) {
+	done := make(chan []byte, 1)
+	go func() {
+		b, err := read()
+		if err != nil {
+			b = nil
+		}
+		done <- b
+	}()
+	select {
+	case b := <-done:
+		return b, true
+	case <-expired:
+		return nil, false
+	}
 }

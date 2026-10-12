@@ -186,17 +186,24 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		return refuse(stderr, " member", err.Error())
 	}
 	pass = append(pass, extra...)
-	if *slots == "" {
-		*slots = filepath.Join(*root, "slots")
-	}
-	if *resultsRoot == "" {
-		*resultsRoot = filepath.Join(*root, "results")
+	// the three directories, absolute: a lane's mark is its launch directory under slots, and
+	// an orphan is told by its mark being directly under this member's slots (memberDirs)
+	*root, *slots, *resultsRoot, err = memberDirs(*root, *slots, *resultsRoot)
+	if err != nil {
+		return refuse(stderr, " member", err.Error())
 	}
 	for _, d := range []string{*slots, *resultsRoot} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return refuse(stderr, " member", err.Error())
 		}
 	}
+	// one member of a name per slots directory (memberlock.go): the lock is held from here to
+	// the return, so the reap below ends a dead member's lanes and never a live one's
+	lock, err := takeMemberLock(*slots, *as)
+	if err != nil {
+		return refuse(stderr, " member", err.Error())
+	}
+	defer func() { _ = lock.Unlock() }() // ignored: the member is returning; the kernel drops the lock with the process either way
 	self, err := os.Executable()
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
@@ -277,7 +284,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		fmt.Fprintln(stdout, note)
 	}
 	// what an earlier member of this name left running is ended before the first pass, so before
-	// any card is taken, and before the sweep, so its launch directories are ended ones
+	// any card is taken, and before the sweep, so its launch directories are ended ones; the
+	// member lock taken above says the earlier member is dead, so every lane it selects is one
 	rn.reapOrphans()
 	if removed, kept := rn.prune(time.Now()); removed > 0 {
 		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
@@ -403,7 +411,8 @@ type loopRun struct {
 //     for a native leads a session of its own that no signal to the member's group reaches)
 //     and stops; the sprint deals the cards again when the member goes down. A member that
 //     died without its drain leaves its lanes running, and a member of its name started again
-//     ends every one of them before its first pass (nativeRunner.reapOrphans). It exits 0.
+//     ends every one of them before its first pass (nativeRunner.reapOrphans); a member of
+//     its name started while it lives is refused (memberlock.go). It exits 0.
 //
 // With no child running either stops at once.
 func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, replaced bool) {

@@ -1,4 +1,9 @@
-//go:build unix
+//go:build functional && unix
+
+// The functional tier: these tests run a real fake-native, its sleepers and the lane's reap of
+// them through real grace (the owner's rule: a unit test uses no real time, no socket, no
+// outside service and no real process). Their helpers (laneOut, readLanePID, laneProcAlive)
+// serve the other functional tests of the member's lanes (member_orphan_lanes_functional_test.go).
 
 package main
 

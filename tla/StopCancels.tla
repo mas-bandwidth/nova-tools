@@ -28,6 +28,24 @@
    The sprint deals a down worker's cards again, so a card that was held or
    running, and not owed, goes back to the queue at the crash.
 
+   THE SELECTION (the cold read of nova-tools#5647). The reap ends every process
+   whose environment names this worker's name and a launch under its slots
+   directory (swarm.OrphanOf), and nothing in a process's environment says whether
+   the worker that started it is dead. So the model has a second worker of the
+   same name over the same slots, the TWIN (two daemons by mistake, a hand-run
+   `member --once --as <name>` beside the daemon, a card's own test reusing a
+   fleet machine's name and root), with lanes of its own (twinLive), and a
+   STRANGER: a lane of a worker of another name under the same slots. The reap is
+   one operator, Reap, run by whichever worker of the name starts (Restart,
+   TwinStart): it ends the orphans and, when nothing keeps two live workers of one
+   name apart, the other live worker's running lanes too. What keeps them apart is
+   the MEMBER LOCK (cmd/nova-swarm/memberlock.go: the kernel's lock on
+   <slots>/.member-<name>.lock, held for the worker's whole run and dropped with
+   its process however it dies): with it a worker of the name starting while
+   another lives is refused, which here is its start not happening. What keeps the
+   stranger's lane out is the owner check (OrphanOf: the owner entry must be this
+   name, never the mark alone).
+
    Witnesses, each one FALSE a finding:
      CancelOnStop     = FALSE: the lanes only stop starting (the native stop of
                         2026-10-08 before this change: it recorded the state and
@@ -46,6 +64,11 @@
                         ends (the finish path not guarded on the cancel)
      ReapOrphans      = FALSE: a restarted worker leaves what its dead incarnation
                         started running (the member before v1.2.16)
+     MemberLock       = FALSE: no lock, so a worker of the name starting beside a
+                        live one reaps the live one's running lanes (the first cut
+                        of v1.2.16's reap, held by its cold read)
+     OwnerChecked     = FALSE: the reap keys on the mark alone, so a lane of
+                        another name under the same slots is ended with the orphans
    Each witness breaks the invariant its case names; three break a second one as
    well, by the same mechanism: GateBeforeStart = FALSE also breaks
    NoLaneWhileStopped (the lane launched after the stop runs while STOPPED),
@@ -55,11 +78,12 @@
    cannot see: Return is sent whatever the word and StartMachine needs nothing
    owed; the worker's own hand-back every pass, whatever the word, is
    pkg/member/member.go machineStop and pkg/friend/stop.go returnOwed, tested as
-   traces. MaxCrashes bounds the crashes, for a finite model. *)
+   traces. MaxCrashes bounds the crashes and MaxTwinStarts the twin's starts, for a
+   finite model. *)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Lanes, Cards, None, CancelOnStop, GateBeforeStart, PersistOwed, NudgeGate, FinishCancelled, ReleaseHeld,
-          ReapOrphans, MaxCrashes
+          ReapOrphans, MaxCrashes, MemberLock, OwnerChecked, MaxTwinStarts
 
 VARIABLES machine,   \* "RUNNING" or "STOPPED"
           lane,      \* each lane: "idle", "held" (taken, not launched), "running" (a child spends), "cancelled" (told to stop, not yet ended)
@@ -76,11 +100,20 @@ VARIABLES machine,   \* "RUNNING" or "STOPPED"
           badFinish, \* a card the stop took was finished by the run it took it from
           up,        \* the worker's process is alive (FALSE between a Crash and its Restart)
           orphans,   \* cards whose lane or read process outlived the worker that started it, owned by nobody
-          crashes    \* how many times the worker died without its drain
+          crashes,   \* how many times the worker died without its drain
+          twin,      \* a second worker of this name over these slots is alive
+          twinLive,  \* cards whose process the twin runs (its lanes)
+          twinStarts,\* how many times the twin started
+          stranger,  \* a lane of a worker of another name under these slots is alive
+          badReap,   \* a reap ended a running lane of a live worker of this name
+          strangerReaped \* a reap ended the stranger's lane
 
-vars == <<machine, lane, card, queue, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish, up, orphans, crashes>>
+vars == <<machine, lane, card, queue, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish, up, orphans, crashes,
+          twin, twinLive, twinStarts, stranger, badReap, strangerReaped>>
 
 crashVars == <<up, orphans, crashes>>
+twinVars == <<twin, twinLive, twinStarts>>
+reapVars == <<stranger, badReap, strangerReaped>>
 
 TypeOK == /\ machine \in {"RUNNING", "STOPPED"}
           /\ lane \in [Lanes -> {"idle", "held", "running", "cancelled"}]
@@ -91,6 +124,8 @@ TypeOK == /\ machine \in {"RUNNING", "STOPPED"}
           /\ badStart \in BOOLEAN /\ badNudge \in BOOLEAN /\ lostOwed \in BOOLEAN
           /\ badFinish \in BOOLEAN
           /\ up \in BOOLEAN /\ orphans \subseteq Cards /\ crashes \in 0..MaxCrashes
+          /\ twin \in BOOLEAN /\ twinLive \subseteq Cards /\ twinStarts \in 0..MaxTwinStarts
+          /\ stranger \in BOOLEAN /\ badReap \in BOOLEAN /\ strangerReaped \in BOOLEAN
 
 Init == /\ machine = "RUNNING"
         /\ lane = [l \in Lanes |-> "idle"]
@@ -100,6 +135,8 @@ Init == /\ machine = "RUNNING"
         /\ reading = {}
         /\ badStart = FALSE /\ badNudge = FALSE /\ lostOwed = FALSE /\ badFinish = FALSE
         /\ up = TRUE /\ orphans = {} /\ crashes = 0
+        /\ twin = FALSE /\ twinLive = {} /\ twinStarts = 0
+        /\ stranger = TRUE /\ badReap = FALSE /\ strangerReaped = FALSE
 
 InHand == {card[l] : l \in Lanes} \ {None}
 
@@ -116,7 +153,7 @@ Take(l, c) == /\ up
               /\ card' = [card EXCEPT ![l] = c]
               /\ queue' = queue \ {c}
               /\ UNCHANGED <<machine, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish>>
-              /\ UNCHANGED crashVars
+              /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* A held lane launches its card. The word is read right before the launch
    (GateBeforeStart); without the gate, or without the held card being given up
@@ -128,7 +165,7 @@ Start(l) == /\ up
             /\ lane' = [lane EXCEPT ![l] = "running"]
             /\ badStart' = (badStart \/ machine = "STOPPED")
             /\ UNCHANGED <<machine, card, queue, owed, returned, finished, cancelled, reading, badNudge, lostOwed, badFinish>>
-            /\ UNCHANGED crashVars
+            /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* A held lane gives its card up when the word is STOPPED (the friend's releaseHeld,
    lanes.go: the window between the claim and the start): the card is owed a
@@ -140,7 +177,7 @@ GiveUpHeld(l) == /\ up
                  /\ owed' = owed \cup {card[l]}
                  /\ cancelled' = cancelled \cup {card[l]}
                  /\ UNCHANGED <<machine, queue, returned, finished, reading, badStart, badNudge, lostOwed, badFinish>>
-                 /\ UNCHANGED crashVars
+                 /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* A card is read (the friend's read lanes): taken from the queue, its read under way
    until its run ends. The word gates the begin. *)
@@ -149,7 +186,7 @@ Read(c) == /\ up
            /\ reading' = reading \cup {c}
            /\ queue' = queue \ {c}
            /\ UNCHANGED <<machine, lane, card, owed, returned, finished, cancelled, badStart, badNudge, lostOwed, badFinish>>
-           /\ UNCHANGED crashVars
+           /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* A read's run ends. A read the stop cancelled (its card owed) stays owed, returned
    once its run ends; a read not cancelled puts the card back to ready. *)
@@ -158,22 +195,23 @@ ReadEnd(c) == /\ up
               /\ reading' = reading \ {c}
               /\ queue' = IF c \in owed THEN queue ELSE queue \cup {c}
               /\ UNCHANGED <<machine, lane, card, owed, returned, finished, cancelled, badStart, badNudge, lostOwed, badFinish>>
-              /\ UNCHANGED crashVars
+              /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
-(* The machine stops. The worker's next pass reads STOPPED and tells every running
-   child to stop, its card owed a stop-return (CancelOnStop), and every read with
-   it; the witness lets the children run on. A worker that is down reads nothing:
-   the word waits for its restart's first pass. *)
-Stop == /\ up
+(* The machine stops. The next pass of a worker of this name reads STOPPED and tells
+   every running child to stop, its card owed a stop-return (CancelOnStop), and
+   every read with it, and the twin's lanes the same (a twin is a member process
+   with the same hand-back); the witness lets the children run on. A name with no
+   worker up reads nothing: the word waits for a restart's first pass. *)
+Stop == /\ (up \/ twin)
         /\ machine = "RUNNING"
         /\ machine' = "STOPPED"
         /\ IF CancelOnStop
            THEN /\ lane' = [l \in Lanes |-> IF lane[l] = "running" THEN "cancelled" ELSE lane[l]]
-                /\ owed' = owed \cup {card[l] : l \in {k \in Lanes : lane[k] = "running"}} \cup reading
-                /\ cancelled' = cancelled \cup {card[l] : l \in {k \in Lanes : lane[k] = "running"}} \cup reading
+                /\ owed' = owed \cup {card[l] : l \in {k \in Lanes : lane[k] = "running"}} \cup reading \cup twinLive
+                /\ cancelled' = cancelled \cup {card[l] : l \in {k \in Lanes : lane[k] = "running"}} \cup reading \cup twinLive
            ELSE UNCHANGED <<lane, owed, cancelled>>
         /\ UNCHANGED <<card, queue, returned, finished, reading, badStart, badNudge, lostOwed, badFinish>>
-        /\ UNCHANGED crashVars
+        /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* A child ends. A cancelled lane's card stays owed (the return goes once the process
    is dead) and is finished by no one (the finding when FinishCancelled); a running
@@ -185,25 +223,26 @@ End(l) == /\ up
           /\ finished' = IF lane[l] = "running" \/ FinishCancelled THEN finished \cup {card[l]} ELSE finished
           /\ badFinish' = (badFinish \/ (lane[l] = "cancelled" /\ FinishCancelled))
           /\ UNCHANGED <<machine, queue, owed, returned, cancelled, reading, badStart, badNudge, lostOwed>>
-          /\ UNCHANGED crashVars
+          /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* The stop-return: sent only after the run is dead (the card is in no lane and no
-   read), whatever the word (the hand-back runs every step, RUNNING or STOPPED); the
-   store puts the same card back in the owner's queue at a new generation. *)
-Return(c) == /\ up
-             /\ c \in owed /\ c \notin InHand /\ c \notin reading
+   read of either worker), whatever the word (the hand-back runs every step, RUNNING
+   or STOPPED), by whichever worker of the name is up; the store puts the same card
+   back in the owner's queue at a new generation. *)
+Return(c) == /\ (up \/ twin)
+             /\ c \in owed /\ c \notin InHand /\ c \notin reading /\ c \notin twinLive
              /\ owed' = owed \ {c}
              /\ returned' = returned \cup {c}
              /\ queue' = queue \cup {c}
              /\ UNCHANGED <<machine, lane, card, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish>>
-             /\ UNCHANGED crashVars
+             /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* The worker dies without its drain while a child of it is alive. Its lanes and reads
    are gone from its memory, and their processes are not: each becomes an orphan. A
    card held or running and not owed goes back to the queue (the sprint deals a down
    worker's cards again). What it owed is read back from disk at the restart
    (PersistOwed); the witness forgets it and finishes the gone run instead (a FAIL for
-   a card the stop took). *)
+   a card the stop took). The lock dies with the process: the kernel drops it. *)
 Crash == /\ up /\ crashes < MaxCrashes /\ Live # {}
          /\ up' = FALSE
          /\ crashes' = crashes + 1
@@ -219,19 +258,86 @@ Crash == /\ up /\ crashes < MaxCrashes /\ Live # {}
                  /\ lostOwed' = (lostOwed \/ owed # {})
                  /\ badFinish' = (badFinish \/ owed # {})
          /\ UNCHANGED <<machine, returned, cancelled, badStart, badNudge>>
+         /\ UNCHANGED <<twinVars, reapVars>>
 
-(* A worker of the same name starts again. Before its first pass, so before it takes
-   any card, it reaps every orphan an earlier incarnation left (ReapOrphans:
-   swarm.ReapOrphanLanes from cmdMember); the witness leaves them running. *)
+(* The reap a starting worker of this name runs before its first pass
+   (swarm.ReapOrphanLanes, from cmdMember): every process whose environment names
+   this name and a launch under these slots, and the session each such process
+   leads. Which processes those are is the whole of the finding:
+     - the orphans its dead incarnations left (ReapOrphans; the witness leaves them);
+     - the stranger's lane, a worker of another name's under the same slots, only
+       when the owner is not checked (~OwnerChecked: the mark alone);
+     - the running lanes of the OTHER live worker of this name, when there is one:
+       the reap cannot tell them from orphans, and only the member lock keeps a
+       second worker of the name from starting beside a live one (MemberLock, the
+       guard on Restart and TwinStart). A reaped running lane is a run killed: its
+       card goes back to the queue unless the stop owes it (as a crash's does). *)
+ReapStranger == /\ stranger' = (stranger /\ OwnerChecked)
+                /\ strangerReaped' = (strangerReaped \/ (stranger /\ ~OwnerChecked))
+
+(* A worker of the same name starts again (the primary). With the lock, a live twin
+   refuses this start, which here is the start not happening until the twin is
+   gone. Before its first pass, so before it takes any card, it reaps (above): the
+   orphans, and without the lock the twin's running lanes too. *)
 Restart == /\ ~up
+           /\ (MemberLock => ~twin)
            /\ up' = TRUE
            /\ orphans' = IF ReapOrphans THEN {} ELSE orphans
-           /\ UNCHANGED <<machine, lane, card, queue, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish, crashes>>
+           /\ twinLive' = IF twin THEN {} ELSE twinLive
+           /\ queue' = queue \cup (IF twin THEN twinLive \ owed ELSE {})
+           /\ badReap' = (badReap \/ (twin /\ twinLive # {}))
+           /\ ReapStranger
+           /\ UNCHANGED <<machine, lane, card, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish, crashes, twin, twinStarts>>
+
+(* A second worker of this name starts over the same slots while the primary may be
+   alive (two daemons by mistake, a hand-run `member --once`, a card's test on a
+   fleet machine's name and root). With the lock, a live primary refuses it, which
+   here is its start not happening. Without the lock it starts, and its reap ends
+   the primary's running lanes and reads as orphans of the name. *)
+TwinStart == /\ ~twin /\ twinStarts < MaxTwinStarts
+             /\ (MemberLock => ~up)
+             /\ twin' = TRUE
+             /\ twinStarts' = twinStarts + 1
+             /\ orphans' = IF ReapOrphans THEN {} ELSE orphans
+             /\ IF up
+                THEN /\ lane' = [l \in Lanes |-> IF lane[l] \in {"running", "cancelled"} THEN "idle" ELSE lane[l]]
+                     /\ card' = [l \in Lanes |-> IF lane[l] \in {"running", "cancelled"} THEN None ELSE card[l]]
+                     /\ reading' = {}
+                     /\ queue' = queue \cup (Live \ owed)
+                     /\ badReap' = (badReap \/ Live # {})
+                ELSE UNCHANGED <<lane, card, reading, queue, badReap>>
+             /\ ReapStranger
+             /\ UNCHANGED <<machine, owed, returned, finished, cancelled, badStart, badNudge, lostOwed, badFinish, up, crashes, twinLive>>
+
+(* The twin takes a card and runs it (one at a time, for a small model); the word
+   gates the take as it gates the primary's. *)
+TwinTake(c) == /\ twin /\ twinLive = {}
+               /\ machine = "RUNNING" /\ c \in queue /\ c \notin InHand /\ c \notin reading
+               /\ twinLive' = {c}
+               /\ queue' = queue \ {c}
+               /\ UNCHANGED <<machine, lane, card, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish>>
+               /\ UNCHANGED <<crashVars, twin, twinStarts, reapVars>>
+
+(* The twin's child ends: its card finished, unless the stop took it (owed: returned
+   once the process is dead, finished by no one). *)
+TwinEnd(c) == /\ twin /\ c \in twinLive
+              /\ twinLive' = twinLive \ {c}
+              /\ finished' = IF c \in owed THEN finished ELSE finished \cup {c}
+              /\ UNCHANGED <<machine, lane, card, queue, owed, returned, cancelled, reading, badStart, badNudge, lostOwed, badFinish>>
+              /\ UNCHANGED <<crashVars, twin, twinStarts, reapVars>>
+
+(* The twin stops with its drain (its `--once` pass done, or stopped by hand): its
+   lanes ended, its lock dropped. *)
+TwinStop == /\ twin /\ twinLive = {}
+            /\ twin' = FALSE
+            /\ UNCHANGED <<machine, lane, card, queue, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish>>
+            /\ UNCHANGED <<crashVars, twinLive, twinStarts, reapVars>>
 
 (* An orphan ends by itself: its native's own deadline. *)
 OrphanEnds(c) == /\ c \in orphans
                  /\ orphans' = orphans \ {c}
                  /\ UNCHANGED <<machine, lane, card, queue, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish, up, crashes>>
+                 /\ UNCHANGED <<twinVars, reapVars>>
 
 (* A work nudge (the idle wake, the oldest-card urging) into the session: gated on
    the word (NudgeGate); the witness nudges while STOPPED. *)
@@ -239,15 +345,15 @@ Nudge == /\ up
          /\ (machine = "RUNNING" \/ ~NudgeGate)
          /\ badNudge' = (badNudge \/ machine = "STOPPED")
          /\ UNCHANGED <<machine, lane, card, queue, owed, returned, finished, cancelled, reading, badStart, lostOwed, badFinish>>
-         /\ UNCHANGED crashVars
+         /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
 (* start: the store refuses it while a stop-return is owed (the store's rule). *)
 StartMachine == /\ machine = "STOPPED" /\ owed = {}
                 /\ machine' = "RUNNING"
                 /\ UNCHANGED <<lane, card, queue, owed, returned, finished, cancelled, reading, badStart, badNudge, lostOwed, badFinish>>
-                /\ UNCHANGED crashVars
+                /\ UNCHANGED <<crashVars, twinVars, reapVars>>
 
-Done == /\ finished \cup returned = Cards /\ queue = {} /\ InHand = {} /\ reading = {} /\ UNCHANGED vars
+Done == /\ finished \cup returned = Cards /\ queue = {} /\ InHand = {} /\ reading = {} /\ twinLive = {} /\ UNCHANGED vars
 
 Next == \/ \E l \in Lanes, c \in Cards : Take(l, c)
         \/ \E l \in Lanes : Start(l)
@@ -257,14 +363,18 @@ Next == \/ \E l \in Lanes, c \in Cards : Take(l, c)
         \/ \E c \in Cards : Read(c)
         \/ \E c \in Cards : ReadEnd(c)
         \/ \E c \in Cards : OrphanEnds(c)
-        \/ Stop \/ StartMachine \/ Crash \/ Restart \/ Nudge \/ Done
+        \/ \E c \in Cards : TwinTake(c)
+        \/ \E c \in Cards : TwinEnd(c)
+        \/ Stop \/ StartMachine \/ Crash \/ Restart \/ TwinStart \/ TwinStop \/ Nudge \/ Done
 
 Fairness == /\ \A l \in Lanes : WF_vars(End(l))
             /\ \A l \in Lanes : WF_vars(Start(l) \/ GiveUpHeld(l))
             /\ \A c \in Cards : WF_vars(Return(c))
             /\ \A c \in Cards : WF_vars(ReadEnd(c))
+            /\ \A c \in Cards : WF_vars(TwinEnd(c))
             /\ WF_vars(StartMachine)
             /\ WF_vars(Restart)
+            /\ WF_vars(TwinStop)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -300,4 +410,13 @@ OwedIsCancelled == owed \subseteq cancelled
 (* No lane process outlives its worker's restart: once a worker is up again, nothing
    an earlier incarnation started is running owned by nobody (v1.2.16). *)
 NoLaneProcessOutlivesRestart == up => orphans = {}
+
+(* A running lane of a live worker of this name is never ended by a reap: the reap
+   keys on name and slots, and the member lock is what says the earlier worker of
+   the name is dead (cmd/nova-swarm/memberlock.go; the cold read of #5647). *)
+NoLiveMembersLaneReaped == ~badReap
+
+(* A lane of a worker of another name under the same slots is never ended: the
+   owner is checked, never the mark alone (swarm.OrphanOf). *)
+NoStrangerReaped == ~strangerReaped
 =============================================================================

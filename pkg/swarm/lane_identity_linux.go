@@ -18,4 +18,6 @@ func LaneStartStamp(pid int) string {
 	return strings.TrimSpace(string(boot)) + ":" + stamp
 }
 
-func laneMarked(pid int, mark string) bool { return environHolds(pid, []byte(LaneEnv+"="+mark)) }
+// laneMarked is whether one process carries the lane's mark; a one-off ask, so no stuck set
+// (lanereap_linux.go readEnviron): the read is bounded all the same.
+func laneMarked(pid int, mark string) bool { return environHolds(pid, []byte(LaneEnv+"="+mark), nil) }

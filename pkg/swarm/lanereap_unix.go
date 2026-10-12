@@ -17,13 +17,15 @@ import (
 // forked during the reap is ended too. found is how many distinct processes of the lane were
 // alive and signalled; survived is how many still are at the end (one this user may not
 // signal, or one the kernel has not let go of). Where this system cannot list processes the
-// reaper refuses to signal a numeric group without a birth-bearing listing.
+// reaper refuses to signal a numeric group without a birth-bearing listing. A process whose
+// environment read ran past its bound is asked once per reap (stuck, lanereap_linux.go).
 func ReapLane(sid int, mark, started string, grace time.Duration) (found, survived int) {
 	own, err := unix.Getsid(0)
 	if err != nil {
 		own = -1
 	}
 	sid = laneSession(sid, own)
+	stuck := map[int]bool{}
 	// A reused leader PID authorizes no session. A departed leader leaves its
 	// session alive while descendants remain; recheck before each listing below.
 	ownedSession := func() int {
@@ -35,13 +37,13 @@ func ReapLane(sid int, mark, started string, grace time.Duration) (found, surviv
 		}
 		return sid
 	}
-	if _, ok := laneProcs(ownedSession(), mark); !ok {
+	if _, ok := laneProcs(ownedSession(), mark, stuck); !ok {
 		// No birth-bearing listing means no authority to signal a numeric group.
 		// A group signal cannot bind all its targets to the recorded process births.
 		return 0, 0
 	}
 	return reapRounds(func() []laneProcess {
-		pids, _ := laneProcs(ownedSession(), mark) // ignored: the first listing above proved this system lists processes
+		pids, _ := laneProcs(ownedSession(), mark, stuck) // ignored: the first listing above proved this system lists processes
 		return pids
 	}, grace)
 }
@@ -107,6 +109,11 @@ type laneProcInfo struct {
 // ReapLane's (reapRounds: a terminate, grace, a kill, grace), each listing afresh. lanes is how
 // many distinct marks it found, found how many processes, survived how many outlived the kill.
 // Where this system cannot list processes with their births and environments it signals none.
+// The whole reap is bounded: two rounds of grace, and each process's environment read by its
+// own bound, once per reap for one that does not answer (stuck, lanereap_linux.go), so a
+// member's start never waits on a process stuck in the kernel. The caller holds the member
+// lock of its name (cmd/nova-swarm memberlock.go): with it, every process this selects is an
+// earlier, dead member's; without it a live member of the same name would be selected too.
 func ReapOrphanLanes(slots, as string, owned func(mark string) bool, grace time.Duration) (lanes, found, survived int) {
 	if as == "" || slots == "" {
 		return 0, 0, 0
@@ -116,12 +123,13 @@ func ReapOrphanLanes(slots, as string, owned func(mark string) bool, grace time.
 		// the asking process's own session unknown: no session is ended, only marked processes
 		own = -1
 	}
-	if _, ok := scanLaneProcs(); !ok {
+	stuck := map[int]bool{}
+	if _, ok := scanLaneProcs(stuck); !ok {
 		return 0, 0, 0
 	}
 	marks := map[string]bool{}
 	list := func() []laneProcess {
-		procs, _ := scanLaneProcs() // ignored: the first scan above proved this system lists processes
+		procs, _ := scanLaneProcs(stuck) // ignored: the first scan above proved this system lists processes
 		return orphanProcs(procs, slots, as, own, owned, marks)
 	}
 	found, survived = reapRounds(list, grace)

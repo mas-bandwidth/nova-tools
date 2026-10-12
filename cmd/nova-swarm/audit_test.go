@@ -232,6 +232,12 @@ var swarmAudit = audit.Config{
 		// path and the bytes of the file and puts no byte on any stream of this binary. The
 		// audit's Write check lets atomicfile.Write by its package name for that reason.
 		`"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"`,
+		// filelock (memberlock.go) takes the kernel's lock on the member's one lock FILE under
+		// its slots and writes the holder's stamp inside that file; it holds no writer of this
+		// package's streams and prints nothing. Its refusal comes back as an error whose text
+		// is built from oneline.Field/Escape inside pkg/filelock (HeldError, Stamp.String),
+		// and this package prints it through refuse, which escapes it again.
+		`"github.com/mas-bandwidth/nova-tools/pkg/filelock"`,
 		// subproc starts one child under a deadline (Command) or a cancellable context
 		// (Long) and returns the *exec.Cmd to this package, which wires the streams. It
 		// holds no writer of this package's stream and prints nothing itself.

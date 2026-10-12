@@ -7,14 +7,49 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// environBound is the most a listing waits for one process's /proc/<pid>/environ. The read
+// takes the target's memory-map lock, and a process that holds it and does not let go (one
+// paging under memory pressure, one stopped mid-exec, one in an uninterruptible wait) would
+// hold the listing, and the member's start with it, for as long as it stays so. Past the
+// bound the process is listed with no lane entries, as one whose environment this user may
+// not read is, and its pid goes into the reap's stuck set so no later round asks it again.
+const environBound = 2 * time.Second
+
+// readEnviron is /proc/<pid>/environ split into its NUL-separated entries, nil when it cannot
+// be read, or when the read did not return within environBound (readWithin), or when pid is in
+// stuck already. stuck is one reap's record of the pids whose read ran out, filled here; nil
+// records nothing and asks every time.
+func readEnviron(pid int, stuck map[int]bool) [][]byte {
+	if stuck[pid] {
+		return nil
+	}
+	expiry := time.NewTimer(environBound)
+	defer expiry.Stop()
+	raw, ok := readWithin(func() ([]byte, error) {
+		return os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
+	}, expiry.C)
+	if !ok {
+		if stuck != nil {
+			stuck[pid] = true
+		}
+		return nil
+	}
+	if raw == nil {
+		return nil
+	}
+	return bytes.Split(raw, []byte{0})
+}
 
 // laneProcs lists the live processes of a lane other than this one (lanereap.go): those in
 // session sid (sid > 0), and those whose environment holds the entry LaneEnv=mark (mark !=
 // ""). It reads the kernel's own records: field 3 (state) and field 6 (session) of
 // /proc/<pid>/stat, and /proc/<pid>/environ, one exact NUL-separated entry, never a command
-// line. A zombie is not live. A process whose records this user may not read is not listed.
-func laneProcs(sid int, mark string) ([]laneProcess, bool) {
+// line. A zombie is not live. A process whose records this user may not read is not listed,
+// nor by its environment one whose environ read ran past environBound (stuck, readEnviron).
+func laneProcs(sid int, mark string, stuck map[int]bool) ([]laneProcess, bool) {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, false
@@ -35,7 +70,7 @@ func laneProcs(sid int, mark string) ([]laneProcess, bool) {
 		if !ok || state == "Z" || state == "X" {
 			continue
 		}
-		if (sid > 0 && session == sid) || (want != nil && environHolds(pid, want)) {
+		if (sid > 0 && session == sid) || (want != nil && environHolds(pid, want, stuck)) {
 			out = append(out, laneProcess{pid: pid, started: started})
 		}
 	}
@@ -46,8 +81,9 @@ func laneProcs(sid int, mark string) ([]laneProcess, bool) {
 // the lane entries of its environment (ReapOrphanLanes), from the kernel's own records: field 3
 // (state) and field 6 (session) of /proc/<pid>/stat and /proc/<pid>/environ, each entry
 // compared by its name up to the first "=", never a command line. A zombie is not live; a
-// process whose environment this user may not read is listed with no lane entries.
-func scanLaneProcs() ([]laneProcInfo, bool) {
+// process whose environment this user may not read, or whose environ read ran past
+// environBound (stuck, readEnviron), is listed with no lane entries.
+func scanLaneProcs(stuck map[int]bool) ([]laneProcInfo, bool) {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, false
@@ -65,8 +101,8 @@ func scanLaneProcs() ([]laneProcInfo, bool) {
 			continue
 		}
 		p := laneProcInfo{pid: pid, started: started, sid: session}
-		if raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ"); err == nil {
-			p.mark, p.owner = laneEntries(bytes.Split(raw, []byte{0}))
+		if ents := readEnviron(pid, stuck); ents != nil {
+			p.mark, p.owner = laneEntries(ents)
 		}
 		out = append(out, p)
 	}
@@ -98,13 +134,9 @@ func procStateSession(pid int) (state string, session int, ok bool) {
 }
 
 // environHolds is whether a process's environment, as the kernel recorded it at its exec,
-// holds the exact entry want.
-func environHolds(pid int, want []byte) bool {
-	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
-	if err != nil {
-		return false
-	}
-	for _, ent := range bytes.Split(raw, []byte{0}) {
+// holds the exact entry want (readEnviron: within environBound, once per stuck pid).
+func environHolds(pid int, want []byte, stuck map[int]bool) bool {
+	for _, ent := range readEnviron(pid, stuck) {
 		if bytes.Equal(ent, want) {
 			return true
 		}
