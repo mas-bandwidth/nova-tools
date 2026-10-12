@@ -59,7 +59,7 @@ pkg/nsprint/testutil/redis.go startOnce waits and retries
 pkg/sandbox/tree.go Tree.KillAndAwait waits and retries
 pkg/secrets/seal.go sealCarry.carry waits and retries
 pkg/swarm/deadline.go Reap waits and retries
-pkg/swarm/lanereap_unix.go ReapLane waits and retries
+pkg/swarm/lanereap_unix.go reapRounds waits and retries
 pkg/swarm/providerbudget.go ProviderProxy.takeBudget rate budget waits
 pkg/swarm/providerbudget.go ProviderProxy.serveBudgeted rate budget waits
 pkg/swarm/providerbudget.go ProviderProxy.forwardBudgeted rate budget waits

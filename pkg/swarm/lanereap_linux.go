@@ -42,6 +42,37 @@ func laneProcs(sid int, mark string) ([]laneProcess, bool) {
 	return out, true
 }
 
+// scanLaneProcs lists every live process other than this one with its birth, its session and
+// the lane entries of its environment (ReapOrphanLanes), from the kernel's own records: field 3
+// (state) and field 6 (session) of /proc/<pid>/stat and /proc/<pid>/environ, each entry
+// compared by its name up to the first "=", never a command line. A zombie is not live; a
+// process whose environment this user may not read is listed with no lane entries.
+func scanLaneProcs() ([]laneProcInfo, bool) {
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, false
+	}
+	self := os.Getpid()
+	var out []laneProcInfo
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 1 || pid == self {
+			continue
+		}
+		started := LaneStartStamp(pid)
+		state, session, ok := procStateSession(pid)
+		if !ok || state == "Z" || state == "X" {
+			continue
+		}
+		p := laneProcInfo{pid: pid, started: started, sid: session}
+		if raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ"); err == nil {
+			p.mark, p.owner = laneEntries(bytes.Split(raw, []byte{0}))
+		}
+		out = append(out, p)
+	}
+	return out, true
+}
+
 // procStateSession is a process's state and session from /proc/<pid>/stat. The comm field is
 // in parentheses and may hold spaces and parentheses of its own, so the split starts after the
 // LAST ")" (StartStamp).

@@ -53,15 +53,54 @@ func laneProcs(sid int, mark string) ([]laneProcess, bool) {
 // kern.procargs2: argc, the exec path, its NUL padding, argc arguments, then the environment,
 // each NUL-terminated. The arguments are skipped, never compared.
 func procargsEnvHolds(pid int, want []byte) bool {
+	for _, ent := range procargsEnv(pid) {
+		if bytes.Equal(ent, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// scanLaneProcs lists every live process other than this one with its birth, its session
+// (getsid) and the lane entries of its environment (kern.procargs2's environment half), for
+// ReapOrphanLanes. A zombie is not live; a process whose records this user may not read is
+// listed with no lane entries.
+func scanLaneProcs() ([]laneProcInfo, bool) {
+	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return nil, false
+	}
+	self := os.Getpid()
+	var out []laneProcInfo
+	for i := range procs {
+		pid := int(procs[i].Proc.P_pid)
+		if pid <= 1 || pid == self || procs[i].Proc.P_stat == darwinZombie {
+			continue
+		}
+		sid, err := unix.Getsid(pid)
+		if err != nil {
+			continue
+		}
+		p := laneProcInfo{pid: pid, started: LaneStartStamp(pid), sid: sid}
+		p.mark, p.owner = laneEntries(procargsEnv(pid))
+		out = append(out, p)
+	}
+	return out, true
+}
+
+// procargsEnv is a process's environment entries from kern.procargs2: argc, the exec path, its
+// NUL padding, argc arguments, then the environment, each NUL-terminated. The arguments are
+// skipped, never read. nil when the record cannot be read.
+func procargsEnv(pid int) [][]byte {
 	buf, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil || len(buf) < 4 {
-		return false
+		return nil
 	}
 	argc := int(binary.NativeEndian.Uint32(buf[:4]))
 	rest := buf[4:]
 	i := bytes.IndexByte(rest, 0)
 	if i < 0 {
-		return false
+		return nil
 	}
 	rest = rest[i:]
 	for len(rest) > 0 && rest[0] == 0 {
@@ -70,10 +109,11 @@ func procargsEnvHolds(pid int, want []byte) bool {
 	for n := 0; n < argc; n++ {
 		i := bytes.IndexByte(rest, 0)
 		if i < 0 {
-			return false
+			return nil
 		}
 		rest = rest[i+1:]
 	}
+	var out [][]byte
 	for len(rest) > 0 {
 		ent := rest
 		if i := bytes.IndexByte(rest, 0); i >= 0 {
@@ -84,9 +124,7 @@ func procargsEnvHolds(pid int, want []byte) bool {
 		if len(ent) == 0 {
 			break
 		}
-		if bytes.Equal(ent, want) {
-			return true
-		}
+		out = append(out, ent)
 	}
-	return false
+	return out
 }

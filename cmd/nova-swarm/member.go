@@ -276,6 +276,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
+	// what an earlier member of this name left running is ended before the first pass, so before
+	// any card is taken, and before the sweep, so its launch directories are ended ones
+	rn.reapOrphans()
 	if removed, kept := rn.prune(time.Now()); removed > 0 {
 		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
 	}
@@ -399,8 +402,8 @@ type loopRun struct {
 //     it ends what is left running (lr.endLanes: each native stopped and its lane reaped,
 //     for a native leads a session of its own that no signal to the member's group reaches)
 //     and stops; the sprint deals the cards again when the member goes down. A member that
-//     died without its drain leaves its lanes running, and a member started again adopts
-//     each child still alive and reaps its lane at its end. It exits 0.
+//     died without its drain leaves its lanes running, and a member of its name started again
+//     ends every one of them before its first pass (nativeRunner.reapOrphans). It exits 0.
 //
 // With no child running either stops at once.
 func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, replaced bool) {
@@ -630,6 +633,45 @@ func (r *nativeRunner) endLane(c *nativeChild, name, mark string, sid int) {
 	r.mu.Unlock()
 }
 
+// laneEnv is a lane's native environment: env with any lane entries it inherited replaced by
+// this launch's mark (the slot) and, when the member has a name, its owner (pkg/swarm/lanereap.go,
+// "A LANE OUTLIVES NO MEMBER"). A member that runs inside another member's lane (a card's own
+// test) carries that lane's entries; its lanes carry its own.
+func laneEnv(env []string, slot, as string) []string {
+	out := append(environWithoutName(environWithoutName(env, swarm.LaneEnv), swarm.LaneOwnerEnv), swarm.LaneEnv+"="+slot)
+	if as != "" {
+		out = append(out, swarm.LaneOwnerEnv+"="+as)
+	}
+	return out
+}
+
+// ownsMark reports whether mark is the mark of a lane this member runs now.
+func (r *nativeRunner) ownsMark(mark string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.lanes {
+		if c.mark == mark {
+			return true
+		}
+	}
+	return false
+}
+
+// reapOrphans ends every lane an earlier member of this name left running under this member's
+// slots (swarm.ReapOrphanLanes): a member killed without its drain leaves each native leading a
+// session of its own, which no signal to it reached, and a lane whose launch is never dealt to
+// this member again (an epoch clear, a redeal elsewhere) would otherwise run on, owned by
+// nobody. cmdMember calls it before the member's first pass, so before any card is taken. It
+// says what it ended on one MEMBER ORPHANS line, and nothing when there was none.
+func (r *nativeRunner) reapOrphans() {
+	lanes, found, survived := swarm.ReapOrphanLanes(r.slots, r.as, r.ownsMark, swarm.TerminateGrace)
+	if r.out == nil || (found == 0 && survived == 0) {
+		return
+	}
+	fmt.Fprintf(r.out, "MEMBER ORPHANS as=%s lanes=%d reaped=%d survived=%d: an earlier member of this name left them running under %s; ended before any card is taken\n",
+		oneline.Field(r.as), lanes, found, survived, oneline.Field(r.slots))
+}
+
 // LaneEndGrace is how long the member's own stop gives each running native to end by itself
 // after its terminate (native reaps its harness's group within swarm.TerminateGrace, then
 // reports) before it is killed; the lane's reap follows either way.
@@ -801,7 +843,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// native leads a session of its own, and the mark, the launch's slot, goes down to every
 	// process its harness starts (native keeps NOVA_SWARM_ names), so the lane's end reaches
 	// a process that left the session too
-	cmd.Env = append(environWithoutName(r.childEnv(model), swarm.LaneEnv), swarm.LaneEnv+"="+slot)
+	cmd.Env = laneEnv(r.childEnv(model), slot, r.as)
 	ownLaneSession(cmd)
 	logf, err := os.Create(logPath)
 	if err != nil {
