@@ -93,6 +93,10 @@
      NOVA_SECRETS_SOPS, so the test passes whether or not sops is installed on the machine that runs it.
      What it asserts about the store and key layout under HOME is unchanged."
     :origin "the coordinator, 2026-10-12: the v1.2.14 CI check failed pkg/seatcred's fleet-layout test with no sops on PATH on a runner that has none")
+   (fix "nova-friend-first-run-names-the-clear-faults-example" :release "v1.2.14" :status "planned"
+    :title "The nova-friend first-run transcript names the lanes --clear-faults example"
+    :text "The friend spend-cap work added the `nova-friend lanes --as bob --clear-faults` example to the usage banner and docs/CLI.md but not to the `### First run` transcript of docs/TESTS.md, so TestTESTSFirstRunIsWhatTheToolPrints (functional tier) refused the v1.2.14 stream: the banner's example block, the transcript and the test's list of examples are one list. The transcript now carries the lanes line and its `LANES OK cleared=none` output, in the banner's verb order."
+    :origin "the coordinator, 2026-10-12: the merge queue (run 38247574824, functional 1/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-friend TestTESTSFirstRunIsWhatTheToolPrints; dev's push CI never runs the functional tier")
    (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."
