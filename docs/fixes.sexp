@@ -964,6 +964,20 @@
     TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
     sprint server)."
    :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")
+  (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "planned"
+   :title "The real-clock delay proxy test reads the write counts after Stop"
+   :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
+    bytes came back to the client, but the proxy counts a write after it: forward calls up.Write and only
+    then record, while serve's io.Copy(client, up) relays the echo on another goroutine, so the echo could
+    reach the client, and the test read the counters, before forward ran record, an ordering race worst on
+    a loaded macOS runner. The test now calls p.Stop after the round trip and before the reads: Stop waits
+    for every connection goroutine (p.wg.Wait), so forward's record has run first. The other tests that read
+    the counts right after a round trip with no sync point between the forward and the read call Stop too:
+    TestEachWriteIsHeldOnceAndAPipelinePaysOnce, TestNothingIsForwardedBeforeItsDelayIsOver and
+    TestALargeWriteComesOutWholeAndInOrder. TestReadsThatArriveTogetherPayTheDelayOnce already waits on the
+    forwarding half and is unchanged; the product code is unchanged, for a write is counted only once the
+    target has taken all of it."
+   :origin "certification run 38185824966 (macos-latest, job 6, dev 8929db2ba), failed TestTheRealClockHoldsAWriteForAtLeastTheDelay at pkg/delayproxy/delayproxy_test.go:367; reproduced on the bench at dev 8c9b33f69, go test -race -count=200 failed 3 of 200")
   (fix "an-enabled-route-with-no-price-is-refused-at-apply" :release "v1.2.17" :status "planned"
    :title "An enabled route with no price is refused at apply"
    :text "apply refuses an enabled route with no price sheet before it plans or writes any kind: the sprint prices a take from the sheet (cardcost.PricesOf(row.Fields).Priced), so an unpriced route records no prediction and a cost of \"-\", or the harness's own $0.00, and the dashboard undercounts. The one refusal names every such route with its provider/model and the command that sets its price (nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>), plus nova-config route prices --refresh --provider <p> when the provider has a list, plus take it out with --enabled false --note '<why>'; a disabled route is never refused for its price, and the tool never sets, guesses or defaults one. apply --check refuses the same, and a bare every-kind apply refuses before any kind is written. Tests, red first: pkg/config TestApplyRefusesAnEnabledRouteWithNoPrice, TestApplyTakesADisabledUnpricedRoute, TestApplyTakesAPricedRoute, and cmd/nova-config TestApplyRefusalNamesTheRouteAndAsksForItsPrice."
