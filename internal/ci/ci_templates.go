@@ -104,63 +104,51 @@ func checkTemplatesWith(root, allowlistPath string, seams SourceSeams) (Template
 	if err != nil {
 		return res, err
 	}
-	matched := make([]bool, len(entries))
-
-	err = seams.walk(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case "testdata", ".git", "vendor":
-				return filepath.SkipDir
+	walk := func(root string, seams SourceSeams, fn func(string, []byte) error) error {
+		return seams.walk(root, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
 			}
-			return nil
-		}
-		if !strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		raw, readErr := seams.readFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		rel = filepath.ToSlash(rel)
-		res.Tests++
-		findings, ok := scanTemplateFileWith(rel, raw, seams)
-		if !ok {
-			return nil
-		}
-		res.Findings = append(res.Findings, findings...)
-		return nil
-	})
+			if d.IsDir() {
+				switch d.Name() {
+				case "testdata", ".git", "vendor":
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			raw, readErr := seams.readFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			return fn(filepath.ToSlash(rel), raw)
+		})
+	}
+	out, err := runAllowlistedScan(root, seams, entries,
+		walk,
+		scanTemplateFileWith,
+		func(entries []waitAllow, used []bool, f TemplateFinding) int {
+			return matchTemplateAllow(entries, f)
+		},
+		func(e waitAllow) TemplateFinding {
+			return TemplateFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: TemplateRemedyAllow}
+		},
+		func(f TemplateFinding) string { return FileLineKey(f.File, f.Line, f.Kind) },
+		func() { res.Tests++ },
+	)
 	if err != nil {
 		return res, err
 	}
-
-	var remaining []TemplateFinding
-	for _, f := range res.Findings {
-		if i := matchTemplateAllow(entries, f); i >= 0 {
-			matched[i] = true
-			res.Allowlisted++
-			continue
-		}
-		remaining = append(remaining, f)
-	}
-	res.Findings = remaining
-	res.Measured = usedRowKeys(entries, matched)
-	for i, e := range entries {
-		if matched[i] {
-			continue
-		}
-		res.Stale = append(res.Stale, TemplateFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: TemplateRemedyAllow})
-	}
-	for _, f := range res.Findings {
-		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
-	}
+	res.Findings = out.findings
+	res.Stale = out.stale
+	res.Allowlisted = out.allowlisted
+	res.Measured = out.measured
 	return res, nil
 }
 

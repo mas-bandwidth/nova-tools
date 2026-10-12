@@ -117,40 +117,23 @@ func checkGoEnvWith(root, allowlistPath string, seams SourceSeams) (GoEnvResult,
 	if err != nil {
 		return res, err
 	}
-	matched := make([]bool, len(entries))
-
-	err = walkCIGoFilesWith(root, seams, func(rel string, raw []byte) error {
-		res.Files++
-		findings, ok := scanGoEnvFileWith(rel, raw, seams)
-		if ok {
-			res.Findings = append(res.Findings, findings...)
-		}
-		return nil
-	})
+	out, err := runAllowlistedScan(root, seams, entries,
+		walkCIGoFilesWith,
+		scanGoEnvFileWith,
+		matchGoEnvAllow,
+		func(e waitAllow) GoEnvFinding {
+			return GoEnvFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: GoEnvRemedyAllow}
+		},
+		func(f GoEnvFinding) string { return FileLineKey(f.File, f.Line, f.Kind) },
+		func() { res.Files++ },
+	)
 	if err != nil {
 		return res, err
 	}
-
-	var remaining []GoEnvFinding
-	for _, f := range res.Findings {
-		if i := matchGoEnvAllow(entries, matched, f); i >= 0 {
-			matched[i] = true
-			res.Allowlisted++
-			continue
-		}
-		remaining = append(remaining, f)
-	}
-	res.Findings = remaining
-	res.Measured = usedRowKeys(entries, matched)
-	for i, e := range entries {
-		if matched[i] {
-			continue
-		}
-		res.Stale = append(res.Stale, GoEnvFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: GoEnvRemedyAllow})
-	}
-	for _, f := range res.Findings {
-		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
-	}
+	res.Findings = out.findings
+	res.Stale = out.stale
+	res.Allowlisted = out.allowlisted
+	res.Measured = out.measured
 	return res, nil
 }
 
