@@ -1142,6 +1142,20 @@ func laneWall(c *tool.Call, w world, dir string, deny func() []string, rowConfig
 	return wall
 }
 
+// resolveCurrentRow is the daemon's current row: the explicit --mode override
+// wins, else the row her beat last said, else batch before any beat (missing
+// sprint beats never leave a blank mode or deadlock on one). The width is the
+// beat's, whatever the mode source.
+func resolveCurrentRow(modeFlag, beatMode string, beatWidth int) (string, int) {
+	if modeFlag != "" {
+		return modeFlag, beatWidth
+	}
+	if beatMode == "" {
+		beatMode = friend.ModeBatch
+	}
+	return beatMode, beatWidth
+}
+
 func (w world) run(c *tool.Call) *tool.Out {
 	if c.Bool("notifications-only") {
 		return w.runNotifications(c)
@@ -1485,6 +1499,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// stop-returns the lanes owe, carried on each beat (stop.go)
 	var machineStopped atomic.Bool
 	owedStopReturns := func() int { return 0 }
+	currentRow := func() (string, int) {
+		rowMu.Lock()
+		defer rowMu.Unlock()
+		return resolveCurrentRow(c.Str("mode"), rowMode, rowWidth)
+	}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		MachineStopped: machineStopped.Load,
@@ -1620,14 +1639,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
 		},
-		Row: func() (string, int) {
-			rowMu.Lock()
-			defer rowMu.Unlock()
-			if m := c.Str("mode"); m != "" {
-				return m, rowWidth // the override, for a test
-			}
-			return rowMode, rowWidth
-		},
+		Row:       currentRow,
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Sprint:    w.sprintAsk(server),
 		Rules:     rules,
