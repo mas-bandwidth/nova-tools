@@ -120,6 +120,7 @@ var secretOpeners = map[string]any{
 	"pkg/filelock.ParseStamp":                     filelock.ParseStamp,
 	"pkg/fleet.ParseWorkload":                     fleet.ParseWorkload,
 	"pkg/friend.NewClaude":                        friend.NewClaude,
+	"pkg/friend.NewDSHCardRunner":                 friend.NewDSHCardRunner,
 	"pkg/friend.NewDeliverer":                     friend.NewDeliverer,
 	"pkg/friend.NewestCodexSession":               friend.NewestCodexSession,
 	"pkg/friend.NewestConversation":               friend.NewestConversation,
