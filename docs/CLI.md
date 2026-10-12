@@ -1575,7 +1575,7 @@ flags:
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --pause-on <string>  funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)
   --profile <string>  the wall profile every lane child runs inside when the friend row names none (row_profile=): friend
-  --pronouns <string>  the friend's pronouns, one of she/her, he/him, they/them (default: the row's row_pronouns when the beat names it, else they/them); every text the daemon writes about the friend says them
+  --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --refuse-go  put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
@@ -1633,7 +1633,7 @@ flags:
   --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
-  --pronouns <string>  the friend's pronouns, one of she/her, he/him, they/them (default: the row's row_pronouns when the beat names it, else they/them); every text the daemon writes about the friend says them
+  --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets
   --secrets <string>  the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec
@@ -1890,7 +1890,7 @@ flags:
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
   --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --profile <string>  the wall profile every lane child runs inside when the friend row names none: friend
-  --pronouns <string>  the friend's pronouns, one of she/her, he/him, they/them (default: the row's row_pronouns when the beat names it, else they/them); every text the daemon writes about the friend says them
+  --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  accepted and ignored: the machine's nova-secrets seat the daemon's plist records
   --secrets <string>  accepted and ignored: the names of the secrets the daemon's plist records, comma-separated

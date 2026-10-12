@@ -421,7 +421,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
 		f.Duration("notify-window", friend.NotificationWindow, "global card-delivery burst window and minimum wake interval; urgent messages bypass it")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
-		f.String("pronouns", "", "the friend's pronouns, one of "+friend.PronounList()+" (default: the row's row_pronouns when the beat names it, else they/them); every text the daemon writes about the friend says them")
+		f.String("pronouns", "", "the friend's startup pronouns, one of "+friend.PronounList()+" (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them")
 		f.Check(func(c *tool.Call) {
 			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
 				c.Problem(err.Error())
