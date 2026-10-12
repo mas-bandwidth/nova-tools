@@ -310,7 +310,7 @@ func nonzeroCountGuard(s *ast.IfStmt, info *types.Info) types.Object {
 			return nil
 		}
 		bound, ok := init.Lhs[0].(*ast.Ident)
-		if !ok || info.ObjectOf(id) != info.ObjectOf(bound) {
+		if !ok || info.ObjectOf(id) == nil || info.ObjectOf(id) != info.ObjectOf(bound) {
 			return nil
 		}
 		count = init.Rhs[0]
