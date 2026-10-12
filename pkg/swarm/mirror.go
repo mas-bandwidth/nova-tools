@@ -20,6 +20,33 @@ func MirrorPath(benchHome, name string) string {
 	return filepath.Join(benchHome, "nova-bench", "mirror", strings.TrimSuffix(name, ".git")+".git")
 }
 
+// fixedMirrorRepos are the repositories every bench must mirror whatever a card
+// names: the fixed set a bench gets when it joins the fleet, beyond the running
+// sprint's stream repos (docs/FLEET.md, the mirrors' refresh row;
+// docs/SPEC-SWARM.md, warm-clones-and-caches.w2).
+var fixedMirrorRepos = []string{"nova-tools", "nova-sprint"}
+
+// MirrorSetRepos is the full mirror set of one bench: every repository a card
+// can name, the running sprint's stream repos (stream) unioned with the fixed
+// set every bench carries, each once and in first-seen order. One definition of
+// the set is what makes it converged: a machine that joins asks for the same
+// list, so it gets the full set from the same place the refresh does
+// (docs/SPEC-SWARM.md, warm-clones-and-caches.w2; docs/FLEET.md, the mirrors'
+// refresh row).
+func MirrorSetRepos(stream []string) []string {
+	seen := make(map[string]bool, len(stream)+len(fixedMirrorRepos))
+	out := make([]string, 0, len(stream)+len(fixedMirrorRepos))
+	for _, name := range append(append([]string{}, stream...), fixedMirrorRepos...) {
+		name = strings.TrimSuffix(strings.TrimSpace(name), ".git")
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
 // cardMirrorDir is where a pulse card's clone step looks for the bench mirror: under $HOME,
 // which is the bench user's home to a person and the slot's data home to a card's harness.
 const cardMirrorDir = "$HOME/nova-bench/mirror/"

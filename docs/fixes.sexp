@@ -1020,4 +1020,15 @@
     admission because its paths (internal/nsprint/testutil/pg, internal/testredis) are gone from dev; its
     donor, nova-tools PR #5503, closed unmerged 2026-10-10T17:53Z. Of its parts, the Redis sentry and the
     104-byte socket bound are on dev (pkg/testredis/sentry.go, pkg/testredis/testredis.go); the postgres
-    watchdog is not. Card a-throwaway-postgres-dies-with-its-test-binary.w1")))
+    watchdog is not. Card a-throwaway-postgres-dies-with-its-test-binary.w1")
+  (fix "every-bench-carries-every-mirror-a-card-can-name" :release "v1.2.14" :status "in-progress"
+   :title "Every bench carries every mirror a card can name"
+   :text "The mirror set is a converged property of the fleet: `nova-swarm mirror` unions the running
+    sprint's stream repos (--repos) with the fixed set every bench carries (swarm.MirrorSetRepos), and
+    every fleet row is a bench (--benches). `nova-swarm mirror --check` names a bench missing a mirror
+    as MIRROR MISSING <bench> <repo> and writes nothing; a refresh pass creates every missing mirror
+    on every bench, and a machine that joins runs the same verb and gets the full fixed set."
+   :origin "session report 2026-10-12 ~02:58Z, epoch 19: staging refused every nova-sprint card dealt to
+    studio, \"no bench mirror for https://github.com/mas-bandwidth/nova-sprint.git\"; the push list in
+    the coordinator's bench.yml named only some benches, so what each bench carried drifted. Attempt 2
+    wires the helpers attempt 1 left dead (card every-bench-carries-every-mirror-a-card-can-name.w2)")))

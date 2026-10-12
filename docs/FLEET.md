@@ -190,7 +190,7 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 | the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
 | the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
 | the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
-| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute |
+| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute, the mirror set a converged property of the fleet: the repositories are the union of every REPO a card can name (the running sprint's stream repos `--repos` plus the fixed set every bench carries, `swarm.MirrorSetRepos`) and every fleet row is a bench (`--benches`), so `nova-swarm mirror --check` names a bench missing a mirror `MIRROR MISSING <bench> <repo>` and a refresh pass creates it; a machine that joins the fleet runs the same verb and gets the full fixed set |
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;
