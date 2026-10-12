@@ -241,8 +241,10 @@ const (
 // that is a failed finish, nothing to do, for the coordinator to judge. A run the
 // provider failed that left no result, its push not refused, is failed with the kind
 // `provider failure` and the provider's reason, and only that one: the sprint deals that
-// card again and never judges it; a refused push or a result with the shape is failed work
-// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure). A launch
+// card again and never judges it. A refused push is failed work whatever the run's end, and
+// so is a result with the shape, except a rate-limited provider end with no pushed head,
+// which is the provider's and the sprint's, whatever the shape (tla/CardContract.tla,
+// JudgeOf and ProviderIsNotFailedWork). A launch
 // refused at staging ran no child: failed with the kind `staging refused` and the stage's
 // reason, the member's failure and never the card's (StageRefused).
 func Judge(r Result, pu Push) (fin Finish, why string) {
@@ -280,6 +282,13 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the provider failed the run and it left no result: the kind and the
 		// provider's reason, never the shape's; the sprint deals the card again. A refused
 		// push above, and a shaped result below (nothing, not done), are the card's own
+		return FinishFailed, EndProvider + ": " + r.Provider
+	case r.End == EndProvider && r.Provider != "" && pu.Sha == "" && (strings.Contains(r.Provider, "class=rate-limited") || (strings.Contains(r.Provider, "status=429") && !strings.Contains(r.Provider, "class=out-of-credit"))):
+		// the provider ended the run naming a rate limit and no head was pushed: the
+		// kind and the provider's reason, whatever the shape; the sprint deals the
+		// card again when its quota returns rather than spending an attempt on it
+		// (docs/SPEC-CARD-CONTRACT.md section 4, provider failure; tla/CardContract.tla,
+		// JudgeOf and ProviderIsNotFailedWork)
 		return FinishFailed, EndProvider + ": " + r.Provider
 	case !r.Shaped && r.End == "":
 		// the child ended by itself and left no result: no work came back, and the sprint

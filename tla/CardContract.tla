@@ -30,17 +30,24 @@
 \*   prov      the child's run ended on the provider's failure: the harness's
 \*             own log carries a provider error, or its transcript stops on a
 \*             tool result after a clean exit (cmd/nova-swarm nativeprovider.go)
+\*   rlim      the provider ended the child's run naming a rate limit: the
+\*             provider kind is `class=rate-limited`, or `status=429` under a
+\*             class that is not out-of-credit (cmd/nova-swarm
+\*             providercause.ClassifyProvider). Chosen where prov is, in
+\*             ChildEnds: the child's end and its reason are fixed before Judge.
 \*   stg       the launch was refused at staging, before any child ran
 \*             (cmd/nova-swarm native's STAGE FAIL: no bench mirror, the pushed
 \*             head missing, the stage's timeout)
 
-\* THE PROVIDER FAILURE. A run that ended with no result and whose provider
-\* failed it (prov) is finished `provider`, after a refused push (which is
-\* said first) and before any failed-work reason: Judge. The finish is what
-\* the member reports, and the sprint deals the card again without judging it
-\* (internal/sprint providerEnded, in nova-sprint; tla/DirtyTick.tla
-\* RedealsAreEndedTakes): the redeal and the retire at the bound are the
-\* sprint's side, outside this model.
+\* THE PROVIDER FAILURE. A run the provider failed is finished `provider`,
+\* after a refused push (which is said first) and before any failed-work
+\* reason: Judge. A run that left no result (prov, ~shape) is the provider's
+\* whatever was pushed; a run that named a rate limit (rlim) is the provider's
+\* with no pushed head, whatever the shape, so a shaped rate-limited end is not
+\* failed work. The finish is what the member reports, and the sprint deals the
+\* card again without judging it (internal/sprint providerEnded, in nova-sprint;
+\* tla/DirtyTick.tla RedealsAreEndedTakes): the redeal and the retire at the
+\* bound are the sprint's side, outside this model.
 
 \* THE STAGING REFUSAL. A launch its member refused at staging ran no child: no
 \* commit, no result, nothing pushed (StageRefused). Judge finishes it `staging`, its
@@ -84,10 +91,10 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, stg
+          prov, rlim, stg
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, stg>>
+          prov, rlim, stg>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -103,6 +110,7 @@ Init ==
   /\ fin = [c \in Cards |-> "none"]
   /\ rep = [c \in Cards |-> "none"]
   /\ prov = [c \in Cards |-> FALSE]
+  /\ rlim = [c \in Cards |-> FALSE]
   /\ stg = [c \in Cards |-> FALSE]
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
@@ -128,7 +136,7 @@ Stage(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "running"]
   /\ \E f \in StageFroms(c) : from' = [from EXCEPT ![c] = f]
-  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, stg>>
+  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, rlim, stg>>
 
 \* The member's machine refuses the launch at staging (cmd/nova-swarm native's STAGE
 \* FAIL): nothing is staged and no child runs, so there is no commit and no result.
@@ -136,18 +144,20 @@ StageRefused(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, rlim>>
 
 \* The child ends: any commit, any result, any verdict, and the provider's
-\* failure or not.
+\* failure or not, with the rate-limited flag chosen here where the provider's
+\* kind is (the end and the reason are fixed before Judge).
 ChildEnds(c) ==
   /\ ph[c] = "running"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
-  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"}, f \in BOOLEAN :
+  /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"}, f \in BOOLEAN, r \in BOOLEAN :
        /\ commit' = [commit EXCEPT ![c] = k]
        /\ shape' = [shape EXCEPT ![c] = s]
        /\ verdict' = [verdict EXCEPT ![c] = v]
        /\ prov' = [prov EXCEPT ![c] = f]
+       /\ rlim' = [rlim EXCEPT ![c] = r]
   /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, stg>>
 
 \* The member's push (cmd/nova-swarm gitPusher.Push): a commit is pushed or
@@ -157,7 +167,7 @@ Push(c) ==
   /\ ph' = [ph EXCEPT ![c] = "pushed"]
   /\ \E p \in IF commit[c] THEN {"ok", "refused"} ELSE {"nocommit"} :
        push' = [push EXCEPT ![c] = p]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, stg>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, rlim, stg>>
 
 \* THE ONE JUDGMENT (internal/member Judge).
 JudgeOf(c) ==
@@ -169,7 +179,7 @@ JudgeOf(c) ==
     [] OTHER ->
          IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
          ELSE IF shape[c] /\ verdict[c] = "ok" /\ push[c] = "ok" THEN "ok"
-         ELSE IF push[c] # "refused" /\ prov[c] /\ ~shape[c] THEN "provider"
+         ELSE IF push[c] # "refused" /\ ((prov[c] /\ ~shape[c]) \/ rlim[c]) THEN "provider"
          ELSE "failed"
 
 \* A finish `failed` opens the failed-work judgment; a finish `provider` opens
@@ -179,13 +189,13 @@ Judge(c) ==
   /\ ph' = [ph EXCEPT ![c] = "done"]
   /\ fin' = [fin EXCEPT ![c] = JudgeOf(c)]
   /\ rep' = [rep EXCEPT ![c] = JudgeOf(c)]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, stg>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, rlim, stg>>
 
 \* The claim moves under the launch at any time before it is judged.
 Move(c) ==
   /\ claim[c] = "held" /\ ph[c] \in {"running", "ended", "pushed"}
   /\ claim' = [claim EXCEPT ![c] = "moved"]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, stg>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, rlim, stg>>
 
 \* REAPED is its own finish (internal/member FinishReaped): the child has
 \* ended, its claim is gone, and nothing is reported.
@@ -194,7 +204,7 @@ Reap(c) ==
   /\ ph' = [ph EXCEPT ![c] = "done"]
   /\ fin' = [fin EXCEPT ![c] = "reaped"]
   /\ rep' = IF Broken = "reapreported" THEN [rep EXCEPT ![c] = "failed"] ELSE rep
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, stg>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, rlim, stg>>
 
 Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ Judge(c) \/ Move(c) \/ Reap(c)
                           \/ StageRefused(c)
@@ -207,6 +217,7 @@ TypeOK ==
   /\ push \in [Cards -> {"none", "ok", "refused", "nocommit"}]
   /\ fin \in [Cards -> {"none", "ok", "failed", "reaped", "provider", "staging"}]
   /\ rep \in [Cards -> {"none", "ok", "failed", "provider", "staging"}]
+  /\ rlim \in [Cards -> BOOLEAN]
   /\ stg \in [Cards -> BOOLEAN]
 
 \* Ok => PushedHead /\ Shape: an ok finish is a commit the child made, on
@@ -242,9 +253,11 @@ ReworkStagedAtTheTip == \A c \in Cards :
   (from[c].k # "none" /\ att[c] > 1) => from[c].k \in {"carry", "tip"}
 
 \* A provider failure never opens a failed-work judgment: a run the provider failed
-\* that left no result, its push not refused, is never finished `failed`.
+\* that left no result, or a provider end naming a rate limit with no pushed head
+\* (whatever the shape), its push not refused, is never finished `failed`.
 ProviderIsNotFailedWork ==
-  \A c \in Cards : fin[c] = "failed" => ~(prov[c] /\ ~shape[c] /\ push[c] # "refused")
+  \A c \in Cards : fin[c] = "failed" =>
+    ~(push[c] # "refused" /\ ((prov[c] /\ ~shape[c]) \/ rlim[c]))
 
 \* A staging refusal never opens a failed-work judgment: a launch refused at staging ran no
 \* child, and is never finished `failed`.
