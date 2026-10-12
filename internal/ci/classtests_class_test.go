@@ -903,8 +903,16 @@ func TestMain(m *testing.M) {
 			_ = os.RemoveAll(dir) // ignored: a temporary directory that may already be gone
 		}
 	}
+	for _, cleanup := range cleanupShared {
+		cleanup()
+	}
 	os.Exit(code)
 }
+
+// cleanupShared holds extra temporary directories to remove at the end of a
+// package run. A test file that is functional-tier only registers its own here
+// (staticcheck_class_test.go), so TestMain stays free of a functional-only name.
+var cleanupShared []func()
 
 func buildPromotionRepo(t *testing.T, root string) *promotionRepo {
 	t.Helper()

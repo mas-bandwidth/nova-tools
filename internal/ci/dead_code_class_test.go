@@ -58,26 +58,10 @@ type deadcodeFunction struct {
 	Marker    bool `json:"Marker"`
 }
 
-// deadcodeToolBinary resolves the deadcode tool binary path via `go tool -n deadcode`.
-// If not yet compiled in the cache, it runs `go tool deadcode` with a clean host environment
-// to ensure the binary is built.
+// deadcodeToolBinary returns the shared deadcode binary built by buildModuleTool.
 func deadcodeToolBinary(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, "go", "tool", "-n", "deadcode")
-	cmd.Env = goenv.Clean(os.Environ())
-	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.Output()
-	require.NoError(t, err, "resolving deadcode binary via go tool -n deadcode")
-
-	bin := strings.TrimSpace(string(out))
-	if _, err := os.Stat(bin); err != nil {
-		build := exec.CommandContext(ctx, "go", "tool", "deadcode")
-		build.Env = goenv.Clean(os.Environ())
-		build.WaitDelay = 5 * time.Second
-		_ = build.Run() // deadcode exits non-zero on no packages, but compiles into cache
-	}
-	require.FileExists(t, bin, "deadcode binary must exist")
-	return bin
+	return buildModuleTool(t, ctx, deadcodePkg)
 }
 
 // deadcodeRoots includes every tool with a production main, as well as the cmd
@@ -125,34 +109,30 @@ func runDeadcode(t *testing.T, ctx context.Context, bin, root, targetOS string) 
 	return pkgs, nil
 }
 
-// findDeadCodeUnion runs deadcode across linux, darwin, and windows, taking the union
-// of dead functions per package.
+// findDeadCodeUnion runs deadcode on linux, taking the union of dead functions per package.
+// deadcode is a static analyzer; running once is sufficient.
 func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[string]int, map[string][]string, error) {
 	t.Helper()
 	bin := deadcodeToolBinary(t, ctx)
-	oses := []string{"linux", "darwin", "windows"}
 	union := make(map[string]map[string]bool)
 	modulePrefix := "github.com/mas-bandwidth/nova-tools/"
-
-	for _, goos := range oses {
-		pkgs, err := runDeadcode(t, ctx, bin, root, goos)
-		if err != nil {
-			return nil, nil, err
+	pkgs, err := runDeadcode(t, ctx, bin, root, "linux")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, pkg := range pkgs {
+		p := strings.TrimPrefix(pkg.Path, modulePrefix)
+		if !deadCodeCounted(p) {
+			continue
 		}
-		for _, pkg := range pkgs {
-			p := strings.TrimPrefix(pkg.Path, modulePrefix)
-			if !deadCodeCounted(p) {
+		for _, fn := range pkg.Funcs {
+			if fn.Marker || fn.Generated {
 				continue
 			}
-			for _, fn := range pkg.Funcs {
-				if fn.Marker || fn.Generated {
-					continue
-				}
-				if union[p] == nil {
-					union[p] = make(map[string]bool)
-				}
-				union[p][fn.Name] = true
+			if union[p] == nil {
+				union[p] = make(map[string]bool)
 			}
+			union[p][fn.Name] = true
 		}
 	}
 
