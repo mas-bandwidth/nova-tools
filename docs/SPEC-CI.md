@@ -1259,8 +1259,9 @@ server by an absolute path is not caught by the shim.
 **The rule.** ci.yml's `test-hosted` keeps `timeout-minutes: 2` and meets it by
 shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
-heavy package (`cmd/nova-swarm`) first, then every other package round-robin in
-`go list` order; vet and test both read the deal's `HOSTED_PKGS`. The Go cache
+heavy package (`cmd/nova-swarm`) first and alone on its shard, then every other
+package round-robin in `go list` order over the remaining shards; vet and test
+both read the deal's `HOSTED_PKGS`. The Go cache
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
 `actions/cache/restore` before `build`, and written by `actions/cache/save`

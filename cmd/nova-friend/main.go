@@ -1198,6 +1198,50 @@ func resolveCurrentRow(modeFlag, beatMode string, beatWidth int) (string, int) {
 	return beatMode, beatWidth
 }
 
+// runOut is the one locked writer for a run's stdout: every goroutine the run
+// starts writes through it, so no two write at once and nothing writes after
+// run returns (shut turns every later Write into an error that never reaches
+// the caller's stdout).
+type runOut struct {
+	mu   sync.Mutex
+	w    io.Writer
+	done bool
+}
+
+func (o *runOut) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.done {
+		return 0, errors.New("run returned: its output is closed")
+	}
+	return o.w.Write(p)
+}
+
+func (o *runOut) shut() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.done = true
+}
+
+// joined schedules f through sched, counting the delivery in bg so run joins
+// it before it returns. A nil sched runs f in a goroutine, as the session
+// check's own default does; a fake-clock sched runs it in place, so its
+// semantics are unchanged.
+func joined(bg *sync.WaitGroup, sched func(func())) func(func()) {
+	return func(f func()) {
+		bg.Add(1)
+		run := func() {
+			defer bg.Done()
+			f()
+		}
+		if sched == nil {
+			go run()
+			return
+		}
+		sched(run)
+	}
+}
+
 func (w world) run(c *tool.Call) *tool.Out {
 	if c.Bool("notifications-only") {
 		return w.runNotifications(c)
@@ -1319,7 +1363,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		return out, exit, err
 	}
-	deliver, err := friend.SelectDeliverer(name, c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), watched, c.Stdout)
+	// one locked writer for the whole run: every goroutine run starts (the beat,
+	// the harness watch, the daemon loop, the lanes) writes through stdout, and
+	// after shut() a write returns an error and never reaches c.Stdout, so
+	// nothing writes after run returns.
+	stdout := &runOut{w: c.Stdout}
+	defer stdout.shut()
+	deliver, err := friend.SelectDeliverer(name, c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), watched, stdout)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
@@ -1327,7 +1377,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
 	if friend.RunsCards(c.Str("harness")) {
-		deliver = friend.NewClaude(name, dir, watched, c.Stdout) // a card a process: the adapter with a lane
+		deliver = friend.NewClaude(name, dir, watched, stdout) // a card a process: the adapter with a lane
 	}
 	// a harness whose session queues what is delivered (Antigravity's mailbox): every delivery
 	// goes in at once, and the daemon follows the conversation that reads it (friend.Mailbox)
@@ -1398,7 +1448,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	record := func(line string) {
 		recordMu.Lock()
 		defer recordMu.Unlock()
-		fmt.Fprintln(c.Stdout, "RUN "+line)
+		fmt.Fprintln(stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
 	// when the sprint server last took her session's answer to a check as its proof (the up
@@ -1457,6 +1507,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(0) // a signal while the store was down
 	}
 	defer closeStore()
+	// every goroutine run starts after this point is counted in bg: cancel (stop)
+	// then join before returning, so nothing outlives run (the defers run LIFO,
+	// so this joins before closeStore and stdout.shut).
+	var bg sync.WaitGroup
+	defer func() { stop(); bg.Wait() }()
 	// the push proof is a state, never an exit (docs/SPEC-FRIEND.md, The push proof): the
 	// daemon starts, its first SESSION CHECK goes in at once (the presence's own), and it
 	// delivers nothing into the session until the session answers it; a check the last run
@@ -1488,7 +1543,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	sc := &friend.SessionCheck{
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
-		Go:   w.checkGo,
+		Go:   joined(&bg, w.checkGo),
 		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
@@ -1565,7 +1620,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		busProof = roundTripProof(st)
 	}
 	dh := w.newDaemonHook(st, name, hook.Friend, busProof, record)
-	go dh.loop(ctx, w.sleep)
+	bg.Add(1)
+	go func() {
+		defer bg.Done()
+		dh.loop(ctx, w.sleep)
+	}()
 	w.beat, w.beatDown = dh.beats(w.now, w.beat, w.beatDown)
 	tellSeat = func(subject, body string) {
 		to := answerTo()

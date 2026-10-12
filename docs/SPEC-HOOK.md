@@ -147,15 +147,17 @@ identity.
 
 ## The verbs
 
-- `nova-hook hook --as <name> --role <role> [--once]`: arms (or joins) the record, holds the `bus` push
+- `nova-hook hook --as <name> --role <role> [--once] [--dry-run]`: arms (or joins) the record, holds the `bus` push
   when the role carries it (renewing its lease, printing each message on the name's stream as
   `HOOK PUSH`), prints `HOOK CHALLENGE nonce=<n>` at start and every `ChallengeEvery`, and a
   `HOOK STATE` line on each change; it stops on a signal (exit 0) or when the record is unhooked under
   it (exit 1), and arms a record lost under it again. A stream that does not answer is one
   `HOOK STATE state=unread` line while the fault stays the same, a tick's wait between reads, and a
   `HOOK STATE state=read` line when it answers again: a store that is down never floods the Monitor.
-  `--once` arms, renews once and prints the state (0 proven, 1 not).
-- `nova-hook prove --as <name> --nonce <n>`: answers the challenge.
+  `--once` arms, renews once and prints the state (0 proven, 1 not); `--dry-run` reads the record and prints
+  the plan it would take (role, epoch, the pushes held and each other push's holder), writing nothing.
+- `nova-hook prove --as <name> --nonce <n> [--dry-run]`: answers the challenge; `--dry-run` reads the record
+  and prints what it would prove (the state, the role and the live pushes a challenge would name), writing nothing.
 - `nova-hook unhook --as <name> [--dry-run]`: unhooks.
 - `nova-hook status [--as <name>]`: one record as a check (0 proven, 1 not, with the breadcrumb), or
   every record.

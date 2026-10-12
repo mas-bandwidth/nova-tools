@@ -137,8 +137,12 @@ jobs:
     # cmd/nova-swarm 44.763 and internal/docs 18.834 together. Its completed legs also
     # measure internal/sprint 15.951 s, pkg/redisconn 18.169, pkg/config 17.741
     # and pkg/secrets 15.577. The measured heavy packages left here (the sprint's went with
-    # nova-sprint, the split) each have a shard;
-    # the other live packages are dealt round-robin.
+    # nova-sprint, the split) each have a shard to themselves; the other live packages are
+    # dealt round-robin over the shards without one. A heavy package used to take round-robin
+    # packages too, and `go test` runs up to GOMAXPROCS package binaries at once, so on the
+    # 3-core macos-latest runner internal/ci shared the machine with eight other packages'
+    # binaries and crossed its own 75 s -timeout (run 38259191532 at 2cea177b3; alone at
+    # GOMAXPROCS=3 on an M5 it is 28 s wall, 75 s of summed test time). pkg/pkgselect.Deal.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
     # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
@@ -229,8 +233,9 @@ jobs:
 
       - name: deal this shard's packages
         # ci.yml test-hosted's deal, with this job's measured heavy list: the heavy
-        # packages first, one per shard, then every other live package round-robin in go list
-        # order. One line of space-separated packages. `go run ./tools/ci help deal`;
+        # packages first, one per shard and alone, then every other live package round-robin
+        # in go list order over the shards without a heavy package. One line of
+        # space-separated packages. `go run ./tools/ci help deal`;
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
@@ -298,6 +303,15 @@ jobs:
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
+
+      - name: install the tested Ansible for the fleet fixtures
+        if: matrix.os == 'ubuntu-latest' && contains(format(' {0} ', env.HOSTED_PKGS), '/fleet ')
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/toolchains-ansible"
+          "$RUNNER_TEMP/toolchains-ansible/bin/python" -m pip install --disable-pip-version-check 'ansible-core==2.16.3'
+          "$RUNNER_TEMP/toolchains-ansible/bin/ansible-playbook" --version
+          echo "$RUNNER_TEMP/toolchains-ansible/bin" >> "$GITHUB_PATH"
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # -count=1: the restored cache must never answer for a test. -timeout 75s: this step

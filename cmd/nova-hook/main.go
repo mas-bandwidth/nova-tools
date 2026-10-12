@@ -145,9 +145,10 @@ example: nova-hook status --as ada`,
 			},
 			{
 				Name:    "hook",
-				Usage:   "hook --as <me> --role <role> [--once] [--redis <addr>]",
+				Usage:   "hook --as <me> --role <role> [--once] [--redis <addr>] [--dry-run]",
 				Example: "hook --as m1 --role member --once",
 				Effect:  tool.Delivery + ": writes the hook record and the lease of every push it holds, and streams the bus push until a signal",
+				DryRun:  true,
 				Detail: `Hooks you in as --role (` + roleNames() + `): a record already hooked as that role is joined at
 its epoch, otherwise a new epoch starts and every lease and proof of the old one is cleared. This process holds
 the bus push when the role carries it: it renews the lease every ` + hook.RenewEvery.String() + ` and prints each message on your bus
@@ -159,6 +160,8 @@ each time the record changes. Run it under the session's Monitor: each line is a
 SIGTERM (HOOK STOP, exit 0; the leases lapse after ` + hook.LeaseTTL.String() + `), or when the record is unhooked under it (exit 1).
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
+--dry-run reads the record and prints the plan the real run would take (the role, the epoch, the pushes held and
+each other push's holder) and writes nothing.
 example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
@@ -177,13 +180,16 @@ example: nova-hook hook --as ada --role coordinator`,
 			},
 			{
 				Name:    "prove",
-				Usage:   "prove --as <me> --nonce <n> [--redis <addr>]",
+				Usage:   "prove --as <me> --nonce <n> [--redis <addr>] [--dry-run]",
 				Example: "", // the nonce is the one a hook's stream printed: no example line can carry it
 				Effect:  tool.Delivery + ": writes the proof of each push the challenge named",
+				DryRun:  true,
 				Detail: `Answers the challenge the hook printed (HOOK CHALLENGE nonce=<n>): with that nonce, under the record's
 epoch, every push the challenge named whose lease is live is proven for ` + hook.ProofTTL.String() + `, and the challenge is spent.
 Prints PROVE OK proven=<n> and the record's state. A nonce that is not the one asked, a challenge that lapsed or
 was answered, or a record unhooked since is FAILED at exit 1, with what to do.
+--dry-run reads the record and prints what it would prove (the state, the role and how many live pushes a
+proof would cover) and writes nothing.
 example: nova-hook prove --as ada --nonce 9f2c4e1a0b3d5c7e`,
 				Flags: func(f *tool.Flags) {
 					as(f)
@@ -303,6 +309,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	role, err := hook.ParseRole(c.Str("role"))
 	if err != nil {
 		return tool.Refuse(err.Error())
+	}
+	if c.DryRun() {
+		ctx, cancel := call()
+		defer cancel()
+		return w.hookPlan(ctx, s, role)
 	}
 	held := holds(role)
 	// the identity's own word (hook.Store.HookAs): it joins a record hooked as role,
@@ -542,6 +553,9 @@ func (w world) prove(c *tool.Call) *tool.Out {
 	defer s.close()
 	ctx, cancel := call()
 	defer cancel()
+	if c.DryRun() {
+		return w.provePlan(ctx, s)
+	}
 	n, err := s.hooks.Answer(ctx, s.as, c.Str("nonce"), "session")
 	switch {
 	case errors.Is(err, hook.ErrNoChallenge), errors.Is(err, hook.ErrWrongNonce):
@@ -560,6 +574,51 @@ func (w world) prove(c *tool.Call) *tool.Out {
 		return tool.Refuse("the hook record could not be read: " + err.Error())
 	}
 	return tool.Done().Fact("proven", n).Fact("state", st[0].State).Fact("role", string(st[0].Role))
+}
+
+// provePlan is prove --dry-run's result: it reads the record and prints what
+// the answer would prove -- each push of the record's role whose lease is live
+// (the pushes a challenge can name) -- and writes nothing.
+func (w world) provePlan(ctx context.Context, s *session) *tool.Out {
+	st, _, err := s.hooks.Read(ctx, s.as)
+	if err != nil {
+		return tool.Refuse("the hook record could not be read: " + err.Error())
+	}
+	live := 0
+	for _, p := range st[0].Pushes {
+		if p.State != hook.PushDown {
+			live++
+		}
+	}
+	return tool.Done().As("DRY-RUN").Fact("as", s.as).Fact("state", st[0].State).Fact("role", string(st[0].Role)).Fact("would-prove", live)
+}
+
+// hookPlan is hook --dry-run's result: it reads the record and prints the plan
+// the real run would take -- the role, the epoch (joined at the record's, else
+// the next), the pushes this process would hold, and each other push's holder
+// -- and writes nothing.
+func (w world) hookPlan(ctx context.Context, s *session, role hook.Role) *tool.Out {
+	st, _, err := s.hooks.Read(ctx, s.as)
+	if err != nil {
+		return tool.Refuse("the hook record could not be read: " + err.Error())
+	}
+	cur := st[0]
+	joined := cur.Role == role && cur.State != hook.StateNone && cur.State != hook.StateUnhooked
+	epoch := cur.Epoch + 1
+	if joined {
+		epoch = cur.Epoch
+	}
+	if epoch < 1 {
+		epoch = 1
+	}
+	held := holds(role)
+	o := tool.Done().As("DRY-RUN").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", joined).Fact("hold", pushList(held))
+	for _, p := range hook.PushesOf(role) {
+		if !slices.Contains(held, p) {
+			o.Note(fmt.Sprintf("the %s push is held by: %s", p, hook.HeldBy(s.as, role, p)))
+		}
+	}
+	return o
 }
 
 // unhook is the verb (tla/Hook.tla, Unhook).

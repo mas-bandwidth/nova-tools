@@ -18,10 +18,12 @@ Deals the live packages of the module (go list ./..., less what pkg/pkgselect/DE
 names) over <n> shards and prints shard <i>'s share as one line of blank-separated
 packages, and appends HOSTED_PKGS=<that line> to $GITHUB_ENV for the steps after it.
 
-The heavy packages go first, one per shard: --heavy names them by a trailing path
-(cmd/nova-swarm matches <module>/cmd/nova-swarm), the k-th taking shard k. Every other
-package then goes round-robin in go list order, continuing after the heavy ones. The
-union of the shards is the live tree, each package once.
+The heavy packages go first, one per shard and alone: --heavy names them by a trailing
+path (cmd/nova-swarm matches <module>/cmd/nova-swarm), the k-th taking shard k. Every
+other package then goes round-robin in go list order over the shards no heavy package
+took, so a heavy package's test binary has its runner to itself; only when the heavy
+packages fill every shard does the round-robin continue over all of them. The union of
+the shards is the live tree, each package once.
 
 Exit 0 dealt, 1 go list failed, 2 bad usage.
 

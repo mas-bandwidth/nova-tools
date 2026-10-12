@@ -68,6 +68,8 @@ A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it
 
 `TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`pkg/testbin`).
 
+Ubuntu certification runs the fleet play fixtures with `ansible-core==2.16.3` in an isolated virtual environment, preserving the 75-second race-package limit.
+
 ### The CL shards fit two minutes
 
 A CI shard of the CL tier is cancelled at two minutes (`timeout-minutes: 2` in `.github/workflows/ci.yml`), and the Makefile's `test` target stops a package at 110 s (`GOTEST_TIMEOUT`). The cap stays; the tests fit it. A unit test takes under a minute, ideally far under, and a CL package takes at most 60 s.
@@ -247,6 +249,9 @@ WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 work
 
 $ nova-friend status --as bob --dir ./bob
 ! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
+
+$ nova-friend lanes --as bob --clear-faults
+LANES OK cleared=none
 ```
 
 ## nova-sandbox
