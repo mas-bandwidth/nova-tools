@@ -28,14 +28,14 @@ import (
 // ---------------------------------------------------------------------------
 
 type fakeForge struct {
-	head    map[string]string
-	checks  map[string][]CheckRun
+	head   map[string]string
+	checks map[string][]CheckRun
 	// checksSuites is the richer read the superseding gate uses: check runs
 	// with their suite's provenance (docs/SPEC-RELEASE.md section 19). When
 	// nil, checkRunsWithSuites falls back to wrapping checks with no suites.
 	checksSuites map[string][]checkRun
 	tags         []string
-	commits map[string][]Commit
+	commits      map[string][]Commit
 	// files is what the compare endpoint names as touched, keyed the same way
 	// as commits: `cut` classifies the range against the sensitive list and
 	// the list of paths is the only input to that decision.
