@@ -66,31 +66,43 @@ func TestAReadsScratchIsInsideItsJob(t *testing.T) {
 	}
 }
 
-// A work card keeps the slot's own tmp/<label>: only a reader's scratch moved inside its
-// job, and a work card's must stay outside the job directory admission git-inits (issue
-// #460). A frame-less unit test is the same shape as a work card.
-func TestAWorkCardsScratchIsTheSlotsTmp(t *testing.T) {
+// Every lane's scratch is <job>/tmp: a reader's, a work card's, and a frame-less unit
+// test's all sit inside their own job, outside the job's repo (issue #460), so a writer of
+// scratch is inside the wall whatever the kind.
+func TestAWorkCardsScratchIsInsideItsJob(t *testing.T) {
 	t.Parallel()
 	slot := t.TempDir()
 	read := nativeTmpDir(nativeRunConfig{slotDir: slot, label: "w.r1", frame: &cardcontract.Frame{Kind: "read"}}, filepath.Join(slot, "jobs", "w.r1"))
 	assert.Equal(t, filepath.Join(slot, "jobs", "w.r1", "tmp"), read)
 	work := nativeTmpDir(nativeRunConfig{slotDir: slot, label: "c.w1", frame: &cardcontract.Frame{Kind: "work"}}, filepath.Join(slot, "jobs", "c.w1"))
-	assert.Equal(t, filepath.Join(slot, "tmp", "c.w1"), work)
+	assert.Equal(t, filepath.Join(slot, "jobs", "c.w1", "tmp"), work)
 	bare := nativeTmpDir(nativeRunConfig{slotDir: slot, label: "a-label"}, filepath.Join(slot, "jobs", "a-label"))
-	assert.Equal(t, filepath.Join(slot, "tmp", "a-label"), bare)
+	assert.Equal(t, filepath.Join(slot, "jobs", "a-label", "tmp"), bare)
 }
 
-// TestTheChildEnvNamesOneScratch: TMPDIR, TMP and TEMP all name the one directory the run
-// hands the child, so a harness or library that reads any of the three by name writes
-// inside the wall.
+// TestTheChildEnvNamesOneScratch: TMPDIR, TMP, TEMP and GOTMPDIR all name the one directory
+// the run hands the child, so a harness or library that reads any of the four by name writes
+// inside the wall. An inherited GOTMPDIR is dropped and replaced, never left to point outside.
 func TestTheChildEnvNamesOneScratch(t *testing.T) {
 	t.Parallel()
-	env := nativeChildEnvFrom([]string{"TMP=/caller", "TEMP=/caller", "TMPDIR=/caller"}, "data", "job", "scratch", "", "", "", "", nil)
-	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+	env := nativeChildEnvFrom([]string{"TMP=/caller", "TEMP=/caller", "TMPDIR=/caller", "GOTMPDIR=/caller-gotmp"}, "data", "job", "scratch", "", "", "", "", nil)
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP", "GOTMPDIR"} {
 		got, ok := lookup(env, name)
 		require.True(t, ok, "the child was handed no %s", name)
 		assert.Equal(t, "scratch", got, "%s = %q, want the one scratch directory", name, got)
+		assert.Equal(t, 1, countEnv(env, name), "%s appears %d times, want exactly once (the inherited value is dropped, not kept)", name, countEnv(env, name))
 	}
+}
+
+// countEnv counts the occurrences of one environment name.
+func countEnv(env []string, want string) int {
+	n := 0
+	for _, kv := range env {
+		if name, _, _ := strings.Cut(kv, "="); name == want {
+			n++
+		}
+	}
+	return n
 }
 
 // TestAReadWallRefusalEndsAsTheReadersEnvironment pins the detection a read's wall refusal

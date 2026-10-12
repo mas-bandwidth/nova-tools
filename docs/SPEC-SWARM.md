@@ -632,7 +632,10 @@ Every rule here is normative. Only living verbs are retained.
 4. **A refused read does not end the run.** The worker's prompt says so in one
    sentence. The harness refuses a read or a scratch write outside the job
    directory, and the worker continues with what is inside. `native` runs
-   inside the sandbox wall and logs refusals to `harness.log`.
+   inside the sandbox wall and logs refusals to `harness.log`. Every lane's
+   scratch is the one directory `<job>/tmp`: the child's `TMPDIR`, `TMP`,
+   `TEMP` and `GOTMPDIR` all name it, and it is passed to the wall as `--write`
+   and `--tmp`, so a writer of scratch lands inside the wall.
 5. **The key file is data.** The key lives in one file, `~/.config/<provider>/env`
    or the path the worker description names. It is read as data, never sourced,
    never on a command line, never in a log, never in a file this tool writes.

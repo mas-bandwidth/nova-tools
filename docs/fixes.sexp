@@ -1104,6 +1104,16 @@
    :text "ci.yml's functional job runs on every pull request to dev and every push to dev, in addition to
      the merge queue, so a red functional test on a dev push is a red dev the sprint's red-base judgment
      sees, instead of surfacing only when a stream PR enters the merge queue."
-   :origin "the coordinator, 2026-10-12 ~12:25Z: two functional tests went red on dev and nobody saw it; dev's
-     ci workflow skipped the functional job on push, so only the merge queue ran the functional tier, and the
-     v1.2.14 stream PR #5627 was thrown out of the queue for failures already on dev")))
+    :origin "the coordinator, 2026-10-12 ~12:25Z: two functional tests went red on dev and nobody saw it; dev's
+      ci workflow skipped the functional job on push, so only the merge queue ran the functional tier, and the
+      v1.2.14 stream PR #5627 was thrown out of the queue for failures already on dev")
+   (fix "every-lane-scratch-directory-is-inside-its-job" :release "v1.2.15" :status "planned"
+    :title "Every lane's scratch directory is inside its job"
+    :text "A worker that wrote a scratch file under /tmp was denied by the landlock wall, and the attempt
+     burned its whole deadline. Every lane's scratch is now the one directory <job>/tmp: nativeTmpDir
+     returns it for every kind, and the child's TMPDIR, TMP, TEMP and GOTMPDIR all name it, so go test,
+     go build and os.TempDir land inside the wall; the job directory's .git/info/exclude gains tmp/ when
+     the job itself is a git work tree (issue #460). TestALaneScratchWorksUnderTheWallAndTmpIsDenied
+     runs three children under the real nova-sandbox wall and proves the helper's scratch lands under the
+     job's tmp, go test passes inside the wall, and a write to /tmp is refused."
+    :origin "the coordinator, 2026-10-12: a worker's /tmp write was denied by the wall and the attempt burned its deadline")))
