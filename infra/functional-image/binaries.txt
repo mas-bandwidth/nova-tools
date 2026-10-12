@@ -44,6 +44,7 @@ ps	apt	procps
 python3	apt	python3
 redis-server	source	redis-build
 sandbox-exec	absent	macOS only; the sandbox tests that need it skip on Linux by design
+setsid	base	util-linux
 sh	base	dash
 sleep	base	coreutils
 sops	source	sops
