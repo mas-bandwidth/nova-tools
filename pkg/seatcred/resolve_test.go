@@ -54,9 +54,7 @@ func seatEnv(t *testing.T, home string, extra map[string]string) func(string) st
 func standInSops(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sops")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	return path
 }
 
