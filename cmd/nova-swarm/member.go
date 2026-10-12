@@ -170,9 +170,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if f.refused(stderr) {
 		return 2
 	}
-	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
-	// is one line at a time
+	// the beat writes from its own goroutine (memberLoop), and each lane's end its LANE END
+	// line from its own (nativeRunner.endLane), so what this verb writes is one line at a time
 	stderr = &lockedWriter{w: stderr}
+	stdout = &lockedWriter{w: stdout}
 	// a member only takes a card it can run at CI's priority: native refuses every card on
 	// an OS with no setpriority, so a member there would take and fail every card it is dealt
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
@@ -216,7 +217,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, held: held, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity,
 		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
@@ -279,16 +280,20 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
 	}
 	rn.cleaner() // from here a launch the member ends is tagged, and removed apart from its pass
-	// a unit restart or stop drains the member (memberLoop): SIGTERM only, so a terminal's
-	// interrupt, which reaches every child of the process group too, still ends it at once
+	// a unit restart or stop drains the member (memberLoop): SIGTERM only. A terminal's
+	// interrupt ends it at once, and since each native leads a session of its own, which the
+	// terminal's interrupt does not reach, the member ends every lane it runs first
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM)
 	defer signal.Stop(term)
+	intr := make(chan os.Signal, 1)
+	signal.Notify(intr, os.Interrupt)
+	defer signal.Stop(intr)
 	keep := mirrorKeeping(os.Getenv(mirrorsEnv), *root, rn.goBuildCache(), stdout, stderr)
 	if keep != nil {
 		rn.benchHome, _ = os.UserHomeDir()
 	}
-	n, replaced := memberLoop(m, loopRun{keep: keep, every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, deadline: deadline.d}, stdout, stderr)
+	n, replaced := memberLoop(m, loopRun{keep: keep, every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, intr: intr, deadline: deadline.d, endLanes: rn.endLanes}, stdout, stderr)
 	if replaced {
 		return exitReplaced
 	}
@@ -370,6 +375,13 @@ type loopRun struct {
 	now      func() time.Time
 	after    func(time.Duration) <-chan time.Time
 	keep     func(time.Time) // refreshes the bench mirrors before a pass (mirrorKeeping); nil: none
+	// intr is a terminal's interrupt: the member ends every lane at once (endLanes) and stops,
+	// for a native leads a session of its own that the terminal's interrupt does not reach
+	// (nil: none)
+	intr <-chan os.Signal
+	// endLanes ends every lane still running when a SIGTERM's drain bound passes or an
+	// interrupt arrives (nativeRunner.endLanes); nil: none is ended
+	endLanes func() int
 }
 
 // memberLoop ticks m every lr.every (lr.limit > 0: at most limit ticks) and returns the
@@ -384,9 +396,11 @@ type loopRun struct {
 //   - its supervisor stopped it (SIGTERM: a unit restart or stop, the loops play's restart
 //     of a changed unit; nova-tools#5096 item 26). A stop never kills a card: the drain is
 //     bounded by member.DrainBound of the longest deadline the running cards name, past which
-//     it stops with what is left running (its supervisor ends it; the sprint deals the
-//     cards again when the member goes down, and a member started again adopts a child
-//     still alive). It exits 0.
+//     it ends what is left running (lr.endLanes: each native stopped and its lane reaped,
+//     for a native leads a session of its own that no signal to the member's group reaches)
+//     and stops; the sprint deals the cards again when the member goes down. A member that
+//     died without its drain leaves its lanes running, and a member started again adopts
+//     each child still alive and reaps its lane at its end. It exits 0.
 //
 // With no child running either stops at once.
 func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, replaced bool) {
@@ -414,14 +428,24 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 	// the beat ends before the loop does: nothing it writes comes after the member's last line
 	defer func() { stopBeats(); beatTicker.Stop(); <-beatsEnded }()
 	draining := "" // why the member drains: "" while it takes
-	var termed bool
+	var termed, interrupted bool
 	var bound time.Duration
 	var until time.Time // a SIGTERM's drain ends here at the latest
 	for {
 		select {
 		case <-lr.term:
 			termed = true
+		case <-lr.intr:
+			interrupted = true
 		default:
+		}
+		if interrupted {
+			ended := 0
+			if lr.endLanes != nil {
+				ended = lr.endLanes()
+			}
+			fmt.Fprintf(stdout, "MEMBER STOP interrupt: the member ended %d lane(s), each with its LANE END line\n", ended)
+			return n, false
 		}
 		if draining == "" && began != "" && lr.stamp() != began {
 			if m.Running() == 0 {
@@ -454,7 +478,13 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 			return n, false
 		}
 		if !until.IsZero() && !now().Before(until) {
-			fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: the drain's bound %s passed with %d running; its supervisor ends them, and the sprint deals their cards again when this member is down\n", oneline.Field(bound.String()), m.Running())
+			if lr.endLanes == nil {
+				fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: the drain's bound %s passed with %d running; its supervisor ends them, and the sprint deals their cards again when this member is down\n", oneline.Field(bound.String()), m.Running())
+				return n, draining == "replaced"
+			}
+			running := m.Running()
+			ended := lr.endLanes()
+			fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: the drain's bound %s passed with %d running; the member ended %d lane(s), each with its LANE END line, and the sprint deals their cards again when this member is down\n", oneline.Field(bound.String()), running, ended)
 			return n, draining == "replaced"
 		}
 		n++
@@ -483,6 +513,8 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 		case <-m.Wake():
 		case <-lr.term:
 			termed = true
+		case <-lr.intr:
+			interrupted = true
 		}
 	}
 }
@@ -517,6 +549,7 @@ type nativeRunner struct {
 	// child takes its global rate budget there (--budget-server, nativebudget.go)
 	server, as        string
 	stderr            io.Writer
+	out               io.Writer                    // the member's log, where each lane's LANE END line goes; nil: none is written
 	env               []string                     // added to this process's environment: none in production, a test's
 	lookPath          func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
 	pass              []string                     // the secret names handed to native (--pass, the worker's secret)
@@ -530,7 +563,10 @@ type nativeRunner struct {
 	// is the cleaner's queue; nil cleans in Ended
 	mu         sync.Mutex
 	live, kept map[string]bool
-	removing   sync.Mutex // held while a launch directory is removed, and while one is claimed
+	// lanes are the children running, by launch name, for the member's own stop to end
+	// (endLanes); mu guards it, and a lane leaves it when its end is reaped (endLane)
+	lanes    map[string]*nativeChild
+	removing sync.Mutex // held while a launch directory is removed, and while one is claimed
 
 	tagged chan ended
 
@@ -563,6 +599,81 @@ func (r *nativeRunner) started(name string) {
 	r.live[name] = true
 }
 
+// addLane records a running child for the member's own stop (endLanes).
+func (r *nativeRunner) addLane(name string, c *nativeChild) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lanes == nil {
+		r.lanes = map[string]*nativeChild{}
+	}
+	r.lanes[name] = c
+}
+
+// endLane ends what a lane's card left running once its native has ended, whichever way the
+// lane ended: every process of native's session (sid, native's pid: it led the session) and
+// every process carrying the lane's mark (swarm.ReapLane: a terminate, swarm.TerminateGrace,
+// a kill). It says so on the lane's LANE END line, reaped=<the processes it found alive and
+// killed>, with survived=<n> when any outlived the kill, and drops the lane from the running.
+func (r *nativeRunner) endLane(c *nativeChild, name, mark string, sid int) {
+	found, survived := swarm.ReapLane(sid, mark, c.started, swarm.TerminateGrace)
+	switch {
+	case r.out == nil:
+	case survived > 0:
+		fmt.Fprintf(r.out, "LANE END card=%s launch=%s pid=%d reaped=%d survived=%d\n", oneline.Field(c.card), oneline.Field(name), sid, found, survived)
+	default:
+		fmt.Fprintf(r.out, "LANE END card=%s launch=%s pid=%d reaped=%d\n", oneline.Field(c.card), oneline.Field(name), sid, found)
+	}
+	r.mu.Lock()
+	if r.lanes[name] == c {
+		delete(r.lanes, name)
+	}
+	r.mu.Unlock()
+}
+
+// LaneEndGrace is how long the member's own stop gives each running native to end by itself
+// after its terminate (native reaps its harness's group within swarm.TerminateGrace, then
+// reports) before it is killed; the lane's reap follows either way.
+const LaneEndGrace = 2*swarm.TerminateGrace + time.Second
+
+// endLanes is the member's own stop of every lane it runs (its SIGTERM drain's bound passed,
+// or an interrupt): each native is told to stop, given LaneEndGrace, killed if it is still
+// there, and its lane reaped as at any end (endLane). It returns how many lanes it ended. A
+// native in a session of its own is reached by no signal sent to the member's group, so
+// nothing else ends them.
+func (r *nativeRunner) endLanes() int {
+	r.mu.Lock()
+	lanes := make([]*nativeChild, 0, len(r.lanes))
+	for _, c := range r.lanes {
+		lanes = append(lanes, c)
+	}
+	r.mu.Unlock()
+	for _, c := range lanes {
+		if c.proc != nil {
+			if err := c.signal(syscall.SIGTERM); err != nil {
+				_ = c.signal(os.Kill) // ignored: a process already gone is the end wanted
+			}
+		}
+	}
+	deadline := time.Now().Add(LaneEndGrace)
+	for _, c := range lanes {
+		select {
+		case <-c.done:
+			continue
+		case <-time.After(time.Until(deadline)):
+		}
+		if c.proc != nil {
+			_ = c.signal(os.Kill) // ignored: the wait on done reads the end
+		}
+		// the reap after the kill is bounded by its own two graces; an adopted lane's
+		// watch reads the death within a second
+		select {
+		case <-c.done:
+		case <-time.After(3*swarm.TerminateGrace + time.Second):
+		}
+	}
+	return len(lanes)
+}
+
 // Start runs a packet as a child. The launch is claimed (live) before its directory is
 // touched and for as long as it runs, so the cleaner, which removes ended launches apart
 // from the pass, never removes the directory of a launch of the same name started again.
@@ -590,12 +701,20 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
-		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read"}
+		proc, started, why := adoptLane(pidPath, slot, pid)
+		if why != nil {
+			return nil, why
+		}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
+		r.addLane(name, c)
 		go func() {
-			for processAlive(pid) {
+			defer proc.Release() // ignored: the adopted process handle, after its final observation
+			for c.adoptedAlive() {
 				time.Sleep(time.Second)
 			}
+			// an adopted lane ends as one this member started: its session (native led one
+			// when a member of this build started it) and its mark
+			r.endLane(c, name, slot, pid)
 			close(c.done)
 		}()
 		r.started(name)
@@ -678,7 +797,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
-	cmd.Env = r.childEnv(model)
+	// the lane is native's session and every process carrying its mark (pkg/swarm/lanereap.go):
+	// native leads a session of its own, and the mark, the launch's slot, goes down to every
+	// process its harness starts (native keeps NOVA_SWARM_ names), so the lane's end reaches
+	// a process that left the session too
+	cmd.Env = append(environWithoutName(r.childEnv(model), swarm.LaneEnv), swarm.LaneEnv+"="+slot)
+	ownLaneSession(cmd)
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
@@ -692,14 +816,19 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		logf.Close()
 		return nil, err
 	}
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+" "+swarm.LaneStartStamp(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
 		// the child runs; only a restart's way back to it is lost, so the member says so and goes on
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read"}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
+	r.addLane(name, c)
 	go func() {
 		c.err = cmd.Wait()
+		// every way a lane ends (its finish ok or failed, the idle reap, the deadline, the
+		// machine's stop, the member's own stop) is native's end, so this one place reaps
+		// what the card left running before the member is told the lane is done
+		r.endLane(c, name, slot, cmd.Process.Pid)
 		release()
 		logf.Close()
 		// ignored: the pid file of a child that has ended; a leftover names a dead pid, which the next start overwrites
@@ -801,7 +930,11 @@ func livePID(path string) int {
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	fields := strings.Fields(string(b))
+	if len(fields) == 0 {
+		return 0
+	}
+	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 || !processAlive(pid) {
 		return 0
 	}
@@ -829,6 +962,10 @@ type nativeChild struct {
 	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
 	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
 	proc *os.Process
+	// A restart has no parent-child wait ownership: every signal and observation must
+	// still match the durable birth identity and the exact launch mark (SPEC-SWARM).
+	adopted       bool
+	started, mark string
 }
 
 // StopGrace is how long a native child told to stop by the machine's stop has to end by
@@ -839,17 +976,17 @@ const StopGrace = 60 * time.Second
 // signal, killed), its working tree and log left as they are, and killed if it is still
 // there after StopGrace. It returns native's pid, the evidence the lane record names.
 func (c *nativeChild) Stop() int {
-	if c.proc == nil {
+	if c.proc == nil || (c.adopted && !c.adoptedAlive()) {
 		return 0
 	}
-	if err := c.proc.Signal(syscall.SIGTERM); err != nil {
-		_ = c.proc.Kill() // ignored: a process already gone is the end wanted
+	if err := c.signal(syscall.SIGTERM); err != nil {
+		_ = c.signal(os.Kill) // ignored: a process already gone is the end wanted
 	}
 	time.AfterFunc(StopGrace, func() {
 		select {
 		case <-c.done:
 		default:
-			_ = c.proc.Kill() // ignored: the wait on done reads the end
+			_ = c.signal(os.Kill) // ignored: the wait on done reads the end
 		}
 	})
 	return c.proc.Pid

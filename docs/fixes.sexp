@@ -70,8 +70,8 @@
      them. This record is in-progress until the tag; the cut turns it shipped.")
    (release "v1.2.15" :status "in-progress"
     :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only,
-     and Codex friend delivery refuses routes that queue input or require a Steer click, and a friend's
-     texts say the friend's own pronouns."))
+     Codex friend delivery refuses routes that queue input or require a Steer click, a member lane
+     ends every process its card started, and a friend's texts say the friend's own pronouns."))
  :items
   ((fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
     :title "Codex friend delivery refuses unproved queue routes"
@@ -95,6 +95,29 @@
      into a string literal. The server's beat answer carries row_pronouns= when the sprint server
      sends it; until then --pronouns is the daemon's source."
     :origin "hand PR onto sprint/comfort for v1.2.15")
+  (fix "a-member-lane-ends-every-process-its-card-started" :release "v1.2.15" :status "in-progress"
+   :title "A member lane ends every process its card started"
+   :text "Fleet member b1 ran at 100% load for 13 hours: a card's run backgrounded 16 shell busy loops
+    through its slot's shell shim, the card finished (failed), the epoch was cleared, and the loops
+    outlived the lane, each in a session of its own under systemd --user, because a harness runs its
+    tool commands in their own sessions and native's group reap never reached them. The member now
+    starts each card's native as the leader of a session of its own and marks it NOVA_SWARM_LANE=<the
+    launch's slot> (native hands NOVA_SWARM_ names to its harness, and every process inherits it). At
+    every lane end (finish ok, finish failed, idle reap, deadline, the machine's stop with its lane
+    cancel and stop-return, the member's own stop at its drain bound or an interrupt, and an adopted
+    lane's end) pkg/swarm ReapLane ends every process in that session or carrying that exact mark.
+    Restart adoption requires the PID record's kernel birth identity and exact lane mark; legacy
+    or mismatched live records are refused without signalling or replacing them. The adopted watch
+    and stop recheck identity; cleanup validates each listed birth before signalling through an OS
+    process handle (pidfd on supporting Linux kernels; birth-check-to-signal is not atomic elsewhere):
+    a terminate, a bounded grace, a kill. The member's LANE END line says reaped=<n> (and survived=<n>
+    when any outlived the kill). A process that both empties its environment and leaves the session
+    escapes. Tests, red first on the unpatched tree: cmd/nova-swarm
+    TestALaneEndLeavesNoProcessOfItsCardAlive (one subtest per end kind), TestAQuietLaneEndReapsNothing
+    and the fixture's own proof TestALaneFixtureLeavesItsSleepersWhenNothingReapsThem; pkg/swarm
+    TestReapLaneEndsItsSessionAndItsMarkAndNothingElse, TestReapLaneOfAnEmptyLaneFindsNothing and
+    TestLaneSessionIsNeverTheAskersOwn."
+   :origin "fleet member b1, 2026-10-12; hand PR onto sprint/comfort for v1.2.15")
   (fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.14" :status "shipped"
    :title "Certification on dev never cancels on later pushes"
    :text "Each pushed sha gets its own certification run to completion. Certification triggers on push to dev and release/** and on workflow_dispatch."
@@ -1290,4 +1313,8 @@
   (fix "the-temp-dir-class-tests-share-their-walk" :release "v1.2.14" :status "shipped"
    :title "The temp-dir class tests share their walk"
    :text "internal/ci's sharedtemp and testoutpath class tests share one source walk. Tests only."
-   :origin "landing eec4730ec on dev (sprint stream cleanup), 2026-10-12")))
+   :origin "landing eec4730ec on dev (sprint stream cleanup), 2026-10-12")
+    (fix "nova-config-sets-the-sprint-rows-git-identity-and-max-attempts" :release "v1.2.15" :status "planned"
+     :title "nova-config sets the sprint row's git_identity and max_attempts"
+     :text "Blocker for adopting nova-sprint v1.2.14 and later. nova-sprint's lander refuses to commit while sprint:git_identity is empty, and its attempt bound reads sprint:max_attempts, but nova-tools' nova-config, the one setter, declared neither field (nova-config registers only the fields its kind declares), so neither could be set and a fresh store would leave every landing refused. The sprint kind now declares git_identity (default the generic nova-sprint <nova-sprint@example.invalid>, set to the fleet's own with nova-config sprint set --git_identity) and max_attempts (default 4, a whole number from 1 to 100, checked by checkSprint naming the field and the remedy), the same fields as nova-sprint's pkg/config copy, and carries migration 0037 (verbatim nova-sprint's) and 0039 (max_attempts). The two pkg/config copies share one migration sequence; the order is fixed in both repositories: 0037 sprint git_identity, 0038 friend pronouns, 0039 sprint max_attempts. Tests: TestTheSprintRowCarriesTheMachinesGitIdentity, TestTheSprintRowsMaxAttemptsDefaultsToFour, TestCheckSprintHoldsMaxAttemptsToAWholeNumberFromOneToTheCeiling and TestTheSprintFieldsHaveTheirMigrations (pkg/config/sprint_fields_test.go), red before and green after."
+     :origin "the coordinator, 2026-10-12, from a cold read of nova-sprint#147: nova-config could set neither field the sprint reads")))

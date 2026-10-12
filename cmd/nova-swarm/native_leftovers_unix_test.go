@@ -103,7 +103,9 @@ func TestNativeAnOrdinaryHarnessLeavesNoSurvivors(t *testing.T) {
 // output goes to a file in the slot, never a pipe back to the member, so a native that
 // printed its line and exited is Done while a process it left still holds that output open
 // (the bound is far under the sleeper's 120 s; in practice one member tick), and the finish
-// is read from the log.
+// is read from the log. The holder is a process of the lane, so the lane's end reaps it before
+// the member is told the lane is done (v1.2.15, member_lane_reap_unix_test.go); before that it
+// outlived the lane.
 func TestMemberSeesANativeThatExitedWhateverItsPipes(t *testing.T) {
 	t.Parallel()
 	pidFile := filepath.Join(t.TempDir(), "sleeper.pid")
@@ -117,6 +119,6 @@ func TestMemberSeesANativeThatExitedWhateverItsPipes(t *testing.T) {
 	require.NoError(t, err)
 	require.Eventually(t, c.Done, 30*time.Second, 20*time.Millisecond, "the member waits on native's process, never on its pipes")
 	require.Less(t, time.Since(start), 30*time.Second, "the sleeper holds the output for 120 s")
-	require.True(t, pidAlive(sleeperPID(pidFile)), "the holder is still there: the wait did not depend on it")
+	require.Eventually(t, func() bool { return !pidAlive(sleeperPID(pidFile)) }, 2*time.Second, 20*time.Millisecond, "the lane's end reaped the holder: the wait did not depend on it, and nothing of the lane outlives it")
 	require.True(t, c.Result().Ran, "the NATIVE line native printed before it exited is the finish")
 }

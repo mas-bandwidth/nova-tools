@@ -15,6 +15,13 @@ func ownChildGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+// ownLaneSession makes a member's native child the leader of a session of its own (and so of
+// a process group whose id is its pid), so every group native and its harness make stays in
+// it and the lane's end reaches them all (swarm.ReapLane, pkg/swarm/lanereap.go).
+func ownLaneSession(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}
+
 // nativeTermCh is the channel that fires when the manager SIGTERMs this process, so the run
 // can reap its own tree and fold the usage before it goes.
 func nativeTermCh() chan os.Signal {
