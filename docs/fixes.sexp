@@ -889,6 +889,11 @@
     next run."
    :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
 
+  (fix "the-fleet-play-installs-every-language-toolchain" :release "v1.2.15" :status "planned"
+   :title "The fleet play installs every language toolchain"
+   :text "The [toolchains] play in fleet/tools.yml installs pinned Node, .NET, Dart, Elixir, Erlang/OTP, Rust, JDK, SBCL and GitHub CLI archives under each host login's ~/sdk, verifies SHA-256 on download, links the executables, configures the login shell and writes toolchain path/version facts for JOB.md and nova-doctor."
+   :origin "card the-fleet-play-installs-every-language-toolchain.w1~19.g6")
+
   (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "in-progress"
    :title "A member reports its ended cards side by side"
    :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
