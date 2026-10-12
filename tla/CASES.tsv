@@ -88,6 +88,7 @@ MCCardContractBrokenPushIgnored.cfg	MCCardContract.tla	invariant	OkIsPushedWork	
 MCCardContractBrokenReapReported.cfg	MCCardContract.tla	invariant	ReapedIsNotReported	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenBranchName.cfg	MCCardContract.tla	invariant	StagedFromOrigin	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenProviderFailed.cfg	MCCardContract.tla	invariant	ProviderIsNotFailedWork	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenNoResultFailed.cfg	MCCardContract.tla	invariant	NoResultIsNotFailedWork	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenStagingFailed.cfg	MCCardContract.tla	invariant	StagingIsNotFailedWork	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenOldHead.cfg	MCCardContract.tla	invariant	ReworkStagedAtTheTip	ignore-terminal	cardcontract	required	-
