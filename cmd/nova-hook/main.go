@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
+	"path/filepath"
 )
 
 var version string
@@ -50,6 +51,8 @@ type world struct {
 	nonce    func() string
 	holder   string        // who holds the pushes this process holds, as the lease shows it
 	tick     time.Duration // one blocking read of the loop
+	forFor   string // --for duration, causes hook to exit before harness bound
+	hooksDir string // directory for hook state files
 }
 
 func realWorld() world {
@@ -57,8 +60,13 @@ func realWorld() world {
 	if err != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "." // fallback for tests
+	}
 	w := world{getenv: os.Getenv, now: time.Now, tick: Tick,
-		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
+		holder:   fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
+		hooksDir: filepath.Join(home, ".nova", "hooks"),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
 		},
@@ -127,6 +135,20 @@ first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); the name a 
 		Words:     []string{"ARMED", "CHALLENGE", "PUSH", "STATE", "STOP", "DRY-RUN"},
 		Verbs: []tool.Verb{
 			{
+				Name:    "check",
+				Usage:   "check --as <me> [--redis <addr>]",
+				Example: "check --as m1",
+				Effect:  tool.Inspection,
+				Detail: `Checks each push of --as's role: prints the holder, its age, and its proof status. Exits 1 when any
+push is not live. For each push: NAME push= state= by= age=proof=<proven|armed|down>.
+example: nova-hook check --as ada`,
+				Flags: func(f *tool.Flags) {
+					as(f)
+					store(f)
+				},
+				Run: w.check,
+			},
+			{
 				Name:    "status",
 				Usage:   "status [--as <name>] [--max <n>] [--redis <addr>]",
 				Example: "status --as m1",
@@ -159,11 +181,16 @@ each time the record changes. Run it under the session's Monitor: each line is a
 SIGTERM (HOOK STOP, exit 0; the leases lapse after ` + hook.LeaseTTL.String() + `), or when the record is unhooked under it (exit 1).
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
+--for <d> causes the hook to exit cleanly before a harness bound with a line that says to re-arm; a re-run within
+BusGrace keeps the same record and epoch (no unhook, no presence flap), and a message that arrived in the gap is delivered at the re-arm, once.
+--hooks-dir <path> sets the directory for hook state files (default: ~/.nova/hooks).
 example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
+					f.String("for", "", "exit before a harness bound with a re-arm line, then re-run within BusGrace to stay hooked")
+					f.String("hooks-dir", "", "directory for hook state files (default: ~/.nova/hooks)")
 					store(f)
 					f.Check(func(c *tool.Call) {
 						if r := c.Str("role"); r != "" {
@@ -642,6 +669,48 @@ func statusFacts(st hook.Status) tool.Fields {
 		o.Fact(string(p.Push), p.State)
 	}
 	return o.Facts
+}
+
+// check is the check verb: prints each push of the role, its holder, its age and its proof.
+func (w world) check(c *tool.Call) *tool.Out {
+	s, refused := w.openSession(c, true)
+	if refused != nil {
+		return refused
+	}
+	defer s.close()
+	ctx, cancel := call()
+	defer cancel()
+	st, _, err := s.hooks.Read(ctx, s.as)
+	if err != nil {
+		return tool.Refuse("the hook record could not be read: " + err.Error())
+	}
+	// Check if status is proven
+	if st[0].State != hook.StateProven {
+		o := tool.Fail(s.as + " is not hooked in: " + st[0].Words())
+		o.Reasons = []string{hookgate.Reason}
+		if r := st[0].Gate(hook.Want{Name: s.as, Need: hook.PushesOf(st[0].Role), Role: st[0].Role}); r != nil {
+			o.Remedy = r.Hook
+		}
+		return o
+	}
+	out := tool.Done().As("NAME")
+	out.Fact("name", s.as)
+	out.Fact("role", string(st[0].Role))
+	out.Fact("epoch", st[0].Epoch)
+	for _, p := range st[0].Pushes {
+		// Print push status details
+		age := time.Duration(0)
+		if p.LiveLeft > 0 {
+			age = hook.LeaseTTL - p.LiveLeft
+		}
+		out.Item("push",
+			string(p.Push), p.State,
+			"by", p.By,
+			"age", age.String(),
+			"proof", map[string]string{hook.PushArmed: "armed", hook.PushProven: "proven"}[p.State],
+		)
+	}
+	return out
 }
 
 func fieldsOf(fs tool.Fields) []any {
