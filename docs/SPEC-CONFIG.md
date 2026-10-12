@@ -347,8 +347,9 @@ class, never a model name". Every value is data in the row: the code names no pr
 | `price_as_of` | text, `YYYY-MM-DD` | (empty) | a reader: the date the prices were read | `route:<r>` |
 | `note` | text | (empty) | a reader: why the route is as it is; a disabled route carries its reason (see "The note") | `route:<r>` |
 
-The price sheet is optional: the owner, 2026-10-01, "the pricing
-configuration saved per-tuple, so it is known and easily look upable". A
+The price sheet is optional on a disabled route and required of an enabled one
+at apply: the owner, 2026-10-01, "the pricing configuration saved per-tuple, so
+it is known and easily look upable". A
 decimal is digits with an optional fraction after one point, no sign and
 no exponent, kept as text in its one spelling (`pkg/cardcost`,
 `Canonical`: `0.30` is `0.3`), never a float; empty is not set, never 0.
@@ -356,7 +357,7 @@ no exponent, kept as text in its one spelling (`pkg/cardcost`,
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
-`price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
+`price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind. The `Check` never requires a price: a route is added or set unpriced, and for a disabled route that is its final state. **apply is where an enabled route with no price is refused** (`config.CheckRoutesPriced`): the sprint prices a take from the route's sheet (`cardcost.PricesOf(...).Priced`), so an unpriced route records no prediction and a cost of `-`, or the harness's own `$0.00`, and the dashboard undercounts. Every such route is named at once with its provider/model and the command that sets its price, and nothing is written; the prices are the owner's, never invented by the tool (the seat, 2026-10-12, on `pro-mercury3` and `pro-mercury3-pro`). A disabled route is never refused for its price.
 
 ### route prices
 
@@ -571,6 +572,22 @@ global ids, so they rise across kinds and never repeat.
 machines (the ceilings), the fleet row (a friend with no beat is charged to
 its coordinator machine), friends, the sprint row, loops (each names a
 machine), routes:
+
+**An enabled route with no price is refused before the plan and any write.**
+Every route row that is enabled (`enabled` absent or true) must carry a price
+sheet (`cardcost.PricesOf(row.Fields).Priced`): the sprint prices a take from
+the sheet (`cardcost.Predict`), so an unpriced route records no prediction and
+a cost of `-`, or the harness's own `$0.00`, and the dashboard undercounts.
+For an every-kind apply (no `--kind`), the refusal comes before any kind is
+written, for `--kind route` before the route kind is planned or written. The
+one `ErrInvalid` names every such route with its provider/model and the command
+that sets its price: `nova-config route set <r> --price_input <USD per million>
+--price_output <USD per million> --price_source <url> --price_as_of
+<YYYY-MM-DD> --actor <name>`, plus `or nova-config route prices --refresh
+--provider <p>` when the provider has a list, plus `or take it out: --enabled
+false --note '<why>'`. Nothing is written, and `--check` refuses the same. A
+disabled route is never refused for its price, and the prices are the owner's:
+the tool never sets, guesses or defaults one.
 
 1. read the kind's rows and revision from Postgres, then the kind's
    `Derive` when it has one (the friend kind adds the `coordinator` word to

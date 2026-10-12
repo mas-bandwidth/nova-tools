@@ -12,9 +12,11 @@ import (
 // The route kind (kind.go: Kinds, "route"; docs/SPEC-CONFIG.md, "route"):
 // one way to run a model tier, every value data in the row.
 
-// proRoute is the raw of a pro route on provider p.
+// proRoute is the raw of a priced pro route on provider p: apply refuses an
+// enabled route with no price (config.CheckRoutesPriced), so the fixtures that
+// apply carry a price sheet.
 func proRoute(p string) map[string]string {
-	return map[string]string{"tier": "pro", "provider": p, "model": "deepseek-v4", "tokens": "400000", "deadline": "1800"}
+	return map[string]string{"tier": "pro", "provider": p, "model": "deepseek-v4", "tokens": "400000", "deadline": "1800", "price_input": "0.5"}
 }
 
 func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {

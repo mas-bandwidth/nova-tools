@@ -168,6 +168,16 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 			}
 		}
 	}
+	// An enabled route with no price sheet is refused before the plan and any
+	// write (docs/SPEC-CONFIG.md, "route"): a take priced from it records no
+	// prediction and the spend undercounts. A bare every-kind apply refuses
+	// before any kind is written by nova-config's pre-check
+	// (cmd/nova-config/apply.go).
+	if kind == KindRoute {
+		if err := CheckRoutesPriced(rows); err != nil {
+			return Result{}, &RefusedError{Err: ErrInvalid, Detail: err.Error()}
+		}
+	}
 	if k.Derive != nil {
 		if rows, err = k.Derive(ctx, st, rows); err != nil {
 			return Result{}, err
