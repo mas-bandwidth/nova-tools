@@ -132,6 +132,48 @@ func TestHookProveStatusUnhook(t *testing.T) {
 	cli.Do(t, "unhook", "--as", "bob").Exit(0).Out("UNHOOK OK as=bob was=none")
 }
 
+// TestProveDryRunPlansAndWritesNothing pins prove --dry-run: it reads the
+// record, prints what the answer would prove, and leaves the record's state as
+// it found it (no proof is written).
+func TestProveDryRunPlansAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	cli := r.cli()
+	res := cli.Run("hook", "--as", "ada", "--role", "comms", "--once")
+	require.Equal(t, 1, res.Code, res.Stdout+res.Stderr)
+	m := nonceRe.FindStringSubmatch(res.Stdout + res.Stderr)
+	require.NotNil(t, m, res.Stdout+res.Stderr)
+	before := r.h.State(t, "ada")
+	require.Equal(t, hook.StateLive, before.State)
+
+	res = cli.Run("prove", "--as", "ada", "--nonce", m[1], "--dry-run")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "PROVE DRY-RUN as=ada state=live role=comms would-prove=1")
+	assert.Equal(t, before.State, r.h.State(t, "ada").State, "a dry run writes no proof")
+
+	cli.Do(t, "prove", "--as", "ada", "--nonce", m[1]).Exit(0).Out("PROVE OK proven=1")
+	assert.Equal(t, hook.StateProven, r.h.State(t, "ada").State, "the nonce still stands after a dry run")
+}
+
+// TestHookDryRunPlansAndWritesNothing pins hook --dry-run: it prints the plan
+// the real run would take and writes no record or lease.
+func TestHookDryRunPlansAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	cli := r.cli()
+	cli.Do(t, "hook", "--as", "bob", "--role", "member", "--dry-run").
+		Exit(0).Out("HOOK DRY-RUN as=bob role=member epoch=1 joined=false hold=-")
+	names, err := r.h.Store.Names(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, names, "a dry run armed nothing")
+
+	cli.Do(t, "hook", "--as", "ada", "--role", "comms", "--once")
+	before := r.h.State(t, "ada")
+	cli.Do(t, "hook", "--as", "ada", "--role", "comms", "--dry-run").
+		Exit(0).Out("HOOK DRY-RUN as=ada role=comms epoch=1 joined=true hold=bus")
+	assert.Equal(t, before.State, r.h.State(t, "ada").State, "a dry run renewed no lease and wrote no record")
+}
+
 // TestARoleOfDaemonsIsArmedAndNamesItsHolders pins hook for a role whose
 // pushes this process does not hold: it arms the record, holds nothing, and
 // names each push's holder.
