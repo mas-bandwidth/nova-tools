@@ -999,6 +999,27 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 				Run: w.status,
 			},
 			{
+				Name:    "lanes",
+				Usage:   "lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]",
+				Example: "lanes --as bob --clear-faults",
+				Effect:  tool.LocalWrite + ": clears the one-shot lanes' provider-refusal fault " + friend.LaneFaultFile + " from the state directory",
+				DryRun:  true,
+				Detail: `A guard's denial is terminal (docs/SPEC-FRIEND.md, the lanes): the daemon reads each lane's refused
+turn, and the second identical refusal marks the lane faulted, reported as lane-fault=<n> refusal="<first line>" on its
+beat and in nova-friend status. A faulted lane takes no card until the daemon restarts or a person runs this verb with
+--clear-faults, which removes ` + friend.LaneFaultFile + ` from the state directory; the daemon's next step sees the file gone, releases
+the lanes and takes cards again. Without --clear-faults it reads and prints the standing fault and writes nothing
+(--dry-run prints what a clear would do, and writes nothing).`,
+				ExitTable: "0 done (a fault read, or a clear), 2 the fault file cannot be removed.",
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the friend whose lanes these are")
+					f.Bool("clear-faults", false, "clear the lane fault so the lanes take cards again; writes nothing without it")
+					f.String("dir", "", "the friend's working directory, whose state directory holds the fault (default: found by --as)")
+					stateDir(f)
+				},
+				Run: w.lanes,
+			},
+			{
 				Name:    "refuse-go",
 				Usage:   "refuse-go --name go|gofmt",
 				Example: "", // refuses, by design: the example block has no line that runs
@@ -1509,9 +1530,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 			tellSeat("friend "+name+": the down verb was refused", DownReason(r)+"\nnova-sprint friend down was refused: "+err.Error()+"\n")
 		}
 	}
+	// a lane fault the limit detector counted itself (lanes failing alike) is
+	// handed to the daemon as the same record a provider's refusal writes, so it
+	// holds the lane's card instead of only logging (docs/SPEC-FRIEND.md, the lanes)
+	var laneFaultPending atomic.Pointer[string]
 	rw.Judge = func(text string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
 		tellSeat(friend.LimitAlikeText(name, text))
+		fault := friend.LaneFaultReport(AlikeLanes, strings.TrimPrefix(text, AlikeJudgmentPrefix))
+		laneFaultPending.Store(&fault)
 	}
 	// the down her lanes' harness faults owe her row (Daemon.FaultDown): her beat says it until it passes
 	type faultHold struct {
@@ -1667,11 +1694,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		Row:       currentRow,
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
-		Sprint:    gated(dh, w.sprintAsk(server)),
-		Rules:     rules,
-		Model:     c.Str("model"),
-		Load:      w.load1(),
-		LaneHold:  func() string { return friend.ReadPause(state) },
+		// the lane fault's truth is the file in the state directory: the daemon
+		// writes it when a lane faults and reads it to release the lanes a person
+		// cleared (docs/SPEC-FRIEND.md, the lanes)
+		Fault:      func() string { return friend.ReadLaneFault(state) },
+		FaultWrite: func(report string) error { return friend.WriteLaneFault(state, report) },
+		FaultExternal: func() string {
+			if p := laneFaultPending.Swap(nil); p != nil {
+				return *p // the limit detector's judgment, adopted as the same record
+			}
+			return ""
+		},
+		Sprint:   gated(dh, w.sprintAsk(server)),
+		Rules:    rules,
+		Model:    c.Str("model"),
+		Load:     w.load1(),
+		LaneHold: func() string { return friend.ReadPause(state) },
 		LaneHoldDown: func(_ context.Context, message string) error {
 			return friend.WritePause(state, message, w.now()) // her next beat says her down with it
 		},
@@ -2314,6 +2352,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
+	// a lane faulted on a provider refusal is terminal: the status says so
+	// (lane_fault=<n> refusal="<first line>") until a person clears it or the
+	// daemon restarts (docs/SPEC-FRIEND.md, the lanes)
+	laneFaultFact(o, friend.ReadLaneFault(state))
 	// her row against her inbox, as the daemon's last reconcile found them (friend.SyncInbox)
 	if s.HeldKnown {
 		o.Fact("held", s.Held).Fact("inbox", s.InboxJobs).Fact("missing", s.Missing)
