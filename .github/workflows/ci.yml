@@ -35,9 +35,9 @@
 # Makefile's GOTEST_P), no redis-server on PATH, and slowtests failing a
 # package over 2 s or a test over 1 s unless internal/ci/slow-tests_allowlist.txt
 # names it. The FUNCTIONAL tier is the `functional` job: the tests behind
-# `//go:build functional`, over the same packages, on merge_group (a stream's
-# merge into dev), the nightly schedule and a manual run, never on a pull
-# request. See docs/TESTING.md.
+# `//go:build functional`, over the same packages, on every pull_request to dev
+# and every push to dev, on merge_group (a stream's merge into dev), the
+# nightly schedule and a manual run. See docs/TESTING.md.
 #
 # NO NATIVE WINDOWS LEG. Every windows-latest leg this file
 # carried — test-windows-pr's four shards, test-hosted-merge's windows leg and
@@ -821,18 +821,20 @@ jobs:
         run: make test-hook
 
   functional:
-    # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,
-    # and are built to be frugal and avoid wasting resources.
+    # THE FUNCTIONAL TIER: functional tests run wherever the unit tier runs, and
+    # are built to be frugal and avoid wasting resources.
     # A functional test is one behind `//go:build functional`: a real
-    # redis-server, a real binary, a real process. It runs on merge_group (the
-    # queue's run of a stream PR into dev), on the nightly schedule and by hand,
-    # and NEVER on pull_request: a card PR into a stream branch and a stream PR
-    # into dev both skip it. Same selected packages as the unit legs, four space
-    # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
+    # redis-server, a real binary, a real process. It runs on every pull_request
+    # to dev and every push to dev, on merge_group (the queue's run of a stream
+    # PR into dev), on the nightly schedule and by hand. A fork's pull_request
+    # skips it transitively: test-packages carries the head-repo guard and this
+    # job needs it, so a skipped test-packages skips the functional legs too.
+    # Same selected packages as the unit legs, four space shards, two cores a
+    # leg, the two-minute cap. ci-ok requires it when it ran.
     # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
     name: functional (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'dev')
     strategy:
       fail-fast: false
       matrix:

@@ -161,19 +161,22 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 }
 
 // TestFunctionalTierRunsOnlyAsStreamsMerge: the functional job runs on
-// merge_group, schedule and workflow_dispatch and never on a pull request, on
-// the space pool under the two-minute cap, over test-packages' functional
-// list, through `make test-functional`; ci-ok requires it when it ran.
+// merge_group, schedule, workflow_dispatch, every pull_request and every push
+// to dev, on the space pool under the two-minute cap, over test-packages'
+// functional list, through `make test-functional`; ci-ok requires it when it
+// ran. A fork's pull_request is skipped transitively: test-packages carries
+// the head-repo guard and the functional job needs it.
 func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 	t.Parallel()
 
 	jobs := ciJobs(t)
 	job, ok := jobs["functional"]
 	require.True(t, ok, "ci.yml has no functional job")
-	for _, ev := range []string{"merge_group", "schedule", "workflow_dispatch"} {
+	for _, ev := range []string{"merge_group", "schedule", "workflow_dispatch", "pull_request"} {
 		assert.Containsf(t, job.If, "github.event_name == '"+ev+"'", "functional's if does not run on %s: %s", ev, job.If)
 	}
-	assert.Falsef(t, strings.Contains(job.If, "pull_request") || strings.Contains(job.If, "!=") && strings.Contains(job.If, "event_name !="), "functional's if must name the events it runs on, never pull_request: %s", job.If)
+	assert.Containsf(t, job.If, "github.event_name == 'push'", "functional's if does not run on a push: %s", job.If)
+	assert.Containsf(t, job.If, "github.ref_name == 'dev'", "functional's if does not run on a push to dev: %s", job.If)
 	assert.Equalf(t, 2, job.TimeoutMinutes, "functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
 	runsOn, _ := yaml.Marshal(job.RunsOn)
 	assert.Containsf(t, string(runsOn), "space", "functional runs-on %s, want the space pool", runsOn)

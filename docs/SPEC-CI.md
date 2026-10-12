@@ -1204,9 +1204,9 @@ min(share, 2) and the Makefile's `GOTEST_P ?= 2` on `go test -p` and
 redis-server is functional-only (build tag functional)` and exits 86, so
 `testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
 `functional` job, `make test-functional`) runs only the `//go:build functional`
-tests of the selected packages, on `merge_group`, `schedule` and
-`workflow_dispatch`, never on `pull_request`, six Linux shards under the
-two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
+tests of the selected packages, on every `pull_request` to dev and every push
+to dev, on `merge_group`, `schedule` and `workflow_dispatch`, six Linux shards
+under the two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
 measurement, printed on every leg and enforced only on the nightly Linux legs;
 what is enforced on every leg is static (`unitwaits`). The unit legs (`test`
@@ -1742,10 +1742,9 @@ has) on its first line, or move its redis-backed tests to
 **Its narrowings.** Only the direct call is read. A file that reaches redis
 through a package-local helper is held by the compiler instead: the helper's
 file is tagged, so an untagged caller does not build, and the lint job's
-`go vet ./...` is red on it. The functional tier runs where a whole stream
-lands (`make check`, ci.yml's `functional` job on merge_group and schedule) and nightly
-(nightly-slow.yml's `functional` leg); the lint job's `make vet-functional`
-compiles it on every change.
+`go vet ./...` is red on it. The functional tier runs on every pull_request to
+dev and every push to dev, on merge_group and schedule (ci.yml's `functional`
+job) and nightly (nightly-slow.yml's `functional` leg); the lint job's `make vet-functional` compiles it on every change.
 
 ### `functional-image` — the functional-tier image is pinned and carries every program the tier runs
 
