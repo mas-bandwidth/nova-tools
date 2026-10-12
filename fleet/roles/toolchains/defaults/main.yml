@@ -1,0 +1,194 @@
+---
+# Pinned archive inputs for the host-login SDK layout. Update URLs and SHA-256
+# values together; the role refuses a platform without an explicit pair. The SDK
+# prefix is nova_sdk_home, the one fleet-wide variable in
+# fleet/group_vars/all.yml; every install, link and idempotency path below derives
+# from it, so a missing or changed executable or archive digest is detected in
+# place and a second converge run changes nothing (docs/FLEET.md, "Language
+# toolchains").
+nova_toolchains_fact_file: "{{ nova_home }}/.config/nova/toolchains.json"
+nova_toolchains_allow_local_archives: false
+nova_toolchains_shell_rc: >-
+  {{ '.zprofile' if (ansible_facts['user_shell'] | default('')).endswith('/zsh') else '.profile' }}
+nova_toolchains_platform_map:
+  Linux:
+    x86_64: linux-x86_64
+    aarch64: linux-arm64
+  Darwin:
+    arm64: darwin-arm64
+    aarch64: darwin-arm64
+    x86_64: darwin-x86_64
+nova_toolchains_platform: >-
+  {{ nova_toolchains_platform_map.get(ansible_facts['system'], {}).get(ansible_facts['architecture'], 'unsupported') }}
+nova_toolchains_registry_token_url: https://ghcr.io/token?scope=repository:homebrew/core/sbcl:pull
+nova_toolchains:
+  node:
+    version: "26.8.2"
+    fact_path: bin/node
+    executables:
+      - {name: node, path: bin/node}
+      - {name: npm, path: bin/npm}
+      - {name: npx, path: bin/npx}
+    platforms:
+      linux-x86_64:
+        url: https://nodejs.org/dist/v26.8.2/node-v26.8.2-linux-x64.tar.xz
+        sha256: 40e1d3225c1c9ae9a2671c98ecb9857e4d5555026394f348645676798840d5c5
+        root: node-v26.8.2-linux-x64
+        probe: bin/node
+      darwin-arm64:
+        url: https://nodejs.org/dist/v26.8.2/node-v26.8.2-darwin-arm64.tar.xz
+        sha256: f58e5044b938a3174184de4aaf1d2bbfcfff812e88220ff08e9221c09f5c8677
+        root: node-v26.8.2-darwin-arm64
+        probe: bin/node
+  dotnet:
+    version: "10.0.401"
+    fact_path: dotnet
+    executables:
+      - {name: dotnet, path: dotnet}
+    platforms:
+      linux-x86_64:
+        url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-linux-x64.tar.gz
+        sha256: 137268c8ad939c064ff1ee2a6fdf0899d8725377114ea012fbd1ad5fa2550418
+        root: .
+        probe: dotnet
+      darwin-arm64:
+        url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-osx-arm64.tar.gz
+        sha256: d143ccec4474dce17d7b778854598137a2599b81828bce51e809897fe8bdf035
+        root: .
+        probe: dotnet
+  dart:
+    version: "3.13.5"
+    fact_path: bin/dart
+    executables:
+      - {name: dart, path: bin/dart}
+    platforms:
+      linux-x86_64:
+        url: https://storage.googleapis.com/dart-archive/channels/stable/release/3.13.5/sdk/dartsdk-linux-x64-release.zip
+        sha256: ea864bc64df30a6b8bdf30b2e32550f7717d9a890de8f40293aeabb924fe232b
+        root: dart-sdk
+        probe: bin/dart
+      darwin-arm64:
+        url: https://storage.googleapis.com/dart-archive/channels/stable/release/3.13.5/sdk/dartsdk-macos-arm64-release.zip
+        sha256: 9dfe7d6f2558816c2a978aff6c80e8a4509c6cb726c0702a616c64d286f60e88
+        root: dart-sdk
+        probe: bin/dart
+  elixir:
+    version: "1.20.4"
+    fact_path: bin/elixir
+    executables:
+      - {name: elixir, path: bin/elixir}
+      - {name: elixirc, path: bin/elixirc}
+      - {name: iex, path: bin/iex}
+      - {name: mix, path: bin/mix}
+    platforms:
+      linux-x86_64:
+        url: https://github.com/elixir-lang/elixir/releases/download/v1.20.4/elixir-otp-29.zip
+        sha256: 7863c546cda13fecc949e562e326042451dacf8fd8698a36783cb71eeb223b46
+        root: .
+        probe: bin/elixir
+      darwin-arm64:
+        url: https://github.com/elixir-lang/elixir/releases/download/v1.20.4/elixir-otp-29.zip
+        sha256: 7863c546cda13fecc949e562e326042451dacf8fd8698a36783cb71eeb223b46
+        root: .
+        probe: bin/elixir
+  otp:
+    version: "29.1.1"
+    fact_path: bin/erl
+    executables:
+      - {name: erl, path: bin/erl}
+      - {name: erlc, path: bin/erlc}
+      - {name: escript, path: bin/escript}
+      - {name: epmd, path: bin/epmd}
+    platforms:
+      linux-x86_64:
+        url: https://builds.hex.pm/builds/otp/amd64/ubuntu-24.04/OTP-29.1.1.tar.gz
+        sha256: 35186bdae840028df621d14f3a75c68eb52eea90fabd500f7946a5d74bdaf11b
+        root: OTP-29.1.1
+        probe: Install
+        install_root: .
+        install_probe: bin/erl
+        installer_argv: ["./Install", "-sasl", "{prefix}"]
+      darwin-arm64:
+        url: https://github.com/erlef/otp_builds/releases/download/OTP-29.1.1/otp-aarch64-apple-darwin.tar.gz
+        sha256: 0e80f209b06d9d13cf3b5f7c07228d9561aff983e6e55ea9c8ebda085db286cc
+        root: .
+        probe: bin/erl
+  rust:
+    version: "1.99.0"
+    fact_path: bin/rustc
+    executables:
+      - {name: cargo, path: bin/cargo}
+      - {name: rustc, path: bin/rustc}
+    platforms:
+      linux-x86_64:
+        url: https://static.rust-lang.org/dist/2026-10-01/rust-1.99.0-x86_64-unknown-linux-gnu.tar.xz
+        sha256: 891c6366d7100feda0bca4c03ce63f3c9ac827cbebbc283e7433061d42c6a376
+        root: rust-1.99.0-x86_64-unknown-linux-gnu
+        probe: install.sh
+        install_root: .
+        install_probe: bin/rustc
+        installer_argv: ["./install.sh", "--prefix", "{prefix}", "--disable-ldconfig"]
+      darwin-arm64:
+        url: https://static.rust-lang.org/dist/2026-10-01/rust-1.99.0-aarch64-apple-darwin.tar.xz
+        sha256: 0306e4813a6fa7d4353de68f0bb9a8216b4ca04b1cdee409d0e301f958e55dd2
+        root: rust-1.99.0-aarch64-apple-darwin
+        probe: install.sh
+        install_root: .
+        install_probe: bin/rustc
+        installer_argv: ["./install.sh", "--prefix", "{prefix}", "--disable-ldconfig"]
+  jdk:
+    version: "25.0.4+101.0.LTS"
+    fact_path: bin/java
+    java_home: true
+    executables:
+      - {name: java, path: bin/java}
+      - {name: javac, path: bin/javac}
+      - {name: jar, path: bin/jar}
+      - {name: jshell, path: bin/jshell}
+    platforms:
+      linux-x86_64:
+        url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%2B1/OpenJDK25U-jdk_x64_linux_hotspot_25.0.4.1_1.tar.gz
+        sha256: dbb698396d478e7fa2b1e50f4103324b2a99b90569ee27c33f2261f9215cf41e
+        root: jdk-25.0.4.1+1
+        probe: bin/java
+      darwin-arm64:
+        url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%2B1/OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.4.1_1.tar.gz
+        sha256: 61979887f7506a24a57439ff99adb8b3a7fc89977d9cfe3b8984f58a981b7b9d
+        root: jdk-25.0.4.1+1/Contents/Home
+        probe: bin/java
+  sbcl:
+    version: "2.6.9"
+    fact_path: bin/sbcl
+    executables:
+      - {name: sbcl, path: bin/sbcl}
+    platforms:
+      linux-x86_64:
+        url: https://ghcr.io/v2/homebrew/core/sbcl/blobs/sha256:890a44c77132873f2bbde23854100f08e7c38dde89b4347eb70c93c4f7621f4d
+        sha256: 890a44c77132873f2bbde23854100f08e7c38dde89b4347eb70c93c4f7621f4d
+        archive_suffix: .tar.gz
+        root: sbcl/2.6.9
+        probe: bin/sbcl
+        registry_auth: true
+      darwin-arm64:
+        url: https://ghcr.io/v2/homebrew/core/sbcl/blobs/sha256:f5ea0e39f978a60a22bf2583927e150164c7ac3142f906198fe03407280ecd87
+        sha256: f5ea0e39f978a60a22bf2583927e150164c7ac3142f906198fe03407280ecd87
+        archive_suffix: .tar.gz
+        root: sbcl/2.6.9
+        probe: bin/sbcl
+        registry_auth: true
+  gh:
+    version: "2.102.0"
+    fact_path: bin/gh
+    executables:
+      - {name: gh, path: bin/gh}
+    platforms:
+      linux-x86_64:
+        url: https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_linux_amd64.tar.gz
+        sha256: bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
+        root: gh_2.102.0_linux_amd64
+        probe: bin/gh
+      darwin-arm64:
+        url: https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_macOS_arm64.zip
+        sha256: da922c20d1792e5b2cbf375593d7a658acf034c12c84e007e71c76ef959c337e
+        root: gh_2.102.0_macOS_arm64
+        probe: bin/gh

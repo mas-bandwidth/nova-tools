@@ -252,6 +252,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_dogfood_receipts` | none: `-e` | the dogfood receipts directory the build's definition-of-done gate reads |
 | `nova_tla_dir`, `nova_tla_jar` | `/opt/tla`, `/opt/tla/tla2tools.jar` | where a record machine holds the TLC jar |
 | `nova_tla_sha256_file` | `tla/tla2tools.sha256` of the checkout the play runs from | the SHA-256 the jar must have, read on the machine running the play |
+| `nova_sdk_home` | `~/sdk` | the login-owned prefix for pinned language toolchains and the first TLC Java candidate |
 | `nova_tla_java_candidates` | `~/sdk/bin/java`, `/usr/bin/java`, `/usr/local/bin/java` | the java a record machine runs TLC with: the first that exists |
 | `nova_release_gate_args` | `--cli <nova_source>/docs/CLI.md --receipts <nova_dogfood_receipts>` | the build's gate flags; a waiver replaces them whole with `--no-dogfood-gate --reason <why>`, and then no receipts are named |
 | `nova_release_build_args` | `[]` | flags appended to the build after the gate's; `nova-update release cycle` passes `--incremental --gate report --reason <why>` |
@@ -302,6 +303,30 @@ in psql, as a role with the owners' rights (the owner or a superuser), then
 run the play again. `nova-config migrate --dry-run` prints the same finding,
 applies nothing, and exits 1 when migrate would refuse (`ready=no`), 0 when
 it would apply.
+
+### Language toolchains
+
+Every Linux and Darwin fleet host installs Node, .NET, Dart, Elixir, Erlang/OTP,
+Rust, JDK, SBCL and GitHub CLI from the versioned, SHA-256-pinned archives in
+`fleet/roles/toolchains/defaults/main.yml`. The login's `~/sdk/<tool>-<version>`
+contains each extracted toolchain; verified downloads are cached in
+`~/sdk/.downloads`, `~/sdk/bin` links the commands, and `~/sdk/env.sh` is sourced
+by the login shell. `~/.config/nova/toolchains.json` records each tool's path and
+version on the host. A missing or changed executable
+or archive digest replaces that versioned install. The role verifies a replacement
+archive before removing the old install, so a download or checksum failure leaves
+the current install intact. The play is opt-in: an untagged tools rollout skips it.
+The Linux x86_64 and Darwin arm64 archive pairs are explicit, and an unsupported
+host platform is refused before installation.
+
+Run the toolchain install with this one command:
+
+```sh
+ansible-playbook fleet/tools.yml --tags toolchains
+```
+
+`--check --diff` reports the same hosts, tool paths and versions without
+installing archives.
 
 ## redis.yml
 
