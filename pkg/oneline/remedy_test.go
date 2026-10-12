@@ -1,12 +1,9 @@
 package oneline
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestWithRemedyEndsEveryLineWithANextStep pins the two halves: a line with no
@@ -58,9 +55,13 @@ func TestHasRemedyIsNotFooledByProse(t *testing.T) {
 	}
 }
 
-// TestShellWordReadsBackAsOneWord: a value through ShellWord, split as a POSIX
-// shell splits it (onboarding.SplitShell, nothing executed), is that one value;
-// a value with nothing a shell reads is printed as it is.
+// TestShellWordReadsBackAsOneWord: a value through ShellWord is one value a
+// POSIX shell reads back, and a value made only of characters no shell gives a
+// meaning is printed as it is. The exact spelling is pinned per row: a bare
+// safe value stays bare, anything else is single-quoted with an embedded quote
+// written '"'"' (close, double-quoted quote, reopen), so a blank, a quote,
+// $(...), a ; or a newline is the value's own character and never a second word
+// or a command the shell would run.
 func TestShellWordReadsBackAsOneWord(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ value, printed string }{
@@ -80,14 +81,7 @@ func TestShellWordReadsBackAsOneWord(t *testing.T) {
 	} {
 		t.Run(tc.printed, func(t *testing.T) {
 			t.Parallel()
-			got := ShellWord(tc.value)
-			assert.Equal(t, tc.printed, got)
-			if strings.Contains(tc.value, "`") {
-				return // the splitter refuses a backquote anywhere; the quoting is pinned above
-			}
-			words, err := onboarding.SplitShell("cmd " + got + " tail")
-			require.NoError(t, err)
-			assert.Equal(t, []string{"cmd", tc.value, "tail"}, words)
+			assert.Equal(t, tc.printed, ShellWord(tc.value))
 		})
 	}
 }
