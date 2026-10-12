@@ -230,11 +230,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		gp.notes = stdout
 		pu = gp
 	}
-	// the machine's CPU, a sample a second, for the beat's load (hostload.Sampler); a
-	// reader beats nothing
+	// the machine's CPU, a sample a second, for the beat's load (member.NewMeter, a
+	// hostload.Sampler over the machine's own source); a reader beats nothing
 	var meter *hostload.Sampler
 	if !*reader {
-		meter = hostload.NewSampler(hostload.Local())
+		meter = member.NewMeter()
 		ctx, stop := context.WithCancel(context.Background())
 		defer stop()
 		go meter.Run(ctx)
@@ -247,6 +247,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
+	// a beat the server refuses marks this member's own status file, read by doctor
+	// (member.Config.Status); the --load-unmeasured probe is asked once at start
+	cfg.Status = memberStatusFile(*as, *root)
+	if !*reader {
+		cfg.LoadUnmeasured = probeLoadUnmeasured(send)
+	}
 	// the attempt decision reads the decision key in this process when --pass names
 	// it and the environment does not hold it (keys.go)
 	cfg.Attempt = workAttempt(*reader, rn.getenv)
@@ -301,6 +307,37 @@ func memberConfig(as string, width int, reader bool, meter *hostload.Sampler, ro
 		cfg.ScriptVerify = scriptVerify(root, "", noWall)
 	}
 	return cfg
+}
+
+// memberStatusFile marks this member's own status file with a word ("beat-refused" while
+// a beat the server refused stands, "" once a beat is taken), so doctor and the dashboard
+// row show the member reads down (member.Config.Status; docs/SPEC-SPRINT.md, the fleet, the
+// beat; nova-sprint reads the status, a-doctor-probes-the-member-beat-form). The file is
+// <root>/<as>.status.
+func memberStatusFile(as, root string) func(word string) error {
+	path := filepath.Join(root, as+".status")
+	return func(word string) error {
+		return os.WriteFile(path, []byte(word), 0o644)
+	}
+}
+
+// probeLoadUnmeasured asks the sprint server's `fleet beat -h` once and returns a function
+// that reports whether it lists --load-unmeasured (member.Config.LoadUnmeasured, the caller's
+// one probe at start). A server that does not answer for it says the flag is not listed, so a
+// beat that carries 0 for want of a reading sends a plain --load 0, never a flag the sprint
+// would refuse.
+func probeLoadUnmeasured(send func(context.Context, ...[]string) ([]sprintwire.Result, error)) func() bool {
+	var once sync.Once
+	var listed bool
+	return func() bool {
+		once.Do(func() {
+			res, err := send(context.Background(), []string{"fleet", "beat", "-h"})
+			if err == nil && len(res) > 0 {
+				listed = strings.Contains(res[0].Stdout, "--load-unmeasured") || strings.Contains(res[0].Stderr, "--load-unmeasured")
+			}
+		})
+		return listed
+	}
 }
 
 // exitReplaced is member's exit when its binary was replaced under it: not 0, so
