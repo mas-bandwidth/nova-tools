@@ -64,7 +64,9 @@
    (release "v1.2.14" :status "planned" :date "2026-10-11"
     :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
    (release "v1.2.15" :status "planned"
-    :text "The next small product fixes, one concern each."))
+    :text "The next small product fixes, one concern each.")
+   (release "v1.2.18" :status "planned"
+    :text "The next small fixes, one concern each."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -954,4 +956,27 @@
     TestOutsideHoldsTestsOnlyBesideGoSource, and the functional
     TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
     sprint server)."
-   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")))
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")
+  (fix "a-throwaway-postgres-dies-with-its-test-binary" :release "v1.2.18" :status "planned"
+   :title "A throwaway Postgres dies with its test binary"
+   :text "pkg/nsprint/testutil/pg's StartServer ran the postmaster through `pg_ctl start`, which detaches
+    it from the caller, so a test binary that died without its cleanups (a timeout, os.Exit, a panic off
+    the test goroutine, SIGKILL) left a postgres running on the bench until someone stopped it by hand,
+    while the throwaway Redis of pkg/testredis already had a sentry for exactly this. StartServer now
+    enlists a sentry of its own, the design and the words of pkg/testredis/sentry.go copied into
+    sentry_unix.go: a second copy of the test binary under an env marker, its own process group, reading
+    a stdin pipe the test binary holds. The postmaster runs in the foreground with the same options as
+    before, its output to the same log file, joined to the sentry's group as it is forked (SysProcAttr
+    Setpgid with Pgid = the sentry's pid); readiness is read from the log line \"database system is ready
+    to accept connections\" and then a ping. A server that cannot join a standing sentry is not started,
+    and the error names the sentry. Stop still stops it with `pg_ctl -m immediate stop`, then waits for
+    the foreground process and closes the sentry's pipe. The five-attempt port retry and its \"Address
+    already in use\" case are kept. Without process groups (Windows) there is no sentry, as pkg/testredis
+    does. Tests: pkg/nsprint/testutil/pg TestPostgresDiesWithItsTestBinary (a child test binary is
+    killed with SIGKILL and its postmaster, read from postmaster.pid, must be gone within thirty
+    seconds), beside TestThrowawayPostgresStartsAndAnswers and TestBinariesNamesTheMissingBinary."
+   :origin "the seat, 2026-10-12 ~03:05Z, re-cutting the v1.3 slice-L card (slice-l-ci-fixtures) left out of
+    admission because its paths (internal/nsprint/testutil/pg, internal/testredis) are gone from dev; its
+    donor, nova-tools PR #5503, closed unmerged 2026-10-10T17:53Z. Of its parts, the Redis sentry and the
+    104-byte socket bound are on dev (pkg/testredis/sentry.go, pkg/testredis/testredis.go); the postgres
+    watchdog is not. Card a-throwaway-postgres-dies-with-its-test-binary.w1")))
