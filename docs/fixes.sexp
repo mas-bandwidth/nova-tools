@@ -70,7 +70,11 @@
    (release "v1.2.18" :status "planned"
     :text "The next small fixes, one concern each."))
  :items
- ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
+ ((fix "certification-is-never-cancelled-by-a-later-landing" :release "v1.2.15" :status "planned"
+   :title "Certification on dev never cancels on later pushes"
+   :text "Each pushed sha gets its own certification run to completion. Certification triggers on push to dev and release/** and on workflow_dispatch."
+   :origin "the owner, 2026-10-12")
+  (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."
    :origin "the split, layers L5 to L7; PR #5591")

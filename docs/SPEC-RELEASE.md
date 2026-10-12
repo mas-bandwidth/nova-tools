@@ -753,7 +753,20 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 
 *Tests: `TestACutWithAWaiverRecordsItInTheTag`, `TestACutIgnoresThePreviousTagsCancelledReleaseRun`.*
 
-## 20. Adopting a build
+## 20. A release requires a completed certification run on its sha
+A cut refuses until the commit it tags has a **completed** certification run. The sha must be vouched for by the
+certification tier, not just the CL tier.
+
+**How to get one:**
+- Push a release branch: `release/vX.Y.Z` triggers certification automatically.
+- Run a workflow dispatch on the release branch with the pinned sha.
+
+Certification runs to completion and is never cancelled by later pushes (dev pushes key by sha, release branches queue
+or key by sha). Once green, `cut` reads that run and proceeds.
+
+*Tests: `TestCertificationOnDevNeverCancels`, `TestCertificationTriggersOnPushAndDispatch`.*
+
+## 21. Adopting a build
 
 The install play adopts one build onto every fleet host, and it stages the rollout so a bad build reaches one host
 before it reaches the fleet. The install runs in two batches: the canary alone first, then every other fleet host.

@@ -16,7 +16,7 @@ on:
     - cron: "17 7 * * *"
   workflow_dispatch:
   push:
-    branches: [dev]
+    branches: [dev, release/**]
 
 
 permissions:
@@ -28,8 +28,10 @@ env:
   NOVA_CI: "1"
 
 concurrency:
-  group: certification-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # Cancel in progress only for pull requests and workflow_dispatch, not for push to dev/release
+  # Each sha on dev gets its own run that runs to completion.
+  group: certification-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   race-cache:
