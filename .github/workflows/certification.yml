@@ -166,12 +166,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
         include:
           - os: ubuntu-latest
-            shards: 16
+            shards: 19
           - os: macos-latest
-            shards: 16
+            shards: 19
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
@@ -239,7 +239,7 @@ jobs:
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-swarm internal/docs pkg/redisconn pkg/config pkg/secrets nova-tools/fleet"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-swarm internal/docs pkg/redisconn pkg/config pkg/secrets nova-tools/fleet nova-tools/fleet/toolchainapply/idempotent nova-tools/fleet/toolchainapply/drift nova-tools/fleet/toolchainapply/baddigest"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
@@ -305,7 +305,7 @@ jobs:
           "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
 
       - name: install the tested Ansible for the fleet fixtures
-        if: matrix.os == 'ubuntu-latest' && contains(format(' {0} ', env.HOSTED_PKGS), '/nova-tools/fleet ')
+        if: matrix.os == 'ubuntu-latest' && (contains(format(' {0} ', env.HOSTED_PKGS), '/nova-tools/fleet ') || contains(env.HOSTED_PKGS, '/nova-tools/fleet/toolchainapply/'))
         shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/toolchains-ansible"
@@ -318,10 +318,11 @@ jobs:
         # starts 35-50 s into the job, so a package still running at 75 s would be cancelled
         # by the cap anyway; Go's timeout fires first and names the test with a stack.
         shell: bash
-        # Fleet runs real Ansible subprocesses. Keep their test concurrency at the
-        # measured two-worker budget and isolate them through the heavy-package deal.
+        # Each fleet apply package runs one real install and verification; render stays
+        # isolated too. Extra shards preserve the existing round-robin capacity.
+        # Bound each process to two Go workers with the same 75-second package limit.
         env:
-          GOMAXPROCS: ${{ contains(format(' {0} ', env.HOSTED_PKGS), '/nova-tools/fleet ') && '2' || '' }}
+          GOMAXPROCS: ${{ (contains(format(' {0} ', env.HOSTED_PKGS), '/nova-tools/fleet ') || contains(env.HOSTED_PKGS, '/nova-tools/fleet/toolchainapply/')) && '2' || '' }}
         run: go test -race -count=1 -timeout 75s $HOSTED_PKGS
 
   smoke:

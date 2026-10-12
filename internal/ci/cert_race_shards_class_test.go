@@ -21,10 +21,11 @@ import (
 // 36357522017, 36357749379 and 36360296846 (2026-09-27).
 
 // certRaceMinShards is the shard count floor per hosted OS: at least one shard
-// for each certRaceHeavy package, now sixteen after run 37165758129.
+// for each certRaceHeavy package, nineteen with the three isolated toolchain
+// lifecycle packages; the round-robin shards retain their capacity.
 var certRaceMinShards = map[string]int{
-	"ubuntu-latest": 16,
-	"macos-latest":  16,
+	"ubuntu-latest": 19,
+	"macos-latest":  19,
 }
 
 // certRaceHeavy are the packages the race deal places first, one per shard:
@@ -48,6 +49,9 @@ var certRaceHeavy = []string{
 	"cmd/nova-swarm",
 	"internal/docs", "pkg/redisconn", "pkg/config",
 	"pkg/secrets", "nova-tools/fleet",
+	"nova-tools/fleet/toolchainapply/idempotent",
+	"nova-tools/fleet/toolchainapply/drift",
+	"nova-tools/fleet/toolchainapply/baddigest",
 }
 
 const certRaceDealStep = "deal this shard's packages"
