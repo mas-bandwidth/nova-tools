@@ -12,11 +12,13 @@ import (
 
 // TestMainCoverRealDeps walks every seam realDeps hands main: the
 // environment, the clock, the hostname and the two store-openers. The
-// --file path of openStore needs no database; openRedis builds a client
-// that dials only on its first command, so no socket opens here. What the
-// unit tier cannot reach without a live store or a subprocess: the
-// Postgres branch of openStore (config.OpenPG pings) and calling the
-// tailscale seam (it execs tailscale); both are pinned set, not invoked.
+// --file path of openStore needs no database; openRedis opens through
+// pkg/redisconn, which dials eagerly, so the unit tier pins its refusals
+// alone and the live connection is the functional test
+// TestNovaConfigReadsTheSeatLogin. What the unit tier cannot reach without
+// a live store or a subprocess: the Postgres branch of openStore
+// (config.OpenPG pings) and calling the tailscale seam (it execs
+// tailscale); both are pinned set, not invoked.
 func TestMainCoverRealDeps(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -63,14 +65,16 @@ func TestMainCoverRealDeps(t *testing.T) {
 	}
 
 	// openRedis answers on an address and refuses without one: no seat is
-	// selected in this process, so the fallback address is empty too.
+	// selected in this process, so the fallback address is empty too. The
+	// connection is opened through pkg/redisconn, which dials eagerly, so
+	// the unit tier pins the refusals alone.
 	redisCases := []struct {
 		name    string
 		addr    string
 		wantErr string
 	}{
-		{name: "an address opens a client that dials on first use", addr: "127.0.0.1:0"},
 		{name: "no address and no seat refuses", addr: "", wantErr: "redis address is required"},
+		{name: "an address that is not host:port refuses", addr: "127.0.0.1:0", wantErr: "not an address"},
 	}
 	for _, c := range redisCases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,19 +93,18 @@ func TestMainCoverRealDeps(t *testing.T) {
 }
 
 // TestMainCoverRedisApplierClose reaches redisApplier's Close, the shut
-// main's stores take: the live client realDeps.openRedis returns closes
-// clean, and so does the zero redisApplier whose store was never opened.
+// main's stores take: a closer set on the applier closes clean, and so does
+// the zero redisApplier whose store was never opened. The live client
+// realDeps.openRedis returns is closed by the functional test
+// TestNovaConfigReadsTheSeatLogin.
 func TestMainCoverRedisApplierClose(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
 	cases := []struct {
 		name string
 		side func(t *testing.T) redisSide
 	}{
-		{name: "the store realDeps opened closes clean", side: func(t *testing.T) redisSide {
-			r, err := realDeps().openRedis(ctx, "127.0.0.1:0")
-			require.NoError(t, err)
-			return r
+		{name: "a store with a closer closes clean", side: func(t *testing.T) redisSide {
+			return redisApplier{closer: func() error { return nil }}
 		}},
 		{name: "a store never opened closes clean", side: func(*testing.T) redisSide { return redisApplier{} }},
 	}

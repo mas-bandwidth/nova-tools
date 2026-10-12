@@ -777,7 +777,14 @@ history's `at=` is the instant of the run, the one value that differs on a
 second run. The real runs need a Postgres (`nova-config migrate`) and a Redis
 (`nova-config apply`); `docs/nova-config/README.md` walks them, and
 `cmd/nova-config/config_functional_test.go` runs them against a throwaway
-Postgres and a throwaway Redis.
+Postgres and a throwaway Redis. The bare sprint store from the recorded
+`nova-sprint seat login` (address, ACL user and in-process password, never in
+an environment or an output) is pinned over a private Redis by
+`cmd/nova-config/seat_login_redis_functional_test.go`
+(`TestNovaConfigReadsTheSeatLogin`); the resolution (address, ACL user and
+in-process password) and `status`'s `redis-from=<flag|env|seat|seat-login>`
+source are pinned by `cmd/nova-config/seat_login_redis_test.go`
+(`TestSeatLoginSprintCredsAndStatusSource`).
 
 ### First run
 

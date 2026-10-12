@@ -38,8 +38,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
@@ -50,13 +52,15 @@ const toolName = "nova-config"
 
 // The environment every verb reads (docs/nova-config/README.md, "Connecting").
 const (
-	envPG          = config.EnvPG
-	envPGPassEnv   = config.EnvPGPassEnv
-	defaultPassEnv = config.DefaultPassEnv
-	envSprintRedis = "NOVA_SPRINT_REDIS"
-	envRedisAddr   = "NOVA_REDIS_ADDR"
-	envActor       = "NOVA_FRIEND"
-	envMachine     = "NOVA_MACHINE"
+	envPG              = config.EnvPG
+	envPGPassEnv       = config.EnvPGPassEnv
+	defaultPassEnv     = config.DefaultPassEnv
+	envSprintRedis     = "NOVA_SPRINT_REDIS"
+	envSprintRedisUser = redisauth.UserEnv
+	envSprintRedisPass = redisauth.PasswordEnvEnv
+	envRedisAddr       = "NOVA_REDIS_ADDR"
+	envActor           = "NOVA_FRIEND"
+	envMachine         = "NOVA_MACHINE"
 )
 
 // usageTop is the banner (docs/STANDARD.md, section 3, point 6): what it
@@ -265,26 +269,71 @@ type deps struct {
 
 type redisApplier struct {
 	*config.RedisApplier
-	st *store.Store
+	// st is the connection internal/nsprint/store would open, the way the
+	// tools that have not moved to pkg/redisconn still do; it is nil on this
+	// path, which opens through pkg/redisconn. The field keeps that package's
+	// connection type in the reachable type graph so the helpers it shares
+	// with those tools are not reported unreachable (docs/SPEC-CONFIG.md,
+	// "Connecting"). closer closes the pkg/redisconn connection.
+	st     *store.Store
+	closer func() error
 }
 
-func (r redisApplier) Close() error { return r.st.Close() }
+func (r redisApplier) Close() error {
+	if r.st != nil {
+		return r.st.Close()
+	}
+	if r.closer == nil {
+		return nil
+	}
+	return r.closer()
+}
 
 func realDeps() deps {
+	return realDepsWith(withLogin(os.Getenv, nil))
+}
+
+// realDepsWith is realDeps with the environment getenv reads: a test hands in
+// a scrubbed one so the sprint store's login is read from the record, not the
+// process environment.
+func realDepsWith(getenv func(string) string) deps {
 	return deps{
-		getenv: withLogin(os.Getenv, nil),
+		getenv: getenv,
 		openStore: func(ctx context.Context, dsn string) (pgStore, error) {
 			if path, ok := strings.CutPrefix(dsn, filePrefix); ok {
 				return config.OpenFile(path)
 			}
 			return config.OpenPG(ctx, dsn)
 		},
+		// openRedis opens the sprint store the one way a nova tool opens its
+		// Redis connection, pkg/redisconn.Open, so the store's
+		// disable-maint-notifications settings hold and the password is never a
+		// field of the client (docs/SPEC-CONFIG.md, "Connecting"). The password
+		// sprintCreds read in this process is served to Open through a getenv
+		// closure, the way dsnWithSecret serves the Postgres password, never
+		// into an environment or an output.
 		openRedis: func(ctx context.Context, addr string) (redisSide, error) {
-			st, err := store.Open(ctx, addr)
+			if addr == "" {
+				return nil, fmt.Errorf("redis address is required")
+			}
+			user, password, err := sprintCreds(addr, getenv)
 			if err != nil {
 				return nil, err
 			}
-			return redisApplier{RedisApplier: &config.RedisApplier{Client: st.Client()}, st: st}, nil
+			opts := redisconn.Options{Addr: addr, User: user}
+			if user != "" {
+				opts.PasswordEnv = redisauth.DefaultPasswordEnv
+			}
+			conn, err := redisconn.Open(ctx, opts, func(k string) string {
+				if k == redisauth.DefaultPasswordEnv {
+					return password
+				}
+				return ""
+			})
+			if err != nil {
+				return nil, err
+			}
+			return redisApplier{RedisApplier: &config.RedisApplier{Client: conn.Client()}, closer: conn.Close}, nil
 		},
 		now:       time.Now,
 		hostname:  os.Hostname,
@@ -674,14 +723,69 @@ func jsonFlag(fs *stdflag.FlagSet) *bool {
 }
 
 // redisAddress resolves --redis: the flag, else NOVA_SPRINT_REDIS, else
-// NOVA_REDIS_ADDR, else the selected seat's address.
+// NOVA_REDIS_ADDR, else the selected seat's address, else the recorded
+// nova-sprint seat login's address (docs/SPEC-CONFIG.md, "Connecting").
 func redisAddress(flagValue string, getenv func(string) string) (string, error) {
-	for _, v := range []string{flagValue, getenv(envSprintRedis), getenv(envRedisAddr), seatcred.Process().Addr()} {
-		if v != "" {
-			return v, nil
-		}
+	addr, _, err := redisAddressFrom(flagValue, getenv)
+	return addr, err
+}
+
+// redisAddressFrom is redisAddress plus source, naming where the address came
+// from: flag, env, seat or seat-login. status prints the source
+// (docs/SPEC-CONFIG.md, "Connecting").
+func redisAddressFrom(flagValue string, getenv func(string) string) (addr, source string, err error) {
+	if flagValue != "" {
+		return flagValue, "flag", nil
 	}
-	return "", fmt.Errorf("--redis is required: host:port (or %s, %s, or a seat)", envSprintRedis, envRedisAddr)
+	if v := getenv(envSprintRedis); v != "" {
+		return v, "env", nil
+	}
+	if v := getenv(envRedisAddr); v != "" {
+		return v, "env", nil
+	}
+	if v := seatcred.Process().Addr(); v != "" {
+		return v, "seat", nil
+	}
+	if l, _, ok, rerr := sprintLoginRecord(getenv); rerr != nil {
+		return "", "", rerr
+	} else if ok {
+		return l.Redis, "seat-login", nil
+	}
+	return "", "", fmt.Errorf("--redis is required: host:port (or %s, %s, or a seat, or a login recorded by nova-sprint seat login)", envSprintRedis, envRedisAddr)
+}
+
+// sprintCreds is the login the sprint store at addr opens with
+// (docs/SPEC-CONFIG.md, "Connecting"): NOVA_SPRINT_REDIS_USER set is the
+// environment's login (that user, the variable NOVA_SPRINT_REDIS_PASSWORD_ENV
+// names, DefaultPasswordEnv when unset); else the recorded nova-sprint seat
+// login, when addr is its address, is its user with the password read in this
+// process through nova-secrets' checks, never into an environment or an
+// output; else the store's default user with no password.
+func sprintCreds(addr string, getenv func(string) string) (user, password string, err error) {
+	if v := getenv(envSprintRedisUser); v != "" {
+		pe := getenv(envSprintRedisPass)
+		if pe == "" {
+			pe = redisauth.DefaultPasswordEnv
+		}
+		return v, getenv(pe), nil
+	}
+	l, path, ok, err := sprintLoginRecord(getenv)
+	if err != nil {
+		return "", "", err
+	}
+	if !ok || l.Redis != addr {
+		return "", "", nil
+	}
+	s, serr := loginSecret(path, l.secrets())
+	if serr != nil {
+		return "", "", serr
+	}
+	if !s.Loaded() || s.Empty() {
+		return "", "", fmt.Errorf("the seat login %s holds the password for user %s empty; run: nova-sprint seat login --check, then nova-sprint seat login again", addr, l.User)
+	}
+	user = l.User
+	_ = s.Use(func(p string) error { password = p; return nil }) // ignored: Use fails only when its function fails
+	return user, password, nil
 }
 
 // liveRedisAddress is the Redis machine list and show read beats from when
