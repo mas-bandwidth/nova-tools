@@ -30,7 +30,7 @@ func Undriven(d Deliverer, harness string) (why, remedy string, ok bool) {
 	if s.Reason != "" {
 		why += " (" + s.Reason + ")"
 	}
-	return why + ": nothing the bus holds for the friend reaches her session", AdapterRemedy(harness), true
+	return why + ": nothing the bus holds for the friend reaches the friend's session", AdapterRemedy(harness), true
 }
 
 // AdapterRemedy is what a friend on a harness with no deliver command does:

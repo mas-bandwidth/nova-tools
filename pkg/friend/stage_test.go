@@ -138,7 +138,7 @@ func TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile(t *testing.T) {
 	}
 	require.Len(t, judgments, 1, "one judgment for the repository, not one per card: %v", judgments)
 	assert.Contains(t, judgments[0], "judgment: bob cannot reach mas-bandwidth/private")
-	assert.Contains(t, judgments[0], "The remedy: give her account read and push access to mas-bandwidth/private")
+	assert.Contains(t, judgments[0], "The remedy: give the friend's account read and push access to mas-bandwidth/private")
 
 	// no lane is handed a card whose job is not staged; a card the daemon stages nothing for is
 	// handed on its brief

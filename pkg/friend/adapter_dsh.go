@@ -176,7 +176,7 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 func (d *DSH) Route(ctx context.Context) (route, line string, err error) {
 	session := d.Session
 	if session == "" {
-		session = "<her newest session>"
+		session = "<the friend's newest session>"
 	}
 	return "push", "dsh " + strings.Join(DSHArgs(session), " "), nil
 }

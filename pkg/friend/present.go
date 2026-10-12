@@ -327,7 +327,7 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 		}
 	}
 	if !withTurn {
-		d.Record(line + " (one-shot: no batch session; the lanes hand her cards)")
+		d.Record(line + d.say(" (one-shot: no batch session; the lanes hand {their} cards)"))
 		l.tellSuperseded(plan, backlog, reason, storeNow, now)
 		return
 	}
@@ -437,7 +437,7 @@ func (l *loop) tellSuperseded(plan PresentPlan, backlog []bus.Entry, reason stri
 	}
 	s := plan.Skipped
 	l.tellKind(bus.KindStatus, fmt.Sprintf("friend %s: present at %s: skipped %d deals, %d pings, %d notes", l.d.Friend, storeNow.UTC().Format(time.RFC3339), s.Deals, s.Pings, s.Notes),
-		fmt.Sprintf("Every older message on her stream was marked superseded unread, %s: %s%s\n", reason, strings.Join(ids, " "), more), now)
+		l.d.sayf("Every older message on {their} stream was marked superseded unread, %s: %s%s\n", reason, strings.Join(ids, " "), more), now)
 }
 
 // presentEnded is a present turn's end, after its settle: one that did not end at exit 0 is

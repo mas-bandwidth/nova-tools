@@ -78,7 +78,7 @@ func TestAStartedSessionGetsThePresentAndNeverTheBacklog(t *testing.T) {
 	assert.NotContains(t, ada, "daemon-pong n-old", "an expired nonce is dropped, never answered")
 	assert.Contains(t, ada, "friend bob: present at ", "the seat is told, on the bus log")
 	assert.Contains(t, ada, "skipped 1 deals, 1 pings, 1 notes")
-	assert.Contains(t, ada, "Every older message on her stream was marked superseded unread, superseded by the present at ")
+	assert.Contains(t, ada, "Every older message on their stream was marked superseded unread, superseded by the present at ")
 	log, err := r.store.Range(context.Background(), bus.LogKey, "-", "+", 100)
 	require.NoError(t, err)
 	assert.Contains(t, log[len(log)-1].Message().Body, "superseded by the present at ", "the bus log shows the acks")
@@ -197,7 +197,7 @@ func TestPlanPresentSupersedesAllButTheNewestNoteAndTheFreshPings(t *testing.T) 
 func TestAReportOnACardNoLongerHersNamesWhoHoldsItNow(t *testing.T) {
 	t.Parallel()
 	running := func() map[string]string { return map[string]string{"taken.w1": "cy"} }
-	assert.Equal(t, "refused: card taken.w1 is not on her row, no longer hers; cy holds it now", NotHers("taken.w1", "taken.w1~15", "bob", running))
+	assert.Equal(t, "refused: card taken.w1 is not on the friend's row, no longer the friend's; cy holds it now", NotHers("taken.w1", "taken.w1~15", "bob", running))
 	assert.Contains(t, NotHers("gone.w1", "gone.w1~15", "bob", running), "no row the daemon reads says who holds it now")
 	assert.Contains(t, NotHers("gone.w1", "gone.w1~15", "bob", nil), "no row the daemon reads says who holds it now")
 }
@@ -358,7 +358,7 @@ func TestTheDaemonRefusesAReportWhoseCardAnotherFriendHolds(t *testing.T) {
 	outboxReport(t, r.d.Dir, "taken.w1~15", "Verdict: LAND\nHead: 0123456789abcdef0123456789abcdef01234567\n")
 	r.run(t, 3)
 	assert.Empty(t, f.got(), "no finish is sent for a card outside her row")
-	assert.Contains(t, r.recordText(), "refused: card taken.w1 is not on her row, no longer hers; cy holds it now")
+	assert.Contains(t, r.recordText(), "refused: card taken.w1 is not on the friend's row, no longer the friend's; cy holds it now")
 }
 
 func TestANewlyDiscoveredSessionAlsoGetsThePresent(t *testing.T) {

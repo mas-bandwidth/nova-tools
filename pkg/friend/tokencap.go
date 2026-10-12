@@ -445,6 +445,6 @@ func reportWords(e TokenCapped, err error) string {
 	case e.Wrote:
 		return "; REPORT.md written as HOLD"
 	default:
-		return "; her own REPORT.md stands"
+		return "; the friend's own REPORT.md stands"
 	}
 }

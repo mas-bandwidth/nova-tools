@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -493,7 +493,7 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 
 	_, err = friend.NewRow("amy", map[string]string{"slots": "8", "tiers": "flash", "width": "0"})
 	require.Error(t, err)
-	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
+	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs the friend works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
 	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
 }
