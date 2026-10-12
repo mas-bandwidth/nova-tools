@@ -719,6 +719,63 @@ is not counted a second time. The tier decision reuses `unitTierFile`, so it
 follows the unit suite's supported build platforms and tags. The `net` class
 test beside it refuses a host a test NAMES; this one refuses a socket it OPENS.
 
+### `unit-rule` — no unit test uses real time, a real socket or an external service
+
+**The rule.** The owner's rule, restated 2026-10-12: "That's a rule. That's how
+we write unit tests here." A unit test never waits on the real clock, never opens
+a real socket and never calls an external service; the real thing is a functional
+test (`//go:build functional`), and a test about logic goes through a fake (a
+fake clock or a `synctest` bubble, a channel the fake signals, `net.Pipe`, an
+in-process `RoundTripper`, `httptest.NewRecorder`, the store through
+`hooktest.New` or `testkit.PipeStore`). `unitwaits` and `unit-sockets` hold two
+parts of it; this rule reads every `_test.go` the unit tier compiles, in every
+directory, for the rest: testify's `Eventually`/`Never` family (a poll on the
+real clock), an assertion whose verdict is an elapsed real time (`time.Since` or
+`time.Until` in its arguments, or `time.Now()` handed to the assertion itself), a
+conn deadline set at `time.Now()`, the socket openers `unit-sockets` does not
+list (`net.DialTCP` and kin, a `net.Dialer` or `net.ListenConfig`, `http.Serve`
+and `ListenAndServe`, `tls.Dial`/`Listen`, a `miniredis.Run*` started by a test
+file) and, outside `cmd/ internal/ pkg/ tools/`, the two older rules' own lists,
+`net/http`'s `Get`/`Head`/`Post`/`PostForm`/`DefaultClient`/`DefaultTransport`,
+`exec` of an external service or network tool (redis-server, postgres, ansible,
+docker, curl, gh, nc ...), and `git` with a network remote.
+**The mistake it prevents.** A test whose verdict turns on the machine's clock or
+load is a flake with a schedule: it is green on a laptop and red on a loaded
+runner, and the retry, the sleep or the longer bound that "fixes" it hides the
+logic it was meant to prove. The owner's rule names the fix: no real time, no
+real socket, no real service in the unit tier, ever.
+**The test.** `TestNoUnitTestUsesRealTimeSocketsOrServices`
+(`internal/ci/unitrule_class_test.go`), with
+`TestUnitRuleFindsEachShapeAndNotItsFake` beside it (every shape found at its
+line in a known-yes fixture, nothing found in the same tests written through
+fakes, a functional-tagged copy not a unit file, the older rules' shapes read only
+outside their directories, and the allowlist's growth check refusing an added row
+and a raised count), `TestUnitRuleBurndownOnlyShrinksAgainstTheMergeParent` (the
+allowlist at HEAD adds no row and raises no count over the merge base's) and
+`TestImportNameReadsAMajorVersionPath` (an unaliased `/vN` module path is read as
+the package before it, so `miniredis.RunT` resolves).
+**Its allowlist.** `internal/ci/unit-rule_burndown.txt`, one counted
+`<file>:<kind> <sites> <reason>` row per unit-tier test file and kind, seeded
+once at the landing from the tree's measure and allowed until moved (v1.3). It
+only shrinks: a site with no row, a row above or below its file's count, a row
+whose file breaks the rule no more, and a row or a count the change's base (the
+pull request's own base in CI, else the merge base with origin/dev) does not have
+are each red; `NOVA_CI_UPDATE=1` lowers a count and drops a row at zero,
+never raises or adds one. A base with no file is the seed.
+**Its remedy line.** `a unit test uses no real time, no real socket and no external service: fake it (a fake clock, a channel the fake signals, net.Pipe, an in-process RoundTripper, httptest.NewRecorder, the store through hooktest.New or testkit.PipeStore) when the test is about logic, or move the test under //go:build functional when its subject is the real thing; the burn-down only shrinks`.
+**Its narrowings.** It reads the test file's own syntax, resolved through its
+imports: a wait or a socket inside the subject (a `Timeout` field, a helper in
+another package, a method value) is not seen. Inside a `synctest.Test` or
+`synctest.Run` bubble package time is the fake clock, so the time shapes are not
+read there (a socket or a service in a bubble still is). A `miniredis.Run*` is a trap, not a socket, only on proof in its own function:
+the client is handed `net.Pipe`, or a `Cleanup` there asserts on that same
+server's `TotalConnectionCount` and the server is closed (`RunT` closes itself);
+a count read and discarded, another server's count or an assertion outside a
+`Cleanup` proves nothing, and that start is a socket. Only the function literal
+handed to `synctest.Test`/`Run` is a bubble: the call's other arguments are read. `time.Now()` passed on into the subject as a
+timestamp (`run(args, ..., time.Now())`) is data, not a verdict, and is not read.
+The tier decision reuses `unitTierFile`.
+
 ### `goenv` — a child `go` never inherits the caller's environment
 
 **The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/`, and

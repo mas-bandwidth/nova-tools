@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,7 +117,10 @@ func unitTierFile(src []byte) bool {
 	return false
 }
 
-// importName is the name file f uses for the import path p ("" when not imported).
+// importName is the name file f uses for the import path p ("" when not
+// imported): the alias, else the path's last element, and for a module path
+// ending in a major version (github.com/alicebob/miniredis/v2) the element
+// before it, which is the package's name.
 func importName(f *ast.File, p string) string {
 	for _, imp := range f.Imports {
 		v, err := strconv.Unquote(imp.Path.Value)
@@ -126,10 +130,22 @@ func importName(f *ast.File, p string) string {
 		if imp.Name != nil {
 			return imp.Name.Name
 		}
-		return path.Base(p)
+		return importPathName(p)
 	}
 	return ""
 }
+
+// importPathName is the package name an unaliased import of p is read as.
+func importPathName(p string) string {
+	base := path.Base(p)
+	if majorVersion.MatchString(base) && path.Dir(p) != "." {
+		return path.Base(path.Dir(p))
+	}
+	return base
+}
+
+// majorVersion is a module path's major-version element (v2, v10).
+var majorVersion = regexp.MustCompile(`^v[1-9][0-9]*$`)
 
 // topLevelName is the ledger name of a top-level declaration: the function, the
 // method as `Type.Method`, or the first name of a var or const spec.
