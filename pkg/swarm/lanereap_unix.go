@@ -3,6 +3,7 @@
 package swarm
 
 import (
+	"os"
 	"syscall"
 	"time"
 
@@ -16,39 +17,45 @@ import (
 // forked during the reap is ended too. found is how many distinct processes of the lane were
 // alive and signalled; survived is how many still are at the end (one this user may not
 // signal, or one the kernel has not let go of). Where this system cannot list processes the
-// lane is its session's group (the session leader's group, pgid == sid): it is reaped whole,
-// and found is 1 when anything was in it.
-func ReapLane(sid int, mark string, grace time.Duration) (found, survived int) {
+// reaper refuses to signal a numeric group without a birth-bearing listing.
+func ReapLane(sid int, mark, started string, grace time.Duration) (found, survived int) {
 	own, err := unix.Getsid(0)
 	if err != nil {
 		own = -1
 	}
 	sid = laneSession(sid, own)
-	if _, ok := laneProcs(sid, mark); !ok {
-		if sid <= 0 || !GroupAlive(sid, "") {
-			return 0, 0
+	// A reused leader PID authorizes no session. A departed leader leaves its
+	// session alive while descendants remain; recheck before each listing below.
+	ownedSession := func() int {
+		if started == "" || started == "-" {
+			return 0
 		}
-		if Reap(sid, "", grace) {
-			return 1, 1
+		if live := LaneStartStamp(sid); live != "-" && live != started {
+			return 0
 		}
-		return 1, 0
+		return sid
 	}
-	seen := map[int]bool{}
-	termed := map[int]bool{}
+	if _, ok := laneProcs(ownedSession(), mark); !ok {
+		// No birth-bearing listing means no authority to signal a numeric group.
+		// A group signal cannot bind all its targets to the recorded process births.
+		return 0, 0
+	}
+	seen := map[laneProcess]bool{}
+	termed := map[laneProcess]bool{}
 	// round signals every listed process (sig, and SIGCONT after a terminate) and reports
 	// whether the lane was empty when listed
 	round := func(sig syscall.Signal, once bool) bool {
-		pids, _ := laneProcs(sid, mark) // ignored: the first listing above proved this system lists processes
-		for _, pid := range pids {
-			seen[pid] = true
-			if once && termed[pid] {
+		pids, _ := laneProcs(ownedSession(), mark) // ignored: the first listing above proved this system lists processes
+		for _, target := range pids {
+			seen[target] = true
+			if once && termed[target] {
 				continue
 			}
-			termed[pid] = true
+			termed[target] = true
 			// ignored: a process gone between the listing and the signal is the end wanted
-			_ = syscall.Kill(pid, sig)
+			_ = signalLaneProcess(target, sig)
 			if sig == syscall.SIGTERM {
-				_ = syscall.Kill(pid, syscall.SIGCONT) // ignored: as above
+				_ = signalLaneProcess(target, syscall.SIGCONT) // ignored: as above
 			}
 		}
 		return len(pids) == 0
@@ -68,7 +75,7 @@ func ReapLane(sid int, mark string, grace time.Duration) (found, survived int) {
 			time.Sleep(25 * time.Millisecond)
 		}
 	}
-	left, _ := laneProcs(sid, mark) // ignored: as above
+	left, _ := laneProcs(ownedSession(), mark) // ignored: as above
 	return len(seen), len(left)
 }
 
@@ -80,4 +87,28 @@ func laneSession(sid, own int) int {
 		return 0
 	}
 	return sid
+}
+
+// laneProcess is the birth observed while listing, not just a reusable PID.
+type laneProcess struct {
+	pid     int
+	started string
+}
+
+// signalLaneProcess opens the OS process handle before revalidating its birth.
+// Linux uses the Go runtime's pidfd handle; systems without one revalidate the
+// kernel birth immediately before signalling but cannot make those two calls atomic.
+func signalLaneProcess(target laneProcess, sig os.Signal) error {
+	if target.started == "" || target.started == "-" {
+		return os.ErrProcessDone
+	}
+	proc, err := os.FindProcess(target.pid)
+	if err != nil {
+		return err
+	}
+	defer proc.Release() // ignored: releases this inspection handle only
+	if LaneStartStamp(target.pid) != target.started {
+		return os.ErrProcessDone
+	}
+	return proc.Signal(sig)
 }

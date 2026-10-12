@@ -615,7 +615,7 @@ func (r *nativeRunner) addLane(name string, c *nativeChild) {
 // a kill). It says so on the lane's LANE END line, reaped=<the processes it found alive and
 // killed>, with survived=<n> when any outlived the kill, and drops the lane from the running.
 func (r *nativeRunner) endLane(c *nativeChild, name, mark string, sid int) {
-	found, survived := swarm.ReapLane(sid, mark, swarm.TerminateGrace)
+	found, survived := swarm.ReapLane(sid, mark, c.started, swarm.TerminateGrace)
 	switch {
 	case r.out == nil:
 	case survived > 0:
@@ -649,8 +649,8 @@ func (r *nativeRunner) endLanes() int {
 	r.mu.Unlock()
 	for _, c := range lanes {
 		if c.proc != nil {
-			if err := c.proc.Signal(syscall.SIGTERM); err != nil {
-				_ = c.proc.Kill() // ignored: a process already gone is the end wanted
+			if err := c.signal(syscall.SIGTERM); err != nil {
+				_ = c.signal(os.Kill) // ignored: a process already gone is the end wanted
 			}
 		}
 	}
@@ -662,7 +662,7 @@ func (r *nativeRunner) endLanes() int {
 		case <-time.After(time.Until(deadline)):
 		}
 		if c.proc != nil {
-			_ = c.proc.Kill() // ignored: the wait on done reads the end
+			_ = c.signal(os.Kill) // ignored: the wait on done reads the end
 		}
 		// the reap after the kill is bounded by its own two graces; an adopted lane's
 		// watch reads the death within a second
@@ -701,11 +701,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
-		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read"}
+		proc, started, why := adoptLane(pidPath, slot, pid)
+		if why != nil {
+			return nil, why
+		}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
 		r.addLane(name, c)
 		go func() {
-			for processAlive(pid) {
+			defer proc.Release() // ignored: the adopted process handle, after its final observation
+			for c.adoptedAlive() {
 				time.Sleep(time.Second)
 			}
 			// an adopted lane ends as one this member started: its session (native led one
@@ -812,12 +816,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		logf.Close()
 		return nil, err
 	}
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+" "+swarm.LaneStartStamp(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
 		// the child runs; only a restart's way back to it is lost, so the member says so and goes on
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read"}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
 	r.addLane(name, c)
 	go func() {
 		c.err = cmd.Wait()
@@ -926,7 +930,11 @@ func livePID(path string) int {
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	fields := strings.Fields(string(b))
+	if len(fields) == 0 {
+		return 0
+	}
+	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 || !processAlive(pid) {
 		return 0
 	}
@@ -954,6 +962,10 @@ type nativeChild struct {
 	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
 	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
 	proc *os.Process
+	// A restart has no parent-child wait ownership: every signal and observation must
+	// still match the durable birth identity and the exact launch mark (SPEC-SWARM).
+	adopted       bool
+	started, mark string
 }
 
 // StopGrace is how long a native child told to stop by the machine's stop has to end by
@@ -964,17 +976,17 @@ const StopGrace = 60 * time.Second
 // signal, killed), its working tree and log left as they are, and killed if it is still
 // there after StopGrace. It returns native's pid, the evidence the lane record names.
 func (c *nativeChild) Stop() int {
-	if c.proc == nil {
+	if c.proc == nil || (c.adopted && !c.adoptedAlive()) {
 		return 0
 	}
-	if err := c.proc.Signal(syscall.SIGTERM); err != nil {
-		_ = c.proc.Kill() // ignored: a process already gone is the end wanted
+	if err := c.signal(syscall.SIGTERM); err != nil {
+		_ = c.signal(os.Kill) // ignored: a process already gone is the end wanted
 	}
 	time.AfterFunc(StopGrace, func() {
 		select {
 		case <-c.done:
 		default:
-			_ = c.proc.Kill() // ignored: the wait on done reads the end
+			_ = c.signal(os.Kill) // ignored: the wait on done reads the end
 		}
 	})
 	return c.proc.Pid

@@ -102,7 +102,7 @@ func TestReapLaneEndsItsSessionAndItsMarkAndNothingElse(t *testing.T) {
 	if want == 3 {
 		pids = append(pids, reapPID(t, out))
 	}
-	found, survived := ReapLane(leader.Process.Pid, mark, TerminateGrace)
+	found, survived := ReapLane(leader.Process.Pid, mark, LaneStartStamp(leader.Process.Pid), TerminateGrace)
 	require.Equal(t, want, found, "the leader and each sleeper of the lane")
 	require.Zero(t, survived)
 	for _, pid := range pids {
@@ -118,7 +118,7 @@ func TestReapLaneOfAnEmptyLaneFindsNothing(t *testing.T) {
 	leader := exec.Command("/bin/sh", "-c", "exit 0")
 	leader.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	require.NoError(t, leader.Run())
-	found, survived := ReapLane(leader.Process.Pid, filepath.Join(t.TempDir(), "slot"), TerminateGrace)
+	found, survived := ReapLane(leader.Process.Pid, filepath.Join(t.TempDir(), "slot"), "departed", TerminateGrace)
 	require.Zero(t, found)
 	require.Zero(t, survived)
 }
@@ -136,4 +136,19 @@ func TestLaneSessionIsNeverTheAskersOwn(t *testing.T) {
 	} {
 		require.Equal(t, c.want, laneSession(c.sid, c.own), "sid %d own %d", c.sid, c.own)
 	}
+}
+
+// A numeric session ID reused for another process, or a listed PID whose birth
+// changed before signalling, gives no authority over the replacement process.
+func TestLaneReapRefusesAReusedProcessIdentity(t *testing.T) {
+	t.Parallel()
+	stranger := startStranger(t, os.Environ())
+	pid := stranger.Process.Pid
+	mark := filepath.Join(t.TempDir(), "absent-lane")
+	found, survived := ReapLane(pid, mark, "old-birth", TerminateGrace)
+	require.Zero(t, found)
+	require.Zero(t, survived)
+	require.True(t, reapLive(pid))
+	require.ErrorIs(t, signalLaneProcess(laneProcess{pid: pid, started: "old-birth"}, syscall.SIGTERM), os.ErrProcessDone)
+	require.True(t, reapLive(pid), "the PID number now names a different process")
 }

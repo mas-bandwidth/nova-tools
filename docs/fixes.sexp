@@ -90,7 +90,11 @@
     launch's slot> (native hands NOVA_SWARM_ names to its harness, and every process inherits it). At
     every lane end (finish ok, finish failed, idle reap, deadline, the machine's stop with its lane
     cancel and stop-return, the member's own stop at its drain bound or an interrupt, and an adopted
-    lane's end) pkg/swarm ReapLane ends every process in that session or carrying that exact mark:
+    lane's end) pkg/swarm ReapLane ends every process in that session or carrying that exact mark.
+    Restart adoption requires the PID record's kernel birth identity and exact lane mark; legacy
+    or mismatched live records are refused without signalling or replacing them. The adopted watch
+    and stop recheck identity; cleanup validates each listed birth before signalling through an OS
+    process handle (pidfd on supporting Linux kernels; birth-check-to-signal is not atomic elsewhere):
     a terminate, a bounded grace, a kill. The member's LANE END line says reaped=<n> (and survived=<n>
     when any outlived the kill). A process that both empties its environment and leaves the session
     escapes. Tests, red first on the unpatched tree: cmd/nova-swarm

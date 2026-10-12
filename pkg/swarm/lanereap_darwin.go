@@ -19,7 +19,7 @@ const darwinZombie = 5
 // (mark != "", the environment half of sysctl kern.procargs2, one exact entry, never the
 // command line before it). A zombie is not live. A process whose records this user may not
 // read is not listed.
-func laneProcs(sid int, mark string) ([]int, bool) {
+func laneProcs(sid int, mark string) ([]laneProcess, bool) {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return nil, false
@@ -29,20 +29,21 @@ func laneProcs(sid int, mark string) ([]int, bool) {
 	if mark != "" {
 		want = []byte(LaneEnv + "=" + mark)
 	}
-	var out []int
+	var out []laneProcess
 	for i := range procs {
 		pid := int(procs[i].Proc.P_pid)
 		if pid <= 1 || pid == self || procs[i].Proc.P_stat == darwinZombie {
 			continue
 		}
+		started := LaneStartStamp(pid)
 		if sid > 0 {
 			if s, err := unix.Getsid(pid); err == nil && s == sid {
-				out = append(out, pid)
+				out = append(out, laneProcess{pid: pid, started: started})
 				continue
 			}
 		}
 		if want != nil && procargsEnvHolds(pid, want) {
-			out = append(out, pid)
+			out = append(out, laneProcess{pid: pid, started: started})
 		}
 	}
 	return out, true

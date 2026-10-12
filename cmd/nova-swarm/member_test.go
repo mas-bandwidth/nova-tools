@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
@@ -621,38 +622,31 @@ func TestLocalChildAdmissionLeavesExistingDefaultsUnchanged(t *testing.T) {
 	require.FileExists(t, marker)
 }
 
-// TestALiveChildIsAdoptedNotRunTwice pins the restart path: a launch whose
-// pid file names a live process is adopted, not started again. The pid file
-// here names this test's own process; Start starts nothing (no marker, no slot
-// or card file made, the pid file untouched) and the child it returns is not
-// done while that pid is alive.
+// TestALiveChildIsAdoptedNotRunTwice pins recovery of a proved live launch:
+// its birth record and exact lane marker authorize adoption without a second run.
 func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	t.Parallel()
 	r, slots, marker := markerRunner(t)
 	p := member.Packet{Card: "c1", Kind: "work", Gen: 2, Attempt: 1, Epoch: 7, Branch: "work/c1"}
 	name := launchName(p)
 	pidPath := filepath.Join(slots, name+".pid")
-	self := strconv.Itoa(os.Getpid()) + "\n"
-	write(t, pidPath, self)
+	lane := identityLane(t, filepath.Join(slots, name))
+	record := strconv.Itoa(lane.Process.Pid) + " " + swarm.LaneStartStamp(lane.Process.Pid) + "\n"
+	write(t, pidPath, record)
 	r.maxLoad = 32
-	r.load = hostload.Source{Load1: func() (float64, bool) {
-		require.Fail(t, "the load was read while adopting an existing child")
-		return 35, true
-	}}
-	// Removing the `if pid := livePID(pidPath); pid > 0 {` adoption branch in
-	// nativeRunner.Start makes this fail: a second child is started over the
-	// first (the slot and card file appear, the pid file is overwritten).
+	r.load = hostload.Source{Load1: func() (float64, bool) { require.Fail(t, "load read while adopting an existing child"); return 35, true }}
 	ch, err := r.Start(p)
 	require.NoError(t, err)
-	require.False(t, ch.Done(), "the adopted child is done while its pid is alive")
-	b, _ := os.ReadFile(pidPath)
-	require.Equal(t, self, string(b), "the pid file was rewritten: %q", b)
-	for _, name := range []string{name, name + ".card.md", name + ".native.log"} {
-		_, err := os.Stat(filepath.Join(slots, name))
-		assert.True(t, os.IsNotExist(err), "%s exists: a launch was begun over a live one (%v)", name, err)
+	require.False(t, ch.Done())
+	b, err := os.ReadFile(pidPath)
+	require.NoError(t, err)
+	assert.Equal(t, record, string(b))
+	for _, absent := range []string{name, name + ".card.md", name + ".native.log"} {
+		assert.NoFileExists(t, filepath.Join(slots, absent))
 	}
-	_, err = os.Stat(marker)
-	require.True(t, os.IsNotExist(err), "the harness path ran: %v", err)
+	assert.NoFileExists(t, marker)
+	require.NoError(t, lane.Process.Kill())
+	require.Eventually(t, ch.Done, 10*time.Second, 10*time.Millisecond)
 }
 
 // TestADeadPidFileIsIgnored pins the other half: a pid file that names a

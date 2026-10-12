@@ -14,7 +14,7 @@ import (
 // ""). It reads the kernel's own records: field 3 (state) and field 6 (session) of
 // /proc/<pid>/stat, and /proc/<pid>/environ, one exact NUL-separated entry, never a command
 // line. A zombie is not live. A process whose records this user may not read is not listed.
-func laneProcs(sid int, mark string) ([]int, bool) {
+func laneProcs(sid int, mark string) ([]laneProcess, bool) {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, false
@@ -24,18 +24,19 @@ func laneProcs(sid int, mark string) ([]int, bool) {
 	if mark != "" {
 		want = []byte(LaneEnv + "=" + mark)
 	}
-	var out []int
+	var out []laneProcess
 	for _, e := range ents {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil || pid <= 1 || pid == self {
 			continue
 		}
+		started := LaneStartStamp(pid)
 		state, session, ok := procStateSession(pid)
 		if !ok || state == "Z" || state == "X" {
 			continue
 		}
 		if (sid > 0 && session == sid) || (want != nil && environHolds(pid, want)) {
-			out = append(out, pid)
+			out = append(out, laneProcess{pid: pid, started: started})
 		}
 	}
 	return out, true
