@@ -160,19 +160,19 @@ var swarmAudit = audit.Config{
 		// member.go: bufio only scans a RESULT.md line by line and holds no writer; what
 		// it reads is kept as values (the head, the one-line report) that reach a stream
 		// only as arguments of nova-sprint's verbs, never as a print of this binary.
-		// pkg/member is the fleet member's loop; it prints only through the writer
+		// nova-sprint/pkg/member is the fleet member's loop; it prints only through the writer
 		// this verb hands it, and every argument it prints is a card id, a count or a
 		// verb name from the sprint's own JSON.
-		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/pkg/member"`,
+		`"bufio"`, `"github.com/mas-bandwidth/nova-sprint/pkg/member"`,
 		// member.go calls only log.Redact, a pure string transformer, on what a failed
 		// sprint verb printed, as the server answered it, before it reaches the member's
 		// writer. It holds no writer here; the transformed value is escaped and bounded by
-		// sprintFailureOutput before pkg/member can print it.
+		// sprintFailureOutput before nova-sprint/pkg/member can print it.
 		`"github.com/mas-bandwidth/nova-tools/pkg/log"`,
 		// member.go hands pkg/sprintwire's Worker to the member as its sprint (--server):
 		// it sends a verb's arguments to the sprint's server and returns the answer as a
 		// value. It holds no writer and prints nothing; a failed verb's words go through
-		// sprintFailureOutput before pkg/member can print them.
+		// sprintFailureOutput before nova-sprint/pkg/member can print them.
 		`"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
@@ -214,6 +214,8 @@ var swarmAudit = audit.Config{
 		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
 		// one parser the frame and the deal share. It holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"`,
+		// nova-sprint/cardhdr: the canonical member reads card classes and model headers as values.
+		`"github.com/mas-bandwidth/nova-sprint/pkg/cardhdr"`,
 		// harness (doctor.go, member.go, native.go) is the harness words: which program a
 		// binary is (KindOf) and whether it is headless. Standard library only, no writer,
 		// prints nothing; a kind reaches a line only through oneline.Field.
@@ -222,6 +224,8 @@ var swarmAudit = audit.Config{
 		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
 		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.
 		`"github.com/mas-bandwidth/nova-tools/pkg/cardcost"`,
+		// nova-sprint/cardcost: the canonical member shares the usage value and renders no stream here.
+		`"github.com/mas-bandwidth/nova-sprint/pkg/cardcost"`,
 		// math/big (main.go, native.go, nativesample.go) holds the dollar budget and compares
 		// a cost with it (#5094): exact arithmetic on values, no writer, no stream.
 		`"math/big"`,
@@ -241,6 +245,8 @@ var swarmAudit = audit.Config{
 		// hostload (member.go) samples the machine's CPU percent once a second into a
 		// ring the member's beat reads; it returns numbers and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/pkg/hostload"`,
+		// nova-sprint/hostload: the canonical member samples CPU into numeric beat values.
+		`"github.com/mas-bandwidth/nova-sprint/pkg/hostload"`,
 		// yield (native.go, member.go) calls setpriority on this process and returns an error,
 		// or is a constant (Supported); it holds no writer and prints nothing. Its error
 		// reaches a stream only through refuseNative, which escapes it.

@@ -21,17 +21,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-sprint/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-sprint/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-sprint/pkg/hostload"
+	"github.com/mas-bandwidth/nova-sprint/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 	"github.com/mas-bandwidth/nova-tools/pkg/binstamp"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
-	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
 	"github.com/mas-bandwidth/nova-tools/pkg/gocache"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness"
-	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 	"github.com/mas-bandwidth/nova-tools/pkg/log"
-	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
@@ -46,9 +46,19 @@ import (
 // from the sprint, pushes the commit of every work card whose child ended and
 // reports it, takes up to its width and starts each card taken as one child
 // through `nova-swarm native`. The fleet table is the dispatcher; the loop is
-// pkg/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
+// nova-sprint/pkg/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
 // run --listen`), the one writer; this machine opens no store. send delivers them: nil is
 // the server's client (sprintwire.Client.Do), a test's is the server's own step.
+// memberSprint preserves the worker's confirmed-write outcome across the
+// split repositories. A plain Sprint.Run would lose the distinction between a
+// server refusal and an unconfirmed finish.
+type memberSprint struct{ *sprintwire.Worker }
+
+func (s memberSprint) RunAnswer(args ...string) (int, []byte, member.Answer) {
+	code, out, answer := s.Worker.RunAnswer(args...)
+	return code, out, member.Answer(answer)
+}
+
 func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Context, ...[]string) ([]sprintwire.Result, error)) int {
 	fs := flag.NewFlagSet("member", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -207,7 +217,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if send == nil {
 		send = newSprintDialer(*server).do
 	}
-	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
+	sp := memberSprint{&sprintwire.Worker{Send: send, Failed: sprintFailureOutput}}
 	// a member hands native the decide key when its environment holds it, or when
 	// --pass named it and this process read it (keys.go): a reader's native asks the
 	// decide read with it, a worker's the gate decision of a red gate, and neither
@@ -364,7 +374,7 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 	if lr.stamp != nil {
 		began = lr.stamp()
 	}
-	// the beat goes on its own clock, apart from the work pass (pkg/member BeatLoop): one
+	// the beat goes on its own clock, apart from the work pass (nova-sprint/pkg/member BeatLoop): one
 	// now, so the member is up before its first pass, then one every interval while the pass
 	// goes on, ending with this loop
 	if err := m.Beat(); err != nil {

@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-sprint/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // argvEnv reads one name out of the native-argv.log native writes into the slot.

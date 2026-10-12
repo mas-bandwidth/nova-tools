@@ -9,6 +9,7 @@ tool (
 )
 
 require (
+	github.com/mas-bandwidth/nova-sprint v1.2.14-0.20261012025256-854dae338d78
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/client9/misspell v0.3.4
 	github.com/jackc/pgx/v5 v5.11.0

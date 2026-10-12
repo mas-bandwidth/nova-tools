@@ -2320,3 +2320,29 @@ internal/ci/seatplay_functional_test.go the seat play's adoption test builds and
 cmd/nova-swarm/member_functional_test.go its one test drove the member loop against a built ./cmd/nova-sprint, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); owed in nova-sprint. driveBase and memberCard moved to contract_cases_functional_test.go
 cmd/nova-swarm/contract_functional_test.go both tests (the scripted child end to end, walled and not) ran the card through a built ./cmd/nova-sprint, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); owed in nova-sprint. realWallBackend moved to step_functional_test.go
 internal/ci/testdata/toolanswers/cmd/nova-sprint.txt nova-sprint's tool-answers shard; the tool left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7), so its row has no site here
+pkg/member/attempt_test.go moved to nova-sprint/pkg/member/fleet_attempt_test.go with the canonical member implementation
+pkg/member/background_review_test.go moved to nova-sprint/pkg/member/fleet_background_review_test.go with the canonical member implementation
+pkg/member/cardtext_wall_test.go moved to nova-sprint/pkg/member/fleet_cardtext_wall_test.go with the canonical member implementation
+pkg/member/cost_test.go moved to nova-sprint/pkg/member/fleet_cost_test.go with the canonical member implementation
+pkg/member/end_ended_behaviour_test.go moved to nova-sprint/pkg/member/fleet_end_ended_behaviour_test.go with the canonical member implementation
+pkg/member/epoch_test.go moved to nova-sprint/pkg/member/fleet_epoch_test.go with the canonical member implementation
+pkg/member/finish_refused_test.go moved to nova-sprint/pkg/member/fleet_finish_refused_test.go with the canonical member implementation
+pkg/member/lifecycle_review_test.go moved to nova-sprint/pkg/member/fleet_lifecycle_review_test.go with the canonical member implementation
+pkg/member/member_cover_test.go moved to nova-sprint/pkg/member/fleet_member_cover_test.go with the canonical member implementation
+pkg/member/member_test.go moved to nova-sprint/pkg/member/fleet_member_test.go with the canonical member implementation
+pkg/member/packets_test.go moved to nova-sprint/pkg/member/fleet_packets_test.go with the canonical member implementation
+pkg/member/progress_test.go moved to nova-sprint/pkg/member/fleet_progress_test.go with the canonical member implementation
+pkg/member/push_test.go moved to nova-sprint/pkg/member/fleet_push_test.go with the canonical member implementation
+pkg/member/queue_cooldown_review_test.go moved to nova-sprint/pkg/member/fleet_queue_cooldown_review_test.go with the canonical member implementation
+pkg/member/read_card_test.go moved to nova-sprint/pkg/member/fleet_read_card_test.go with the canonical member implementation
+pkg/member/read_finding_test.go moved to nova-sprint/pkg/member/fleet_read_finding_test.go with the canonical member implementation
+pkg/member/read_retry_ghost_test.go the ghost-read regression is already in nova-sprint/pkg/member/read_retry_test.go; the fleet now runs that canonical member
+pkg/member/reader_row_test.go moved to nova-sprint/pkg/member/fleet_reader_row_test.go with the canonical member implementation
+pkg/member/reader_width_test.go moved to nova-sprint/pkg/member/fleet_reader_width_test.go with the canonical member implementation
+pkg/member/report_side_by_side_test.go moved to nova-sprint/pkg/member/fleet_report_side_by_side_test.go with the canonical member implementation
+pkg/member/script_verify_behaviour_test.go moved to nova-sprint/pkg/member/fleet_script_verify_behaviour_test.go with the canonical member implementation
+pkg/member/script_verify_test.go moved to nova-sprint/pkg/member/fleet_script_verify_test.go with the canonical member implementation
+pkg/member/staging_test.go moved to nova-sprint/pkg/member/fleet_staging_test.go with the canonical member implementation
+pkg/member/stepsha_test.go moved to nova-sprint/pkg/member/fleet_stepsha_test.go with the canonical member implementation
+pkg/member/stop_test.go moved to nova-sprint/pkg/member/fleet_stop_test.go with the canonical member implementation
+pkg/member/tree_test.go moved to nova-sprint/pkg/member/fleet_tree_test.go with the canonical member implementation

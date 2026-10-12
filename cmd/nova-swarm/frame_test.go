@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/mas-bandwidth/nova-sprint/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // The frame is the packet's (docs/SPEC-CARD-CONTRACT.md layer 1): the brief's

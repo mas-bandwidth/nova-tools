@@ -6,6 +6,8 @@
 # repositories' tools), built once per platform the fleet runs on, in ~/.local/bin on every machine, the
 # machine's nova_build fact (group_vars nova_build_file) set to it, and the
 # function library that build embeds on the store.
+# The installed nova-swarm member binary links nova-sprint/pkg/member at the
+# version pinned in nova_source/go.mod; that repository owns the loop.
 #
 #   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> -e nova_sprint_release=<nova-sprint release dir> --check --diff | cat
 #   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> -e nova_sprint_release=<nova-sprint release dir> | cat

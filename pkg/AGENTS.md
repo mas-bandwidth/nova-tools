@@ -32,7 +32,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `hygiene/` | clean checkout and leak assertions | `go test ./pkg/hygiene` | `go test ./pkg/hygiene` |
 | `keyshape/` | cryptographic key format verification | `go test ./pkg/keyshape` | `go test ./pkg/keyshape` |
 | `log/` | structured logging helpers | `go test ./pkg/log` | `go test ./pkg/log` |
-| `member/` | a sprint fleet member's loop: beat, queue, push and judge the finish, take to width, each card a child | `go test ./pkg/member` | `go test ./pkg/member` |
 | `nsprint/` | the shared Redis store and login, its Functions, and the verb flags the living tools use | `go test ./pkg/nsprint/...` | `go test ./pkg/nsprint/...` |
 | `ntable/` | a general Redis-backed table: ordered sets per cell, projections, folds, the render | `go test ./pkg/ntable` | `go test ./pkg/ntable` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./pkg/onboarding` | `go test ./pkg/onboarding` |

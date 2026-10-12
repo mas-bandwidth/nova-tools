@@ -9,7 +9,7 @@ finishes the card, `gh pr review` finishes a read. The child pushes nothing and 
 the member does both, outside the wall, with its own credential.
 
 The code is `pkg/cardcontract` (the frame, the result shape, the profiles and their shims),
-`pkg/member` (the finish), `cmd/nova-swarm` (native installs the frame; the member pushes
+`nova-sprint/pkg/member` (the finish), `cmd/nova-swarm` (native installs the frame; the member pushes
 and opens the pull request). The model is `tla/CardContract.tla`.
 
 ## 1. The layers, bottom up
@@ -19,7 +19,7 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 | 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, which staging carries onto the tip of the base branch, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
 | 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin), a rework at the tip of its base branch with that commit's work carried on top where it applies cleanly, and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch`, `TestAReworkIsStagedAtTheTipOfItsBase`, `TestAReworkCarriesThePreviousWorkThatApplies`, `TestAReworkWhoseWorkDoesNotApplyIsTheBareTip` (functional tier) |
 | 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `pkg/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
-| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `pkg/member`, the twin tests in mas-bandwidth/nova-sprint, `tla/CardContract.tla` |
+| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `nova-sprint/pkg/member`, the twin tests in mas-bandwidth/nova-sprint, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
 
 `STAGE OK` reports total staging `secs` and cumulative Git command seconds for `clone`

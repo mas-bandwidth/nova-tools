@@ -19,10 +19,9 @@ cmd/nova-friend/wakeping.go world.wakeFriends wake ping
 cmd/nova-friend/wakeping.go world.wakePass wake ping
 cmd/nova-friend/main.go world.waitPong wake ping pong wait
 
-# the fleet member and reader (cmd/nova-swarm member, pkg/member)
+# the fleet member and reader command (the BeatLoop lives in nova-sprint/pkg/member)
 cmd/nova-swarm/member.go cmdMember member pass
 cmd/nova-swarm/member.go memberLoop member pass
-pkg/member/member.go Member.BeatLoop member beat
 
 # the coordinator's inbox and wake (cmd/nova-sprint)
 

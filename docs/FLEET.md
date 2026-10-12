@@ -186,11 +186,14 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 | the friends' bus | `nova-redis install bus` | `nova-redis serve` on 6381, its data in `~/nova-bench/redis/bus` |
 | the sprint's server | `nova-sprint install server --listen <address:port>` | `nova-sprint run --listen` |
 | the machine's member | `nova-sprint install member --as <m> --server <address:port>` | `nova-swarm member` |
+
 | the seat's push loop | `nova-sprint install seat-push` | `nova-sprint inbox --wait --push seat` |
 | the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
 | the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
 | the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
 | the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute |
+
+`nova-sprint/pkg/member` owns the one fleet member loop. `nova-swarm member` is its runner and command adapter, built from nova-tools with a pinned nova-sprint module; the release play installs that pinned binary for member units. The functional sprint tests and the fleet command therefore exercise the same loop.
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;

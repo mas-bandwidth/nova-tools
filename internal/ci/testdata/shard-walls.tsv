@@ -86,7 +86,6 @@ pkg/hostload	1.1	@local	-
 pkg/hygiene	0.5	@run37411066588	self-hosted
 pkg/keyshape	0.0	@run37411066588	self-hosted
 pkg/log	0.0	@run37411066588	self-hosted
-pkg/member	1.3	@local	-
 internal/memindex	0.0	@run37411066588	self-hosted
 internal/nogh	0.1	@local	-
 pkg/nsprint/fn	0.2	@run37411066588	self-hosted

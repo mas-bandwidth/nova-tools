@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/mas-bandwidth/nova-sprint/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
-	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // THE ATTEMPT DECISION (docs/SPEC-SPRINT.md section 2; pkg/decide, attempt.go). A work

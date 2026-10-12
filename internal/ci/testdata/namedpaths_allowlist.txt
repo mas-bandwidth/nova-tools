@@ -120,3 +120,5 @@ internal/workgh nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (s
 internal/workgh/testdata/reliable nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/worklang nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 tools/sprintsize nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
+
+pkg/member/member.go moved to mas-bandwidth/nova-sprint as the one fleet member loop; the historical audit record names the former path

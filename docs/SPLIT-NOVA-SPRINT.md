@@ -96,7 +96,7 @@ uses, measured with a Go AST scan of the moved code:
 - `pkg/goenv` (1): Clean
 - `pkg/hostload` (7): HowCPU HowLoad1 Local MaxPercent Measure Source State
 - `pkg/hygiene` (1): MatchGlob
-- `pkg/member` (7): Child Config Member New Packet Push Result
+- `nova-sprint/pkg/member` (7): Child Config Member New Packet Push Result
 - `pkg/nsprint/fn` (6): Library Load Loaded Source Spec Sum
 - `pkg/nsprint/redisauth` (3): DefaultPasswordEnv PasswordEnvEnv UserEnv
 - `pkg/nsprint/testutil` (1): Start
@@ -128,7 +128,7 @@ Each card is "make it usable by a stranger building a different workflow". The v
 | package | sprint concept leaking in (API, comments, errors) | the general form |
 |---|---|---|
 | `pkg/swarm` | card (275 mentions), brief, reader, coordinator, seat; `CardHeader*`, `CardRepoURL`, `StagedBrief`, `ReadCardBase` | a **task** file with a header and rules: `TaskHeader*`, `TaskRepoURL`, `StagedTask`; "reviewer" in place of reader |
-| `pkg/member` | sprint member loop, cards, readers, tiers | a **worker loop** against a work server: beat, take, report, push; the server is an interface and nova-sprint is one implementation |
+| `nova-sprint/pkg/member` | sprint member loop, cards, readers, tiers | a **worker loop** against a work server: beat, take, report, push; the server is an interface and nova-sprint is one implementation |
 | `pkg/sprintwire` | "sprint's server", `Worker` verbs | `workwire`: a batch of verbs to a **work server**, request, reply, client; no sprint words in its types |
 | `pkg/decide` | card, brief, judgment, tier; `AttemptOf`, `BriefOf`, `ClassNeedsPro` | typed **decisions** over a **subject** (text plus diff). The card questions (read, score, attempt, grade, gate, brief) become schemas the caller supplies, not types built into the package |
 | `pkg/cardcontract` | card, sprint, brief, tier, readers | the **task contract**: the frame around a task's work (base, branch, push, finish) |

@@ -12,7 +12,7 @@ import (
 
 // A member and a reader reach the sprint server through one dialer: every verb
 // is sent to the server, and a verb the server did not answer is tried again
-// next pass. The dialer is what the loop already does around that (pkg/member,
+// next pass. The dialer is what the loop already does around that (nova-sprint/pkg/member,
 // BeatLoop and Tick): after a connection refused or reset it backs off, one
 // second doubling to RedialLast, and it re-dials with a client rebuilt from
 // scratch, so it never parks on a connection the server no longer holds and its
