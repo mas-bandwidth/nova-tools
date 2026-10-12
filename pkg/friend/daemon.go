@@ -311,7 +311,8 @@ type Daemon struct {
 	Notifications        *NotificationPolicy
 
 	m           *Machine
-	noPresent   bool // a test's: no present, so a rig delivers its messages as they come
+	idleNow     atomic.Bool // the last step found no dealt work and no live session (Idle; docs/SPEC-FRIEND.md, idle)
+	noPresent   bool        // a test's: no present, so a rig delivers its messages as they come
 	status      Status
 	written     time.Time
 	limitSaid   time.Time // the reset of the limit last said on the record
@@ -848,6 +849,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.retry = time.Time{}
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
 		}
+		// the idle signal the spend cap reads (Idle): no dealt work and no live
+		// session, so a turn is launched only when there is one to launch. It is
+		// stored after the step's own lane work, so the just-dealt card the lanes
+		// hand this step is never seen as idle (docs/SPEC-FRIEND.md, idle).
+		live := d.Mailbox != nil && d.Mailbox.Live() != ""
+		d.idleNow.Store(!live && l.busy == nil && len(l.hand) == 0 && len(l.dealt) == 0 && !l.wake &&
+			!l.presentOwed(now) && !l.lanes.running() && len(l.reads.running) == 0)
 		if l.broken && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, d.status.SessionID, d.status.SessionReason), fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
 		} else if l.unable != "" && !l.told {
@@ -976,6 +984,13 @@ func (l *loop) proof(now time.Time) bool {
 	d.status.Push, d.status.PushNonce = PushUnproven, nonce
 	return false
 }
+
+// Idle reports whether the last step found the friend with no dealt work and
+// no live session: nothing in hand, no dealt brief, no turn, no wake or
+// present owed, no lane or read running, and no live mailbox conversation
+// (docs/SPEC-FRIEND.md, idle). cmd/nova-friend wires it to the spend cap's
+// idle seam, so a daemon with nothing dealt launches no turn at all.
+func (d *Daemon) Idle() bool { return d.idleNow.Load() }
 
 // held is the cards she holds: her row as the server last said it (Held), else
 // Cards, oldest first, else the queue file's queued and working tasks, in its order.

@@ -1577,6 +1577,7 @@ flags:
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
+  --spend-cap <float>  the spend cap in USD per day per provider; at the cap turns stop and one judgment is raised (default: $20)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --token-cap <int>  tokens one card may spend, all kinds, before its lane is stopped with a HOLD report; 0 none (default: the row's row_token_cap)
   --wall-jobs <string>  job directories outside --dir that are writable inside the lane's wall, comma-separated
@@ -1634,6 +1635,7 @@ flags:
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
+  --spend-cap <float>  the spend cap in USD per day per provider; at the cap turns stop and one judgment is raised (default: $20)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  the friend's width, from the nova-config friend row; 0 is unknown
@@ -1889,6 +1891,7 @@ flags:
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
+  --spend-cap <float>  the spend cap in USD per day per provider; at the cap turns stop and one judgment is raised (default: $20)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --wall-jobs <string>  job directories outside --dir that are writable inside the lane's wall, comma-separated
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)

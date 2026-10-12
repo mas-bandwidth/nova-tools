@@ -2,12 +2,15 @@ package friend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,8 +45,49 @@ type DSH struct {
 	Sessions     string    // the sessions root; DSH_HOME/sessions, else ~/.dsh/sessions, when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
 
+	mu    sync.Mutex
+	cost  float64      // total spend in USD, as the harness's usage report says it
 	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
+
+// SpentUSD is the cost of every run so far, in US dollars, as the harness's
+// own usage report says it (docs/SPEC-FRIEND.md, spend caps). Each turn's
+// output is read for the cost it names (dshCost): the stream-json result
+// line's total_cost_usd, else a `cost_usd=<n>` token. A turn that names no
+// cost is not counted, and the provider's funds refusal stops the daemon
+// instead of the cap.
+func (d *DSH) SpentUSD() float64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.cost
+}
+
+// dshCost is the turn's cost in USD, as the harness's own usage report in out
+// says it: the stream-json result line's total_cost_usd, else a `cost_usd=<n>`
+// token; 0 when it names none.
+func dshCost(out string) float64 {
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "total_cost_usd") {
+			continue
+		}
+		var r struct {
+			TotalCost float64 `json:"total_cost_usd"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &r) == nil {
+			return r.TotalCost
+		}
+	}
+	if m := dshCostToken.FindStringSubmatch(out); m != nil {
+		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+// dshCostToken is a plain cost token in a turn's output,
+// `cost_usd=<dollars>`, when the harness prints no stream-json result line.
+var dshCostToken = regexp.MustCompile(`cost_usd=([0-9.]+)`)
 
 // DSHArgs is the argument list of one delivery; the text travels on stdin
 // ("-"), so it is never parsed as an argument.
@@ -111,6 +155,11 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 			d.turns.saw(id, 0, r)
 			return 0, r // the output is not kept: a credential's name and its lookup stay off the record
 		}
+	}
+	if cost := dshCost(out); cost > 0 { // the harness's own usage report, summed per turn
+		d.mu.Lock()
+		d.cost += cost
+		d.mu.Unlock()
 	}
 	if d.Out != nil && out != "" {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))

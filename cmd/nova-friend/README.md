@@ -82,3 +82,11 @@ The [nova-friend section of the command reference](../../docs/CLI.md#nova-friend
 ## Spec
 
 The contract is [docs/SPEC-FRIEND.md](../../docs/SPEC-FRIEND.md).
+
+Every `run` has a spend cap per day and per provider, read from its config
+($20/day by default, `friend.DefaultSpendCapUSD`); at the cap the daemon stops
+launching turns and raises one judgment to the seat and the owner, and a
+provider refusal for funds (an insufficient balance, a 402) stops its turns at
+once with the same judgment. Spend is measured from the harness's own usage
+report, never estimated. A daemon whose friend has no dealt work and no live
+session does not launch turns at all (docs/SPEC-FRIEND.md, a-friend-daemon-has-a-spend-cap-and-stops-at-a-provider-refusal.w1).

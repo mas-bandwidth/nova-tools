@@ -224,6 +224,13 @@ type Limits struct {
 	// a wake is answered, so the reset is set by a person (friend down --until)
 	// and not guessed again each Rest (usage-limit-reset-read-from-the-message-b.w1).
 	Unread func(text string)
+	// Funds, when set, is handed a failed turn's own wording of a provider
+	// refusal for funds with no reset to wake at (an insufficient balance, a
+	// 402): the reason (ratelimit.ProviderLimit's rule, one layer up). The
+	// daemon wires it to the spend cap, so the refusal stops the turns at once
+	// with the spend-cap judgment instead of the limit's own Rest retry
+	// (docs/SPEC-FRIEND.md, spend caps).
+	Funds func(reason string)
 	// Harness is the harness whose own wording a failed turn is read in
 	// (ParseLimit), and Rest how long it is down when the text names no
 	// reset (DefaultLimitWait when zero): --limit-rest.
@@ -291,11 +298,15 @@ func (l *Limits) see(out string, failed bool) {
 	lim, found := ReadLimit(out, now)
 	uses := ReadRateLimitEvents(out, now)
 	kind, named := "", true
+	funds := false
 	if !strings.Contains(out, `"rate_limit_event"`) && failed {
 		// the harness's own wording of a failed turn, with its kind and a default reset
 		// when it names none; a successful turn that only talks of limits is no limit
 		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok {
 			lim, found, kind, named = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind, hit.Named
+			// a credits wording with no reset to wake at is a provider refusal for
+			// funds, never the harness's own timed limit (ratelimit.ProviderLimit)
+			funds = hit.Kind == KindCredits && !hit.Named
 		}
 	}
 	if found && lim.Limited && kind == "" {
@@ -326,6 +337,9 @@ func (l *Limits) see(out string, failed bool) {
 	}
 	if judge && l.Unread != nil {
 		l.Unread(lim.Reason)
+	}
+	if funds && l.Funds != nil {
+		l.Funds(lim.Reason)
 	}
 }
 

@@ -92,7 +92,9 @@ func markerTools(doc string) []string {
 // leaving everything outside them as it stands.
 func replaceSection(doc, tool, ref string) string {
 	re := regexp.MustCompile(`(?s)(<!-- clidoc:begin ` + regexp.QuoteMeta(tool) + ` -->).*?(<!-- clidoc:end ` + regexp.QuoteMeta(tool) + ` -->)`)
-	return re.ReplaceAllString(doc, "$1"+ref+"$2")
+	// the pasted help is literal: a `$` in it (a default such as `$20`) is never a
+	// regexp group reference, so double it before the replacement expands `$1`/`$2`
+	return re.ReplaceAllString(doc, "$1"+strings.ReplaceAll(ref, "$", "$$")+"$2")
 }
 
 // reference runs tool's help and each verb's -h from binDir and returns the
