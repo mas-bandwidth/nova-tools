@@ -23,19 +23,19 @@ import (
 
 // A real `nova-swarm member` process, over a sprint server, is dealt a read whose child
 // -- the harness -- dies at 134 (an abort an environment death, not a no-result). The
-// member hands the read back with the child's real exit code and the harness that ran it
-// (`read --return ... --exit 134 --harness <h>`), so the store tells the death from a
-// no-result and never spends a redeal on one it could have named (nova-sprint #129, finish
-// --exit/--harness; the member's a-member-reports-a-childs-exit-and-harness). The server is
-// this test's own (--server) and the member's environment is scrubbed, so no seat on the
-// host can forward a verb to a live sprint. Red before the fix: the 134 arrived as a bare
-// no-result, the read --return carrying no --exit and no --harness.
+// member hands the read back with the child's real exit code and the child's harness
+// output (`read --return ... --exit 134 --harness <output>`), so the store tells the death
+// from a no-result and never spends a redeal on one it could have named (nova-sprint #129,
+// finish --exit/--harness; the member's a-member-sends-the-harness-output-not-its-name).
+// The server is this test's own (--server) and the member's environment is scrubbed, so no
+// seat on the host can forward a verb to a live sprint. Red before the fix: the 134
+// arrived as a bare no-result, the read --return carrying no --exit and no --harness.
 func TestARealMemberReportsAChildThatExits134WithItsExitAndHarness(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, buildShared(), "building the binaries these tests run")
-	e := newCaseEnv(t, false)        // a local bare origin, staged with no mirror
-	head := pushedWork(t, e)         // the head under review, on sprint/a-1.w1
-	abort := e.script(t, "exit 134") // the child the member runs: a harness that aborts
+	e := newCaseEnv(t, false)                                        // a local bare origin, staged with no mirror
+	head := pushedWork(t, e)                                         // the head under review, on sprint/a-1.w1
+	abort := e.script(t, "printf 'harness output line\n'; exit 134") // the child the member runs: a harness that aborts
 	sp := &ghostSprint{read: member.Packet{
 		Card: "a-1.r1.m1", Kind: "read", As: "m1", Primary: "a-1", Worker: "m2",
 		Attempt: 1, Gen: 1, Epoch: 1, Head: head, WorkBranch: "sprint/a-1.w1",
@@ -104,5 +104,5 @@ func TestARealMemberReportsAChildThatExits134WithItsExitAndHarness(t *testing.T)
 	require.True(t, sp.taken, "the member took the read"+logs)
 	require.Len(t, returned, 1, "the read whose child aborted was handed back within %s; none means the member held it or reported it as a no-result"+logs, bound)
 	assert.Contains(t, returned[0], "--exit 134", "the child's real exit code, an environment death the store can name"+logs)
-	assert.Contains(t, returned[0], "--harness "+abort, "the harness that ran it"+logs)
+	assert.Contains(t, returned[0], "--harness harness output line", "the child's harness output, not its name"+logs)
 }

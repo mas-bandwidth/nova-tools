@@ -9,26 +9,29 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
-// nativeResult reads one native child's result from a log line it is given, with the
-// harness name the runner started it under.
-func nativeResult(t *testing.T, log, harness string) member.Result {
+// nativeResult reads one native child's result from a log line and a harness output file
+// it is given.
+func nativeResult(t *testing.T, log, output string) member.Result {
 	t.Helper()
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "c1.native.log"), log)
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(job, "harness-output.log"), output)
 	done := make(chan struct{})
 	close(done)
-	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), harness: harness, done: done}
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
 	return c.Result()
 }
 
-// A child that exits 134 carries its real exit code and the harness that ran it, where the
-// member's finish names them (--exit 134 --harness opencode): a 134 abort must not arrive
-// as a no-result (nova-sprint #129; the member's a-member-reports-a-childs-exit-and-harness).
+// A child that exits 134 carries its real exit code and the tail of its harness output,
+// where the member's finish names them (--exit 134 --harness <output>): a 134 abort must
+// not arrive as a no-result (nova-sprint #129;
+// a-member-sends-the-harness-output-not-its-name).
 func TestAChildThatExits134CarriesItsExitAndHarness(t *testing.T) {
 	t.Parallel()
-	r := nativeResult(t, "NATIVE INCOMPLETE label=c1 job=/x rc=134 wall=1.00s sandbox=landlock harness=ok budget=unmetered\n", "opencode")
+	r := nativeResult(t, "NATIVE INCOMPLETE label=c1 job=/x rc=134 wall=1.00s sandbox=landlock harness=ok budget=unmetered\n", "the harness aborted\nlast line\n")
 	assert.Equal(t, 134, r.Exit, "the child's real exit code")
-	assert.Equal(t, "opencode", r.Harness, "the harness that ran it")
+	assert.Equal(t, "the harness aborted\nlast line", r.HarnessOutput, "the child's harness output")
 }
 
 // A 137 child carries its exit too; a child that exits 0 and native's own rc=-1 end carry
@@ -43,7 +46,7 @@ func TestOnlyARealNonZeroExitIsCarried(t *testing.T) {
 		"a clean run carries none":      {log: "NATIVE OK label=c1 job=/x rc=0 wall=1.00s sandbox=landlock harness=ok budget=unmetered\n", exit: 0},
 		"native's own end carries none": {log: "NATIVE INCOMPLETE label=c1 job=/x rc=-1 wall=1.00s sandbox=landlock harness=ok budget=unmetered\n", exit: 0},
 	} {
-		r := nativeResult(t, c.log, "opencode")
+		r := nativeResult(t, c.log, "")
 		assert.Equal(t, c.exit, r.Exit, name)
 	}
 }

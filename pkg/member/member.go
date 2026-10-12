@@ -208,12 +208,14 @@ type Result struct {
 	Carry string
 	// Exit is the child's real exit code, from native's `NATIVE ... rc=` field: 134 an
 	// abort and 137 a kill are an environment death the store must tell from a no-result,
-	// so the finish carries `--exit <n> --harness <name>` (nova-sprint #129, finish
-	// --exit/--harness). 0 for a child that ended at 0, and for one that never ran.
+	// so the finish carries `--exit <n> --harness <the child's harness output>` (nova-sprint
+	// #129, finish --exit/--harness). 0 for a child that ended at 0, and for one that never ran.
 	Exit int
-	// Harness is the harness the child ran under: the program the route names, else the
-	// member's own --harness (Packet.Harness; pkg/harness). "" when no child ran.
-	Harness string
+	// HarnessOutput is the child's harness printed output, the tail of <job>/harness-output.log:
+	// the finish's --harness carries its last HarnessTailLines lines (nova-sprint #129, finish
+	// --harness: the child's harness output, not the harness name; the member's
+	// a-member-sends-the-harness-output-not-its-name). "" when no child ran or it printed nothing.
+	HarnessOutput string
 }
 
 // The gate routes the member acts on (native's NATIVE GATE line): a gate red only on
@@ -2854,18 +2856,34 @@ func usageArgs(r Result) []string {
 // deathFlags is the --exit and --harness a finish or a return carries when the child
 // ended at a non-zero exit code: 134 an abort and 137 a kill are an environment death
 // the store must tell from a no-result, so the sprint never spends a redeal on one it
-// could have named (nova-sprint #129, finish --exit/--harness; the member's
-// a-member-reports-a-childs-exit-and-harness). None for a child that ended at 0 or one
-// that never ran, so a clean finish is unchanged.
+// could have named (nova-sprint #129, finish --exit/--harness). The --harness value is
+// the child's harness output, its last HarnessTailLines lines, not the harness name
+// (the member's a-member-sends-the-harness-output-not-its-name). None for a child that
+// ended at 0 or one that never ran, so a clean finish is unchanged.
 func deathFlags(r Result) []string {
 	if r.Exit == 0 {
 		return nil
 	}
 	args := []string{"--exit", strconv.Itoa(r.Exit)}
-	if r.Harness != "" {
-		args = append(args, "--harness", r.Harness)
+	if tail := harnessTail(r.HarnessOutput); tail != "" {
+		args = append(args, "--harness", tail)
 	}
 	return args
+}
+
+// HarnessTailLines is how many of the child's harness output's last lines the finish's
+// --harness carries (nova-sprint #129, finish --harness): the child's harness output, not
+// the harness name.
+const HarnessTailLines = 40
+
+// harnessTail is the last HarnessTailLines lines of the harness output, without a trailing
+// newline; "" when the output is empty.
+func harnessTail(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > HarnessTailLines {
+		lines = lines[len(lines)-HarnessTailLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // exitArgs is deathFlags for a server that may know the flags, none for one known to

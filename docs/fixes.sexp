@@ -1072,4 +1072,14 @@
     :origin "session report 2026-10-12 ~02:58Z, epoch 19: staging refused every nova-sprint card dealt to
     a member seat, \"no bench mirror for https://github.com/mas-bandwidth/nova-sprint.git\"; the push list in
     the coordinator's bench.yml named only some benches, so what each bench carried drifted. Attempt 2
-    wires the helpers attempt 1 left dead (card every-bench-carries-every-mirror-a-card-can-name.w2)")))
+    wires the helpers attempt 1 left dead (card every-bench-carries-every-mirror-a-card-can-name.w2)")
+  (fix "a-member-sends-the-harness-output-not-its-name" :release "v1.2.15" :status "planned"
+   :title "A member's finish sends the child's harness output, not its name"
+   :text "The member's finish carried the harness name on `--harness`, but nova-sprint's finish `--harness`
+    means the child's harness output, its last 40 lines. `member.deathFlags` now sends those last 40
+    lines, read from `<job>/harness-output.log`, and drops the harness name, since nova-sprint's finish
+    has no separate flag for it. Corrects `a-member-reports-a-childs-exit-and-harness`, which sent the
+    name, and whose first brief put the fix in nova-sprint's pkg/member, which nothing in production calls."
+   :origin "the coordinator, 2026-10-12 ~07:50Z, re-cut after a cold read of 23b82f7: on nova-sprint main the
+    finish verb's --harness means the child's harness output, its last 40 lines, but nova-tools' member sent
+    the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")))
