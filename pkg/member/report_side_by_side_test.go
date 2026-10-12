@@ -396,7 +396,7 @@ func TestAnUnansweredReportWhoseClaimMovedKeepsTheRunAsFailed(t *testing.T) {
 	close(gs.release)
 	<-m.Wake() // the report posted
 	_, err = m.Tick(time.Unix(0, 0))
-	require.Error(t, err, "the collecting pass says the store did not answer")
+	assert.Error(t, err, "the collecting pass says the store did not answer")
 
 	assert.Contains(t, out.String(), "finish c1 ok=false exit=2", "the unanswered report's own line")
 	assert.Contains(t, out.String(), "the outcome is unknown, so the run is kept as failed", "the uncertainty is said")
