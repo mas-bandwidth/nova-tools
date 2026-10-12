@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/pathcase"
 )
 
 // A FILESYSTEM IS NOT A STRING, and this file is the one place in this package that says so.
@@ -88,58 +90,7 @@ func sameDir(a, b string) bool {
 // name that already differs from a slot directory's by case alone, and there a refusal a person
 // can read and edit is worth more than a key file copied inside the wall (rule 6).
 func dirFoldsCase(dir string) bool {
-	return writtenProbeFolds(dir, true)
-}
-
-// recased is one name spelled in another case, or the name itself where it carries no letter
-// to re-case (a slot's digits, most often).
-func recased(name string) string {
-	if lower := strings.ToLower(name); lower != name {
-		return lower
-	}
-	if upper := strings.ToUpper(name); upper != name {
-		return upper
-	}
-	return name
-}
-
-// writtenProbeFolds puts the question to the filesystem by writing IN THE DIRECTORY ASKED
-// ABOUT: one probe file whose name carries capitals, asked for again in another case, and
-// removed either way. The write is the only way to ask a directory about its own lookups, and
-// it happens at LOAD, once per description, in the directory the tool already creates slot
-// directories in -- the spec sentence names it.
-//
-// THE CLIMB IS THE ONE INFERENCE LEFT, and it is only for a directory that IS NOT THERE YET: a
-// path nobody has created cannot be asked, so the nearest existing ancestor answers for it, and
-// that ancestor can be on another filesystem. It does not climb past a directory that IS there
-// and refused the write, because that would answer about a volume nobody asked about.
-// `unanswerable` is what it answers where no write could be made at all -- the one case where
-// the filesystem said nothing, and the caller's own comment says which way it then leans.
-func writtenProbeFolds(dir string, unanswerable bool) bool {
-	d := dir
-	for {
-		if _, err := os.Stat(d); err == nil {
-			break
-		}
-		up := filepath.Dir(d)
-		if up == d {
-			return unanswerable
-		}
-		d = up
-	}
-	f, err := os.CreateTemp(d, "NovaCaseProbe")
-	if err != nil {
-		return unanswerable
-	}
-	name := f.Name()
-	f.Close()
-	defer os.Remove(name)
-	orig, err := os.Lstat(name)
-	if err != nil {
-		return unanswerable
-	}
-	other, err := os.Lstat(filepath.Join(d, recased(filepath.Base(name))))
-	return err == nil && os.SameFile(orig, other)
+	return pathcase.ProbeFolds(dir, true)
 }
 
 // AbsResolved is a path made absolute and then symlink-resolved: the one spelling admission

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/pathcase"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -164,71 +165,6 @@ func TestNamesOneFileAsksTheFilesystem(t *testing.T) {
 	assert.Equal(t, folds, got, "dirFoldsCase of an absent directory = %v, the filesystem folds = %v", got, folds)
 }
 
-// measuredFold is the GROUND TRUTH about one directory: a file written INSIDE it and asked
-// for again in another case. ok is false where the directory would not take the write, which
-// is the one case no measurement can answer.
-func measuredFold(dir string) (folds, ok bool) {
-	f, err := os.CreateTemp(dir, "GroundTruth")
-	if err != nil {
-		return false, false
-	}
-	name := f.Name()
-	f.Close()
-	defer os.Remove(name)
-	orig, err := os.Lstat(name)
-	if err != nil {
-		return false, false
-	}
-	other, err := os.Lstat(filepath.Join(dir, strings.ToLower(filepath.Base(name))))
-	return err == nil && os.SameFile(orig, other), true
-}
-
-// nameFoldsInParent is the answer the REMOVED shortcut gave: the spelling of the directory's
-// own name, looked up in its PARENT. It is kept here as the wrong answer this test is about.
-func nameFoldsInParent(dir string) (folds, ok bool) {
-	base := filepath.Base(dir)
-	lower := strings.ToLower(base)
-	if lower == base {
-		return false, false // no letter to re-case, so the shortcut could not answer either
-	}
-	orig, err := os.Lstat(dir)
-	if err != nil {
-		return false, false
-	}
-	other, err := os.Lstat(filepath.Join(filepath.Dir(dir), lower))
-	return err == nil && os.SameFile(orig, other), true
-}
-
-// caseBoundaryDir finds a directory whose OWN NAME folds one way in its parent while lookups
-// INSIDE it fold the other way. A MOUNT BOUNDARY is where the two can differ -- a
-// case-sensitive volume mounted under the folding `/Volumes`, or the reverse -- and it is the
-// one place a fold inferred from the parent is wrong (Stella's read of #159, comment
-// 5648066751).
-//
-// It looks along the ancestors of `t.TempDir()` up to one level above `os.TempDir()`, which is
-// the builder's own case-sensitive-image setup: `TMPDIR=<volume>/tmp` puts the volume root on
-// that path. The walk is bounded there so that the probe writes land in temp directories and
-// their volume root, never anywhere else on the machine.
-func caseBoundaryDir(t *testing.T) (dir string, folds bool, found bool) {
-	t.Helper()
-	stop := filepath.Dir(filepath.Clean(os.TempDir()))
-	for d := t.TempDir(); ; {
-		inside, okInside := measuredFold(d)
-		byName, okName := nameFoldsInParent(d)
-		if okInside && okName && inside != byName {
-			return d, inside, true
-		}
-		if d == stop {
-			return "", false, false
-		}
-		up := filepath.Dir(d)
-		if up == d {
-			return "", false, false
-		}
-		d = up
-	}
-}
-
 // DEMANDED by Stella's read of #159 (comment 5648066751): `dirFoldsCase` measured the spelling
 // of the directory's own name IN ITS PARENT and treated that as the lookup behaviour INSIDE the
 // directory. Those differ at a mount boundary, and the slot check asks the question about
@@ -242,7 +178,7 @@ func caseBoundaryDir(t *testing.T) (dir string, folds bool, found bool) {
 func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 	t.Parallel()
 
-	boundary, folds, found := caseBoundaryDir(t)
+	boundary, folds, found := pathcase.CaseBoundaryDir(t)
 	if !found {
 		t.Skip("no case-sensitivity boundary is reachable from this machine's temp directory: every directory on that path answers the same inside as its own name does in its parent, so the inference this test is about cannot be observed here. Run with TMPDIR inside a case-sensitive image mounted under a folding parent")
 	}

@@ -1,10 +1,6 @@
 package sandbox
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "github.com/mas-bandwidth/nova-tools/pkg/pathcase"
 
 // A FILESYSTEM IS NOT A STRING, and this file is the one place in this package that says so.
 // APFS is case-INsensitive by default and NTFS is too, so two spellings that differ only in
@@ -36,62 +32,12 @@ import (
 //
 // So the question is put by WRITING one probe file and asking for it back in another case.
 // `Inside` reaches this only for a directory that is not there, so the write lands in the
-// nearest existing ancestor and the climb is named at `writtenProbeFolds`.
+// nearest existing ancestor and the climb is named at `pathcase.ProbeFolds`.
 //
 // Where no write can be made the answer is NO, which is the answer this package gave before the
 // fold was measured at all: `Inside` has callers on both sides -- a `true` refuses a `--secret`
 // and a `true` ADMITS a `HOME` -- so a filesystem that said nothing leaves today's answer
 // standing rather than inventing one in a direction that is safe for only half of them.
 func dirFoldsCase(dir string) bool {
-	return writtenProbeFolds(dir, false)
-}
-
-// recased is one name spelled in another case, or the name itself where it carries no letter
-// to re-case.
-func recased(name string) string {
-	if lower := strings.ToLower(name); lower != name {
-		return lower
-	}
-	if upper := strings.ToUpper(name); upper != name {
-		return upper
-	}
-	return name
-}
-
-// writtenProbeFolds puts the question to the filesystem by writing IN THE DIRECTORY ASKED
-// ABOUT: one probe file whose name carries capitals, asked for again in another case, and
-// removed either way. The write is the only way to ask a directory about its own lookups, and
-// it happens while the policy is BUILT, never inside the wall.
-//
-// THE CLIMB IS THE ONE INFERENCE LEFT, and it is only for a directory that IS NOT THERE: a path
-// nobody has created cannot be asked, so the nearest existing ancestor answers for it, and that
-// ancestor can be on another filesystem. It does not climb past a directory that IS there and
-// refused the write, because that would answer about a volume nobody asked about.
-// `unanswerable` is what it answers where no write could be made at all -- the one case where
-// the filesystem said nothing, and `dirFoldsCase` says which way this package then leans.
-func writtenProbeFolds(dir string, unanswerable bool) bool {
-	d := dir
-	for {
-		if _, err := os.Stat(d); err == nil {
-			break
-		}
-		up := filepath.Dir(d)
-		if up == d {
-			return unanswerable
-		}
-		d = up
-	}
-	f, err := os.CreateTemp(d, "NovaCaseProbe")
-	if err != nil {
-		return unanswerable
-	}
-	name := f.Name()
-	f.Close()
-	defer os.Remove(name)
-	orig, err := os.Lstat(name)
-	if err != nil {
-		return unanswerable
-	}
-	other, err := os.Lstat(filepath.Join(d, recased(filepath.Base(name))))
-	return err == nil && os.SameFile(orig, other)
+	return pathcase.ProbeFolds(dir, false)
 }

@@ -38,6 +38,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `ntable/` | a general Redis-backed table: ordered sets per cell, projections, folds, the render | `go test ./pkg/ntable` | `go test ./pkg/ntable` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./pkg/onboarding` | `go test ./pkg/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./pkg/oneline` | `go test ./pkg/oneline` |
+| `pathcase/` | the one case-folding probe pkg/sandbox and pkg/swarm share: whether a directory folds case, and the case-boundary path the fixture measures | `go test ./pkg/pathcase` | `go test ./pkg/pathcase` |
 | `pkgselect/` | package selection, the shard deal and the test fan-out that CI and nova-ci local share | `go test ./pkg/pkgselect` | `go test ./pkg/pkgselect` |
 | `provbalance/` | a model provider's balance read through the seat's key | `go test ./pkg/provbalance` | `go test ./pkg/provbalance` |
 | `readregular/` | the one way to read a file a tool did not write: regular files only (links followed), size capped, FIFOs and devices refused by name | `go test ./pkg/readregular` | `go test ./pkg/readregular` |

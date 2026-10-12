@@ -101,6 +101,7 @@ pkg/ntable	0.0	@run37411066588	self-hosted
 pkg/onboarding	0.0	@run37411066588	self-hosted
 pkg/oneline	0.1	@run37411066588	self-hosted
 pkg/oneline/audit	0.0	@run37411066588	self-hosted
+pkg/pathcase	0.0	@local	-
 pkg/pkgselect	0.2	@local	-
 pkg/provbalance	0.0	@run37518625834	self-hosted
 pkg/readregular	0.2	@local	-

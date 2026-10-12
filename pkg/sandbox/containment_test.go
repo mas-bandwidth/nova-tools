@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/pathcase"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -137,66 +138,6 @@ func TestRulesNineAndThirteenAskTheFilesystemToo(t *testing.T) {
 	require.True(t, said, "a HOME outside every --write is not home_outside: %v", bad)
 }
 
-// measuredFold is the GROUND TRUTH about one directory: a file written INSIDE it and asked for
-// again in another case. ok is false where the directory would not take the write, which is the
-// one case no measurement can answer.
-func measuredFold(dir string) (folds, ok bool) {
-	f, err := os.CreateTemp(dir, "GroundTruth")
-	if err != nil {
-		return false, false
-	}
-	name := f.Name()
-	f.Close()
-	defer os.Remove(name)
-	orig, err := os.Lstat(name)
-	if err != nil {
-		return false, false
-	}
-	other, err := os.Lstat(filepath.Join(dir, strings.ToLower(filepath.Base(name))))
-	return err == nil && os.SameFile(orig, other), true
-}
-
-// nameFoldsInParent is the answer the REMOVED shortcut gave: the spelling of the directory's own
-// name, looked up in its PARENT. It is kept here as the wrong answer this test is about.
-func nameFoldsInParent(dir string) (folds, ok bool) {
-	base := filepath.Base(dir)
-	lower := strings.ToLower(base)
-	if lower == base {
-		return false, false
-	}
-	orig, err := os.Lstat(dir)
-	if err != nil {
-		return false, false
-	}
-	other, err := os.Lstat(filepath.Join(filepath.Dir(dir), lower))
-	return err == nil && os.SameFile(orig, other), true
-}
-
-// caseBoundaryDir finds a directory whose OWN NAME folds one way in its parent while lookups
-// INSIDE it fold the other way -- a MOUNT BOUNDARY, the one place the two can differ. It looks
-// along the ancestors of t.TempDir() up to one level above os.TempDir(), which is the
-// case-sensitive-image setup this PR already uses: `TMPDIR=<volume>/tmp` puts the volume root on
-// that path, and the bound keeps every probe write inside temp directories and their volume root.
-func caseBoundaryDir(t *testing.T) (dir string, folds bool, found bool) {
-	t.Helper()
-	stop := filepath.Dir(filepath.Clean(os.TempDir()))
-	for d := t.TempDir(); ; {
-		inside, okInside := measuredFold(d)
-		byName, okName := nameFoldsInParent(d)
-		if okInside && okName && inside != byName {
-			return d, inside, true
-		}
-		if d == stop {
-			return "", false, false
-		}
-		up := filepath.Dir(d)
-		if up == d {
-			return "", false, false
-		}
-		d = up
-	}
-}
-
 // DEMANDED by both eyes of #159 (Stella, comment 5648066751; the Fable read, comment
 // 5648102050): `dirFoldsCase` measured the spelling of the directory's own name IN ITS PARENT
 // and treated that as the lookup behaviour INSIDE the directory. At a mount boundary those are
@@ -209,7 +150,7 @@ func caseBoundaryDir(t *testing.T) (dir string, folds bool, found bool) {
 func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 	t.Parallel()
 
-	boundary, folds, found := caseBoundaryDir(t)
+	boundary, folds, found := pathcase.CaseBoundaryDir(t)
 	if !found {
 		t.Skip("no case-sensitivity boundary is reachable from this machine's temp directory: every directory on that path answers the same inside as its own name does in its parent, so the inference this test is about cannot be observed here. Run with TMPDIR inside a case-sensitive image mounted under a folding parent")
 	}
@@ -221,4 +162,18 @@ func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 	absent := filepath.Join(boundary, "novagone")
 	got = Inside(filepath.Join(boundary, "NovaGone", "env"), absent)
 	assert.Equal(t, folds, got, "Inside(%s/NovaGone/env, %s) = %v, the boundary folds = %v", boundary, absent, got, folds)
+}
+
+// TestDenyPathResolvesAndCleans pins denyPath's three answers: an existing path
+// is resolved through its symlinks, a missing or relative path is made absolute,
+// and every answer is clean. It is the coverage the fold of the probe leaves to
+// be earned in this package, and it holds the denied-path spelling the checks
+// compare against.
+func TestDenyPathResolvesAndCleans(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{t.TempDir(), filepath.Join(t.TempDir(), "nope"), "a/../b"} {
+		got := denyPath(raw)
+		assert.True(t, filepath.IsAbs(got), "denyPath(%s) = %s is not absolute", raw, got)
+		assert.Equal(t, filepath.Clean(got), got, "denyPath(%s) = %s is not clean", raw, got)
+	}
 }
