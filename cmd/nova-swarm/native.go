@@ -423,17 +423,12 @@ func hideTmpFromJobRepo(jobDir string) (bool, error) {
 	if bytes.Contains(b, []byte("\ntmp/\n")) || bytes.HasPrefix(b, []byte("tmp/\n")) {
 		return true, nil
 	}
-	f, err := os.OpenFile(exclude, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return true, err
+	nb := b
+	if len(nb) > 0 && nb[len(nb)-1] != '\n' {
+		nb = append(nb, '\n')
 	}
-	defer f.Close() // ignored: the write below is the one that can fail, and it is returned
-	if len(b) > 0 && b[len(b)-1] != '\n' {
-		if _, err := f.WriteString("\n"); err != nil {
-			return true, err
-		}
-	}
-	if _, err := f.WriteString("tmp/\n"); err != nil {
+	nb = append(nb, "tmp/\n"...)
+	if err := atomicfile.Write(exclude, nb, 0o644); err != nil {
 		return true, err
 	}
 	return true, nil
