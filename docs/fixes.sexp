@@ -699,6 +699,17 @@
     unknown-outcome keep-as-failed is below the module's grain. Tests and models only, no product change."
    :origin "card tla-cardcontract-report-sent-and-collected-apart.w2 (v1.2.16; the member's report/collect split, nova-tools #5625)")
 
+  (fix "tla-cardcontract-each-witness-breaks-only-its-rule" :release "v1.2.16" :status "planned"
+   :title "Each CardContract witness breaks only the rule it names"
+   :text "The reversed witnesses providerfailed, noshape, pushignored and today each replaced Judge's whole
+    judgment, so each broke the staging, provider and no-result invariants besides the one it names. JudgeOf is
+    now one design chain, and each witness differs in its own rule only: providerfailed judges a provider
+    failure as failed work (fails ProviderIsNotFailedWork), today drops the commit from the ok rule, noshape
+    drops the shape, and pushignored judges ok on the child's word when the push was refused (each fails
+    OkIsPushedWork). The four witness cfgs now list every invariant, and TLC fails each on its named property
+    only. Tests and models only, no product change."
+   :origin "card tla-cardcontract-each-witness-breaks-only-its-rule.w1 (v1.2.16)")
+
   (fix "tla-friend-one-shot-lanes-and-caps" :release "v1.2.12" :status "planned"
    :title "Friend's one-shot lanes and caps model the code: no limit gate, a fault kept, a cap set aside after one turn"
    :text "LaneStart no longer needs the harness up: the lanes bypass the limit gate (gatedLanes), so a lane's
