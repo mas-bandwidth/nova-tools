@@ -6,9 +6,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,40 +64,31 @@ func TestABeatProbesForTheFlagOnce(t *testing.T) {
 }
 
 // overlapWriter is an out that says whether two writes were ever inside it at once. Its
-// first write waits inside, up to holdFor, for a second to arrive: a member that writes
-// one line at a time keeps the second outside until the first returns, so it never does.
+// first write is held inside until the test releases it; any other write records whether
+// it came in while another was inside and goes straight through.
 type overlapWriter struct {
 	inside  atomic.Int32
 	overlap atomic.Bool
 	first   sync.Once
-	second  sync.Once
 	entered chan struct{} // closed once the first write is inside
-	arrived chan struct{} // closed once a write came in while another was inside
+	release chan struct{} // closed by the test to let the first write out
 	mu      sync.Mutex
 	b       bytes.Buffer
 }
 
-// holdFor bounds the first write's wait only so a passing run ends: a second write that
-// came later than it would read as no overlap (a false pass), never as a false red.
-const holdFor = time.Second
-
 func newOverlapWriter() *overlapWriter {
-	return &overlapWriter{entered: make(chan struct{}), arrived: make(chan struct{})}
+	return &overlapWriter{entered: make(chan struct{}), release: make(chan struct{})}
 }
 
 func (w *overlapWriter) Write(p []byte) (int, error) {
 	if w.inside.Add(1) > 1 {
 		w.overlap.Store(true)
-		w.second.Do(func() { close(w.arrived) })
 	}
 	defer w.inside.Add(-1)
 	isFirst := false
 	w.first.Do(func() { isFirst = true; close(w.entered) })
 	if isFirst {
-		select {
-		case <-w.arrived:
-		case <-time.After(holdFor):
-		}
+		<-w.release
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -110,24 +103,32 @@ func (w *overlapWriter) String() string {
 
 // TestTheBeatAndThePassSayThingsOneAtATime: the beat goes on its own goroutine apart from
 // the pass (BeatLoop), and both say things on the member's one out, so the member writes
-// it one line at a time whatever writer it was given (oneWriter). Beat's load note is held
-// inside the writer while the pass's room refusal is said: a member that wrote the
-// caller's writer as given lets the second line in beside the first, on every run (under
-// -race the same two writes on a bytes.Buffer were TestAMemberWhosePassIsHungStopsBeating's
-// data race, 1 run in 50 on dev 274339741).
+// it one line at a time whatever writer it was given (oneWriter). In a synctest bubble,
+// Beat's load note is held inside the writer while the pass says its room refusal, and
+// synctest.Wait returns only once every other goroutine is durably blocked: the beat on
+// the test's release, and the pass either on the member's turn (oneWriter) or, for a
+// member that wrote the caller's writer as given, already through it beside the beat's
+// line, which is red on every run. No clock is read or waited on. (Under -race the same
+// two writes on a bytes.Buffer were TestAMemberWhosePassIsHungStopsBeating's data race,
+// 1 run in 50 on dev 274339741.)
 func TestTheBeatAndThePassSayThingsOneAtATime(t *testing.T) {
 	t.Parallel()
-	out := newOverlapWriter()
-	m := New(Config{As: "m", Width: 1, Room: func() (bool, string) { return false, "the disk is under its floor" }}, newScript(), newRunner(), &fakePusher{}, out)
-	var both sync.WaitGroup
-	both.Add(2)
-	go func() { defer both.Done(); _ = m.Beat() }()            // no meter: "NOTE beat: load unmeasured", its first line
-	<-out.entered                                              // the beat's line is inside the writer
-	go func() { defer both.Done(); m.room(time.Unix(0, 0)) }() // no room: "take REFUSED"
-	both.Wait()
-	require.False(t, out.overlap.Load(), "the pass's line went into the writer while the beat's was inside it")
-	require.Contains(t, out.String(), "NOTE beat: load unmeasured, sent 0\n")
-	require.Contains(t, out.String(), "take REFUSED: the disk is under its floor\n")
+	synctest.Test(t, func(t *testing.T) {
+		out := newOverlapWriter()
+		m := New(Config{As: "m", Width: 1, Room: func() (bool, string) { return false, "the disk is under its floor" }}, newScript(), newRunner(), &fakePusher{}, out)
+		beat, pass := make(chan struct{}), make(chan struct{})
+		go func() { defer close(beat); _ = m.Beat() }()            // no meter: "NOTE beat: load unmeasured", its first line
+		<-out.entered                                              // the beat's line is inside the writer
+		go func() { defer close(pass); m.room(time.Unix(0, 0)) }() // no room: "take REFUSED"
+		synctest.Wait()                                            // the pass has written, or waits its turn, durably
+		// assert, not require: the held beat is released below whatever this says
+		assert.False(t, out.overlap.Load(), "the pass's line went into the writer while the beat's was inside it")
+		close(out.release)
+		<-beat
+		<-pass
+		require.Contains(t, out.String(), "NOTE beat: load unmeasured, sent 0\n")
+		require.Contains(t, out.String(), "take REFUSED: the disk is under its floor\n")
+	})
 }
 
 // TestARefusedBeatIsLoggedOncePerMinute: a beat the server refuses (exit 2) is loud: the

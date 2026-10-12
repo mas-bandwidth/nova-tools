@@ -729,7 +729,7 @@ func NewMeter() *hostload.Sampler {
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: &oneWriter{w: out}, running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
+	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: newOneWriter(out), running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
 		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), reportGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}, finishRefused: map[string]*refusedFinish{}}
 	// the --load-unmeasured probe is the caller's one ask at start (Config.LoadUnmeasured),
 	// so it runs here, once, never on a later beat (Beat reads the flag it set)
@@ -745,15 +745,22 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // note, a refused beat), so a writer the caller gives that is not safe for concurrent
 // writes (a bytes.Buffer) was written by both at once: -race found Beat's load note
 // against applyReport's line in TestAMemberWhosePassIsHungStopsBeating on dev 274339741,
-// 2026-10-12. Each Fprintf is one Write, so a line is never cut by another.
+// 2026-10-12. Each Fprintf is one Write, so a line is never cut by another. The turn is a
+// one-slot channel rather than a mutex so a write waiting for it is durably blocked, which
+// is what lets TestTheBeatAndThePassSayThingsOneAtATime observe the wait with
+// synctest.Wait and no clock.
 type oneWriter struct {
-	mu sync.Mutex
-	w  io.Writer
+	turn chan struct{}
+	w    io.Writer
+}
+
+func newOneWriter(w io.Writer) *oneWriter {
+	return &oneWriter{turn: make(chan struct{}, 1), w: w}
 }
 
 func (o *oneWriter) Write(p []byte) (int, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	o.turn <- struct{}{}
+	defer func() { <-o.turn }()
 	return o.w.Write(p)
 }
 
