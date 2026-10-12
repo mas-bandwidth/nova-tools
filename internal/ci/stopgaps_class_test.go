@@ -170,7 +170,10 @@ func verbTableHas(cli, tool, verb string) bool {
 func treeTestNames(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	names := map[string]bool{}
-	require.NoError(t, filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	// The walk and the reads go through the source seams (source.go), so over this
+	// repository they are the tests' one shared read of the tree, not a second
+	// open of every _test.go.
+	require.NoError(t, walkSourceDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -180,7 +183,7 @@ func treeTestNames(t *testing.T, root string) map[string]bool {
 		if d.IsDir() || !strings.HasSuffix(p, "_test.go") {
 			return nil
 		}
-		raw, err := os.ReadFile(p)
+		raw, err := readSourceFile(p)
 		if err != nil {
 			return err
 		}

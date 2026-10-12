@@ -3,7 +3,6 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
@@ -44,8 +43,11 @@ func checkReexecGuard(root string) ([]reexecFinding, error) {
 	}
 	byDir := map[string][]file{}
 	guarded := map[string]bool{}
-	fset := token.NewFileSet()
-	err := filepath.WalkDir(filepath.Join(root, "cmd"), func(path string, d fs.DirEntry, err error) error {
+	// The walk, the reads and the parses go through the source seams (source.go):
+	// over this repository they are the tests' one shared read and parse of the
+	// tree; a fixture root takes the disk. Each position is read in the FileSet
+	// its parse answered.
+	err := walkSourceDir(filepath.Join(root, "cmd"), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -58,7 +60,11 @@ func checkReexecGuard(root string) ([]reexecFinding, error) {
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		src, err := readSourceFile(path)
+		if err != nil {
+			return err
+		}
+		fset, parsed, err := parseSource(path, src, 0)
 		if err != nil {
 			return err
 		}

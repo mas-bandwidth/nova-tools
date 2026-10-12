@@ -319,8 +319,13 @@ func loadTreeFile(fset *token.FileSet, f *treeFile) error {
 	if f.Go {
 		// The name handed to the parser is the absolute path, which is what
 		// the walks this replaces passed, so any message go/parser prints
-		// reads the same as before.
-		f.AST, f.ParseErr = parser.ParseFile(fset, f.Path, f.Src, 0)
+		// reads the same as before. The parse keeps the comments: the one
+		// checker that reads a file's build constraint (ci_net.go) asks for
+		// parser.ParseComments, and before this it was a second full parse of
+		// every _test.go in the package run; a checker that asked for none walks
+		// the same declarations, a comment group being no literal, call or
+		// identifier it reads.
+		f.AST, f.ParseErr = parser.ParseFile(fset, f.Path, f.Src, parser.ParseComments)
 	}
 	return nil
 }
@@ -425,12 +430,14 @@ func treeParseSource(name string, src []byte, mode parser.Mode) (*token.FileSet,
 	if f == nil || len(f.Src) != len(src) || &f.Src[0] != &src[0] {
 		return parseSourceFile(name, src, mode)
 	}
-	// The tree already parsed these bytes in mode 0, into its own FileSet. The
-	// checkers read only lines out of a position, so that parse is theirs too,
-	// and a caller that skips object resolution reads nothing resolution adds;
-	// a file the tree could not parse is parsed again under the caller's name,
-	// so the refusal reads as it always did.
-	if (mode == 0 || mode == parser.SkipObjectResolution) && f.AST != nil && f.ParseErr == nil {
+	// The tree already parsed these bytes with their comments and with object
+	// resolution, into its own FileSet. The checkers read only lines out of a
+	// position, so that parse is theirs too: a caller that asked for the comments
+	// has them, a caller that asked for none reads past them, and a caller that
+	// skips object resolution reads nothing resolution adds. A file the tree
+	// could not parse is parsed again under the caller's name, so the refusal
+	// reads as it always did.
+	if mode&^(parser.ParseComments|parser.SkipObjectResolution) == 0 && f.AST != nil && f.ParseErr == nil {
 		return idx.FSet, f.AST, nil
 	}
 	v, _ := treeParses.LoadOrStore(treeParseKey{name, mode}, &treeParse{})

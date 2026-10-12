@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -100,8 +99,9 @@ func isTimeChan(t ast.Expr, timeName string) bool {
 // timerLoopsIn is every timer loop of one Go source, as `<func>` names: a
 // function's own name, or `Recv.Name` for a method (the pointer dropped).
 func timerLoopsIn(name string, src []byte) ([]string, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
+	// Parsed through the source seam (source.go): a file of this repository is the
+	// tree's one parse; a fixture's bytes are parsed here.
+	_, f, err := parseSource(name, src, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func funcName(fn *ast.FuncDecl) string {
 func timerLoopsOfTree(root string) ([]string, error) {
 	var out []string
 	for _, dir := range pushLoopDirs {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
+		err := walkSourceDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -197,7 +197,7 @@ func timerLoopsOfTree(root string) ([]string, error) {
 			if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 				return nil
 			}
-			src, err := os.ReadFile(p)
+			src, err := readSourceFile(p)
 			if err != nil {
 				return err
 			}
