@@ -1116,4 +1116,11 @@
      the job itself is a git work tree (issue #460). TestALaneScratchWorksUnderTheWallAndTmpIsDenied
      runs three children under the real nova-sandbox wall and proves the helper's scratch lands under the
      job's tmp, go test passes inside the wall, and a write to /tmp is refused."
-    :origin "the coordinator, 2026-10-12: a worker's /tmp write was denied by the wall and the attempt burned its deadline")))
+    :origin "the coordinator, 2026-10-12: a worker's /tmp write was denied by the wall and the attempt burned its deadline")
+  (fix "nova-tools-refuses-shell-scripts" :release "v1.2.15" :status "planned"
+   :title "The tree refuses any tracked shell script"
+   :text "internal/ci/no_shell_scripts_test.go reads `git ls-files` and refuses any *.sh or *.bash file,
+     naming each, with no exception list; a subtest stages a run.sh in a temporary git tree and shows
+     the same scan refusing it, and docs/SPEC-CI.md indexes the rule."
+   :origin "the owner, 2026-10-12 ~12:45Z: \"I don't want any shell scripts :)\" / \"But let's be pragmatic
+     here\"; card nova-tools-refuses-shell-scripts.w2")))
