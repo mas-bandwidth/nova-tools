@@ -158,6 +158,13 @@ or a wake line that arrives after it starts, or for `--timeout`, so the banner
 has no example of it; its `-h` example is run on the in-memory store with an
 injected clock in `cmd/nova-friend/watch_test.go`.
 
+The spend cap per day and per provider (`pkg/friend/spendcap.go`) is pinned in
+`pkg/friend/spendcap_test.go`: `TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`
+(a fake harness reports usage; past the cap a turn is stopped and one judgment
+raised naming the friend, the provider and the spend, once until the day
+resets), `TestSpendCapResetsOnANewSpendDay`, `TestSpendCapDefaultIsTwentyDollars`,
+`TestSpendCapJudgmentNamesFriendProviderAndSpend`.
+
 ### First run
 
 ```text

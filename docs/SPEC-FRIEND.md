@@ -2057,6 +2057,28 @@ in a live daemon no lane is paced yet; `nova-friend` setting
 `Limits.Pacing` from the row (the gate paces the batch turn at the default
 until it does); and no TLA+ module models the pacer.
 
+### a-friend-daemon-has-a-spend-cap-and-stops-at-a-provider-refusal.w1 — a spend cap per day and provider, and a stop on refusal
+
+The finding of 2026-10-12: a friend's daemon on mini-m5 (harness dsh,
+DeepSeek) ran about 22 hours while friends were deferred to v1.3, spent the
+owner's DeepSeek balance of more than $500 down to `QUOTA: Insufficient
+Balance`, and kept checking presence every hour. Nothing capped its spend, and
+nothing told the owner or the seat it was spending while the sprint had no
+friend work.
+
+Every friend daemon has a spend cap per day and per provider, read from its
+config, $20 a day by default (`DefaultSpendCapUSD`). Spend is measured from the
+harness's own usage report, never estimated (`SpendCap.Spent`). At the cap the
+daemon stops launching turns and raises one judgment to the seat and the owner
+naming the friend, the provider and the spend (`SpendCap.Gate`, `Judged`;
+`TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`). The cap resets when
+the spend day resets (`TestSpendCapResetsOnANewSpendDay`). A provider refusal
+for funds (an insufficient balance, a `402`) stops the daemon's turns at once,
+with the same judgment, rather than retrying hourly; a rate limit still backs
+off (rate-limit-backs-off-not-down.w1, above). A daemon whose friend has no
+dealt work and no live session does not launch turns at all.
+`TestSpendCapDefaultIsTwentyDollars`, `TestSpendCapJudgmentNamesFriendProviderAndSpend`.
+
 ### lane-end-finishes-the-card.w1 — a lane's end is a finish
 
 The owner, 2026-10-05: "Now let's look at friends. Are they actually doing
