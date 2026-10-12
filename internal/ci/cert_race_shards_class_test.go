@@ -47,7 +47,7 @@ var certRaceHeavy = []string{
 	"internal/update", "cmd/nova-secrets",
 	"cmd/nova-swarm",
 	"internal/docs", "pkg/redisconn", "pkg/config",
-	"pkg/secrets", "fleet",
+	"pkg/secrets", "nova-tools/fleet",
 }
 
 const certRaceDealStep = "deal this shard's packages"
