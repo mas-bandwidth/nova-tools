@@ -1107,6 +1107,10 @@
     :origin "the coordinator, 2026-10-12 ~12:25Z: two functional tests went red on dev and nobody saw it; dev's
       ci workflow skipped the functional job on push, so only the merge queue ran the functional tier, and the
       v1.2.14 stream PR #5627 was thrown out of the queue for failures already on dev")
+   (fix "a-wall-denial-is-told-to-the-worker-in-its-turn" :release "v1.2.15" :status "planned"
+    :title "A wall denial is told to the worker in its turn"
+    :text "The shell wrapper (wallnote) tells the worker at once when a path is denied by the wall, naming the denied path and the remedy (write scratch files under $TMPDIR inside the job directory, never under /tmp). The native run also gets a NATIVE NOTE wall-denial line at once on the first denial."
+    :origin "the coordinator, 2026-10-12, from the incident on card the-nova-config-timeout-test-stalls-after-the-connection (attempt 1, stream v1214-blocker): its worker wrote /tmp/test_stall.go, the landlock wall denied it, nothing told the worker what the denial meant, and the attempt burned its whole deadline")
    (fix "every-lane-scratch-directory-is-inside-its-job" :release "v1.2.15" :status "planned"
     :title "Every lane's scratch directory is inside its job"
     :text "A worker that wrote a scratch file under /tmp was denied by the landlock wall, and the attempt

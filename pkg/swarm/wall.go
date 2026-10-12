@@ -396,6 +396,7 @@ type ShellDenialReader struct {
 	denial ShellDenial
 	denied bool
 	step   string
+	callback func(path string)
 }
 
 // NewShellDenialReader returns an empty reader for one run's capture.
@@ -436,6 +437,12 @@ func (r *ShellDenialReader) line(raw string) {
 	}
 	if p, ok := deniedPath(line); ok {
 		r.denied, r.denial = true, ShellDenial{Path: p, Line: line}
+		if r.callback != nil {
+			// Fire callback without holding the mutex
+			go func(path string) {
+				r.callback(path)
+			}(p)
+		}
 	}
 }
 
@@ -586,7 +593,7 @@ func DeniedPathRoots(denied string) []string {
 //     sentence says why, so nobody reads a cause into it.
 //   - THE REMEDY IS A MEASUREMENT, not a guess: re-run the card's own gate against this
 //     commit and read its stderr. On a walled run the read set is offered beside it as one
-//     candidate among the others.
+//     candidate among the others. For /tmp writes, the remedy names $TMPDIR.
 //
 // `wall` is the wall's own name, or empty for a run that had none; a run with no wall is told
 // so and nothing is attributed to a sandbox that was not there.
@@ -599,6 +606,18 @@ func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial) string
 	b.WriteString(". Remedy: re-run the card's own gate against the commit under ")
 	b.WriteString(oneline.Field(jobDir))
 	b.WriteString(" and read its stderr -- that is the measurement this refusal is standing in for")
+
+	// Add TMPDIR remedy for /tmp writes
+	if isOutsideWriteRoot(d.Path) {
+		tmpdir := os.Getenv("TMPDIR")
+		if tmpdir == "" {
+			tmpdir = "/tmp"
+		}
+		b.WriteString("; if that was a write: write scratch files under $TMPDIR (")
+		b.WriteString(tmpdir)
+		b.WriteString("), inside the job directory, never under /tmp")
+	}
+
 	if wall == "" || wall == SandboxNoneByFlag {
 		b.WriteString("; this run had no sandbox, so nothing here is attributable to one")
 		return b.String()
@@ -620,4 +639,19 @@ func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial) string
 	}
 	b.WriteString(". That is a candidate and not the diagnosis")
 	return b.String()
+}
+
+// isOutsideWriteRoot returns true if the path is outside all card write roots
+func isOutsideWriteRoot(path string) bool {
+	// /tmp, /var/tmp, /dev/shm are always outside the card's write roots
+	if strings.HasPrefix(path, "/tmp/") || path == "/tmp" {
+		return true
+	}
+	if strings.HasPrefix(path, "/var/tmp/") || path == "/var/tmp" {
+		return true
+	}
+	if strings.HasPrefix(path, "/dev/shm/") || path == "/dev/shm" {
+		return true
+	}
+	return false
 }
