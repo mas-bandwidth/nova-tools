@@ -1109,11 +1109,23 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			// card's commit pushed) has not been collected yet
 			continue
 		}
+		// the queue listed the card working at the launch's own claim (m.moved above), so the
+		// queue's state is known: a member's queue sends no packet for a card it names in
+		// --have (queueArgs), and a read whose stage failed is run again from the launch's own
+		// packet. Before v1.2.14 the retry waited for a packet that never came, the launch
+		// stayed in the running map with its result and no child, and the read sat working, a
+		// ghost, to the server's 60-minute read deadline (port of nova-sprint #112,
+		// a-member-hands-back-a-read-it-is-not-running).
+		qp := c.Packet
+		if qp == nil {
+			own := l.packet
+			qp = &own
+		}
 		// reportOne runs the verb apart from the pass, bounded by pushWidth, and posts
 		// its result for the collect below: the card it reports is acted on there, in
 		// the pass goroutine (reportRun, applyReport). A read it runs again here and
 		// now is a state change of this pass and is counted here.
-		acted += m.reportOne(id, l, now, c.Packet)
+		acted += m.reportOne(id, l, now, qp)
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
 	// card was dealt elsewhere) has nothing left to report to: once it has
@@ -2173,8 +2185,8 @@ func (m *Member) claim(c queueCard) (epoch uint64, gen, attempt int) {
 
 // queueArgs is the pass's queue, asking only for the packets it may use (a reader's answer
 // otherwise carries every asked read's brief, hundreds of kilobytes, every pass): --packets,
-// the reads a reader may begin this pass (its lanes free, and those the pass's reports
-// free; a member none: its take hands its packets), and --have, every card it holds a
+// the reads a reader may begin this pass (its lanes free now: a lane a report frees is
+// asked for by the next pass, lanes; a member none: its take hands its packets), and --have, every card it holds a
 // launch for and every read it returned a moment ago, which need none. Every other
 // in-flight card comes with its packet, so a restarted member recovers its cards from the
 // first answer.
