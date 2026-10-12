@@ -225,7 +225,11 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 
 	// (4) The push triggers, which take no expression, hold exactly the list
 	// (ci.yml) or a subset of it (certification.yml runs on the branch merges
-	// land on; main is promoted, #778). Nothing else may appear there.
+	// land on; main is promoted, #778), plus the release branches certification
+	// also runs on so a release can certify a pinned sha. A release branch
+	// (`release/vX.Y.Z`) is not an integration branch — it is cut off dev for
+	// one release — so it is named by pattern in certification.yml's trigger and
+	// kept out of the one list. Nothing else may appear there.
 	inList := toSet(names)
 	ciPush := pushTriggerBranches(src)
 	require.NotEmpty(t, ciPush, "%s: no push trigger branches parsed; the parser is looking in the wrong place", ciFile)
@@ -233,8 +237,16 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 	certPush := pushTriggerBranches(readFile(t, filepath.Join(root, certFile)))
 	require.NotEmpty(t, certPush, "%s: no push trigger branches parsed; certification runs on a push to the integration branch", certFile)
 	for _, b := range certPush {
-		assert.True(t, inList[b], "%s: certification triggers on a push to %q, which is not in ci.yml's integration branch list %v", certFile, b, names)
+		assert.True(t, inList[b] || isReleaseBranchPattern(b), "%s: certification triggers on a push to %q, which is neither in ci.yml's integration branch list %v nor a release branch", certFile, b, names)
 	}
+}
+
+// isReleaseBranchPattern reports whether a push-trigger branch names a release
+// branch: the branch a release is cut and certified from, `release/<version>`
+// (or the glob `release/**` that certification.yml writes). It is not an
+// integration branch, so it never joins the one list.
+func isReleaseBranchPattern(branch string) bool {
+	return branch == "release/**" || strings.HasPrefix(branch, "release/")
 }
 
 // TestPullRequestConcurrencyKeysOnTheHead pins the cancellation fix
