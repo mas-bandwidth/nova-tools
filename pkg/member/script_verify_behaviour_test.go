@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // gitNoConfig is a git that ignores the bench's global and system config, so Verify's own
@@ -25,7 +26,7 @@ func gitNoConfig(t *testing.T) string {
 	require.NoError(t, err)
 	p := filepath.Join(t.TempDir(), "git")
 	script := fmt.Sprintf("#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null\nexec %q \"$@\"\n", real)
-	require.NoError(t, os.WriteFile(p, []byte(script), 0o755))
+	require.NoError(t, testbin.WriteExecutable(p, []byte(script), 0o755))
 	return p
 }
 

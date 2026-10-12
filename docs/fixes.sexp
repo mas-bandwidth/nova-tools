@@ -657,7 +657,7 @@
     redeal class, a budget-unverifiable end with no result is a staging refusal, and a provider end with no
     Provider is failed work, never a redeal. A new NoResultIsNotFailedWork invariant holds, with the reversed
     witness noresultfailed (MCCardContractBrokenNoResultFailed.cfg), and the witness count in COVERAGE and
-    README (eleven) now matches CASES. The model's Judge stays the old atomic one (the claim held, fin and rep set in one step); the member's send, move, then collect (nova-tools #5625) is owed to the v1.2.16 Judge split, and COVERAGE's card-contract row is partial until it lands. Tests and models only, no product change."
+    README (eleven) now matches CASES. The model's Judge stays the old atomic one (the claim held, fin and rep set in one step); the member's send, move, then collect (nova-tools #5625) is owed to the v1.2.16 Judge split, and COVERAGE's card-contract row is partial until it lands. The script verifier tests write their Git wrapper through testbin.WriteExecutable, so a parallel fork cannot inherit its open write descriptor and make exec fail with text file busy. Tests and models only, no product change."
    :origin "card tla-cardcontract-judge-against-pkg-member.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11; the first of two CardContract cards)")
 
   (fix "tla-friend-one-shot-lanes-and-caps" :release "v1.2.12" :status "planned"
