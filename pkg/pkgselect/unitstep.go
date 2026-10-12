@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 )
 
 // ShardGoTestTimeout is `go test -timeout` for a unit shard. It ends a hung run
@@ -91,13 +92,23 @@ const (
 // shared runner. The shim stands in for a binary, so it is a two-line /bin/sh
 // file and not a Go program. internal/ci: TestUnitTierRefusesRedisServer.
 func WriteUnitShim(tmp string) (string, error) {
+	return writeUnitShim(tmp, os.WriteFile)
+}
+
+// writeUnitShim takes the writer as a parameter so the guard test can observe
+// the fork lock during the write, without replacing a parallel caller's writer.
+func writeUnitShim(tmp string, writeFile func(string, []byte, os.FileMode) error) (string, error) {
 	dir := filepath.Join(tmp, UnitShimDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	shim := filepath.Join(dir, "redis-server")
 	body := fmt.Sprintf("#!/bin/sh\necho %q >&2\nexit %d\n", UnitShimMessage, UnitShimExit)
-	if err := os.WriteFile(shim, []byte(body), 0o755); err != nil {
+	// Go's fork takes the write side of ForkLock. Keep it out until the
+	// executable's write descriptor closes (TestWriteUnitShimGuardsFork).
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	if err := writeFile(shim, []byte(body), 0o755); err != nil {
 		return "", err
 	}
 	return shim, os.Chmod(shim, 0o755)

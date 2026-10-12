@@ -247,14 +247,11 @@ func TestTreeUsageAndKillAndAwaitOverARealProcessTree(t *testing.T) {
 		// ignored: the process was killed above; the wait's error is the kill's, and the tree is over either way
 		_ = cmd.Wait()
 	})
-	self := os.Getpid()
 	tr := &Tree{
 		top:     cmd.Process.Pid,
 		keepTop: true,
 		pgid:    mustPgid(t, cmd.Process.Pid),
-		list: func() ([]procRow, error) {
-			return procRows(self, cmd.Process.Pid)
-		},
+		list:    procRows,
 	}
 
 	u, err := tr.Usage()

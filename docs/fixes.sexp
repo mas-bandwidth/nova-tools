@@ -70,16 +70,57 @@
      them. This record is in-progress until the tag; the cut turns it shipped.")
    (release "v1.2.15" :status "in-progress"
     :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only,
-     Codex friend delivery refuses routes that queue input or require a Steer click, and a member lane
-     ends every process its card started."))
+     Codex friend delivery refuses routes that queue input or require a Steer click, a member lane
+     ends every process its card started.")
+   (release "v1.2.16" :status "in-progress"
+    :text "A friend's texts say the friend's configured pronouns, with the matching sprint sync and beat
+     producer; sandbox process-table reads and valid test probes preserve each command's wait; the
+     one-shot lane fixture waits for the completed card turn before cancelling its daemon. Every TLA+
+     model checked against the code.")
+)
  :items
-  ((fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
+  ((fix "the-verb-scaffold-compiles-only-its-generated-tests" :release "v1.2.16" :status "planned"
+    :title "The verb scaffold compiles only its generated tests"
+    :text "The new-verb integration fixture copies the real CLI's production packages and embedded files,
+     then builds, vets, tests the generated probe, runs its Makefile target and checks its printed
+     dispatch case. It excludes the existing CLI tests and their test-only dependencies, which each
+     scratch-module test command compiled again despite selecting only the generated probe. The
+     new-rule fixture retains the existing class-test helpers its generated rule needs. The outer
+     package's tests and the certification package and job time limits remain unchanged."
+    :origin "Certification run 38292554491, attempt 1: the macOS cmd/nova-ci shard passes its tests but exceeds the two-minute job limit")
+  (fix "sandbox-table-reads-preserve-command-waits" :release "v1.2.16" :status "in-progress"
+    :title "Sandbox process-table reads preserve other commands' waits"
+    :text "The Linux process-table reader waited on every zombie child except the wall's command,
+     stealing parallel exec.Cmd exit statuses. Table reads now only observe. The wall's dedicated
+     process collects adopted zombies explicitly, including descendants orphaned before any count,
+     while its primary command retains its own wait. Run requires a process owning all its children;
+     this fix does not support unrelated concurrent commands inside that process. Deterministic
+     WNOWAIT regressions pin the unrelated command's wait and unseen adopted-descendant cleanup.
+     The valid probe test also runs in a dedicated child, preserving other parallel tests' waits;
+     reversing that helper to an in-process probe deterministically steals a held zombie's wait."
+    :origin "the sandbox probe-step stolen wait, 2026-10-12")
+   (fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
     :title "Codex friend delivery refuses unproved queue routes"
     :text "The implicit Codex delivery route refuses at factory, check, install, run and reach until a
      supported session push route is proved. Notification-only delivery does not type into a session
      or queue a prompt. The refusal preserves the installed launch configuration. This guard prevents
      queued Steer regressions; it does not claim idle wake or permanent native push is implemented."
     :origin "PR #5628, reviewed head aa0dcec2aca2805426197129c6767527a07e07d8; assembled into sprint/comfort for v1.2.15")
+  (fix "a-friends-texts-say-the-friends-own-pronouns" :release "v1.2.16" :status "in-progress"
+    :title "A friend's texts say the friend's own pronouns"
+    :text "nova-friend and nova-config called every friend her and she (found by the owner, 2026-10-11). A
+     friend row now carries a pronouns setting, she/her, he/him or they/them, they/them when not stated
+     and never it (nova-config friend add/set --pronouns, migration 0038, the desired hash field
+     pronouns), and the daemon learns it from nova-friend run/install --pronouns (written into the
+     launchd agent) or the beat's row_pronouns=. Every text the daemon writes about the friend, the
+     limit, rate, funds, spend-cap, fault and lane-fault judgments to the seat and the records of the
+     inbox, outbox, take and present lines, renders its pronouns through one helper, Pronouns.Say
+     ({their}, {them}, {they}); the texts with no daemon in hand (the help, the stage and claude-lane
+     refusals, the friend kind's help) say the friend's. pkg/friend's
+     TestNoStringLiteralCallsAFriendHerOrHim reads the sources and fails on a personal pronoun typed
+     into a string literal. The server's beat answer carries row_pronouns= when the sprint server
+     sends it; until then --pronouns is the daemon's source."
+    :origin "hand PR onto sprint/comfort for v1.2.16")
   (fix "a-member-lane-ends-every-process-its-card-started" :release "v1.2.15" :status "in-progress"
    :title "A member lane ends every process its card started"
    :text "Fleet member b1 ran at 100% load for 13 hours: a card's run backgrounded 16 shell busy loops
@@ -755,6 +796,17 @@
     unknown-outcome keep-as-failed is below the module's grain. Tests and models only, no product change."
    :origin "card tla-cardcontract-report-sent-and-collected-apart.w2 (v1.2.16; the member's report/collect split, nova-tools #5625)")
 
+  (fix "tla-cardcontract-each-witness-breaks-only-its-rule" :release "v1.2.16" :status "planned"
+   :title "Each CardContract witness breaks only the rule it names"
+   :text "The reversed witnesses providerfailed, noshape, pushignored and today each replaced Judge's whole
+    judgment, so each broke the staging, provider and no-result invariants besides the one it names. JudgeOf is
+    now one design chain, and each witness differs in its own rule only: providerfailed judges a provider
+    failure as failed work (fails ProviderIsNotFailedWork), today drops the commit from the ok rule, noshape
+    drops the shape, and pushignored judges ok on the child's word when the push was refused (each fails
+    OkIsPushedWork). The four witness cfgs now list every invariant, and TLC fails each on its named property
+    only. Tests and models only, no product change."
+   :origin "card tla-cardcontract-each-witness-breaks-only-its-rule.w1 (v1.2.16)")
+
   (fix "tla-friend-one-shot-lanes-and-caps" :release "v1.2.12" :status "planned"
    :title "Friend's one-shot lanes and caps model the code: no limit gate, a fault kept, a cap set aside after one turn"
    :text "LaneStart no longer needs the harness up: the lanes bypass the limit gate (gatedLanes), so a lane's
@@ -1083,6 +1135,58 @@
     TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
     sprint server)."
    :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")
+  (fix "tla-pass-nova-tools-coverage-rows" :release "v1.2.16" :status "in-progress"
+   :title "Every TLA+ model checked against the code"
+   :text "The TLA+ pass reads tla/COVERAGE.tsv rows 1-9 against the code each column names at the
+    current dev. Every code column names files that exist; every CASES.tsv case has a current TLC
+    record (tlacheck groups --stale prints []), so no case is stale and no model edit was owed. The
+    2026-10-11 fixes that changed these machines are read and accounted for: the step's drain of every
+    ended result, the outbox's finishes off the loop and the refusal raise through tellBroken are named
+    below the grain of Friend and FriendStage; the limit's ANSI strip and the lane beyond the cap are
+    already in the Friend note. The partial rows keep the card ids their owed_by already names
+    (tla-friend-link-and-challenge, tla-friendstage-every-hand-is-guarded,
+    tla-bus2-names-pkg-bus-and-the-idle-claim, tla-cairnstore-no-gap-ledger-and-reopen,
+    tla-table-layer-headers-name-table-lua), the missing rows keep tla-presence-and-leases,
+     tla-merge-tree-promotion and install-rollback-on-missed-ticks, and UpdateApply is current; none
+     names a dropped card. The friend spend cap (pkg/friend/spendcap.go, landed 2026-10-12) is a new
+     rule, outside the Friend module: the Friend note names it and it is proposed as a new card."
+    :origin "card tla-pass-nova-tools-coverage-rows.w7 (the TLA+ pass over tla/COVERAGE.tsv rows 1-9, v1.2.16)")
+  (fix "tla-pass-nova-tools-coverage-rows-10-18" :release "v1.2.16" :status "in-progress"
+   :title "Every TLA+ model checked against the code"
+   :text "The TLA+ pass reads tla/COVERAGE.tsv rows 10-18 against the code each column names at the
+    current dev. Every code column names files that exist; every CASES.tsv case of the five current
+    modules (BenchRun, BenchStage, FileLock, Bus2Receipts, FriendEnvelope) has a current TLC record
+    (tlacheck groups --stale prints []), so no case is stale and no model edit was owed. The 2026-10-11
+    fixes that changed these machines are read and accounted for: the acted receipt a failed stamp owes
+    again (ceacb9508) is modelled by MCBus2ReceiptsKnownGap (Broken = \"losestamp\"), and the step's
+    drain of every ended result and the outbox's finishes off the loop are named below the Bus2Receipts
+    and FriendEnvelope grains;
+    the only changes to BenchStage and FileLock are a citation and package-comment wording (ecec608fd).
+    The rows owed to other cards on the table keep their ids and are not redone: nova-table
+    (tla-table-layer-headers-name-table-lua), card-contract (the CardContract cards:
+    tla-cardcontract-judge-against-pkg-member, tla-cardcontract-report-sent-and-collected-apart and
+    tla-cardcontract-retire-the-sprint-actions) and config (tla-configapply-friend-slots-and-stamp-cas).
+    The missing rows propose cards and name no dropped card: secrets (tla-secrets) and decide-record
+    (tla-decide-record)."
+   :origin "card tla-pass-nova-tools-coverage-rows-10-18.w2 (the TLA+ pass over tla/COVERAGE.tsv rows 10-18, v1.2.16)")
+  (fix "tla-pass-nova-tools-coverage-rows-19-27" :release "v1.2.16" :status "in-progress"
+   :title "Every TLA+ model checked against the code (rows 19-27)"
+   :text "The TLA+ pass reads tla/COVERAGE.tsv rows 19-27 against the code each column names at the
+    current dev. Every code column names files that exist; every CASES.tsv case has a current TLC
+    record (tlacheck groups --stale prints []), so no case is stale and no model edit was owed.
+    FriendEnvelope, WakeCursor, FriendLane, FriendNotifications, FriendNotificationsCapacity, Reach,
+    LoopRedial, BusSendOnce and Delivery are current, each with its reversed witnesses passing the
+    violations they name. friend-notifications and friend-reach were partial in the base, but their
+    modules already model the features the notes named outside: the deal-notice withdrawal,
+    coalescing and the wake ping (tla/FriendNotifications.tla Withdraw, Coalesce, WakePing), and the
+    --from suffix, the at-once push climb, the in-bound proof and the refused window (tla/Reach.tla
+    From, ClimbAtOnce, Prove, Refuse), so both rows are current here. The 2026-10-11 fixes that
+    changed these machines are read and accounted for: the step's drain of every ended result, the
+    outbox's finishes off the loop and the refusal raise through tellBroken are the loop's pacing,
+    below the grain of FriendEnvelope and Delivery and already named in their notes. The one partial
+    row (friend-presence) keeps its card id (tla-friendpresence-daemon-evidence); none names a
+    dropped card."
+   :origin "card tla-pass-nova-tools-coverage-rows-19-27.w2 (the TLA+ pass over tla/COVERAGE.tsv rows 19-27, v1.2.16)")
   (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "shipped"
    :title "The real-clock delay proxy test reads the write counts after Stop"
    :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
@@ -1306,4 +1410,8 @@
     (fix "nova-config-sets-the-sprint-rows-git-identity-and-max-attempts" :release "v1.2.15" :status "planned"
      :title "nova-config sets the sprint row's git_identity and max_attempts"
      :text "Blocker for adopting nova-sprint v1.2.14 and later. nova-sprint's lander refuses to commit while sprint:git_identity is empty, and its attempt bound reads sprint:max_attempts, but nova-tools' nova-config, the one setter, declared neither field (nova-config registers only the fields its kind declares), so neither could be set and a fresh store would leave every landing refused. The sprint kind now declares git_identity (default the generic nova-sprint <nova-sprint@example.invalid>, set to the fleet's own with nova-config sprint set --git_identity) and max_attempts (default 4, a whole number from 1 to 100, checked by checkSprint naming the field and the remedy), the same fields as nova-sprint's pkg/config copy, and carries migration 0037 (verbatim nova-sprint's) and 0039 (max_attempts). The two pkg/config copies share one migration sequence; the order is fixed in both repositories: 0037 sprint git_identity, 0038 friend pronouns, 0039 sprint max_attempts. Tests: TestTheSprintRowCarriesTheMachinesGitIdentity, TestTheSprintRowsMaxAttemptsDefaultsToFour, TestCheckSprintHoldsMaxAttemptsToAWholeNumberFromOneToTheCeiling and TestTheSprintFieldsHaveTheirMigrations (pkg/config/sprint_fields_test.go), red before and green after."
-     :origin "the coordinator, 2026-10-12, from a cold read of nova-sprint#147: nova-config could set neither field the sprint reads")))
+     :origin "the coordinator, 2026-10-12, from a cold read of nova-sprint#147: nova-config could set neither field the sprint reads")
+   (fix "one-shot-lane-test-waits-for-the-card-turn" :release "v1.2.16" :status "in-progress"
+    :title "The one-shot lane test waits for the card turn"
+    :text "The fake harness cancels the one-shot daemon only after its second run reaches the card and the lane completion record is written. The test retains its prompt, session, send-line and state assertions, while the daemon joins its workers before the test reads output."
+    :origin "the coordinator, 2026-10-12, after the one-shot lane fixture cancelled on beat count rather than card completion")))

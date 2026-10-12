@@ -743,9 +743,9 @@ func (w *FaultWatch) Observe(fault string, now time.Time) (until time.Time, down
 // FaultDownText is the one judgment the seat is told when a row's lanes hit the same harness
 // fault FaultRepeats times within FaultWithin: the subject and the body, naming the reason the
 // row is down with and until when.
-func FaultDownText(friend, reason string, until time.Time) (subject, body string) {
+func FaultDownText(friend string, p Pronouns, reason string, until time.Time) (subject, body string) {
 	subject = fmt.Sprintf("friend %s down until %s: %s", friend, until.UTC().Format(time.RFC3339), oneLine(reason, 120))
-	body = fmt.Sprintf("%s: her lanes hit the same harness fault %d times within %s: %s\nHer lanes are held and her beat says her down until then; the cards stay in her lanes' hands, no attempt counted, and run again after it. The fault is the machine's, never the worker's: find its cause.\n",
+	body = p.Sprintf("%s: {their} lanes hit the same harness fault %d times within %s: %s\n{Their} lanes are held and {their} beat says {them} down until then; the cards stay in {their} lanes' hands, no attempt counted, and run again after it. The fault is the machine's, never the worker's: find its cause.\n",
 		subject, FaultRepeats, FaultWithin, reason)
 	return subject, body
 }

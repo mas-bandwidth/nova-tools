@@ -231,7 +231,7 @@ func TestAnUnhookStandsAcrossADaemonRestart(t *testing.T) {
 	r.dh.step(ctx)
 	ok, why = r.dh.ok()
 	assert.False(t, ok)
-	assert.Contains(t, why, "a restart of it does not hook her in")
+	assert.Contains(t, why, "a restart of it does not hook bob in")
 	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State, "the restarted daemon left the unhook standing")
 	r.dh.step(ctx)
 	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State, "and every later step too")

@@ -1792,6 +1792,13 @@ steps all share one policy the nested domain is the same wall again. Anything a
 caller must do unwalled it must do **before** the first `Run`, which is exactly
 why the probe runs `write_outside_control` first.
 
+`sandbox.Run` requires a dedicated process that owns all its children. The bare
+`nova-sandbox` command, its sequential probe steps, and the `nova-friend wall` child
+use that boundary. Unrelated commands cannot run concurrently in that process:
+Linux's subreaper adopts descendants even before a count observes them, and its
+collector owns every adopted child's wait except the primary command's `exec.Cmd`
+wait. The general `/proc` table reader only reads; it never waits for any process.
+
 The ABI is discovered with `landlock_create_ruleset(NULL, 0,
 LANDLOCK_CREATE_RULESET_VERSION)`, and the handled set is masked down to what
 that ABI knows: a ruleset that handles an access the kernel does not understand

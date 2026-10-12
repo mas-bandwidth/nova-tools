@@ -319,9 +319,9 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 	assert.Equal(t, 2, beats)
 	assert.Len(t, downs, 1)
 
-	subject, body := LimitDownText("bob", downs[0].until, downs[0].reason)
+	subject, body := LimitDownText("bob", DefaultPronouns, downs[0].until, downs[0].reason)
 	assert.Contains(t, subject, "friend bob down")
 	assert.Contains(t, body, "nova-sprint friend down bob --reason 'harness limit: Error: Insufficient AI Credits. Your credits will refresh 6:52 PM.' --until 2026-10-04T22:52:00Z")
-	_, body = LimitUpText("bob")
+	_, body = LimitUpText("bob", DefaultPronouns)
 	assert.Contains(t, body, "nova-sprint friend up bob")
 }

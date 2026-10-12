@@ -38,7 +38,7 @@ func TestStatusSaysTheRowIsReadFromTheView(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "friend-b", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		HeldKnown: true, Held: 7, InboxJobs: 0, Missing: 7, HeldFrom: friend.FromView}))
 	cli.Do(t, "status", "--as", "friend-b", "--dir", dir).Exit(0).
-		Out("held=7 inbox=0 missing=7", "NOTE the inbox: her row is read from the worker view: "+friend.ViewWhy)
+		Out("held=7 inbox=0 missing=7", "NOTE the inbox: the friend's row is read from the worker view: "+friend.ViewWhy)
 }
 
 // The daemon's view is the server's GET /api/view/worker?as=<friend>, its answer whole; a

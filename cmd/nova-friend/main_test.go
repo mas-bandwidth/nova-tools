@@ -230,6 +230,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
 		{"check delivery nothing given", []string{"check", "--harness", "opencode"}, []string{"--as is required", "--dir is required"}},
 		{"check bad harness and window", []string{"check", "--as", "bob", "--harness", "vim", "--dir", "d", "--within", "0s"}, []string{`--harness "vim" is no harness`, "--within wants a positive duration"}},
+		{"run pronouns that are not one of the three", []string{"run", "--as", "bob", "--harness", "opencode", "--dir", "d", "--pronouns", "it/its"}, []string{`--pronouns "it/its" wants one of she/her, he/him, they/them`}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -539,7 +540,7 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "batch", s.Mode, "the row says one-shot and names no config_dir: claude is refused")
 	assert.Contains(t, out.String(), "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir")
-	assert.Contains(t, out.String(), "run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>")
+	assert.Contains(t, out.String(), "run: nova-config friend set bob --config_dir <the account's absolute config directory>, or nova-friend run --config-dir <dir>")
 }
 
 // A claude one-shot lane runs its card inside the lane wall, and the wall's
@@ -810,6 +811,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		require.NoError(t, os.Symlink(dir, filepath.Join(r.home, "ai", "bob", "working")))
 		var mu sync.Mutex
 		var runs []string
+		cardTurn := false
 		lists := 0
 		checks := 0
 		w.exec = func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
@@ -843,21 +845,30 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 				return `{"messages":[{"info":{"role":"assistant","cost":0.002}}]}`, 0, nil
 			}
 			runs = append(runs, strings.Join(args, " "))
-			return "ok\n", 0, nil
-		}
-		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-			beats++
-			if beats == 12 {
-				cancel()
+			if len(runs) == 2 {
+				cardTurn = true // the opener and the card turn reached the fake harness
 			}
-			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+			return "ok\n", 0, nil
 		}
 		// The daemon writes its record from the run's goroutine and the lane's
 		// open (its price line) from the turn's, so stdout is under a lock.
 		var outMu sync.Mutex
 		out := &lockedBuilder{mu: &outMu}
 		var errb strings.Builder
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+			mu.Lock()
+			turnStarted := cardTurn
+			mu.Unlock()
+			if turnStarted {
+				outMu.Lock()
+				said := out.String()
+				outMu.Unlock()
+				if strings.Contains(said, "lane=1 session=ses_lane1") {
+					cancel() // laneDone recorded the completed card turn before this beat
+				}
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+		}
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		outMu.Lock()
@@ -1036,8 +1047,16 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 // the presence file with the limit's reason until she is woken; nothing goes into her
 // session before the reset; after it a wake turn whose answer carries its nonce, and
 // then the message (docs/SPEC-FRIEND.md, a harness at its limit).
-func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
-	t.Parallel()
+// holdAHarnessAtItsLimit runs the limit scenario with extra flags on the run and answers what the
+// coordinator was told: the harness hits its limit, the friend is down until the reset, a wake turn
+// brings it back.
+func holdAHarnessAtItsLimit(t *testing.T, extra ...string) string {
+	t.Helper()
+	return holdAHarnessAtItsLimitWithRow(t, "", extra...)
+}
+
+func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...string) string {
+	t.Helper()
 	r := newRig(t, "ada", "bob")
 	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
 	require.NoError(t, err)
@@ -1078,7 +1097,11 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
+		answer := "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1"
+		if rowPronouns != "" {
+			answer += " row_pronouns=" + rowPronouns
+		}
+		return answer, nil
 	}
 	type downBeat struct {
 		at, until time.Time
@@ -1126,7 +1149,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		return "", 0, nil
 	}
 	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
+	code := run(append([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, extra...), strings.NewReader(""), out, errb, w)
 	require.Equal(t, 0, code, errb.String())
 	mu.Lock()
 	defer mu.Unlock()
@@ -1176,9 +1199,47 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		told = append(told, e.Fields["subject"]+"\n"+e.Fields["body"])
 	}
 	all := strings.Join(told, "\n")
-	assert.Contains(t, all, "friend bob down: her harness is at its limit until ", "the coordinator is told she is down")
 	assert.Contains(t, all, "nova-sprint friend down bob --reason 'harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.' --until ")
 	assert.Contains(t, all, "friend bob back", "and that she is back")
+	return all
+}
+
+// The default (the row names none) is they/them.
+func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
+	t.Parallel()
+	all := holdAHarnessAtItsLimit(t)
+	assert.Contains(t, all, "friend bob down: their harness is at its limit until ", "the coordinator is told the friend is down")
+}
+
+// --pronouns names the friend's pronouns and the coordinator is told in them (made-up friend bob).
+func TestRunTellsTheCoordinatorOfALimitInTheFriendsPronouns(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ flag, want string }{
+		{"she/her", "friend bob down: her harness is at its limit until "},
+		{"he/him", "friend bob down: his harness is at its limit until "},
+		{"they/them", "friend bob down: their harness is at its limit until "},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			assert.Contains(t, holdAHarnessAtItsLimit(t, "--pronouns", tc.flag), tc.want)
+		})
+	}
+}
+
+// The synced row overrides the startup flag through the actual beat callback and
+// changes the coordinator's report, without a daemon restart or a store read.
+func TestRunUsesTheSyncedRowsPronounsForItsLimitReport(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ row, flag, possessive string }{
+		{"she/her", "he/him", "her"},
+		{"he/him", "they/them", "his"},
+		{"they/them", "she/her", "their"},
+	} {
+		t.Run(tc.row, func(t *testing.T) {
+			t.Parallel()
+			all := holdAHarnessAtItsLimitWithRow(t, tc.row, "--pronouns", tc.flag)
+			assert.Contains(t, all, "friend bob down: "+tc.possessive+" harness is at its limit until ")
+		})
+	}
 }
 
 // lockedBuilder is a strings.Builder under the test's lock: the daemon writes

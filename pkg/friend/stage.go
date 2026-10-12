@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -137,9 +138,9 @@ type NotStageable struct {
 func (n *NotStageable) Error() string {
 	if n.Card == "" {
 		if n.Job != "" {
-			return fmt.Sprintf("her account cannot reach %s (staging %s/%s): %s", n.Repo, JobsDir, n.Job, n.Why)
+			return fmt.Sprintf("the friend's account cannot reach %s (staging %s/%s): %s", n.Repo, JobsDir, n.Job, n.Why)
 		}
-		return fmt.Sprintf("her account cannot reach %s: %s", n.Repo, n.Why)
+		return fmt.Sprintf("the friend's account cannot reach %s: %s", n.Repo, n.Why)
 	}
 	return fmt.Sprintf("card %s cannot be staged from %s: %s", n.Card, n.Repo, n.Why)
 }
@@ -328,7 +329,7 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 	url := s.url(repo)
 	unreachable := func(err error) error {
 		return &NotStageable{Repo: repo, Why: fmt.Sprintf("git could not fetch %s: %s", url, oneLine(err.Error(), 300)),
-			Remedy: fmt.Sprintf("give her account read and push access to %s (on GitHub, a collaborator invitation she accepts, or her key added with write), or take the card(s) back and deal them to a friend who can reach it", repo)}
+			Remedy: fmt.Sprintf("give the friend's account read and push access to %s (on GitHub, a collaborator invitation the friend accepts, or the friend's key added with write), or take the card(s) back and deal them to a friend who can reach it", repo)}
 	}
 	if _, err := os.Lstat(mirror); errors.Is(err, fs.ErrNotExist) {
 		tmp := mirror + ".cloning"
@@ -522,7 +523,7 @@ func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]s
 		err := s.pruneJob(ctx, f.mirror, f.job)
 		lock.Unlock()
 		if err != nil {
-			firstErr = cmpErr(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
+			firstErr = cmp.Or(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
 			continue
 		}
 		pruned = append(pruned, f.job)

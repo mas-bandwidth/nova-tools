@@ -3,7 +3,9 @@ package swarm
 import (
 	"os"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,45 +24,25 @@ import (
 func TestIssue2579(t *testing.T) {
 	t.Parallel()
 
-	job := t.TempDir()
+	for _, tc := range []struct {
+		name, task, kind, target, step, reason, want, unwanted string
+	}{
+		{"idle", "task-idle", "", "", "-", "the card's log and its process tree were both still for 300s; the run ended it rather than holding the slot to its deadline", "CARD IDLE task=task-idle step=- idle=300s", "WALL REFUSED"},
+		{"wall refused", "task-wall", "write", "/etc/passwd", "2", "the wall refused write /etc/passwd and the card wrote nothing for 300s after it", "WALL REFUSED write /etc/passwd", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Case 1: Card that became idle with NO refusal
-	// Should write CARD IDLE line, not WALL REFUSED
-	// kind="" indicates no refusal, so WriteBlockedResult will use CardIdleLine
-	path, wrote, err := WriteBlockedResult(
-		job, "task-idle", "", "", "-",
-		"the card's log and its process tree were both still for 300s; the run ended it rather than holding the slot to its deadline",
-	)
-	require.NoError(t, err, "WriteBlockedResult for idle card failed: %v %v", wrote, err)
-	require.True(t, wrote, "WriteBlockedResult for idle card failed: %v %v", wrote, err)
+			path, wrote, err := WriteBlockedResult(t.TempDir(), tc.task, tc.kind, tc.target, tc.step, 300*time.Second, tc.reason)
+			require.NoError(t, err)
+			assert.True(t, wrote)
 
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	body := string(raw)
-
-	// The report should say CARD IDLE, not WALL REFUSED
-	require.Contains(t, body, "CARD IDLE task=task-idle", "idle card report should contain 'CARD IDLE task=task-idle':\n%s", body)
-
-	// The report should NOT say WALL REFUSED when there was no refusal
-	require.NotContains(t, body, "WALL REFUSED", "idle card (not wall refused) should not contain 'WALL REFUSED' line:\n%s", body)
-
-	// Case 2: Clean up and test a card that HIT a wall refusal
-	os.RemoveAll(job)
-	job = t.TempDir()
-
-	// A card that hit a wall refusal should still say WALL REFUSED
-	// kind="write" indicates a refusal, so WriteBlockedResult will use WallRefusedLine
-	path2, wrote2, err := WriteBlockedResult(
-		job, "task-wall", "write", "/etc/passwd", "2",
-		"the wall refused write /etc/passwd and the card wrote nothing for 300s after it",
-	)
-	require.NoError(t, err, "WriteBlockedResult for wall-refused card failed: %v %v", wrote2, err)
-	require.True(t, wrote2, "WriteBlockedResult for wall-refused card failed: %v %v", wrote2, err)
-
-	raw2, err := os.ReadFile(path2)
-	require.NoError(t, err)
-	body2 := string(raw2)
-
-	// A card blocked by wall refusal SHOULD have WALL REFUSED
-	require.Contains(t, body2, "WALL REFUSED write /etc/passwd", "wall-refused card should contain 'WALL REFUSED write /etc/passwd':\n%s", body2)
+			raw, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), tc.want)
+			if tc.unwanted != "" {
+				assert.NotContains(t, string(raw), tc.unwanted)
+			}
+		})
+	}
 }

@@ -1490,7 +1490,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			// spells it on a CARD IDLE line when the kind is empty
 			kind = ""
 		}
-		if path, wrote, err := swarm.WriteBlockedResult(s.prep.jobDir, s.prep.cfg.label, kind, s.res.idleEnd.Path, s.res.idleEnd.Step, reason); err != nil {
+		if path, wrote, err := swarm.WriteBlockedResult(s.prep.jobDir, s.prep.cfg.label, kind, s.res.idleEnd.Path, s.res.idleEnd.Step, s.res.idleEnd.Idle, reason); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the blocked report could not be written: %s\n", oneline.Escape(err.Error()))
 		} else if wrote {
 			s.res.blockedPath = path

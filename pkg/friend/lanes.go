@@ -887,11 +887,11 @@ func (l *loop) faultTurn(ln *lane, line, fault, first string, now time.Time) {
 		return
 	}
 	s.gov.PauseUntil(until, reason, now)
-	d.Record(fmt.Sprintf("%s harness fault: %d alike within %s: her row down until %s, her lanes held: %s", now.UTC().Format(time.RFC3339), FaultRepeats, FaultWithin, until.UTC().Format(time.RFC3339), oneLine(reason, 300)))
+	d.Record(d.sayf("%s harness fault: %d alike within %s: {their} row down until %s, {their} lanes held: %s", now.UTC().Format(time.RFC3339), FaultRepeats, FaultWithin, until.UTC().Format(time.RFC3339), oneLine(reason, 300)))
 	if d.FaultDown != nil {
 		d.FaultDown(until, reason)
 	}
-	subject, body := FaultDownText(d.Friend, reason, until)
+	subject, body := FaultDownText(d.Friend, d.Pro.Get(), reason, until)
 	l.tellKind(bus.KindBlocker, subject, body, now)
 }
 
@@ -977,7 +977,7 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 		if s.gov.Hold(rate.Reason) {
 			d.Record(fmt.Sprintf("%s provider failure: lanes held, the friend held down, nothing resumes until a person clears %s: %s", at, PauseFile, oneLine(rate.Reason, 200)))
 			l.holdDown(stop, now)
-			l.tellKind(bus.KindBlocker, fmt.Sprintf("friend %s: provider failure: %s", d.Friend, oneLine(rate.Reason, 120)), fmt.Sprintf("The row says a rate limit holds the lanes (pause_on=any). The provider said: %s. Every lane is stopped and the friend is held down; clear the pause with nova-friend resume --as %s, then bring her up.\n", rate.Reason, d.Friend), now)
+			l.tellKind(bus.KindBlocker, fmt.Sprintf("friend %s: provider failure: %s", d.Friend, oneLine(rate.Reason, 120)), d.sayf("The row says a rate limit holds the lanes (pause_on=any). The provider said: %s. Every lane is stopped and the friend is held down; clear the pause with nova-friend resume --as %s, then bring {them} up.\n", rate.Reason, d.Friend), now)
 		}
 		return true
 	case errors.As(err, &usage):
@@ -988,10 +988,10 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 	case errors.As(err, &funds):
 		if s.gov.Hold(funds.Reason) {
 			l.holdDown(stop, now)
-			subject, body := FundsJudgmentText(d.Friend, funds.Reason)
+			subject, body := FundsJudgmentText(d.Friend, d.Pro.Get(), funds.Reason)
 			if s.marked { // the pause marker holds them: a person's resume, not a restart, lifts it
 				d.Record(fmt.Sprintf("%s provider failure: out of funds: lanes held, the friend held down, nothing resumes until a person clears %s, every card kept in hand: %s", at, PauseFile, oneLine(funds.Reason, 200)))
-				body += fmt.Sprintf("Her lanes' pause marker (%s) holds them across a restart and her beat says her down with the provider's message: once paid, run nova-friend resume --as %s.\n", PauseFile, d.Friend)
+				body += d.sayf("{Their} lanes' pause marker (%s) holds them across a restart and {their} beat says {them} down with the provider's message: once paid, run nova-friend resume --as %s.\n", PauseFile, d.Friend)
 			} else {
 				d.Record(fmt.Sprintf("%s out of funds: lanes held until the daemon restarts, every card kept in hand: %s", at, oneLine(funds.Reason, 200)))
 			}
@@ -1004,7 +1004,7 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 			d.Record(at + " " + line)
 		}
 		if judge {
-			subject, body := RateJudgmentText(d.Friend, s.gov.Cap(s.width), s.width, rate.Reason)
+			subject, body := RateJudgmentText(d.Friend, d.Pro.Get(), s.gov.Cap(s.width), s.width, rate.Reason)
 			l.tellKind(bus.KindBlocker, subject, body, now)
 		}
 		return true

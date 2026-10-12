@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -46,7 +47,7 @@ func SnapEpoch(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 		entries, err := os.ReadDir(filepath.Join(dir, sub))
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
-				firstErr = cmpErr(firstErr, err)
+				firstErr = cmp.Or(firstErr, err)
 			}
 			continue
 		}
@@ -61,7 +62,7 @@ func SnapEpoch(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 			}
 			to, err := retireEpoch(dir, sub, job, epoch, now)
 			if err != nil {
-				firstErr = cmpErr(firstErr, err)
+				firstErr = cmp.Or(firstErr, err)
 				continue
 			}
 			moved++

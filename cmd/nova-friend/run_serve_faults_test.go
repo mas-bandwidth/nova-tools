@@ -258,7 +258,7 @@ func TestRunSaysThereIsNoSeatOrCoordinatorToTellOfALimit(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Positive(t, hits, "the turn hit the limit: %s", out.String())
-	assert.Contains(t, out.String(), "limit: no seat or coordinator to tell: friend bob down: her harness is at its limit until", out.String())
+	assert.Contains(t, out.String(), "limit: no seat or coordinator to tell: friend bob down: their harness is at its limit until", out.String())
 }
 
 // driveCreditRefusal runs the opencode daemon over one queued card whose turn

@@ -50,7 +50,7 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 	}{
 		{name: "the outbox written", configDir: "/accounts/heavy-a", write: true},
 		{name: "no outbox result", configDir: "/accounts/heavy-a", wantErr: "holds no REPORT.md and no RESULT.md"},
-		{name: "no config_dir", wantErr: "friend bob is a claude friend in one-shot mode with no config_dir, and a lane runs only as her own account (CLAUDE_CONFIG_DIR); run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>"},
+		{name: "no config_dir", wantErr: "friend bob is a claude friend in one-shot mode with no config_dir, and a lane runs only as the friend's own account (CLAUDE_CONFIG_DIR); run: nova-config friend set bob --config_dir <the account's absolute config directory>, or nova-friend run --config-dir <dir>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -16,9 +16,10 @@
 // exact dispatch case to add; it never edits the switch itself.
 //
 // Each test copies into its scratch tree only the module's packages that the
-// patterns it builds depend on (go list -deps -test), never all of cmd/,
+// patterns it builds depend on, never all of cmd/,
 // internal/, tools/ and profiles/ (rowan hold 6 on #3616: 0.15 s -> 54 s), and
-// the two tests run in parallel.
+// the two tests run in parallel. The verb's generated tests stand alone; the
+// rule fixture also needs the existing class tests' repoRoot helper.
 package main
 
 import (
@@ -35,7 +36,13 @@ import (
 
 func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	t.Parallel()
-	_, bin, tree := scaffoldTree(t, "./cmd/nova-ci")
+	_, bin, tree := scaffoldTree(t, "./cmd/nova-ci", false)
+
+	// The fixture compiles the generated tests, without compiling this CLI's
+	// unrelated test suite again in each scratch-module test command.
+	tests, err := filepath.Glob(filepath.Join(tree, "cmd", "nova-ci", "*_test.go"))
+	require.NoError(t, err)
+	assert.Empty(t, tests)
 
 	// Run new-verb verb
 	out := runScaffoldCmd(t, bin, "new-verb", "--root", tree, "nova-ci", "probe")
@@ -142,9 +149,10 @@ func TestScaffoldVerbsDryRunAndRefuse(t *testing.T) {
 }
 
 // scaffoldTree builds the CLI and lays out a scratch module holding go.mod,
-// go.sum, the Makefile, and only the module packages that pattern depends on,
-// tests included: each such package's top-level files plus its embed files.
-func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
+// go.sum, the Makefile, and only the module packages that pattern depends on.
+// testSupport includes existing tests and their dependencies when a generated
+// skeleton needs a helper from the target package's tests.
+func scaffoldTree(t *testing.T, pattern string, testSupport bool) (root, bin, tree string) {
 	t.Helper()
 	for _, tool := range []string{"make", "go"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -163,12 +171,18 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 		}
 	}
 
-	list := exec.Command("go", "list", "-deps", "-test", "-f",
-		`{{.Dir}}{{range .EmbedFiles}}|{{.}}{{end}}{{range .TestEmbedFiles}}|{{.}}{{end}}`, pattern)
+	args := []string{"list", "-deps"}
+	embeds := `{{.Dir}}{{range .EmbedFiles}}|{{.}}{{end}}`
+	if testSupport {
+		args = append(args, "-test")
+		embeds += `{{range .TestEmbedFiles}}|{{.}}{{end}}`
+	}
+	args = append(args, "-f", embeds, pattern)
+	list := exec.Command("go", args...)
 	list.Dir = root
 	list.Env = goenv.Clean(os.Environ())
 	out, err := list.Output()
-	require.NoError(t, err, "go list -deps -test %s: %v", pattern, err)
+	require.NoError(t, err, "go %s: %v", strings.Join(args, " "), err)
 	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.Split(line, "|")
@@ -181,7 +195,7 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 		ents, err := os.ReadDir(dir)
 		require.NoError(t, err)
 		for _, e := range ents {
-			if e.Type().IsRegular() {
+			if e.Type().IsRegular() && (testSupport || !strings.HasSuffix(e.Name(), "_test.go")) {
 				copyScaffoldFile(t, filepath.Join(dir, e.Name()), filepath.Join(tree, rel, e.Name()))
 			}
 		}
