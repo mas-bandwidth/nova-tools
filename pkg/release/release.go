@@ -44,6 +44,7 @@ import (
 // both fields are here -- a pending run is not a green one, and reading only the
 // conclusion would make it look like a neutral one.
 type CheckRun struct {
+	ID         int64
 	Name       string
 	Status     string // queued, in_progress, completed
 	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral

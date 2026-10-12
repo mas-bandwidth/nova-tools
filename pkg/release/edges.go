@@ -163,12 +163,12 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		return runs, nil
 	}
 	out, err = api(ctx, "api", "--paginate", "repos/"+repo+"/actions/runs?head_sha="+url.QueryEscape(sha)+"&per_page=100",
-		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event}")
+		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event}")
 	if err != nil {
 		return nil, fmt.Errorf("cannot read check provenance: %w", err)
 	}
 	type provenance struct {
-		SuiteID                                  int64
+		SuiteID, ID                              int64
 		HeadSHA, WorkflowPath, HeadBranch, Event string
 	}
 	bySuite := map[int64]provenance{}
@@ -205,6 +205,7 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		}
 		r := bySuite[suite]
 		for _, i := range indexes {
+			runs[i].ID = r.ID
 			runs[i].WorkflowPath, runs[i].HeadBranch, runs[i].Event = r.WorkflowPath, r.HeadBranch, r.Event
 			runs[i].TagPush = tagPush && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push"
 		}
