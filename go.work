@@ -4,4 +4,5 @@ use (
 	.
 	./hook
 	./pkg/oneline
+	./pkg/subproc
 )

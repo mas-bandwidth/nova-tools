@@ -27,7 +27,7 @@ func TestEveryNestedModuleIsTested(t *testing.T) {
 	root := repoRoot(t)
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 	modules := strings.Fields(mk.vars["MODULES"])
-	require.NotEmpty(t, modules, "Makefile MODULES is empty; a nested module (hook/, pkg/oneline/) would be tested by no make target")
+	require.NotEmpty(t, modules, "Makefile MODULES is empty; a nested module (hook/, pkg/oneline/, pkg/subproc/) would be tested by no make target")
 
 	used := usedWorkModules(t, filepath.Join(root, "go.work"))
 	require.NotEmpty(t, used, "go.work names no used module; the workspace is the truth this test reads")

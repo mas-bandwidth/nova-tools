@@ -37,12 +37,14 @@ dev. No doc and no card spells it (`internal/ci`: `TestNoWholeTreeGoTestInDocs`)
 Outside a nova-tools checkout, test only the packages you touched:
 `nice -n 15 go test -p 2 -count=1 <packages>`.
 
-## Nested modules: `hook/` and `pkg/oneline/`
+## Nested modules: `hook/`, `pkg/oneline/` and `pkg/subproc/`
 
-Two packages in this repository are modules of their own, with their own
-`go.mod` beside the root: `hook/` (`github.com/mas-bandwidth/nova-tools/hook`)
-and `pkg/oneline/` (`github.com/mas-bandwidth/nova-tools/pkg/oneline`, no
-imports beyond the standard library). The root `go.mod` requires each with a
+Three packages in this repository are modules of their own, with their own
+`go.mod` beside the root: `hook/` (`github.com/mas-bandwidth/nova-tools/hook`),
+`pkg/oneline/` (`github.com/mas-bandwidth/nova-tools/pkg/oneline`, no imports
+beyond the standard library) and `pkg/subproc/`
+(`github.com/mas-bandwidth/nova-tools/pkg/subproc`, no imports beyond the
+standard library). The root `go.mod` requires each with a
 `replace` to its directory, so a `GOWORK=off` build — a member, a release build,
 `go install` — still resolves it, and the root `go.work` lists `.` and every
 nested module so a workspace build sees them too.
@@ -54,7 +56,7 @@ so `make test`, `make vet`, `make test-full` and `make test-race` loop over it
 and its packages reach `CL_PKGS`; `internal/ci`'s
 `TestEveryNestedModuleIsTested` reads `go.work` and fails when a used module is
 missing from `MODULES`. The module itself is vetted and tested from inside it
-(`cd pkg/oneline` first, then `go vet` and `go test -count=1 -cover` over its
+(`cd pkg/subproc` first, then `go vet` and `go test -count=1 -cover` over its
 packages).
 
 ## The functional tier runs inside a container

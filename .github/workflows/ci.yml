@@ -830,6 +830,16 @@ jobs:
         shell: bash
         run: make test-oneline
 
+      - name: test the subproc module
+        # pkg/subproc/ is a nested module of its own (pkg/subproc/go.mod): `go list
+        # ./...` from the root never names it, so no leg's package list carries its
+        # tests. The bounded subprocess runner is imported by 40 packages across the
+        # tools, so a leg that tests any of them runs the module's own tests too,
+        # sub-second, with the same refusing redis-server first on PATH.
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
+        shell: bash
+        run: make test-subproc
+
   functional:
     # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,
     # and are built to be frugal and avoid wasting resources.
