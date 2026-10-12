@@ -591,7 +591,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
 		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", harness: harnessName(p, r.harness)}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read"}
 		go func() {
 			for processAlive(pid) {
 				time.Sleep(time.Second)
@@ -697,7 +697,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", harness: harnessName(p, r.harness)}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read"}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -784,17 +784,6 @@ func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
 	return bin, nil
 }
 
-// harnessName is the harness a packet's child runs under, as the finish names it with
-// --harness (member.Result.Harness): the headless program the route names, else the
-// member's own --harness. The binary harnessFor resolves is what runs; this is the name
-// the store reads, so an environment death names the program that died.
-func harnessName(p member.Packet, memberHarness string) string {
-	if harness.IsHeadless(p.Harness) {
-		return p.Harness
-	}
-	return memberHarness
-}
-
 // launchName is the name of one launch: the card at its generation (a read:
 // its attempt) in its epoch; a card dealt again is another launch.
 func launchName(p member.Packet) string {
@@ -830,10 +819,6 @@ func processAlive(pid int) bool {
 
 type nativeChild struct {
 	card, logPath, results, job string
-	// harness is the harness name this child ran under (the route's, else the member's
-	// --harness): the finish names it with --harness, so the store tells an environment
-	// death from a no-result (member.Result.Harness; nova-sprint #129).
-	harness string
 	// read is whether this launch is a READ (member.Packet.Kind): a wall refusal on a read
 	// is the reader's own environment, never the work's (member.EndEnvironment).
 	read   bool
@@ -1073,7 +1058,6 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		exit := 0
-		childRan := false
 		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
 		var wall time.Duration
 		nativeHasSpend := false
@@ -1099,7 +1083,6 @@ func (c *nativeChild) Result() member.Result {
 				return
 			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
-				childRan = true
 				if rc, err := strconv.Atoi(string(m[2])); err == nil && rc > 0 {
 					// the child's real exit code: 134 an abort and 137 a kill reach the
 					// member here, where a missing one would read as a no-result (native's
@@ -1209,13 +1192,56 @@ func (c *nativeChild) Result() member.Result {
 			// their rerun passed: the work is done as far as its gate says; the readers read it
 			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
 		}
-		harness := ""
-		if childRan {
-			harness = c.harness
-		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, Harness: harness}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, HarnessOutput: harnessOutputTail(c.job)}
 	})
 	return c.result
+}
+
+// harnessOutputBytes bounds the harness output the member reads for a finish's --harness:
+// its last bytes, more than enough for the last member.HarnessTailLines lines.
+const harnessOutputBytes = 64 << 10
+
+// harnessOutputTail is the tail of the child's harness output, <job>/harness-output.log:
+// its last harnessOutputBytes bytes, cut to a line boundary so the tail opens on a whole
+// line. "" when there is no job, no such file, or an empty one. The finish's --harness
+// carries its last member.HarnessTailLines lines (member.deathFlags).
+func harnessOutputTail(job string) string {
+	if job == "" {
+		return ""
+	}
+	f, err := os.Open(filepath.Join(job, "harness-output.log"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close() // ignored: a read-only log needs no close result
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	if fi.Size() == 0 {
+		return ""
+	}
+	if fi.Size() <= harnessOutputBytes {
+		raw, err := io.ReadAll(f)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(raw))
+	}
+	const slack = 4096
+	window := int64(harnessOutputBytes + slack)
+	if _, err := f.Seek(max(fi.Size()-window, 0), io.SeekStart); err != nil {
+		return ""
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, window))
+	if err != nil {
+		return ""
+	}
+	s := string(raw)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[i+1:]
+	}
+	return s
 }
 
 // frameOf is a launch's frame (docs/SPEC-CARD-CONTRACT.md layer 1): the repository and
