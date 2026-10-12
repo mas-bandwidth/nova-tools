@@ -82,7 +82,9 @@
      process collects adopted zombies explicitly, including descendants orphaned before any count,
      while its primary command retains its own wait. Run requires a process owning all its children;
      this fix does not support unrelated concurrent commands inside that process. Deterministic
-     WNOWAIT regressions pin the unrelated command's wait and unseen adopted-descendant cleanup."
+     WNOWAIT regressions pin the unrelated command's wait and unseen adopted-descendant cleanup.
+     The valid probe test also runs in a dedicated child, preserving other parallel tests' waits;
+     reversing that helper to an in-process probe deterministically steals a held zombie's wait."
     :origin "the sandbox probe-step stolen wait, 2026-10-12")
    (fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
     :title "Codex friend delivery refuses unproved queue routes"
