@@ -19,10 +19,13 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/tools/internal/runframe"
 )
 
 const tool = "ci"
+
+// cmdline is what a refusal tells the reader to run.
+const cmdline = "go run ./tools/ci"
 
 // env is everything a verb reads from outside itself, so a test runs a verb
 // with none of the process's own: its streams, its environment, its directory.
@@ -31,6 +34,10 @@ type env struct {
 	getenv         func(string) string
 	dir            string // the working directory; "" means the process's own
 }
+
+// Out and Err are the streams the runframe dispatch frame reads.
+func (e env) Out() io.Writer { return e.stdout }
+func (e env) Err() io.Writer { return e.stderr }
 
 // verb is one command: its name, a one-line summary for the banner, the help
 // text `ci help <verb>` prints, and the function that runs it. do returns the
@@ -42,6 +49,10 @@ type verb struct {
 	help    string
 	do      func(e env, args []string) int
 }
+
+// Help and Do present a verb to the runframe dispatch frame.
+func (v verb) Help() string                { return v.help }
+func (v verb) Do(e env, args []string) int { return v.do(e, args) }
 
 var registry = map[string]verb{}
 
@@ -72,28 +83,5 @@ func banner() string {
 }
 
 func run(args []string, e env) int {
-	if len(args) == 0 {
-		fmt.Fprint(e.stderr, banner())
-		return 2
-	}
-	switch args[0] {
-	case "help", "-h", "--help":
-		if len(args) > 1 && args[0] == "help" {
-			v, ok := registry[args[1]]
-			if !ok {
-				fmt.Fprintf(e.stderr, "%s help: unknown verb %s; run: go run ./tools/ci help\n", tool, oneline.Quote(args[1]))
-				return 2
-			}
-			fmt.Fprint(e.stdout, v.help)
-			return 0
-		}
-		fmt.Fprint(e.stdout, banner())
-		return 0
-	}
-	v, ok := registry[args[0]]
-	if !ok {
-		fmt.Fprintf(e.stderr, "%s: unknown verb %s; the verbs are %s; run: go run ./tools/ci help\n", tool, oneline.Quote(args[0]), strings.Join(names(), ", "))
-		return 2
-	}
-	return v.do(e, args[1:])
+	return runframe.Run(e, args, tool, cmdline, banner, names(), registry)
 }

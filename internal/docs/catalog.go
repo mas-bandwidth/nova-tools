@@ -151,6 +151,7 @@ var DefaultCatalog = []Entry{
 	E("tools/fardelay", "a store at a distance as a process: a loopback proxy that holds each write of its clients back by a fixed delay", "go test ./tools/fardelay", "go run ./tools/fardelay --target HOST:PORT --delay 64ms"),
 	E("tools/functionalrun", "the functional tier inside one container per run, and the reaper of its overdue containers", "go test ./tools/functionalrun", "make test-functional-container"),
 	E("tools/ghrelease", "the GitHub release verbs: the stamped ldflags, the build of every shipped tool per platform, the checksums over the shipped set, the stamp assertion, the certified gate and the draft-only upload", "go test ./tools/ghrelease", "go run ./tools/ghrelease help"),
+	E("tools/internal", "the one argument-parse/env-read/dispatch frame the tools/ci and tools/ghrelease commands share (runframe); each tool keeps its own verbs, banner and exit codes", "go test ./tools/internal/runframe", "go test ./tools/internal/runframe"),
 	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
 	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
 	E("tools/notes20261002", "the 2026-10-02 notes written into nova-config: the seed, as a Go program with the arguments and refusals of the script it replaced", "go test ./tools/notes20261002", "go run ./tools/notes20261002 <args>"),

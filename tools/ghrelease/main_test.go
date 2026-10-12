@@ -114,3 +114,30 @@ func TestATargetLineOfAnyOtherShapeIsAnErrorNotASkip(t *testing.T) {
 		t.Fatalf("a comment, a blank and one line: %v %v", ts, err)
 	}
 }
+
+func TestEnvRootUsesTheWorkingDirectory(t *testing.T) {
+	t.Parallel()
+	if got := (env{}).root(); got != "." {
+		t.Fatalf("empty dir root = %q, want .", got)
+	}
+	if got := (env{dir: "release"}).root(); got != "release" {
+		t.Fatalf("dir root = %q, want release", got)
+	}
+}
+
+func TestEnvShippedReturnsSetTargets(t *testing.T) {
+	t.Parallel()
+	want := []target{{"linux", "amd64"}, {"windows", "amd64"}}
+	got, err := (env{targets: want}).shipped()
+	if err != nil || len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("shipped with targets set = %v, %v, want %v", got, err, want)
+	}
+}
+
+func TestEnvShippedParsesEmbeddedTargets(t *testing.T) {
+	t.Parallel()
+	got, err := (env{}).shipped()
+	if err != nil || len(got) == 0 {
+		t.Fatalf("shipped with no set targets = %d platforms, %v", len(got), err)
+	}
+}
