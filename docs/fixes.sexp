@@ -97,6 +97,10 @@
     :title "The nova-friend first-run transcript names the lanes --clear-faults example"
     :text "The friend spend-cap work added the `nova-friend lanes --as bob --clear-faults` example to the usage banner and docs/CLI.md but not to the `### First run` transcript of docs/TESTS.md, so TestTESTSFirstRunIsWhatTheToolPrints (functional tier) refused the v1.2.14 stream: the banner's example block, the transcript and the test's list of examples are one list. The transcript now carries the lanes line and its `LANES OK cleared=none` output, in the banner's verb order."
     :origin "the coordinator, 2026-10-12: the merge queue (run 38247574824, functional 1/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-friend TestTESTSFirstRunIsWhatTheToolPrints; dev's push CI never runs the functional tier")
+   (fix "the-nova-config-timeout-test-stalls-after-the-connection" :release "v1.2.14" :status "planned"
+    :title "The inventory timeout test reaches the applied-state read again"
+    :text "TestInventoryTimeoutFlagGovernsTheConnection parked a raw TCP listener that accepted and never answered, and since nova-config opens its Redis connection through pkg/redisconn.Open (one bounded dial and the HELLO 3 handshake), the verb timed out while connecting and never reached the read of the applied state the test proves. The stalled store now completes the RESP3 handshake and stalls on the read, so the timeout is again `while reading the applied state`; a second case, a store that accepts and never answers the handshake, pins `while connecting`. The product is unchanged: docs/SPEC-CONFIG.md requires pkg/redisconn.Open."
+    :origin "the coordinator, 2026-10-12: dev's merge queue (run 38247574824, functional 4/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-config TestInventoryTimeoutFlagGovernsTheConnection, failing 5 of 5 on dev f1ae69f03")
    (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."
