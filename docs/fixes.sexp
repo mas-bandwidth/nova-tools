@@ -1105,4 +1105,15 @@
     name, and whose first brief put the fix in nova-sprint's pkg/member, which nothing in production calls."
    :origin "the coordinator, 2026-10-12 ~07:50Z, re-cut after a cold read of 23b82f7: on nova-sprint main the
     finish verb's --harness means the child's harness output, its last 40 lines, but nova-tools' member sent
-    the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")))
+    the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
+   (fix "nova-friend-run-never-writes-its-output-after-it-returns" :release "v1.2.14" :status "in-progress"
+    :title "nova-friend run never writes its output after it returns"
+    :text "run's output is written through one locked writer (runOut) that every goroutine the run starts
+     shares, and that after shut() turns a write into an error that never reaches the caller's stdout, so no
+     two goroutines write at once (the record and a claude lane's account line) and nothing writes after run
+     returns. The hook loop and the session check's delivery are counted in one WaitGroup that run cancels
+     then joins before it returns, so a hook step can no longer write 'hook: context canceled' after run has
+     ended. A DATA RACE the -race certification caught (run 38205033396, TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir)
+     is gone, and two race-tagged tests pin it: TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce and
+     TestRunNeverWritesItsOutputAfterItReturns."
+    :origin "the v1.2.14 cut, 2026-10-12 ~09:10Z, certification run 38205033396 with -race: DATA RACE, the daemon's beat writes the run's output after (or while) the test reads it (card nova-friend-run-never-writes-its-output-after-it-returns.w8)")))
