@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -123,7 +124,7 @@ func TestWriteBlockedResultNeverOverwritesAPublishedReport(t *testing.T) {
 	job := t.TempDir()
 	mine := filepath.Join(job, "RESULT.md")
 	require.NoError(t, os.WriteFile(mine, []byte("RESULT: mine\nfindings: 0\n"), 0o644))
-	_, wrote, err := WriteBlockedResult(job, "c", "write", "/etc/hosts", "2", "still")
+	_, wrote, err := WriteBlockedResult(job, "c", "write", "/etc/hosts", "2", 0, "still")
 	require.NoError(t, err, "a published report is never overwritten: wrote=%v err=%v", wrote, err)
 	require.False(t, wrote, "a published report is never overwritten: wrote=%v err=%v", wrote, err)
 	raw, err := os.ReadFile(mine)
@@ -138,7 +139,7 @@ func TestWriteBlockedResultNamesTheBlockAndCannotBeGreen(t *testing.T) {
 	t.Parallel()
 
 	job := t.TempDir()
-	path, wrote, err := WriteBlockedResult(job, "card-8311", "write", "/etc/hosts", "2", "the card wrote nothing for 300s")
+	path, wrote, err := WriteBlockedResult(job, "card-8311", "write", "/etc/hosts", "2", 300*time.Second, "the card wrote nothing for 300s")
 	require.NoError(t, err, "a card with no report of its own is given one: %v %v", wrote, err)
 	require.True(t, wrote, "a card with no report of its own is given one: %v %v", wrote, err)
 	raw, err := os.ReadFile(path)

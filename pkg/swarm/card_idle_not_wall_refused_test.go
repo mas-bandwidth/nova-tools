@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func TestIssue2579(t *testing.T) {
 	// Should write CARD IDLE line, not WALL REFUSED
 	// kind="" indicates no refusal, so WriteBlockedResult will use CardIdleLine
 	path, wrote, err := WriteBlockedResult(
-		job, "task-idle", "", "", "-",
+		job, "task-idle", "", "", "-", 300*time.Second,
 		"the card's log and its process tree were both still for 300s; the run ended it rather than holding the slot to its deadline",
 	)
 	require.NoError(t, err, "WriteBlockedResult for idle card failed: %v %v", wrote, err)
@@ -39,7 +40,7 @@ func TestIssue2579(t *testing.T) {
 	body := string(raw)
 
 	// The report should say CARD IDLE, not WALL REFUSED
-	require.Contains(t, body, "CARD IDLE task=task-idle", "idle card report should contain 'CARD IDLE task=task-idle':\n%s", body)
+	require.Contains(t, body, "CARD IDLE task=task-idle step=- idle=300s", "idle card report should include the measured idle duration: expect idle=300s to match the reason:\n%s", body)
 
 	// The report should NOT say WALL REFUSED when there was no refusal
 	require.NotContains(t, body, "WALL REFUSED", "idle card (not wall refused) should not contain 'WALL REFUSED' line:\n%s", body)
@@ -51,7 +52,7 @@ func TestIssue2579(t *testing.T) {
 	// A card that hit a wall refusal should still say WALL REFUSED
 	// kind="write" indicates a refusal, so WriteBlockedResult will use WallRefusedLine
 	path2, wrote2, err := WriteBlockedResult(
-		job, "task-wall", "write", "/etc/passwd", "2",
+		job, "task-wall", "write", "/etc/passwd", "2", 300*time.Second,
 		"the wall refused write /etc/passwd and the card wrote nothing for 300s after it",
 	)
 	require.NoError(t, err, "WriteBlockedResult for wall-refused card failed: %v %v", wrote2, err)
