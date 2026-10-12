@@ -516,7 +516,10 @@ next only when the turn ends; a card with no RESULT.md after two turns is set as
 lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
 /dev/null, inside the lane wall with the row's config_dir as its --config-dir), its result read from the
 card's outbox; a claude row in one-shot mode with no config_dir (nor --config-dir) is refused on the
-record with the remedy, and no lane runs. Each claude run is priced from its stream-json and its
+record with the remedy, and no lane runs. A dsh lane is a fresh headless process per card instead
+(dsh --profile headless, the brief on stdin), HOME confined to the friend's working dir, its result read
+from the card's outbox; a missing credential is reported as a provider refusal, never a silent failure.
+Each claude run is priced from its stream-json and its
 rate_limit_event read, an opencode run from its session's record (opencode export), and each beat says
 what the lanes have cost and the limit they last read, one record line when it changed (spend: harness=
 runs= cost_usd= five_hour= seven_day= ..._resets=, or limited_until=). A lane
@@ -1285,7 +1288,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
 	if friend.RunsCards(c.Str("harness")) {
-		deliver = friend.NewClaude(name, dir, watched, c.Stdout) // a card a process: the adapter with a lane
+		switch c.Str("harness") {
+		case "dsh":
+			deliver = friend.NewDSHCardRunner(name, dir, watched, c.Stdout) // a card a process: the adapter with a lane
+		default:
+			deliver = friend.NewClaude(name, dir, watched, c.Stdout) // a card a process: the adapter with a lane
+		}
 	}
 	// a harness whose session queues what is delivered (Antigravity's mailbox): every delivery
 	// goes in at once, and the daemon follows the conversation that reads it (friend.Mailbox)

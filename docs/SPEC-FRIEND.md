@@ -1915,6 +1915,20 @@ run is, one `claude: run=(read)` line per read. A rejected event is
 (`providerLimit`), so a read at the limit pauses the lanes until its reset.
 `TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard`.
 
+### DSH lanes: a headless harness runs one-shot lanes (pkg/friend/adapter_dsh_lanes.go)
+
+The DeepSeek Harness (`dsh`) runs each card as a fresh headless process
+(`dsh --profile headless`, the brief on stdin), HOME confined to the friend's
+working directory, under the lane wall to the row's width. `nova-friend run
+--harness dsh --width <n>` on a one-shot row is the lane (`DSHCardRunner`, each
+card a process of its own); the result is reported per lane, and a failing lane
+does not stop the others. A missing credential (`MISSING_CREDENTIAL` in the
+run's output, exit 1) is reported as a provider refusal, a judgment told at
+once, never a silent failure; the code reads no key itself.
+
+`TestDSHCardRunnerRunsEachCardAsOneShot`, `TestDSHCardRunnerMultipleCardsRunIndependently`,
+`TestDSHCardRunnerReportsMissingCredentialAsRefusal`, `TestDSHCardRunnerUsesHeadlessProfile`.
+
 ### rate-limit-backs-off-not-down.w1 — a rate limit backs off; out of funds holds
 
 A rate limit passes in a minute; out of funds does not (the finding of
