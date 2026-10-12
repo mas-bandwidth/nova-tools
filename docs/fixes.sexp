@@ -1111,7 +1111,7 @@
     name, and whose first brief put the fix in nova-sprint's pkg/member, which nothing in production calls."
    :origin "the coordinator, 2026-10-12 ~07:50Z, re-cut after a cold read of 23b82f7: on nova-sprint main the
     finish verb's --harness means the child's harness output, its last 40 lines, but nova-tools' member sent
-     the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
+    the harness name (card a-member-sends-the-harness-output-not-its-nameb.w1)")
    (fix "nova-tools-dev-is-mod-tidy-clean" :release "v1.2.14" :status "in-progress"
     :title "The root module's go.mod and go.sum are tidy"
     :text "CI's lint job runs make mod-tidy, which had gone red because go.mod listed errcheck v1.20.0,
@@ -1139,4 +1139,14 @@
      ended. A DATA RACE the -race certification caught (run 38205033396, TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir)
      is gone, and two race-tagged tests pin it: TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce and
      TestRunNeverWritesItsOutputAfterItReturns."
-    :origin "the v1.2.14 cut, 2026-10-12 ~09:10Z, certification run 38205033396 with -race: DATA RACE, the daemon's beat writes the run's output after (or while) the test reads it (card nova-friend-run-never-writes-its-output-after-it-returns.w8)")))
+    :origin "the v1.2.14 cut, 2026-10-12 ~09:10Z, certification run 38205033396 with -race: DATA RACE, the daemon's beat writes the run's output after (or while) the test reads it (card nova-friend-run-never-writes-its-output-after-it-returns.w8)")
+  (fix "a-read-noexec-path-under-an-execute-root-is-refused" :release "v1.2.18" :status "planned"
+   :title "A --read-noexec path under an execute-granting root refuses instead of silently executing"
+   :text "Landlock's rules are a union: a path is executable when any rule on it or a parent grants
+    fsExecute, so a --read-noexec directory that sat under a root the wall grants execute (a static
+    root, the command's own directory, a --read or a --write) stayed executable in spite of its own
+    no-exec rule. addRules now refuses that policy at build time with reason=sandbox_failed rather than
+    silently letting the execution through, and TestWallAReadNoexecBinaryCannotBeExecuted pins it."
+   :origin "the seat's unit-coverage survey of nova-tools dev, 2026-10-12: pkg/sandbox/wrap_linux.go's
+    addRules added the no-exec read set last, but the command's own directory is already an execute
+    root, so the no-exec wall silently ran a script under --read-noexec")))
