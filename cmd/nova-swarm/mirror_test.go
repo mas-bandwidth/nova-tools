@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,17 +40,32 @@ func TestMirrorClonesWhatIsAbsentAndFetchesHeadsAndPullRequests(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := runMirror([]string{"--dir", dir, "--repos", "a, b", "--base", "https://example.test/org/"}, &out, &errb, g.run, nil)
 	require.Equal(t, 0, code, errb.String())
-	assert.Equal(t, "MIRROR OK a\nMIRROR OK b\n", out.String())
-	require.Len(t, g.calls, 4)
+	assert.Contains(t, out.String(), "MIRROR OK a\n")
+	assert.Contains(t, out.String(), "MIRROR OK b\n")
+	require.Len(t, g.calls, 4*2)
 	assert.Equal(t, "|init --bare --quiet -- "+filepath.Join(dir, "a.git"), g.calls[0])
 	assert.Equal(t, filepath.Join(dir, "a.git")+"|fetch --quiet --no-tags --prune -- https://example.test/org/a.git +refs/heads/*:refs/heads/* +refs/pull/*/head:refs/pull/*/head", g.calls[1])
 
-	// a second pass finds both mirrors and only fetches
+	// a second pass finds every mirror and only fetches
 	g.calls = nil
 	out.Reset()
 	require.Equal(t, 0, runMirror([]string{"--dir", dir, "--repos", "a,b", "--base", "https://example.test/org"}, &out, &errb, g.run, nil))
-	require.Len(t, g.calls, 2)
+	require.Len(t, g.calls, 4)
 	assert.Contains(t, g.calls[0], "|fetch ")
+}
+
+// The repositories every bench carries are the stream repos --repos names unioned
+// with the fixed set: a bench that names only `a` still gets nova-tools and
+// nova-sprint (swarm.MirrorSetRepos, docs/SPEC-SWARM.md, warm-clones-and-caches.w2).
+func TestMirrorAddsTheFixedRepositoriesToTheStreamList(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	g := &recordGit{}
+	var out, errb bytes.Buffer
+	require.Equal(t, 0, runMirror([]string{"--dir", dir, "--repos", "a", "--base", "https://example.test/o"}, &out, &errb, g.run, nil), errb.String())
+	for _, want := range []string{"a", "nova-tools", "nova-sprint"} {
+		assert.Contains(t, out.String(), "MIRROR OK "+want+"\n")
+	}
 }
 
 func TestMirrorOneFailureDoesNotStopTheOthers(t *testing.T) {
@@ -58,7 +74,8 @@ func TestMirrorOneFailureDoesNotStopTheOthers(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := runMirror([]string{"--dir", t.TempDir(), "--repos", "a,b", "--base", "https://example.test/o"}, &out, &errb, g.run, nil)
 	assert.Equal(t, 1, code)
-	assert.Equal(t, "MIRROR FAILED a: fatal: unable to access\nMIRROR OK b\n", out.String())
+	assert.Contains(t, out.String(), "MIRROR FAILED a: fatal: unable to access\n")
+	assert.Contains(t, out.String(), "MIRROR OK b\n")
 }
 
 func TestMirrorRefusesWhatIsNotARepositoryName(t *testing.T) {
@@ -112,6 +129,55 @@ func TestMirrorEveryRunsAgainUntilTheWaitEnds(t *testing.T) {
 	assert.Equal(t, 0, code, errb.String())
 	assert.Equal(t, 3, strings.Count(out.String(), "MIRROR OK a"), "one pass, then one after each of two waits")
 	assert.Equal(t, []time.Duration{time.Minute, time.Minute, time.Minute}, waited)
+}
+
+// The mirror set is a converged property of the fleet: every bench (a fleet row) carries
+// every repository a card can name. `nova-swarm mirror --check` is the converge-check: it
+// names a bench missing a mirror as a fault and writes nothing. A refresh pass creates the
+// missing mirrors. docs/FLEET.md, the mirrors' refresh row; docs/SPEC-SWARM.md,
+// warm-clones-and-caches.w2.
+func TestMirrorSetCoversEveryBench(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	g := &recordGit{}
+	base := "https://example.test/org"
+
+	// The fleet inventory: two benches, and the one repository each already carries so it
+	// is missing exactly the other; neither carries a fixed repository yet.
+	for _, keep := range []string{"b1/alpha.git", "b2/beta.git"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, keep), 0o755), keep)
+	}
+	repos := []string{"alpha", "beta"}
+	required := swarm.MirrorSetRepos(repos)
+
+	// converge-check names every mirror a bench lacks and runs no git.
+	var out, errb bytes.Buffer
+	code := runMirror([]string{"--dir", dir, "--benches", "b1,b2", "--repos", "alpha,beta", "--base", base, "--check"}, &out, &errb, g.run, nil)
+	assert.Equal(t, 1, code, errb.String())
+	var missing []string
+	for _, b := range []string{"b1", "b2"} {
+		for _, r := range required {
+			if (b == "b1" && r == "alpha") || (b == "b2" && r == "beta") {
+				continue
+			}
+			missing = append(missing, "MIRROR MISSING "+b+" "+r)
+		}
+	}
+	for _, want := range missing {
+		assert.Contains(t, out.String(), want+"\n")
+	}
+	assert.Empty(t, g.calls, "a converge-check runs no git")
+
+	// A refresh pass creates every missing mirror on every bench.
+	out.Reset()
+	code = runMirror([]string{"--dir", dir, "--benches", "b1,b2", "--repos", "alpha,beta", "--base", base}, &out, &errb, g.run, nil)
+	require.Equal(t, 0, code, errb.String())
+	for _, b := range []string{"b1", "b2"} {
+		for _, r := range required {
+			_, err := os.Stat(filepath.Join(dir, b, r+".git"))
+			require.NoError(t, err, "the refresh pass did not create %s/%s.git", b, r)
+		}
+	}
 }
 
 func TestDiskGuardStopsUnderItsStopFloor(t *testing.T) {
