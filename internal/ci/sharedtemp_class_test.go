@@ -77,44 +77,70 @@ func (f sharedTempFinding) String() string {
 		f.File, f.Line, f.Call, f.Func, sharedTempRemedy)
 }
 
+// classFinding is one row a class walk reports: key is the `file:function`
+// allowlist entry the finding files under, and message is the line a reader
+// sees when the finding is not allowlisted.
+type classFinding struct {
+	key     string
+	message string
+}
+
+// walkClassFindings is the one source walk the temp-directory class tests
+// share. It reads every _test.go under cmd/, internal/ and pkg/ (testdata
+// excepted), runs scan over each file, and fails for a finding whose key is not
+// on allowlistPath and for an allowlist entry whose key no longer names one.
+// Each caller keeps its own rule (scan) and its own allowlist; the walk and the
+// finding report are held once here.
+func walkClassFindings(t *testing.T, allowlistPath, staleReason string, scan func(rel string, fset *token.FileSet, file *ast.File) []classFinding) {
+	t.Helper()
+
+	tree := repoTree(t)
+	allow := loadAllowlist(t, allowlistPath, shrinkOnly)
+	seen := map[string]bool{}
+	var violations []string
+
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
+		for _, src := range tree.GoFilesUnder(true, dir) {
+			// testdata holds the fixtures these tests read, so reading it would
+			// find the offenders they are meant to find.
+			if src.HasDirNamed("testdata") {
+				continue
+			}
+			require.NoError(t, src.ParseErr)
+			for _, f := range scan(src.Rel, tree.FSet, src.AST) {
+				seen[f.key] = true
+				if !allow.Has(f.key) {
+					violations = append(violations, f.message+"\n  (or add "+f.key+" to internal/ci/"+allowlistPath+" with a reason)")
+				}
+			}
+		}
+	}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but %s; delete the stale entry (the list only shrinks)",
+			allowlistPath, row.Key, staleReason))
+	}
+	sort.Strings(violations)
+	for _, v := range violations {
+		assert.Fail(t, v)
+	}
+}
+
 // TestNoTestGlobsTheSharedTempDir walks the two trees on the CI path and refuses
 // a listing of the shared temp directory that is not allowlisted, and an
 // allowlist entry that no longer names one.
 func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 	t.Parallel()
 
-	tree := repoTree(t)
-	allow := loadAllowlist(t, sharedTempAllowlistPath, shrinkOnly)
-	seen := map[string]bool{}
-	var violations []string
-
-	for _, dir := range []string{"cmd", "internal", "pkg"} {
-		for _, src := range tree.GoFilesUnder(true, dir) {
-			// testdata holds the fixtures this very test reads, so reading it
-			// would find the offenders it is meant to find.
-			if src.HasDirNamed("testdata") {
-				continue
+	walkClassFindings(t, sharedTempAllowlistPath, "no shared-temp listing is there any more",
+		func(rel string, fset *token.FileSet, file *ast.File) []classFinding {
+			found := sharedTempReadsIn(rel, fset, file)
+			out := make([]classFinding, 0, len(found))
+			for _, f := range found {
+				out = append(out, classFinding{key: f.File + ":" + f.Func, message: f.String()})
 			}
-			require.NoError(t, src.ParseErr)
-			for _, f := range sharedTempReadsIn(src.Rel, tree.FSet, src.AST) {
-				key := f.File + ":" + f.Func
-				seen[key] = true
-				if !allow.Has(key) {
-					violations = append(violations, f.String()+"\n  (or add "+key+" to internal/ci/"+sharedTempAllowlistPath+" with a reason)")
-				}
-			}
-		}
-	}
-	for _, row := range allowlist.Check(t, allow, seen).Stale {
-		key := row.Key
-		violations = append(violations, fmt.Sprintf(
-			"%s lists %s, but no shared-temp listing is there any more; delete the stale entry (the list only shrinks)",
-			sharedTempAllowlistPath, key))
-	}
-	sort.Strings(violations)
-	for _, v := range violations {
-		assert.Fail(t, v)
-	}
+			return out
+		})
 }
 
 // TestSharedTempReadScannerReadsTheFixtures is the red-test contract: the scanner
