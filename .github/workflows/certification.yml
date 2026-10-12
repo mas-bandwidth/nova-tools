@@ -304,6 +304,15 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
 
+      - name: install the tested Ansible for the fleet fixtures
+        if: matrix.os == 'ubuntu-latest' && contains(format(' {0} ', env.HOSTED_PKGS), '/fleet ')
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/toolchains-ansible"
+          "$RUNNER_TEMP/toolchains-ansible/bin/python" -m pip install --disable-pip-version-check 'ansible-core==2.16.3'
+          "$RUNNER_TEMP/toolchains-ansible/bin/ansible-playbook" --version
+          echo "$RUNNER_TEMP/toolchains-ansible/bin" >> "$GITHUB_PATH"
+
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # -count=1: the restored cache must never answer for a test. -timeout 75s: this step
         # starts 35-50 s into the job, so a package still running at 75 s would be cancelled

@@ -259,6 +259,7 @@ func runToolchainsFixturePlay(t *testing.T, parent context.Context, ansible, tmp
 		"ANSIBLE_PIPELINING=1",
 	)
 	output, err := cmd.CombinedOutput()
+	require.NoError(t, ctx.Err(), "fixture play exceeded its budget:\n%s", output)
 	if wantError {
 		require.Error(t, err, "expected Ansible to reject a mismatched fixture digest:\n%s", output)
 		assert.Contains(t, strings.ToLower(string(output)), "checksum")
