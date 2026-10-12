@@ -146,6 +146,7 @@ tools/ci	0.2	@local	-
 tools/fardelay	0.1	@local	-
 tools/functionalrun	0.1	@local	-
 tools/ghrelease	0.2	@local	-
+tools/internal/runframe	0.1	@local	-
 tools/newrule	0.0	@run37411066588	self-hosted
 tools/newverb	0.0	@run37411066588	self-hosted
 tools/notes20261002	0.1	@local	-
