@@ -140,6 +140,7 @@ var secretOpeners = map[string]any{
 	"pkg/friend.ParseView":                        friend.ParseView,
 	"pkg/hostload.ParseProcStat":                  hostload.ParseProcStat,
 	"pkg/hostload.ParseTopCPU":                    hostload.ParseTopCPU,
+	"pkg/hostload.ParseTopCPUInterval":            hostload.ParseTopCPUInterval,
 	"pkg/log.New":                                 nslog.New,
 	"internal/nsprint/store.Open":                 nsstore.Open,
 	"pkg/nsprint/verbflag.New":                    verbflag.New,

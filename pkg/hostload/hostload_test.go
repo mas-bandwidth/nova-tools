@@ -51,6 +51,21 @@ func TestTopCPULine(t *testing.T) {
 	require.False(t, ok, "an idle that is not a number must not report")
 }
 
+// TestTopCPUIntervalTakesTheLast: darwin's `top -l 2` prints two CPU usage
+// lines, the first the average since boot and the second the interval between
+// the two readings; busy is 100 minus the last line's idle.
+func TestTopCPUIntervalTakesTheLast(t *testing.T) {
+	t.Parallel()
+	out := "CPU usage: 5.0% user, 3.0% sys, 92.0% idle\nCPU usage: 20.0% user, 10.0% sys, 70.0% idle\n"
+	pct, ok := ParseTopCPUInterval(out)
+	require.True(t, ok, "interval busy = %v %v, want 30", pct, ok)
+	require.True(t, near(pct, 30), "interval busy = %v %v, want 30", pct, ok)
+	_, ok = ParseTopCPUInterval("CPU usage: 1% user, 2% sys, x% idle\n")
+	require.False(t, ok, "a malformed idle must not report")
+	_, ok = ParseTopCPUInterval("no usage line\n")
+	require.False(t, ok, "a missing line must not report")
+}
+
 // TestMeasureLinux: the first reading has no interval, so it falls back to the
 // load average over the cores; the next gives the CPU busy percent between the
 // two readings.
