@@ -1,39 +1,63 @@
 ---------------------------- MODULE Bus2Receipts ----------------------------
 \* The receipts of nova-bus over its delivery machine (docs/SPEC-BUS.md,
-\* message-receipts; internal/bus/stages.go, internal/friend/daemon.go). It
-\* EXTENDS Bus2 and adds the receipts beside the streams, so Bus2's own
-\* cases read the machine as it was.
+\* message-receipts; pkg/bus/stages.go, redis.go; pkg/friend/daemon.go,
+\* present.go). It EXTENDS Bus2 and adds the receipts beside the streams, so
+\* Bus2's own cases read the machine as it was.
 \*
-\* The state it adds, per message m and recipient r: rcpt[m][r], the
-\* receipt the store holds ("none", "delivered", "read", "acted"), moved
-\* only by the rule Fwd (Store.Forward: only forward, only delivered starts
-\* one). Each consumer c is a friend daemon: hand[c] the pairs <<m, r>> it
-\* has read and not yet taken, turn[c] the ones in the session's turn,
-\* ackq[c] the ones a turn acted on that it has not acked, done[c] its
-\* memory of the ones it pushed into a turn that ended acted (lost when it
-\* crashes), and acts[m][r] how many turns carrying m ended acted (a ghost).
+\* The state it adds, per message m and recipient r: rcpt[m][r], the receipt
+\* the store holds ("none", "delivered", "read", "acted"), moved only by the
+\* rule Fwd (Store.Forward: only forward, only delivered starts one). Each
+\* consumer c is a friend daemon: hand[c] the pairs <<m, r>> it has read and
+\* not yet taken, turn[c] the ones in the session's turn, ackq[c] the ones a
+\* turn acted on that it has not acked, done[c] its memory of the ones it
+\* pushed into a turn that ended acted (lost when it crashes), and acts[m][r]
+\* how many turns carrying m ended acted (a ghost).
 \*
-\* The actions: RRecv (recv stamps delivered and hands the message to the
-\* daemon), Take (the daemon drops a message it knows was acted, by its
-\* memory or by the receipt, acking it, else pushes it into a turn), Print
-\* (the session took the turn: read), Reply (the session sent a message
-\* naming it: acted), TurnEnd (exit 0: acted, remembered, owed an ack),
-\* TurnFail (the turn ran and failed: read, and the claim hands it in
-\* again), DAck, LoseAck (the XACK never landed: the claim hands it in
-\* again), RCrash (a daemon dies holding what it holds, and forgets).
+\* The actions: RRecv (recv stamps delivered, reads the receipt it found, and
+\* drops-and-acks a pair the daemon knows was acted, else hands it to the
+\* daemon), Take (the daemon pushes a handed pair into a turn), Print (the
+\* session took the turn: read), Reply (the session sent a message naming it:
+\* acted), TurnEnd (exit 0: acted, remembered, owed an ack), LoseStamp (exit 0
+\* but the acted stamp failed: remembered, the receipt stays read), TurnFail
+\* (the turn ran and failed: read, and handed in again, or given up and acked
+\* at read), DAck, LoseAck (the XACK never landed: the message stays pending,
+\* redelivered through RRecv after the daemon died), Present (the present
+\* stamps the backlog delivered and acks it superseded), RCrash (a daemon dies
+\* holding what it holds, and forgets).
 \*
-\* Broken = "none" is the design; two reversed witnesses, each caught by one
-\* property below:
-\*   "pushdup"         the take pushes every message it is handed, acted or
-\*                     not: NoIdActedTwice
+\* Broken = "none" is the design. The reversed witnesses are caught by one
+\* property each; the third value is the code's own refusal, not a witness:
+\*   "pushdup"         recv hands every message to the daemon, acted or not:
+\*                     NoIdActedTwice
 \*   "backstamp"       recv writes delivered over whatever the receipt held
 \*                     (HSET, not the rule): ReceiptNeverMovesBack
+\*   "losestamp"       the acted stamp failed and is only remembered
+\*                     (daemon.go, oweActed), written again before the next
+\*                     read once the store answers; with a crash and a lost
+\*                     ack together the message is acted twice, the known gap
+\*                     MCBus2ReceiptsKnownGap checks.
 
 EXTENDS Bus2
 
 VARIABLES rcpt, hand, turn, ackq, done, acts
 rvars == <<rcpt, hand, turn, ackq, done, acts>>
 allvars == <<vars, rvars>>
+
+ReceiptStates == {"none", "delivered", "read", "acted"}
+Pairs == Messages \X Recipients
+
+Rank(s) == CASE s = "none" -> 0 [] s = "delivered" -> 1 [] s = "read" -> 2 [] s = "acted" -> 3
+
+\* Store.Forward (pkg/bus/stages.go Forward; redis.go forwardLua): the
+\* receipt holding cur asked to move to s.
+Fwd(cur, s) == IF Rank(s) > Rank(cur) /\ (Rank(cur) > 0 \/ s = "delivered") THEN s ELSE cur
+
+\* recv's delivered stamp (Bus.RecvKinds, delivered); the backstamp witness
+\* writes it over whatever the receipt held.
+Delivered(m, r) == IF Broken = "backstamp" THEN "delivered" ELSE Fwd(rcpt[m][r], "delivered")
+
+\* The receipt recv found (Entry.Stage), before the delivered stamp.
+Found(m, r) == rcpt[m][r]
 
 RInit ==
   /\ Init
@@ -44,15 +68,6 @@ RInit ==
   /\ done = [c \in Consumers |-> {}]
   /\ acts = [m \in Messages |-> [r \in Recipients |-> 0]]
 
-ReceiptStates == {"none", "delivered", "read", "acted"}
-Pairs == Messages \X Recipients
-
-Rank(s) == CASE s = "none" -> 0 [] s = "delivered" -> 1 [] s = "read" -> 2 [] s = "acted" -> 3
-
-\* Store.Forward (internal/bus/stages.go Forward; redis.go forwardLua): the
-\* receipt holding cur asked to move to s.
-Fwd(cur, s) == IF Rank(s) > Rank(cur) /\ (Rank(cur) > 0 \/ s = "delivered") THEN s ELSE cur
-
 RTypeOK ==
   /\ rcpt \in [Messages -> [Recipients -> ReceiptStates]]
   /\ hand \in [Consumers -> SUBSET Pairs]
@@ -61,32 +76,36 @@ RTypeOK ==
   /\ done \in [Consumers -> SUBSET Pairs]
   /\ acts \in [Messages -> [Recipients -> Nat]]
 
-\* recv's delivered stamp (Bus.RecvKinds, delivered); the backstamp witness
-\* writes it over whatever the receipt held.
-Delivered(m, r) == IF Broken = "backstamp" THEN "delivered" ELSE Fwd(rcpt[m][r], "delivered")
-
-Took(m, r, c) ==
+\* recv for r by c: the message it is handed, stamped delivered. A pair the
+\* daemon knows was acted (its memory, or the receipt recv found) is dropped
+\* and acked, never handed in; the pushdup witness hands every one in. A recv
+\* that hands out a new message found no pending one a dead consumer held.
+Received(m, r, c) ==
   /\ rcpt' = [rcpt EXCEPT ![m][r] = Delivered(m, r)]
-  /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
-  /\ UNCHANGED <<turn, ackq, done, acts>>
+  /\ IF Broken # "pushdup" /\ (<<m, r>> \in done[c] \/ Found(m, r) = "acted")
+       THEN /\ st' = [st EXCEPT ![m][r] = "acked"]
+            /\ holder' = [holder EXCEPT ![m][r] = NoOne]
+            /\ UNCHANGED <<hand, turn, ackq, done, acts>>
+       ELSE /\ st' = [st EXCEPT ![m][r] = "pending"]
+            /\ holder' = [holder EXCEPT ![m][r] = c]
+            /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
+            /\ UNCHANGED <<turn, ackq, done, acts>>
+  /\ UNCHANGED <<log, to, alive, crashes>>
 
-\* nova-bus recv by the daemon c: the message it is handed, stamped delivered.
 RRecv(r, c) ==
-  \/ RecvPending(r, c) /\ Took(OldestClaimable(r, c), r, c)
-  \/ RecvNew(r, c) /\ Took(Oldest(r, "new"), r, c)
+  \/ /\ c \in alive /\ Claimable(r, c) # {}
+     /\ LET m == OldestClaimable(r, c) IN Received(m, r, c)
+  \/ /\ c \in alive /\ (Claimable(r, c) = {} \/ Broken = "newfirst") /\ Has(r, "new")
+     /\ LET m == Oldest(r, "new") IN Received(m, r, c)
 
-\* The daemon's take (internal/friend/daemon.go, read): a message it pushed
-\* into a turn that ended acted (its memory), or whose receipt recv found
-\* acted (Entry.Stage), is dropped and acked, never pushed in; any other goes
-\* into the session's turn. The pushdup witness pushes every one.
+\* The daemon's take (pkg/friend/daemon.go, take): the recv already dropped
+\* the acted ones, so a handed pair goes straight into the session's turn.
 Take(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in hand[c]
   /\ hand' = [hand EXCEPT ![c] = @ \ {<<m, r>>}]
-  /\ IF Broken # "pushdup" /\ (<<m, r>> \in done[c] \/ rcpt[m][r] = "acted")
-       THEN Ack(r, m) /\ UNCHANGED <<rcpt, turn, ackq, done, acts>>
-       ELSE /\ turn' = [turn EXCEPT ![c] = @ \cup {<<m, r>>}]
-            /\ UNCHANGED vars
-            /\ UNCHANGED <<rcpt, ackq, done, acts>>
+  /\ turn' = [turn EXCEPT ![c] = @ \cup {<<m, r>>}]
+  /\ UNCHANGED vars
+  /\ UNCHANGED <<rcpt, ackq, done, acts>>
 
 \* The session took the turn: it printed (daemon.go, watch).
 Print(c, m, r) ==
@@ -102,7 +121,8 @@ Reply(c, m, r) ==
   /\ UNCHANGED vars
   /\ UNCHANGED <<hand, turn, ackq, done, acts>>
 
-\* The turn ended at exit 0 (daemon.go, settle): acted, remembered, owed an ack.
+\* The turn ended at exit 0 (daemon.go, settle): acted, remembered, owed an
+\* ack.
 TurnEnd(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in turn[c]
   /\ turn' = [turn EXCEPT ![c] = @ \ {<<m, r>>}]
@@ -113,14 +133,34 @@ TurnEnd(c, m, r) ==
   /\ UNCHANGED vars
   /\ UNCHANGED hand
 
-\* The turn ran and failed: read, and the claim hands it in again.
+\* Exit 0 but the acted stamp failed (daemon.go, oweActed): remembered and
+\* owed an ack, the receipt stays read (a read stamp is not owed; only acted
+\* keeps a message from a second turn). With a crash and a lost ack the
+\* message is redelivered and acted twice: the known gap.
+LoseStamp(c, m, r) ==
+  /\ Broken = "losestamp"
+  /\ c \in alive /\ <<m, r>> \in turn[c]
+  /\ turn' = [turn EXCEPT ![c] = @ \ {<<m, r>>}]
+  /\ acts' = [acts EXCEPT ![m][r] = @ + 1]
+  /\ done' = [done EXCEPT ![c] = @ \cup {<<m, r>>}]
+  /\ ackq' = [ackq EXCEPT ![c] = @ \cup {<<m, r>>}]
+  /\ UNCHANGED rcpt
+  /\ UNCHANGED vars
+  /\ UNCHANGED hand
+
+\* The turn ran and failed: read; the claim hands it in again, or the message
+\* is given up and acked at read (daemon.go, settle's failure arm).
 TurnFail(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in turn[c]
   /\ turn' = [turn EXCEPT ![c] = @ \ {<<m, r>>}]
-  /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
   /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "read")]
-  /\ UNCHANGED vars
-  /\ UNCHANGED <<ackq, done, acts>>
+  /\ \/ /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
+        /\ UNCHANGED vars
+        /\ UNCHANGED <<ackq, done, acts>>
+     \/ /\ st' = [st EXCEPT ![m][r] = "acked"]
+        /\ holder' = [holder EXCEPT ![m][r] = NoOne]
+        /\ UNCHANGED <<hand, ackq, done, acts>>
+  /\ UNCHANGED <<log, to, alive, crashes>>
 
 DAck(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in ackq[c]
@@ -128,15 +168,33 @@ DAck(c, m, r) ==
   /\ ackq' = [ackq EXCEPT ![c] = @ \ {<<m, r>>}]
   /\ UNCHANGED <<rcpt, hand, turn, done, acts>>
 
-\* The XACK never landed: the message stays pending, and the claim hands it
-\* in again to the same daemon. An outside event, bounded with the crashes.
+\* The XACK never landed: the daemon stops owing the ack, and the message
+\* stays pending. The claim hands it in again only after the daemon died
+\* (idle past ClaimAfter), so a live daemon keeps its message; the successor
+\* redelivers it through RRecv, where the receipt found is read.
 LoseAck(c, m, r) ==
-  /\ c \in alive /\ <<m, r>> \in ackq[c] /\ crashes < MaxCrashes
+  /\ c \in alive /\ <<m, r>> \in ackq[c]
   /\ ackq' = [ackq EXCEPT ![c] = @ \ {<<m, r>>}]
-  /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
-  /\ crashes' = crashes + 1
-  /\ UNCHANGED <<st, holder, log, to, alive>>
-  /\ UNCHANGED <<rcpt, turn, done, acts>>
+  /\ UNCHANGED <<st, holder, log, to, alive, crashes>>
+  /\ UNCHANGED <<rcpt, hand, turn, done, acts>>
+
+\* The present (pkg/friend/present.go, startPresent): on a session start or
+\* after a gap the daemon c stamps its whole backlog delivered and acks the
+\* superseded messages. One action per backlog message; TLC checks every
+\* order. A fresh message is claimed only after a dead holder's own came first.
+Present(c, m, r) ==
+  \/ \* the backlog stamp: a fresh message the present read is claimed and
+     \* stamped delivered
+     /\ c \in alive /\ st[m][r] = "new" /\ Claimable(r, c) = {}
+     /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "delivered")]
+     /\ st' = [st EXCEPT ![m][r] = "pending"]
+     /\ holder' = [holder EXCEPT ![m][r] = c]
+     /\ UNCHANGED <<log, to, alive, crashes>>
+     /\ UNCHANGED <<hand, turn, ackq, done, acts>>
+  \/ \* the superseded ack: a backlog message the present replaced is acked
+     /\ c \in alive /\ st[m][r] = "pending" /\ holder[m][r] \in {c} \cup (Consumers \ alive)
+     /\ Ack(r, m)
+     /\ UNCHANGED <<rcpt, hand, turn, ackq, done, acts>>
 
 \* A daemon dies holding what it holds: its memory goes with it, the store's
 \* receipts stay.
@@ -153,7 +211,8 @@ RNext ==
   \/ \E r \in Recipients, c \in Consumers : RRecv(r, c)
   \/ \E c \in Consumers, m \in Messages, r \in Recipients :
        \/ Take(c, m, r) \/ Print(c, m, r) \/ Reply(c, m, r)
-       \/ TurnEnd(c, m, r) \/ TurnFail(c, m, r) \/ DAck(c, m, r) \/ LoseAck(c, m, r)
+       \/ TurnEnd(c, m, r) \/ LoseStamp(c, m, r) \/ TurnFail(c, m, r)
+       \/ DAck(c, m, r) \/ LoseAck(c, m, r) \/ Present(c, m, r)
   \/ \E c \in Consumers : RCrash(c)
 
 \* The receipts over the delivery machine; safety only, so no fairness, and

@@ -96,6 +96,7 @@ MCBus2.cfg	MCBus2.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPartial.cfg	MCBus2.tla	invariant	OnEveryStreamOrNone	ignore-terminal	bus2	required	-
 MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2	required	-
 MCBus2BrokenSteal.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
+MCBus2BrokenClaimFresh.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
 MCBus2BrokenAckUndelivered.cfg	MCBus2.tla	action	AckOnlyDelivered	ignore-terminal	bus2	required	-
 MCBus2BrokenAckReopens.cfg	MCBus2.tla	action	AckedStaysAcked	ignore-terminal	bus2	required	-
 MCFriend.cfg	MCFriend.tla	pass	-	ignore-terminal	friend	required	-
@@ -108,6 +109,7 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenAheadIsNewer.cfg	MCUpdateApply.tla	invariant	VerdictMatchesVersion	ignore-terminal	updateapply	required	-
 MCConfigApply.cfg	MCConfigApply.tla	pass	-	ignore-terminal	configapply	required	-
 MCConfigApplyBrokenStampFirst.cfg	MCConfigApply.tla	invariant	StampOnlyWhenComplete	ignore-terminal	configapply	required	-
 MCConfigApplyBrokenFriendBeforeCeiling.cfg	MCConfigApply.tla	invariant	ApplyOrder	ignore-terminal	configapply	required	-
@@ -148,6 +150,7 @@ MCFriendBrokenNoProof.cfg	MCFriend.tla	action	NoTurnBeforeProof	ignore-terminal	
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
+MCBus2ReceiptsKnownGap.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCFriendNotifications.cfg	MCFriendNotifications.tla	pass	-	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsBadAck.cfg	MCFriendNotifications.tla	invariant	NoLostReady	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsBadDuplicate.cfg	MCFriendNotifications.tla	invariant	ReadyQueueBounded	ignore-terminal	friend-notifications	required	-
@@ -200,3 +203,8 @@ MCHookBrokenNoRole.cfg	MCHook.tla	invariant	LiveIsJoined	ignore-terminal	hook	re
 MCHookBrokenTakeover.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
 MCHookBrokenReArm.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
 MCHookBrokenNoExpire.cfg	MCHook.tla	temporal	DeadHolderLosesGate	ignore-terminal	hook	required	-
+MCBusSendOnce.cfg	MCBusSendOnce.tla	pass	-	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenCheckApart.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenNewId.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenDropEarly.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenNoFingerprint.cfg	MCBusSendOnce.tla	invariant	AnswerIsTheOriginal	ignore-terminal	bussendonce	required	-

@@ -64,7 +64,11 @@
    (release "v1.2.14" :status "planned" :date "2026-10-11"
     :text "The next small fixes, one concern each, including the defects v1.2.12's tests find.")
    (release "v1.2.15" :status "planned"
-    :text "The next small product fixes, one concern each."))
+    :text "The next small product fixes, one concern each.")
+   (release "v1.2.17" :status "planned"
+    :text "The next small product fixes, one concern each: apply refuses an enabled route with no price, so no take is priced from an empty sheet.")
+   (release "v1.2.18" :status "planned"
+    :text "The next small fixes, one concern each."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -118,6 +122,13 @@
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
+  (fix "the-adopt-starts-with-one-canary-member" :release "v1.2.14" :status "planned"
+   :title "The adopt starts with one canary member"
+   :text "The build no longer lands on every fleet host at once: the install play runs one canary host first and
+    every other fleet host after it, stops on the canary's failure, waits on the canary's own member log for one
+    finish ok line, and rolls the canary back alone to the version its build fact held. A canary whose build fact
+    held no version is not rolled back, and nova_adopt_canary=none installs every host in one batch as before."
+   :origin "tmp/next-sprint-cards/TOOLING-FROM-THE-SEAT-2026-10-11.md item 12 (the owner, 2026-10-11)")
   (fix "worker-writes-result-before-deadline" :release "v1.2.14" :status "planned"
    :title "A child ended at its deadline with a commit and no result gets a report"
    :text "The card already tells the child to finish at 80 percent of its wall; for a child that works on
@@ -218,6 +229,24 @@
      the platform, copying internal/up/layout.go's tools table: brew on darwin, go install for sops
      elsewhere, apt for age-keygen on linux."
     :origin "issue #5016; the point-release plan (tmp/point-release-plan-v1.2.11-v1.2.12.md), 2026-10-11")
+   (fix "a-member-runs-again-a-read-whose-stage-failed" :release "v1.2.14" :status "planned"
+    :title "nova-swarm member runs a read whose stage failed again, never holds it as a ghost"
+    :text "Blocker. On the live v1.2.13 sprint about 20 of 42 cards in review each held one read card
+     working for up to an hour with no member process running it (schema-c-t04-versions.r8.b2 since
+     21:53Z). b2's member log: \"the reader's environment ended it (the wall refused a write outside the
+     job); no verdict recorded; run again in 15s\", then nothing until \"reaped ... no longer in the
+     queue\" at the server's 60-minute read deadline. pkg/member's reportOne ran the retry only from the
+     queue's packet (if qPacket == nil return false), but a member's queue sends no packet for a card it
+     names in --have (queueArgs), so the retry never ran, the launch kept its result with no child, and
+     the member named the read held in every queue. Tick now hands reportOne the launch's own packet
+     when the queue lists the card working at the launch's claim and sends none, so the read runs again
+     after ReadStageRetry and a second failure is returned. Work cards have no such retry: a work
+     card's stage failure is finished --failed at once. The nova-sprint server half (a read its
+     member's beat does not name goes back to the read deal within LiveGrace) is nova-sprint #112.
+     Tests, red first: TestAReadWhoseStageFailedIsRunAgainNotHeldAsAGhost (pkg/member) and the
+     functional TestARealMemberRunsAReadWhoseStageFailedAgainNeverHoldsItAsAGhost (cmd/nova-swarm, a
+     real member process over a sprint server)."
+    :origin "the read-deal diagnosis, 2026-10-11 ~23:00Z, on the live v1.2.13 sprint; ported from mas-bandwidth/nova-sprint#112 (a-member-hands-back-a-read-it-is-not-running)")
    (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
     :title "A friend's lanes are thin clients of the sprint server"
     :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
@@ -692,6 +721,69 @@
     its exit mapping. Tests and models only, no product change."
    :origin "card tla-benchrun-an-interrupted-exec-ran.w4 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
 
+  (fix "tla-updateapply-newer-and-delivery-scopes" :release "v1.2.12" :status "planned"
+   :title "UpdateApply reads NEWER for a greater release and delivers per recipient scope"
+   :text "UpdateApply.tla's verdict read any installed version greater than the latest as AHEAD; the code
+    reads NEWER for a greater release version and AHEAD only for the vX.Y.Z-0 pseudo-version. The module
+    now reads NEWER and never AHEAD (its versions are numbers, never pseudo-versions), records a delivery
+    per recipient scope instead of one delivered boolean, and corrects the header's `confirmed` and
+    `writeSnapshot` names to `sendOK` and `writeSnapshotWith`. A new reversed witness aheadisnewer reads
+    AHEAD for a greater release version and fails a new VerdictMatchesVersion invariant, and report.go
+    and cli.go cite the module from report and verdict. Tests and models only, no product change."
+   :origin "the card tla-updateapply-newer-and-delivery-scopes.w5 (nova-tools drift read at dev 2314d437f, 2026-10-11, inventory item T35)")
+
+  (fix "tla-bus2-names-pkg-bus-and-the-idle-claim" :release "v1.2.12" :status "planned"
+   :title "Bus2 names pkg/bus and models the idle claim"
+   :text "Bus2's header named internal/bus2/bus2.go and docs/SPEC-BUS2.md, both gone; it now names
+    pkg/bus/bus.go and redis.go and docs/SPEC-BUS.md. The model told a dead holder only by a crash; the
+    code tells one by the entry's idle time past ClaimAfter, with one consumer name for every reader, so
+    Bus2 gains a Stall action (a live holder idle past ClaimAfter becomes claimable by any reader, its
+    holder NoOne) and HeldStaysHeld is restated as held while under ClaimAfter. A message's cc is folded
+    into its recipients. A sixth reversed witness, claimfresh, claims a holder before ClaimAfter and
+    fails HeldStaysHeld; the five existing witnesses and Bus2Receipts' cases keep their results. A
+    message's kind and RecvKinds' release of a skipped kind stay below the module's grain. Tests and
+    models only, no product change."
+   :origin "card tla-bus2-names-pkg-bus-and-the-idle-claim.w9 (v1.2.12 inventory item T32; drift read at dev 2314d437f, 2026-10-11)")
+
+  (fix "tla-bus2receipts-read-at-recv" :release "v1.2.12" :status "planned"
+   :title "Bus2Receipts reads the receipt at the recv and models the give-up, the present and the failed acted stamp"
+   :text "Tests and models only, no product change. The module's header named internal/bus/stages.go and
+    internal/friend/daemon.go (they are pkg/bus/stages.go, redis.go, pkg/friend/daemon.go, present.go).
+    It read the receipt at the take; the code reads it at the recv (Entry.Stage, bus.go:478-481,
+    daemon.go:1126), so a redelivered id the daemon remembers or whose receipt recv found acted is
+    dropped and acked there, never pushed in twice. It now acks a message given up at read
+    (daemon.go settle), stamps the present's backlog delivered and acks it superseded (present.go:256,
+    :311), and models the failed acted stamp (Broken = losestamp, daemon.go oweActed): the daemon
+    remembers the turn but the receipt stays read. A new witness MCBus2ReceiptsKnownGap checks the
+    known gap, a failed stamp, a lost ack and a crash together act a message twice (NoIdActedTwice);
+    the two existing witnesses keep their results. ReceiptNeverMovesBack, ActedImpliesDelivered and
+    NoIdActedTwice hold."
+   :origin "the card tla-bus2receipts-read-at-recv.w7 (stream v1212, 2026-10-11)")
+
+  (fix "tla-bussendonce-first-cases" :release "v1.2.12" :status "planned"
+   :title "BusSendOnce gains an instance, a case and four reversed witnesses"
+   :text "Tests and models only, no product change. BusSendOnce.tla's header named internal/bus/token.go,
+    which this tree does not have; it now names pkg/bus/token.go and pkg/bus/redis.go (AddOnce,
+    :138-169), and says why the model's per-token keying is sound against the code's
+    per-sender-and-token keying (the fingerprint includes From, so the sender is part of the
+    arguments). The new MCBusSendOnce instance checks OneMessageWithinLife and AnswerIsTheOriginal,
+    and four reversed witnesses fail exactly one each: BrokenCheckApart, BrokenNewId and BrokenDropEarly
+    fail OneMessageWithinLife, BrokenNoFingerprint fails AnswerIsTheOriginal. The bus-send-once
+    COVERAGE row is current."
+   :origin "card tla-bussendonce-first-cases.w5 (v1.2.12 inventory item T35; drift read at dev 2314d437f, 2026-10-11)")
+
+  (fix "friend-test-rig-clock-rechecked" :release "v1.2.12" :status "in-progress"
+   :title "The cmd/nova-friend test rig's fake clock is synchronized"
+   :text "Tests only, no code change. The card re-reported the fake-clock race in
+    cmd/nova-friend/main_test.go (both sides (*rig).world's now closure: the daemon's beat in
+    daemon.go:772 and each lane's work goroutine in daemon.go:1285). The v1.2.10 certification fix
+    (certification-bus-and-friend-test-rigs) already synchronized it: the clock's now and sleep take
+    r.mu across answerChecks and the one-second advance, the answered record bob's session writes takes
+    answeredMu, and stopAfter re-wraps the guarded clock, so every caller sees one advance and the rig
+    is safe for the daemon's concurrent callers. Rechecked at dev f78071c2a6 on 2026-10-12: go test
+    -race -count=20 ./cmd/nova-friend/ reports no race, so this card adds no code."
+   :origin "card nova-friend-test-rig-clock-races-the-daemon.w1; the race was first landed shipped by the v1.2.10 certification fix (PR #5607)")
+
   (fix "roadmap-tool-becomes-nova-roadmap" :release "v1.2.13" :status "planned"
    :title "Extract the roadmap tool into nova-roadmap"
    :text "The roadmap and fixes code exists twice: here as internal/roadmap, internal/roadmap/sexp and
@@ -789,6 +881,11 @@
    :text "Six new non-Fleet checks read each friend daemon this machine loads (launchd plists on darwin, systemd user units on linux) and fail with the one fix line for a fault a person would otherwise find: --coordinator against the sprint seat, the nova-config row's mode, roles and width, a refused beat or a stale beat while the agent is loaded, --dir against the lane wall's deny-self, a claude config dir that is not signed in, and a plist plutil refuses."
    :origin "card doctor-checks-every-friend-daemons-setup.w2; the owner, 2026-10-11, nova-doctor should catch these things")
 
+  (fix "the-stalled-store-timeout-test-drives-the-stall" :release "v1.2.14" :status "planned"
+   :title "bus: the stalled-store timeout test no longer races the wall clock"
+   :text "TestARedisCallThatStallsFailsWithinTheNamedTimeout failed on macos-latest under -race: the call's 20ms deadline covered go-redis's connection handshake and its command write, so a loaded runner let the deadline fire before the pipeline was written, and the SMEMBERS retry count came out short. The stalled store answers the handshake and then returns a controlled timeout on every later read, so the retry count is deterministic and the declared deadline is the one the test asserts."
+   :origin "card a-stalled-redis-call-test-is-deterministic-on-macos.w2; certification run 38199136941, job test (macos-latest, 13), failed TestARedisCallThatStallsFailsWithinTheNamedTimeout at pkg/bus/timeout_test.go:81")
+
   (fix "a-friend-lane-gives-the-harness-its-own-tmpdir" :release "v1.2.15" :status "in-progress"
    :title "A friend lane gives its harness its own TMPDIR"
    :text "Every harness run in a friend lane gets a private, writable temp directory inside its own lane: <lane dir>/tmp, made 0700 before the run and removed after it, with TMPDIR, TMP, TEMP and CLAUDE_CODE_TMPDIR all naming it, so no harness ever touches the shared /tmp. The lane wall carries the directory as --tmp and grants nothing outside the lane. A run that ends within five seconds with no REPORT.md and no RESULT.md and whose output names a filesystem error (EEXIST, EACCES, EPERM, ENOENT) on a path outside its lane ends as an environment fault of the friend: the card stays in the lane's hand, its attempt not counted, her lanes pause and the coordinator gets a pushed judgment naming the error line, never a failed attempt of the card."
@@ -797,4 +894,114 @@
   (fix "the-claude-harness-runs-the-newest-model-of-each-tier-class" :release "v1.2.15" :status "planned"
    :title "The claude harness runs the newest model of each tier's class"
    :text "pkg/friend ReadModels, the one claude tier map (nova-friend's ReadModel hook reads it for every claude lane), maps flash to claude-haiku-5-5 instead of claude-haiku-4-5-20251001; pro stays claude-sonnet-5-5, heavy claude-opus-5-5, frontier claude-fable-5-1. read_lanes_models_test.go pins the whole map and that no tier maps to a model of a bigger class than its own."
-   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")))
+   :origin "the owner, 2026-10-11 ~19:20Z: run the most recent model available for each named class; card the-claude-harness-runs-the-newest-model-of-each-tier-class.w2")
+
+  (fix "a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop" :release "v1.2.15" :status "planned"
+   :title "A friend step drains every ended result and finishes off the loop"
+   :text "Each daemon step took at most one ended result from the batch, lane and read channels, so k
+    lanes that ended together were seen over k beats and their lanes stayed held that long; the step now
+    drains all of them (capped at maxStepResults), applying each in the loop goroutine so the daemon's
+    state stays single-writer. outboxStep no longer sends each finished job's tip check and finish
+    serially in the loop, blocking the step's lane take behind every other card's finish: each due job's
+    tip check and finish now runs in a goroutine, at most pushWidth at once, marked in flight so the
+    next step neither sends it again nor counts it finished, and its answer (finished, refused with the
+    reason, tip moved) is posted on a channel the step drains and applied by the loop. On shutdown the
+    daemon waits for in-flight finishes up to FinishWait and leaves any unanswered to be sent again
+    next run."
+    :origin "the owner, 2026-10-11: what else is like serial reads, going out one at a time, when they could go out at the same time; and log the serial things that should be parallel, batching or parallel case by case. Found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/friend/daemon.go ~756-764 and pkg/friend/outbox.go ~223-303; card a-friend-step-collects-every-ended-lane-and-finishes-off-the-loop.w4")
+
+  (fix "a-cut-ignores-the-previous-tags-cancelled-release-run" :release "v1.2.15" :status "planned"
+   :title "A cut ignores a previous tag's cancelled release run and names what it set aside"
+   :text "The release cut reads every check run on the commit it tags and refuses when any is not success, skipped or neutral, so a second cut from the same commit (which lockstep demands whenever nova-sprint moves and nova-tools does not) found the previous tag's cancelled release.yml runs and needed a CI waiver. The cut now sets aside only a cancelled release.yml run of an older tag on the same commit (the publish recipe cancels it when the cut publishes its own assets), names what it set aside in the RELEASE CUT line as ci-set-aside=<run id>@<tag>,..., refuses --waive-ci when only the set-aside runs are non-green (\"the previous tag's release run is set aside; no waiver is needed\"), and still refuses a waiver of a green commit. A cancelled run whose head branch is the release branch or the version being cut stays a stop."
+   :origin "card a-cut-ignores-the-previous-tags-cancelled-release-run.w5; the seat, 2026-10-11 ~20:00Z: cutting nova-tools v1.2.11 from the v1.2.10 commit 2314d437f was refused build=cancelled, certified=cancelled, release=cancelled, the three checks of the v1.2.10 tag's release.yml run, cancelled on purpose by the v1.2.10 publish step")
+
+  (fix "a-harness-limit-in-any-wording-pauses-the-lanes" :release "v1.2.15" :status "in-progress"
+   :title "A harness limit in any wording pauses the lanes"
+   :text "pkg/friend ReadLimit read a harness's limit only when the wording's words stood unbroken in the raw
+    line, then stripped the ANSI colour codes only for the reset beside it; Claude Code colours the words of
+    its weekly-limit banner, so the codes sit between them ('hit your <esc>weekly<esc> limit') and the wording
+    no longer matched. ReadLimit now strips the codes before matching and for the line it records. The banner
+    'You've hit your weekly limit · resets Oct 16 at 3am (America/New_York)' with those codes therefore reads
+    as a weekly limit until the reset the line names, in the zone it names, so the lane is UsageLimited (the
+    existing pause path) and keeps the card without counting an attempt. Tests: limit_test.go
+    TestEveryLimitWordingClassifiesWithItsResetInTheNamedZone (each wording, the codes between the words) and
+    adapter_claude_lanes_unix_test.go TestClaudeLaneWeeklyLimitIsUsageLimitedNotAFailedAttempt (the whole
+    RunCard path returns UsageLimited, not NoReport), red first at base."
+   :origin "card a-harness-limit-in-any-wording-pauses-the-lanes.w2; the seat, 2026-10-11 20:16Z: claude -p prints You've hit your weekly limit for every model, and the daemon records each lane as a failed attempt of the card; the classifier must read the whole stdout and stderr, strips ANSI codes before matching, and in any wording the harness prints the limit pauses the lanes until the reset, never a failed attempt. Attempt 1 changed pkg/friend/adapter_claude_lanes.go, outside this card's PATHS (E12); this attempt fixes the classifier in pkg/friend/limit.go.")
+
+  (fix "a-member-reports-its-ended-cards-beside-the-fill" :release "v1.2.14" :status "in-progress"
+   :title "A member reports its ended cards side by side"
+   :text "The member pass reported every ended card with reportOne one after another, each a synchronous sprint
+    verb that may wait on the wire, so a lane stayed held after its child ended for the length of the report lag.
+    The pass now runs up to pushWidth reports side by side (reportGate), each still one verb with its own refusal
+    contract, and posts its exit code and output for the pass goroutine's collect to apply; a launch being reported
+    is busy, so it is neither reported twice nor counted free. The take for the lanes free now runs before the
+    reports are collected, so a lane freed by a report is filled by the next pass; a non-background pass waits for
+    its reports, so it is still one step. What a report's write came to is read from the store's answer, never the exit code
+    alone (nova-sprint's refuse() exits 2 as a lost answer does, and a cut operation exits 1 as a refused card does):
+    sprintwire.Worker.RunAnswer classifies the server's whole result as Accepted, Refused or Unknown (no answer,
+    changed=unknown, an operation cut for nova-sprint repair, a finish a clear closed). A Refused report whose claim
+    moved while it ran, whatever its exit code, is collected as reaped, never applied: its post is applied only once
+    the collecting pass has read the queue, so the moved re-check consults the queue that pass just read, never the
+    previous pass's. An Unknown one whose claim moved (the store may have committed it and moved the claim itself)
+    keeps the run as failed for a person and is not sent again, never reaped as clean. A report the
+    store accepted is applied, never reaped: nova-sprint's finish refuses a stale claim (internal/sprint
+    steps_work.go finishPlan, liveGen), so an accepted finish was the card's claim when it landed, and a move seen
+    after it is the store acting on that report (a failed finish redealt at gen+1, kept as failed). The lander's
+    diffcheck now holds a package's tests always inside PATHS (cardgen.AlwaysInPathsRule) when the PATHS name real
+    Go source in its directory (a .go file, the directory, or a Go-file glob), so the tests this changes beside the
+    member source are in scope and a README or fixture authorizes no test. DEBT, explicit: tla/CardContract.tla
+    models Judge and Move as one atomic step (the finish and the report together, guarded on the held claim), while
+    the member now sends a report and collects it apart, a move possible in between, including a move the member's
+    own accepted report causes; this change makes no formal coverage claim for that interval. The model card is in
+    v1.2.16; until it lands, the interval is held by TestAMovedClaimWhileReportingIsReapedNotApplied,
+    TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved, TestAnUnansweredReportWhoseClaimMovedKeepsTheRunAsFailed,
+    TestAMovedReportIsJudgedByWhatBecameOfItsWriteNotItsExitCode, sprintwire
+    TestRunAnswerTellsARefusalFromAnUnknownOutcome and the store's liveGen check. Tests, red first:
+    pkg/member/report_side_by_side_test.go (TestReportsRunSideBySideInOnePass, TestTakeRunsBeforeTheReportsReturn,
+    the two above, and the refusal, no-answer, retry and stop cases), pkg/diffcheck
+    TestOutsideHoldsTestsOnlyBesideGoSource, and the functional
+    TestARealMemberReportsItsEndedCardsSideBySideAndFillsAFreedLane (cmd/nova-swarm, a real member process over a
+    sprint server)."
+   :origin "the owner, 2026-10-11: \"What else is like serial reads, going out one at a time, when they could go out at the same time in || ?\" and \"log critical cards to fix all these serial things that should be parallel\"; found by the seat's audit child on nova-tools origin/dev 0f628af77 the same day, in pkg/member/member.go the pass's report loop; card a-member-reports-its-ended-cards-beside-the-fill.w11")
+  (fix "the-real-clock-delayproxy-test-reads-the-count-after-stop" :release "v1.2.14" :status "planned"
+   :title "The real-clock delay proxy test reads the write counts after Stop"
+   :text "TestTheRealClockHoldsAWriteForAtLeastTheDelay read p.Writes and p.Shortest as soon as the echoed
+    bytes came back to the client, but the proxy counts a write after it: forward calls up.Write and only
+    then record, while serve's io.Copy(client, up) relays the echo on another goroutine, so the echo could
+    reach the client, and the test read the counters, before forward ran record, an ordering race worst on
+    a loaded macOS runner. The test now calls p.Stop after the round trip and before the reads: Stop waits
+    for every connection goroutine (p.wg.Wait), so forward's record has run first. The other tests that read
+    the counts right after a round trip with no sync point between the forward and the read call Stop too:
+    TestEachWriteIsHeldOnceAndAPipelinePaysOnce, TestNothingIsForwardedBeforeItsDelayIsOver and
+    TestALargeWriteComesOutWholeAndInOrder. TestReadsThatArriveTogetherPayTheDelayOnce already waits on the
+    forwarding half and is unchanged; the product code is unchanged, for a write is counted only once the
+    target has taken all of it."
+   :origin "certification run 38185824966 (macos-latest, job 6, dev 8929db2ba), failed TestTheRealClockHoldsAWriteForAtLeastTheDelay at pkg/delayproxy/delayproxy_test.go:367; reproduced on the bench at dev 8c9b33f69, go test -race -count=200 failed 3 of 200")
+  (fix "an-enabled-route-with-no-price-is-refused-at-apply" :release "v1.2.17" :status "planned"
+   :title "An enabled route with no price is refused at apply"
+   :text "apply refuses an enabled route with no price sheet before it plans or writes any kind: the sprint prices a take from the sheet (cardcost.PricesOf(row.Fields).Priced), so an unpriced route records no prediction and a cost of \"-\", or the harness's own $0.00, and the dashboard undercounts. The one refusal names every such route with its provider/model and the command that sets its price (nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>), plus nova-config route prices --refresh --provider <p> when the provider has a list, plus take it out with --enabled false --note '<why>'; a disabled route is never refused for its price, and the tool never sets, guesses or defaults one. apply --check refuses the same, and a bare every-kind apply refuses before any kind is written. Tests, red first: pkg/config TestApplyRefusesAnEnabledRouteWithNoPrice, TestApplyTakesADisabledUnpricedRoute, TestApplyTakesAPricedRoute, and cmd/nova-config TestApplyRefusalNamesTheRouteAndAsksForItsPrice."
+   :origin "the seat, 2026-10-12 03:09Z: routes pro-mercury3 and pro-mercury3-pro (inception/mercury-3-preview-1002) carry no price sheet, so every Mercury 3 take records cost \"-\" (no prediction) or $0.00 (the harness's own zero), and the dashboard's spend undercounts; the owner's rule is that prices are the owner's, never invented")
+  (fix "a-throwaway-postgres-dies-with-its-test-binary" :release "v1.2.18" :status "planned"
+   :title "A throwaway Postgres dies with its test binary"
+   :text "pkg/nsprint/testutil/pg's StartServer ran the postmaster through `pg_ctl start`, which detaches
+    it from the caller, so a test binary that died without its cleanups (a timeout, os.Exit, a panic off
+    the test goroutine, SIGKILL) left a postgres running on the bench until someone stopped it by hand,
+    while the throwaway Redis of pkg/testredis already had a sentry for exactly this. StartServer now
+    enlists a sentry of its own, the design and the words of pkg/testredis/sentry.go copied into
+    sentry_unix.go: a second copy of the test binary under an env marker, its own process group, reading
+    a stdin pipe the test binary holds. The postmaster runs in the foreground with the same options as
+    before, its output to the same log file, joined to the sentry's group as it is forked (SysProcAttr
+    Setpgid with Pgid = the sentry's pid); readiness is read from the log line \"database system is ready
+    to accept connections\" and then a ping. A server that cannot join a standing sentry is not started,
+    and the error names the sentry. Stop still stops it with `pg_ctl -m immediate stop`, then waits for
+    the foreground process and closes the sentry's pipe. The five-attempt port retry and its \"Address
+    already in use\" case are kept. Without process groups (Windows) there is no sentry, as pkg/testredis
+    does. Tests: pkg/nsprint/testutil/pg TestPostgresDiesWithItsTestBinary (a child test binary is
+    killed with SIGKILL and its postmaster, read from postmaster.pid, must be gone within thirty
+    seconds), beside TestThrowawayPostgresStartsAndAnswers and TestBinariesNamesTheMissingBinary."
+   :origin "the seat, 2026-10-12 ~03:05Z, re-cutting the v1.3 slice-L card (slice-l-ci-fixtures) left out of
+    admission because its paths (internal/nsprint/testutil/pg, internal/testredis) are gone from dev; its
+    donor, nova-tools PR #5503, closed unmerged 2026-10-10T17:53Z. Of its parts, the Redis sentry and the
+    104-byte socket bound are on dev (pkg/testredis/sentry.go, pkg/testredis/testredis.go); the postgres
+    watchdog is not. Card a-throwaway-postgres-dies-with-its-test-binary.w1")))

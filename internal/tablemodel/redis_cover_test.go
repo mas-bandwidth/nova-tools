@@ -188,6 +188,14 @@ func TestRedisCoverCloseInterruptsTheServerAndRemovesItsDirectory(t *testing.T) 
 				})
 			}
 			s.Close()
+			// Wait for this subtest's own interrupt before going on: Close sent
+			// SIGINT to this process. The receive proves the handler has taken the
+			// signal, so the deferred signal.Stop cannot run ahead of a signal
+			// still in flight. It is a plain receive, not a select with a time
+			// bound: the signal is process-directed and Close always sends it
+			// while Notify is still registered, so it is guaranteed to arrive, and
+			// the unit-tier rule refuses a wall-clock wait in this file.
+			<-interrupts
 			tassert.NoDirExists(t, dir, "Close left the store directory")
 			tassert.DirExists(t, root, "Close took more than the store directory")
 		})

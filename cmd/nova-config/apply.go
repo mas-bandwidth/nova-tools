@@ -82,6 +82,18 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 			return refused(stderr, verb, what, next)
 		}
 	}
+	// An enabled route with no price is refused before the plan and any write
+	// (docs/SPEC-CONFIG.md, "route"): for an every-kind apply the route kind is
+	// last, so a bare apply would otherwise write every earlier kind first.
+	if *kind == "" || *kind == config.KindRoute {
+		routes, err := st.List(ctx, config.KindRoute)
+		if err != nil {
+			return storeErr(stderr, verb, err, toolName+" apply --check")
+		}
+		if err := config.CheckRoutesPriced(routes); err != nil {
+			return storeErr(stderr, verb, &config.RefusedError{Err: config.ErrInvalid, Detail: err.Error()}, toolName+" apply --dry-run")
+		}
+	}
 	rs, err := d.openRedis(ctx, addr)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())

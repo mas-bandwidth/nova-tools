@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -184,14 +185,22 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		}
 		c2Lane := map[string]string{"1": "2", "2": "1"}[c1Lane]
 		assert.Equal(t, 1, h.maxBusy, "a lane never runs two turns at once")
-		first := texts[0]
+		// the two lanes run their turns concurrently, so the order the harness records
+		// their texts in is the scheduler's: c1's turn text is found by its card, never
+		// assumed to be texts[0] (it was not, on hosted macOS, in certification run
+		// 38179213955)
+		at := slices.IndexFunc(texts, func(s string) bool { return strings.Contains(s, "one card this turn, c1.") })
+		require.GreaterOrEqual(t, at, 0, "c1 is handed: %v", turns)
+		first := texts[at]
 		assert.Contains(t, first, "lane "+c1Lane+" of 2: one card this turn, c1.")
 		assert.Contains(t, first, "Its brief is "+filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"))
 		assert.Contains(t, first, "2. Write "+filepath.Join(dir, "outbox", "c1~15")+"/REPORT.md and "+filepath.Join(dir, "outbox", "c1~15")+"/RESULT.md")
 		assert.Contains(t, first, "3. Send one bus line: nova-bus send --as bob --to ada --subject 'card c1 done'")
 		assert.Contains(t, first, Text(hello), "the waiting message rides with the first card")
-		for _, text := range texts[1:] {
-			assert.NotContains(t, text, "for whichever lane is next", "and only with it")
+		for i, text := range texts {
+			if i != at {
+				assert.NotContains(t, text, "for whichever lane is next", "and only with it")
+			}
 		}
 		assert.NotContains(t, strings.Join(texts, "\n"), "after every card", "a message with no card to ride with waits")
 		pending, fresh := r.pending(t)

@@ -1564,7 +1564,7 @@ While the server refuses `friend cards` (a refusal it answered, `friend.Refused`
 server that did not answer), the daemon reads her row from the server's worker view, `GET
 /api/view/worker?as=<friend>` (nova-sprint `view worker`, served today): her work cards
 ready and working, each with the inbox path friend sync delivers its brief to
-(`~/<friend>-working/inbox/<job>/BRIEF.md`, the job `friendJobOf`), and no brief. On that
+(`~/ai/<friend>/working/inbox/<job>/BRIEF.md`, the job `friendJobOf`), and no brief. On that
 answer the daemon counts and retires as above, retiring only work jobs (`STATUS:` briefs:
 the view lists none of her reads, so a `WHO: friend` job is never retired on it), and writes
 nothing: a held card with no brief is said missing, once, with why, and `status` says the
@@ -1833,7 +1833,7 @@ symlink in the home directory, and another refusal that ended a turn in 12
 seconds). Before each turn the adapter writes the friend's directory into her
 project config, `<dir>/opencode.json`, under `permission.external_directory`
 as `<path>/**: allow`, for the directory as given, its real path, and the
-home directory's `<friend>-working` symlink when there is one, merged into
+home directory's `ai/<friend>/working` symlink when there is one, merged into
 what the file holds and written only when it changes (a config that cannot
 be written is said in the record and the turn goes ahead). The schema is
 OpenCode's documented permission map; it is not yet measured on a live lane.

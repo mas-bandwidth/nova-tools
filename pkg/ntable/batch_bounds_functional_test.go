@@ -36,8 +36,6 @@ type boundCase struct {
 	member string // the member named in the refusal, if any
 	// build returns the members array body for n units of the bounded thing.
 	build func(n int) string
-	// actor pads the manifest (manifest bytes only).
-	actorPad func(n int) string
 }
 
 const echoMarker = "zzq"

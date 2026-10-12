@@ -2,7 +2,6 @@ package docs
 
 import (
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -11,72 +10,6 @@ import (
 
 // strangerBusPath is the cold stranger run of nova-bus between two names.
 const strangerBusPath = "../../docs/stranger/bus-two-names.md"
-
-// strangerBusSections are the four sections a cold stranger run is recorded under.
-var strangerBusSections = []string{"Setup", "Transcript", "Stumbles", "Verdict"}
-
-// strangerBusCardRE is a stumble's proposed card line: `card: <id>`, as a list item or not.
-var strangerBusCardRE = regexp.MustCompile(`^(?:- )?card: [A-Za-z0-9][A-Za-z0-9._-]*\s*$`)
-
-// strangerBusSectionBodies splits a run record into its `## ` sections, by heading.
-func strangerBusSectionBodies(text string) map[string][]string {
-	bodies := map[string][]string{}
-	cur := ""
-	for _, line := range strings.Split(text, "\n") {
-		if h, ok := strings.CutPrefix(line, "## "); ok {
-			cur = strings.TrimSpace(h)
-			bodies[cur] = []string{}
-			continue
-		}
-		if cur != "" {
-			bodies[cur] = append(bodies[cur], line)
-		}
-	}
-	return bodies
-}
-
-// strangerBusProblems is every way the bus run record falls short: a missing
-// section, a transcript with no command line (`$ <command>`), and a stumble (a
-// `### ` heading under Stumbles) with no proposed card line `card: <id>`.
-func strangerBusProblems(text string) []string {
-	var problems []string
-	bodies := strangerBusSectionBodies(text)
-	for _, s := range strangerBusSections {
-		if _, ok := bodies[s]; !ok {
-			problems = append(problems, "no ## "+s+" section")
-		}
-	}
-	commands := 0
-	for _, line := range bodies["Transcript"] {
-		if strings.HasPrefix(line, "$ ") && strings.TrimSpace(line) != "$" {
-			commands++
-		}
-	}
-	if _, ok := bodies["Transcript"]; ok && commands == 0 {
-		problems = append(problems, "the transcript has no command line")
-	}
-	stumble, carded := "", false
-	closeStumble := func() {
-		if stumble != "" && !carded {
-			problems = append(problems, "stumble "+quoteBusStumble(stumble)+" has no proposed card line `card: <id>`")
-		}
-	}
-	for _, line := range bodies["Stumbles"] {
-		if h, ok := strings.CutPrefix(line, "### "); ok {
-			closeStumble()
-			stumble, carded = strings.TrimSpace(h), false
-			continue
-		}
-		if strangerBusCardRE.MatchString(strings.TrimSpace(line)) {
-			carded = true
-		}
-	}
-	closeStumble()
-	return problems
-}
-
-// quoteBusStumble quotes a stumble heading for a problem line.
-func quoteBusStumble(s string) string { return `"` + s + `"` }
 
 // strangerBusHostCommands are the bench-side commands every bus run transcript
 // must show. The transcript is the run's whole command record, so the host work
@@ -150,9 +83,9 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 		"$ cd src && go mod download\n(no output)\n" +
 		"$ nova-bus version\nnova-bus devel\n```\n\n" +
 		"## Stumbles\n\n### 1. one\n\n- card: a-card\n\n### 2. two\n\ncard: b-card\n\n## Verdict\n\nyes\n"
-	require.Empty(t, strangerBusProblems(good), "the fake good record")
-	require.Empty(t, strangerBusHostProblems(strings.Join(strangerBusSectionBodies(good)["Transcript"], "\n")), "the fake good record's host commands")
-	require.Empty(t, strangerBusReadLogProblems(strangerBusSectionBodies(good)["Setup"]), "the fake good record's Setup read log")
+	require.Empty(t, strangerProblems(good), "the fake good record")
+	require.Empty(t, strangerBusHostProblems(strings.Join(strangerSectionBodies(good)["Transcript"], "\n")), "the fake good record's host commands")
+	require.Empty(t, strangerBusReadLogProblems(strangerSectionBodies(good)["Setup"]), "the fake good record's Setup read log")
 
 	for name, c := range map[string]struct{ text, want string }{
 		"no Verdict":      {strings.Replace(good, "## Verdict", "## Ending", 1), "no ## Verdict section"},
@@ -165,24 +98,24 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 		"no association":  {strings.Replace(good, "bench\n", "bench\nthe two earlier records in docs/stranger/ name the same walls: docs/stranger/friend-fake-harness.md and docs/stranger/three-card-sprint.md\n", 1), "the Setup read log names docs/stranger/friend-fake-harness.md without tying it to stumble 1"},
 		"swapped":         {strings.Replace(good, "bench\n", "bench\nthe two earlier records in docs/stranger/ name the same walls: docs/stranger/friend-fake-harness.md after stumble 2 and docs/stranger/three-card-sprint.md after stumble 1\n", 1), "the Setup read log names docs/stranger/three-card-sprint.md without tying it to stumble 2"},
 	} {
-		transcript := strings.Join(strangerBusSectionBodies(c.text)["Transcript"], "\n")
-		setup := strangerBusSectionBodies(c.text)["Setup"]
-		got := strings.Join(append(append(strangerBusProblems(c.text), strangerBusHostProblems(transcript)...), strangerBusReadLogProblems(setup)...), "\n")
+		transcript := strings.Join(strangerSectionBodies(c.text)["Transcript"], "\n")
+		setup := strangerSectionBodies(c.text)["Setup"]
+		got := strings.Join(append(append(strangerProblems(c.text), strangerBusHostProblems(transcript)...), strangerBusReadLogProblems(setup)...), "\n")
 		require.Contains(t, got, c.want, "%s: the fake must be refused", name)
 	}
 
 	raw, err := os.ReadFile(strangerBusPath)
 	require.NoError(t, err, "reading %s", strangerBusPath)
 	text := string(raw)
-	require.Empty(t, strangerBusProblems(text), "%s", strangerBusPath)
-	require.Contains(t, strangerBusSectionBodies(text), "Stumbles")
+	require.Empty(t, strangerProblems(text), "%s", strangerBusPath)
+	require.Contains(t, strangerSectionBodies(text), "Stumbles")
 
 	// The correction this attempt carries: the transcript must cover every
 	// command, host side included. The bench commands that start the container
 	// and fetch the modules stand in the transcript, not only in Setup; and a
 	// stumble that names the refused pong line points at the transcript for it,
 	// so the refused invocation and its exact line must stand there too.
-	transcript := strings.Join(strangerBusSectionBodies(text)["Transcript"], "\n")
+	transcript := strings.Join(strangerSectionBodies(text)["Transcript"], "\n")
 	require.Contains(t, transcript, "PONG REFUSED: --to is required: no ping has named a seat yet",
 		"the refused pong invocation and its line must stand in the transcript of %s", strangerBusPath)
 	require.Empty(t, strangerBusHostProblems(transcript), "%s", strangerBusPath)
@@ -194,5 +127,5 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 	// docs/stranger/three-card-sprint.md after stumble 2, instead of the bare
 	// "earlier records" the reader found or a bare pair of names that says
 	// nothing about which stumble each followed.
-	require.Empty(t, strangerBusReadLogProblems(strangerBusSectionBodies(text)["Setup"]), "%s", strangerBusPath)
+	require.Empty(t, strangerBusReadLogProblems(strangerSectionBodies(text)["Setup"]), "%s", strangerBusPath)
 }

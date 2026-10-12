@@ -709,6 +709,35 @@ func checkRouteChanges(changes map[string]string) error {
 	return nil
 }
 
+// CheckRoutesPriced is apply's refusal of an enabled route with no price sheet
+// (docs/SPEC-CONFIG.md, "route" and "Apply"): the sprint prices a take from the
+// route's sheet (cardcost.PricesOf(row.Fields).Priced), so an unpriced route
+// records a cost of "-" or the harness's own $0.00 and the dashboard undercounts.
+// Every such route is named at once with its provider/model and the command that
+// sets its price; the owner sets prices, never this tool. A disabled route is
+// never refused for its price, whatever its sheet.
+func CheckRoutesPriced(rows []Row) error {
+	var problems []string
+	for _, r := range rows {
+		if r.Fields["enabled"] == "false" {
+			continue
+		}
+		if cardcost.PricesOf(r.Fields).Priced() {
+			continue
+		}
+		provider, model := r.Fields["provider"], r.Fields["model"]
+		problem := fmt.Sprintf("route %s (%s/%s) is enabled with no price; every take on it would cost - or $0.00 and the spend would undercount; the owner sets its price: nova-config route set %s --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>", r.Name, provider, model, r.Name)
+		if _, ok := PriceListOf(provider); ok {
+			problem += fmt.Sprintf("; or nova-config route prices --refresh --provider %s", provider)
+		}
+		problems = append(problems, problem+"; or take it out: --enabled false --note '<why>'")
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s", strings.Join(problems, "; "))
+}
+
 // LoopLog is where a loop's unit writes its output on its machine, derived
 // from the fleet's loops_dir and the loop's name, and never typed:
 // <loops_dir>/<name>.log. apply writes it into the loop's Redis hash beside

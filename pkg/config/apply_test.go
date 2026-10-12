@@ -371,6 +371,84 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, friend, sprint, loop, route", assertionMsg324...)
 }
 
+// insertRoute is a store with one route row whose raw fields are given.
+func insertRoute(t *testing.T, name string, raw map[string]string) (Store, *Kind) {
+	t.Helper()
+	ctx := context.Background()
+	st := NewMem()
+	route, _ := Lookup(KindRoute)
+	row, err := route.NewRow(name, raw)
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindRoute, row, "operator")
+	require.NoError(t, err)
+	return st, route
+}
+
+// TestApplyRefusesAnEnabledRouteWithNoPrice: an enabled route with no price
+// sheet is refused before the plan and any write, at apply and apply --check
+// alike, naming the route and its model and the command that sets its price
+// (docs/SPEC-CONFIG.md, "route" and "Apply"). Nothing reaches Redis, and a
+// provider without a list gets no refresh offer.
+func TestApplyRefusesAnEnabledRouteWithNoPrice(t *testing.T) {
+	t.Parallel()
+
+	for _, check := range []bool{false, true} {
+		t.Run(fmt.Sprintf("check=%t", check), func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st, _ := insertRoute(t, "pro-mercury3", map[string]string{"tier": "pro", "provider": "inception", "model": "mercury-3-preview-1002", "deadline": "1800"})
+			ap := newFake()
+			res, err := Apply(ctx, st, ap, KindRoute, "operator", check, func(Op) { t.Error("a refusal reported an operation") })
+			require.Error(t, err)
+			require.True(t, Refused(err), "a refusal (exit 1), not a failure")
+			require.ErrorIs(t, err, ErrInvalid)
+			require.ErrorContains(t, err, "route pro-mercury3 (inception/mercury-3-preview-1002) is enabled with no price")
+			require.ErrorContains(t, err, "nova-config route set pro-mercury3 --price_input <USD per million> --price_output <USD per million>")
+			require.NotContains(t, err.Error(), "route prices --refresh")
+			require.ErrorContains(t, err, "take it out: --enabled false --note '<why>'")
+			require.Zero(t, res.Add+res.Set+res.Remove)
+			require.Empty(t, ap.log, "a refused apply wrote: %v", ap.log)
+			require.Zero(t, ap.prepared, "a refused apply prepared the library")
+			require.Empty(t, ap.revs, "a refused apply stamped a revision: %v", ap.revs)
+		})
+	}
+
+	// a provider with a list gets the refresh as one more remedy
+	ctx := context.Background()
+	st, _ := insertRoute(t, "pro-openrouter", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800"})
+	_, err := Apply(ctx, st, newFake(), KindRoute, "operator", true, func(Op) {})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "or nova-config route prices --refresh --provider openrouter")
+}
+
+// TestApplyTakesADisabledUnpricedRoute: a disabled route is never refused for
+// its price (docs/SPEC-CONFIG.md, "route").
+func TestApplyTakesADisabledUnpricedRoute(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, _ := insertRoute(t, "pro-off", map[string]string{"tier": "pro", "provider": "inception", "model": "mercury-3-preview-1002", "deadline": "1800", "enabled": "false", "note": "no price yet"})
+	ap := newFake()
+	res, err := Apply(ctx, st, ap, KindRoute, "operator", false, func(Op) {})
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Add)
+	require.Equal(t, []string{"add route pro-off as=operator idem=config:route:1", "stamp route 1"}, ap.log)
+}
+
+// TestApplyTakesAPricedRoute: a route with any price in its sheet is applied,
+// never refused (a sheet with one price is priced: cardcost.Prices.Priced).
+func TestApplyTakesAPricedRoute(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, _ := insertRoute(t, "pro-priced", map[string]string{"tier": "pro", "provider": "inception", "model": "mercury-3-preview-1002", "deadline": "1800", "price_input": "0.30", "price_output": "1.20"})
+	ap := newFake()
+	res, err := Apply(ctx, st, ap, KindRoute, "operator", false, func(Op) {})
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Add)
+	require.Equal(t, "0.3", ap.views[KindRoute]["pro-priced"]["price_input"])
+}
+
 // TestApplyRefusesToMoveTheSeat: a publish never moves the coordinator seat
 // (docs/SPEC-CONFIG.md, "sprint"): apply holds a sprint:coordinator the live
 // store disagrees with, writes every other sprint field, reports one OpHeld

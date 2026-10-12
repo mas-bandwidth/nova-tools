@@ -614,7 +614,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				assert.Equal(t, tc.want, walls[0], "the wall's --config-dir")
 				wantDeny := tc.deny
 				if wantDeny == nil { // none given: never a wall that denies nothing (bad_profile, exit 125 for every lane)
-					wantDeny = []string{filepath.Join(w.home, "ada-working")}
+					wantDeny = []string{filepath.Join(w.home, "ai", "ada", "working")}
 				}
 				assert.Equal(t, wantDeny, denies[0], "the wall's deny list")
 				assert.Zero(t, plain, "no child of the lane ran outside the wall")
@@ -806,7 +806,8 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("I am bob.\n"), 0o644))
-		require.NoError(t, os.Symlink(dir, filepath.Join(r.home, "bob-working")))
+		require.NoError(t, os.MkdirAll(filepath.Join(r.home, "ai", "bob"), 0o755))
+		require.NoError(t, os.Symlink(dir, filepath.Join(r.home, "ai", "bob", "working")))
 		var mu sync.Mutex
 		var runs []string
 		lists := 0
@@ -872,7 +873,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.Equal(t, map[int]string{1: "ses_lane1"}, lanes.Sessions)
 		raw, err := os.ReadFile(filepath.Join(dir, "opencode.json"))
 		require.NoError(t, err)
-		assert.Contains(t, string(raw), `"`+filepath.Join(r.home, "bob-working")+`/**": "allow"`)
+		assert.Contains(t, string(raw), `"`+filepath.Join(r.home, "ai", "bob", "working")+`/**": "allow"`)
 		s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)

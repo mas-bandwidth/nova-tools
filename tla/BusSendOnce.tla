@@ -1,8 +1,9 @@
 ----------------------------- MODULE BusSendOnce -----------------------------
 \* A send under a token is one logical message (docs/SPEC-BUS.md,
-\* a-lost-send-response-is-safe-to-retry.w1; internal/bus/token.go: Send,
-\* sendOnce and replay; the store's step is AddOnce, a script Redis runs
-\* alone: GET the record, else SET it with PX and XADD the message).
+\* a-lost-send-response-is-safe-to-retry.w1; pkg/bus/token.go: Send,
+\* sendOnce and replay; the store's step is pkg/bus/redis.go:138-169 AddOnce,
+\* a script Redis runs alone: GET the record, else SET it with PX and XADD
+\* the message).
 \*
 \* The state the code owns: records[t], the record of token t in the store
 \* (the arguments it was sent with, the message's id, its at, and until, the
@@ -14,6 +15,12 @@
 \* retry, a watchdog's resend, a changed body), each answer delivered or
 \* lost; a process that restarts holds nothing, so it is any caller sending
 \* again.
+\*
+\* The code keys the record per sender and token (pkg/bus/token.go:29,
+\* SentOf); the model keys it per token. That is sound because the
+\* fingerprint the record stores includes From (pkg/bus/token.go:91): the
+\* sender is part of the arguments, so a model token stands for one sender's
+\* token, and the changed arguments a retry can carry are the model's Args.
 \*
 \* Broken = "none" is the design. Every other value is a reversed witness:
 \*   "checkapart"    the record is read in one step and the message written in

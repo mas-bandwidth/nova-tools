@@ -42,6 +42,7 @@ func TestEachWriteIsHeldOnceAndAPipelinePaysOnce(t *testing.T) {
 	require.Equal(t, pipeline, got, "the pipeline did not come back whole")
 	asked = r.fake.asked()
 	require.True(t, onlyDelays(asked, len(separate)+1), "%d commands in one write brought the clock's waits to %v; want one more delay, not %d", pipelined, asked, pipelined)
+	p.Stop() // waits for forward's record before the count is read (delayproxy.go:301-319)
 	require.Equal(t, len(separate)+1, p.Writes(), "the proxy counts %d writes; want %d", p.Writes(), len(separate)+1)
 }
 
@@ -67,6 +68,7 @@ func TestNothingIsForwardedBeforeItsDelayIsOver(t *testing.T) {
 	_, err = io.ReadFull(c, got)
 	require.NoError(t, err, "after the delay the reply is %q, %v; want hello", got, err)
 	require.Equal(t, "hello", string(got), "after the delay the reply is %q, %v; want hello", got, err)
+	p.Stop() // waits for forward's record before the count is read (delayproxy.go:301-319)
 	require.Equal(t, 1, p.Writes(), "the proxy counts %d writes; want 1", p.Writes())
 }
 
@@ -91,6 +93,7 @@ func TestALargeWriteComesOutWholeAndInOrder(t *testing.T) {
 	for i, d := range asked {
 		require.Equal(t, delay, d, "read %d waited %v; want the delay, %v", i, d, delay)
 	}
+	p.Stop() // waits for forward's record before the count is read (delayproxy.go:301-319)
 	require.Equal(t, len(asked), p.Writes(), "the proxy counts %d writes for %d reads", p.Writes(), len(asked))
 }
 
@@ -364,6 +367,11 @@ func TestTheRealClockHoldsAWriteForAtLeastTheDelay(t *testing.T) {
 	c := r.client()
 	got := roundTrip(t, c, "real clock")
 	require.Equal(t, "real clock", got, "came back as %q", got)
+	// The echoed bytes can reach the client before the forwarding half runs
+	// record, which counts a write only once the target has taken all of it.
+	// Stop waits for every connection goroutine (delayproxy.go:301-319, p.wg.Wait
+	// at :318), so forward's record has run before the counts are read.
+	p.Stop()
 	require.Equal(t, 1, p.Writes(), "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
 	require.GreaterOrEqual(t, p.Shortest(), realDelay, "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
 }

@@ -119,23 +119,43 @@ func green(runs []CheckRun) error {
 }
 
 // sourceChecks excludes only a cancelled publication of an existing older
-// release tag (docs/SPEC-RELEASE.md section 19). All other checks, including
-// unknown provenance, remain evidence the ordinary CI gate must judge.
-func sourceChecks(runs []CheckRun, tags []string, version string) []CheckRun {
+// release tag (cmd/nova-update/README.md, release cut; docs/SPEC-RELEASE.md
+// section 19). All other checks, including unknown provenance, remain evidence
+// the ordinary CI gate must judge. It returns the set-aside runs too, so the
+// cut's record can name what it ignored and why.
+func sourceChecks(runs []CheckRun, tags []string, version string) (kept, setAside []CheckRun) {
 	older := map[string]bool{}
 	for _, tag := range tags {
 		if ValidVersion(tag) == nil && semver.IsValid(tag) && semver.IsValid(version) && semver.Compare(tag, version) < 0 {
 			older[tag] = true
 		}
 	}
-	kept := make([]CheckRun, 0, len(runs))
+	kept = make([]CheckRun, 0, len(runs))
 	for _, r := range runs {
 		if r.Status == "completed" && r.Conclusion == "cancelled" && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push" && r.TagPush && older[r.HeadBranch] {
+			setAside = append(setAside, r)
 			continue
 		}
 		kept = append(kept, r)
 	}
-	return kept
+	return kept, setAside
+}
+
+// ciSetAside names the release-workflow runs a cut set aside, each as its run
+// id and the older tag it published, for the RELEASE CUT line's ci-set-aside
+// field (cmd/nova-update/README.md, release cut).
+func ciSetAside(runs []CheckRun) string {
+	if len(runs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, r := range runs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%d@%s", r.ID, r.HeadBranch)
+	}
+	return b.String()
 }
 
 // ciNotGreen reads the runs once and answers the checks green() would refuse
@@ -620,7 +640,8 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the tags of %s: %w (ask again when the forge answers)", o.repo, err))
 	}
-	runs = sourceChecks(runs, tags, o.version)
+	var setAside []CheckRun
+	runs, setAside = sourceChecks(runs, tags, o.version)
 	// THE GREEN GATE, AND THE ONE WAY PAST IT. A waiver with an empty value is
 	// not a waiver, and a waiver of a green commit is a lie in the tag's
 	// permanent record, so both refuse before anything is written
@@ -638,6 +659,10 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		ciWaive = ciWaiver(runs, waive)
 		fmt.Fprintf(out, "RELEASE CUT CI WAIVED waived=%s checks=%s\n", field(waive), field(ciWaivedChecks(runs)))
 	} else if waive != "" {
+		if len(setAside) > 0 {
+			return refusal(errs, "CUT", refuse("cut without it; nothing here needs waiving",
+				"the previous tag's release run is set aside; no waiver is needed"))
+		}
 		return refusal(errs, "CUT", refuse("cut without it; nothing here needs waiving",
 			"--waive-ci waives a red or missing CI, and every check on %s is green", sha))
 	}
@@ -702,9 +727,13 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 	}
 	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs, ciWaive)
+	aside := ""
+	if len(setAside) > 0 {
+		aside = " ci-set-aside=" + field(ciSetAside(setAside))
+	}
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes\n",
-			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes%s\n",
+			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State, aside)
 		fmt.Fprint(errs, section)
 		return 0
 	}
@@ -719,7 +748,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no\n",
-		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no%s\n",
+		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State, aside)
 	return 0
 }

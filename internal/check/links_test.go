@@ -1,7 +1,6 @@
 package check
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -213,87 +212,68 @@ func TestLinksFenceRemembersOpeningMarker(t *testing.T) {
 	assert.Empty(t, res.Broken, "broken = %v, want none: the fenced example is not a link", res.Broken)
 }
 
-// Issue #30 (fence length): the scanner stored a fixed three-character marker,
-// so a four-backtick fence was closed by the three-backtick fence it was
-// quoting. The quoted example's link then leaked out and was reported — a
-// false FAIL. A fence closes only on a run at least as long as its opener.
-func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
+// The fence-closing rules, one case each: a fence records the character and the
+// length of its opening delimiter, so only a run of the same character, at least
+// as long and carrying nothing after it, closes it.
+//
+//   - TestLinksNestedFourBacktickFenceHidesInnerThree (issue #30): a
+//     three-backtick run inside a four-backtick fence is illustration, not a
+//     closer, so its link stays hidden — a false FAIL before.
+//   - TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink (issue #30): the
+//     four-fence closes on its own run, so the real broken link below it is
+//     checked instead of swallowed into LINKS OK.
+//   - TestLinksLongerRunClosesShorterFence (reviewer #66): a longer run does
+//     close a shorter opener, so the link below it is checked.
+//   - TestLinksSameLengthRunWithTrailingTextDoesNotClose: a same-length run
+//     carrying text after it does not close, so both links stay illustration.
+func TestLinksFenceClosingRules(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeTree(t, dir, map[string]string{
-		"a.md": "````\n```\n[fake](missing.md)\n```\n````\n",
-	})
-	res, err := LinksExcluding(dir, nil)
-	if err != nil {
-		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
+	tests := []struct {
+		name        string
+		md          string
+		wantChecked int
+		wantBroken  []string
+	}{
+		{
+			name:        "TestLinksNestedFourBacktickFenceHidesInnerThree",
+			md:          "````\n```\n[fake](missing.md)\n```\n````\n",
+			wantChecked: 0,
+			wantBroken:  nil,
+		},
+		{
+			name:        "TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink",
+			md:          "````\n```\n````\n[real](missing.md)\n",
+			wantChecked: 1,
+			wantBroken:  []string{"missing.md"},
+		},
+		{
+			name:        "TestLinksLongerRunClosesShorterFence",
+			md:          "```\n[fake](inside.md)\n````\n[real](missing.md)\n",
+			wantChecked: 1,
+			wantBroken:  []string{"missing.md"},
+		},
+		{
+			name:        "TestLinksSameLengthRunWithTrailingTextDoesNotClose",
+			md:          "```\n[fake](inside.md)\n``` not a closer\n[alsofake](missing.md)\n",
+			wantChecked: 0,
+			wantBroken:  nil,
+		},
 	}
-	assert.Equal(t, 0, res.Checked, "checked = %d, want 0: a link inside a four-backtick fence is illustration", res.Checked)
-	if len(res.Broken) != 0 {
-		assert.Failf(t, "assertion failed", "broken = %s, want none: the nested three-backtick example is not a link", brief(fmt.Sprint(res.Broken)))
-	}
-}
-
-// Issue #30 (fence length): the spurious close above re-opened a fence on the
-// closing four-backtick run; that fence never closed and swallowed a real
-// broken link into LINKS OK with zero links. Recording the opener's length
-// keeps the four-fence closed, so the link below it is checked.
-func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeTree(t, dir, map[string]string{
-		"a.md": "````\n```\n````\n[real](missing.md)\n",
-	})
-	res, err := LinksExcluding(dir, nil)
-	if err != nil {
-		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
-	}
-	assert.Equal(t, 1, res.Checked, "checked = %d, want 1: the link below the closed four-fence must be checked", res.Checked)
-	if len(res.Broken) != 1 || res.Broken[0].Target != "missing.md" {
-		assert.Failf(t, "assertion failed", "broken = %s, want the real missing.md reported", brief(fmt.Sprint(res.Broken)))
-	}
-}
-
-// Reviewer (#66, finding 1): the two tests above only exercise a SHORTER run
-// failing to close a LONGER fence, so the ">=" at links.go could be narrowed
-// back to "==" with every test still green. The rule the scanner actually
-// implements is the one SPEC.md states for the shared fenceRE at the corpus
-// check: "an opening delimiter records its character and length, and only a
-// run of the same character, at least as long and carrying nothing after it,
-// closes it." These two pin the halves that were unpinned: a LONGER run does
-// close, and a same-length run carrying text does not.
-func TestLinksLongerRunClosesShorterFence(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeTree(t, dir, map[string]string{
-		"a.md": "```\n[fake](inside.md)\n````\n[real](missing.md)\n",
-	})
-	res, err := LinksExcluding(dir, nil)
-	if err != nil {
-		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
-	}
-	assert.Equal(t, 1, res.Checked, "checked = %d, want 1: a four-backtick run is at least as long as the three-backtick opener, so it closes it", res.Checked)
-	if len(res.Broken) != 1 || res.Broken[0].Target != "missing.md" {
-		assert.Failf(t, "assertion failed", "broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(res.Broken)))
-	}
-}
-
-func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeTree(t, dir, map[string]string{
-		"a.md": "```\n[fake](inside.md)\n``` not a closer\n[alsofake](missing.md)\n",
-	})
-	res, err := LinksExcluding(dir, nil)
-	if err != nil {
-		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
-	}
-	assert.Equal(t, 0, res.Checked, "checked = %d, want 0: a run carrying text after it does not close the fence, so both links stay illustration", res.Checked)
-	if len(res.Broken) != 0 {
-		assert.Failf(t, "assertion failed", "broken = %s, want none: nothing below an unclosed fence is a link", brief(fmt.Sprint(res.Broken)))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeTree(t, dir, map[string]string{"a.md": tt.md})
+			res, err := LinksExcluding(dir, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantChecked, res.Checked, "checked = %d, want %d", res.Checked, tt.wantChecked)
+			var got []string
+			for _, b := range res.Broken {
+				got = append(got, b.Target)
+			}
+			assert.ElementsMatch(t, tt.wantBroken, got, "broken = %v, want %v", got, tt.wantBroken)
+		})
 	}
 }
 

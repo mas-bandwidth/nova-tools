@@ -34,10 +34,12 @@ func strangerSectionBodies(text string) map[string][]string {
 	return bodies
 }
 
-// strangerRunProblems is every way a run record falls short: a missing section,
-// a transcript with no command line (`$ <command>`), and a stumble (a `### `
-// heading under Stumbles) with no proposed card line.
-func strangerRunProblems(text string) []string {
+// strangerProblems is every way a stranger run record falls short: a missing
+// section, a transcript with no command line (`$ <command>`), and a stumble (a
+// `### ` heading under Stumbles) with no proposed card line. Both stranger run
+// documents — the bus run and the three-card sprint — are held to this one
+// checker; the bus record's extra host-side and read-log rules stand beside it.
+func strangerProblems(text string) []string {
 	var problems []string
 	bodies := strangerSectionBodies(text)
 	for _, s := range strangerSections {
@@ -86,7 +88,7 @@ func TestStrangerRunThreeCardSprintIsRecorded(t *testing.T) {
 
 	good := "# run\n\n## Setup\n\nbench\n\n## Transcript\n\n```text\n$ nova-sprint version\nnova-sprint devel\n```\n\n" +
 		"## Stumbles\n\n### 1. one\n\n- card: a-card\n\n### 2. two\n\ncard: b-card\n\n## Verdict\n\nyes\n"
-	require.Empty(t, strangerRunProblems(good), "the fake good record")
+	require.Empty(t, strangerProblems(good), "the fake good record")
 
 	for name, c := range map[string]struct{ text, want string }{
 		"no Verdict":    {strings.Replace(good, "## Verdict", "## Ending", 1), "no ## Verdict section"},
@@ -95,13 +97,13 @@ func TestStrangerRunThreeCardSprintIsRecorded(t *testing.T) {
 		"uncarded":      {strings.Replace(good, "card: b-card", "a card is owed", 1), `stumble "2. two" has no proposed card line`},
 		"empty card id": {strings.Replace(good, "- card: a-card", "- card: ", 1), `stumble "1. one" has no proposed card line`},
 	} {
-		got := strings.Join(strangerRunProblems(c.text), "\n")
+		got := strings.Join(strangerProblems(c.text), "\n")
 		require.Contains(t, got, c.want, "%s: the fake must be refused", name)
 	}
 
 	raw, err := os.ReadFile(strangerSprintPath)
 	require.NoError(t, err, "reading %s", strangerSprintPath)
 	text := string(raw)
-	require.Empty(t, strangerRunProblems(text), "%s", strangerSprintPath)
+	require.Empty(t, strangerProblems(text), "%s", strangerSprintPath)
 	require.Contains(t, strangerSectionBodies(text), "Stumbles")
 }

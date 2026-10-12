@@ -14,7 +14,9 @@ package pg
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -22,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -97,15 +100,85 @@ func Binaries() (string, error) {
 	return "", fmt.Errorf("pg_ctl (with initdb and postgres) is not on PATH, not in %s, and not under %s; install postgresql (go run ./tools/ci install-postgres)", BinEnv, strings.Join(wellKnown, ", "))
 }
 
+// THE SENTRY. A test's cleanup stops its postmaster, and a cleanup runs only
+// when the test binary lives to run it. A binary that times out, calls
+// os.Exit, panics off the test's goroutine or is killed runs none, and its
+// postmaster would stand until someone stops it by hand. So StartServer enlists
+// a sentry of its own: a second copy of the test binary under sentryEnv, its
+// own process group, reading a stdin pipe this binary holds. The postmaster
+// joins the group as it is forked, before it runs an instruction. When this
+// binary is gone, however it went, the kernel closes the pipe, the read ends,
+// and the sentry kills its group: postmaster and itself. The design and the
+// words are pkg/testredis/sentry.go's, copied for the throwaway Postgres;
+// without process groups (Windows) there is no sentry. See sentry_unix.go and
+// sentry_other.go.
+
+// sentryEnv marks a copy of the test binary as a sentry. It is set in the
+// sentry's environment and nowhere else.
+const sentryEnv = "NOVA_PG_SENTRY"
+
+// sentryStands is the one line a sentry prints, once it is about to read.
+const sentryStands = "the sentry stands\n"
+
+// sentryWait is how long a sentry may take to say it stands, and how long
+// Stop waits for it to end after the pipe closes.
+const sentryWait = 30 * time.Second
+
+// post is a sentry standing.
+type post struct {
+	group int             // its process group, which the postmaster joins
+	gone  <-chan struct{} // closed when the sentry's process has ended
+	hold  io.Closer       // the other end of its standard input, open for as long as this process lives
+}
+
+// alive reports whether the sentry is still standing. A server that cannot
+// join a standing sentry is not started.
+func (p *post) alive() error {
+	if p == nil || p.group == 0 {
+		return nil
+	}
+	select {
+	case <-p.gone:
+		return fmt.Errorf("the sentry %d has ended while this test binary runs; something killed it", p.group)
+	default:
+		return nil
+	}
+}
+
+// stand is a sentry's whole life: say it stands, read until the test binary is
+// gone, kill. It returns only when the kill left it alive, which is a test or
+// a failure.
+func stand(in io.Reader, out io.Writer, kill func() error) int {
+	if _, err := io.WriteString(out, sentryStands); err != nil {
+		// Nobody reads: the binary that enlisted this sentry is gone already,
+		// before it could start a server.
+		return 1
+	}
+	// The read ends when the pipe closes. An error ends it as well, and the
+	// answer to a pipe that broke is the same as to one that closed.
+	// ignored: a broken pipe and a closed one mean the same here (see the comment above); the kill below is checked
+	_, _ = io.Copy(io.Discard, in)
+	if err := kill(); err != nil {
+		return 1
+	}
+	return 0
+}
+
 // Server is one running throwaway Postgres.
 type Server struct {
 	Dir  string
 	Bin  string
 	Port string
 	// User is the superuser initdb made; trust authentication, no password.
-	User string
-	next atomic.Int64
-	log  string
+	User    string
+	next    atomic.Int64
+	log     string
+	cmd     *exec.Cmd     // the foreground postmaster
+	exited  chan struct{} // closed when the foreground postmaster is gone
+	ended   error         // what it ended with; read only after exited is closed
+	sentry  *post         // kills the postmaster when this test binary is gone
+	stop    sync.Once
+	stopErr error
 }
 
 // DSN is the connection string of one database on the server, for pgx: a
@@ -118,9 +191,11 @@ func (s *Server) DSN(database string) string {
 // 60 s for the server itself, and the budget leaves room past that.
 const pgToolBudget = 120 * time.Second
 
-// StartServer runs initdb and pg_ctl start under dir on a free loopback
-// port. The caller stops it with Stop. It is the TestMain form: one server
-// for a package, one database per test through Database.
+// StartServer runs initdb and a foreground postgres under dir on a free
+// loopback port, the postmaster joined to a sentry of its own that kills it
+// when this test binary is gone. The caller stops it with Stop. It is the
+// TestMain form: one server for a package, one database per test through
+// Database.
 func StartServer(dir string) (*Server, error) {
 	bin, err := Binaries()
 	if err != nil {
@@ -135,6 +210,11 @@ func StartServer(dir string) (*Server, error) {
 	if out, err := initdb.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("initdb: %v\n%s", err, out)
 	}
+	at, err := enlist()
+	if err != nil {
+		return nil, fmt.Errorf("throwaway postgres: %w", err)
+	}
+	s.sentry = at
 	// The socket directory is a fixed short path under the data directory's
 	// parent: a macOS t.TempDir path is longer than a unix socket allows.
 	// Listening is on loopback only; the socket directory is emptied so no
@@ -143,32 +223,80 @@ func StartServer(dir string) (*Server, error) {
 	for attempt := 0; attempt < 5; attempt++ {
 		port, err := freePort()
 		if err != nil {
-			return nil, err
+			return nil, errors.Join(err, s.closeSentry())
 		}
-		opts := fmt.Sprintf("-p %s -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c log_min_messages=warning", port)
-		start, stopStart := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(bin, "pg_ctl"), "-D", data, "-l", logPath, "-o", opts, "-w", "-t", "60", "start")
-		start.Env = cleanEnv()
-		out, err := start.CombinedOutput()
-		stopStart()
-		if err == nil {
+		if err := s.launch(data, port, at.group); err == nil {
 			s.Port = port
-			if err := s.ready(); err != nil {
-				// ignored: a test fixture's cleanup on the failure path; the ready error is the one returned
-				_ = s.Stop()
-				return nil, err
-			}
 			return s, nil
-		}
-		body, _ := os.ReadFile(logPath)
-		last = fmt.Sprintf("pg_ctl start on port %s: %v\n%s\n%s", port, err, out, body)
-		if !strings.Contains(string(body), "Address already in use") && !strings.Contains(string(body), "could not bind") {
-			return nil, fmt.Errorf("%s", last)
+		} else {
+			body, _ := os.ReadFile(logPath)
+			last = fmt.Sprintf("postgres start on port %s: %v\n%s", port, err, body)
+			if !strings.Contains(string(body), "Address already in use") && !strings.Contains(string(body), "could not bind") {
+				return nil, errors.Join(fmt.Errorf("%s", last), s.closeSentry())
+			}
 		}
 	}
-	return nil, fmt.Errorf("throwaway postgres did not start in five attempts: %s", last)
+	return nil, errors.Join(fmt.Errorf("throwaway postgres did not start in five attempts: %s", last), s.closeSentry())
 }
 
-// ready pings the server once it reports itself started.
+// launch runs postgres in the foreground under the given port, its output to
+// the existing log file and the postmaster joined to the sentry's group. It
+// returns once the server has said it is ready and answered a ping, or the
+// error that stopped it.
+func (s *Server) launch(data, port string, group int) error {
+	if err := s.sentry.alive(); err != nil {
+		return fmt.Errorf("the throwaway postgres cannot join its sentry, so it is not started: %w", err)
+	}
+	log, err := os.OpenFile(s.log, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// ignored: the child inherited this file descriptor; the parent's copy of a log file has nothing left to say
+		_ = log.Close()
+	}()
+	args := []string{"-D", data, "-p", port, "-c", "listen_addresses=127.0.0.1", "-c", "unix_socket_directories=", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off", "-c", "log_min_messages=warning"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, filepath.Join(s.Bin, "postgres"), args...)
+	cmd.Env = cleanEnv()
+	cmd.Stdout, cmd.Stderr = log, log
+	join(cmd, group)
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return fmt.Errorf("the throwaway postgres did not join its sentry (group %d): %w", group, err)
+	}
+	s.cmd = cmd
+	s.exited = make(chan struct{})
+	go func() {
+		s.ended = cmd.Wait()
+		cancel()
+		close(s.exited)
+	}()
+	s.Port = port
+	if err := s.ready(); err != nil {
+		select {
+		case <-s.exited:
+		default:
+			stop, stopStop := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(s.Bin, "pg_ctl"), "-D", data, "-m", "immediate", "-w", "stop")
+			stop.Env = cleanEnv()
+			if stop.Run() != nil {
+				// ignored: the postmaster may have ended during pg_ctl; the wait below proves it is gone
+				_ = cmd.Process.Kill()
+			}
+			stopStop()
+			<-s.exited
+		}
+		return err
+	}
+	return nil
+}
+
+// readyLine is what postgres prints once it listens. The log line is the
+// server's own word that it is up; the ping then proves it answers.
+const readyLine = "database system is ready to accept connections"
+
+// ready reads the log until it carries the readiness line, then pings the
+// server.
 func (s *Server) ready() error {
 	db, err := sql.Open("pgx", s.DSN("postgres"))
 	if err != nil {
@@ -181,6 +309,20 @@ func (s *Server) ready() error {
 	defer cancel()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
+		select {
+		case <-s.exited:
+			body, _ := os.ReadFile(s.log)
+			return fmt.Errorf("postgres exited before ready: %v\n%s", s.ended, body)
+		default:
+		}
+		body, _ := os.ReadFile(s.log)
+		if !strings.Contains(string(body), readyLine) {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("throwaway postgres on port %s did not report readiness:\n%s", s.Port, body)
+			}
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
 		if err := db.PingContext(ctx); err == nil {
 			return nil
 		} else if time.Now().After(deadline) {
@@ -191,15 +333,50 @@ func (s *Server) ready() error {
 	}
 }
 
-// Stop stops the server (immediate mode: nothing here is kept).
+// Stop stops the server (immediate mode: nothing here is kept), waits for the
+// foreground postmaster, then closes the sentry's pipe and waits for it.
 func (s *Server) Stop() error {
+	s.stop.Do(func() { s.stopErr = s.stopRunning() })
+	return s.stopErr
+}
+
+func (s *Server) stopRunning() (result error) {
+	defer func() { result = errors.Join(result, s.closeSentry()) }()
 	stop, stopStop := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(s.Bin, "pg_ctl"), "-D", filepath.Join(s.Dir, "data"), "-m", "immediate", "-w", "stop")
 	defer stopStop()
 	stop.Env = cleanEnv()
 	if out, err := stop.CombinedOutput(); err != nil {
+		if s.cmd != nil {
+			// ignored: an already-ended postmaster is the same cleanup state; the wait below proves it is gone
+			_ = s.cmd.Process.Kill()
+		}
+		if s.exited != nil {
+			<-s.exited
+		}
 		return fmt.Errorf("pg_ctl stop: %v\n%s", err, out)
 	}
+	if s.exited != nil {
+		<-s.exited
+	}
 	return nil
+}
+
+// closeSentry closes the sentry's pipe and waits for the sentry to end. It is
+// idempotent and safe when there is no sentry (no process groups).
+func (s *Server) closeSentry() error {
+	if s.sentry == nil || s.sentry.group == 0 {
+		return nil
+	}
+	if s.sentry.hold != nil {
+		// ignored: closing an already-closed pipe still wakes the sentry, and a second close has nothing left to say
+		_ = s.sentry.hold.Close()
+	}
+	select {
+	case <-s.sentry.gone:
+		return nil
+	case <-time.After(sentryWait):
+		return fmt.Errorf("the sentry %d did not end after its pipe closed", s.sentry.group)
+	}
 }
 
 // Database creates a fresh, empty database on the server and returns its

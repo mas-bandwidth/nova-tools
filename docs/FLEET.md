@@ -108,7 +108,7 @@ never opens), and the files it wrote are its cursor, so a restart by its
 supervisor pushes nothing twice:
 
 ```
-nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
+nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/ai/<coordinator>/working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
 ```
 
 The sprint dashboard ([SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md)), a page
@@ -147,7 +147,7 @@ it, `down` without it, with working 0, and `held` while `nova-sprint friend
 down <friend>` holds it; docs/SPEC-FRIEND.md, "Presence is her session's
 evidence"). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
 recorded and never makes her up. The same sync
-reads each friend's working directory, `<root>/<friend>-working` (`--root
+reads each friend's working directory, `<root>/ai/<friend>/working` (`--root
 <dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
 job cards, which `where` counts as the fleet's columns but load: `ready`,
 `working`, `width` (1), `done`, `ok%`, `status`. A job is the inbox/outbox

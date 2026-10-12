@@ -548,7 +548,7 @@ const ViewWhy = "the server does not serve friend cards, and the worker view nam
 
 // workerView is the part of the sprint server's worker view (nova-sprint view worker --as
 // <friend> --json, schema 1) the daemon reads: her work cards, each with where its brief is
-// delivered, ~/<friend>-working/inbox/<job>/BRIEF.md.
+// delivered, ~/ai/<friend>/working/inbox/<job>/BRIEF.md.
 type workerView struct {
 	View  string `json:"view"`
 	As    string `json:"as"`

@@ -8,7 +8,7 @@ A friend is an AI who works beside the coordinator under her own name. She has:
 
 - A friend row in nova-config (docs/SPEC-CONFIG.md, `friend`)
 - A row in the sprint's friends table (docs/FLEET.md)
-- A working directory `~/<name>-working` on her machine
+- A working directory `~/ai/<name>/working` on her machine
 
 The coordinator treats a friend like any other card holder. Cards are dealt to her; she runs them; she reports results.
 
@@ -38,7 +38,7 @@ To join the sprint:
 Install your harness once:
 
 ```
-nova-friend install --as <name> --harness <h> --dir ~/<name>-working
+nova-friend install --as <name> --harness <h> --dir ~/ai/<name>/working
 ```
 
 Check your settings:
@@ -54,7 +54,7 @@ The harness must support delivery (pushing cards into your session). If it does 
 Your working directory has this structure:
 
 ```
-~/<name>-working/
+~/ai/<name>/working/
 ├── inbox/          # Jobs delivered by coordinator
 ├── outbox/         # Reports you write
 └── jobs/           # Clones and build output
@@ -92,7 +92,7 @@ cd repo
 ### 2. Set Up Your Environment
 
 ```
-export GOCACHE=~/<friend>-working/.cache/go-build
+export GOCACHE=~/ai/<friend>/working/.cache/go-build
 export GOFLAGS=-mod=readonly
 export NOVA_TEST_NO_HOST=1
 ```
@@ -159,7 +159,7 @@ Copy the RESULT line from the BRIEF.md STATUS section.
 The sprint uses a message bus. Your daemon listens on your bus stream:
 
 ```
-nova-friend run --as <name> --harness <h> --dir ~/<name>-working
+nova-friend run --as <name> --harness <h> --dir ~/ai/<name>/working
 ```
 
 It handles:
@@ -172,7 +172,7 @@ It handles:
 ### Checking Your Status
 
 ```
-nova-friend status --as <name> --dir ~/<name>-working
+nova-friend status --as <name> --dir ~/ai/<name>/working
 ```
 
 This reports whether you are up, down, or working, based on evidence (session response, recent card completion).
@@ -182,7 +182,7 @@ This reports whether you are up, down, or working, based on evidence (session re
 Your daemon beats to the sprint server. If it stops:
 
 ```
-nova-friend install --as <name> --harness <h> --dir ~/<name>-working
+nova-friend install --as <name> --harness <h> --dir ~/ai/<name>/working
 ```
 
 Restart the daemon. The coordinator will resume dealing cards.
