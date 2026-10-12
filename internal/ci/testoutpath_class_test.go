@@ -6,14 +6,11 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // testoutpath_class_test.go is the class rule behind the deps.json defect: `go
@@ -89,38 +86,15 @@ func (f outPathFinding) String() string {
 func TestToolRunsInTestsWriteIntoATempDir(t *testing.T) {
 	t.Parallel()
 
-	tree := repoTree(t)
-	allow := loadAllowlist(t, testOutPathAllowlistPath, shrinkOnly)
-	seen := map[string]bool{}
-	var violations []string
-
-	for _, dir := range []string{"cmd", "internal", "pkg"} {
-		for _, src := range tree.GoFilesUnder(true, dir) {
-			// testdata holds the fixtures this very test reads, so reading it
-			// would find the offenders it is meant to find.
-			if src.HasDirNamed("testdata") {
-				continue
+	walkClassFindings(t, testOutPathAllowlistPath, "no relative output path is there any more",
+		func(rel string, fset *token.FileSet, file *ast.File) []classFinding {
+			found := relativeOutputPathsIn(rel, fset, file)
+			out := make([]classFinding, 0, len(found))
+			for _, f := range found {
+				out = append(out, classFinding{key: f.File + ":" + f.Func, message: f.String()})
 			}
-			require.NoError(t, src.ParseErr)
-			for _, f := range relativeOutputPathsIn(src.Rel, tree.FSet, src.AST) {
-				key := f.File + ":" + f.Func
-				seen[key] = true
-				if !allow.Has(key) {
-					violations = append(violations, f.String()+"\n  (or add "+key+" to internal/ci/"+testOutPathAllowlistPath+" with a reason)")
-				}
-			}
-		}
-	}
-	for _, row := range allowlist.Check(t, allow, seen).Stale {
-		key := row.Key
-		violations = append(violations, fmt.Sprintf(
-			"%s lists %s, but no relative output path is there any more; delete the stale entry (the list only shrinks)",
-			testOutPathAllowlistPath, key))
-	}
-	sort.Strings(violations)
-	for _, v := range violations {
-		assert.Fail(t, v)
-	}
+			return out
+		})
 }
 
 // TestRelativeOutputPathScannerReadsTheFixtures is the red-test contract: the
