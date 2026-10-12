@@ -62,7 +62,7 @@ var BriefBaseRemedies = map[string]string{
 	"base-is-live":         "BASE: is a sprint base origin holds (sprint/<name>, a base the sprint's cards use, or the trunk for the promotion stream; nova-sprint bases lists them), never a temporary branch (tmp/, wip/, scratch/) or one origin no longer holds; re-cut the card on the sprint branch",
 	"tier-set":             "line 1 names the card's tier, `tier: flash|pro|heavy|frontier`; a card with no tier, or `-`, was dealt to friends who could not serve it",
 	"tla-is-frontier":      "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the frontier tier's work: write `tier: frontier` on line 1, or take tla/ out of PATHS: and give the model to its own card",
-	"who-serves-tier":      "the friend WHO: names serves the card's tier (her row's tiers, else her class), or for `WHO: friend` some friend does; name a friend who serves it, raise the tier to one she serves, or drop the WHO: line so the fleet deals it",
+	"who-serves-tier":      "the friend WHO: names serves the card's tier (the friend's row's tiers, else the friend's class), or for `WHO: friend` some friend does; name a friend who serves it, raise the tier to one the friend serves, or drop the WHO: line so the fleet deals it",
 }
 
 // LedgerKind is the KIND: of a ledger card, the card nova-card generate cuts from a

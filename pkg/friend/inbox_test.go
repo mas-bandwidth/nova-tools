@@ -97,8 +97,8 @@ func TestEveryHeldCardIsWrittenToTheInbox(t *testing.T) {
 		}
 	}
 	require.Len(t, wrote, 2, "one line per write: %v", r.records)
-	assert.Contains(t, wrote[0], "inbox/taken.w2~15/BRIEF.md (card taken.w2, working on her row)")
-	assert.Contains(t, wrote[1], "inbox/dealt.w3~15/BRIEF.md (card dealt.w3, ready on her row)")
+	assert.Contains(t, wrote[0], "inbox/taken.w2~15/BRIEF.md (card taken.w2, working on the friend's row)")
+	assert.Contains(t, wrote[1], "inbox/dealt.w3~15/BRIEF.md (card dealt.w3, ready on the friend's row)")
 	s := r.last()
 	assert.True(t, s.HeldKnown)
 	assert.Equal(t, [3]int{42, 42, 0}, [3]int{s.Held, s.InboxJobs, s.Missing}, "held, inbox and missing as status prints them")
@@ -313,7 +313,7 @@ func TestAViewRowRetiresWorkKeepsReadsAndSaysMissingOnce(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(dir, "inbox", missing.Job), "no brief is made up")
 	n := 0
 	for _, l := range r.records {
-		if strings.Contains(l, "inbox: missing inbox/missing.w2~15/BRIEF.md (card missing.w2, working on her row): "+ViewWhy) {
+		if strings.Contains(l, "inbox: missing inbox/missing.w2~15/BRIEF.md (card missing.w2, working on the friend's row): "+ViewWhy) {
 			n++
 		}
 	}

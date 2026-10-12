@@ -605,7 +605,7 @@ func TestAClaudeRowInOneShotModeWithoutConfigDirIsRefused(t *testing.T) {
 		assert.Zero(t, ran, "no card runs")
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 1, strings.Count(records, "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir"), records)
-		assert.Contains(t, records, "run: nova-config friend set bob --config_dir <her account's absolute config directory>")
+		assert.Contains(t, records, "run: nova-config friend set bob --config_dir <the account's absolute config directory>")
 		assert.Equal(t, ModeBatch, r.last().Mode)
 	})
 }

@@ -47,7 +47,7 @@ func TestRunNamesTheCurrentHolderWhenItRefusesAnOldReport(t *testing.T) {
 	require.Equal(t, 0, code, errb.String())
 	assert.Positive(t, looked, "the actual holder source is wired into the daemon")
 	assert.Zero(t, finished, "no finish is sent for a card off her row")
-	assert.Contains(t, out.String(), "refused: card taken.w1 is not on her row, no longer hers; cy holds it now")
+	assert.Contains(t, out.String(), "refused: card taken.w1 is not on the friend's row, no longer the friend's; cy holds it now")
 }
 
 func TestHolderViewRejectsMalformedOrUnrelatedDocuments(t *testing.T) {

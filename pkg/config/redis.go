@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -232,7 +233,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -263,6 +264,9 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			// her optional work restriction, "" for none
 			"streams": str(d, 6),
 			"kinds":   str(d, 7),
+			// the pronouns the friend goes by; a row that names none reads as the default,
+			// so apply writes the field only when the row says something else
+			"pronouns": cmp.Or(str(d, 8), DefaultFriendPronouns),
 		}
 	}
 	return views, revValue(rev), nil
@@ -382,7 +386,7 @@ func (a *RedisApplier) charge(ctx context.Context, f string) (string, error) {
 		a.coordinatorRead = true
 	}
 	if a.coordinator == "" {
-		return "", &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("friend %s has no beat naming a machine and the fleet names no coordinator machine to charge her slots to; run: nova-config fleet set --coordinator <machine>, then apply", f)}
+		return "", &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("friend %s has no beat naming a machine and the fleet names no coordinator machine to charge the friend's slots to; run: nova-config fleet set --coordinator <machine>, then apply", f)}
 	}
 	return a.coordinator, nil
 }
@@ -419,7 +423,7 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("CEILING %s: friend %s makes the sum %s over the machine ceiling %s; raise it with nova-config machine set %s --slots <n>, or lower a friend's slots",
 			word(words, 1), f, word(words, 2), word(words, 3), word(words, 1))}
 	case "NOCEILING":
-		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("machine %s has no ceiling in Redis; run: nova-config machine add %s ... (her beat names it) then apply", machine, machine)}
+		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("machine %s has no ceiling in Redis; run: nova-config machine add %s ... (the friend's beat names it) then apply", machine, machine)}
 	case "NAME-IS-LOGIN":
 		return &RefusedError{Err: ErrActor, Detail: fmt.Sprintf("%s is a login in Redis (friends:login), not a friend", f)}
 	default:
@@ -444,8 +448,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeTokenCap := prev == nil || prev["token_cap"] != row.Fields["token_cap"]
 	writeStreams := prev == nil || prev["streams"] != row.Fields["streams"]
 	writeKinds := prev == nil || prev["kinds"] != row.Fields["kinds"]
+	writePronouns := prev == nil || prev["pronouns"] != row.Fields["pronouns"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writeRoles {
+	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writePronouns && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -467,6 +472,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeKinds { // her optional KIND restriction, a plain field beside streams
 		pipe.HSet(ctx, "friend:"+f+":desired", "kinds", row.Fields["kinds"])
+	}
+	if writePronouns { // the configured pronouns mirrored in the desired hash; sprint sync reads the config store and supplies row_pronouns on beats
+		pipe.HSet(ctx, "friend:"+f+":desired", "pronouns", row.Fields["pronouns"])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

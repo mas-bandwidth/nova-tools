@@ -40,6 +40,9 @@ type Agent struct {
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
+	// Pronouns are the friend's pronouns (the row's pronouns setting), the daemon's --pronouns,
+	// written only when set.
+	Pronouns string
 	// DenySelf is the coordinator's self the daemon's lane wall never writes inside, the
 	// daemon's --deny-self, written only when set (the daemon's default, DefaultDenySelf,
 	// stands when it is not).
@@ -114,6 +117,9 @@ func (a Agent) Args() []string {
 	}
 	if a.ConfigDir != "" {
 		args = append(args, "--config-dir", a.ConfigDir)
+	}
+	if a.Pronouns != "" {
+		args = append(args, "--pronouns", a.Pronouns)
 	}
 	if a.DenySelf != "" {
 		args = append(args, "--deny-self", a.DenySelf)

@@ -130,13 +130,13 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		l := &Limits{Now: clock, Harness: "codex", Nonce: func() string { return "w4k3up" },
 			Down: func(until time.Time, reason string) {
 				downs = append(downs, until.UTC().Format(time.RFC3339))
-				subject, body := LimitDownText("bob", until, reason)
+				subject, body := LimitDownText("bob", DefaultPronouns, until, reason)
 				_, err := r.bus.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: subject, Body: body})
 				require.NoError(t, err)
 			},
 			Up: func(string) {
 				ups = append(ups, "up")
-				subject, body := LimitUpText("bob")
+				subject, body := LimitUpText("bob", DefaultPronouns)
 				_, err := r.bus.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: subject, Body: body})
 				require.NoError(t, err)
 			},

@@ -162,10 +162,10 @@ func (h *daemonHook) step(ctx context.Context) {
 			word = r.Error()
 		}
 		if errors.Is(err, hook.ErrNotHooked) {
-			word = h.holder.Name + " was unhooked (nova-hook unhook), or hooked as another role since: this daemon holds nothing, and a restart of it does not hook her in, until she is hooked in as " + string(h.holder.Role) + " again; run: " + hook.HookCommand(h.holder.Name, h.holder.Role)
+			word = h.holder.Name + " was unhooked (nova-hook unhook), or hooked as another role since: this daemon holds nothing, and a restart of it does not hook " + h.holder.Name + " in, until " + h.holder.Name + " is hooked in as " + string(h.holder.Role) + " again; run: " + hook.HookCommand(h.holder.Name, h.holder.Role)
 		}
 		if errors.Is(err, hook.ErrOtherRole) {
-			word = h.holder.Name + " is hooked as another role (nova-hook status --as " + h.holder.Name + "): this daemon never takes the record over, so it holds nothing and her lanes take nothing; to work as a friend, run: " + hook.HookCommand(h.holder.Name, h.holder.Role)
+			word = h.holder.Name + " is hooked as another role (nova-hook status --as " + h.holder.Name + "): this daemon never takes the record over, so it holds nothing and its lanes take nothing; to work as a friend, run: " + hook.HookCommand(h.holder.Name, h.holder.Role)
 		}
 	}
 	h.hooked.Store(err == nil)

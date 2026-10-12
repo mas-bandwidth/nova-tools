@@ -70,8 +70,10 @@
      them. This record is in-progress until the tag; the cut turns it shipped.")
    (release "v1.2.15" :status "in-progress"
     :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only,
-     Codex friend delivery refuses routes that queue input or require a Steer click, and a member lane
-     ends every process its card started."))
+     Codex friend delivery refuses routes that queue input or require a Steer click, a member lane
+     ends every process its card started.")
+   (release "v1.2.16" :status "in-progress"
+    :text "A friend's texts say the friend's configured pronouns, with the matching sprint sync and beat producer."))
  :items
   ((fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
     :title "Codex friend delivery refuses unproved queue routes"
@@ -80,6 +82,21 @@
      or queue a prompt. The refusal preserves the installed launch configuration. This guard prevents
      queued Steer regressions; it does not claim idle wake or permanent native push is implemented."
     :origin "PR #5628, reviewed head aa0dcec2aca2805426197129c6767527a07e07d8; assembled into sprint/comfort for v1.2.15")
+  (fix "a-friends-texts-say-the-friends-own-pronouns" :release "v1.2.16" :status "in-progress"
+    :title "A friend's texts say the friend's own pronouns"
+    :text "nova-friend and nova-config called every friend her and she (found by the owner, 2026-10-11). A
+     friend row now carries a pronouns setting, she/her, he/him or they/them, they/them when not stated
+     and never it (nova-config friend add/set --pronouns, migration 0038, the desired hash field
+     pronouns), and the daemon learns it from nova-friend run/install --pronouns (written into the
+     launchd agent) or the beat's row_pronouns=. Every text the daemon writes about the friend, the
+     limit, rate, funds, spend-cap, fault and lane-fault judgments to the seat and the records of the
+     inbox, outbox, take and present lines, renders its pronouns through one helper, Pronouns.Say
+     ({their}, {them}, {they}); the texts with no daemon in hand (the help, the stage and claude-lane
+     refusals, the friend kind's help) say the friend's. pkg/friend's
+     TestNoStringLiteralCallsAFriendHerOrHim reads the sources and fails on a personal pronoun typed
+     into a string literal. The server's beat answer carries row_pronouns= when the sprint server
+     sends it; until then --pronouns is the daemon's source."
+    :origin "hand PR onto sprint/comfort for v1.2.16")
   (fix "a-member-lane-ends-every-process-its-card-started" :release "v1.2.15" :status "in-progress"
    :title "A member lane ends every process its card started"
    :text "Fleet member b1 ran at 100% load for 13 hours: a card's run backgrounded 16 shell busy loops

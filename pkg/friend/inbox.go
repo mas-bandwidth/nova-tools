@@ -207,7 +207,7 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 			continue
 		}
 		if strings.TrimSpace(h.Brief) == "" {
-			record(fmt.Sprintf("%s inbox: missing inbox/%s/BRIEF.md (card %s, %s on her row): %s; nothing was written", at, h.Job, h.Card, dash(h.Col), cmp.Or(h.Why, "the server sent no brief")))
+			record(fmt.Sprintf("%s inbox: missing inbox/%s/BRIEF.md (card %s, %s on the friend's row): %s; nothing was written", at, h.Job, h.Card, dash(h.Col), cmp.Or(h.Why, "the server sent no brief")))
 			c.Missing++
 			continue
 		}
@@ -219,7 +219,7 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 		// a rework's brief is written with its fix first (rework.go, ReworkedBrief)
 		switch err := atomicfile.WriteFile(brief, []byte(ReworkedBrief(h.Brief)), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
-			record(fmt.Sprintf("%s inbox: wrote inbox/%s/BRIEF.md (card %s, %s on her row)", at, h.Job, h.Card, dash(h.Col)))
+			record(fmt.Sprintf("%s inbox: wrote inbox/%s/BRIEF.md (card %s, %s on the friend's row)", at, h.Job, h.Card, dash(h.Col)))
 		case errors.Is(err, fs.ErrExist): // friend sync wrote it between the look and the write
 		default:
 			c.Missing++
@@ -249,7 +249,7 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 			firstErr = cmpErr(firstErr, err)
 			continue
 		}
-		record(fmt.Sprintf("%s inbox: retired inbox/%s to %s: its card is no longer on her row", at, name, to))
+		record(fmt.Sprintf("%s inbox: retired inbox/%s to %s: its card is no longer on the friend's row", at, name, to))
 	}
 	return c, firstErr
 }
@@ -332,7 +332,7 @@ func (l *loop) inboxStep(now time.Time) {
 	}
 	if err != nil {
 		if why := err.Error(); why != d.status.InboxError {
-			d.Record(fmt.Sprintf("%s inbox: the server did not say which cards are on her row: %s; nothing written or retired until it does", now.UTC().Format(time.RFC3339), oneLine(why, 300)))
+			d.Record(d.sayf("%s inbox: the server did not say which cards are on {their} row: %s; nothing written or retired until it does", now.UTC().Format(time.RFC3339), oneLine(why, 300)))
 			d.status.InboxError = why
 		}
 		return
@@ -448,7 +448,7 @@ func (l *loop) startDealt(now time.Time) {
 	lines := l.dealt
 	l.dealt = nil
 	if l.passive {
-		d.Record(fmt.Sprintf("%s not delivered: %s has no deliver command: %d card(s) dealt into her inbox", now.UTC().Format(time.RFC3339), d.Harness, len(lines)))
+		d.Record(d.sayf("%s not delivered: %s has no deliver command: %d card(s) dealt into {their} inbox", now.UTC().Format(time.RFC3339), d.Harness, len(lines)))
 		return
 	}
 	t := &turn{subjects: fmt.Sprintf("%q", fmt.Sprintf("%d card(s) dealt", len(lines)))}
@@ -504,7 +504,7 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 			if view == nil {
 				return Row{Refused: refused.Why}, ns
 			}
-			note = ns.Error() + "; her row is read from the worker view, counted and retired"
+			note = ns.Error() + "; the friend's row is read from the worker view, counted and retired"
 		} else if view == nil {
 			return Row{}, ErrNotDue
 		}
