@@ -350,31 +350,54 @@ func (r *generalityMessageReporter) Errorf(format string, args ...any) {
 	r.messages = append(r.messages, fmt.Sprintf(format, args...))
 }
 
-// measureGeneralityCounts scans files and returns per-key occurrence counts and keys.
-func measureGeneralityCounts(files []GeneralitySourceFile) (map[string]int, map[string]bool, []string) {
-	measuredCounts := make(map[string]int)
-	measuredKeys := make(map[string]bool)
-	var rawViolations []string
+// generalityHit is one forbidden token on one line of one file.
+type generalityHit struct {
+	rel  string
+	line int // 1-based
+	tok  string
+}
 
+// scanGenerality is the one scan of files, every hit in file then line order; the
+// counts and the line-naming violations are both read off it, so the tree is
+// cleaned and parsed once per check, not once per reading. A file whose own bytes
+// hold no candidate token (case-folded) is neither copied nor parsed: cleaning only
+// blanks text, so its clean form holds none either, and the line scan would find
+// nothing in it.
+func scanGenerality(files []GeneralitySourceFile) []generalityHit {
+	var hits []generalityHit
 	for _, f := range files {
-		rel := f.Rel
-		cleanSrc := cleanSourceForGenerality(rel, f.Src)
-		if !fileMayContainGenerality(cleanSrc) {
+		if !fileMayContainGenerality(f.Src) {
 			continue
 		}
-		lines := strings.Split(string(cleanSrc), "\n")
-		for lineNum, line := range lines {
+		cleanSrc := cleanSourceForGenerality(f.Rel, f.Src)
+		for lineNum, line := range strings.Split(string(cleanSrc), "\n") {
 			if !lineMayContainGenerality(line) {
 				continue
 			}
-			tokens := extractTokensFromText(line)
-			for _, tok := range tokens {
-				key := rel + ":" + tok
-				measuredKeys[key] = true
-				measuredCounts[key]++
-				rawViolations = append(rawViolations, fmt.Sprintf("%s:%d:%s", rel, lineNum+1, tok))
+			for _, tok := range extractTokensFromText(line) {
+				hits = append(hits, generalityHit{rel: f.Rel, line: lineNum + 1, tok: tok})
 			}
 		}
+	}
+	return hits
+}
+
+// measureGeneralityCounts scans files and returns per-key occurrence counts and keys.
+func measureGeneralityCounts(files []GeneralitySourceFile) (map[string]int, map[string]bool, []string) {
+	return generalityCounts(scanGenerality(files))
+}
+
+// generalityCounts is the per-key occurrence counts and keys of hits, and each hit as
+// `<file>:<line>:<token>`.
+func generalityCounts(hits []generalityHit) (map[string]int, map[string]bool, []string) {
+	measuredCounts := make(map[string]int)
+	measuredKeys := make(map[string]bool)
+	var rawViolations []string
+	for _, h := range hits {
+		key := h.rel + ":" + h.tok
+		measuredKeys[key] = true
+		measuredCounts[key]++
+		rawViolations = append(rawViolations, fmt.Sprintf("%s:%d:%s", h.rel, h.line, h.tok))
 	}
 	return measuredCounts, measuredKeys, rawViolations
 }
@@ -411,7 +434,8 @@ func generalitySortedViolations(allow generalityCountedLedger) []string {
 // checkGenerality scans the given source files against the counted ledger.
 func checkGenerality(files []GeneralitySourceFile, allow generalityCountedLedger) []string {
 	violations := generalitySortedViolations(allow)
-	measuredCounts, _, _ := measureGeneralityCounts(files)
+	hits := scanGenerality(files)
+	measuredCounts, _, _ := generalityCounts(hits)
 	allowedCounts := make(map[string]int)
 	for _, row := range allow.Rows() {
 		allowedCounts[row.Key] = allow.Count(row.Key)
@@ -431,23 +455,11 @@ func checkGenerality(files []GeneralitySourceFile, allow generalityCountedLedger
 	violations = append(violations, reporter.messages...)
 
 	// A new token still names its exact source line, not just the ledger key.
-	for _, f := range files {
-		rel := f.Rel
-		cleanSrc := cleanSourceForGenerality(rel, f.Src)
-		if !fileMayContainGenerality(cleanSrc) {
-			continue
-		}
-		for lineNum, line := range strings.Split(string(cleanSrc), "\n") {
-			if !lineMayContainGenerality(line) {
-				continue
-			}
-			for _, tok := range extractTokensFromText(line) {
-				if !allow.Has(rel + ":" + tok) {
-					violations = append(violations, fmt.Sprintf(
-						"%s:%d: forbidden reference to %q (Rule 1: generality guardrail; see docs/SPEC-CI.md#generality); no host, machine, tailnet, friend or person name in living code",
-						rel, lineNum+1, tok))
-				}
-			}
+	for _, h := range hits {
+		if !allow.Has(h.rel + ":" + h.tok) {
+			violations = append(violations, fmt.Sprintf(
+				"%s:%d: forbidden reference to %q (Rule 1: generality guardrail; see docs/SPEC-CI.md#generality); no host, machine, tailnet, friend or person name in living code",
+				h.rel, h.line, h.tok))
 		}
 	}
 

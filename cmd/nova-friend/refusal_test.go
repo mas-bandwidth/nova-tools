@@ -69,7 +69,7 @@ func TestAPolicyRefusalAlsoFaultsTheLane(t *testing.T) {
 func TestTheLaneFaultNoticeNamesTheHoldVerb(t *testing.T) {
 	t.Parallel()
 
-	subject, body := friend.LaneFaultText("bob", `lane-fault=2 refusal="content_filter_error: no"`)
+	subject, body := friend.LaneFaultText("bob", friend.DefaultPronouns, `lane-fault=2 refusal="content_filter_error: no"`)
 	assert.Contains(t, subject, "bob")
 	assert.Contains(t, body, "lane-fault=2")
 	assert.Contains(t, body, "nova-sprint hold bob --return")

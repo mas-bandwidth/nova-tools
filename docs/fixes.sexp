@@ -70,10 +70,11 @@
      them. This record is in-progress until the tag; the cut turns it shipped.")
    (release "v1.2.15" :status "in-progress"
     :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only,
-     Codex friend delivery refuses routes that queue input or require a Steer click, and a member lane
+     Codex friend delivery refuses routes that queue input or require a Steer click, a member lane
      ends every process its card started.")
    (release "v1.2.16" :status "in-progress"
-    :text "The next comfort fixes, including process-table reads that preserve each command's wait."))
+    :text "A friend's texts say the friend's configured pronouns, with the matching sprint sync and beat
+     producer; sandbox process-table reads and valid test probes preserve each command's wait."))
  :items
   ((fix "sandbox-table-reads-preserve-command-waits" :release "v1.2.16" :status "in-progress"
     :title "Sandbox process-table reads preserve other commands' waits"
@@ -93,6 +94,21 @@
      or queue a prompt. The refusal preserves the installed launch configuration. This guard prevents
      queued Steer regressions; it does not claim idle wake or permanent native push is implemented."
     :origin "PR #5628, reviewed head aa0dcec2aca2805426197129c6767527a07e07d8; assembled into sprint/comfort for v1.2.15")
+  (fix "a-friends-texts-say-the-friends-own-pronouns" :release "v1.2.16" :status "in-progress"
+    :title "A friend's texts say the friend's own pronouns"
+    :text "nova-friend and nova-config called every friend her and she (found by the owner, 2026-10-11). A
+     friend row now carries a pronouns setting, she/her, he/him or they/them, they/them when not stated
+     and never it (nova-config friend add/set --pronouns, migration 0038, the desired hash field
+     pronouns), and the daemon learns it from nova-friend run/install --pronouns (written into the
+     launchd agent) or the beat's row_pronouns=. Every text the daemon writes about the friend, the
+     limit, rate, funds, spend-cap, fault and lane-fault judgments to the seat and the records of the
+     inbox, outbox, take and present lines, renders its pronouns through one helper, Pronouns.Say
+     ({their}, {them}, {they}); the texts with no daemon in hand (the help, the stage and claude-lane
+     refusals, the friend kind's help) say the friend's. pkg/friend's
+     TestNoStringLiteralCallsAFriendHerOrHim reads the sources and fails on a personal pronoun typed
+     into a string literal. The server's beat answer carries row_pronouns= when the sprint server
+     sends it; until then --pronouns is the daemon's source."
+    :origin "hand PR onto sprint/comfort for v1.2.16")
   (fix "a-member-lane-ends-every-process-its-card-started" :release "v1.2.15" :status "in-progress"
    :title "A member lane ends every process its card started"
    :text "Fleet member b1 ran at 100% load for 13 hours: a card's run backgrounded 16 shell busy loops
@@ -145,6 +161,10 @@
     :title "The inventory timeout test reaches the applied-state read again"
     :text "TestInventoryTimeoutFlagGovernsTheConnection parked a raw TCP listener that accepted and never answered, and since nova-config opens its Redis connection through pkg/redisconn.Open (one bounded dial and the HELLO 3 handshake), the verb timed out while connecting and never reached the read of the applied state the test proves. The stalled store now completes the RESP3 handshake and stalls on the read, so the timeout is again `while reading the applied state`; a second case, a store that accepts and never answers the handshake, pins `while connecting`. The product is unchanged: docs/SPEC-CONFIG.md requires pkg/redisconn.Open."
     :origin "the coordinator, 2026-10-12: dev's merge queue (run 38247574824, functional 4/6) refused mas-bandwidth/nova-tools#5627 on cmd/nova-config TestInventoryTimeoutFlagGovernsTheConnection, failing 5 of 5 on dev f1ae69f03")
+   (fix "the-hung-pass-beat-test-waits-for-its-tick-and-the-member-writes-one-line-at-a-time" :release "v1.2.14" :status "shipped"
+    :title "The hung-pass beat test waits for its tick, and the member writes its out one line at a time"
+    :text "TestAMemberWhosePassIsHungStopsBeating had two causes of red. The test moved its clock to BeatStall+1m as soon as BeatLoop had taken the first tick, before the loop read the clock for it, so the first tick could read 6m0s and the 5m1s line was never said; the test now sends a second, silent tick at the same clock first, taken only once the first is done. And the member's out was written from two goroutines, Beat on BeatLoop's clock and the pass, so a caller's bytes.Buffer was a data race under -race; New wraps the out in oneWriter (pkg/member/member.go), one write at a time on a one-slot channel turn, pinned by TestTheBeatAndThePassSayThingsOneAtATime: in a synctest bubble its writer holds the beat's line inside it while the pass says one, and synctest.Wait shows the pass durably waiting its turn, with no clock read or waited on; red on the unpatched member on every run (50 of 50). Measured on hetzner2 with go test -race -count=50: on dev 274339741 the test was red 1 of 50 (the data race; 0 of 50 at GOMAXPROCS=1 and 3, 1 of 50 beside a parallel -race run of pkg/swarm and pkg/friend), and 50 of 50 (the 5m1s line, member_test.go:1811) with the window between the loop taking a tick and reading the clock widened by 2ms; with both fixes 0 of 50 in every one of those, and 0 of 50 as 50 separate -race processes."
+    :origin "the coordinator, 2026-10-12: certification run 38273976881 on dev 274339741, test (macos-latest, 15), failed pkg/member TestAMemberWhosePassIsHungStopsBeating at member_test.go:1811 (said once: expected 1, actual 0), blocking the v1.2.14 cut")
    (fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
    :text "Their commands, packages, models and docs move to mas-bandwidth/nova-sprint, and CI refuses their paths here."

@@ -421,6 +421,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
 		f.Duration("notify-window", friend.NotificationWindow, "global card-delivery burst window and minimum wake interval; urgent messages bypass it")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
+		f.String("pronouns", "", "the friend's startup pronouns, one of "+friend.PronounList()+" (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them")
 		f.Check(func(c *tool.Call) {
 			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
 				c.Problem(err.Error())
@@ -433,6 +434,9 @@ func friendTool(w world) *tool.Tool {
 			}
 			if c.Dur("notify-window") <= 0 {
 				c.Problem("--notify-window wants a positive duration")
+			}
+			if _, ok := friend.ParsePronouns(c.Str("pronouns")); !ok {
+				c.Problem(fmt.Sprintf("--pronouns %q wants one of %s", c.Str("pronouns"), friend.PronounList()))
 			}
 		})
 		stateDir(f)
@@ -482,16 +486,16 @@ the check is asked again with the same nonce, every ` + friend.SessionQuiet.Stri
 cannot drive is one "presence: REFUSED" line with the remedy (a dsh session under an agent preset: start a
 session in <dir> with no agent preset and name it with --session <id>). The beat after a check goes in
 says it (--check <nonce> --run <run>), and the beat after the session answers names it (--pong <nonce>
---run <run>): the sprint server counts only an answer to a check this run asked, once, as her session's
-evidence while her beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
+--run <run>): the sprint server counts only an answer to a check this run asked, once, as the friend's session's
+evidence while the friend's beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while the friend is up; a per-card harness
 (claude) says neither. While the session is down the beat says so (--until, --reason: the push unproven,
 or no session answer, with the check's nonce). The present comes first, the backlog never does: on the
-daemon's start (once the first beat says her row's mode), after ` + friend.StaleAfter.String() + ` with no turn taken, and when she
-sends herself a message with the subject present, the next turn is one PRESENT turn (her live queue from her
+daemon's start (once the first beat says the friend's row's mode), after ` + friend.StaleAfter.String() + ` with no turn taken, and when the friend
+sends a message to the friend's own stream with the subject present, the next turn is one PRESENT turn (the friend's live queue from the friend's
 row or inbox/QUEUE.json, each card's column and BRIEF.md, the seat, the newest coordinator note, and one line
 Skipped: n deals, n pings, n notes); every older message is acked "superseded by the present at <time>", said
 on the record and to the seat on the bus, and a PING past the ` + friend.Window.String() + ` challenge window is dropped, never
-answered. A report on a card no longer on her row is never finished; the record names who holds it now.
+answered. A report on a card no longer on the friend's row is never finished; the record names who holds it now.
 Each second, when the session is free: every waiting
 message is read off the stream and pushed in as ONE turn, one envelope, oldest first, each message under a line
 [i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>, capped at the harness's text limit
@@ -502,10 +506,10 @@ PING is answered at once with a daemon-pong and acked, never a turn; while a cha
 pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
 "coordinator back" when pings resume, collapsed to the latest and said only inside a turn that
 carries messages. Presence is the session's, never the daemon's: ` + friend.ProveEvery.String() + ` after the last check went in
-(the session's own bus messages keep her up meanwhile; the daemon's never count), a SESSION CHECK <nonce> goes in through the harness
+(the session's own bus messages keep the friend up meanwhile; the daemon's never count), a SESSION CHECK <nonce> goes in through the harness
 as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
 deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `
-and the friend is down, "no session answer", her beat saying down until the next answer brings it up; it
+and the friend is down, "no session answer", the friend's beat saying down until the next answer brings it up; it
 starts down until the first answer. The check waits while a turn is at the gate (from before the limit
 gate's wait to its end) or, on a headless harness (dsh, gemini: a one-shot process per turn), while the
 adapter's own record says a turn runs, and a check owed ` + friend.SessionQuiet.String() + ` that has not
@@ -516,11 +520,11 @@ stays pending, status says session=broken, and the seat (else --coordinator) is 
 bus; a restart clears it. A turn whose harness says it is out of credits or at a usage limit (a Claude
 Code rate_limit_event rejected, "Insufficient AI Credits ... will refresh 6:52 PM", "usage limit ...
 try again at") makes the friend down until the reset: the presence file says down with the limit,
-her beat says down with the reset and the reason (nova-sprint friend beat --until --reason; her row reads
+the friend's beat says down with the reset and the reason (nova-sprint friend beat --until --reason; the friend's row reads
 down), nothing is delivered, and the seat (else
---coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
+--coordinator) is told once with the line that shows it on the friend's row (nova-sprint friend down <me>
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
-nonce from inside the session before she beats again, and the seat is told she is back. Each harness's own
+nonce from inside the session before the friend beats again, and the seat is told the friend is back. Each harness's own
 wording is read (claude, codex, opencode, grok, antigravity, dsh, gemini), its kind (limit or credits) and its
 reset when it names one (a clock time in the zone it names, "resets Oct 10 at 5am (America/New_York)"), else
 --limit-rest, and the seat is told once, as a judgment, the text it could not read; status says session=limited limit_kind= limit_until= while it stands. The friend
@@ -1048,7 +1052,7 @@ this verb through the name it was run by (no shell script) and is refused at exi
 				Effect:  tool.LocalWrite + ": removes the lanes' pause marker " + friend.PauseFile + " from the state directory",
 				DryRun:  true,
 				Detail: `A provider failure the lanes met (out of funds, 402; a rate limit too when the row says pause_on=any) stops every
-lane and writes ` + friend.PauseFile + ` in the state directory with the provider's exact message; while it stands her daemon beats her down
+lane and writes ` + friend.PauseFile + ` in the state directory with the provider's exact message; while it stands the daemon beats the friend down
 with that message (friend beat --until --reason). Nothing resumes until a person has dealt with the provider and runs this
 verb: it prints RESUME OK cleared= with the message the marker held (RESUME OK cleared=none when there was no pause), after
 which a running daemon lifts its hold at its next step, runs the kept cards again, and its next beat withdraws the down.
@@ -1264,6 +1268,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var rowConfigDir atomic.Pointer[string] // her row's config_dir as her beat last answered; read by the lanes' runs and the wall
 	var rowTokenCap atomic.Int64            // her row's per-card token cap as her beat last answered; DefaultTokenCap until it says, 0 none
 	rowTokenCap.Store(friend.DefaultTokenCap)
+	// the pronouns the friend goes by: --pronouns first, the row's row_pronouns once a beat names them
+	// (friend.RowPronouns), they/them when neither does; every text about the friend says them (Daemon.Pro)
+	pro := friend.NewPronounsRef(friend.DefaultPronouns)
+	if p, ok := friend.ParsePronouns(c.Str("pronouns")); ok {
+		pro.Set(p)
+	}
 	var denySeatMu sync.Mutex
 	var denySeatName string
 	var denySeatAt time.Time
@@ -1483,15 +1493,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
 		}
-		tellSeat(friend.LimitDownText(name, until, reason))
+		tellSeat(friend.LimitDownText(name, pro.Get(), until, reason))
 	}
 	fl.Unread = func(text string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: the message names no reset I can read; held, a judgment to the seat: " + text)
-		tellSeat(friend.LimitUnreadText(name, c.Dur("limit-rest"), text))
+		tellSeat(friend.LimitUnreadText(name, pro.Get(), c.Dur("limit-rest"), text))
 	}
 	fl.Up = func(nonce string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
-		tellSeat(friend.LimitUpText(name))
+		tellSeat(friend.LimitUpText(name, pro.Get()))
 	}
 	if stateWhy != "" {
 		record(w.now().UTC().Format(time.RFC3339) + " state: " + friend.StateDirIn(dir) + " refused (" + stateWhy + "); the state is in " + state + ", outside the directory a sandboxed session may write: give --state-dir")
@@ -1516,7 +1526,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// delivers nothing into the session until the session answers it; a check the last run
 	// queued and never saw answered keeps its nonce, so the session's late answer proves it
 	if perCard {
-		record(w.now().UTC().Format(time.RFC3339) + " push proof: owed by the folder: " + c.Str("harness") + " runs each card as a process of its own, so the session check goes in as " + friend.SessionCheckFile(dir, "<nonce>") + "; a live session answers it with nova-friend pong --as " + name + " --nonce <nonce> --state-dir " + state + ", and the beat carries the answer; with no live session her cards' finishes are her presence, and nothing is held back")
+		record(w.now().UTC().Format(time.RFC3339) + " push proof: owed by the folder: " + c.Str("harness") + " runs each card as a process of its own, so the session check goes in as " + friend.SessionCheckFile(dir, "<nonce>") + "; a live session answers it with nova-friend pong --as " + name + " --nonce <nonce> --state-dir " + state + ", and the beat carries the answer; with no live session the friend's cards' finishes are the friend's presence, and nothing is held back")
 	} else {
 		record(w.now().UTC().Format(time.RFC3339) + " push proof: pending: the first session check goes into the " + c.Str("harness") + " session now; nothing is delivered until the session answers it")
 	}
@@ -1586,7 +1596,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			fl.Refuse(friend.KindCredits, "spend cap: "+reason, until)
 		},
 		Judgment: func(day time.Time, spent, cap float64) string {
-			subject, body := friend.SpendCapJudgmentText(name, provider, spent, cap)
+			subject, body := friend.SpendCapJudgmentText(name, pro.Get(), provider, spent, cap)
 			tellSeat(subject, body)
 			return subject
 		},
@@ -1655,7 +1665,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var laneFaultPending atomic.Pointer[string]
 	rw.Judge = func(text string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
-		tellSeat(friend.LimitAlikeText(name, text))
+		tellSeat(friend.LimitAlikeText(name, pro.Get(), text))
 		fault := friend.LaneFaultReport(AlikeLanes, strings.TrimPrefix(text, AlikeJudgmentPrefix))
 		laneFaultPending.Store(&fault)
 	}
@@ -1673,6 +1683,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	owedStopReturns := func() int { return 0 }
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Pro:            pro,
 		MachineStopped: machineStopped.Load,
 		StopReturn: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
@@ -1738,6 +1749,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 					rowMu.Unlock()
 					dir := friend.RowConfigDir(answer)
 					rowConfigDir.Store(&dir)
+					if p, ok := friend.RowPronouns(answer); ok {
+						pro.Set(p)
+					}
 				}
 				if n, ok := friend.ParseReadSlots(answer); err == nil && ok {
 					rowReadSlots.Store(int64(n))
@@ -2155,6 +2169,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), DenySelf: c.Str("deny-self"), WallReads: c.Str("wall-reads"),
 		NotificationsOnly: c.Bool("notifications-only"), NotifyKinds: c.Str("notify-kinds"), NotifyWindow: c.Dur("notify-window"),
+		Pronouns: c.Str("pronouns"),
 	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
@@ -2510,7 +2525,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Fact("proof", tool.Text(s.Proof)).Fact("proof_at", stamp(s.ProofAt))
 	}
 	if s.HeldKnown && s.HeldFrom == friend.FromView {
-		o.Note("the inbox: her row is read from " + friend.FromView + ": " + friend.ViewWhy + "; a missing card's BRIEF.md is friend sync's to write")
+		o.Note("the inbox: the friend's row is read from " + friend.FromView + ": " + friend.ViewWhy + "; a missing card's BRIEF.md is friend sync's to write")
 	}
 	var route, routeLine string
 	var routeErr error

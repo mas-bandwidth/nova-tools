@@ -43,7 +43,10 @@ cmd/nova-tokens	8.4	@run37518625834	self-hosted
 cmd/nova-up	0.0	@local	-
 cmd/nova-update	0.0	@run37517528825	self-hosted
 cmd/nova-version	0.0	@run37518625834	self-hosted
-fleet	0.1	@local	-
+fleet	10.2	@local	-
+fleet/toolchainapply/baddigest	24.2	@local	-
+fleet/toolchainapply/drift	29.4	@local	-
+fleet/toolchainapply/idempotent	30.2	@local	-
 pkg/atomicfile	1.4	@run37411066588	self-hosted
 pkg/bench	0.1	@local	-
 pkg/binstamp	0.1	@local	-

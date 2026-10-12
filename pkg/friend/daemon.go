@@ -109,12 +109,15 @@ const (
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
-	Width                int
-	Store                bus.Store
-	Deliver              Deliverer
-	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
-	StepBeatForTests     bool                                              // deterministic fake-clock seam; production has one independent beat caller
-	HarnessStatus        func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
+	// Pro holds the friend's pronouns (the row's pronouns setting): every text the daemon
+	// writes about the friend says them through d.say. Nil is they/them.
+	Pro              *PronounsRef
+	Width            int
+	Store            bus.Store
+	Deliver          Deliverer
+	Beat             func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	StepBeatForTests bool                                              // deterministic fake-clock seam; production has one independent beat caller
+	HarnessStatus    func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
 	// tasks under Dir). Activity is read by the independent beat cadence at
@@ -1045,7 +1048,7 @@ func (l *loop) idle(now time.Time) {
 		l.startTurn(t, now, l.deliverBatch(t))
 	case note:
 		l.tellKind(bus.KindBlocker, fmt.Sprintf("friend %s: idle %s holding %d cards: %s", d.Friend, 2*after, len(d.cards), held),
-			fmt.Sprintf("Her session has written nothing for %s while holding these cards, and a wake turn %s ago changed nothing. Look at her session, or deal the cards to another friend.\n", 2*after, after), now)
+			d.sayf("{Their} session has written nothing for %s while holding these cards, and a wake turn %s ago changed nothing. Look at {their} session, or deal the cards to another friend.\n", 2*after, after), now)
 	}
 }
 
@@ -1614,9 +1617,9 @@ func LaneFaultParts(report string) (n int, line string, ok bool) {
 // on a provider refusal: the subject and body naming the fault, the hold verb
 // that returns the friend's cards, and the harness check (docs/SPEC-FRIEND.md,
 // the lanes).
-func LaneFaultText(friend, fault string) (subject, body string) {
+func LaneFaultText(friend string, p Pronouns, fault string) (subject, body string) {
 	subject = fmt.Sprintf("friend %s: a lane faulted on a provider refusal", friend)
-	body = fmt.Sprintf("%s: %s\nA lane's turns were refused by the provider and the denial is terminal: the lane holds its card and runs nothing more until her daemon restarts. Hold her and return her cards: nova-sprint hold %s --return; run the harness check: nova-friend check --as %s\n",
+	body = p.Sprintf("%s: %s\nA lane's turns were refused by the provider and the denial is terminal: the lane holds its card and runs nothing more until {their} daemon restarts. Hold {them} and return {their} cards: nova-sprint hold %s --return; run the harness check: nova-friend check --as %s\n",
 		subject, fault, friend, friend)
 	return subject, body
 }
@@ -1695,7 +1698,7 @@ func (l *loop) laneFaulted(err error, now time.Time) string {
 			l.d.Record(now.UTC().Format(time.RFC3339) + " lane fault: the report cannot be written to the state directory: " + oneLine(err.Error(), 300))
 		}
 	}
-	subject, body := LaneFaultText(l.d.Friend, fault)
+	subject, body := LaneFaultText(l.d.Friend, l.d.Pro.Get(), fault)
 	l.tell(subject, body, now)
 	return fault
 }
@@ -1981,11 +1984,11 @@ func (l *loop) refused(verb, why string, now time.Time) {
 	}
 	l.refusedTold[verb] = true
 	until := now.Add(RefusalDownFor)
-	d.Record(fmt.Sprintf("%s refused: %s refused %d times in a row: %s; her beat says down with it until it answers", now.UTC().Format(time.RFC3339), verb, n, oneLine(why, 300)))
+	d.Record(d.sayf("%s refused: %s refused %d times in a row: %s; {their} beat says down with it until it answers", now.UTC().Format(time.RFC3339), verb, n, oneLine(why, 300)))
 	if d.RefusalDown != nil {
 		d.RefusalDown(until, why)
 	}
-	d.tellBroken(l.ctx, l.b, fmt.Sprintf("friend %s: the server refused %s", d.Friend, verb), oneLine(why, 400)+"\nHer beat says down with it until the server answers.")
+	d.tellBroken(l.ctx, l.b, fmt.Sprintf("friend %s: the server refused %s", d.Friend, verb), oneLine(why, 400)+d.say("\n{Their} beat says down with it until the server answers."))
 }
 
 // recovered clears one verb's refusals at now: said once, and the down a

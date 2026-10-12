@@ -143,6 +143,14 @@ jobs:
     # 3-core macos-latest runner internal/ci shared the machine with eight other packages'
     # binaries and crossed its own 75 s -timeout (run 38259191532 at 2cea177b3; alone at
     # GOMAXPROCS=3 on an M5 it is 28 s wall, 75 s of summed test time). pkg/pkgselect.Deal.
+    # cmd/nova-ci is heavy by its need for the machine, not its own time: its scaffold test
+    # builds, vets and tests a copied tree through the go command, and on a round-robin
+    # macos-latest shard of 32 it starved past the 75 s -timeout on every run (38270081216,
+    # 38271306374, 38272526102: 75.0xx s; 73.441 s on 38277806324), while alone on its own
+    # shard it is 42.466 s (run 38277334996). The shard count is the heavy count plus seven
+    # round-robin shards of about 23 packages: on run 38273976881 a round-robin shard of 32
+    # ran green on macos-latest and was still cancelled by the two-minute job cap (30 s of
+    # setup, 86 s of test step). internal/ci: TestCertificationRaceShardsPartitionTheLiveTree.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
     # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
@@ -166,12 +174,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
         include:
           - os: ubuntu-latest
-            shards: 16
+            shards: 23
           - os: macos-latest
-            shards: 16
+            shards: 23
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
@@ -239,7 +247,7 @@ jobs:
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-swarm internal/docs pkg/redisconn pkg/config pkg/secrets"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-swarm internal/docs pkg/redisconn pkg/config pkg/secrets nova-tools/fleet nova-tools/fleet/toolchainapply/idempotent nova-tools/fleet/toolchainapply/drift nova-tools/fleet/toolchainapply/baddigest cmd/nova-ci"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
@@ -300,12 +308,20 @@ jobs:
         # This job is the hosted full suite on `ubuntu-latest` and `macos-latest`. The controls
         # spawn redis-server; they do not dial a bench. Finishes (or waits on) the background
         # install started earlier in the job.
+        # The one exemption: a shard whose package line is exactly one package under
+        # fleet/toolchainapply/ (each is heavy, so alone) does not wait. No redis package is in
+        # those packages' test dependencies, and the wait was 36 s of the ubuntu drift shard's
+        # setup on run 38280521819, which then crossed the two-minute cap with the package
+        # green at 50 s. Two or more packages, or any other package, waits as before. The
+        # background install still runs. internal/ci TestCertificationWaitsForRedisUnlessToolchainApplyAlone
+        # holds the condition to this exact text and the exemption to those packages' deps.
+        if: "!(startsWith(env.HOSTED_PKGS, 'github.com/mas-bandwidth/nova-tools/fleet/toolchainapply/') && !contains(env.HOSTED_PKGS, ' github.com/'))"
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
 
       - name: install the tested Ansible for the fleet fixtures
-        if: matrix.os == 'ubuntu-latest' && contains(format(' {0} ', env.HOSTED_PKGS), '/fleet ')
+        if: matrix.os == 'ubuntu-latest' && (contains(format(' {0} ', env.HOSTED_PKGS), '/nova-tools/fleet ') || contains(env.HOSTED_PKGS, '/nova-tools/fleet/toolchainapply/'))
         shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/toolchains-ansible"
@@ -318,6 +334,11 @@ jobs:
         # starts 35-50 s into the job, so a package still running at 75 s would be cancelled
         # by the cap anyway; Go's timeout fires first and names the test with a stack.
         shell: bash
+        # Each fleet apply package runs one real install and verification; render stays
+        # isolated too. Extra shards preserve the existing round-robin capacity.
+        # Bound each process to two Go workers with the same 75-second package limit.
+        env:
+          GOMAXPROCS: ${{ (contains(format(' {0} ', env.HOSTED_PKGS), '/nova-tools/fleet ') || contains(env.HOSTED_PKGS, '/nova-tools/fleet/toolchainapply/')) && '2' || '' }}
         run: go test -race -count=1 -timeout 75s $HOSTED_PKGS
 
   smoke:

@@ -562,9 +562,16 @@ func reachOf(pkgDir, test string) (testReach, bool, error) {
 		return r, false, err
 	}
 	funcs := make(map[string]*ast.FuncDecl)
-	fset := token.NewFileSet()
 	for _, f := range files {
-		file, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
+		// Read and parsed through the source seams (source.go): this package's own
+		// tests, which call this once per compared example, are answered from their
+		// one shared read of the tree instead of opening and parsing cmd/<tool>'s
+		// tests again for every example of the tool.
+		src, err := readSourceFile(f)
+		if err != nil {
+			return r, false, err
+		}
+		_, file, err := parseSource(f, src, parser.SkipObjectResolution)
 		if err != nil {
 			return r, false, err
 		}

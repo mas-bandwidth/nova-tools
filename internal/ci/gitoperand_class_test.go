@@ -2,7 +2,6 @@ package ci
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"sort"
 	"strconv"
@@ -102,8 +101,9 @@ func gitSubcommandOf(args []ast.Expr) string {
 }
 
 func gitOperandFindings(rel string, src []byte) []string {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	// Parsed through the source seam (source.go): a file of this repository is the
+	// tree's one parse; a fixture's bytes are parsed here.
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return []string{rel + ": " + err.Error()}
 	}

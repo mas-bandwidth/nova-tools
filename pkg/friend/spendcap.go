@@ -259,9 +259,9 @@ func fundsRefusal(err error) (string, bool) {
 // SpendCapJudgmentText is what the seat and the owner are told when a
 // friend's spend has passed its cap: one judgment naming the friend, the
 // provider and the spend.
-func SpendCapJudgmentText(friend, provider string, spent, cap float64) (subject, body string) {
+func SpendCapJudgmentText(friend string, p Pronouns, provider string, spent, cap float64) (subject, body string) {
 	subject = fmt.Sprintf("friend %s: %s spend reached $%.2f of its $%.2f/day cap", friend, provider, spent, cap)
-	body = fmt.Sprintf("Her %s spend reached $%.2f of its $%.2f/day cap; turns are stopped until the spend day resets. A payment or a higher cap is the owner's (nova-config friend set %s --spend-cap <usd>).\n", provider, spent, cap, friend)
+	body = p.Sprintf("{Their} %s spend reached $%.2f of its $%.2f/day cap; turns are stopped until the spend day resets. A payment or a higher cap is the owner's (nova-config friend set %s --spend-cap <usd>).\n", provider, spent, cap, friend)
 	return subject, body
 }
 
