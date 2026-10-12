@@ -71,9 +71,20 @@
    (release "v1.2.15" :status "in-progress"
     :text "The comfort stream fixes: the card wall admits the TLC jar and Java while keeping them read-only,
      Codex friend delivery refuses routes that queue input or require a Steer click, and a member lane
-     ends every process its card started."))
+     ends every process its card started.")
+   (release "v1.2.16" :status "planned"
+    :text "Small fixes found while validating the comfort stream."))
  :items
-  ((fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
+  ((fix "the-verb-scaffold-compiles-only-its-generated-tests" :release "v1.2.16" :status "planned"
+    :title "The verb scaffold compiles only its generated tests"
+    :text "The new-verb integration fixture copies the real CLI's production packages and embedded files,
+     then builds, vets, tests the generated probe, runs its Makefile target and checks its printed
+     dispatch case. It excludes the existing CLI tests and their test-only dependencies, which each
+     scratch-module test command compiled again despite selecting only the generated probe. The
+     new-rule fixture retains the existing class-test helpers its generated rule needs. The outer
+     package's tests and the certification package and job time limits remain unchanged."
+    :origin "Certification run 38292554491, attempt 1: the macOS cmd/nova-ci shard passes its tests but exceeds the two-minute job limit")
+  (fix "codex-friend-delivery-refuses-unproved-queue-routes" :release "v1.2.15" :status "in-progress"
     :title "Codex friend delivery refuses unproved queue routes"
     :text "The implicit Codex delivery route refuses at factory, check, install, run and reach until a
      supported session push route is proved. Notification-only delivery does not type into a session
