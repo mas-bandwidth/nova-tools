@@ -1028,7 +1028,7 @@
     every fleet row is a bench (--benches). `nova-swarm mirror --check` names a bench missing a mirror
     as MIRROR MISSING <bench> <repo> and writes nothing; a refresh pass creates every missing mirror
     on every bench, and a machine that joins runs the same verb and gets the full fixed set."
-   :origin "session report 2026-10-12 ~02:58Z, epoch 19: staging refused every nova-sprint card dealt to
-    studio, \"no bench mirror for https://github.com/mas-bandwidth/nova-sprint.git\"; the push list in
+    :origin "session report 2026-10-12 ~02:58Z, epoch 19: staging refused every nova-sprint card dealt to
+    a member seat, \"no bench mirror for https://github.com/mas-bandwidth/nova-sprint.git\"; the push list in
     the coordinator's bench.yml named only some benches, so what each bench carried drifted. Attempt 2
     wires the helpers attempt 1 left dead (card every-bench-carries-every-mirror-a-card-can-name.w2)")))
