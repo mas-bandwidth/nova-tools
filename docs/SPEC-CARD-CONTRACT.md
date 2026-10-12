@@ -279,6 +279,12 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   for a budget which budget and at what count, from native's `NATIVE BUDGET` line, the cost
   the harness reported to the cent and rounded up
   (`budget: tokens 509,940 of 400,000, $0.03: no RESULT.md shape`);
+  a child that ended at a non-zero exit code carries its real code and the harness that ran
+  it on the finish as `--exit <n> --harness <name>` (nova-sprint #129, `finish
+  --exit/--harness`; the member's a-member-reports-a-childs-exit-and-harness), so the store
+  tells an environment death — 134 an abort, 137 a kill — from a no-result and never spends
+  a redeal on one it could have named. The member sends no such flag to a server that lacks
+  it: a refusal naming it an unknown flag drops the flags and the same finish goes again;
 - **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`
   (`cardhdr.EndNothing`),
   `verdict <word>`, `no commit: <why>` (`cardhdr.EndNoCommit`), `push refused: <git's line>`; a failed finish passes

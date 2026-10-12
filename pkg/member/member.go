@@ -206,6 +206,14 @@ type Result struct {
 	// the work before it carried); the finish's report carries it, so the card's timeline
 	// says it. "" for a first attempt and a read.
 	Carry string
+	// Exit is the child's real exit code, from native's `NATIVE ... rc=` field: 134 an
+	// abort and 137 a kill are an environment death the store must tell from a no-result,
+	// so the finish carries `--exit <n> --harness <name>` (nova-sprint #129, finish
+	// --exit/--harness). 0 for a child that ended at 0, and for one that never ran.
+	Exit int
+	// Harness is the harness the child ran under: the program the route names, else the
+	// member's own --harness (Packet.Harness; pkg/harness). "" when no child ran.
+	Harness string
 }
 
 // The gate routes the member acts on (native's NATIVE GATE line): a gate red only on
@@ -556,6 +564,10 @@ type Member struct {
 	// readRetried is the reads run again once after a stage or environment failure, by card
 	// id: a second such failure of the card is returned, whichever path launches it
 	readRetried map[string]bool
+	// noExitArgs is set when the server refuses the finish's --exit/--harness flags as
+	// unknown (a server from before nova-sprint #129): the member then sends no such flag,
+	// so it refuses no flag its server lacks (deathFlags, unknownExitFlag).
+	noExitArgs  atomic.Bool
 	epoch       uint64
 	width       int  // the width this tick runs to: the override, else the fleet row's
 	saidNoWidth bool // the NOTE that no row names a width has been said
@@ -1333,7 +1345,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet) 
 			if noFinding {
 				reason = cut(NoFinding + ": the broken read names no file, line or rule: " + finding)
 			}
-			args = append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
+			args = append(append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), exitArgs(r, m.noExitArgs.Load())...), launched...)
 			m.reportRun(id, args, reportOut{reads: true, ok: ok, returnNoVerdict: true, returnReason: reason, now: now})
 			return 0
 		}
@@ -1372,6 +1384,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet) 
 			args = append(args, "--failed")
 		}
 		args = append(args, usageArgs(r)...)
+		args = append(args, exitArgs(r, m.noExitArgs.Load())...)
 		// the take's attempt decision, when one was asked (attempt): the finish carries it
 		if d := l.decided; d != nil && d.err != nil {
 			fmt.Fprintf(m.out, "NOTE attempt %s not decided: %s; the reason line routes the finish\n", id, oneLine(d.err.Error()))
@@ -1407,6 +1420,15 @@ func (m *Member) reportRun(id string, args []string, ro reportOut) bool {
 		defer m.longs.Done()
 		m.reportGate <- struct{}{}
 		code, out, answer := m.runAnswer(args...)
+		if unknownExitFlag(out) {
+			// the server is from before nova-sprint #129 and refused --exit/--harness by
+			// name: the member drops them and sends the same finish again, and no later
+			// finish carries them (noExitArgs), so it refuses no flag its server lacks.
+			m.noExitArgs.Store(true)
+			args = stripExitFlags(args)
+			ro.args = args
+			code, out, answer = m.runAnswer(args...)
+		}
 		<-m.reportGate
 		ro.code, ro.out, ro.answer = code, out, answer
 		m.post(id, post{report: &ro})
@@ -2827,6 +2849,54 @@ func usageArgs(r Result) []string {
 		return nil
 	}
 	return []string{"--usage", r.Usage}
+}
+
+// deathFlags is the --exit and --harness a finish or a return carries when the child
+// ended at a non-zero exit code: 134 an abort and 137 a kill are an environment death
+// the store must tell from a no-result, so the sprint never spends a redeal on one it
+// could have named (nova-sprint #129, finish --exit/--harness; the member's
+// a-member-reports-a-childs-exit-and-harness). None for a child that ended at 0 or one
+// that never ran, so a clean finish is unchanged.
+func deathFlags(r Result) []string {
+	if r.Exit == 0 {
+		return nil
+	}
+	args := []string{"--exit", strconv.Itoa(r.Exit)}
+	if r.Harness != "" {
+		args = append(args, "--harness", r.Harness)
+	}
+	return args
+}
+
+// exitArgs is deathFlags for a server that may know the flags, none for one known to
+// lack them (noExit, m.noExitArgs): the member sends no flag its server refuses.
+func exitArgs(r Result, noExit bool) []string {
+	if noExit {
+		return nil
+	}
+	return deathFlags(r)
+}
+
+// unknownExitFlag is whether a verb's refusal is a server from before the --exit/--harness
+// flags, which refuses an unknown flag by name as its parse does (the queueOf fallback
+// reads `unknown flag --packets` the same way). The member drops the flags and sends the
+// finish again, so it refuses no flag its server lacks.
+func unknownExitFlag(out []byte) bool {
+	return bytes.Contains(out, []byte("unknown flag --exit")) || bytes.Contains(out, []byte("unknown flag --harness"))
+}
+
+// stripExitFlags removes --exit and --harness, and their values, from a verb's arguments:
+// the finish the member sends when its server does not know them (unknownExitFlag).
+func stripExitFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "--exit" || args[i] == "--harness") && i+1 < len(args) {
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
 }
 
 // StartGap is the least time between two harness starts on one member, so the cards a
