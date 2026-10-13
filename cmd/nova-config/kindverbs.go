@@ -518,8 +518,12 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	c := seatStoreFlags(fs)
 	redisFlag := liveFlag(fs, k)
 	asJSON := jsonFlag(fs)
+	maxFlag := fs.Int("max", 0, "print at most `n` rows (0, the default, prints all); the total is reported either way")
 	if code, ok := parse(fs, args, stderr, verb); !ok {
 		return code
+	}
+	if *maxFlag < 0 {
+		return refuse(stderr, verb, fmt.Sprintf("--max must be zero or more (got %d); run: %s --max <n>", *maxFlag, toolName+" "+verb))
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "list takes no name; want "+verb)
@@ -552,18 +556,27 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 			return refuse(stderr, verb, err.Error())
 		}
 	}
+	total := len(rows)
+	shown := rows
+	if *maxFlag > 0 && *maxFlag < len(shown) {
+		shown = shown[:*maxFlag]
+	}
 	if *asJSON {
-		o := tool.Done().Fact("kind", k.Name).Fact("rows", len(rows))
+		o := tool.Done().Fact("kind", k.Name).Fact("rows", total).Fact("shown", len(shown))
 		o.Verb = verb
-		for _, row := range rows {
+		for _, row := range shown {
 			o.Item(k.Name, rowFields(k, row, liveFields(bs, row.Name)...)...)
 		}
 		return emit(stdout, o)
 	}
-	for _, row := range rows {
+	for _, row := range shown {
 		fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name))
 	}
-	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
+	if len(shown) < total {
+		fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d shown=%d\n", k.Name, total, len(shown))
+	} else {
+		fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, total)
+	}
 	return 0
 }
 
@@ -576,9 +589,13 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		redisFlag = liveFlag(fs, k)
 	}
 	asJSON := jsonFlag(fs)
+	maxFlag := fs.Int("max", 0, "print at most `n` entries (0, the default, prints all); the total is reported either way")
 	name, rest := nameAndRest(k, args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
 		return code
+	}
+	if which == "history" && *maxFlag < 0 {
+		return refuse(stderr, verb, fmt.Sprintf("--max must be zero or more (got %d); run: %s --max <n>", *maxFlag, toolName+" "+verb))
 	}
 	switch {
 	case k.Singleton && fs.NArg() > 0:
@@ -619,18 +636,26 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if len(changes) == 0 && !k.Singleton {
 		return refused(stderr, verb, k.Name+" "+name+" has no history: it was never added", toolName+" "+k.Name+" list"+c.again())
 	}
+	hshown := changes
+	if *maxFlag > 0 && *maxFlag < len(hshown) {
+		hshown = hshown[:*maxFlag]
+	}
 	if *asJSON {
-		o := tool.Done().Fact("kind", k.Name).Fact("name", name).Fact("changes", len(changes))
+		o := tool.Done().Fact("kind", k.Name).Fact("name", name).Fact("changes", len(changes)).Fact("shown", len(hshown))
 		o.Verb = verb
-		for _, ch := range changes {
+		for _, ch := range hshown {
 			o.Item("change", "id", ch.ID, "op", ch.Op, "actor", ch.Actor, "at", ch.At, "before", ch.Before, "after", ch.After)
 		}
 		return emit(stdout, o)
 	}
-	for _, ch := range changes {
+	for _, ch := range hshown {
 		fmt.Fprintln(stdout, config.HistoryLine(ch))
 	}
-	fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), len(changes))
+	if len(hshown) < len(changes) {
+		fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d shown=%d\n", k.Name, config.Value(name), len(changes), len(hshown))
+	} else {
+		fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), len(changes))
+	}
 	return 0
 }
 
