@@ -41,7 +41,7 @@ var fuseHelps = map[string]fuseHelp{
 		true, false,
 	},
 	"check": {
-		"check --box <path> [--] [surface]",
+		"check --box <path> [--json] [--] [surface]",
 		inspection + "; the permission gate: act only on exit 0",
 		"Without a surface, checks lockdown only; no quarantine is checked.",
 		"0 verified clear for what was checked; 1 lockdown or the named surface's quarantine is blown; 2 cannot prove clear (bad invocation, absent box, or unreadable box).",
@@ -55,7 +55,7 @@ var fuseHelps = map[string]fuseHelp{
 		true, true,
 	},
 	"quarantine": {
-		"quarantine --box <path> [--dry-run] [--] <surface> <reason>",
+		"quarantine --box <path> [--dry-run] [--json] [--] <surface> <reason>",
 		localWrite,
 		"Stop reading one surface and verify it. Surface spellings match after normalization; the reason is recorded. Requires a readable existing box.",
 		"0 quarantined and verified; 1 write or verification failed; 2 bad invocation, absent box, or unreadable box.",
@@ -115,6 +115,9 @@ func cmdHelp(args []string, stdout, stderr io.Writer) int {
 		}
 		if h.dryRun {
 			fmt.Fprintln(stdout, "  --dry-run    make every check the write would, print what it would do, write nothing")
+		}
+		if name == "check" || name == "quarantine" {
+			fmt.Fprintln(stdout, "  --json       emit one JSON record instead of a text line; exit codes unchanged")
 		}
 		fmt.Fprintln(stdout, "  --           end flags; following words are literal surfaces or reasons\nFlags precede positional arguments; each flag is given once.")
 	}

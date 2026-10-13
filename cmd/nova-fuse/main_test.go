@@ -1255,6 +1255,7 @@ var fuseAudit = audit.Config{
 		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
 		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
 		"main.go|parseBoxWith|name":     "the verb's own name, chosen by this file at every call site",
+		"json.go|emitJSON|string(data)": "encoding/json escapes control characters in every string it emits, so the marshaled record cannot forge a second line",
 	},
 	Shadows: []string{"fuse", "Fold", "why", "since"},
 	Imports: []string{
@@ -1286,6 +1287,8 @@ var fuseAudit = audit.Config{
 		// else.
 		`"github.com/mas-bandwidth/nova-tools/pkg/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
+		// encoding/json marshals the check/quarantine --json records; it holds no writer.
+		`"encoding/json"`,
 	},
 	MinClassified: 40,
 }

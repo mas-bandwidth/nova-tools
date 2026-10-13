@@ -48,9 +48,9 @@ usage:
   nova-fuse version    print this build identity (--version also accepted)
   nova-fuse init --box <path> [--dry-run]                  create an empty box where none is; never replaces one
   nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
-  nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
+  nova-fuse check --box <path> [--json] [surface]          may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> [--dry-run] "<reason>"   blow the one hard fuse: all untrusted reads stop
-  nova-fuse quarantine --box <path> [--dry-run] <surface> "<reason>"
+  nova-fuse quarantine --box <path> [--dry-run] [--json] <surface> "<reason>"
                                                            stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> [--dry-run] <surface>
                                                            rescind your own quarantine (soft, both directions)
@@ -71,9 +71,10 @@ unreadable box, never read as clear.
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
 it. Read a verb's help with nova-fuse help <verb> (for example, help check).
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
-the write would and writes nothing; its line says dry_run=true. There is no
---json: every verb answers in one-line typed records (the grammar in SPEC.md),
-and check's answer is its exit code.
+the write would and writes nothing; its line says dry_run=true. Apart from
+check --json and quarantine --json (one JSON record each, same exit codes),
+every verb answers in one-line typed records (the grammar in SPEC.md), and
+check's answer is its exit code.
 
 box JSON example (a quarantine with no lockdown):
   {"lockdown": null, "quarantine": {"a-forum": {"at": "2026-01-01T00:00:00Z", "reason": "an attack is pervasive"}}}
@@ -224,6 +225,15 @@ func parseWrite(name string, args []string, stderr io.Writer, getenv func(string
 		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
 	})
 	return box, positional, boxOK, parsed, dry
+}
+
+// parseWriteJSON is parseWrite plus --json, for quarantine receipts only.
+func parseWriteJSON(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed, dry, asJSON bool) {
+	box, positional, boxOK, parsed = parseBoxWith(name, args, stderr, getenv, func(fs *flag.FlagSet) {
+		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
+		fs.BoolVar(&asJSON, "json", false, "emit one JSON receipt instead of a text line")
+	})
+	return box, positional, boxOK, parsed, dry, asJSON
 }
 
 // parseBoxWith is parseBox with a hook for a verb that has a flag of its own, so that a
@@ -618,7 +628,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv inv
 
 // cmdQuarantine stops ONE surface.
 func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
-	box, positional, ok, parsed, dry := parseWrite("quarantine", rest, stderr, inv.getenv)
+	box, positional, ok, parsed, dry, asJSON := parseWriteJSON("quarantine", rest, stderr, inv.getenv)
 	if !parsed {
 		return 2
 	}
@@ -668,6 +678,10 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		return b, true, nil
 	})
 	if errors.Is(readErr, fuse.ErrNoBox) {
+		if asJSON {
+			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "refused", Surface: string(surface), DryRun: dry, Error: readErr.Error()})
+			return 2
+		}
 		// Refuse, for the same reason as an unreadable box: with no box there every
 		// surface is refused, and a new box holding only this quarantine would clear
 		// the rest.
@@ -675,6 +689,10 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		return 2
 	}
 	if readErr != nil {
+		if asJSON {
+			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "refused", Surface: string(surface), DryRun: dry, Error: readErr.Error()})
+			return 2
+		}
 		// Refuse: this is the asymmetry with lockdown, not an inconsistency with it. An
 		// unreadable box blocks every surface; replacing it with a fresh box holding only
 		// this one quarantine would unblock everything else, so the safety-shaped action
@@ -685,15 +703,27 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		return 2
 	}
 	if standingKey != "" {
+		if asJSON {
+			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "ok", Surface: standingKey, Since: standing.At, Reason: standing.Reason, Already: true, DryRun: dry})
+			return 0
+		}
 		fmt.Fprintf(stdout, "QUARANTINE OK %s already=quarantined since=%s: %s (standing record kept; the new reason was not recorded: %s)\n",
 			oneline.Field(standingKey), since(standing), why(standing), oneline.Escape(reason))
 		return 0
 	}
 	if err != nil {
+		if asJSON {
+			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "failed", Surface: string(surface), DryRun: dry, Error: err.Error()})
+			return 1
+		}
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 	if dry {
+		if asJSON {
+			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "ok", Surface: string(surface), Reason: reason, DryRun: true})
+			return 0
+		}
 		fmt.Fprintf(stdout, "QUARANTINE OK %s dry_run=true: nothing written, the surface is not quarantined; a real run would record: %s\n", oneline.Field(surface), oneline.Escape(reason))
 		return 0
 	}
@@ -707,10 +737,18 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	after, err := fuse.ReadBox(boxFile(inv.wd, box))
 	landed, ok2 := after.Quarantine[surface]
 	if err != nil || !ok2 {
+		if asJSON {
+			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "failed", Surface: string(surface), DryRun: dry, Error: "written but unverifiable"})
+			return 1
+		}
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell the person you work with\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 
+	if asJSON {
+		emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "ok", Surface: string(surface), Since: landed.At, Reason: reason, DryRun: false})
+		return 0
+	}
 	fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)\n",
 		oneline.Field(surface), since(landed), oneline.Escape(reason))
 	return 0

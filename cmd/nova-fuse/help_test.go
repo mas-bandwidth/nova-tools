@@ -209,7 +209,7 @@ func TestMisspelledCommandsNameTheAvailableChoices(t *testing.T) {
 		want string
 	}{
 		{[]string{"status", "--zzz"}, "nova-fuse status REFUSED: unknown flag --zzz; the flags of status are --box, --max; run: nova-fuse help status"},
-		{[]string{"check", "--zzz"}, "nova-fuse check REFUSED: unknown flag --zzz; the flags of check are --box; run: nova-fuse help check"},
+		{[]string{"check", "--zzz"}, "nova-fuse check REFUSED: unknown flag --zzz; the flags of check are --box, --json; run: nova-fuse help check"},
 		{[]string{"check", "--bx", "x"}, "did you mean --box?"},
 		{[]string{"lockdown", "--zzz"}, "the flags of lockdown are --box, --dry-run"},
 		{[]string{"defuse"}, "nova-fuse REFUSED: unknown verb \"defuse\"; the verbs are init, status, check, lockdown, quarantine, lift, path, version, help; run: nova-fuse help"},
