@@ -770,7 +770,7 @@ path where no box exists.
 usage:
   nova-fuse version    print this build identity (--version also accepted)
   nova-fuse init --box <path> [--dry-run]                  create an empty box where none is; never replaces one
-  nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
+  nova-fuse status --box <path> [--max <n>] [--json]       what is blown, and since when (REPORTS; never gate on it)
   nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> [--dry-run] "<reason>"   blow the one hard fuse: all untrusted reads stop
   nova-fuse quarantine --box <path> [--dry-run] <surface> "<reason>"
@@ -794,9 +794,9 @@ unreadable box, never read as clear.
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
 it. Read a verb's help with nova-fuse help <verb> (for example, help check).
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
-the write would and writes nothing; its line says dry_run=true. There is no
---json: every verb answers in one-line typed records (the grammar in SPEC.md),
-and check's answer is its exit code.
+the write would and writes nothing; its line says dry_run=true. Apart from
+status --json (one JSON document), every verb answers in one-line typed
+records (the grammar in SPEC.md), and check's answer is its exit code.
 
 box JSON example (a quarantine with no lockdown):
   {"lockdown": null, "quarantine": {"a-forum": {"at": "2026-01-01T00:00:00Z", "reason": "an attack is pervasive"}}}
@@ -858,11 +858,12 @@ Help: nova-fuse help init; -h after a verb is refused at exit 2.
 `nova-fuse status -h`:
 
 ```
-usage: nova-fuse status --box <path> [--max <n>]
+usage: nova-fuse status --box <path> [--max <n>] [--json]
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
   --max <n>    quarantine line limit (default 20); 0 lists all; totals stay uncapped
+  --json       emit one JSON document (lockdown, quarantines, quarantine_count)
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 reported a readable box; 2 bad invocation, absent box, or unreadable box.
 effect: inspection: reads, writes nothing

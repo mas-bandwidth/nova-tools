@@ -106,6 +106,7 @@ func statusJSON(stdout io.Writer, b fuse.Box, names []string) int {
 	}
 	data, err := json.Marshal(doc)
 	if err != nil {
+		fmt.Fprintln(stdout, `{"error":"status could not be rendered","remedy":"run: nova-fuse help status"}`)
 		return 2
 	}
 	fmt.Fprintln(stdout, string(data))
