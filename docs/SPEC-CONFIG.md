@@ -1000,3 +1000,13 @@ a fake secrets reader.
 - secrets: the store holds the name of the variable, never a password;
 - the sprint plan (`ns_sprint_plan`): a sprint is bounded work, not the
   fleet.
+
+Billing `subscription` is a declared zero marginal card charge, independent of
+numeric token prices. Reported harness dollars remain `actual_usd` with their
+reporter; totals charge zero without changing that evidence. Existing `plan`
+continues to calculate its metered reference value. Route billing takes precedence;
+provider billing is inherited only when route metadata is absent. A receipt retains
+its explicit billing when repriced, including after the current route changes.
+Migration 0043 expands both route and provider CHECK constraints after roles0042.
+Monthly subscription fees remain outside per-card usage. Activate typed subscription
+only after the paired receipt-contract installation described in FLEET.md.

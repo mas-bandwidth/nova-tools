@@ -321,3 +321,13 @@ func TestMuseCachedTokensRemainDistinctFromExplicitCacheReads(t *testing.T) {
 		})
 	}
 }
+
+func TestMuseRawCountersRemainDistinctFromCommonProjection(t *testing.T) {
+	t.Parallel()
+	usage, err := HeadlessUsage(harness.Muse, []byte(`{"schema_version":1,"payload":{"kind":"model_completed","usage":{"cached_tokens":0,"input_tokens":12}}}`))
+	require.NoError(t, err)
+	assert.Contains(t, usage.RawCounts, "cached_tokens")
+	assert.Equal(t, int64(0), usage.RawCounts["cached_tokens"])
+	assert.NotContains(t, usage.RawCounts, "cache_read_tokens")
+	assert.Equal(t, Dash, usage.Values["cache_read"])
+}

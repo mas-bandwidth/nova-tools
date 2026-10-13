@@ -113,6 +113,7 @@ func TestABalanceCarriesItsDate(t *testing.T) {
 		raw  map[string]string
 		want string
 	}{
+		{"subscription without numeric prices", map[string]string{"billing": "subscription", "funded": "true"}, ""},
 		{"needs funding decision", map[string]string{"billing": "metered"}, "--funded is required"},
 		{"needs billing decision", map[string]string{"funded": "false"}, "--billing is required"},
 		{"needs date", map[string]string{"billing": "both", "funded": "true", "balance_usd": "238"}, "--balance_as_of"},
@@ -128,7 +129,11 @@ func TestABalanceCarriesItsDate(t *testing.T) {
 				assert.Contains(t, err.Error(), tc.want)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, "0", row.Fields["balance_usd"])
+				if tc.raw["balance_usd"] != "" {
+					assert.Equal(t, "0", row.Fields["balance_usd"])
+				} else {
+					assert.Empty(t, row.Fields["balance_usd"])
+				}
 			}
 		})
 	}

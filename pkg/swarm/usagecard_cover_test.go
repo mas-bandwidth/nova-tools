@@ -11,8 +11,10 @@ package swarm
 // is-a-directory refusals answer before any program runs, and they are covered here.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +148,7 @@ func TestUsagecardCoverAppendCardUsage(t *testing.T) {
 		"ended": "2026-10-04T00:10:00Z", "end": EndDone, "rc": "0",
 		"provider": "anthropic", "model": "claude-x", "tokens_in": "10", "tokens_out": "2",
 		"cache_write": Dash, "cache_read": "40", "reasoning": "1", "usd": "0.0010",
+		"receipt_version": Dash, "billing": Dash, "raw_usage": Dash, "actual_usd": Dash,
 	}
 	t.Run("a new file gets the header and the row; a retried attempt appends the row only", func(t *testing.T) {
 		t.Parallel()
@@ -157,7 +160,7 @@ func TestUsagecardCoverAppendCardUsage(t *testing.T) {
 		header := strings.Join(CardUsageColumns, "\t")
 		lines := strings.Split(strings.TrimSuffix(mustReadCoverFile(t, path), "\n"), "\n")
 		require.Len(t, lines, 3, "one header and one row per attempt")
-		assert.Equal(t, header, lines[0], "the header is the fourteen columns in order")
+		assert.Equal(t, header, lines[0], "the header preserves the common columns and optional receipt columns in order")
 		assert.Equal(t, 1, strings.Count(strings.Join(lines, "\n"), header), "the header is written once, never again")
 		fields := strings.Split(lines[1], "\t")
 		require.Len(t, fields, len(CardUsageColumns))
@@ -272,4 +275,80 @@ func indexOfCoverColumn(t *testing.T, name string) int {
 	}
 	t.Fatalf("%s is not a usage.tsv column", name)
 	return -1
+}
+
+func TestUsagecardTypedHeaderExpansionPreservesRowsModeAndFailure(t *testing.T) {
+	t.Parallel()
+	legacyColumns := CardUsageColumns[:14]
+	values := []string{"fixture", "1", "start", "end", "ok", "0", "meta", "fixture", "12", "7", "0", "-", "-", "2.5000"}
+	legacy := strings.Join(legacyColumns, "\t") + "\n" + strings.Join(values, "\t") + "\n"
+	row := UsageRow{"job": "new", "receipt_version": "2", "billing": "subscription", "raw_usage": "fixture", "actual_usd": "0.12345678"}
+	for _, test := range []string{"preserves", "replace failure", "unknown schema", "malformed row"} {
+		t.Run(test, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "usage.tsv")
+			original := legacy
+			if test == "unknown schema" {
+				original = "unknown\nvalue\n"
+			}
+			if test == "malformed row" {
+				original = strings.Join(legacyColumns, "\t") + "\nshort\n"
+			}
+			require.NoError(t, os.WriteFile(path, []byte(original), 0640))
+			if test == "replace failure" {
+				err := appendCardUsage(path, row, func(string, []byte, os.FileMode) error { return errors.New("injected replacement failure") })
+				require.Error(t, err)
+				assert.Equal(t, original, mustReadCoverFile(t, path))
+				return
+			}
+			err := AppendCardUsage(path, row)
+			if test != "preserves" {
+				require.Error(t, err)
+				assert.Equal(t, original, mustReadCoverFile(t, path))
+				return
+			}
+			require.NoError(t, err)
+			info, err := os.Stat(path)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0640), info.Mode().Perm())
+			lines := strings.Split(strings.TrimSuffix(mustReadCoverFile(t, path), "\n"), "\n")
+			require.Len(t, lines, 3)
+			assert.Equal(t, strings.Join(CardUsageColumns, "\t"), lines[0])
+			historical := strings.Split(lines[1], "\t")
+			assert.Equal(t, values, historical[:14])
+			assert.Equal(t, []string{Dash, Dash, Dash, Dash}, historical[14:])
+			current := strings.Split(lines[2], "\t")
+			assert.Equal(t, "2", current[14])
+			assert.Equal(t, "subscription", current[15])
+			assert.Equal(t, "fixture", current[16])
+			assert.Equal(t, "0.12345678", current[17])
+		})
+	}
+}
+
+func TestUsagecardConcurrentHeaderExpansionLosesNoAppend(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "usage.tsv")
+	legacy := strings.Join(CardUsageColumns[:14], "\t") + "\n" + strings.Repeat("-\t", 13) + "-\n"
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0640))
+	const writers = 32
+	results := make(chan error, writers)
+	for i := range writers {
+		go func() {
+			results <- AppendCardUsage(path, UsageRow{"job": strconv.Itoa(i), "receipt_version": "2", "billing": "subscription", "raw_usage": "fixture"})
+		}()
+	}
+	for range writers {
+		require.NoError(t, <-results)
+	}
+	lines := strings.Split(strings.TrimSuffix(mustReadCoverFile(t, path), "\n"), "\n")
+	require.Len(t, lines, writers+2)
+	seen := map[string]bool{}
+	for _, line := range lines[2:] {
+		fields := strings.Split(line, "\t")
+		require.Len(t, fields, len(CardUsageColumns))
+		assert.False(t, seen[fields[0]])
+		seen[fields[0]] = true
+	}
+	assert.Len(t, seen, writers)
 }

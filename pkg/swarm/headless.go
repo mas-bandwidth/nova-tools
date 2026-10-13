@@ -178,7 +178,7 @@ func HeadlessUsage(kind string, out []byte) (ProviderUsage, error) {
 				values[column] = strconv.FormatInt(count, 10)
 			}
 		}
-		return ProviderUsage{Values: values, Observed: len(result.Usage) > 0, Turns: result.Turns}, nil
+		return ProviderUsage{RawCounts: result.Usage, Values: values, Observed: len(result.Usage) > 0, Turns: result.Turns}, nil
 	}
 	return ProviderUsage{}, fmt.Errorf("%q is not a headless harness", kind)
 }
