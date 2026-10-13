@@ -54,7 +54,7 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	require.Equal(t, "machine,fleet,friend,sprint,loop,route,tier", strings.Join(names, ","), "kinds %v: machines first (ceilings), the fleet next (a friend with no beat is recorded with its coordinator machine), friends, the sprint row (it names a friend), loops (each names a machine), routes, tiers last (each names routes)", names)
+	require.Equal(t, "machine,fleet,friend,sprint,loop,provider,route,tier", strings.Join(names, ","), "kinds %v: machines first (ceilings), the fleet next (a friend with no beat is recorded with its coordinator machine), friends, the sprint row (it names a friend), loops (each names a machine), routes, tiers last (each names routes)", names)
 }
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I

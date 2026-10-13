@@ -312,6 +312,48 @@ would print with `dry_run=true`, and takes no lock, writes nothing and runs noth
 refuses it refuses the same. The pieces are `config.LoopRunArgv`,
 `config.NextLoopStarts` and `config.LoopMetrics` (pkg/config/looprun.go).
 
+**`provider`** (`config.providers`): one row per provider word named by a
+route. `billing` is required (`metered`, `plan`, or `both`), and `funded` is
+required (`true` or `false`), so add forces an explicit funding decision.
+`balance_usd` is an optional non-negative decimal, empty when unknown;
+when set it needs `balance_as_of` (`YYYY-MM-DD`). `console_url` is an HTTPS
+console URL or empty; `note` carries the owner's facts. Migration 0041 seeds
+one row per existing route provider with `billing=metered`, `funded=false`
+and note `made by migrate from the routes: set --funded and --billing`.
+Those defaults are a reminder to declare the facts, not evidence that the
+provider is unfunded. The migration never infers a balance or funding. Before any migration writes,
+upgrade refuses non-conforming provider words, with the fix listed for every
+route: use the previous nova-config build matching the store's schema
+(the schema40 build for a schema40 store) to run each printed
+`route set <route> --provider <new>` correction, then retry the upgrade.
+Postgres data and ledger, and FileStore bytes, stay untouched on refusal;
+no provider word is silently renamed. A legacy FileStore gets the same check
+before opening its provider seed rows.
+
+A route's `provider` is a reference to a provider row: an absent row refuses
+add or set with `nova-config provider add <name> --billing metered --funded false`
+as the usable next command; the owner then sets its actual billing and funding.
+A provider referenced by a route cannot be removed. This is the reference
+and apply-order pattern already represented by machine and friend in
+`tla/ConfigApply.tla`; route to provider introduces no new state or action
+and this cut changes no model or TLC receipt. Providers apply before routes.
+
+`status` always prints a `PROVIDER name=<name> funded=<bool> billing=<word>
+balance_usd=<value or -> as_of=<date or ->` line for each provider, followed
+by `<tier>=<enabled in array>/<enabled total>` for every tier it serves.
+Empty or absent tier arrays select all enabled routes, including frontier's
+implicit array; disabled routes do not contribute. A non-empty provider note
+appears on its line, including the migration reminder. A funded provider's enabled
+routes excluded by a non-empty array produce `CONFIG WARN provider=<name>
+funded=true routes-in-no-tier-array=<names>` and a concrete `tier set --routes`
+command preserving the existing array. A configured tier selecting no enabled
+route of any funded provider produces `CONFIG WARN tier=<tier> holds no route
+of a funded provider` and `tier show` as its remedy. These warnings are advisory
+and never change the exit code. CLI warning commands retain the chosen
+`--file`, `--pg` or `--seat`; writes carry the known actor or an explicit
+`--actor <name>` placeholder. JSON carries the provider lines as the
+`providers` fact and the same warnings as notes.
+
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
@@ -736,6 +778,11 @@ the hash lacks or holds out of shape reads back as the type's zero, so a
 hash changed by hand is put back by the next apply. Remove: the hash and the
 name in `loops` go in one transaction, with a `config-remove` receipt in
 `cap:log`.
+
+**provider:** the hash `provider:<name>` with name, billing, funded,
+balance_usd, balance_as_of, console_url, note, rev and at; the set `providers`.
+Remove deletes the hash and removes the name from the set. nova-sprint's
+`ProviderSubject` uses the same word for a judgment subject, not a Redis key.
 
 **route:** the hash `route:<r>` with every field of the row, `name`, `rev`
 and `at`, written whole in one transaction with the name added to the set

@@ -498,7 +498,7 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	_, err := Apply(context.Background(), NewMem(), newFake(), "lane", "rowan", false, func(Op) {})
 	assertionMsg324 := []any{"unknown kind: %v", err}
 	require.Error(t, err, assertionMsg324...)
-	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, friend, sprint, loop, route", assertionMsg324...)
+	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, friend, sprint, loop, provider, route", assertionMsg324...)
 }
 
 // insertRoute is a store with one route row whose raw fields are given.
@@ -509,6 +509,7 @@ func insertRoute(t *testing.T, name string, raw map[string]string) (Store, *Kind
 	route, _ := Lookup(KindRoute)
 	row, err := route.NewRow(name, raw)
 	require.NoError(t, err)
+	addProvider(t, st, row.Fields["provider"])
 	_, err = st.Insert(ctx, KindRoute, row, "operator")
 	require.NoError(t, err)
 	return st, route
@@ -562,7 +563,7 @@ func TestApplyTakesADisabledUnpricedRoute(t *testing.T) {
 	res, err := Apply(ctx, st, ap, KindRoute, "operator", false, func(Op) {})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Add)
-	require.Equal(t, []string{"add route pro-off as=operator idem=config:route:1", "stamp route 1"}, ap.log)
+	require.Equal(t, []string{"add route pro-off as=operator idem=config:route:2", "stamp route 2"}, ap.log)
 }
 
 // TestApplyTakesAPricedRoute: a route with any price in its sheet is applied,

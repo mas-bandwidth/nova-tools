@@ -53,6 +53,11 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"loop", "list", "nova-config loop list --file try.json"},
 	{"loop", "show", "nova-config loop show reader-m1 --file try.json"},
 	{"loop", "history", "nova-config loop history reader-m1 --file try.json"},
+	{"provider", "add", "nova-config provider add p1 --billing metered --funded false --actor a1 --file try.json"},
+	{"provider", "set", "nova-config provider set p1 --billing both --funded true --balance_usd 238 --balance_as_of 2026-10-13 --note 'credits plus a plan (example)' --actor a1 --file try.json"},
+	{"provider", "list", "nova-config provider list --file try.json"},
+	{"provider", "show", "nova-config provider show p1 --file try.json"},
+	{"provider", "history", "nova-config provider history p1 --file try.json"},
 	{"route", "add", "nova-config route add flash-a --tier flash --provider p1 --model small-1 --deadline 900 --tokens 200000 --actor a1 --file try.json"},
 	{"route", "set", "nova-config route set flash-a --price_input 0.30 --price_output 1.20 --note 'prices from the provider page' --actor a1 --file try.json"},
 	{"route", "list", "nova-config route list --file try.json"},
@@ -67,6 +72,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"loop", "remove", "nova-config loop remove reader-m1 --actor a1 --file try.json"},
 	{"friend", "remove", "nova-config friend remove f1 --actor a1 --file try.json"},
 	{"route", "remove", "nova-config route remove flash-a --actor a1 --file try.json"},
+	{"provider", "remove", "nova-config provider remove p1 --actor a1 --file try.json"},
 	{"machine", "remove", "nova-config machine remove m1 --actor a1 --file try.json"},
 }
 

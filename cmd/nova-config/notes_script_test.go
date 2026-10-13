@@ -112,6 +112,7 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 	t.Parallel()
 
 	h := newHarness()
+	addProviders(t, h.store, "p")
 	h.env["NOVA_FRIEND"] = "a1"
 	disabled := []string{"flash-mimo26pro-openrouter", "flash-luna6-opencode", "flash-luna6-openrouter", "flash-mercury-openrouter",
 		"flash-nemotron-openrouter", "flash-gemini31lite-openrouter"}

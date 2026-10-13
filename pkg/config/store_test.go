@@ -316,6 +316,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		id, err = st.Insert(ctx, KindLoop, mk(loop, "l", cmd), "t")
 		readBack(KindLoop, "l", OpAdd, cmd, id, err)
 		via := map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"}
+		addProvider(t, st, via["provider"])
 		id, err = st.Insert(ctx, KindRoute, mk(route, "r", via), "t")
 		readBack(KindRoute, "r", OpAdd, via, id, err)
 		_, id, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "r"}, "t")

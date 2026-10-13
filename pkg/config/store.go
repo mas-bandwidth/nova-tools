@@ -102,9 +102,19 @@ var (
 type RefusedError struct {
 	Err    error
 	Detail string
+	// MissingRefKind and MissingRefName identify an absent referenced row.
+	// Remedy is its library command, which the CLI scopes to the chosen store.
+	MissingRefKind string
+	MissingRefName string
+	Remedy         string
 }
 
-func (e *RefusedError) Error() string { return e.Detail }
+func (e *RefusedError) Error() string {
+	if e.Remedy != "" {
+		return e.Detail + "; run: " + e.Remedy
+	}
+	return e.Detail
+}
 func (e *RefusedError) Unwrap() error { return e.Err }
 
 // Refused reports whether err is a store refusal (exit 1), as opposed to a
@@ -131,7 +141,12 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 		if _, found, err := st.Get(ctx, f.Ref, row.Fields[f.Name]); err != nil {
 			return err
 		} else if !found {
-			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--%s %s names no %s row", f.Name, row.Fields[f.Name], f.Ref)}
+			refusal := &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--%s %s names no %s row", f.Name, row.Fields[f.Name], f.Ref)}
+			if f.Ref == KindProvider {
+				refusal.MissingRefKind, refusal.MissingRefName = f.Ref, row.Fields[f.Name]
+				refusal.Remedy = fmt.Sprintf("nova-config provider add %s --billing metered --funded false", row.Fields[f.Name])
+			}
+			return refusal
 		}
 	}
 	if k.Name == KindTier {

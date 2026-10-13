@@ -156,7 +156,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "machine", "remove", "studio")
 	require.Equal(t, "CONFIG REMOVE kind=machine name=studio rev=9\n", out, "machine remove: %q", out)
 	out, _ = r.run(t, 0, "status")
-	require.Contains(t, out, " schema="+strconv.Itoa(n)+" machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=-", "status: %q", out)
+	require.Contains(t, out, " schema="+strconv.Itoa(n)+" machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=-", "status: %q", out)
 	// The width: set on the row, printed as set, with no Redis anywhere.
 	r.run(t, 0, "machine", "add", "wide", "--user", "u", "--seat", "s", "--slots", "160", "--width", "16")
 	out, _ = r.run(t, 0, "machine", "set", "wide", "--width", "32")
@@ -183,7 +183,7 @@ func TestApplyEndToEnd(t *testing.T) {
 
 	// --check prints the plan and writes nothing but that beat.
 	out, _ := r.run(t, 0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn,loops_dir\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,git_identity,max_attempts\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=heavy\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=3 set=0 remove=0 rev=0 applied=0\n"
+	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn,loops_dir\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,git_identity,max_attempts\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=provider add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=heavy\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=3 set=0 remove=0 rev=0 applied=0\n"
 	require.Equal(t, want, out, "apply --check:\n%s\nwant:\n%s", out, want)
 	nCheck221, _ := r.client.DBSize(ctx).Result()
 	require.Equal(t, int64(1), nCheck221, "--check wrote %d keys (the beat is the one)", nCheck221-1)
@@ -228,7 +228,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	require.Equal(t, "5", gotCheck262["rev:fleet"], "config:decl %v", gotCheck262)
 	require.Equal(t, "6", gotCheck262["rev:sprint"], "config:decl %v", gotCheck262)
 	out, _ = r.run(t, 0, "status")
-	require.Contains(t, out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6 loop_applied=0 route_applied=0 tier_applied=0\n", "status after apply: %q", out)
+	require.Contains(t, out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n", "status after apply: %q", out)
 
 	// The live measured facts: list and show with the Redis at hand print
 	// what the beat says after the declared fields, beat=none for a

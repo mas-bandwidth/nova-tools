@@ -197,6 +197,11 @@ func (p *PG) Migrate(ctx context.Context) (from, to int, applied []int, err erro
 		return 0, 0, nil, err
 	}
 	to = from
+	if from < 41 {
+		if err := p.CheckProviderUpgrade(ctx); err != nil {
+			return from, from, nil, err
+		}
+	}
 	for _, m := range Pending(all, from) {
 		if err := p.applyOne(ctx, m); err != nil {
 			return from, to, applied, err
@@ -208,6 +213,35 @@ func (p *PG) Migrate(ctx context.Context) (from, to int, applied []int, err erro
 		return from, to, applied, err
 	}
 	return from, to, applied, nil
+}
+
+// CheckProviderUpgrade reads the legacy words before any migration writes. A
+// fresh database has no routes table, and needs no provider-name correction.
+func (p *PG) CheckProviderUpgrade(ctx context.Context) error {
+	var exists bool
+	if err := p.db.QueryRowContext(ctx, `SELECT to_regclass('config.routes') IS NOT NULL`).Scan(&exists); err != nil {
+		return fmt.Errorf("postgres: provider upgrade preflight: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	rows, err := p.db.QueryContext(ctx, `SELECT name, provider FROM config.routes ORDER BY name`)
+	if err != nil {
+		return fmt.Errorf("postgres: provider upgrade preflight: %w", err)
+	}
+	defer func() { _ = rows.Close() }() // ignored: rows.Err surfaces read failures
+	var routes []Row
+	for rows.Next() {
+		var name, provider string
+		if err := rows.Scan(&name, &provider); err != nil {
+			return fmt.Errorf("postgres: provider upgrade preflight: %w", err)
+		}
+		routes = append(routes, Row{Name: name, Fields: map[string]string{"provider": provider}})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("postgres: provider upgrade preflight: %w", err)
+	}
+	return CheckProviderNames(routes)
 }
 
 func (p *PG) applyOne(ctx context.Context, m Migration) error {
