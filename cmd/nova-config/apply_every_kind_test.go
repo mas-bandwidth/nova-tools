@@ -62,7 +62,7 @@ func runEveryKind(d deps, args ...string) (int, string, string) {
 // sprint row's git_identity never reached Redis. A refusal now names the row
 // on one line, the kind's later rows are still written, the refused kind is
 // not stamped, and every later kind applies (tla/ConfigApply.tla,
-// EveryKindAfterARefusalIsAttempted and StampedKindHasNoRefusal).
+// EveryPlannedKindIsAttemptedUnlessCrashed and StampedKindHasNoRefusal).
 func TestApplyAppliesEveryKindPastARefusalAndNamesIt(t *testing.T) {
 	t.Parallel()
 
@@ -175,8 +175,60 @@ func TestApplyCheckNamesAKnownRefusalAndGoesOn(t *testing.T) {
 	rr.revs[config.KindFriend] = 99 // the friend kind is CONFLICT: its pending rows count as refused
 	code, out, errs := runEveryKind(d, "apply", "--check")
 	require.Equal(t, 1, code, "stdout: %s\nstderr: %s", out, errs)
-	require.Contains(t, out, "CONFIG CHECK REFUSED kind=sprint name=sprint why=sprint sprint: its coordinator names friend rowan, refused earlier in this run (CONFLICT friend)", "stdout:\n%s", out)
+	require.Contains(t, out, "CONFIG CHECK REFUSED kind=sprint name=sprint why=sprint sprint: its coordinator names friend rowan, refused earlier in this run (CONFLICT friend: Redis holds rev 99", "stdout:\n%s", out)
 	require.Contains(t, out, "CONFIG CHECK kind=tier ", "the check went on past the refusals:\n%s", out)
 	require.Contains(t, out, "CONFIG CHECK REFUSED kinds=friend:1,sprint:1 applied=machine,fleet,loop,route,tier; run: ", "stdout:\n%s", out)
 	require.Empty(t, rr.log, "--check wrote: %v", rr.log)
+}
+
+// TestApplyStopsAtAStoreErrorAfterARefusalInTheSameKind: a connection error
+// after a refusal in the same kind is never swallowed as one more refusal:
+// the run says the refusal, then stops with exit 2 and the error on stderr,
+// and no later kind is written (tla/ConfigApply.tla, StoreErrorStopsTheRun).
+func TestApplyStopsAtAStoreErrorAfterARefusalInTheSameKind(t *testing.T) {
+	t.Parallel()
+
+	ceiling := &config.RefusedError{Err: config.ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 76 over the machine ceiling 64"}
+	_, rr, d := everyKindHarness(t, map[string]error{"rowan": ceiling, "stella": errors.New("redis at 127.0.0.1:6379: connection refused")})
+	code, out, errs := runEveryKind(d, "apply")
+	require.Equal(t, 2, code, "stdout: %s\nstderr: %s", out, errs)
+	require.Contains(t, errs, "nova-config apply REFUSED: redis at 127.0.0.1:6379: connection refused", "the error is said: %q", errs)
+	require.Contains(t, out, "CONFIG REFUSED kind=friend name=rowan ", "the refusal before it is still said:\n%s", out)
+	require.Contains(t, out, "run: nova-config friend set rowan --slots <n>, or raise the machine's ceiling with nova-config machine set studio --slots <n>", "the remedy names the machine:\n%s", out)
+	require.NotContains(t, rr.log, "write friend zara", "a write after the store error: %v", rr.log)
+	require.NotContains(t, rr.log, "write sprint sprint", "a later kind was written against a failed Redis: %v", rr.log)
+	require.Zero(t, rr.revs[config.KindFriend], "%v", rr.revs)
+	require.NotContains(t, out, "CONFIG APPLY OK", "stdout:\n%s", out)
+	require.NotContains(t, out, "CONFIG APPLY REFUSED", "stdout:\n%s", out)
+}
+
+// TestApplyWritesTheSprintRowWhenTheCoordinatorsSetIsRefused: the ref rule
+// does not bring the incident back. The coordinator friend is in Redis and
+// her set is refused; the sprint row, whose coordinator does not change, is
+// written with its new git_identity and stamped.
+func TestApplyWritesTheSprintRowWhenTheCoordinatorsSetIsRefused(t *testing.T) {
+	t.Parallel()
+
+	h, rr, d := everyKindHarness(t, map[string]error{})
+	code, out, errs := runEveryKind(d, "apply")
+	require.Equal(t, 0, code, "first apply\nstdout: %s\nstderr: %s", out, errs)
+	for _, args := range [][]string{
+		{"friend", "set", "rowan", "--slots", "16"},
+		{"sprint", "set", "--git_identity", "Nova Sprint <sprint@mas-bandwidth.com>"},
+	} {
+		code, out, errs := h.run(t, args...)
+		require.Equal(t, 0, code, "%v\nstdout: %s\nstderr: %s", args, out, errs)
+	}
+	rr.refuse["rowan"] = &config.RefusedError{Err: config.ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 80 over the machine ceiling 64"}
+	rr.log = nil
+	code, out, errs = runEveryKind(d, "apply")
+	require.Equal(t, 1, code, "stdout: %s\nstderr: %s", out, errs)
+	require.Contains(t, out, "CONFIG REFUSED kind=friend name=rowan ", "stdout:\n%s", out)
+	require.NotContains(t, out, "kind=sprint name=sprint why=", "the sprint row was refused by the ref rule:\n%s", out)
+	require.Contains(t, rr.log, "write sprint sprint", "log %v", rr.log)
+	require.Equal(t, "Nova Sprint <sprint@mas-bandwidth.com>", rr.views[config.KindSprint][config.KindSprint][config.FieldGitIdentity])
+	sprintRev, err := h.store.Rev(context.Background(), config.KindSprint)
+	require.NoError(t, err)
+	require.Equal(t, sprintRev, rr.revs[config.KindSprint], "the sprint kind is stamped: %v", rr.revs)
+	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=friend:1 applied=machine,fleet,sprint,loop,route,tier; run: ", "stdout:\n%s", out)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -109,13 +110,20 @@ type Result struct {
 	// revision was stamped.
 	Written int
 	Stamped bool
+	// Pending is the adds and sets of a kind refused whole before any write
+	// (CONFLICT, or the kind's own check: fleet endpoints, an unpriced
+	// route), so the caller can count them refused for the ref rule
+	// (ConfigApply.tla PendingMachines). Ops and the counts stay empty.
+	Pending []Op
 }
 
 // Refusal is one op an apply did not write, and why: Err is a
-// *RefusedError (ConfigApply.tla, refusedRows).
+// *RefusedError (ConfigApply.tla, refusedRows). Absent is true when the row
+// is not in Redis (the refused op was an add), which the ref rule reads.
 type Refusal struct {
 	Kind, Name string
 	Err        error
+	Absent     bool
 }
 
 // ErrRefusedRef is the refusal of a row whose ref names a row refused
@@ -124,34 +132,31 @@ type Refusal struct {
 var ErrRefusedRef = errors.New("names a row refused earlier in this run")
 
 // Earlier is the rows an every-kind run has refused so far, by kind and
-// then name, each with its one-line reason; the name "*" stands for every
-// row of a kind refused whole (ConfigApply.tla, refusedRows).
-type Earlier map[string]map[string]string
+// then name (ConfigApply.tla, refusedRows).
+type Earlier map[string]map[string]EarlierRow
 
-// Add records one refused row.
-func (e Earlier) Add(kind, name, why string) {
-	if e[kind] == nil {
-		e[kind] = map[string]string{}
-	}
-	e[kind][name] = why
+// EarlierRow is one row refused earlier in the run: its one-line reason, and
+// whether it is absent from Redis (its refused op was an add).
+type EarlierRow struct {
+	Why    string
+	Absent bool
 }
 
-// why returns the reason a row of kind was refused earlier, if it was.
-func (e Earlier) why(kind, name string) (string, bool) {
-	rows := e[kind]
-	if rows == nil || name == "" {
-		return "", false
+// Add records one refused row.
+func (e Earlier) Add(kind, name, why string, absent bool) {
+	if e[kind] == nil {
+		e[kind] = map[string]EarlierRow{}
 	}
-	if w, ok := rows[name]; ok {
-		return w, true
-	}
-	w, ok := rows["*"]
-	return w, ok
+	e[kind][name] = EarlierRow{Why: why, Absent: absent}
 }
 
 // refRefusal is the ref rule (ConfigApply.tla RefRefused): an add or set
 // whose ref or seq field names a row refused earlier in this run is refused
-// with that row's reason.
+// with that row's reason, but only when the named row is absent from Redis
+// or the op changes that ref field itself. A row that only names a present
+// row, unchanged (the sprint row's coordinator when the coordinator friend's
+// set was refused), is written: refusing it would leave git_identity
+// unapplied, the incident this rule must not bring back.
 func refRefusal(k *Kind, op Op, earlier Earlier) error {
 	if len(earlier) == 0 || (op.Op != OpAdd && op.Op != OpSet) {
 		return nil
@@ -160,14 +165,29 @@ func refRefusal(k *Kind, op Op, earlier Earlier) error {
 		if f.Ref == "" || (f.Type != TypeRef && f.Type != TypeSeq) {
 			continue
 		}
+		changed := op.Op == OpSet && slices.Contains(op.Changed, f.Name)
 		for _, name := range strings.Split(op.Row.Fields[f.Name], ",") {
 			name = strings.TrimSpace(name)
-			if why, ok := earlier.why(f.Ref, name); ok {
-				return &RefusedError{Err: ErrRefusedRef, Detail: fmt.Sprintf("%s %s: its %s names %s %s, refused earlier in this run (%s)", k.Name, op.Row.Name, f.Name, f.Ref, name, why)}
+			r, ok := earlier[f.Ref][name]
+			if name == "" || !ok || (!r.Absent && !changed) {
+				continue
 			}
+			return &RefusedError{Err: ErrRefusedRef, Detail: fmt.Sprintf("%s %s: its %s names %s %s, refused earlier in this run (%s)", k.Name, op.Row.Name, f.Name, f.Ref, name, r.Why)}
 		}
 	}
 	return nil
+}
+
+// pending is the adds and sets of a plan: the rows a kind refused whole
+// leaves unwritten.
+func pending(ops []Op) []Op {
+	var out []Op
+	for _, op := range ops {
+		if op.Op == OpAdd || op.Op == OpSet {
+			out = append(out, op)
+		}
+	}
+	return out
 }
 
 // ErrConflict is the compare-and-set refusal: Redis holds a revision of
@@ -244,21 +264,23 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 	if err != nil {
 		return Result{}, err
 	}
+	// The kind's own checks refuse the whole kind before any write, and only
+	// that kind: fleet endpoints, and an enabled route with no price sheet
+	// (docs/SPEC-CONFIG.md, "route": a take priced from it records no
+	// prediction and the spend undercounts). The refusal is returned after
+	// the plan, so its rows count as refused for the ref rule (Pending).
+	var kindErr error
 	if kind == KindFleet {
 		for _, row := range rows {
 			if err := ValidateFleetEndpoints(View(row.Fields)); err != nil {
-				return Result{}, &RefusedError{Err: ErrInvalid, Detail: err.Error()}
+				kindErr = &RefusedError{Err: ErrInvalid, Detail: err.Error()}
+				break
 			}
 		}
 	}
-	// An enabled route with no price sheet is refused before the plan and any
-	// write (docs/SPEC-CONFIG.md, "route"): a take priced from it records no
-	// prediction and the spend undercounts. A bare every-kind apply refuses
-	// before any kind is written by nova-config's pre-check
-	// (cmd/nova-config/apply.go).
 	if kind == KindRoute {
 		if err := CheckRoutesPriced(rows); err != nil {
-			return Result{}, &RefusedError{Err: ErrInvalid, Detail: err.Error()}
+			kindErr = &RefusedError{Err: ErrInvalid, Detail: err.Error()}
 		}
 	}
 	if k.Derive != nil {
@@ -275,13 +297,19 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		return Result{}, err
 	}
 	res := Result{Kind: kind, Rev: rev, Check: check, RedisRev: redisRev}
-	// The plan is made before the CONFLICT refusal so the caller can name
-	// the rows it leaves unwritten (ConfigApply.tla PendingMachines); nothing
-	// is written.
-	res.Ops = Plan(k, rows, views)
+	// The plan is made before a whole-kind refusal so the caller can name the
+	// rows it leaves unwritten (ConfigApply.tla PendingMachines); nothing is
+	// written or reported.
+	plan := Plan(k, rows, views)
 	if redisRev > rev {
+		res.Pending = pending(plan)
 		return res, Conflict(kind, redisRev, rev)
 	}
+	if kindErr != nil {
+		res.Pending = pending(plan)
+		return res, kindErr
+	}
+	res.Ops = plan
 	for _, op := range res.Ops {
 		switch op.Op {
 		case OpAdd:
@@ -297,7 +325,7 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 			report(op)
 			row, _ := reportSeatHold(kind, moveSeat, op, report)
 			if err := knownRefusal(k, op, row, earlier); err != nil {
-				res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err})
+				res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err, Absent: op.Op == OpAdd})
 			}
 		}
 		return res, firstRefusal(res)
@@ -334,7 +362,7 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		// OpHeld line is said — unless the caller names the seat move.
 		row, _ := reportSeatHold(kind, moveSeat, op, report)
 		if err := refRefusal(k, op, earlier); err != nil {
-			res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err})
+			res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err, Absent: op.Op == OpAdd})
 			continue
 		}
 		switch op.Op {
@@ -345,9 +373,11 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		}
 		if err != nil {
 			// A refusal names the row and the kind goes on (ConfigApply.tla
-			// DoOps); anything else stops the apply at once.
+			// DoOps); anything else stops the apply at once, even after a
+			// refusal in this kind (StoreError): the caller tests the error
+			// before Refused.
 			if Refused(err) && !IsConflict(err) {
-				res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err})
+				res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err, Absent: op.Op == OpAdd})
 				continue
 			}
 			return res, err

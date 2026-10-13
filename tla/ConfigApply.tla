@@ -50,13 +50,17 @@
 \*   refusals         how many runtime refusals so far (bounded)
 \*   planned          the kinds this apply has stages for
 \*   attempted        the kinds whose ops this apply has started
-\*   crashedRun       this apply ended by a crash
+\*   crashedRun       this apply ended by a crash, or by a store error
+\*                    (exit 2)
+\*   storeErred       a store or connection error that is not a refusal
+\*                    happened in this apply
 \*
 \* Actions: InsertMachine, UpdateMachine, DeleteMachine, InsertFriend,
 \* UpdateFriend, DeleteFriend (each refused on a name taken or missing, on
 \* a ref that names no row, and on deleting a machine a friend names);
 \* StartApply, Advance (the writes and the stamp; each write is written or
-\* refused, and a refusal never stops the apply); ApplyCheck (plan, write
+\* refused, and a refusal never stops the apply); StoreError (a write fails
+\* with an error that is not a refusal: the run stops at once, exit 2); ApplyCheck (plan, write
 \* nothing); ApplyCrash (stop after a proper prefix of the ops, no stamp);
 \* OutsideRedisWrite (Redis's stamp moves ahead of the store);
 \* Read (a view is read, nothing is written).
@@ -70,9 +74,11 @@
 \*   StampOnlyWhenComplete   apply.go Apply, the stamp after the ops
 \*   RetryIsIdempotent        apply.go Idem, and a second apply of the same
 \*                            Postgres
-\*   EveryKindAfterARefusalIsAttempted
+\*   EveryPlannedKindIsAttemptedUnlessCrashed
 \*                            cmd/nova-config/apply.go runApply, the kind
 \*                            loop goes on past a refusal
+\*   StoreErrorStopsTheRun    cmd/nova-config/apply.go runApply, a store
+\*                            error is never classed as a refusal
 \*   StampedKindHasNoRefusal  apply.go apply, no stamp when an op was
 \*                            refused
 \*   CrashedApplyCompletes    a crashed apply is finished by the next apply
@@ -87,10 +93,14 @@
 \*   "nohistory"    a row changes with no history    HistoryCoversEveryWrite
 \*   "overahead"    an apply writes while the stamp  ConflictRefusesAhead
 \*                  it read is ahead
-\*   "stopatrefusal" the apply stops at the first    EveryKindAfterARefusalIsAttempted
+\*   "stopatrefusal" the apply stops at the first    EveryPlannedKindIsAttemptedUnlessCrashed
 \*                  refused write (v1.2.16's apply)
 \*   "stamprefused" a kind with a refused write is   StampedKindHasNoRefusal
 \*                  stamped
+\*   "swallowerr"   a store error after a refusal    StoreErrorStopsTheRun
+\*                  in the same kind is classed as a
+\*                  refusal and the run goes on (the
+\*                  first cut of PR 5662)
 
 EXTENDS Naturals, Sequences
 
@@ -106,7 +116,7 @@ ASSUME Len(MachineList) = 2 /\ MachineList[1] # MachineList[2]
 ASSUME Len(FriendList) = 2 /\ FriendList[1] # FriendList[2]
 ASSUME MaxRev \in Nat /\ MaxFaults \in Nat /\ MaxCrashes \in Nat /\ MaxRefusals \in Nat
 ASSUME Broken \in {"none", "stampfirst", "friendfirst", "nohistory", "overahead",
-                    "stopatrefusal", "stamprefused"}
+                    "stopatrefusal", "stamprefused", "swallowerr"}
 
 \* Idem is the marker apply.go builds: config:<kind>:<rev>.
 Idem(k, r) == <<"config", k, r>>
@@ -116,17 +126,17 @@ VARIABLES
   phase, stages, si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0,
   stampMoved, opsDone, clean, idemApplied, wroteAhead, owed,
   crashes, faults, checked, seen,
-  refusedRows, refusals, planned, attempted, crashedRun
+  refusedRows, refusals, planned, attempted, crashedRun, storeErred
 
 vars == <<mRows, fRows, history, mViews, fViews, stamp,
           phase, stages, si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0,
           stampMoved, opsDone, clean, idemApplied, wroteAhead, owed,
           crashes, faults, checked, seen,
-          refusedRows, refusals, planned, attempted, crashedRun>>
+          refusedRows, refusals, planned, attempted, crashedRun, storeErred>>
 
 \* The variables the refusal rule adds; a step that does not touch them
 \* leaves them as they are.
-rvars == <<refusedRows, refusals, planned, attempted, crashedRun>>
+rvars == <<refusedRows, refusals, planned, attempted, crashedRun, storeErred>>
 
 TypeOK ==
   /\ mRows \in [Machines -> 0..2]
@@ -166,6 +176,7 @@ TypeOK ==
   /\ planned \in [Kinds -> BOOLEAN]
   /\ attempted \in [Kinds -> BOOLEAN]
   /\ crashedRun \in BOOLEAN
+  /\ storeErred \in BOOLEAN
 
 Rev(k) ==
   LET ids == {i \in 1..Len(history) : history[i].kind = k}
@@ -256,9 +267,15 @@ PendingMachines ==
   {MachPlan[i].name : i \in {j \in 1..Len(MachPlan) : MachPlan[j].op # "remove"}}
 
 \* A row whose ref names a row refused earlier in this run is itself
-\* refused, never written half-referenced (apply.go refRefusal). The friend
-\* names its machine.
-RefRefused(op) == op.kind = "friend" /\ op.op # "remove" /\ op.value \in refusedRows
+\* refused, never written half-referenced (apply.go refRefusal), but only
+\* when the named row is absent from Redis (its refused op was an add) or
+\* the op changes the ref field itself. The friend names its machine: an add
+\* is refused only on an absent machine; a set always changes the machine.
+RefRefused(op) ==
+  /\ op.kind = "friend"
+  /\ op.op # "remove"
+  /\ op.value \in refusedRows
+  /\ (mViews[op.value] = 0 \/ op.op = "set")
 
 Init ==
   /\ mRows = [m \in Machines |-> 0]
@@ -291,6 +308,7 @@ Init ==
   /\ planned = [k \in Kinds |-> FALSE]
   /\ attempted = [k \in Kinds |-> FALSE]
   /\ crashedRun = FALSE
+  /\ storeErred = FALSE
 
 \* A store write appends one history row, unless the witness removes that
 \* append. The guards are the refusals PlanWrite names.
@@ -446,6 +464,7 @@ StartApply ==
   /\ planned' = [k \in Kinds |-> \E i \in 1..Len(stages') : KindOf(stages'[i]) = k]
   /\ attempted' = [k \in Kinds |-> FALSE]
   /\ crashedRun' = FALSE
+  /\ storeErred' = FALSE
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, clean,
                  idemApplied, wroteAhead, owed, crashes, faults, checked, seen,
                  refusals>>
@@ -483,7 +502,7 @@ NextOp(k, plan) ==
 \* The witness "stopatrefusal" is v1.2.16: the apply ends at the refusal.
 DoOps(k, plan) ==
   /\ attempted' = [attempted EXCEPT ![k] = TRUE]
-  /\ UNCHANGED <<stamp, stampMoved, idemApplied, planned, crashedRun>>
+  /\ UNCHANGED <<stamp, stampMoved, idemApplied, planned, crashedRun, storeErred>>
   /\ IF oi > Len(plan) THEN
        /\ LeaveOps(k)
        /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean, phase,
@@ -557,12 +576,42 @@ ApplyCrash ==
   /\ crashes' = crashes + 1
   /\ phase' = "idle"
   /\ crashedRun' = TRUE
-  /\ UNCHANGED <<refusedRows, refusals, planned, attempted>>
+  /\ UNCHANGED <<refusedRows, refusals, planned, attempted, storeErred>>
   /\ stampMoved' = [k \in Kinds |-> FALSE]
   /\ prefix' = <<>>
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, stages, si, oi,
                  mPlan, fPlan, ceilAtStart, ahead0, opsDone, idemApplied,
                  wroteAhead, faults, checked, seen>>
+
+\* A write fails with an error that is not a refusal (a store or connection
+\* error). The run stops there, exit 2, as a crash does: the kind is owed and
+\* no later kind is written (cmd/nova-config/apply.go runApply, the first
+\* case of the kind switch). It shares the crash budget. The witness
+\* "swallowerr" is the first cut of PR 5662: after a refusal in the same
+\* kind, the error is classed as one more refusal and the run goes on.
+StoreError ==
+  /\ phase = "applying"
+  /\ crashes < MaxCrashes
+  /\ si \in 1..Len(stages)
+  /\ stages[si] \in {"mops", "fops"}
+  /\ LET k == KindOf(stages[si])
+         plan == IF k = "machine" THEN mPlan ELSE fPlan
+     IN /\ oi <= Len(plan)
+        /\ crashes' = crashes + 1
+        /\ storeErred' = TRUE
+        /\ IF Broken = "swallowerr" /\ RefusedOf(k) # {}
+           THEN /\ refusedRows' = refusedRows \cup {plan[oi].name}
+                /\ NextOp(k, plan)
+                /\ UNCHANGED <<phase, crashedRun, owed, clean>>
+           ELSE /\ phase' = "idle"
+                /\ crashedRun' = TRUE
+                /\ owed' = [owed EXCEPT ![k] = TRUE]
+                /\ clean' = [clean EXCEPT ![k] = FALSE]
+                /\ UNCHANGED <<refusedRows, si, oi, opsDone>>
+  /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, stages, mPlan,
+                 fPlan, prefix, ceilAtStart, ahead0, stampMoved, idemApplied,
+                 wroteAhead, faults, checked, seen, refusals, planned,
+                 attempted>>
 
 Next ==
   \/ \E m \in Machines : InsertMachine(m) \/ UpdateMachine(m) \/ DeleteMachine(m)
@@ -570,7 +619,7 @@ Next ==
   \/ \E f \in Friends : DeleteFriend(f)
   \/ ApplyCheck \/ Read
   \/ \E k \in Kinds : OutsideRedisWrite(k)
-  \/ StartApply \/ Advance \/ ApplyCrash
+  \/ StartApply \/ Advance \/ ApplyCrash \/ StoreError
 
 \* Fairness is the next apply: once a crash has left a kind owed, and no
 \* further crash is left, the apply that is enabled runs to its stamp.
@@ -632,14 +681,19 @@ CanFinish(k) ==
 CrashedApplyCompletes == \A k \in Kinds : CanFinish(k) ~> ~owed[k]
 
 \* A refusal never stops a later kind: once an apply has ended other than
-\* by a crash, every kind it had stages for was attempted (cmd/nova-config
-\* apply.go runApply). This is stronger than "after a refused kind": no
-\* planned kind is ever skipped.
-EveryKindAfterARefusalIsAttempted ==
+\* by a crash or a store error (exit 2), every kind it had stages for was
+\* attempted (cmd/nova-config apply.go runApply). This is stronger than
+\* "every kind after a refused kind": no planned kind is ever skipped.
+EveryPlannedKindIsAttemptedUnlessCrashed ==
   (phase = "idle" /\ ~crashedRun) => \A k \in Kinds : planned[k] => attempted[k]
 
 \* A stamped kind has no refused op in the apply that stamped it (apply.go
 \* apply: a kind with any refusal is not stamped).
 StampedKindHasNoRefusal == \A k \in Kinds : stampMoved[k] => RefusedOf(k) = {}
+
+\* A store error is never classed as a refusal: the step it happens in ends
+\* the run, exit 2 (cmd/nova-config apply.go runApply). The excuse the
+\* invariant above gives a crashed run is earned only by stopping.
+StoreErrorStopsTheRun == storeErred => (phase = "idle" /\ crashedRun)
 
 =============================================================================

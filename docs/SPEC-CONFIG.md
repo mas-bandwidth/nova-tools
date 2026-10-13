@@ -573,19 +573,24 @@ global ids, so they rise across kinds and never repeat.
 (`KindNames`): machines (the ceilings), the fleet row (a friend with no beat
 is charged to its coordinator machine), friends, the sprint row, loops (each
 names a machine), routes, tiers. **A refusal never stops a later kind**
-(tla/ConfigApply.tla, `EveryKindAfterARefusalIsAttempted`): every kind is
-attempted, whatever an earlier kind refused, so a friend refused `CEILING`
-never leaves the sprint row unapplied (the v1.2.16 incident, 2026-10-13):
+(tla/ConfigApply.tla, `EveryPlannedKindIsAttemptedUnlessCrashed`): every
+kind is attempted, whatever an earlier kind refused, so a friend refused
+`CEILING` never leaves the sprint row unapplied (the v1.2.16 incident,
+2026-10-13). There is no whole-run pre-check: each kind's own check (the
+fleet's endpoints, the routes' prices) refuses that kind only:
 
-**An enabled route with no price is refused before the plan and any write.**
+**An enabled route with no price refuses the route kind before any write.**
 Every route row that is enabled (`enabled` absent or true) must carry a price
 sheet (`cardcost.PricesOf(row.Fields).Priced`): the sprint prices a take from
 the sheet (`cardcost.Predict`), so an unpriced route records no prediction and
 a cost of `-`, or the harness's own `$0.00`, and the dashboard undercounts.
-For an every-kind apply (no `--kind`), the refusal comes before any kind is
-written, for `--kind route` before the route kind is planned or written. The
+The refusal is the route kind's only: no route is written or reported, the
+plan is read so the unwritten routes count as refused for the ref rule (a
+tier naming a new one is refused with it), and every other kind of an
+every-kind apply still applies. Missing or invalid fleet endpoints refuse the
+fleet kind the same way, and only it. The
 one `ErrInvalid` names every such route with its provider/model and the command
-that sets its price: `nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>`, plus `or nova-config route prices --refresh --provider <p>` when the provider has a list, plus `or take it out: --enabled false --note '<why>'`. Nothing is written, and `--check` refuses the same. A
+that sets its price: `nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>`, plus `or nova-config route prices --refresh --provider <p>` when the provider has a list, plus `or take it out: --enabled false --note '<why>'`. No route is written, and `--check` refuses the same. A
 disabled route is never refused for its price, and the prices are the owner's:
 the tool never sets, guesses or defaults one.
 
@@ -624,7 +629,11 @@ the tool never sets, guesses or defaults one.
    whose ref or seq field names a row refused earlier in this run (the sprint
    row's coordinator, a loop's machine, a tier's routes, the fleet's machines)
    is refused with that reason (`ErrRefusedRef`) and never written
-   half-referenced (`RefRefused`);
+   half-referenced (`RefRefused`), when the named row is absent from Redis
+   (its refused op was an add) or the op changes that ref field itself. A row
+   that only names a row still in Redis, its ref unchanged, is written: when
+   the coordinator friend's set is refused, the sprint row's `git_identity`
+   still lands;
 8. **stamp** `config:decl rev:<kind> = <rev>, at:<kind> = <server ms>`,
    compare-and-set: inside `WATCH config:decl`, the stamp is written only
    while it still reads the value step 2 read; a stamp that moved is
@@ -633,13 +642,15 @@ the tool never sets, guesses or defaults one.
    status` still says so and the next apply retries only the diff.
 
 What still stops the run at once: a store or connection error that is not a
-refusal (exit 2). The run ends with `CONFIG APPLY OK kinds=<n>` and exit 0
+refusal (exit 2), even after a refusal in the same kind; that kind's refusals
+are named first, and no later kind is written (`StoreErrorStopsTheRun`). The run ends with `CONFIG APPLY OK kinds=<n>` and exit 0
 when nothing was refused; else with one `CONFIG APPLY REFUSED
 kinds=<k:count,...> applied=<kinds fully applied, or -> run: <the first remedy>` line and exit 1
 (`CONFIG CHECK REFUSED ...` under `--check`, which prints no end line when
 nothing would be refused). The per-kind `CONFIG APPLY kind=...` line is
-printed for each kind that applied, and not for a refused one; a `CONFLICT`
-is said on stderr, as before, and counted in the end line.
+printed for each kind that applied, and not for a refused one; a whole-kind
+refusal (`CONFLICT`, the fleet's endpoints, an unpriced route) is one stderr
+line, as before, and counted in the end line.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
 zero, the revision unchanged (steady apply is 8 Redis round trips down from 18, two of them the loop

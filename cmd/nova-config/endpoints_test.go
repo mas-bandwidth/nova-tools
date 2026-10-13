@@ -39,23 +39,23 @@ func TestFileFleetEndpointsStayPartialUntilApply(t *testing.T) {
 			path := filepath.Join(h.dir, "try.json")
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
-			for _, args := range [][]string{{"apply"}, {"apply", "--dry-run"}, {"apply", "--kind", "fleet"}} {
+			// The endpoints are the fleet kind's own check: they refuse that
+			// kind only, and every other kind applies (docs/SPEC-CONFIG.md,
+			// "Apply").
+			for _, args := range [][]string{{"apply", "--dry-run"}, {"apply", "--kind", "fleet"}, {"apply"}} {
 				code, out, errs := h.run(t, append(args, "--file", "try.json")...)
 				require.Equal(t, 1, code, errs)
-				assert.Empty(t, out)
+				assert.Contains(t, out, " REFUSED kinds=fleet:1 ", "%v: %s", args, out)
 				assert.Contains(t, errs, "endpoints are unset: "+tc.missing)
-				assert.Zero(t, h.redis.opens)
-				assert.Empty(t, h.redis.log)
+				assert.NotContains(t, h.redis.log, "write fleet fleet", "%v", args)
 			}
+			assert.Contains(t, h.redis.log, "write machine bench-beta", "another kind applies while endpoints are partial")
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, before, after, "a refused apply preserves the partial file")
-			step("apply", "--kind", "machine", "--dry-run")
-			assert.Equal(t, 1, h.redis.opens, "another kind may apply while endpoints are partial")
 			step("fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn)
 			step("apply", "--dry-run")
-			assert.Equal(t, 2, h.redis.opens, "the complete endpoint pair permits full apply")
-			assert.Empty(t, h.redis.log)
+			assert.NotContains(t, h.redis.log, "write fleet fleet", "a dry run wrote")
 		})
 	}
 }

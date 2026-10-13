@@ -681,7 +681,11 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	require.Equal(t, int64(3), h.redis.revs["fleet"], "apply --check wrote to redis: %v", h.redis.revs)
 }
 
-func TestApplyRefusesMissingFleetEndpointsBeforeAnyMutation(t *testing.T) {
+// Missing fleet endpoints are the fleet kind's own check: they refuse that
+// kind only, on one stderr line with the command that sets them, the fleet
+// row is never written, and every other kind applies (docs/SPEC-CONFIG.md,
+// "Apply").
+func TestMissingFleetEndpointsRefuseOnlyTheFleetKind(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"apply"}, {"apply", "--check"}, {"apply", "--kind", "fleet"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -690,13 +694,14 @@ func TestApplyRefusesMissingFleetEndpointsBeforeAnyMutation(t *testing.T) {
 			h.env["NOVA_PG_DSN"], h.env["NOVA_FRIEND"], h.env["NOVA_SPRINT_REDIS"] = dsn, "operator", "bench-beta:6380"
 			code, out, errs := h.run(t, args...)
 			require.Equal(t, 1, code, errs)
-			require.Empty(t, out)
+			require.Contains(t, out, " REFUSED kinds=fleet:1 ", "stdout %q", out)
 			require.Contains(t, errs, "endpoints are unset: redis_port, pg_dsn")
 			require.Contains(t, errs, "fleet set --redis_port <port> --pg_dsn <dsn>")
 			require.Equal(t, 1, strings.Count(errs, "fleet set"), errs)
-			require.Equal(t, 1, h.opens, "the authoritative fleet is read before its endpoints can be checked")
-			require.Zero(t, h.redis.opens)
-			require.Empty(t, h.redis.log)
+			require.NotContains(t, h.redis.log, "write fleet fleet", "a refused fleet row was written")
+			if len(args) == 1 {
+				require.Contains(t, h.redis.log, "write tier flash", "the other kinds apply: %v", h.redis.log)
+			}
 			code, _, errs = h.run(t, "apply", "--kind", "machine", "--check")
 			require.Zero(t, code, errs)
 		})
