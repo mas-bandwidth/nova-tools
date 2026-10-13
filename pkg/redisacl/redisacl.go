@@ -53,6 +53,7 @@ var Families = []Family{
 	{"friends", []string{"friend:*", "friends", "friends:*"}, "pkg/config FriendBeatKey, FriendsKey: a friend's beat, desired slots, width, mode and roles"},
 	{"fleet", []string{"fleet:*"}, "pkg/config FleetKey"},
 	{"loops", []string{"loops", "loop:*"}, "pkg/config LoopsKey, LoopKey"},
+	{"providers", []string{"providers", "provider:*"}, "pkg/config ProvidersKey, ProviderKey"},
 	{"routes", []string{"routes", "route:*"}, "pkg/config RoutesKey, RouteKey"},
 	{"config", []string{"config:decl"}, "pkg/config DeclKey"},
 	{"tokens", []string{"tokens:ledger:*"}, "internal/record LedgerPrefix: nova-tokens ledger and report, logged in as the seat's user"},
@@ -119,7 +120,7 @@ func Roles() []Role {
 	// Every store verb lists the library before it calls it (fn.LoadMissing,
 	// the sprint store's open): FUNCTION LIST is every role's.
 	list := []string{"+function|list"}
-	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "routes": "r", "config": "r", "tokens": "r", "events": "r"}
+	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "providers": "r", "routes": "r", "config": "r", "tokens": "r", "events": "r"}
 	with := func(over map[string]string) map[string]string {
 		out := maps.Clone(read)
 		maps.Copy(out, over)
