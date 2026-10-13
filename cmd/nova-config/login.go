@@ -26,6 +26,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
@@ -316,7 +317,7 @@ func (c conn) discoverPG(ctx context.Context, getenv func(string) string, d deps
 	}
 	found := "empty"
 	if redisErr != nil {
-		found = fmt.Sprintf("%T", redisErr)
+		found = redisconn.Classify(redisErr).String()
 	}
 	looked = append(looked, prefix+found)
 	return "", "", looked, pgRequired(looked)

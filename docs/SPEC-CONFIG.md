@@ -822,7 +822,8 @@ order: `no store named: --pg not given; NOVA_PG_DSN unset;
 Redis <addr> (from <source>): empty|<error class>`. With no Redis address,
 the last entry is `no Redis named (NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR,
 seat, nova-sprint seat login <path>: none|<error class>)`. Redis errors
-print their class, never their raw text or credentials. The remedy is
+print `unreachable`, `auth-refused` or `other` through `redisconn.Classify`,
+never their raw text or credentials. The remedy is
 `run: nova-config login, or export
 NOVA_PG_DSN=postgres://user@host:5432/nova, or --file <path>`.
 

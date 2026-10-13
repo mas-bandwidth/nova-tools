@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -210,7 +211,7 @@ func TestRedisDiscoveryFailureIsBoundedAndNeverQuotesItsError(t *testing.T) {
 	}
 	code, out, errs := runCapture([]string{"route", "list"}, d)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "fleet:pg_dsn in Redis 127.0.0.1:6399 (from env): *errors.errorString")
+	assert.Contains(t, errs, "fleet:pg_dsn in Redis 127.0.0.1:6399 (from env): other")
 	assert.NotContains(t, out+errs, "diagnostic-secret")
 	assert.Zero(t, h.opens)
 }
@@ -276,9 +277,38 @@ func TestRedisDiscoveryReadFailureClosesAndRedacts(t *testing.T) {
 	d.openRedis = func(context.Context, string) (redisSide, error) { return r, nil }
 	code, out, errs := runCapture([]string{"route", "list"}, d)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "fleet:pg_dsn in Redis (unparsed Redis address) (from env): *errors.errorString")
+	assert.Contains(t, errs, "fleet:pg_dsn in Redis (unparsed Redis address) (from env): other")
 	assert.NotContains(t, out+errs, "diagnostic-secret")
 	assert.NotContains(t, out+errs, "address-secret")
 	assert.True(t, r.closed)
 	assert.Zero(t, h.opens)
+}
+
+func TestRedisDiscoveryNamesDistinctConnectionFailureClasses(t *testing.T) {
+	t.Parallel()
+	_, unreachable := redisconn.Resolve(redisconn.Options{}, nil)
+	_, refused := redisconn.Resolve(redisconn.Options{Addr: "127.0.0.1:6399", User: "u1", PasswordEnv: "REDIS_PASSWORD"}, nil)
+	require.Error(t, unreachable)
+	require.Error(t, refused)
+	for _, tc := range []struct {
+		name    string
+		failure error
+	}{
+		{"unreachable", unreachable}, {"auth-refused", refused},
+		{"other", errors.New("unclassified diagnostic-secret")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness()
+			h.env["XDG_CONFIG_HOME"] = t.TempDir()
+			h.env[envSprintRedis] = "127.0.0.1:6399"
+			d := h.deps()
+			d.openRedis = func(context.Context, string) (redisSide, error) { return nil, tc.failure }
+			code, out, errs := runCapture([]string{"route", "list"}, d)
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errs, "fleet:pg_dsn in Redis 127.0.0.1:6399 (from env): "+tc.name)
+			assert.NotContains(t, out+errs, "diagnostic-secret")
+			assert.Zero(t, h.opens)
+		})
+	}
 }
