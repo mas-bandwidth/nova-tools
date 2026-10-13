@@ -341,8 +341,8 @@ func TestSlowtestsJSONIsTheSameVerdict(t *testing.T) {
 `
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json"}, stdin)
 	require.Equal(t, 0, code, stderr)
-	assert.JSONEq(t, `{"result":{"verb":"slowtests","status":"ok","exit":0},
-		"facts":{"packages":1,"slowest":"example.com/pkg","slowest_seconds":75.3,"enforce":false,"load":1,"cpus":2},
+	assert.JSONEq(t, `{"result":{"verb":"slowtests","status":"ok","exit":0,"remedy":"nova-ci slowtests '--budget' '60' '--load' '1' '--cpus' '2' '--json' --enforce"},
+		"facts":{"packages":1,"slowest":"example.com/pkg","slowest_seconds":75.3,"enforce":false,"load":1,"cpus":2,"within_budget":false,"warning":"budget exceeded without enforcement; reuse the same event stream"},
 		"items":[{"kind":"slow-package","fields":{"package":"example.com/pkg","seconds":75.3,"budget":60,"slowest":"TestA:3.2s"}}]}`, stdout)
 
 	code, stdout, _ = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json", "--enforce"}, stdin)
@@ -639,7 +639,7 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		{"missing tree", []string{"./nope/..."}, []string{`package pattern "./nope/..." matches no package (no such directory)`}},
 		{"not a dir", []string{file}, []string{"matches no package (not a directory)"}},
 		{"no go files", []string{empty}, []string{"matches no package (the directory holds no .go file)"}},
-		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes no flags`}},
+		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes --json`}},
 		// Every independent problem in the one refusal.
 		{"all at once", []string{"--bogus", "./nope", ".", "./also-nope"}, []string{`unknown flag "--bogus"`, `"./nope" matches no package`, `"./also-nope" matches no package`}},
 	} {
