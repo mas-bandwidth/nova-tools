@@ -59,7 +59,7 @@ func TestMuseRunsACardHeadless(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, model string
-		symlink bool
+		symlink     bool
 	}{
 		{name: "frontier-model", model: "frontier-model"},
 		{name: "refused", model: "refused"},
@@ -74,6 +74,8 @@ func TestMuseRunsACardHeadless(t *testing.T) {
 				require.NoError(t, os.Symlink(dir, link))
 				dir = link
 			}
+			dir, err := filepath.EvalSymlinks(dir)
+			require.NoError(t, err)
 			prompt := filepath.Join(dir, "prompt")
 			require.NoError(t, os.WriteFile(prompt, []byte("card prompt"), 0o600))
 			self, err := os.Executable()
