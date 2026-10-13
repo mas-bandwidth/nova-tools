@@ -1229,8 +1229,11 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	if s.prep.cfg.headless() == harness.Muse {
 		// A fresh reader per retry: stdin is consumed by the previous attempt.
 		if err := museNativeInput(cmd, os.Environ()); err != nil {
-			s.log.Close()
-			s.harnessOut.Close()
+			for _, file := range []*os.File{s.log, s.harnessOut} {
+				if closeErr := file.Close(); closeErr != nil {
+					refuseNative(errOut, fmt.Sprintf("the refused Muse launch log could not be closed: %s; check job storage before retrying", oneline.Err(closeErr)))
+				}
+			}
 			refuseNative(errOut, err.Error())
 			return nil, nativeRunResult{}, 2
 		}
