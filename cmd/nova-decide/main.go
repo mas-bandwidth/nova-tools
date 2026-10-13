@@ -87,9 +87,9 @@ does_task, lines_changed, inside_paths and defect (nouls, p of yes) and verdict 
 or UNSURE). The state is the card, the rule when --rule names one, and the diff, nothing else.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("card", "the card the worker was given, a file")
-					f.Required("diff", "the worker's unified diff, a file")
-					f.String("rule", "", "a rule text the read holds the diff to as well, a file")
+					f.Required("card", "the card the worker was given, a file, or - for stdin")
+					f.Required("diff", "the worker's unified diff, a file, or - for stdin")
+					f.String("rule", "", "a rule text the read holds the diff to as well, a file, or - for stdin")
 					w.asking(f)
 					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
@@ -107,8 +107,8 @@ fenced_block_edit, asserted_data_cut, load_bearing_word_cut; outside_paths is 1 
 The line names the top class and its p; nova-sprint land asks it as <card>@landed@<head>.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("card", "the card the worker was given, a file")
-					f.Required("diff", "the landed unified diff, a file")
+					f.Required("card", "the card the worker was given, a file, or - for stdin")
+					f.Required("diff", "the landed unified diff, a file, or - for stdin")
 					w.asking(f)
 					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
@@ -116,7 +116,7 @@ The line names the top class and its p; nova-sprint land asks it as <card>@lande
 			},
 			{
 				Name:    "attempt",
-				Usage:   "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "attempt --brief <file|-> [--result <file|->] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "attempt --brief " + fixture + "card.md --result " + fixture + "result.md --reason \"verdict not-done: tests red in pkg/decide\" --backend fixed --answers " + fixture + "attempt-answers.json --record ./decisions.jsonl --op c1@1",
 				Effect:  tool.Delivery + "; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record",
 				Detail: `The attempt decision: how a work take ended, one choice, class: done, nothing-to-do,
@@ -124,7 +124,7 @@ wrong-scope, no-result, needs-pro or provider-failure, each with its p. The stat
 the child's RESULT.md (none when --result is not given) and the member's reason line.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("brief", "the card's brief the worker was given, a file")
+					f.Required("brief", "the card's brief the worker was given, a file, or - for stdin")
 					f.String("result", "", "the child's RESULT.md, a file; absent when the child wrote none")
 					f.Required("reason", "the member's reason line for the take's end, as text")
 					w.asking(f)
@@ -134,7 +134,7 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 			},
 			{
 				Name:    "grade",
-				Usage:   "grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "grade --brief <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "grade --brief " + fixture + "card.md --backend fixed --answers " + fixture + "grade-answers.json --record ./decisions.jsonl --op c1@grade",
 				Effect:  tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
 				Detail: `The grade decision: a card's convergence before its first deal, one choice, grade: script
@@ -142,7 +142,7 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed outside --held-out.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("brief", "the card's brief, a file")
+					f.Required("brief", "the card's brief, a file, or - for stdin")
 					f.String("examples", "", "few-shot examples from the sprint record, a JSON-lines file of {card, heading, paths, kind, label} (SPEC-NOVA-DECIDE section 11)")
 					f.String("held-out", "", "cards left out of the example pool, a file of card ids one per line (with --examples)")
 					f.String("seed", "0", "the seed that picks the examples, so a run reproduces (with --examples)")
@@ -168,7 +168,7 @@ is, else pre-existing.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("output", "the gate's output, a file of go test's output (plain or -v), or - for stdin")
 					f.Required("card", "the card the worker was given, a file, or - for stdin: its PATHS line is read")
-					f.String("diff", "", "the card's unified diff, a file: its files and line counts are summarised")
+					f.String("diff", "", "the card's unified diff, a file, or - for stdin: its files and line counts are summarised")
 					f.String("base-red", "", "the failing tests red at the card's base, comma-separated (<Test> or <pkg>.<Test>); given empty, none is")
 					f.String("bars", "", "the flaky and the pre-existing bars, <flaky>,<pre-existing>: each a probability or empty (that route taken by no failure), two set ones summing above 1; empty (the default) routes none, as the sprint row's defaults do; 0.8,0.8 is the starting point")
 					w.asking(f)

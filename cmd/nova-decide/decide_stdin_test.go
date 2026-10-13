@@ -39,6 +39,10 @@ func TestDecideVerbsAcceptStdinStream(t *testing.T) {
 	require.Len(t, ds, 1)
 	assert.Equal(t, "-", ds[0].Inputs["diff"])
 
+	// gate --card - (gate's own reader, not readFiles)
+	recGateCard := filepath.Join(dir, "gate-card.jsonl")
+	cli.DoIn(t, string(card), "gate", "--output", td+"gate-output.txt", "--card", "-", "--diff", td+"card.diff", "--backend", "fixed", "--answers", td+"gate-answers.json", "--record", recGateCard, "--op", "stdin-gate-card").Exit(0).Out("GATE OK")
+
 	// gate --output -
 	rec3 := filepath.Join(dir, "gate.jsonl")
 	cli.DoIn(t, string(gateOut), "gate", "--output", "-", "--card", td+"card.md", "--diff", td+"card.diff", "--backend", "fixed", "--answers", td+"gate-answers.json", "--record", rec3, "--op", "stdin-gate").Exit(0).Out("GATE OK")
