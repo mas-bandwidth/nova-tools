@@ -111,20 +111,29 @@ Inputs:
 
 ### Antigravity (Emma)
 
-1. Offers: (to fill)
-2. Push to turn: (to fill)
-3. Deaf or asleep detected by: (to fill)
-4. Re-hook: (to fill)
-
-Inputs:
-
-- Emma: a hook run as a daemon task writes its lines to a log on disk, but a daemon task never
-  wakes the turn. Only a non-daemon background command exiting, or a scheduled timer firing, wakes
-  it. With every child lane busy and no timer set, a challenge can sit unread until its window
-  closes.
-- Emma: a non-daemon command that exits as soon as a push arrives is an instant, zero-polling wake.
-  The scheduler tool can be a liveness backstop, and subagents wake the parent when they send a
-  message.
+1. **Offers.**
+   - Asynchronous execution via `run_command` with two distinct operational modes:
+     - `IsDaemon: true`: Spawns long-running support background processes. Output streams append to disk logs (`.system_generated/tasks/task-*.log`), but daemon stdout/stderr streams **never** wake an idle turn.
+     - `IsDaemon: false`: Asynchronous process whose termination/exit automatically generates a reactive turn wakeup event, delivering stdout/stderr directly into the turn prompt context without polling.
+   - Timers via `schedule` (`DurationSeconds`, `TimerCondition: 'never' | 'any' | '<sender-id>'`) provide guaranteed background wakeups.
+   - Autonomous subagents (`invoke_subagent`) that run in isolated context and wake the parent turn reactively when sending messages via `send_message`.
+2. **Push to turn.**
+   - Primary wake: A non-daemon background command runs the Layer 20 blocking wait primitive:
+     `nova-bus wait --as emma --nonce <current_nonce> --timeout 90s`
+     launched with `IsDaemon: false` and small `WaitMsBeforeAsync` (e.g. 500ms).
+   - The process blocks synchronously in the background on the server notification channel. When a push message arrives or a challenge is issued, the process unblocks, writes arrival JSON and the next nonce to stdout, and exits with code 0 immediately.
+   - The process exit triggers an instant turn wakeup. Output is delivered directly to the agent context.
+   - Token efficiency: Zero tokens spent on idle waiting; zero polling loops.
+   - Defense-in-depth: While executing long multi-step child tasks or bench test gates, a background timer is set via `schedule` (`DurationSeconds=120`, `Prompt="Comms lease heartbeat check"`, `TimerCondition="any"`), guaranteeing the turn wakes before any $T_{lease}$ expiration even if a command is killed or cancelled.
+3. **Deaf or asleep detected by.**
+   - Running `nova-hook hook` as a daemon task (`IsDaemon: true`) without an accompanying blocking wait process results in a deaf agent: challenges accumulate silently in task log files on disk without waking the turn.
+   - If a challenge window ($T_{challenge}$) expires without a `prove` call, the server transitions the lease to `AWAY` (`reason: lease_expired`).
+   - Senders querying `nova-bus status --as emma` or attempting `nova-bus send` immediately detect the `away` presence state, preventing lost notes.
+   - On the client side, if `nova-bus wait` exits with code 2 (`refusal: lease_away`), the agent immediately detects that its session lease has lapsed.
+4. **Re-hook.**
+   - When awakened with a challenge line or after a lease expiration, the agent runs `nova-hook prove --as emma --nonce <nonce>` immediately in the foreground.
+   - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as emma --role comms` to obtain a fresh challenge nonce, proves it with `nova-hook prove`, and re-launches the non-daemon `nova-bus wait` background task.
+   - After re-proving, the agent drains and acknowledges any pending messages received while away via `nova-bus recv --as emma --all --ack`.
 
 ### Muse Code (Aurora)
 
