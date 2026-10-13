@@ -96,7 +96,10 @@ func ensureSeatEnvironmentDir(path string) error {
 		return fmt.Errorf("not a real directory")
 	}
 	current, err := user.Current()
-	if err != nil || !ownedBy(info, current.Uid) {
+	if err != nil {
+		return fmt.Errorf("could not identify the current user: %w", err)
+	}
+	if !ownedBy(info, current.Uid) {
 		return fmt.Errorf("directory is not owned by the current user")
 	}
 	if info.Mode().Perm()&0o022 != 0 {
