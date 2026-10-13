@@ -944,19 +944,57 @@ func Index(store, session string) ([]IndexRow, []string, int, error) {
 			rows = append(rows, IndexRow{Session: ef.Session, ID: ef.ID, Stamp: stamp, Source: ef.Source, Bytes: len(ef.Text)})
 		}
 	}
-	slices.SortFunc(rows, func(a, b IndexRow) int {
-		if c := a.Stamp.Compare(b.Stamp); c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.Session, b.Session); c != 0 {
-			return c
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
+	slices.SortFunc(rows, compareIndexRows)
 	sessions := make([]string, 0, len(names))
 	for id := range names {
 		sessions = append(sessions, id)
 	}
 	slices.Sort(sessions)
 	return rows, sessions, len(rows), nil
+}
+
+// IndexSince filters the existing index without changing its ordering or session context.
+// Entry IDs use the full (stamp, session, ID) order; timestamps exclude the whole instant.
+func IndexSince(store, session, since string) ([]IndexRow, []string, int, error) {
+	instant, timeErr := time.Parse(time.RFC3339Nano, since)
+	if timeErr != nil && !ValidID(since) {
+		return nil, nil, 0, &NotFoundError{Msg: "--since wants an entry ID or RFC3339 instant", Remedy: "give a valid --since cursor"}
+	}
+	rows, names, _, err := Index(store, session)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	var cursor IndexRow
+	if timeErr != nil {
+		found := false
+		for _, row := range rows {
+			if row.ID != since {
+				continue
+			}
+			if found {
+				return nil, nil, 0, &NotFoundError{Msg: "--since entry ID is ambiguous across sessions", Remedy: "add --session to select the cursor's session"}
+			}
+			cursor, found = row, true
+		}
+		if !found {
+			return nil, nil, 0, &NotFoundError{Msg: "--since entry ID was not found", Remedy: command("index", "--store", store, "--max", "0")}
+		}
+	}
+	rows = slices.DeleteFunc(rows, func(row IndexRow) bool {
+		if timeErr == nil {
+			return !row.Stamp.After(instant)
+		}
+		return compareIndexRows(row, cursor) <= 0
+	})
+	return rows, names, len(rows), nil
+}
+
+func compareIndexRows(a, b IndexRow) int {
+	if c := a.Stamp.Compare(b.Stamp); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Session, b.Session); c != 0 {
+		return c
+	}
+	return strings.Compare(a.ID, b.ID)
 }

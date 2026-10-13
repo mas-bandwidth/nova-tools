@@ -23,7 +23,7 @@ and an optional checkout through git; the other checks read the manifests and le
 first run: create the small markdown tree below, then run the example commands.
 
 usage:
-  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>]
+  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]
   nova-check attest --home <dir> --manifest <file> [--max <n>]
   nova-check links --dir <dir> [--file <path>] [--exclude <prefix>] [--max <n>]
   nova-check kernel --file <file> --max-bytes <n>
@@ -36,7 +36,7 @@ usage:
   nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
   nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]
   nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]
   nova-check version
@@ -53,7 +53,7 @@ The exit-1 line prints trend=widening on the CONVERGENCE line, and the next run 
 nova-check convergence --state <file> again once the source moves, or nova-check dogfood record the
 finding the stream names.
 
-Every verb but quickstart, dogfood ledger, dogfood record, dogfood gate, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling and convergence take it too, through their own printers (convergence prints its reading object), and quickstart and dogfood print typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+Every verb but dogfood ledger, dogfood record, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling and convergence take it too, through their own printers (convergence prints its reading object), quickstart and dogfood gate support it too; dogfood ledger and record print typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 
@@ -72,12 +72,13 @@ example:
 ```
 usage: nova-check quickstart [flags]
 from `nova-check help`:
-  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>]
+  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]
   nova-check quickstart --dir ./self
 flags:
   --dir <string>  --dir <dir> is the tree to walk, your self repo's root or a directory inside it; it is never guessed from the working directory, so write it out every run (required)
   --exclude <value>  path prefix not scanned by links (repeatable; empty by default)
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
+  --json  print the result as one JSON object instead of lines
   --max <int>  items listed before one MORE line stands for the rest; 0 lists all
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 effect: inspection: reads markdown under --dir, runs links then nocode, writes nothing
@@ -261,14 +262,15 @@ effect: local write: appends one receipt file to --receipts (--dry-run writes no
 ```
 usage: nova-check dogfood gate [flags]
 from `nova-check help`:
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
   a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`
 flags:
   --allow-empty  pass on an empty receipt set; without it, no receipts is a refusal and not a green line
-  --authors <<tool> <verb> = <who wrote it>>  file mapping <tool> <verb> = <who wrote it>, one per line
+  --authors <string>  file mapping tool verb = author, one per line
   --cli <string>  the command reference the verbs are read from, usually docs/CLI.md
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
   --git-timeout <int>  seconds one --repo authorship read may take before it is killed and named
+  --json  print the result as one JSON object instead of lines
   --max <int>  items listed before one MORE line stands for the rest; 0 lists all
   --receipts <string>  --receipts <dir> is the directory the receipts live in, one file per receipt: the same directory record appends to and ledger reads, kept in a repository so the record outlives the bench (required)
   --repo <string>  repository to read authorship from when there is no --authors file
@@ -3285,7 +3287,9 @@ OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. `slowtests` and `functional` work in any Go module; `local`,
+a budget. `functional --json <packages...>` projects its existing package selection
+as `{"packages":[...],"pattern":"..."}`; without --json its two make-facing lines
+remain unchanged. `slowtests` and `functional` work in any Go module; `local`,
 `new-rule` and `new-verb` need a nova-tools checkout; `github receipt` writes to
 a Redis store. It also reports its own build with `nova-ci version`.
 
@@ -3300,7 +3304,10 @@ binary alone. On your own module, pipe `go test -json` in and check that test
 run's exit status separately: `slowtests` checks timing, not whether the tests
 passed. The default budget is 60 seconds per package; a package over it is a
 `CI-SLOW` line, and exit 0 still means a measurement unless `--enforce` is given
-(then exit 1: the check ran and said no). A terminal on stdin or a line that is
+(then exit 1: the check ran and said no). An unenforced overrun also prints
+`CI-SLOW WARN within_budget=false enforce=false` and the command that enforces
+the same budget; pipe the same event stream into that command. In JSON the warning
+and `within_budget: false` are facts, with the command in `result.remedy`. A terminal on stdin or a line that is
 not a TestEvent is refused at exit 2, and so is a float flag that is not a finite
 number (`NaN`, `Inf`). `--json` prints the same verdict as one JSON object
 (`{"result":{...},"facts":{...},"items":[...]}`), and a refusal as that object
@@ -3648,6 +3655,23 @@ counts the file. An append addressing a session neither shape holds refuses with
 the whole remedy verb: `open first: nova-cairn open --store <dir> --session <id>
 --publish <policy>`.
 
+
+`index --since <entry-id|RFC3339>` returns entries strictly after the cursor,
+then applies `--max`. An entry ID uses the existing ascending order of stamp,
+session, and entry ID, so later entries at the same stamp remain reachable.
+IDs shared across sessions refuse; select the cursor with `--session`.
+An RFC3339 timestamp (including fractional seconds and offsets) excludes all
+entries at or before that instant. Missing IDs, invalid cursors, and an explicit
+empty cursor refuse at exit 2. Entry totals and per-session counts describe
+filtered matches; session context remains visible even when no entries match.
+Without `--since`, the index is unchanged. Filtering still reads the existing
+store index: the cursor bounds returned records, not reads. Physical metadata
+walking remains; indexed storage and bounded I/O are deferred to v1.3.
+It does not create a cache or change stored records.
+
+Receipt JSON includes the complete stored `text` by default. `--text=false`
+explicitly omits it. Plaintext continues to omit text unless `--text` is given;
+byte counts and all other existing receipt facts remain unchanged.
 
 ## nova-decide
 

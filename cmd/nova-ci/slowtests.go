@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/pkg/bench"
 	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -202,8 +203,18 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			}
 		}
 	}
+	// Reporting a budget breach is independent of whether this leg enforces it.
+	// STANDARD section2: exit0 remains a measurement; the warning must still be visible.
+	enforceCommand := ""
+	if !*enforce && len(report.Over)+len(report.OverTests) > 0 {
+		enforceCommand = slowtestsEnforceCommand(args)
+	}
 	if *asJSON {
 		o := verdictJSON(report, load, *enforce, code, *maxFlag)
+		if enforceCommand != "" {
+			o.Fact("within_budget", false).Fact("warning", tool.Text("budget exceeded without enforcement; reuse the same event stream"))
+			o.Remedy = enforceCommand
+		}
 		if empty {
 			o.Status = tool.Failed
 			o.Exit = 1
@@ -215,7 +226,26 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	for _, line := range capSlowLines(lines, *maxFlag) {
 		fmt.Fprintln(stdout, line)
 	}
+	if enforceCommand != "" {
+		fmt.Fprintf(stdout, "CI-SLOW WARN within_budget=false enforce=false: budget exceeded without enforcement; reuse the same event stream; run: %s\n", enforceCommand)
+	}
 	return code
+}
+
+// slowtestsEnforceCommand retains every original option, including budget and
+// allowlist, and quotes each word with the existing shell renderer. Appending
+// --enforce overrides an explicit --enforce=false without changing the input.
+func slowtestsEnforceCommand(args []string) string {
+	// No positional arguments are accepted; a trailing flag terminator is
+	// valid but must not put the new enforcement flag behind it.
+	if len(args) > 0 && args[len(args)-1] == "--" {
+		args = args[:len(args)-1]
+	}
+	words := []string{"nova-ci", "slowtests"}
+	for _, arg := range args {
+		words = append(words, bench.Quote(arg))
+	}
+	return strings.Join(words, " ") + " --enforce"
 }
 
 // maxRemedy is the second half of the MORE line slowtests prints under --max.

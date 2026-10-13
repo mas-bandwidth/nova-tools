@@ -58,6 +58,11 @@
 \*             nobody's). An unknown outcome (no answer, changed=unknown,
 \*             keepUncertain) keeps the run as failed and is below this
 \*             model's grain
+\*   stageAnchor   the immutable commit recorded by native when this launch is
+\*                 staged; update-ref can move checkout refs but not this record
+\*   headDescends  whether the result's current head descends from stageAnchor
+\*   originUpdated  whether this launch updated its target branch
+\*   originDescends whether the pushed origin head descends from stageAnchor
 
 \* THE REASON PREFIXES (ProviderFailure, the name pkg/member/member.go,
 \* cmd/nova-swarm/nativeprovider.go, their tests and SPEC-CARD-CONTRACT.md
@@ -103,7 +108,9 @@
 \* "stagingfailed" (a staging refusal judged as failed work), "lengthnoresult"
 \* (a cutoff judged as a no-result redeal instead of a no-cost staging fault), "applymoved"
 \* (a report applied on a moved claim), "reapaccepted" (an accepted report
-\* reaped). "none" is the design.
+\* reaped), and "rewritepushed" (the update-ref bypass rewrites the checkout
+\* below the recorded stage and the member pushes that unrelated head anyway).
+\* "none" is the design.
 
 \* ONE CARD IS THE INSTANCE. Every action touches one card and no invariant relates
 \* two, so the cards are independent: an invariant of the form "for every card"
@@ -122,10 +129,10 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg, lf, answer
+          prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg, lf, answer>>
+          prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -145,6 +152,10 @@ Init ==
   /\ stg = [c \in Cards |-> FALSE]
   /\ lf = [c \in Cards |-> FALSE]
   /\ answer = [c \in Cards |-> "none"]
+  /\ stageAnchor = [c \in Cards |-> FALSE]
+  /\ headDescends = [c \in Cards |-> FALSE]
+  /\ originUpdated = [c \in Cards |-> FALSE]
+  /\ originDescends = [c \in Cards |-> FALSE]
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
 
@@ -169,7 +180,9 @@ Stage(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "running"]
   /\ \E f \in StageFroms(c) : from' = [from EXCEPT ![c] = f]
-  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer>>
+  /\ stageAnchor' = [stageAnchor EXCEPT ![c] = TRUE]
+  /\ headDescends' = [headDescends EXCEPT ![c] = TRUE]
+  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, originUpdated, originDescends>>
 
 \* The member's machine refuses the launch at staging (native's STAGE
 \* FAIL): nothing is staged and no child runs, so there is no commit and no result.
@@ -177,7 +190,7 @@ StageRefused(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, lf, answer>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
 
 \* The child ends: any commit, any result, any verdict, and the run's end class:
 \* a provider failure with a reason (prov), a no-result end (nr), or a
@@ -197,20 +210,46 @@ ChildEnds(c) ==
        /\ nr' = [nr EXCEPT ![c] = n]
        /\ stg' = [stg EXCEPT ![c] = u]
        /\ lf' = [lf EXCEPT ![c] = l]
+       /\ headDescends' = [headDescends EXCEPT ![c] = TRUE]
        /\ (IF f THEN 1 ELSE 0) + (IF n THEN 1 ELSE 0) + (IF u THEN 1 ELSE 0) + (IF l THEN 1 ELSE 0) <= 1
        /\ n => (~s \/ (v = "notdone" /\ ~k))
        /\ u => ~s
        /\ l => ~s
-  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, answer>>
+  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, answer, stageAnchor, originUpdated, originDescends>>
+
+\* update-ref bypasses the launch's command shim: it can move the checkout's head
+\* to work that does not descend from the immutable stage record. The member checks
+\* that relation again in gitPusher.Push (memberpush.go, merge-base --is-ancestor).
+\* The slot's recorded staged commit is unchanged by this checkout rewrite.
+RewriteBelowStage(c) ==
+  /\ ph[c] = "ended" /\ commit[c] /\ stageAnchor[c] /\ headDescends[c]
+  /\ headDescends' = [headDescends EXCEPT ![c] = FALSE]
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, stageAnchor, originUpdated, originDescends>>
 
 \* The member's push (gitPusher.Push): a commit is pushed or
 \* refused; no commit is nothing to push.
+PushOutcomes(c) ==
+  IF ~commit[c] THEN {"nocommit"}
+  ELSE IF headDescends[c] THEN {"ok", "refused"}
+  ELSE IF Broken = "rewritepushed" THEN {"ok", "refused"}
+  ELSE {"refused"}
+
 Push(c) ==
   /\ ph[c] = "ended" /\ claim[c] = "held"
   /\ ph' = [ph EXCEPT ![c] = "pushed"]
-  /\ \E p \in IF commit[c] THEN {"ok", "refused"} ELSE {"nocommit"} :
-       push' = [push EXCEPT ![c] = p]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, nr, stg, lf, answer>>
+  /\ \E p \in PushOutcomes(c) :
+       /\ push' = [push EXCEPT ![c] = p]
+       /\ IF p = "ok"
+            THEN /\ originUpdated' = [originUpdated EXCEPT ![c] = TRUE]
+                 /\ originDescends' = [originDescends EXCEPT ![c] = headDescends[c]]
+            ELSE /\ originUpdated' = originUpdated
+                 /\ originDescends' = originDescends
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, nr, stg, lf, answer, stageAnchor, headDescends>>
+
+\* A retry after a refusal has no new checkout or origin effect: it is a stutter.
+RetryRefusedPush(c) ==
+  /\ ph[c] = "pushed" /\ push[c] = "refused"
+  /\ UNCHANGED vars
 
 \* The ok rule: a commit the child made, pushed, with the result's shape and
 \* verdict ok. "today" drops the commit (ok unless the push was refused, which
@@ -259,7 +298,7 @@ JudgeOf(c) ==
 SendReport(c) ==
   /\ ph[c] = "pushed" /\ claim[c] = "held"
   /\ ph' = [ph EXCEPT ![c] = "reported"]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
 
 \* What a collected report comes to: applied (the judgment, said to the
 \* sprint) when the claim is still held, or when the store accepted it; else
@@ -282,13 +321,13 @@ CollectReport(c) ==
           ELSE /\ fin' = [fin EXCEPT ![c] = "reaped"]
                /\ rep' = [rep EXCEPT ![c] = "none"]
   /\ ph' = [ph EXCEPT ![c] = "done"]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, stageAnchor, headDescends, originUpdated, originDescends>>
 
 \* The claim moves under the launch at any time before its report is collected.
 Move(c) ==
   /\ claim[c] = "held" /\ ph[c] \in {"running", "ended", "pushed", "reported"}
   /\ claim' = [claim EXCEPT ![c] = "moved"]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg, lf, answer>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
 
 \* REAPED is its own finish (pkg/member/member.go, FinishReaped): the child has
 \* ended, its claim is gone, and nothing is reported.
@@ -297,9 +336,9 @@ Reap(c) ==
   /\ ph' = [ph EXCEPT ![c] = "done"]
   /\ fin' = [fin EXCEPT ![c] = "reaped"]
   /\ rep' = IF Broken = "reapreported" THEN [rep EXCEPT ![c] = "failed"] ELSE rep
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, answer>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
 
-Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ SendReport(c) \/ CollectReport(c) \/ Move(c) \/ Reap(c)
+Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ RewriteBelowStage(c) \/ Push(c) \/ RetryRefusedPush(c) \/ SendReport(c) \/ CollectReport(c) \/ Move(c) \/ Reap(c)
                           \/ StageRefused(c)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
@@ -315,6 +354,10 @@ TypeOK ==
   /\ stg \in [Cards -> BOOLEAN]
   /\ lf \in [Cards -> BOOLEAN]
   /\ answer \in [Cards -> {"none", "accepted", "refused"}]
+  /\ stageAnchor \in [Cards -> BOOLEAN]
+  /\ headDescends \in [Cards -> BOOLEAN]
+  /\ originUpdated \in [Cards -> BOOLEAN]
+  /\ originDescends \in [Cards -> BOOLEAN]
 
 \* Ok => PushedHead /\ Shape: an ok finish is a commit the child made, on
 \* origin by the member's push, with the result's shape and verdict ok.
@@ -380,6 +423,15 @@ CollectedAppliesOnlyIfHeld ==
 \* finish was the card's claim when it landed.
 AcceptedIsNeverReaped ==
   \A c \in Cards : answer[c] = "accepted" => fin[c] # "reaped"
+
+\* A pushed origin head keeps the immutable stage commit in its ancestry. The update-ref
+\* adversary moves only the child's checkout head; Push refuses that non-descendant and
+\* leaves the target branch unchanged. `rewritepushed` bypasses the check as the reversed witness.
+RewriteKeptIsPushed == \A c \in Cards : ~originUpdated[c] \/ originDescends[c]
+
+\* A refusal, including a repeated refusal, preserves both the recorded stage and origin.
+RefusedPushPreservesOrigin ==
+  \A c \in Cards : push[c] = "refused" => stageAnchor[c] /\ ~originUpdated[c]
 
 \* Every launch ends judged, reaped, or finished provider (a run the provider failed, the
 \* sprint's redeal outside this model) or staging (a launch refused at staging, the sprint's

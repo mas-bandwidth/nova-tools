@@ -52,3 +52,17 @@ The [nova-check section of the command reference](../../docs/CLI.md#nova-check) 
 ## Spec
 
 The contract is [docs/SPEC-CHECK.md](../../docs/SPEC-CHECK.md).
+
+`quickstart --json` returns one result object. Its `facts.checks` array contains
+links and nocode results with their own statuses, counts, findings and truncation
+metadata. Overall `total`, `passed`, `failed`, `refused` and `findings` counts are
+independent of `--max`; the process exits with the worse check's exit code.
+
+`dogfood gate --json` returns the same gate verdict in `facts.verdict`, alongside
+`verified_receipts` (validated receipt files, including each path),
+`uncovered_verbs`, `missing_authors`, `findings`, `summary` and ledger `rows`.
+Each JSON listing respects `--max`; `more` retains its shown/total counts.
+Missing authors are reported independently; they do not add a new gate rule.
+Uncovered verbs fail the gate when `--require-all` is set. Diagnostics remain in
+the JSON object; malformed input and missing arguments preserve failure/refusal
+status and exit codes. Without `--json`, both commands retain their typed lines.
