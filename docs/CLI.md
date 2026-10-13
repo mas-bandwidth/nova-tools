@@ -23,7 +23,7 @@ and an optional checkout through git; the other checks read the manifests and le
 first run: create the small markdown tree below, then run the example commands.
 
 usage:
-  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>]
+  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]
   nova-check attest --home <dir> --manifest <file> [--max <n>]
   nova-check links --dir <dir> [--file <path>] [--exclude <prefix>] [--max <n>]
   nova-check kernel --file <file> --max-bytes <n>
@@ -53,7 +53,7 @@ The exit-1 line prints trend=widening on the CONVERGENCE line, and the next run 
 nova-check convergence --state <file> again once the source moves, or nova-check dogfood record the
 finding the stream names.
 
-Every verb but quickstart, dogfood ledger, dogfood record, dogfood gate, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling and convergence take it too, through their own printers (convergence prints its reading object), and quickstart and dogfood print typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+Every verb but quickstart, dogfood ledger, dogfood record, dogfood gate, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling, convergence and quickstart take it too, through their own printers (convergence prints its reading object), and dogfood prints typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 
@@ -72,12 +72,13 @@ example:
 ```
 usage: nova-check quickstart [flags]
 from `nova-check help`:
-  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>]
+  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]
   nova-check quickstart --dir ./self
 flags:
   --dir <string>  --dir <dir> is the tree to walk, your self repo's root or a directory inside it; it is never guessed from the working directory, so write it out every run (required)
   --exclude <value>  path prefix not scanned by links (repeatable; empty by default)
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
+  --json  print the composite result as one JSON object instead of lines
   --max <int>  items listed before one MORE line stands for the rest; 0 lists all
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 effect: inspection: reads markdown under --dir, runs links then nocode, writes nothing
