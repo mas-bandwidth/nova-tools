@@ -100,7 +100,7 @@ func runRoutePrices(c *tool.Call, d deps) *tool.Out {
 		c.Problem(err.Error())
 		return nil
 	}
-	dsn, err := cn.dsn(d.getenv)
+	dsn, err := cn.dsn(c.Ctx, d)
 	if err != nil {
 		c.Problem(err.Error())
 		return nil

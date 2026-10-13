@@ -161,7 +161,7 @@ func loopRunCall(call *tool.Call, d deps, c conn, name string, command []string,
 	}
 	argv := command
 	if len(argv) == 0 {
-		dsn, err := c.dsn(d.getenv)
+		dsn, err := c.dsn(call.Ctx, d)
 		if err != nil {
 			return tool.Refuse(err.Error())
 		}

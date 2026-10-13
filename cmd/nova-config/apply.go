@@ -52,7 +52,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}

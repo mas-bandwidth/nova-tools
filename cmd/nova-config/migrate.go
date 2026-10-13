@@ -61,7 +61,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 		fmt.Fprintf(stdout, "CONFIG MIGRATE print=%d pg=-\n", len(all))
 		return 0
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}

@@ -49,7 +49,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	if *check {
 		// under --check exit 2 is "no such row" alone: no store to read is 3
-		dsn, err := c.dsn(d.getenv)
+		dsn, err := c.dsn(ctx, d)
 		if err != nil {
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
@@ -115,7 +115,7 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 	if err := config.ValidateName(name); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
