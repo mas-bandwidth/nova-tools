@@ -61,7 +61,12 @@ func TestConfigListMaxFlag(t *testing.T) {
 	for _, maxValue := range []string{"-1", "x"} {
 		code, out, stderr = h.run(t, "machine", "list", "--file", "try.json", "--max", maxValue)
 		assert.Equal(t, 2, code, "--max %q exit: stdout=%q stderr=%q", maxValue, out, stderr)
-		assert.Contains(t, stderr, "--max", "--max %q refusal: %q", maxValue, stderr)
+		if maxValue == "-1" {
+			assert.Contains(t, stderr, "--max must be zero or more", "negative --max refusal: %q", stderr)
+		} else {
+			assert.Contains(t, stderr, "flag -max", "non-integer --max refusal: %q", stderr)
+		}
+		assert.Contains(t, stderr, "; run: nova-config machine list -h", "--max %q remedy: %q", maxValue, stderr)
 		assert.Equal(t, opens, h.opens, "invalid --max %q must refuse before opening a store", maxValue)
 	}
 
@@ -73,7 +78,7 @@ func TestConfigListMaxFlag(t *testing.T) {
 	}
 	code, history, stderr := h.run(t, "machine", "history", "a", "--file", "try.json", "--max", "1")
 	require.Equal(t, 0, code, "history: %q", stderr)
-	assert.Contains(t, history, "CONFIG CHANGE id=1 ")
+	assert.Contains(t, history, "HISTORY id=1 ")
 	assert.Contains(t, history, "CONFIG MORE kind=change shown=1 total=3")
 	assert.Contains(t, history, "CONFIG HISTORY kind=machine name=a changes=3")
 	code, historyAll, stderr := h.run(t, "machine", "history", "a", "--file", "try.json")
@@ -101,7 +106,12 @@ func TestConfigListMaxFlag(t *testing.T) {
 	for _, maxValue := range []string{"-1", "x"} {
 		code, out, stderr = h.run(t, "machine", "history", "a", "--file", "try.json", "--max", maxValue)
 		assert.Equal(t, 2, code, "history --max %q exit: stdout=%q stderr=%q", maxValue, out, stderr)
-		assert.Contains(t, stderr, "--max", "history --max %q refusal: %q", maxValue, stderr)
+		if maxValue == "-1" {
+			assert.Contains(t, stderr, "--max must be zero or more", "negative history --max refusal: %q", stderr)
+		} else {
+			assert.Contains(t, stderr, "flag -max", "non-integer history --max refusal: %q", stderr)
+		}
+		assert.Contains(t, stderr, "; run: nova-config machine history -h", "history --max %q remedy: %q", maxValue, stderr)
 		assert.Equal(t, opens, h.opens, "invalid history --max %q must refuse before opening a store", maxValue)
 	}
 }
