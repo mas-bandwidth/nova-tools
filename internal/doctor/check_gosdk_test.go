@@ -147,3 +147,86 @@ func TestDoctorGoCheckRefusesTheWrongToolchainAndAGoOnTheCoordinator(t *testing.
 		assert.Empty(t, r.Fix)
 	})
 }
+
+func TestDoctorRunDirFlag(t *testing.T) {
+	t.Parallel()
+
+	t.Run("repository-scoped Go probes use the requested checkout", func(t *testing.T) {
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		for _, tc := range []struct {
+			name, goMod string
+			wantExit    int
+			wantLine    string
+		}{
+			{name: "matching checkout", goMod: rightGoMod, wantExit: 0, wantLine: "DOCTOR gosdk ok"},
+			{name: "different checkout", goMod: "module example.invalid/y\n\ngo 1.23\n\ntoolchain go1.23.0\n", wantExit: 2, wantLine: "DOCTOR gosdk fail"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				bin := filepath.Join(root, "bin")
+				target := filepath.Join(root, "checkout")
+				require.NoError(t, os.MkdirAll(bin, 0o755))
+				require.NoError(t, os.MkdirAll(target, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\n"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(target, "go.mod"), []byte(tc.goMod), 0o644))
+				fe := fakeEnv{root: root, env: map[string]string{"PATH": "bin"}}
+				fe.exec = func(name string, args ...string) (string, error) {
+					switch filepath.Base(name) {
+					case "go":
+						if len(args) < 3 || args[0] != "-C" || args[1] != target {
+							return "", errors.New("Go probe was not scoped to --dir: " + strings.Join(args, " "))
+						}
+						args = args[2:]
+						if len(args) == 1 && args[0] == "version" {
+							return "go version go1.24.5 linux/amd64\n", nil
+						}
+						if len(args) == 2 && args[0] == "env" {
+							switch args[1] {
+							case "GOMOD":
+								return filepath.Join(target, "go.mod"), nil
+							case "GOCACHE":
+								return filepath.Join(root, "cache"), nil
+							case "GOFLAGS":
+								return "-mod=readonly", nil
+							}
+						}
+					case "sh":
+						return "", nil
+					}
+					return "", errors.New("unexpected command: " + name + " " + strings.Join(args, " "))
+				}
+				var stdout, stderr strings.Builder
+				code := Main(Default, fe, "", []string{"run", "--check", "gosdk", "--dir", target}, strings.NewReader(""), &stdout, &stderr)
+				assert.Equal(t, tc.wantExit, code, "stdout=%s stderr=%s", stdout.String(), stderr.String())
+				assert.Contains(t, stdout.String(), tc.wantLine)
+				assert.Empty(t, stderr.String())
+				assert.Equal(t, cwd, mustGetwd(t), "--dir never changes the process working directory")
+			})
+		}
+	})
+
+	t.Run("a missing repository is explicitly refused before any check runs", func(t *testing.T) {
+		t.Parallel()
+		called := false
+		fe := fakeEnv{exec: func(string, ...string) (string, error) {
+			called = true
+			return "", nil
+		}}
+		var stdout, stderr strings.Builder
+		code := Main(Default, fe, "", []string{"run", "--dir", filepath.Join(t.TempDir(), "missing")}, strings.NewReader(""), &stdout, &stderr)
+		assert.Equal(t, 2, code)
+		assert.Empty(t, stdout.String())
+		assert.Contains(t, stderr.String(), "--dir ")
+		assert.Contains(t, stderr.String(), "not a readable directory")
+		assert.False(t, called, "refusal happens before probes")
+	})
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	return wd
+}
