@@ -72,6 +72,7 @@ func TestSendDryRunHandlesCall(t *testing.T) {
 			Exit   int      `json:"exit"`
 			Why    []string `json:"why"`
 		} `json:"result"`
+		Notes []string `json:"notes"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(refused.Stdout), &refusal))
 	assert.Equal(t, "refused", refusal.Result.Status)
@@ -79,4 +80,6 @@ func TestSendDryRunHandlesCall(t *testing.T) {
 	require.NotEmpty(t, refusal.Result.Why)
 	assert.Contains(t, refusal.Result.Why[0], io.ErrUnexpectedEOF.Error())
 	assert.NotContains(t, refusal.Result.Why[0], "Call.DryRun", "the safety guard must not replace the store refusal")
+	require.NotEmpty(t, refusal.Notes)
+	assert.Contains(t, refusal.Notes[0], "Call.DryRun", "the safety guard remains visible beside the underlying refusal")
 }
