@@ -2011,6 +2011,15 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	return nativeChildEnvFrom(os.Environ(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, toolPath)
 }
 
+// opencodeOutputTokenMax is the output-token ceiling the harness hands every
+// opencode child itself: opencode caps every completion at 32,000 output tokens
+// by default, reasoning included, and clamps this name to the model's own limit,
+// so a ceiling no current model reaches lifts the cap to each model's real limit
+// and a run stops ending finish "length" mid-work for want of a bench wrapper.
+// A finish of "length" that still happens is the harness's fault, never the
+// card's (nativeprovider.go, providerEndedLength).
+const opencodeOutputTokenMax = "131072"
+
 // nativeChildEnvFrom is nativeChildEnv over environ, native's own environment.
 func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string, toolPath []string) []string {
 	var kept []string
@@ -2023,6 +2032,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 	remove := []string{
 		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR", "TMP", "TEMP",
 		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "ASDF_OUTPUT_TRANSLATIONS",
+		"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX",
 	}
 	if shimShell != "" {
 		remove = append(remove, "SHELL")
@@ -2052,6 +2062,9 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		// why (`error="ProviderModelNotFoundError: ..."`), not only its UnknownError envelope
 		"OPENCODE_PRINT_LOGS=1",
 		"OPENCODE_LOG_LEVEL=ERROR",
+		// the harness owns the output-token ceiling (opencodeOutputTokenMax), so a
+		// bench needs no wrapper exporting it outside version control
+		"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX="+opencodeOutputTokenMax,
 	)
 	if cacheDir != "" {
 		out = append(out,
