@@ -38,7 +38,9 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	machines, err := st.List(ctx, KindMachine)
 	require.NoError(t, err)
 	beatOf := machines[0].Name
-	require.NoError(t, c.HSet(ctx, BeatKey(beatOf), "os", "linux", "arch", "amd64", "ncpu", "8").Err())
+	for _, machine := range machines {
+		require.NoError(t, c.HSet(ctx, BeatKey(machine.Name), "os", "linux", "arch", "amd64", "ncpu", "8").Err())
+	}
 
 	count := &pipeCounter{}
 	c.AddHook(count)
@@ -70,4 +72,11 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "linux", inv.Meta.Hostvars[beatOf]["nova_os"])
 	assert.Len(t, inv.Meta.Hostvars[beatOf]["nova_loops"], 1)
+
+	missing, err := ap.Snapshot(ctx)
+	require.NoError(t, err)
+	missing.Beats[machines[len(machines)-1].Name] = nil
+	inv, err = BuildInventory(missing, "")
+	require.ErrorContains(t, err, "bench_os is unset in beat field os")
+	assert.Nil(t, inv)
 }
