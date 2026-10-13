@@ -53,6 +53,30 @@ root (`~/nova`, or `--root <dir>`). The design is [SPEC-UP.md](SPEC-UP.md).
 What `--local` never touches, and how each step decides it has nothing to do, is in
 [SPEC-UP.md](SPEC-UP.md).
 
+## Write a fleet seat environment
+
+`nova-up --seat` writes the per-user `seat-environment.json`; it does not run the `--local`
+setup or infer fleet endpoints from its `mem:` twin. The matching nova-sprint reader is a
+separate, pending change in [nova-sprint PR #256](https://github.com/mas-bandwidth/nova-sprint/pull/256).
+Until that reader lands, nova-sprint and nova-bus continue to use their existing process
+environment settings; nova-bus does not read this file. Supply the fleet's three endpoints
+explicitly (or through the matching environment variables):
+
+```sh
+nova-up --seat \
+  --sprint-redis 127.0.0.1:6381 \
+  --server 127.0.0.1:6390 \
+  --bus-redis 127.0.0.1:6381
+```
+
+The command atomically writes versioned data under
+`$XDG_CONFIG_HOME/nova-sprint/seat-environment.json`, or
+`$HOME/.config/nova-sprint/seat-environment.json` when `XDG_CONFIG_HOME` is not absolute. It
+stores endpoints and existing secret references only, never password values. Existing
+`seat.json` files keep their legacy format. To use a protected Redis store, its address must
+match the seat's existing login reference, or the process must already provide the applicable
+authentication environment.
+
 ## Checking the setup
 
 ### setup-nova-doctor-r-r5.w1: nova-doctor

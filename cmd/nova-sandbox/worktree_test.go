@@ -522,6 +522,36 @@ func TestGhForgeBadOriginIsNotAnOutage(t *testing.T) {
 	}
 }
 
+func TestGhForgeRejectsInvalidSeatAsBadInput(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	seatDir := filepath.Join(root, "nova-sprint")
+	require.NoError(t, os.Mkdir(seatDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(seatDir, "seat-environment.json"), []byte(`{"version":1,"forge_identity":null}`), 0600))
+	getenv := func(key string) string {
+		if key == "XDG_CONFIG_HOME" {
+			return root
+		}
+		return ""
+	}
+	forge := ghForge{repo: t.TempDir(), getenv: getenv, git: func(string, ...string) (string, error) {
+		return "https://localhost/owner/repo.git", nil
+	}}
+	_, err := forge.PR(7)
+	require.ErrorIs(t, err, errBadSeat)
+	require.NotErrorIs(t, err, errNoForge)
+	require.Contains(t, err.Error(), "seat environment is invalid")
+
+	var stderr strings.Builder
+	code := worktreeForgeRefuse(&stderr, err)
+	require.Equal(t, 2, code)
+	require.Contains(t, stderr.String(), "WORKTREE REFUSED reason=bad_seat:")
+	require.Contains(t, stderr.String(), "seat environment is invalid")
+	require.Contains(t, stderr.String(), worktreeRemedy)
+	require.NotContains(t, stderr.String(), worktreeRetryRemedy)
+}
+
 // 11. The forge seam's three failures each refuse in their own words: an origin
 // with no owner/name says what it wants and what it read and carries the plain
 // remedy, while the two that are the forge's own carry the retry line.

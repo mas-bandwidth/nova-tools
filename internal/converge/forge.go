@@ -10,10 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
@@ -41,15 +43,20 @@ type Forge interface {
 // first thousand of an unknown number is a measurement with a lie in it.
 const ForgeLimit = 1000
 
-// GH is the real forge: `gh pr list`, bounded, reading only. GH_CONFIG_DIR and
-// the rest of the environment come from the caller's, because which identity gh
-// speaks as is the caller's business and never this verb's.
+// GH is the real forge: `gh pr list`, bounded, reading only. An explicit
+// GH_CONFIG_DIR remains the caller's choice; otherwise the optional seat
+// environment supplies its forge_identity reference (docs/SPEC-UP.md).
 type GH struct {
 	Repo    string
 	Timeout time.Duration
 	// Bin is the gh executable, "gh" unless a caller names another. A test
 	// names a fake; nothing here searches a path of its own.
 	Bin string
+	// Env is an optional child environment. The process GH_CONFIG_DIR wins;
+	// when it is unset, an explicit value in Env wins over the seat default.
+	Env []string
+	// Getenv supplies process settings; nil uses os.Getenv.
+	Getenv func(string) string
 }
 
 // ghPR is the shape `gh pr list --json` answers in.
@@ -94,10 +101,19 @@ func (g GH) list(ctx context.Context, state, search string) ([]PR, error) {
 	ctx, cancel := context.WithTimeout(ctx, g.Timeout)
 	defer cancel()
 	cmd := subproc.Context(ctx, bin, args...)
+	getenv := g.Getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	childEnv, err := seatcred.ForgeCommandEnv(g.Env, getenv)
+	if err != nil {
+		return nil, fmt.Errorf("gh environment: %s", oneline.Err(err))
+	}
+	cmd.Env = childEnv
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	err := cmd.Run()
+	err = cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("gh pr list --state %s ran past --timeout %s and was killed", oneline.Field(state), g.Timeout)
 	}

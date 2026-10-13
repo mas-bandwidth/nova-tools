@@ -61,17 +61,18 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 	}
 	all, err := Migrations()
 	require.NoError(t, err)
+	tip := all[len(all)-1].Version
 	from, to, applied, err := st.Migrate(ctx)
 	assertionMsg67 := []any{"first migrate: from %d to %d applied %v err %v", from, to, applied, err}
 	require.NoError(t, err, assertionMsg67...)
 	require.Equal(t, 0, from, assertionMsg67...)
-	require.Equal(t, len(all), to, assertionMsg67...)
+	require.Equal(t, tip, to, assertionMsg67...)
 	require.Len(t, applied, len(all), assertionMsg67...)
 	from, to, applied, err = st.Migrate(ctx)
 	assertionMsg69 := []any{"second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err}
 	require.NoError(t, err, assertionMsg69...)
-	require.Equal(t, len(all), from, assertionMsg69...)
-	require.Equal(t, len(all), to, assertionMsg69...)
+	require.Equal(t, tip, from, assertionMsg69...)
+	require.Equal(t, tip, to, assertionMsg69...)
 	require.Empty(t, applied, assertionMsg69...)
 	counts, err := st.Counts(ctx)
 	require.NoError(t, err)
@@ -89,7 +90,7 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 		v, err := st.Version(ctx)
 		assertionMsg72 := []any{"version after: %d %v", v, err}
 		require.NoError(t, err, assertionMsg72...)
-		require.Equal(t, len(all), v, assertionMsg72...)
+		require.Equal(t, tip, v, assertionMsg72...)
 	}
 	fleet, found, err := st.Get(ctx, KindFleet, KindFleet)
 	require.NoError(t, err)
@@ -198,7 +199,7 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 			assert.Equal(t, "3", widths()["m2"], "the file run again overwrote a width set since")
 			_, to, applied, err := st.Migrate(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, len(all), to)
+			assert.Equal(t, all[len(all)-1].Version, to)
 			assert.NotContains(t, applied, 12, "migrate after the fill applied 0012 again")
 		})
 	}
@@ -206,22 +207,10 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 
 func TestMachineRolesMigrationPreservesExistingGroups(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name        string
-		store       string
-		coordinator string
-		want        map[string]string
-	}{
-		{name: "separate references", store: "store-a", coordinator: "coord-a", want: map[string]string{
-			"bench-a": "bench", "store-a": "bench,services", "coord-a": "bench,coordination", "shared": "bench",
-		}},
-		{name: "same reference", store: "shared", coordinator: "shared", want: map[string]string{
-			"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench,coordination,services",
-		}},
-		{name: "empty references", want: map[string]string{
-			"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench",
-		}},
-	} {
+	// The table is the one DeriveMachineRoles is held to
+	// (TestDeriveMachineRolesIsMigration0042): the SQL and the inventory's
+	// derivation of a pre-0042 row are one rule.
+	for _, tc := range machineRoleDerivationCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
@@ -350,7 +339,7 @@ func TestAppliedIsTheLedger(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, got, 11)
 	assert.Len(t, got, len(all)-1)
-	assert.Equal(t, len(all), got[len(got)-1])
+	assert.Equal(t, all[len(all)-1].Version, got[len(got)-1])
 }
 
 // 0017 makes a loop's width the machine's: the second reader rows of
@@ -595,4 +584,56 @@ func TestMigrationThirtyGivesEveryFriendTheBatchMode(t *testing.T) {
 	_, err = st.db.ExecContext(ctx, thirty.SQL)
 	require.NoError(t, err, "the file runs again")
 	assert.Equal(t, map[string]string{"f1": "batch", "f2": "one-shot"}, columnOf(t, st, "mode"), "a mode set since is kept")
+}
+
+// TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow applies every
+// migration before 0044, stores one they/them and one she/her, then lets
+// Migrate apply 0044. Both values stay. The second Migrate applies nothing.
+// NULL is allowed and the column default is gone. The names are made up.
+func TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	defer st.Close()
+	all, err := Migrations()
+	require.NoError(t, err)
+	for _, m := range all {
+		if m.Version >= 44 {
+			continue
+		}
+		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	}
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name) VALUES ('pat'), ('quinn')`)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET pronouns = 'she/her' WHERE name = 'quinn'`)
+	require.NoError(t, err)
+	before := columnOf(t, st, "pronouns")
+	from, to, applied, err := st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 43, from)
+	assert.Equal(t, 44, to)
+	assert.Equal(t, []int{44}, applied)
+	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"), "0044 rewrites no row; before %+v", before)
+	var drop string
+	for _, m := range all {
+		if m.Version == 44 {
+			drop = m.SQL
+		}
+	}
+	require.NotEmpty(t, drop)
+	_, err = st.db.ExecContext(ctx, drop)
+	require.NoError(t, err, "0044 run again")
+	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"), "0044 run again rewrites no row")
+	from, to, applied, err = st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 44, from)
+	assert.Equal(t, 44, to)
+	assert.Empty(t, applied, "0044 applied twice applies nothing")
+	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"))
+	var nullable string
+	var columnDefault *string
+	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'friends' AND column_name = 'pronouns'`).Scan(&nullable, &columnDefault))
+	assert.Equal(t, "YES", nullable)
+	assert.Nil(t, columnDefault)
 }

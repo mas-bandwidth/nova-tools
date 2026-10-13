@@ -822,7 +822,7 @@ source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=43 applied=43
+CONFIG MIGRATE file=try.json from=0 to=44 applied=44
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -1152,7 +1152,7 @@ UP seat create /home/you/nova-try/seat.env seat=coordinator
 UP smoke create one card on /home/you/nova-try/smoke/sprint.twin beside the throwaway repository /home/you/nova-try/smoke/repo
 
 $ nova-up --dry-run --root ./nova-try
-! UP REFUSED: --local is required; it wants nothing after it: the mode that sets up this one machine with no config; run: nova-up help
+! UP REFUSED: choose exactly one mode: --local sets up this machine; --seat writes the per-user seat environment; run: nova-up help
 ```
 
 ## nova-doctor

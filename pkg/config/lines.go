@@ -41,6 +41,10 @@ func rowLine(k *Kind, row Row, cut bool) string {
 	b.WriteString(" name=" + Value(row.Name))
 	for _, f := range k.Fields {
 		v := row.Fields[f.Name]
+		// An empty friend pronoun is unstated. A stored they/them stays the bare word.
+		if k.Name == KindFriend && f.Name == "pronouns" && v == "" {
+			v = DefaultFriendPronouns + "(unstated)"
+		}
 		if cut && f.Cut {
 			if r := []rune(v); len(r) > ListNoteRunes {
 				v = string(r[:ListNoteRunes]) + "..."
