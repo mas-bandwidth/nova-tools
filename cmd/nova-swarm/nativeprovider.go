@@ -54,6 +54,11 @@ const providerLogTailBytes = 64 << 10
 // providerEndedNoMessage is the reason of a run that ended on a tool result.
 const providerEndedNoMessage = "ended without a final message"
 
+// providerEndedLength is the reason of a run whose final message the harness
+// stopped at its output-token ceiling (finish "length"): the message was cut
+// off by the harness's own cap, so the missing result is not the card's.
+const providerEndedLength = "ended at the output token limit"
+
 // providerClass is the NATIVE line's class word; the member's nativeProvider matches it
 // with the launch grace's PROVIDER-5XX.
 const providerClass = "PROVIDER-FAIL"
@@ -108,22 +113,31 @@ func tailSince(path string, offset int64) []byte {
 	return raw
 }
 
-// endedOnATool is whether the run's last message in the session database is not a final
-// assistant message (an assistant message whose finish is a stop, a length or another
-// end of turn, never `tool-calls`), among the messages created at or after since. false
-// when the database or its reader is absent or holds no message of the run: an absence
-// says nothing.
-func endedOnATool(dataHome string, since time.Time) bool {
-	out, ok := sessionQuery(dataHome, `SELECT json_extract(data,'$.role'), COALESCE(json_extract(data,'$.finish'),'') FROM message WHERE time_created >= `+
-		strconv.FormatInt(since.UnixMilli(), 10)+` ORDER BY time_created DESC, id DESC LIMIT 1`)
-	if !ok {
-		return false
+// runEnd reads the run's end from the session database in ONE query (cold
+// read of #5668: providerEnd used to fetch the last message twice, two
+// sqlite3 runs on the critical path). endedTool is whether the run's last
+// message is not a final assistant message (an assistant message whose finish
+// is a stop, a length or another end of turn, never `tool-calls`); endedLength
+// is whether ANY assistant message of the run was stopped at the output-token
+// ceiling (finish "length") — not only the last one, because an intermediate
+// truncated turn followed by a brief clean stop is still the harness's cap,
+// not the card's end. ok is false when the database or its reader is absent
+// or holds no message of the run: an absence says nothing.
+func runEnd(dataHome string, since time.Time) (endedTool, endedLength, ok bool) {
+	at := strconv.FormatInt(since.UnixMilli(), 10)
+	out, qok := sessionQuery(dataHome, `SELECT EXISTS(SELECT 1 FROM message WHERE time_created >= `+at+`), `+
+		`COALESCE((SELECT json_extract(data,'$.role') FROM message WHERE time_created >= `+at+` ORDER BY time_created DESC, id DESC LIMIT 1),''), `+
+		`COALESCE((SELECT COALESCE(json_extract(data,'$.finish'),'') FROM message WHERE time_created >= `+at+` ORDER BY time_created DESC, id DESC LIMIT 1),''), `+
+		`EXISTS(SELECT 1 FROM message WHERE time_created >= `+at+` AND json_extract(data,'$.role') = 'assistant' AND json_extract(data,'$.finish') = 'length')`)
+	if !qok {
+		return false, false, false
 	}
-	role, finish, ok := strings.Cut(out, "\t")
-	if !ok {
-		return false // no message of this run
+	parts := strings.Split(out, "\t")
+	if len(parts) != 4 || parts[0] != "1" {
+		return false, false, false // no message of this run
 	}
-	return role != "assistant" || finish == "" || finish == "tool-calls"
+	role, finish := parts[1], parts[2]
+	return role != "assistant" || finish == "" || finish == "tool-calls", parts[3] == "1", true
 }
 
 // sessionProviderError is the cause the session database recorded on the newest message of
@@ -174,7 +188,9 @@ func sessionQuery(dataHome, query string) (string, bool) {
 // provider error: the harness's printed output (capture: what the run appended to
 // `<job>/harness-output.log`, where OPENCODE_PRINT_LOGS puts its ERROR lines), then its log
 // in the data home; else when the run exited clean ending on a tool result (`ended without
-// a final message`, class other). The session's record of the failed message, when it has
+// a final message`, class other) or on a final message the harness stopped at its
+// output-token ceiling (finish "length": `ended at the output token limit`, class other).
+// The session's record of the failed message, when it has
 // one, then names the cause (it keeps the provider's status: a 402 is `statusCode 402`
 // there).
 //
@@ -206,8 +222,17 @@ func providerEnd(headless, dataHome string, offset int64, since time.Time, rc in
 		found = swarm.CauseFromText(line)
 	} else if line := providerLogError(dataHome, offset); line != "" {
 		found = swarm.CauseFromText(line)
-	} else if rc == 0 && endedOnATool(dataHome, since) {
-		found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}
+	} else if rc == 0 {
+		endedTool, endedLength, hasEnd := runEnd(dataHome, since)
+		if !hasEnd {
+			return swarm.ProviderCause{}, false
+		} else if endedTool {
+			found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}
+		} else if endedLength {
+			found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedLength}
+		} else {
+			return swarm.ProviderCause{}, false
+		}
 	} else {
 		return swarm.ProviderCause{}, false
 	}
