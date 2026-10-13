@@ -186,6 +186,7 @@ const gitGuard = `reset)
 	for nova_a in "$@"; do
 		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
 		case "$nova_a" in
+		--) break ;;
 		--pathspec-from-file) nova_skip=1 ;;
 		-*) ;;
 		*) nova_npos=$((nova_npos + 1)); if [ "$nova_npos" -eq 1 ]; then nova_target="$nova_a"; fi ;;
