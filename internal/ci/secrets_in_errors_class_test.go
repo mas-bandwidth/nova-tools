@@ -85,17 +85,13 @@ func secretFiles(files []*treeFile) []secretcheck.File {
 // `<repo-relative package directory>.<Name>`. TestNoSecretReachesAnError holds
 // it complete against the tree.
 var secretOpeners = map[string]any{
-	"pkg/buildinfo.Parse":     buildinfo.Parse,
-	"pkg/bus/bustest.NewFake": bustest.NewFake,
-	"pkg/cardcost.ParseSpend": cardcost.ParseSpend,
-	"pkg/cardcost.ParseSpendChecked": func(value string) (cardcost.Usage, error) {
-		return cardcost.ParseSpendChecked("receipt_version:" + value)
-	},
-	"pkg/cardcost.ParseTotal": cardcost.ParseTotal,
-	"pkg/cardcost.ParseUsage": cardcost.ParseUsage,
-	"pkg/cardcost.ParseUsageChecked": func(value string) (cardcost.Usage, error) {
-		return cardcost.ParseUsageChecked("receipt_version=" + value)
-	},
+	"pkg/buildinfo.Parse":                         buildinfo.Parse,
+	"pkg/bus/bustest.NewFake":                     bustest.NewFake,
+	"pkg/cardcost.ParseSpend":                     cardcost.ParseSpend,
+	"pkg/cardcost.ParseSpendChecked":              cardcost.ParseSpendChecked,
+	"pkg/cardcost.ParseTotal":                     cardcost.ParseTotal,
+	"pkg/cardcost.ParseUsage":                     cardcost.ParseUsage,
+	"pkg/cardcost.ParseUsageChecked":              cardcost.ParseUsageChecked,
 	"pkg/cardhdr.ParseBase":                       cardhdr.ParseBase,
 	"pkg/cardhdr.ParseTest":                       cardhdr.ParseTest,
 	"pkg/cardtree.Parse":                          cardtree.Parse,
