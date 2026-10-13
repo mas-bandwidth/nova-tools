@@ -400,7 +400,7 @@ func TestMigrateWindowRefusesWhileAnotherNovaSessionHoldsTheDatabase(t *testing.
 	assert.Equal(t, schemaTip(), h2.store.version)
 
 	// nothing pending under --window with a held database: nothing to refuse, applied=0.
-	// The store is at the schema tip (0044). The file count is one behind that tip.
+	// The store is at the schema tip. The files are consecutive, so that tip is the file count.
 	h3 := newHarness()
 	h3.env["NOVA_PG_DSN"] = dsn
 	h3.store.version = schemaTip()
