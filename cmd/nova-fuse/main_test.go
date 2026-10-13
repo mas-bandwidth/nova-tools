@@ -1255,7 +1255,7 @@ var fuseAudit = audit.Config{
 		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
 		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
 		"main.go|parseBoxWith|name":     "the verb's own name, chosen by this file at every call site",
-		"json.go|parseFailure|message":  "the parser has already escaped caller-controlled fields; preserving its captured refusal byte-for-byte keeps the legacy non-JSON error stream",
+		"main.go|refuseCaptured|parser": "parseBoxWith builds this parser text from already escaped refusal fields; this helper is only the legacy non-JSON byte-preserving path, while JSON refusals use tool.Out.Render",
 	},
 	Shadows: []string{"fuse", "Fold", "why", "since"},
 	Imports: []string{
