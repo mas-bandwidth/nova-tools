@@ -3282,7 +3282,9 @@ OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. `slowtests` and `functional` work in any Go module; `local`,
+a budget. `functional --json <packages...>` projects its existing package selection
+as `{"packages":[...],"pattern":"..."}`; without --json its two make-facing lines
+remain unchanged. `slowtests` and `functional` work in any Go module; `local`,
 `new-rule` and `new-verb` need a nova-tools checkout; `github receipt` writes to
 a Redis store. It also reports its own build with `nova-ci version`.
 
@@ -3297,7 +3299,10 @@ binary alone. On your own module, pipe `go test -json` in and check that test
 run's exit status separately: `slowtests` checks timing, not whether the tests
 passed. The default budget is 60 seconds per package; a package over it is a
 `CI-SLOW` line, and exit 0 still means a measurement unless `--enforce` is given
-(then exit 1: the check ran and said no). A terminal on stdin or a line that is
+(then exit 1: the check ran and said no). An unenforced overrun also prints
+`CI-SLOW WARN within_budget=false enforce=false` and the command that enforces
+the same budget; pipe the same event stream into that command. In JSON the warning
+and `within_budget: false` are facts, with the command in `result.remedy`. A terminal on stdin or a line that is
 not a TestEvent is refused at exit 2, and so is a float flag that is not a finite
 number (`NaN`, `Inf`). `--json` prints the same verdict as one JSON object
 (`{"result":{...},"facts":{...},"items":[...]}`), and a refusal as that object
