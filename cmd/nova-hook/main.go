@@ -1,9 +1,10 @@
 // nova-hook hooks an identity in: the one record, in the bus Redis, of the
 // pushes its role needs (the bus, the sprint, its work), each live while its
 // holder renews a lease and proven while a proof stands (docs/SPEC-HOOK.md;
-// the module is hook/, the machine tla/Hook.tla). Every bus, friend and
-// sprint tool refuses an identity that is not hooked in, and its refusal
-// names this tool's hook verb. The verbs are hook, prove, unhook and status;
+// the module is hook/, the machine tla/Hook.tla). Tools gate the acting
+// identity; some bus mailbox proofs are advisory unless --require-push is set
+// or NOVA_BUS_REQUIRE_PUSH=1.
+// The verbs are hook, prove, unhook and status;
 // the dispatch, the banner, the help, the version verb, the refusals and the
 // output envelope are pkg/tool's, and the rules are the hook module's.
 package main
@@ -116,13 +117,13 @@ func hookTool(w world) *tool.Tool {
 	}
 	return &tool.Tool{
 		Name:  "nova-hook",
-		What:  "hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs",
+		What:  "hooks an acting identity to its role's live, proven pushes; some bus mailbox checks are advisory",
 		Stamp: version,
-		How: `role pushes: coordinator bus+sprint, friend bus+work, comms bus, member/reader work.
-a push is live while its holder renews hook:live:<name>:<push> (TTL ` + hook.LeaseTTL.String() + `) in the bus Redis,
-and proven while its proof stands (hook:proof:<name>:<push>); the record is hook:rec:<name>.
-hook holds the bus push under a Monitor and prints each push; prove answers its CHALLENGE.
-first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); the name a row of nova-config.`,
+		How: `roles: coordinator bus+sprint; friend bus+work; comms bus; member/reader work.
+strict gates require the acting name's role push to be live and proven.
+nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.
+a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.
+the record is in bus Redis; address: --redis, NOVA_BUS_REDIS, else fleet:bus.`,
 		ExitTable: "0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"ARMED", "CHALLENGE", "PUSH", "STATE", "STOP", "DRY-RUN"},
 		Verbs: []tool.Verb{
@@ -158,6 +159,7 @@ HOOK ARMED line's notes. It prints HOOK CHALLENGE nonce=<n> at start and every `
 nova-hook prove --as <me> --nonce <n>, within ` + hook.AnswerBound.String() + `, and the pushes it holds are proven. HOOK STATE state= line
 each time the record changes. Run it under the session's Monitor: each line is a notification. It stops on SIGINT or
 SIGTERM (HOOK STOP, exit 0; the leases lapse after ` + hook.LeaseTTL.String() + `), or when the record is unhooked under it (exit 1).
+This proof records a protocol response to the challenge; it does not establish foreground session presence or native idle-wake behavior.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
 --dry-run reads the record and prints the plan the real run would take (the role, the epoch, the pushes held and
