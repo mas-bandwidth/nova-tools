@@ -44,6 +44,7 @@ func TestConfigInvalidEnumListsOptions(t *testing.T) {
 	assert.Equal(t, "refused", obj.Result.Status)
 	assert.Equal(t, 2, obj.Result.Exit)
 	assert.Equal(t, []string{"metered", "plan", "both"}, obj.Facts.ValidOptions, out)
+	assert.Contains(t, out, `"remedy":"nova-config provider add -h"`)
 	require.NotEmpty(t, obj.Result.Why)
 	assert.Contains(t, obj.Result.Why[0], "metered")
 }

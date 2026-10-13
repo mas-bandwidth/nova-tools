@@ -208,8 +208,9 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	if len(problems) > 0 {
 		if opts := invalidEnumOptions(k, given); *asJSON && len(opts) > 0 {
-			o := tool.Refuse(strings.Join(problems, "; "))
+			o := tool.Refuse(plain(strings.Join(problems, "; ")))
 			o.Verb = verb
+			o.Remedy = helpFor(verb)
 			o.Fact("valid_options", opts)
 			return emit(stdout, o)
 		}
