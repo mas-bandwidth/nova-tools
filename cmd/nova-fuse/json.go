@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
