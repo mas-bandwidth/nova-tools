@@ -283,16 +283,41 @@ func TestMuseBudgetSourceUsesTheReportedFinalCounts(t *testing.T) {
 }
 
 func TestMuseTerminalTextRefusalUsesProviderClassification(t *testing.T) {
- t.Parallel()
- for _, tc := range []struct { reason, text, class string }{
-  {"null", "HTTP 401 invalid API key", CauseAuth},
-  {`""`, "HTTP 429 rate limit", CauseRateLimited},
-  {`" "`, "insufficient credit", CauseCredit},
- } { t.Run(tc.class, func(t *testing.T) {
-  t.Parallel()
-  capture := []byte(`{"payload":{"kind":"run_terminal","terminal":"failed","reason":`+tc.reason+`,"text":"`+tc.text+`"}}`)
-  cause, found := HeadlessFailure(harness.Muse, capture)
-  require.True(t, found)
-  assert.Equal(t, tc.class, cause.Class)
- }) }
+	t.Parallel()
+	for _, tc := range []struct{ reason, text, class string }{
+		{"null", "HTTP 401 invalid API key", CauseAuth},
+		{`""`, "HTTP 429 rate limit", CauseRateLimited},
+		{`" "`, "insufficient credit", CauseCredit},
+	} {
+		t.Run(tc.class, func(t *testing.T) {
+			t.Parallel()
+			capture := []byte(`{"payload":{"kind":"run_terminal","terminal":"failed","reason":` + tc.reason + `,"text":"` + tc.text + `"}}`)
+			cause, found := HeadlessFailure(harness.Muse, capture)
+			require.True(t, found)
+			assert.Equal(t, tc.class, cause.Class)
+		})
+	}
+}
+
+func TestMuseCachedTokensRemainDistinctFromExplicitCacheReads(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, capture, wantRead string
+		rawCache                int64
+	}{
+		{"cached only", `{"payload":{"kind":"model_completed","usage":{"cached_tokens":8}}}`, Dash, 8},
+		{"both counters", `{"payload":{"kind":"model_completed","usage":{"cached_tokens":8,"cache_read_tokens":3}}}`, "3", 8},
+		{"reported zero", `{"payload":{"kind":"model_completed","usage":{"cached_tokens":0,"cache_read_tokens":0}}}`, "0", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := harness.ReadMuse([]byte(tc.capture))
+			require.NoError(t, err)
+			assert.Equal(t, tc.rawCache, raw.Usage["cached_tokens"])
+			usage, err := HeadlessUsage(harness.Muse, []byte(tc.capture))
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantRead, usage.Values["cache_read"])
+			assert.Equal(t, Dash, usage.Values["cache_write"])
+		})
+	}
 }

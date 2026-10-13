@@ -561,6 +561,11 @@ zero prices record the subscription's zero marginal card cost. Raw usage stays
 under Muse's original names in the JSONL capture. The common usage table maps
 those reported classes without cache or reasoning subtraction, as the existing
 headless lanes do; overlapping raw classes are no metered price claim.
+`cached_tokens` remains a distinct raw Muse counter in that capture. It is
+not an alias for `cache_read_tokens`: the common `cache_read` column is
+reported only when Muse explicitly reports `cache_read_tokens`. Additional
+raw fields in the durable spend/consumer record belong to the separate
+subscription billing and raw receipts follow-up.
 The coordinator adds `frontier-muse` with
 `nova-config route add` and the selected model, deadline, subscription billing and zero marginal price sheet;
 the tools play writes no route or configuration-store value.

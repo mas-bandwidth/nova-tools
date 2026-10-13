@@ -97,8 +97,19 @@ func ReadMuse(out []byte) (MuseResult, error) {
 		case "run_terminal", "terminal":
 			result.Text = event.Text
 			result.Failure = ""
-			if event.Terminal != "completed" && event.Reason != nil {
-				result.Failure = *event.Reason
+			if event.Terminal != "completed" {
+				if event.Reason != nil {
+					result.Failure = strings.TrimSpace(*event.Reason)
+				}
+				if result.Failure == "" {
+					result.Failure = strings.TrimSpace(event.Text)
+				}
+				if result.Failure == "" {
+					result.Failure = strings.TrimSpace(event.Terminal)
+				}
+				if result.Failure == "" {
+					result.Failure = "run failed"
+				}
 			}
 		}
 	}
