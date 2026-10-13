@@ -46,7 +46,7 @@ that record:
 ```json
 {
   "version": 1,
-  "forge_identity": "/home/seat/.config/gh-profile"
+  "forge_identity": "/path/to/gh-profile"
 }
 ```
 

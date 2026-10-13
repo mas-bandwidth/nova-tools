@@ -6,6 +6,7 @@ package converge
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,7 +71,9 @@ func TestGHReadsOnlyTheSelectedForgeConfig(t *testing.T) {
 			if tc.seat {
 				path := filepath.Join(configHome, "nova-sprint", "seat-environment.json")
 				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-				require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"forge_identity":"`+forge+`"}`), 0o600))
+				body, err := json.Marshal(map[string]any{"version": 1, "forge_identity": forge})
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(path, body, 0o600))
 			}
 			capture := filepath.Join(configHome, "captured")
 			getenv := func(key string) string {

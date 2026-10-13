@@ -1,6 +1,7 @@
 package seatcred
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -47,8 +48,13 @@ func TestLoadSeatEnvironmentValidatesAndReturnsForgeReference(t *testing.T) {
 	private := filepath.Join(root, "private")
 	require.NoError(t, os.Mkdir(private, 0o700))
 	path := filepath.Join(private, EnvironmentFile)
-	body := `{"version":1,"environment":{"NOVA_SPRINT_REDIS":"127.0.0.1:6381"},"forge_identity":"` + forge + `"}`
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	body, err := json.Marshal(SeatEnvironment{
+		Version:       1,
+		Environment:   map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:6381"},
+		ForgeIdentity: forge,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, body, 0o600))
 
 	record, err := LoadSeatEnvironment(path)
 	require.NoError(t, err)
@@ -88,7 +94,9 @@ func TestForgeCommandEnvUsesSeatDefaultButKeepsExplicitOverrides(t *testing.T) {
 	require.NoError(t, os.Mkdir(forge, 0o700))
 	path := filepath.Join(root, EnvironmentDir, EnvironmentFile)
 	require.NoError(t, os.Mkdir(filepath.Dir(path), 0o700))
-	require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"forge_identity":"`+forge+`"}`), 0o600))
+	body, err := json.Marshal(SeatEnvironment{Version: 1, ForgeIdentity: forge})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, body, 0o600))
 	getenv := func(key string) string {
 		if key == "XDG_CONFIG_HOME" {
 			return root
