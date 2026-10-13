@@ -281,3 +281,18 @@ func TestMuseBudgetSourceUsesTheReportedFinalCounts(t *testing.T) {
 	budget, _, _ := usage.Budget()
 	assert.Equal(t, 21, budget)
 }
+
+func TestMuseTerminalTextRefusalUsesProviderClassification(t *testing.T) {
+ t.Parallel()
+ for _, tc := range []struct { reason, text, class string }{
+  {"null", "HTTP 401 invalid API key", CauseAuth},
+  {`""`, "HTTP 429 rate limit", CauseRateLimited},
+  {`" "`, "insufficient credit", CauseCredit},
+ } { t.Run(tc.class, func(t *testing.T) {
+  t.Parallel()
+  capture := []byte(`{"payload":{"kind":"run_terminal","terminal":"failed","reason":`+tc.reason+`,"text":"`+tc.text+`"}}`)
+  cause, found := HeadlessFailure(harness.Muse, capture)
+  require.True(t, found)
+  assert.Equal(t, tc.class, cause.Class)
+ }) }
+}

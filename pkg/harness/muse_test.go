@@ -134,3 +134,20 @@ func TestMuseTerminalAnswerReplacesAnEarlierFailure(t *testing.T) {
 	assert.Equal(t, "pong", got.Text)
 	assert.Empty(t, got.Failure)
 }
+
+func TestMuseFailureFallsBackToTerminalText(t *testing.T) {
+ t.Parallel()
+ cases := []struct { name, capture, want string }{
+  {"nil reason", `{"payload":{"kind":"run_terminal","terminal":"failed","reason":null,"text":"HTTP 401 invalid API key"}}`, "HTTP 401 invalid API key"},
+  {"empty reason", `{"payload":{"kind":"run_terminal","terminal":"failed","reason":"","text":"HTTP 429 rate limit"}}`, "HTTP 429 rate limit"},
+  {"blank reason", `{"payload":{"kind":"run_terminal","terminal":"failed","reason":" ","text":"insufficient credit"}}`, "insufficient credit"},
+  {"no text", `{"payload":{"kind":"run_terminal","terminal":"failed","reason":null}}`, "failed"},
+  {"no terminal detail", `{"payload":{"kind":"run_terminal"}}`, "run failed"},
+ }
+ for _, tc := range cases { t.Run(tc.name, func(t *testing.T) {
+  t.Parallel()
+  got, err := ReadMuse([]byte(tc.capture))
+  require.NoError(t, err)
+  assert.Equal(t, tc.want, got.Failure)
+ }) }
+}
