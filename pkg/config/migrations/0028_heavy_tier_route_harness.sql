@@ -9,7 +9,10 @@
 -- rest (a login that expired) is the provider's, and a word shared by the three would rest
 -- all three for one failure.
 ALTER TABLE config.routes DROP CONSTRAINT IF EXISTS routes_tier_check;
-ALTER TABLE config.routes ADD CONSTRAINT routes_tier_check CHECK (tier IN ('flash', 'pro', 'heavy'));
+-- A route's tier is the wider Tiers (kind.go), frontier beside flash, pro and heavy:
+-- a frontier card is dealt only on a frontier route. The tier kind's rows stay three
+-- (config.tiers below), so the seed keeps three rows and gains no frontier array.
+ALTER TABLE config.routes ADD CONSTRAINT routes_tier_check CHECK (tier IN ('flash', 'frontier', 'heavy', 'pro'));
 ALTER TABLE config.routes
     ADD COLUMN IF NOT EXISTS harness text NOT NULL DEFAULT 'opencode'
         CHECK (harness IN ('opencode', 'claude', 'codex', 'grok'));
