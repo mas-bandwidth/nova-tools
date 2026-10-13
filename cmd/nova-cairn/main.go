@@ -156,7 +156,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					f.Required("store", "the checkpoint store directory")
 					f.String("session", "", "one session to index; default every record")
 					checkID(f, "session")
-					f.String("since", "", "return entries strictly after an entry ID or RFC3339 instant")
+					f.String("since", "", "bound returned records strictly after an entry ID or RFC3339 instant; metadata reads remain unbounded")
 					f.Check(func(c *tool.Call) {
 						if c.Given("since") {
 							if _, err := time.Parse(time.RFC3339Nano, c.Str("since")); err != nil && !cairn.ValidID(c.Str("since")) {

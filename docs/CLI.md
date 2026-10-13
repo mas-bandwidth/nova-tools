@@ -3653,7 +3653,9 @@ entries at or before that instant. Missing IDs, invalid cursors, and an explicit
 empty cursor refuse at exit 2. Entry totals and per-session counts describe
 filtered matches; session context remains visible even when no entries match.
 Without `--since`, the index is unchanged. Filtering still reads the existing
-store index; it does not create a cache or change stored records.
+store index: the cursor bounds returned records, not reads. Physical metadata
+walking remains; indexed storage and bounded I/O are deferred to v1.3.
+It does not create a cache or change stored records.
 
 Receipt JSON includes the complete stored `text` by default. `--text=false`
 explicitly omits it. Plaintext continues to omit text unless `--text` is given;
