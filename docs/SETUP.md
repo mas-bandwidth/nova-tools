@@ -55,9 +55,12 @@ What `--local` never touches, and how each step decides it has nothing to do, is
 
 ## Write a fleet seat environment
 
-`nova-up --seat` writes the per-user `seat-environment.json` read by `nova-sprint`; it does not
-run the `--local` setup or infer fleet endpoints from its `mem:` twin. Supply the fleet's three
-endpoints explicitly (or through the matching environment variables):
+`nova-up --seat` writes the per-user `seat-environment.json`; it does not run the `--local`
+setup or infer fleet endpoints from its `mem:` twin. The matching nova-sprint reader is a
+separate, pending change in [nova-sprint PR #256](https://github.com/mas-bandwidth/nova-sprint/pull/256).
+Until that reader lands, nova-sprint and nova-bus continue to use their existing process
+environment settings; nova-bus does not read this file. Supply the fleet's three endpoints
+explicitly (or through the matching environment variables):
 
 ```sh
 nova-up --seat \

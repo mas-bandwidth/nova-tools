@@ -257,6 +257,17 @@ func TestUpSeatWritesFleetEndpointsAndPreservesReferences(t *testing.T) {
 	legacyAfter, err := os.ReadFile(legacyPath)
 	require.NoError(t, err)
 	assert.Equal(t, legacy, legacyAfter, "legacy seat.json remains unchanged")
+
+	// A validation refusal includes the parser's safe cause and leaves the
+	// malformed prior record untouched for repair.
+	invalid := []byte(`{"version":1,"unexpected":true}`)
+	require.NoError(t, os.WriteFile(path, invalid, 0o600))
+	code, out, errs = newFake(t).novaWithEnv("linux", getenv, "--seat")
+	assert.Equal(t, 2, code, out+errs)
+	assert.Contains(t, errs, "existing seat environment could not be validated (seat environment is invalid)")
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, invalid, data)
 }
 
 func TestUpSeatRefusesMissingOrCredentialBearingEndpoint(t *testing.T) {
@@ -296,6 +307,7 @@ func TestUpSeatRefusesMissingOrCredentialBearingEndpoint(t *testing.T) {
 	code, out, errs = newFake(t).novaWithEnv("linux", getenv, "--seat")
 	assert.Equal(t, 2, code, out+errs)
 	assert.Contains(t, errs, "directory is not safe to write")
+	assert.Contains(t, errs, "directory is writable by another user")
 	assert.NoFileExists(t, filepath.Join(unsafeDir, "seat-environment.json"))
 }
 

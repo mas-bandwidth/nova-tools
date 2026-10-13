@@ -3,12 +3,10 @@ package up
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"os/user"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
@@ -57,7 +55,7 @@ func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 
 	profile, exists, err := seatcred.ReadSeatEnvironment(getenv)
 	if err != nil {
-		return tool.Refuse("the existing seat environment could not be validated; it was left unchanged")
+		return tool.Refuse(fmt.Sprintf("the existing seat environment could not be validated (%v); it was left unchanged", err))
 	}
 	if !exists {
 		profile.Version = 1
@@ -65,41 +63,26 @@ func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 	profile.Environment = environment
 	data, err := json.MarshalIndent(profile, "", "  ")
 	if err != nil {
-		return tool.Refuse("the seat environment could not be encoded; no file was changed")
+		return tool.Refuse(fmt.Sprintf("the seat environment could not be encoded (%v); no file was changed", err))
 	}
 	data = append(data, '\n')
 	path, err := seatcred.SeatEnvironmentPath(getenv)
 	if err != nil {
-		return tool.Refuse("HOME must name an absolute directory when XDG_CONFIG_HOME is not absolute")
+		return tool.Refuse(fmt.Sprintf("HOME must name an absolute directory when XDG_CONFIG_HOME is not absolute (%v)", err))
 	}
 	if c.DryRun() {
 		return tool.Done().Note("dry run: seat environment validated; nothing written").Fact("fields", 3)
 	}
 	if err := ensureSeatEnvironmentDir(filepath.Dir(path)); err != nil {
-		return tool.Refuse("the per-user seat environment directory is not safe to write")
+		return tool.Refuse(fmt.Sprintf("the per-user seat environment directory is not safe to write (%v)", err))
 	}
 	if err := atomicfile.WriteFile(path, data, 0o600, atomicfile.ExactMode()); err != nil {
-		return tool.Refuse("the seat environment could not be written atomically; the previous file was left intact")
+		return tool.Refuse(fmt.Sprintf("the seat environment could not be written atomically (%v); the previous file was left intact", err))
 	}
 	return tool.Done().Note("seat environment written").Fact("fields", 3)
 }
 
-func validSeatEndpoint(value string) bool {
-	if strings.HasPrefix(value, "mem:") || strings.Contains(value, "://") || strings.ContainsAny(value, "@/?#") {
-		return false
-	}
-	for _, r := range value {
-		if r < 0x20 || r == 0x7f || r == '\'' || r == '"' || r == ' ' {
-			return false
-		}
-	}
-	host, port, err := net.SplitHostPort(value)
-	if err != nil || host == "" {
-		return false
-	}
-	n, err := strconv.ParseUint(port, 10, 16)
-	return err == nil && n > 0
-}
+func validSeatEndpoint(value string) bool { return seatcred.ValidSeatEndpoint(value) }
 
 func ensureSeatEnvironmentDir(path string) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
