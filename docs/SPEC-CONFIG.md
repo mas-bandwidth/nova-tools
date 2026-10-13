@@ -569,10 +569,13 @@ global ids, so they rise across kinds and never repeat.
 
 ## Apply
 
-`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
-machines (the ceilings), the fleet row (a friend with no beat is charged to
-its coordinator machine), friends, the sprint row, loops (each names a
-machine), routes:
+`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order
+(`KindNames`): machines (the ceilings), the fleet row (a friend with no beat
+is charged to its coordinator machine), friends, the sprint row, loops (each
+names a machine), routes, tiers. **A refusal never stops a later kind**
+(tla/ConfigApply.tla, `EveryKindAfterARefusalIsAttempted`): every kind is
+attempted, whatever an earlier kind refused, so a friend refused `CEILING`
+never leaves the sprint row unapplied (the v1.2.16 incident, 2026-10-13):
 
 **An enabled route with no price is refused before the plan and any write.**
 Every route row that is enabled (`enabled` absent or true) must carry a price
@@ -596,26 +599,47 @@ the tool never sets, guesses or defaults one.
    read stops before its results are used or cached;
 3. **refuse `CONFLICT`** when the stamp is greater than the Postgres
    revision: a newer Postgres applied it, and this process would roll it
-   back. Nothing is written;
+   back. Nothing of that kind is written; the plan is made first so the
+   rows it leaves unwritten count as refused for the ref rule (step 7), and
+   every later kind still runs;
 4. **plan** the difference: `ADD` for a row Redis lacks, `SET` for one that
    differs in any field (naming the fields), `REMOVE` for a name in Redis that
    Postgres has not. Adds and sets come in the kind's apply order (friends:
    the coordinator first, so `ns_friend_roles` has one to bootstrap and a
    handover writes the new coordinator before the old), then removes by
    name;
-5. with `--check`, print the plan as `CHECK` lines and stop; nothing is
-   written, not even the function library;
+5. with `--check`, print the plan as `CHECK` lines; nothing is written, not
+   even the function library. An op `--check` already knows would be
+   refused (the kind's `Check` on the row, or the ref rule) is named on a
+   `CONFIG CHECK REFUSED kind=<k> name=<row> why=<one line> run: <remedy>`
+   line, and the check goes on to every later kind;
 6. install the `nova_sprint` function library only when the store has none
    (`fn.LoadMissing`; a deployed one is never replaced);
 7. write every op in order through the runtime's own functions, each write
    carrying `--as` and the idempotency marker `config:<kind>:<rev>` into
-   `cap:log`. A refusal from a function (`CEILING`, an actor without the
-   coordinator role) stops the apply there, is printed with its remedy, and the
-   stamp is not moved;
+   `cap:log`. A refusal (`*RefusedError`: `CEILING`, an actor without the
+   coordinator role, a row still in use, an invalid row) is named on one line,
+   `CONFIG REFUSED kind=<k> name=<row> why=<one line> run: <remedy>`, and the
+   kind's remaining ops are still written (`DoOps`). **The ref rule:** a row
+   whose ref or seq field names a row refused earlier in this run (the sprint
+   row's coordinator, a loop's machine, a tier's routes, the fleet's machines)
+   is refused with that reason (`ErrRefusedRef`) and never written
+   half-referenced (`RefRefused`);
 8. **stamp** `config:decl rev:<kind> = <rev>, at:<kind> = <server ms>`,
    compare-and-set: inside `WATCH config:decl`, the stamp is written only
    while it still reads the value step 2 read; a stamp that moved is
-   `CONFLICT`.
+   `CONFLICT`. **A kind with any refused op is not stamped**
+   (`StampedKindHasNoRefusal`): its revision stays behind, so `nova-config
+   status` still says so and the next apply retries only the diff.
+
+What still stops the run at once: a store or connection error that is not a
+refusal (exit 2). The run ends with `CONFIG APPLY OK kinds=<n>` and exit 0
+when nothing was refused; else with one `CONFIG APPLY REFUSED
+kinds=<k:count,...> applied=<kinds fully applied, or -> run: <the first remedy>` line and exit 1
+(`CONFIG CHECK REFUSED ...` under `--check`, which prints no end line when
+nothing would be refused). The per-kind `CONFIG APPLY kind=...` line is
+printed for each kind that applied, and not for a refused one; a `CONFLICT`
+is said on stderr, as before, and counted in the end line.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
 zero, the revision unchanged (steady apply is 8 Redis round trips down from 18, two of them the loop

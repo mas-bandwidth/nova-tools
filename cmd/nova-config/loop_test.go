@@ -186,7 +186,7 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 
 	code, out, _ = h.run(t, "apply", "--kind", "loop")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY ADD kind=loop name=l1\nCONFIG APPLY kind=loop add=1 set=0 remove=0 rev=2 ms=0\n", out)
+	assert.Equal(t, "APPLY ADD kind=loop name=l1\nCONFIG APPLY kind=loop add=1 set=0 remove=0 rev=2 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	assert.Equal(t, []string{"write loop l1"}, h.redis.log)
 	assert.Equal(t, `["/bin/prog"]`, h.redis.views["loop"]["l1"]["argv"])
 	assert.Equal(t, int64(2), h.redis.revs["loop"])

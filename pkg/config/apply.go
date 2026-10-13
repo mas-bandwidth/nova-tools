@@ -100,6 +100,74 @@ type Result struct {
 	Check               bool // --check: nothing was written
 	RedisRev            int64
 	PreparedForWritesOK bool
+	// Refused is every op of the kind that was not written: a write the
+	// runtime refused, or a row whose ref names a row refused earlier in the
+	// run; under check, the ops the kind's Check or the ref rule already
+	// knows would be refused (docs/SPEC-CONFIG.md, "Apply").
+	Refused []Refusal
+	// Written counts the ops written; Stamped is true when the kind's
+	// revision was stamped.
+	Written int
+	Stamped bool
+}
+
+// Refusal is one op an apply did not write, and why: Err is a
+// *RefusedError (ConfigApply.tla, refusedRows).
+type Refusal struct {
+	Kind, Name string
+	Err        error
+}
+
+// ErrRefusedRef is the refusal of a row whose ref names a row refused
+// earlier in the same run: it is never written half-referenced
+// (docs/SPEC-CONFIG.md, "Apply"; ConfigApply.tla RefRefused).
+var ErrRefusedRef = errors.New("names a row refused earlier in this run")
+
+// Earlier is the rows an every-kind run has refused so far, by kind and
+// then name, each with its one-line reason; the name "*" stands for every
+// row of a kind refused whole (ConfigApply.tla, refusedRows).
+type Earlier map[string]map[string]string
+
+// Add records one refused row.
+func (e Earlier) Add(kind, name, why string) {
+	if e[kind] == nil {
+		e[kind] = map[string]string{}
+	}
+	e[kind][name] = why
+}
+
+// why returns the reason a row of kind was refused earlier, if it was.
+func (e Earlier) why(kind, name string) (string, bool) {
+	rows := e[kind]
+	if rows == nil || name == "" {
+		return "", false
+	}
+	if w, ok := rows[name]; ok {
+		return w, true
+	}
+	w, ok := rows["*"]
+	return w, ok
+}
+
+// refRefusal is the ref rule (ConfigApply.tla RefRefused): an add or set
+// whose ref or seq field names a row refused earlier in this run is refused
+// with that row's reason.
+func refRefusal(k *Kind, op Op, earlier Earlier) error {
+	if len(earlier) == 0 || (op.Op != OpAdd && op.Op != OpSet) {
+		return nil
+	}
+	for _, f := range k.Fields {
+		if f.Ref == "" || (f.Type != TypeRef && f.Type != TypeSeq) {
+			continue
+		}
+		for _, name := range strings.Split(op.Row.Fields[f.Name], ",") {
+			name = strings.TrimSpace(name)
+			if why, ok := earlier.why(f.Ref, name); ok {
+				return &RefusedError{Err: ErrRefusedRef, Detail: fmt.Sprintf("%s %s: its %s names %s %s, refused earlier in this run (%s)", k.Name, op.Row.Name, f.Name, f.Ref, name, why)}
+			}
+		}
+	}
+	return nil
 }
 
 // ErrConflict is the compare-and-set refusal: Redis holds a revision of
@@ -138,21 +206,36 @@ func Idem(kind string, rev int64) string { return fmt.Sprintf("config:%s:%d", ki
 // sprint field is written and one OpHeld line is said. The seat moves by
 // nova-sprint's seat verb, or by ApplyMovingSeat (nova-config apply --move-seat).
 func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
-	return apply(ctx, st, ap, kind, actor, check, false, report)
+	return apply(ctx, st, ap, kind, actor, check, false, nil, report)
+}
+
+// ApplyInRun is one kind of an every-kind run (nova-config apply): Apply,
+// or ApplyMovingSeat when moveSeat is set, with the rows the run has
+// refused so far in earlier, so a row whose ref names one of them is
+// refused and not written (ConfigApply.tla, DoOps and RefRefused).
+func ApplyInRun(ctx context.Context, st Store, ap Applier, kind, actor string, check, moveSeat bool, earlier Earlier, report func(Op)) (Result, error) {
+	return apply(ctx, st, ap, kind, actor, check, moveSeat, earlier, report)
 }
 
 // ApplyMovingSeat is Apply with the seat move named (docs/SPEC-CONFIG.md,
 // "sprint"): it writes a sprint:coordinator the live store disagrees with.
 // nova-config apply --move-seat calls it.
 func ApplyMovingSeat(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
-	return apply(ctx, st, ap, kind, actor, check, true, report)
+	return apply(ctx, st, ap, kind, actor, check, true, nil, report)
 }
 
 // apply is Apply with the seat move named: moveSeat (ApplyMovingSeat, the
 // owner's word) writes a sprint:coordinator the live store disagrees with;
 // without it the publish holds it, keeps the live value and says the one
 // OpHeld line (docs/SPEC-CONFIG.md, "sprint").
-func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check, moveSeat bool, report func(Op)) (Result, error) {
+//
+// A refused op never stops the kind (ConfigApply.tla DoOps): a write the
+// runtime refuses with a *RefusedError, or a row the ref rule refuses, is
+// recorded in Result.Refused and the kind's remaining ops are still
+// written; a kind with any refusal is not stamped (DoStamp), and the first
+// refusal is returned so a caller of one kind still sees it. A store or
+// connection error that is not a refusal, and a CONFLICT, stop at once.
+func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check, moveSeat bool, earlier Earlier, report func(Op)) (Result, error) {
 	k, ok := Lookup(kind)
 	if !ok {
 		return Result{}, fmt.Errorf("unknown kind %q; the kinds are %s", kind, strings.Join(KindNames(), ", "))
@@ -192,10 +275,13 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		return Result{}, err
 	}
 	res := Result{Kind: kind, Rev: rev, Check: check, RedisRev: redisRev}
+	// The plan is made before the CONFLICT refusal so the caller can name
+	// the rows it leaves unwritten (ConfigApply.tla PendingMachines); nothing
+	// is written.
+	res.Ops = Plan(k, rows, views)
 	if redisRev > rev {
 		return res, Conflict(kind, redisRev, rev)
 	}
-	res.Ops = Plan(k, rows, views)
 	for _, op := range res.Ops {
 		switch op.Op {
 		case OpAdd:
@@ -209,9 +295,12 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 	if check {
 		for _, op := range res.Ops {
 			report(op)
-			reportSeatHold(kind, moveSeat, op, report)
+			row, _ := reportSeatHold(kind, moveSeat, op, report)
+			if err := knownRefusal(k, op, row, earlier); err != nil {
+				res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err})
+			}
 		}
-		return res, nil
+		return res, firstRefusal(res)
 	}
 	if len(res.Ops) > 0 {
 		if err := ap.Prepare(ctx); err != nil {
@@ -244,6 +333,10 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		// every other field is written, the live value stands and the one
 		// OpHeld line is said — unless the caller names the seat move.
 		row, _ := reportSeatHold(kind, moveSeat, op, report)
+		if err := refRefusal(k, op, earlier); err != nil {
+			res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err})
+			continue
+		}
 		switch op.Op {
 		case OpAdd, OpSet:
 			err = ap.Write(ctx, kind, row, op.Prev, actor, idem)
@@ -251,15 +344,52 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 			err = ap.Remove(ctx, kind, op.Name, actor, idem)
 		}
 		if err != nil {
+			// A refusal names the row and the kind goes on (ConfigApply.tla
+			// DoOps); anything else stops the apply at once.
+			if Refused(err) && !IsConflict(err) {
+				res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err})
+				continue
+			}
 			return res, err
 		}
+		res.Written++
+	}
+	// A kind with a refused op is not stamped: its revision stays behind,
+	// so status says so and the next apply retries only the diff
+	// (ConfigApply.tla DoStamp, StampedKindHasNoRefusal).
+	if len(res.Refused) > 0 {
+		return res, firstRefusal(res)
 	}
 	if len(res.Ops) > 0 || redisRev != rev {
 		if err := ap.Stamp(ctx, kind, redisRev, rev); err != nil {
 			return res, err
 		}
+		res.Stamped = true
 	}
 	return res, nil
+}
+
+// knownRefusal is what --check already knows would be refused for one op:
+// the ref rule, then the kind's Check on the row it would write.
+func knownRefusal(k *Kind, op Op, row Row, earlier Earlier) error {
+	if err := refRefusal(k, op, earlier); err != nil {
+		return err
+	}
+	if k.Check != nil && (op.Op == OpAdd || op.Op == OpSet) {
+		if err := k.Check(row); err != nil {
+			return &RefusedError{Err: ErrInvalid, Detail: err.Error()}
+		}
+	}
+	return nil
+}
+
+// firstRefusal is the error a refused kind returns: its first refusal, so a
+// one-kind caller still sees ErrCeiling, ErrActor and the rest.
+func firstRefusal(res Result) error {
+	if len(res.Refused) == 0 {
+		return nil
+	}
+	return res.Refused[0].Err
 }
 
 // heldLine is the one line a held seat says: the live coordinator and the

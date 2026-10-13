@@ -222,7 +222,7 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 
 	code, out, _ = h.run(t, "apply", "--kind", "route")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=1 ms=0\n", out)
+	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=1 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	assert.Equal(t, []string{"write route r1"}, h.redis.log)
 	assert.Equal(t, "true", h.redis.views["route"]["r1"]["enabled"])
 
@@ -236,7 +236,7 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	code, out, _ = h.run(t, "apply", "--kind", "route")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=2 ms=0\n", out)
+	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=2 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	view := h.redis.views["route"]["r1"]
 	assert.Equal(t, "0.10000000000000000000000000001", view["price_input"], "a decimal, never through a float")
 	assert.Equal(t, "2.5", view["price_output"])
