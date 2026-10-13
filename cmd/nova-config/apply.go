@@ -33,9 +33,11 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		return refuse(stderr, verb, "apply takes no arguments; flags only")
 	}
 	var problems []string
+	var invalidKind bool
 	kinds := config.KindNames()
 	if *kind != "" {
 		if _, ok := config.Lookup(*kind); !ok {
+			invalidKind = true
 			problems = append(problems, fmt.Sprintf("--kind %s: want one of %s", *kind, strings.Join(config.KindNames(), ", ")))
 		}
 		kinds = []string{*kind}
@@ -61,6 +63,9 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		problems = append(problems, err.Error())
 	}
 	if len(problems) > 0 {
+		if invalidKind {
+			return refuseOptions(stderr, verb, strings.Join(problems, "; "), config.KindNames())
+		}
 		return refuse(stderr, verb, strings.Join(problems, "; "))
 	}
 	st, err := d.openStore(ctx, dsn)
