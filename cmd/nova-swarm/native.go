@@ -2408,7 +2408,7 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 			}
 			if err != nil {
 				usage.Values["raw_usage"] = "INVALID"
-				fmt.Fprintf(errOut, "NATIVE NOTE: invalid raw receipt: %s\n", err)
+				fmt.Fprintf(errOut, "NATIVE NOTE: invalid raw receipt: %s\n", oneline.Err(err))
 			} else {
 				usage.Values["raw_usage"] = encoded
 			}

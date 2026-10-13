@@ -129,7 +129,11 @@ func TestABalanceCarriesItsDate(t *testing.T) {
 				assert.Contains(t, err.Error(), tc.want)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, "0", row.Fields["balance_usd"])
+				if tc.raw["balance_usd"] != "" {
+					assert.Equal(t, "0", row.Fields["balance_usd"])
+				} else {
+					assert.Empty(t, row.Fields["balance_usd"])
+				}
 			}
 		})
 	}
