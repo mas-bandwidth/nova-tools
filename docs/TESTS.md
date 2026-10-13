@@ -893,6 +893,17 @@ so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
 the test's own directory. The ids come from `--op`, so every line reads the same
 twice.
 
+The extracted fixture supports a complete offline decision and calibration
+loop:
+
+```text
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-wrong
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-ok
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-wrong --label wrong
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-ok --label ok
+$ nova-decide calibrate --record ./decide-example/decisions.jsonl --decision example --question clear --positive wrong --negative ok --bars 0.5
+```
+
 ### First run
 
 ```text
