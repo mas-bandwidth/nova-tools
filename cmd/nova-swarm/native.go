@@ -2404,7 +2404,7 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 			}
 			encoded, err := cardcost.EncodeRaw(raw)
 			if rr == "unreadable" {
-				err = fmt.Errorf("Muse original usage could not be read; preserve source and start a fresh attempt")
+				err = fmt.Errorf("muse original usage could not be read; preserve source and start a fresh attempt")
 			}
 			if err != nil {
 				usage.Values["raw_usage"] = "INVALID"

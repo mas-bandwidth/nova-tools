@@ -53,7 +53,7 @@ func (r *RawUsage) Validate() error {
 		}
 		for key, n := range record.Tokens {
 			if !slices.Contains(museRawKeys, key) || n < 0 {
-				return fmt.Errorf("invalid raw counter %q", key)
+				return fmt.Errorf("invalid raw counter")
 			}
 		}
 	}
@@ -82,16 +82,16 @@ func DecodeRaw(s string) (*RawUsage, error) {
 	}
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return nil, fmt.Errorf("invalid raw usage encoding: %w", err)
+		return nil, fmt.Errorf("invalid raw usage encoding")
 	}
 	if err := validateRawJSON(b); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid raw usage JSON")
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	var r RawUsage
 	if err = d.Decode(&r); err != nil {
-		return nil, fmt.Errorf("invalid raw usage JSON: %w", err)
+		return nil, fmt.Errorf("invalid raw usage JSON")
 	}
 	var extra any
 	if err = d.Decode(&extra); err != io.EOF {
@@ -135,7 +135,7 @@ func ParseUsageChecked(line string) (Usage, error) {
 		n, err := strconv.Atoi(v)
 		u.ReceiptVersion = n
 		if err != nil || n != ReceiptVersion {
-			return u, fmt.Errorf("unsupported receipt version %q", v)
+			return u, fmt.Errorf("unsupported receipt version")
 		}
 	}
 	if raw, ok := values["raw_usage"]; ok {
