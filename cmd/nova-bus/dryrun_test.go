@@ -80,6 +80,5 @@ func TestSendDryRunHandlesCall(t *testing.T) {
 	require.NotEmpty(t, refusal.Result.Why)
 	assert.Contains(t, refusal.Result.Why[0], io.ErrUnexpectedEOF.Error())
 	assert.NotContains(t, refusal.Result.Why[0], "Call.DryRun", "the safety guard must not replace the store refusal")
-	require.NotEmpty(t, refusal.Notes)
-	assert.Contains(t, refusal.Notes[0], "Call.DryRun", "the safety guard remains visible beside the underlying refusal")
+	assert.Empty(t, refusal.Notes, "send reads Call.DryRun before setup, so the safety fallback is unnecessary")
 }
