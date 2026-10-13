@@ -516,7 +516,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by, and the optional streams and kinds restrictions on the work the friend may be dealt",
+		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by (a stated value, or unstated, which reads they/them), and the optional streams and kinds restrictions on the work the friend may be dealt",
 		Fields: []Field{
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers the friend can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
@@ -526,7 +526,7 @@ var Kinds = []*Kind{
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
-			{Name: "pronouns", Type: TypeEnum, Enum: FriendPronounSets, Default: DefaultFriendPronouns, Help: "the pronouns the friend goes by, one of " + strings.Join(FriendPronounSets, ", ") + "; they/them when not stated, and never \"it\": the daemon's texts about the friend say them"},
+			{Name: "pronouns", Type: TypeEnum, Enum: FriendPronounSets, Default: DefaultFriendPronouns, Nullable: true, Help: "the pronouns the friend goes by, one of " + strings.Join(FriendPronounSets, ", ") + "; an empty value is unstated and reads and prints as they/them(unstated); a stated value prints as itself; a set that names other fields leaves the stored value; never \"it\": the daemon's texts about the friend say them"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -1250,14 +1250,16 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 	return row, nil
 }
 
-// zero is the canonical value add stores for a field it is not given:
-// Default when the field has one, else the type's zero.
+// zero is the canonical value add stores for a field it is not given.
+// An omitted Nullable field stays unset, including when Default names the
+// value a reader substitutes for that empty store. Otherwise Default, else
+// the type's zero.
 func (f Field) zero() string {
 	switch {
-	case f.Default != "":
-		return f.Default
 	case f.Nullable:
 		return ""
+	case f.Default != "":
+		return f.Default
 	case f.Type == TypeInt:
 		return "0"
 	case f.Type == TypeBool:

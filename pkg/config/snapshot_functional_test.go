@@ -83,8 +83,11 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 
 	missing, err := ap.Snapshot(ctx)
 	require.NoError(t, err)
-	missing.Beats[machines[len(machines)-1].Name] = nil
+	down := machines[len(machines)-1].Name
+	delete(missing.Beats, down)
 	inv, err = BuildInventory(missing, "")
-	require.ErrorContains(t, err, "bench_os is unset in beat field os")
-	assert.Nil(t, inv)
+	require.NoError(t, err, "a machine with no beat is listed with a NOTE, never a refusal of the list")
+	assert.Contains(t, inv.All.Hosts, down)
+	assert.NotContains(t, inv.Meta.Hostvars[down], "nova_os")
+	assert.Contains(t, inv.Notes, "machine "+down+": no beat (the machine is down, or its member has never beaten); listed from its row; the play gathers os, arch and cores from its facts")
 }

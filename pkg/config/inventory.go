@@ -76,6 +76,12 @@ type AnsibleInventory struct {
 	StoreDeployer AnsibleGroup `json:"store_deployer"`
 	Runners       AnsibleGroup `json:"runners"`
 	TLA           AnsibleGroup `json:"tla"`
+	// Notes are what the inventory derived or left out rather than refused:
+	// a roles field derived as migration 0042 derives it, a host with no beat
+	// or a beat missing facts. They are never part of the JSON (ansible reads
+	// every top-level key as a group); the verb prints each as a NOTE line on
+	// stderr.
+	Notes []string `json:"-"`
 }
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
@@ -121,13 +127,22 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	hostvars := make(map[string]map[string]any, len(names))
 	runnerHosts, tlaHosts := []string{}, []string{}
 	benchHosts, serviceHosts, coordinatorHosts := []string{}, []string{}, []string{}
+	notes := []string{}
 	machineKind, _ := Lookup(KindMachine)
 	rolesField, _ := machineKind.Field("roles")
 	for _, m := range names {
 		v := snap.Machines[m]
 		rolesRaw, hasRoles := v["roles"]
 		if !hasRoles {
-			return nil, fmt.Errorf("machine %s: registry_roles is missing from applied machine row field roles; reapply the machine rows with: nova-config apply --kind machine", m)
+			// A row applied before migration 0042 has no roles field: the
+			// previous release's store. Its roles are derived as 0042 derives
+			// them, and said so; only a row with nothing to derive from (no
+			// applied fleet row) is refused.
+			if snap.Revs[KindFleet] == 0 {
+				return nil, fmt.Errorf("machine %s: registry_roles is missing from applied machine row field roles and cannot be derived: the fleet row was never applied; run: nova-config apply", m)
+			}
+			rolesRaw = DeriveMachineRoles(m, snap.Fleet)
+			notes = append(notes, fmt.Sprintf("machine %s: the applied row has no roles field (applied before migration 0042); derived %s as 0042 does (bench; coordination from the fleet coordinator; services from the fleet store); to store it: nova-config apply --kind machine", m, rolesRaw))
 		}
 		roles, roleErr := rolesField.Canonical(rolesRaw)
 		if roleErr != nil || roles != rolesRaw {
@@ -155,13 +170,23 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 			return nil, fmt.Errorf("machine %s: slots_capacity must be greater than 0 from machine row field slots; run: nova-config machine show %s", m, m)
 		}
 		runners, _ := strconv.Atoi(v["runners"])
+		// The measured facts are optional: a machine that is down, or one whose
+		// beat predates a fact, is listed from its row and the facts it has,
+		// never refused (one down host never takes the whole fleet's inventory
+		// with it). The play gathers os, arch and cores from its own facts for
+		// any host whose beat lacks them (fleet/tools.yml).
 		beat := snap.Beats[m]
-		if beat == nil || beat.OS == "" {
-			return nil, fmt.Errorf("machine %s: bench_os is unset in beat field os; restore or start the machine's configured beat publisher so bench:%s:beat contains os and ncpu, then rerun nova-config inventory", m, m)
+		if beat == nil {
+			beat = &Beat{}
+			notes = append(notes, fmt.Sprintf("machine %s: no beat (the machine is down, or its member has never beaten); listed from its row; the play gathers os, arch and cores from its facts", m))
+		} else if missing := missingBeatFacts(beat); len(missing) > 0 {
+			notes = append(notes, fmt.Sprintf("machine %s: its beat has no %s; listed with the facts it has; the play gathers the rest from its facts", m, strings.Join(missing, ", ")))
 		}
-		cores, err := inventoryCount(m, "cores", "beat field ncpu", beat.Cores)
-		if err != nil {
-			return nil, fmt.Errorf("%w; restore or start the machine's configured beat publisher so bench:%s:beat contains os and ncpu, then rerun nova-config inventory", err, m)
+		cores, hasCores := 0, beat.Cores != ""
+		if hasCores {
+			if cores, err = inventoryCount(m, "cores", "beat field ncpu", beat.Cores); err != nil {
+				return nil, err
+			}
 		}
 		width, hasWidth := 0, false
 		if v["width"] != "" {
@@ -170,7 +195,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 				return nil, err
 			}
 			hasWidth = true
-		} else {
+		} else if hasCores {
 			width, hasWidth = cores/2, true // The machine row's nullable width defaults to half its beat cores.
 		}
 		if hasWidth && width > slots {
@@ -193,11 +218,15 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if hasWidth {
 			hv["slots_share"] = width
 		}
-		hv["bench_os"], hv["nova_os"] = beat.OS, beat.OS
+		if beat.OS != "" {
+			hv["bench_os"], hv["nova_os"] = beat.OS, beat.OS
+		}
 		if beat.Arch != "" {
 			hv["nova_arch"] = beat.Arch
 		}
-		hv["cores"] = cores
+		if hasCores {
+			hv["cores"] = cores
+		}
 		if u := v["user"]; u != "" {
 			hv["ansible_user"] = u
 		}
@@ -260,7 +289,24 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		StoreDeployer: AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
 		Runners:       AnsibleGroup{Hosts: runnerHosts},
 		TLA:           AnsibleGroup{Hosts: tlaHosts},
+		Notes:         notes,
 	}, nil
+}
+
+// missingBeatFacts names the facts a beat lacks, in the order the play reads
+// them: os, arch, ncpu.
+func missingBeatFacts(b *Beat) []string {
+	missing := []string{}
+	if b.OS == "" {
+		missing = append(missing, "os")
+	}
+	if b.Arch == "" {
+		missing = append(missing, "arch")
+	}
+	if b.Cores == "" {
+		missing = append(missing, "ncpu")
+	}
+	return missing
 }
 
 // matchRoleReference keeps the explicit inventory role and fleet singleton
@@ -502,6 +548,10 @@ type fixtureMachines map[string]fixtureMachine
 
 // fixtureMachine is one machine the fixture names; OS, Arch and Cores stand
 // in for the machine's beat, while Width is the nullable machine-row field.
+//
+// Roles is a pointer so a machine without the key stands for a row applied
+// before migration 0042 (fleet/testdata/inventory-fixture-n-1.yml is one),
+// and `roles: ""` for a row that carries no role.
 type fixtureMachine struct {
 	User    string  `yaml:"user"`
 	Seat    string  `yaml:"seat"`
@@ -567,11 +617,13 @@ func LoadFixture(path string) (*Snapshot, error) {
 		if !NamePattern.MatchString(m) {
 			return nil, fmt.Errorf("--fixture %s: machine %q is not a row name (lower-case letters, digits and dashes)", path, m)
 		}
-		if r.Roles == nil {
-			return nil, fmt.Errorf("--fixture %s: machine %s roles is missing; include an explicit roles list (empty is allowed)", path, m)
-		}
 		machine := View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
-		machine["roles"] = *r.Roles
+		// A machine with no roles key is a row applied before migration
+		// 0042, as the previous release's store holds it: the field stays
+		// absent, and the inventory derives it as 0042 does, with a NOTE.
+		if r.Roles != nil {
+			machine["roles"] = *r.Roles
+		}
 		if r.Width != nil {
 			machine["width"] = strconv.Itoa(*r.Width)
 		}
