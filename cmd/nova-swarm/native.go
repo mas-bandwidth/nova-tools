@@ -734,7 +734,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// standard's plaintext-key drift (docs/SPEC-SECRETS.md, the dogfooding ten), left
 	// in a data home the hygiene reap may not visit for days. The secret shape still
 	// writes nothing at all.
-	if cfg.authFile != "" {
+	if cfg.authFile != "" && cfg.headless() != harness.Muse {
 		if reason := copyAuth(cfg.authFile, provider, dataHome); reason != "" {
 			releaseSlot()
 			releaseLease()
@@ -999,6 +999,12 @@ func wall(p *nativePrepared, errOut io.Writer) (*nativeWalled, nativeRunResult, 
 	// allow rule is still a wall -- a card naming no repos runs inside it without the rule,
 	// and one naming repos is refused, never unwalled. A machine with no wall binary at all
 	// refuses unless --no-wall owns every read and write the child makes.
+	if p.cfg.headless() == harness.Muse {
+		if err := os.WriteFile(filepath.Join(p.jobDir, "muse-prompt.txt"), []byte(nativePrompt(p.cfg)), 0o600); err != nil {
+			refuseNative(errOut, "the Muse prompt file could not be written; check the job directory permissions")
+			return nil, nativeRunResult{}, 2
+		}
+	}
 	runPath := p.launch[0]
 	runArgv := p.launch[1:]
 	wall := p.cfg.sandbox
@@ -1062,6 +1068,14 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 		}
 	}
 	childEnv := withOutputTokenMax(nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath), p.cfg.outputMax())
+	if p.cfg.headless() == harness.Muse {
+		key := os.Getenv(harness.MuseKeyEnv)
+		if strings.TrimSpace(key) == "" {
+			refuseNative(errOut, "Muse has no META_API_KEY; run the member with --pass META_API_KEY and its seat login, or add META_API_KEY to NOVA_SWARM_KEYS names")
+			return nil, nativeRunResult{}, 2
+		}
+		_, childEnv = harness.MuseInput(childEnv)
+	}
 	// A headless harness runs from a private home under the data home, seeded with its credential
 	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one. claude
 	// copies no file: its login is the token --pass hands it by name, and a run without one says so.
@@ -1214,6 +1228,18 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	cmd.Env = s.childEnv
 	cmd.Dir = s.prep.jobDir
 	cmd.Stdin = s.devNull
+	if s.prep.cfg.headless() == harness.Muse {
+		// A fresh reader per retry: stdin is consumed by the previous attempt.
+		if err := museNativeInput(cmd, os.Environ()); err != nil {
+			for _, file := range []*os.File{s.log, s.harnessOut} {
+				if closeErr := file.Close(); closeErr != nil {
+					refuseNative(errOut, fmt.Sprintf("the refused Muse launch log could not be closed: %s; check job storage before retrying", oneline.Err(closeErr)))
+				}
+			}
+			refuseNative(errOut, err.Error())
+			return nil, nativeRunResult{}, 2
+		}
+	}
 	cmd.Stdout = s.capture
 	cmd.Stderr = io.MultiWriter(s.capture, &s.wallOut)
 	attemptStart := time.Now()
@@ -2629,7 +2655,11 @@ func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]strin
 	// a headless harness has one argv shape of its own (swarm.HeadlessArgv), the model
 	// the part of the route after its provider
 	if k := cfg.headless(); k != "" {
-		return swarm.HeadlessArgv(k, bin, cfg.model[len(provider)+1:], nativePrompt(cfg))
+		prompt := nativePrompt(cfg)
+		if k == harness.Muse {
+			prompt = filepath.Join(cfg.slotDir, "jobs", cfg.label, "muse-prompt.txt")
+		}
+		return swarm.HeadlessArgv(k, bin, cfg.model[len(provider)+1:], prompt)
 	}
 	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
 		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: nativePrompt(cfg),
@@ -3163,4 +3193,16 @@ func deadlineReportDue(res nativeRunResult, handedBack, providerEnded bool) bool
 	return res.deadlined && !res.lost && !res.idled && !res.terminated && res.stopped == "" &&
 		res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) &&
 		!handedBack && !providerEnded
+}
+
+// museNativeInput is the one transport of a provider key into the walled launch.
+// Native retains the value in memory; the wall and all tools inherit no key.
+func museNativeInput(cmd *exec.Cmd, environ []string) error {
+	key, _ := harness.MuseInput(environ)
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("muse has no META_API_KEY; run the member with --pass META_API_KEY and its seat login, or add META_API_KEY to NOVA_SWARM_KEYS names")
+	}
+	_, cmd.Env = harness.MuseInput(cmd.Env)
+	cmd.Stdin = strings.NewReader(key + "\n")
+	return nil
 }

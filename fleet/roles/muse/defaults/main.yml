@@ -1,0 +1,16 @@
+---
+# Pinned from the public Muse Code 1.4.7-R6101.1 release manifest.
+nova_muse_version: 1.4.7-R6101.1
+nova_muse_artifacts:
+  linux-amd64:
+    file: muse-x86-linux
+    sha256: 36e3dac91f56c15572b95be55d70ee9fd9685cd9ab49f747bab4746c8d7c2518
+  linux-arm64:
+    file: muse-aarch64-linux
+    sha256: 48db3c7468cd4f401eff9b415fb7e0cdfe0351fb1730649ceae2a0f766e23b85
+  darwin-amd64:
+    file: muse-x86-macos
+    sha256: 6d766da6601a0aae8bd22294c0854970286e1b9ade3009f0d0289b7875a10c58
+  darwin-arm64:
+    file: muse-aarch64-macos
+    sha256: 87ff5a31b63e30b6ac04d3e8298285517e753c126fb6f3aee80accf28c4562f1

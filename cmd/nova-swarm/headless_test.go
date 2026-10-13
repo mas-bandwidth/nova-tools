@@ -2,19 +2,24 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness"
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // A launch whose binary is a headless harness builds its argv from the harness's own
@@ -236,4 +241,68 @@ func TestClaudesPrivateHomeIsGivenNoCopyOfTheBenchsCredential(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"fake":"not a real login"}`, string(b))
 	assert.Equal(t, "CLAUDE_CODE_OAUTH_TOKEN", h.Token)
+}
+
+func TestAMuseNativeLaunchNamesTheCardPromptFile(t *testing.T) {
+	t.Parallel()
+	cfg := nativeRunConfig{binary: "muse", model: "meta/route-model", slotDir: "/slot", label: "card"}
+	argv, err := nativeLaunchArgv("/bin/muse", cfg, "meta")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/bin/muse", "exec", "--prompt-file", "/slot/jobs/card/muse-prompt.txt", "--json", "--model", "route-model", "--api-key-stdin"}, argv[:8])
+	assert.NotContains(t, argv, "META_API_KEY")
+}
+
+func TestMuseNativeInputFeedsOnlyStdinAndRefusesAbsence(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fake-muse")
+	script := "#!/bin/sh\nkey=$(cat)\n[ \"$key\" = fixture-provider-key ] || exit 7\n[ -z \"${META_API_KEY+x}\" ] || exit 8\n/usr/bin/env | /usr/bin/grep META_API_KEY && exit 9\nprintf 'pong\\n'\n"
+	require.NoError(t, testbin.WriteExecutable(bin, []byte(script), 0o700))
+	for _, present := range []bool{false, true} {
+		t.Run(strconv.FormatBool(present), func(t *testing.T) {
+			t.Parallel()
+			cmd := subproc.Long(context.Background(), bin, "exec", "--model", "route-model")
+			cmd.Dir, cmd.Env = dir, []string{"PATH=/usr/bin:/bin", "META_API_KEY=must-not-reach-child"}
+			env := []string{"META_API_KEY=fixture-provider-key"}
+			if !present {
+				env = nil
+			}
+			err := museNativeInput(cmd, env)
+			if !present {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "--pass META_API_KEY")
+				assert.Nil(t, cmd.Process, "absence starts no process")
+				return
+			}
+			require.NoError(t, err)
+			assert.NotContains(t, strings.Join(cmd.Args, " "), "fixture-provider-key")
+			assert.NotContains(t, strings.Join(cmd.Env, " "), "META_API_KEY")
+			out, err := cmd.Output()
+			require.NoError(t, err)
+			assert.Equal(t, "pong\n", string(out))
+		})
+	}
+}
+
+func TestMuseSubscriptionReceiptHasZeroMarginalCostWithoutNormalizingCounters(t *testing.T) {
+	t.Parallel()
+	capture := []byte(`{"payload":{"kind":"model_completed","model":"route-model","usage":{"input_tokens":12,"output_tokens":7,"cache_write_tokens":3,"cache_read_tokens":5,"reasoning_tokens":2}}}`)
+	raw, err := harness.ReadMuse(capture)
+	require.NoError(t, err)
+	assert.Equal(t, int64(12), raw.Usage["input_tokens"])
+	assert.Equal(t, int64(7), raw.Usage["output_tokens"])
+	usage, err := swarm.HeadlessUsage(harness.Muse, capture)
+	require.NoError(t, err)
+	spend := spendWord([]cardcost.Usage{launchSpend(usage.Values)})
+	receipt := cardcost.ParseSpend(spend).Priced("frontier-muse", cardcost.Prices{Input: "0", CacheRead: "0", CacheWrite: "0", Output: "0", ReasoningAsOutput: true, Billing: cardcost.BillingPlan})
+	assert.Equal(t, "frontier-muse", receipt.Route)
+	assert.Contains(t, receipt.Prices, "bill:plan")
+	assert.Equal(t, "0", receipt.Predicted)
+	assert.Empty(t, receipt.Actual, "the harness did not report a dollar amount")
+	assert.Equal(t, int64(12), receipt.Tokens.Input)
+	assert.Equal(t, int64(7), receipt.Tokens.Output)
+	assert.Equal(t, int64(5), receipt.Tokens.CacheRead)
+	assert.Equal(t, int64(3), receipt.Tokens.CacheWrite)
+	assert.Equal(t, int64(2), receipt.Tokens.Reasoning)
+	assert.Empty(t, receipt.Unpriced)
 }

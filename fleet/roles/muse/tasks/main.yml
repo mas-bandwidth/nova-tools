@@ -1,0 +1,54 @@
+---
+- name: Muse has a pinned artefact for this platform
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - nova_platform in nova_muse_artifacts
+    fail_msg: "Muse has no pinned artefact for {{ nova_platform }}; add its release URL and SHA-256 before adoption."
+
+- name: the member binary directory
+  ansible.builtin.file:
+    path: "{{ nova_bin_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: the pinned Muse Code binary
+  ansible.builtin.get_url:
+    url: "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version={{ nova_muse_version }}&file={{ nova_muse_artifacts[nova_platform].file }}"
+    dest: "{{ nova_bin_dir }}/muse"
+    checksum: "sha256:{{ nova_muse_artifacts[nova_platform].sha256 }}"
+    mode: "0755"
+
+# names reads only vault field names; it never decrypts a provider key.
+- name: the member seat's provider-key names
+  ansible.builtin.command:
+    argv: ["{{ nova_bin_dir }}/nova-secrets", names, --store, "{{ nova_secrets_store }}", --as, "{{ nova_seat }}", --max, '0', --json]
+  register: nova_muse_names
+  changed_when: false
+  failed_when: false # ignored: an unreadable seat is reported and given no Muse key login.
+  check_mode: false
+
+- name: Muse key adoption status
+  ansible.builtin.set_fact:
+    nova_muse_key_status: >-
+      {{ 'unreadable' if nova_muse_names.rc != 0 else
+         'present' if ('META_API_KEY' in ((nova_muse_names.stdout | from_json)['items'] | default([]) | map(attribute='fields.key') | list)) else 'missing' }}
+
+- name: the member names-login directory
+  ansible.builtin.file:
+    path: "{{ nova_home }}/.config/nova-swarm"
+    state: directory
+    mode: "0700"
+
+- name: the Muse seat login carries names only
+  ansible.builtin.copy:
+    dest: "{{ nova_home }}/.config/nova-swarm/muse-keys.json"
+    content: "{{ {'store': nova_secrets_store, 'as': nova_seat, 'key': nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', 'sops': nova_sops | default(''), 'names': ['META_API_KEY']} | to_nice_json }}\n"
+    mode: "0600"
+  when: nova_muse_key_status == 'present'
+
+- name: a member without the key has no Muse names login
+  ansible.builtin.file:
+    path: "{{ nova_home }}/.config/nova-swarm/muse-keys.json"
+    state: absent
+  when: nova_muse_key_status != 'present'

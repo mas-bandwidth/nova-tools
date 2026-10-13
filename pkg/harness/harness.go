@@ -22,16 +22,18 @@ const (
 	Claude   = "claude"
 	Codex    = "codex"
 	Grok     = "grok"
+	Muse     = "muse"
 )
 
 // Kinds is every harness word a route row may carry, in the order a list prints them.
-var Kinds = []string{OpenCode, Claude, Codex, Grok}
+var Kinds = []string{OpenCode, Claude, Codex, Grok, Muse}
 
-// Headless are the harnesses that run as a one-shot child and print their own usage.
+// Headless names the subscription harnesses that run one-shot and report usage.
+// Muse is also headless, with a provider key on stdin instead of a subscription.
 var Headless = []string{Claude, Codex, Grok}
 
 // IsHeadless reports whether kind is one of the headless harnesses.
-func IsHeadless(kind string) bool { return slices.Contains(Headless, kind) }
+func IsHeadless(kind string) bool { return kind == Muse || slices.Contains(Headless, kind) }
 
 // KindOf is the harness a binary is: the headless harness its program name spells
 // (`claude`, `/Users/g/.local/bin/codex`, `grok.exe`), and opencode for any other program,
@@ -55,6 +57,9 @@ const ProviderPrefix = "subscription-"
 func ProviderOf(kind string) string {
 	if !IsHeadless(kind) {
 		return ""
+	}
+	if kind == Muse {
+		return "meta"
 	}
 	return ProviderPrefix + kind
 }

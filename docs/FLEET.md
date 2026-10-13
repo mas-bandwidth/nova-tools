@@ -530,3 +530,42 @@ child made there by hand is theirs to remove.
 The inventory carries `nova_loops` only once the loop kind has been applied to
 the store; until then `loops.yml` refuses each machine by name instead of
 reading the absence as "no loops" and retiring every unit.
+
+## Muse harness
+
+The tools play installs Muse Code `1.4.7-R6101.1` on every fleet member from
+its public release artefact, verified against the platform's pinned SHA-256
+in `fleet/roles/muse/defaults/main.yml`. A second converge keeps matching bytes.
+The role reads only the member seat's key names with `nova-secrets names`.
+Its adoption table reports `muse_key=present`, `missing`, or `unreadable`.
+A member without `META_API_KEY` refuses a Muse route with the remedy and runs no
+Muse card.
+
+The role writes a login of names, never values, at
+`~/.config/nova-swarm/muse-keys.json`. The member reads that optional login
+in process when `NOVA_SWARM_KEYS` is unset; an explicitly named login takes
+priority and includes `META_API_KEY` in its `names` to serve Muse.
+The direct member unit uses the existing in-process nova-secrets reader;
+its command and environment contain no provider key. Native passes the key
+on Muse's stdin and removes it from the harness environment, so tool children
+inherit no key. Muse reads the card's prompt file in the job worktree, reports
+its JSONL result and token classes, and uses the existing provider-failure
+classifier for a refused key, model, credit, or provider.
+
+A Muse route names `--tier frontier --harness muse --provider meta` and the
+model selected for that route. Muse is a subscription: its route uses the
+existing `--billing plan` vocabulary and explicitly zero marginal prices
+(`--price_input 0 --price_cache_read 0 --price_cache_write 0 --price_output 0`).
+`plan` alone retains the repository's metered-value prediction; the explicit
+zero prices record the subscription's zero marginal card cost. Raw usage stays
+under Muse's original names in the JSONL capture. The common usage table maps
+those reported classes without cache or reasoning subtraction, as the existing
+headless lanes do; overlapping raw classes are no metered price claim.
+`cached_tokens` remains a distinct raw Muse counter in that capture. It is
+not an alias for `cache_read_tokens`: the common `cache_read` column is
+reported only when Muse explicitly reports `cache_read_tokens`. Additional
+raw fields in the durable spend/consumer record belong to the separate
+subscription billing and raw receipts follow-up.
+The coordinator adds `frontier-muse` with
+`nova-config route add` and the selected model, deadline, subscription billing and zero marginal price sheet;
+the tools play writes no route or configuration-store value.
