@@ -264,7 +264,7 @@ func TestUpSeatWritesFleetEndpointsAndPreservesReferences(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, invalid, 0o600))
 	code, out, errs = newFake(t).novaWithEnv("linux", getenv, "--seat")
 	assert.Equal(t, 2, code, out+errs)
-	assert.Contains(t, errs, "existing seat environment could not be validated (seat environment is invalid)")
+	assert.Contains(t, errs, "existing seat environment could not be validated (seat environment is invalid: unknown key)")
 	data, err = os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, invalid, data)
