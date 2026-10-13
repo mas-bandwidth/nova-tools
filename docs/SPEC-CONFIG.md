@@ -316,14 +316,15 @@ refuses it refuses the same. The pieces are `config.LoopRunArgv`,
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
-`model:` header pins it instead. `frontier` is a route tier like flash, pro
-and heavy: a frontier card is dealt only on a frontier route. A heavy route
+`model:` header pins it instead. The route kind accepts `frontier` alongside
+flash, pro and heavy and carries it through add, set, list and apply. Automatic
+frontier fleet dispatch requires the sprint deal integration. A heavy route
 names a headless harness (`harness`), the class of the owner's 2026-10-04 "the tier is a
 class, never a model name". Every value is data in the row: the code names no provider or model.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `tier` | enum `flash`, `frontier`, `heavy`, `pro` | yes | the deal: the cards of this tier are dealt on it; a frontier card is dealt only on a frontier route; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
+| `tier` | enum `flash`, `frontier`, `heavy`, `pro` | yes | the deal reads the stored tier; frontier route configuration is accepted, with automatic fleet dispatch a separate sprint integration; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `harness` | enum `opencode`, `claude`, `codex`, `grok` | (opencode) | the member: the harness a card on the route runs under; `opencode` launches through the providers table with the provider's key, a headless one is the machine's own program and subscription login (the heavy tier) and its route's provider is `subscription-<harness>` (`subscription-claude`, `subscription-codex`, `subscription-grok`; refused otherwise), so a provider's rest never spans two harnesses | `route:<r>` |

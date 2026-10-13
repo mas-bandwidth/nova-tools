@@ -284,6 +284,8 @@ func TestTlaIsHeavyOrAbove(t *testing.T) {
 			require.Contains(t, fix, "RESULT: c sha=0123456789ab tier: heavy", "the corrected line 1 sets tier heavy")
 		})
 	}
+	const wantRemedy = "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or take tla/ out of PATHS: and give the model to its own card"
+	assert.Equal(t, wantRemedy, BriefRemedy("tla-is-heavy-or-above"), "the canonical remedy matches the sprint rule verbatim")
 	assert.NotEmpty(t, BriefRemedy("tla-is-frontier"), "the old token still has a remedy")
 	assert.Equal(t, BriefRemedy("tla-is-heavy-or-above"), BriefRemedy("tla-is-frontier"), "the old token names the same remedy")
 }
