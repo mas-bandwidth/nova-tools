@@ -354,17 +354,17 @@ type dogfoodGateVerbJSON struct {
 }
 
 type dogfoodGateJSON struct {
-	Verb          string                    `json:"verb"`
-	Status        string                    `json:"status"`
-	Exit          int                       `json:"exit"`
-	Passed        bool                      `json:"passed"`
-	RequireAll    bool                      `json:"require_all"`
-	Receipts      int                       `json:"receipts"`
-	Summary       dogfoodGateSummaryJSON    `json:"summary"`
-	Findings      []dogfoodGateFindingJSON  `json:"findings"`
-	Uncovered     []dogfoodGateVerbJSON     `json:"uncovered"`
-	MissingAuthor []dogfoodGateVerbJSON     `json:"missing_authors"`
-	Why           []string                  `json:"why,omitempty"`
+	Verb          string                   `json:"verb"`
+	Status        string                   `json:"status"`
+	Exit          int                      `json:"exit"`
+	Passed        bool                     `json:"passed"`
+	RequireAll    bool                     `json:"require_all"`
+	Receipts      int                      `json:"receipts"`
+	Summary       dogfoodGateSummaryJSON   `json:"summary"`
+	Findings      []dogfoodGateFindingJSON `json:"findings"`
+	Uncovered     []dogfoodGateVerbJSON    `json:"uncovered"`
+	MissingAuthor []dogfoodGateVerbJSON    `json:"missing_authors"`
+	Why           []string                 `json:"why,omitempty"`
 }
 
 type dogfoodGateSummaryJSON struct {
