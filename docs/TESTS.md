@@ -1046,6 +1046,7 @@ transcript was produced by running the built binary, not written by hand.
 $ nova-ci slowtests --example --budget 60 --load 4 --cpus 16
 CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
+CI-SLOW within_budget=false: over budget but --enforce not given, so this run passes; run: nova-ci slowtests --enforce
 
 $ nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s

@@ -341,8 +341,8 @@ func TestSlowtestsJSONIsTheSameVerdict(t *testing.T) {
 `
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json"}, stdin)
 	require.Equal(t, 0, code, stderr)
-	assert.JSONEq(t, `{"result":{"verb":"slowtests","status":"ok","exit":0},
-		"facts":{"packages":1,"slowest":"example.com/pkg","slowest_seconds":75.3,"enforce":false,"load":1,"cpus":2},
+	assert.JSONEq(t, `{"result":{"verb":"slowtests","status":"ok","exit":0,"remedy":"nova-ci slowtests --enforce"},
+		"facts":{"packages":1,"slowest":"example.com/pkg","slowest_seconds":75.3,"enforce":false,"within_budget":false,"load":1,"cpus":2},
 		"items":[{"kind":"slow-package","fields":{"package":"example.com/pkg","seconds":75.3,"budget":60,"slowest":"TestA:3.2s"}}]}`, stdout)
 
 	code, stdout, _ = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json", "--enforce"}, stdin)
@@ -404,6 +404,10 @@ func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 		args []string
 		code int
 	}{{nil, 0}, {[]string{"--enforce"}, 1}} {
+		want := want
+		if c.code == 0 {
+			want += "CI-SLOW within_budget=false: over budget but --enforce not given, so this run passes; run: nova-ci slowtests --enforce\n"
+		}
 		code, stdout, _ := runCI(t, append([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, c.args...), stdin)
 		assert.Equal(t, c.code, code, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
 		assert.Equal(t, want, stdout, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
@@ -570,7 +574,11 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 				"CI-LOAD load=" + load + ".00 cpus=32 per-cpu="
 			assert.Equal(t, leg.code, code, "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			assert.True(t, strings.HasPrefix(stdout, want), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
-			assert.True(t, strings.HasSuffix(stdout, ": measured, not a verdict\n"), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
+			if leg.code == 0 {
+				assert.True(t, strings.HasSuffix(stdout, "run: nova-ci slowtests --enforce\n"), "load %s, %s leg: stdout %q, want the within_budget=false warning last", load, leg.name, stdout)
+			} else {
+				assert.True(t, strings.HasSuffix(stdout, ": measured, not a verdict\n"), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
+			}
 			code, stdout, _ = runCI(t, args, sleeps)
 			assert.Equal(t, 1, code, "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
 			assert.Contains(t, stdout, "CI-SLEEPS test=TestNew package=example.com/internal/pkg", "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)

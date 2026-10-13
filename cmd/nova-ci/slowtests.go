@@ -212,6 +212,9 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		}
 		return o.Render(stdout, true)
 	}
+	if !*enforce && len(report.Over)+len(report.OverTests) > 0 {
+		lines = append(lines, "CI-SLOW within_budget=false: over budget but --enforce not given, so this run passes; run: nova-ci slowtests --enforce")
+	}
 	for _, line := range capSlowLines(lines, *maxFlag) {
 		fmt.Fprintln(stdout, line)
 	}
@@ -384,6 +387,10 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 		slowest = r.Slowest.Name
 	}
 	o.Fact("packages", r.Packages).Fact("slowest", slowest).Fact("slowest_seconds", r.Slowest.Seconds).Fact("enforce", enforce)
+	o.Fact("within_budget", len(r.Over)+len(r.OverTests) == 0)
+	if !enforce && len(r.Over)+len(r.OverTests) > 0 {
+		o.Remedy = "nova-ci slowtests --enforce"
+	}
 	if load.Known {
 		o.Fact("load", load.Avg)
 	} else {
