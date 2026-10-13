@@ -399,9 +399,11 @@ func TestMigrateWindowRefusesWhileAnotherNovaSessionHoldsTheDatabase(t *testing.
 	require.Equal(t, 0, code, "no --window: stdout %q stderr %q", out, errs)
 	assert.Equal(t, schemaTip(), h2.store.version)
 
-	// nothing pending under --window with a held database: nothing to refuse, applied=0
+	// nothing pending under --window with a held database: nothing to refuse, applied=0.
+	// The store is at the schema tip (0044). The file count is one behind that tip.
 	h3 := newHarness()
 	h3.env["NOVA_PG_DSN"] = dsn
+	h3.store.version = schemaTip()
 	h3.store.Held = []config.Session{{Role: "nova_admin", PID: 7}}
 	code, out, errs = h3.run(t, "migrate", "--window")
 	require.Equal(t, 0, code, "nothing pending: stdout %q stderr %q", out, errs)
