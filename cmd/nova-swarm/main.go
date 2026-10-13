@@ -602,6 +602,7 @@ func cmdProfile(args []string, stdout, stderr io.Writer) int {
 }
 
 type nativeFlags struct {
+	outputTokenMax  *int
 	harness         *string
 	model           *string
 	cardPath        *string
@@ -645,6 +646,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	// directory after that publish, so a bench sweep never deletes the results with the
 	// working directory.
 	nf := &nativeFlags{
+		outputTokenMax:  f.fs.Int("output-token-max", opencodeOutputTokenMax, "the positive per-turn output `tokens` limit, reasoning included; the harness sets it itself on every opencode child (default 128000)"),
 		harness:         f.fs.String("harness", "", "required: the harness binary `path` the child runs under, checked for existence and execution"),
 		model:           f.fs.String("model", "", "required without --worker: the `provider/model` to run, one slash, both sides nonempty"),
 		cardPath:        f.fs.String("card", "", "required: the card `file`, handed to the child byte for byte as its task"),
@@ -744,6 +746,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 				f.add("--config is the legacy shape's and this worker description names a secret; the description's own provider declaration is written instead")
 			}
 		}
+	}
+	if *nf.outputTokenMax <= 0 {
+		f.add("--output-token-max wants positive tokens, reasoning included")
 	}
 	f.want(*harnessBin, "harness", "the harness binary path, checked for existence and execution")
 	if !workerGiven {
@@ -873,6 +878,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		frame = &fr
 	}
 	cfg := nativeRunConfig{
+		outputTokenMax: *nf.outputTokenMax,
 		frame:          frame,
 		binary:         *harnessBin,
 		model:          effectiveModel,

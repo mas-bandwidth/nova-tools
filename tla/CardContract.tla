@@ -48,6 +48,8 @@
 \*             child ran (native's STAGE FAIL: no bench mirror, the pushed head
 \*             missing, the stage's timeout), or the child's end was
 \*             budget-unverifiable and left no result (EndUnverifiable)
+\*   lf        a run with no result whose assistant turn was cut off at the
+\*             harness output limit; a harness fault, the staging class
 \*   answer    the store's answer to the report (the finish verb): none (no
 \*             report collected yet), accepted (code 0, the store took it:
 \*             the finish was the card's claim when it landed, so a move seen
@@ -98,7 +100,8 @@
 \* staged at the bare tip with no word that the work must be redone: the
 \* pushed work lost in silence), "providerfailed" (a provider failure judged as
 \* failed work), "noresultfailed" (a no-result end judged as failed work),
-\* "stagingfailed" (a staging refusal judged as failed work), "applymoved"
+\* "stagingfailed" (a staging refusal judged as failed work), "lengthnoresult"
+\* (a cutoff judged as a no-result redeal instead of a no-cost staging fault), "applymoved"
 \* (a report applied on a moved claim), "reapaccepted" (an accepted report
 \* reaped). "none" is the design.
 
@@ -119,10 +122,10 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg, answer
+          prov, nr, stg, lf, answer
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg, answer>>
+          prov, nr, stg, lf, answer>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -140,6 +143,7 @@ Init ==
   /\ prov = [c \in Cards |-> FALSE]
   /\ nr = [c \in Cards |-> FALSE]
   /\ stg = [c \in Cards |-> FALSE]
+  /\ lf = [c \in Cards |-> FALSE]
   /\ answer = [c \in Cards |-> "none"]
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
@@ -165,7 +169,7 @@ Stage(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "running"]
   /\ \E f \in StageFroms(c) : from' = [from EXCEPT ![c] = f]
-  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, answer>>
+  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer>>
 
 \* The member's machine refuses the launch at staging (native's STAGE
 \* FAIL): nothing is staged and no child runs, so there is no commit and no result.
@@ -173,11 +177,11 @@ StageRefused(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, answer>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, lf, answer>>
 
 \* The child ends: any commit, any result, any verdict, and the run's end class:
 \* a provider failure with a reason (prov), a no-result end (nr), or a
-\* budget-unverifiable staging refusal (stg); at most one. A budget-unverifiable
+\* budget-unverifiable staging refusal (stg), or output-limit harness fault (lf); at most one. A budget-unverifiable
 \* end in the class leaves no shape, and a no-result end leaves none or only its
 \* first RESULT.md: verdict not-done and no commit (member.go Judge, its
 \* first-RESULT case: pu.Sha empty, so nothing the member could push).
@@ -185,16 +189,18 @@ ChildEnds(c) ==
   /\ ph[c] = "running"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ \E k \in BOOLEAN, s \in BOOLEAN, v \in {"ok", "notdone"},
-         f \in BOOLEAN, n \in BOOLEAN, u \in BOOLEAN :
+         f \in BOOLEAN, n \in BOOLEAN, u \in BOOLEAN, l \in BOOLEAN :
        /\ commit' = [commit EXCEPT ![c] = k]
        /\ shape' = [shape EXCEPT ![c] = s]
        /\ verdict' = [verdict EXCEPT ![c] = v]
        /\ prov' = [prov EXCEPT ![c] = f]
        /\ nr' = [nr EXCEPT ![c] = n]
        /\ stg' = [stg EXCEPT ![c] = u]
-       /\ (IF f THEN 1 ELSE 0) + (IF n THEN 1 ELSE 0) + (IF u THEN 1 ELSE 0) <= 1
+       /\ lf' = [lf EXCEPT ![c] = l]
+       /\ (IF f THEN 1 ELSE 0) + (IF n THEN 1 ELSE 0) + (IF u THEN 1 ELSE 0) + (IF l THEN 1 ELSE 0) <= 1
        /\ n => (~s \/ (v = "notdone" /\ ~k))
        /\ u => ~s
+       /\ l => ~s
   /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, answer>>
 
 \* The member's push (gitPusher.Push): a commit is pushed or
@@ -204,7 +210,7 @@ Push(c) ==
   /\ ph' = [ph EXCEPT ![c] = "pushed"]
   /\ \E p \in IF commit[c] THEN {"ok", "refused"} ELSE {"nocommit"} :
        push' = [push EXCEPT ![c] = p]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, nr, stg, answer>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, claim, fin, rep, prov, nr, stg, lf, answer>>
 
 \* The ok rule: a commit the child made, pushed, with the result's shape and
 \* verdict ok. "today" drops the commit (ok unless the push was refused, which
@@ -224,7 +230,8 @@ OkOf(c) ==
 \* judges a no-result end as failed work, and "today" and "noshape" loosen the
 \* ok rule (OkOf).
 JudgeOf(c) ==
-  IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
+  IF lf[c] THEN (IF Broken = "lengthnoresult" THEN "provider" ELSE "staging")
+  ELSE IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
   ELSE IF push[c] = "refused" THEN
          IF Broken = "pushignored" /\ shape[c] /\ verdict[c] = "ok" /\ commit[c]
            THEN "ok"
@@ -252,7 +259,7 @@ JudgeOf(c) ==
 SendReport(c) ==
   /\ ph[c] = "pushed" /\ claim[c] = "held"
   /\ ph' = [ph EXCEPT ![c] = "reported"]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, answer>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer>>
 
 \* What a collected report comes to: applied (the judgment, said to the
 \* sprint) when the claim is still held, or when the store accepted it; else
@@ -275,13 +282,13 @@ CollectReport(c) ==
           ELSE /\ fin' = [fin EXCEPT ![c] = "reaped"]
                /\ rep' = [rep EXCEPT ![c] = "none"]
   /\ ph' = [ph EXCEPT ![c] = "done"]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf>>
 
 \* The claim moves under the launch at any time before its report is collected.
 Move(c) ==
   /\ claim[c] = "held" /\ ph[c] \in {"running", "ended", "pushed", "reported"}
   /\ claim' = [claim EXCEPT ![c] = "moved"]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg, answer>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg, lf, answer>>
 
 \* REAPED is its own finish (pkg/member/member.go, FinishReaped): the child has
 \* ended, its claim is gone, and nothing is reported.
@@ -290,7 +297,7 @@ Reap(c) ==
   /\ ph' = [ph EXCEPT ![c] = "done"]
   /\ fin' = [fin EXCEPT ![c] = "reaped"]
   /\ rep' = IF Broken = "reapreported" THEN [rep EXCEPT ![c] = "failed"] ELSE rep
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, answer>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, answer>>
 
 Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ SendReport(c) \/ CollectReport(c) \/ Move(c) \/ Reap(c)
                           \/ StageRefused(c)
@@ -306,6 +313,7 @@ TypeOK ==
   /\ prov \in [Cards -> BOOLEAN]
   /\ nr \in [Cards -> BOOLEAN]
   /\ stg \in [Cards -> BOOLEAN]
+  /\ lf \in [Cards -> BOOLEAN]
   /\ answer \in [Cards -> {"none", "accepted", "refused"}]
 
 \* Ok => PushedHead /\ Shape: an ok finish is a commit the child made, on
@@ -353,6 +361,11 @@ NoResultIsNotFailedWork ==
 \* A staging refusal never opens a failed-work judgment: a launch refused at staging ran no
 \* child, and is never finished `failed`.
 StagingIsNotFailedWork == \A c \in Cards : fin[c] = "failed" => ~stg[c]
+
+\* A cutoff belongs to the harness, not to the card: staging never spends
+\* an attempt, a redeal or a card cost (the sprint staging-refused path).
+LengthIsAHarnessFault == \A c \in Cards :
+  (ph[c] = "done" /\ fin[c] # "reaped" /\ lf[c]) => fin[c] = "staging"
 
 \* A collected result applies only if the claim is still held at the fresh
 \* queue read, otherwise the card is reaped: what the sprint is told is set
