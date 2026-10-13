@@ -154,6 +154,137 @@ const gitClone = `clone)
 	exit 0 ;;
 `
 
+// gitGuardFuncs are the git shim's helpers for the history guard (gitGuard).
+const gitGuardFuncs = `nova_guard_top() {
+	nova_gt=$(nova_git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	nova_gt=$(cd "$nova_gt" 2>/dev/null && pwd -P) || return 1
+	nova_gs=$(cd "$NOVA_STAGED" 2>/dev/null && "$NOVA_GIT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	nova_gs=$(cd "$nova_gs" 2>/dev/null && pwd -P) || return 1
+	[ -n "$nova_gt" ] && [ "$nova_gt" = "$nova_gs" ]
+}
+nova_refuse_rewrite() {
+	echo "error: REFUSED $1: a card may not rewrite history at or below the staged commit $NOVA_HEAD; the staged commit and everything under it are the sprint's, so work from a new commit on top of it instead" >&2
+	exit 1
+}
+`
+
+// gitGuard is harness card B (v1.2.17): a take may not rewrite at or below the
+// staged commit. Until this case, reset, rebase and commit --amend handed
+// straight through to the real git, so a model could reset --soft below the
+// staged commit and the refusal only arrived at push time, when the member
+// found the result's head did not descend from the staged commit (memberpush.go);
+// six pushes were refused that way. The guard refuses the rewriting operation
+// itself, in the staged checkout and its linked worktrees -- a repository the child made of its
+// own, and ordinary commits, resets that stay above the staged commit, a
+// rebase onto it, and an amend of the child's own commit all reach the real
+// git unchanged. A target git cannot resolve is handed through too, so git
+// itself names the error.
+const gitGuard = `reset)
+	shift "$nova_n"
+	if ! nova_guard_top || [ -z "$NOVA_HEAD" ]; then nova_git reset "$@"; exit $?; fi
+	nova_target=""; nova_npos=0; nova_skip=""; nova_boundary=""; nova_paths=""; nova_pathfile=""
+	for nova_a in "$@"; do
+		if [ -n "$nova_skip" ]; then nova_pathfile="$nova_a"; nova_skip=""; continue; fi
+		if [ -n "$nova_boundary" ]; then nova_paths=1; continue; fi
+		case "$nova_a" in
+		--) nova_boundary=1 ;;
+		--?*)
+			nova_opt="${nova_a#--}"; nova_opt="${nova_opt%%=*}"
+			case pathspec-from-file in "$nova_opt"*)
+				case "$nova_a" in *=*) nova_pathfile="${nova_a#*=}" ;; *) nova_skip=1 ;; esac ;;
+			esac ;;
+		-*) ;;
+		*) nova_npos=$((nova_npos + 1)); if [ "$nova_npos" -eq 1 ]; then nova_target="$nova_a"; fi ;;
+		esac
+	done
+	case "$nova_pathfile" in
+	""|-) ;;
+	*)
+		case "$nova_pathfile" in
+		/*) ;;
+		*) nova_root=$(nova_git rev-parse --show-toplevel 2>/dev/null) && nova_prefix=$(nova_git rev-parse --show-prefix 2>/dev/null) && nova_pathfile="$nova_root/$nova_prefix$nova_pathfile" || nova_pathfile="" ;;
+		esac
+		if [ -f "$nova_pathfile" ] && [ -r "$nova_pathfile" ] && [ -s "$nova_pathfile" ]; then nova_paths=1; fi ;;
+	esac
+	if [ -n "$nova_paths" ] || [ "$nova_npos" -ge 2 ]; then nova_git reset "$@"; exit $?; fi
+	[ -n "$nova_target" ] || nova_target=HEAD
+	nova_t=$(nova_git rev-parse --verify -q "$nova_target^{commit}" 2>/dev/null) || { nova_git reset "$@"; exit $?; }
+	nova_h=$(nova_git rev-parse --verify -q "HEAD^{commit}" 2>/dev/null) || { nova_git reset "$@"; exit $?; }
+	if [ "$nova_t" != "$nova_h" ]; then
+		if [ "$nova_t" = "$NOVA_HEAD" ] || ! nova_git merge-base --is-ancestor "$NOVA_HEAD" "$nova_t" >/dev/null 2>&1; then
+			nova_refuse_rewrite "git reset $nova_target"
+		fi
+	fi
+	nova_git reset "$@"; exit $? ;;
+rebase)
+	shift "$nova_n"
+	if ! nova_guard_top || [ -z "$NOVA_HEAD" ]; then nova_git rebase "$@"; exit $?; fi
+	nova_base=""; nova_onto=""; nova_skip=""; nova_npos=0
+	for nova_a in "$@"; do
+		if [ "$nova_skip" = onto ]; then nova_onto="$nova_a"; nova_skip=""; continue; fi
+		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
+		case "$nova_a" in
+		-x|-X|-s|-C) nova_skip=1 ;;
+		--?*)
+			nova_opt="${nova_a#--}"; nova_opt="${nova_opt%%=*}"
+			for nova_r in root onto exec strategy strategy-option whitespace empty; do
+				case "$nova_r" in "$nova_opt"*)
+					case "$nova_r" in
+					root) nova_refuse_rewrite "git rebase $nova_a" ;;
+					onto) case "$nova_a" in *=*) nova_onto="${nova_a#*=}" ;; *) nova_skip=onto ;; esac ;;
+					*) case "$nova_a" in *=*) ;; *) nova_skip=1 ;; esac ;;
+					esac
+					break ;;
+				esac
+			done ;;
+		-*) ;;
+		*) nova_npos=$((nova_npos + 1)); if [ "$nova_npos" -eq 1 ]; then nova_base="$nova_a"; fi ;;
+		esac
+	done
+	[ -n "$nova_onto" ] && nova_base="$nova_onto"
+	if [ -z "$nova_base" ]; then
+		nova_base=$(nova_git rev-parse --verify -q 'HEAD@{upstream}' 2>/dev/null) || { nova_git rebase "$@"; exit $?; }
+	fi
+	nova_b=$(nova_git rev-parse --verify -q "$nova_base^{commit}" 2>/dev/null) || { nova_git rebase "$@"; exit $?; }
+	if [ "$nova_b" != "$NOVA_HEAD" ]; then
+		if ! nova_git merge-base --is-ancestor "$NOVA_HEAD" "$nova_b" >/dev/null 2>&1; then
+			nova_refuse_rewrite "git rebase $nova_base"
+		fi
+	fi
+	nova_git rebase "$@"; exit $? ;;
+commit)
+	shift "$nova_n"
+	nova_amend=""; nova_skip=""
+	for nova_a in "$@"; do
+		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
+		case "$nova_a" in
+		--) break ;;
+		--?*)
+			nova_opt="${nova_a#--}"; nova_opt="${nova_opt%%=*}"
+			for nova_r in amend message file reuse-message reedit-message template fixup squash author date cleanup trailer pathspec-from-file; do
+				case "$nova_r" in "$nova_opt"*)
+					if [ "$nova_r" = amend ]; then nova_amend=1
+					else case "$nova_a" in *=*) ;; *) nova_skip=1 ;; esac; fi
+					break ;;
+				esac
+			done ;;
+		-?*)
+			nova_short="${nova_a#-}"
+			while [ -n "$nova_short" ]; do
+				nova_ch="${nova_short%"${nova_short#?}"}"; nova_short="${nova_short#?}"
+				case "$nova_ch" in m|F|C|c|t) [ -n "$nova_short" ] || nova_skip=1; break ;; esac
+			done ;;
+		esac
+	done
+	if [ -z "$nova_amend" ]; then nova_git commit "$@"; exit $?; fi
+	if ! nova_guard_top || [ -z "$NOVA_HEAD" ]; then nova_git commit "$@"; exit $?; fi
+	nova_h=$(nova_git rev-parse --verify -q "HEAD^{commit}" 2>/dev/null) || { nova_git commit "$@"; exit $?; }
+	if [ "$nova_h" = "$NOVA_HEAD" ] || ! nova_git merge-base --is-ancestor "$NOVA_HEAD" "$nova_h" >/dev/null 2>&1; then
+		nova_refuse_rewrite "git commit --amend"
+	fi
+	nova_git commit "$@"; exit $? ;;
+`
+
 // gitTail hands every other git command to the real git as it was typed.
 const gitTail = `esac
 exec "$NOVA_GIT" "$@"
@@ -161,7 +292,7 @@ exec "$NOVA_GIT" "$@"
 
 // ContractShim is the git every profile may reuse: push recorded, everything else real.
 func ContractShim(family string, f Frame, s Staged) Shim {
-	return Shim{Name: "git", Script: prelude("git", family, f, s) + gitHead + gitPush + gitTail}
+	return Shim{Name: "git", Script: prelude("git", family, f, s) + gitGuardFuncs + gitHead + gitPush + gitGuard + gitTail}
 }
 
 // refusingGh is a gh that refuses every command with one line.
@@ -267,7 +398,7 @@ func (claude) Family() string { return "claude" }
 
 func (claude) Shims(f Frame, s Staged) []Shim {
 	return []Shim{
-		{Name: "git", Script: prelude("git", "claude", f, s) + gitHead + gitPush + gitClone + gitTail},
+		{Name: "git", Script: prelude("git", "claude", f, s) + gitGuardFuncs + gitHead + gitPush + gitClone + gitGuard + gitTail},
 		{Name: "gh", Script: prelude("gh", "claude", f, s) + ghClaude},
 	}
 }

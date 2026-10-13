@@ -45,6 +45,10 @@ func TestTheProviderErrorPatterns(t *testing.T) {
 	t.Parallel()
 	for line, want := range map[string]bool{
 		`level=ERROR message="stream error" error.error="x"`:                            true,
+		`level=ERROR error.error="h2 protocol error"`:                                   true,
+		`level=ERROR error.error.type=internal_error`:                                   true,
+		`level=INFO error.error="h2 protocol error"`:                                    false,
+		`level=INFO error.error.type=internal_error`:                                    false,
 		`level=ERROR error.error.type=server_error`:                                     true,
 		`level=ERROR error.error="AI_APICallError: Rate limit reached"`:                 true,
 		`level=ERROR message=failed statusCode=503`:                                     true,
@@ -130,6 +134,42 @@ func TestAChildTheProviderFailedIsJudgedProviderFailure(t *testing.T) {
 		fin, why := member.Judge(c.Result(), member.Push{None: "the child committed nothing"})
 		assert.Equal(t, member.FinishFailed, fin, tc.name)
 		assert.Equal(t, tc.want, why, tc.name)
+	}
+}
+
+// A cutoff is independently decoded as the harness's fault, never folded
+// into provider/no-result classification (LengthIsAHarnessFault).
+func TestAFinishOfLengthIsAHarnessFaultNotNoResult(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, row string
+		fault     bool
+	}{
+		{"length", "1\tassistant\tlength\tassistant\tlength\t0\t32000", true},
+		{"stop", "1\tassistant\tstop\t\t\t0\t0", false},
+		{"tool", "1\ttool\t\t\t\t0\t0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, words, ok := parseRunEnd(tc.row)
+			require.True(t, ok)
+			assert.Equal(t, tc.fault, words != "")
+		})
+	}
+}
+
+// A midturn length before a clean stop or tool result remains a cutoff.
+func TestALengthFinishBeforeAStopIsStillAHarnessFault(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"midturn-stop.tsv", "midturn-tool.tsv"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			row, err := os.ReadFile(filepath.Join("testdata", "length-finish", name))
+			require.NoError(t, err)
+			_, words, ok := parseRunEnd(string(row))
+			require.True(t, ok)
+			assert.Equal(t, "finish length; output 0, reasoning 32000", words)
+		})
 	}
 }
 

@@ -209,8 +209,9 @@ fleet's copy of the same pass.
 ## A fixture inventory
 
 `nova-config inventory --fixture <file>` reads the rows from a YAML or JSON
-file instead of the store: machines (with `os` and `arch` standing in for the
-beat), the fleet row and loops. A file with no `loops` key is a fleet whose
+file instead of the store: machines (with `os`, `arch` and `cores` standing in
+for the beat, and optional `width` for the machine row), the fleet row and
+loops. A file with no `loops` key is a fleet whose
 loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
 machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
 running the play, named `localhost`, with no store deployer, which is what
@@ -222,7 +223,7 @@ with `--check`.
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
 `runners`, `nova_tla` (its row's `tla`; the `tla` group is the hosts where it
 is true), `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
-`nova_os` and `nova_arch` (from its beat, when it has one) and `nova_loops`,
+`nova_os` and `nova_arch` (from its beat) and `nova_loops`,
 and `all.vars` `nova_store`. The rest are defaults in
 `fleet/group_vars/all.yml`. The inventory's host variables override them, and
 so do a `group_vars/benches.yml` and `host_vars/<machine>.yml` beside the
@@ -230,6 +231,33 @@ inventory; a `group_vars/all.yml` beside the inventory does not (the play's own
 is read after it). The host variables ensure an applied nonstandard Redis port
 outranks every group default. The Postgres URI is preserved exactly, including
 an explicit localhost; it is never derived from the Redis store machine.
+
+The play variables with a machine-row or beat source are projected as follows.
+Inventory refuses a machine without beat `os` or `ncpu` before emitting any
+inventory: every machine remains in `benches`, whose plays read `bench_os` and
+`cores`. Restore or start the machine's configured beat publisher so
+`bench:<machine>:beat` contains `os` and `ncpu`, then rerun
+`nova-config inventory`. The publisher is external to this config reader; its
+installation and exact start command are not described here. Beat `arch` is
+projected when present but is not a required play variable.
+
+| variable | inventory source | plays that read it |
+|---|---|---|
+| `ansible_host` | the machine row name | Ansible connection target for every play |
+| `ansible_connection` | `local` when the inventory runs on that machine; otherwise absent | the local host in the play that invokes Ansible |
+| `bench_os` | beat `os` | bench, monitoring and tools plays |
+| `cores` | beat `ncpu`, as an integer | bench-register and runners plays |
+| `registry_seat` | machine row `seat` | bench play and fleet group variables |
+| `slots_capacity` | machine row `slots` | bench-register play |
+| `slots_share` | machine row `width`; when width is unset, half the beat cores | bench-register play |
+| `registry_roles` | unavailable: the machine row has no roles field and beats carry none | bench and runners plays |
+
+Role-based group membership is also unavailable from the current configuration
+schema. `benches` still contains every machine row; `store` and `coordinator`
+still come from the fleet row's `store` and `coordinator` references. This does
+not reproduce the former inventory's role-derived `benches`, `store`, and
+`coordinator` groups, or provide `registry_roles`; a schema change is required
+for plays that read those roles to run from this inventory alone.
 
 | variable | default | what it is |
 |---|---|---|

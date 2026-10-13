@@ -1,0 +1,2 @@
+NATIVE OK label=c1 job=job rc=0 wall=1.00s harness=ok budget=unmetered spend=input:10,output:0,cost:0.25,model:provider/model
+NATIVE HARNESS-FAULT label=c1 wall=1.00s route=provider/model reason=harness fault: the model's turn ended at the harness's output limit (finish length; output 0, reasoning 32000; OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000)

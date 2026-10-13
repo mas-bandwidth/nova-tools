@@ -26,8 +26,10 @@ const MaxProviderAttempts = 3
 
 // launchFailureRE matches the provider's own words for a server error, case-insensitively:
 // OpenCode's `Unexpected server error ... ref=err_...`, the same while it says `internal
-// server error`, and the bare statuses 502, 503 and 529 as whole words.
-var launchFailureRE = regexp.MustCompile(`(?i)unexpected server error|internal server error|\b(502|503|529)\b`)
+// server error`, the bare statuses 502, 503 and 529 as whole words, and a stream error --
+// the provider's h2 failure (`Stream error: h2 protocol error: ...`), which the downstream
+// cause classifier already reads as provider-5xx (cause5xxRE).
+var launchFailureRE = regexp.MustCompile(`(?i)unexpected server error|internal server error|stream error|h2 protocol error|\b(502|503|529)\b`)
 
 // providerRefRE pulls the provider's own reference out of the tail, the one token a person
 // can carry to the provider. A tail with a server error and no ref is still a launch

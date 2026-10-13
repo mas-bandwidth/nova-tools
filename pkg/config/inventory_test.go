@@ -24,18 +24,21 @@ func loopView(name, machine string, over map[string]string) View {
 	return v
 }
 
-// snapshot is two machines, the fleet row naming both, a beat for one and
-// the loops the case gives (nil: the loop kind never applied).
+// snapshot is two machines with complete applied rows and beats, the fleet
+// row naming both and the loops the case gives (nil: the loop kind never applied).
 func snapshot(loops map[string]View) *Snapshot {
 	s := &Snapshot{
 		Machines: map[string]View{
-			"bench-alpha": {"user": "user-a", "seat": "seat-a", "slots": "64", "runners": "1"},
-			"bench-beta":  {"user": "user-b", "seat": "seat-b", "slots": "40", "runners": "0"},
+			"bench-alpha": {"user": "user-a", "seat": "seat-a", "slots": "64", "width": "8", "runners": "1"},
+			"bench-beta":  {"user": "user-b", "seat": "seat-b", "slots": "40", "width": "3", "runners": "0"},
 		},
 		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"},
 		Loops: loops,
-		Beats: map[string]*Beat{"bench-beta": {OS: "linux", Arch: "amd64"}},
-		Revs:  map[string]int64{KindMachine: 3, KindFleet: 2},
+		Beats: map[string]*Beat{
+			"bench-alpha": {OS: "linux", Arch: "amd64", Cores: "16"},
+			"bench-beta":  {OS: "linux", Arch: "amd64", Cores: "8"},
+		},
+		Revs: map[string]int64{KindMachine: 3, KindFleet: 2},
 	}
 	if loops != nil {
 		s.Revs[KindLoop] = 4
@@ -65,21 +68,97 @@ func TestBuildInventoryFromTheAppliedState(t *testing.T) {
 
 	alpha, beta := inv.Meta.Hostvars["bench-alpha"], inv.Meta.Hostvars["bench-beta"]
 	assert.Equal(t, map[string]any{
-		"ansible_host": "bench-alpha", "ansible_user": "user-a", "nova_seat": "seat-a", "slots": 64, "runners": 1,
-		"kind": "machine", "nova_tla": false, "ansible_connection": "local", "nova_redis_port": 6380, "nova_redis_addr": "bench-beta:6380", "nova_pg_dsn": "postgres://nova_config@localhost:5432/nova",
+		"ansible_host": "bench-alpha", "ansible_user": "user-a", "nova_seat": "seat-a", "registry_seat": "seat-a", "slots": 64, "slots_capacity": 64, "slots_share": 8, "runners": 1,
+		"kind": "machine", "nova_tla": false, "ansible_connection": "local", "bench_os": "linux", "cores": 16, "nova_os": "linux", "nova_arch": "amd64", "nova_redis_port": 6380, "nova_redis_addr": "bench-beta:6380", "nova_pg_dsn": "postgres://nova_config@localhost:5432/nova",
 		"nova_loops": []InventoryLoop{{Name: "tick", Argv: []string{"nova-sprint", "run"}, Keys: []string{}, Every: 5, Log: "~/nova-bench/loops/tick.log"}},
 	}, alpha)
+	assert.Equal(t, 40, beta["slots_capacity"])
+	assert.Equal(t, 3, beta["slots_share"])
+	assert.Equal(t, "seat-b", beta["registry_seat"])
+	assert.Equal(t, 8, beta["cores"])
 	assert.Equal(t, "linux", beta["nova_os"])
 	assert.Equal(t, "amd64", beta["nova_arch"])
 	assert.Equal(t, "bench-beta:6380", beta["nova_redis_addr"])
 	assert.Equal(t, "postgres://nova_config@localhost:5432/nova", beta["nova_pg_dsn"], "the explicit localhost DSN is preserved")
 	assert.NotContains(t, beta, "ansible_connection")
-	assert.NotContains(t, alpha, "nova_os", "a machine with no beat carries no platform: the plays gather it")
+	assert.Equal(t, "linux", alpha["bench_os"])
 	assert.Equal(t, []InventoryLoop{{
 		Name: "member-beta", Argv: []string{"nova-swarm", "member", "--as", "bench-beta"}, Seat: "seat-a",
 		Keys: []string{"API_KEY", "BENCH_PASSWORD"}, Keepalive: true, Enabled: true,
 		Log: "~/nova-bench/loops/member-beta.log",
 	}}, beta["nova_loops"])
+}
+
+// TestInventoryEmitsEveryHostVarThePlaysRead covers the host variables whose
+// source already exists in the applied machine row or measured beat. The
+// legacy registry_roles source has no machine-row field in this schema and is
+// deliberately not guessed here; its role-derived groups remain the current
+// inventory's fleet projection until a schema card supplies that source.
+func TestInventoryEmitsEveryHostVarThePlaysRead(t *testing.T) {
+	t.Parallel()
+	s := &Snapshot{
+		Machines: map[string]View{
+			"linux-bench":  {"user": "linux-user", "seat": "seat-linux", "slots": "20", "width": "4", "runners": "1"},
+			"darwin-bench": {"user": "mac-user", "seat": "seat-mac", "slots": "12", "width": "2", "runners": "0"},
+			"store-only":   {"user": "store-user", "seat": "seat-store", "slots": "48", "width": "0", "runners": "0"},
+			"coordinator":  {"user": "coord-user", "seat": "seat-coord", "slots": "36", "runners": "0"},
+		},
+		Fleet: View{"store": "store-only", "coordinator": "coordinator", "redis_port": "6380", "pg_dsn": "postgres://config@store:5432/nova"},
+		Beats: map[string]*Beat{
+			"linux-bench":  {OS: "linux", Arch: "amd64", Cores: "8"},
+			"darwin-bench": {OS: "darwin", Arch: "arm64", Cores: "8"},
+			"store-only":   {OS: "linux", Arch: "amd64", Cores: "16"},
+			"coordinator":  {OS: "linux", Arch: "amd64", Cores: "12"},
+		},
+	}
+	inv, err := BuildInventory(s, "coordinator")
+	require.NoError(t, err)
+
+	for host, want := range map[string]map[string]any{
+		"linux-bench": {
+			"ansible_host": "linux-bench", "bench_os": "linux", "cores": 8,
+			"registry_seat": "seat-linux", "slots_capacity": 20, "slots_share": 4,
+		},
+		"darwin-bench": {
+			"ansible_host": "darwin-bench", "bench_os": "darwin", "cores": 8,
+			"registry_seat": "seat-mac", "slots_capacity": 12, "slots_share": 2,
+		},
+		"store-only": {
+			"ansible_host": "store-only", "bench_os": "linux", "cores": 16,
+			"registry_seat": "seat-store", "slots_capacity": 48, "slots_share": 0,
+		},
+		"coordinator": {
+			"ansible_host": "coordinator", "bench_os": "linux", "cores": 12,
+			"registry_seat": "seat-coord", "slots_capacity": 36, "slots_share": 6,
+			"ansible_connection": "local",
+		},
+	} {
+		for field, value := range want {
+			assert.Equal(t, value, inv.Meta.Hostvars[host][field], "%s.%s", host, field)
+		}
+	}
+	assert.Equal(t, []string{"coordinator", "darwin-bench", "linux-bench", "store-only"}, inv.Benches.Hosts)
+	assert.Equal(t, []string{"store-only"}, inv.Store.Hosts)
+	assert.Equal(t, []string{"coordinator"}, inv.Coordinator.Hosts)
+	assert.NotContains(t, inv.Meta.Hostvars["linux-bench"], "registry_roles", "the machine schema has no role source to project")
+
+	t.Run("missing required beat fact refuses with repair", func(t *testing.T) {
+		t.Parallel()
+		missing := *s
+		missing.Beats = map[string]*Beat{}
+		for host, beat := range s.Beats {
+			copy := *beat
+			missing.Beats[host] = &copy
+		}
+		beat := *missing.Beats["coordinator"]
+		beat.Cores = ""
+		missing.Beats["coordinator"] = &beat
+		inv, err := BuildInventory(&missing, "")
+		require.Error(t, err)
+		assert.Nil(t, inv)
+		assert.Contains(t, err.Error(), "machine coordinator: cores is unset in beat field ncpu")
+		assert.Contains(t, err.Error(), "restore or start the machine's configured beat publisher")
+	})
 }
 
 func TestMemberEndpointComesFromTheFleetAndNotItsPersistedArgv(t *testing.T) {
@@ -165,17 +244,21 @@ func TestALoopViewThatDoesNotParseIsRefused(t *testing.T) {
 	}
 }
 
-// An empty login or seat is left out, never emitted as "".
+// An empty optional login is left out, never emitted as ""; the required seat
+// remains explicit for the plays that check the registry seat.
 func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 	t.Parallel()
 	s := snapshot(nil)
-	s.Machines["bench-empty"] = View{"user": "", "seat": "", "slots": "2", "runners": "0"}
+	s.Machines["bench-empty"] = View{"user": "", "seat": "seat-empty", "slots": "2", "width": "0", "runners": "0"}
+	s.Beats["bench-empty"] = &Beat{OS: "linux", Arch: "amd64", Cores: "2"}
 	inv, err := BuildInventory(s, "")
 	require.NoError(t, err)
 	hv := inv.Meta.Hostvars["bench-empty"]
-	for _, k := range []string{"ansible_user", "nova_seat", "user", "seat"} {
+	for _, k := range []string{"ansible_user", "user"} {
 		assert.NotContains(t, hv, k)
 	}
+	assert.Equal(t, "seat-empty", hv["registry_seat"])
+	assert.Equal(t, "seat-empty", hv["nova_seat"])
 	assert.Equal(t, 2, hv["slots"])
 }
 
@@ -213,8 +296,8 @@ func TestLoadFixtureIsTheAppliedStateOfTheSameRows(t *testing.T) {
 	}
 	full := write("full.yml", `
 machines:
-  bench-alpha: {user: user-a, seat: seat-a, slots: 4, runners: 1, os: darwin, arch: arm64}
-  bench-beta: {user: user-b, seat: seat-b, slots: 2}
+  bench-alpha: {user: user-a, seat: seat-a, slots: 4, width: 3, runners: 1, os: darwin, arch: arm64, cores: 8}
+  bench-beta: {user: user-b, seat: seat-b, slots: 2, width: 1, runners: 0, os: linux, arch: amd64, cores: 4}
 fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova, loops_dir: "~/nova-bench/loops"}
 loops:
   member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true}
@@ -222,9 +305,9 @@ loops:
 `)
 	snap, err := LoadFixture(full)
 	require.NoError(t, err)
-	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1", "tla": "false"}, snap.Machines["bench-alpha"])
-	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
-	assert.NotContains(t, snap.Beats, "bench-beta")
+	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "width": "3", "runners": "1", "tla": "false"}, snap.Machines["bench-alpha"])
+	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64", Cores: "8"}, snap.Beats["bench-alpha"])
+	assert.Equal(t, &Beat{OS: "linux", Arch: "amd64", Cores: "4"}, snap.Beats["bench-beta"])
 	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}, snap.Fleet)
 	assert.Equal(t, View{
 		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
@@ -265,13 +348,13 @@ func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
 	}{
 		{"root is a list", "- one\n- two\n", "line 1: the document is a map with machines, fleet and loops, got a list"},
 		{"machines is a list", "machines:\n  - one\n  - two\n", "line 2: machines is a map of name to machine, got a list"},
-		{"machine is text", "machines:\n  m1: five\n", "line 2: a machine is a map of user, seat, slots, runners, tla, os and arch, got text"},
+		{"machine is text", "machines:\n  m1: five\n", "line 2: a machine is a map of user, seat, slots, runners, tla, os, arch, cores and width, got text"},
 		{"machine field is text", "machines:\n  m1: {slots: soon}\n", "line 2: a number is wanted, got text"},
 		{"fleet is text", "fleet: five\n", "line 1: fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir, got text"},
 		{"loops is a list", "loops:\n  - one\n", "line 2: loops is a map of name to loop, got a list"},
 		{"loop is text", "loops:\n  l1: five\n", "line 2: a loop is a map of machine, argv, seat, keys, every, keepalive and enabled, got text"},
 		{"unknown field", "machines: {}\nfleet: {}\nbogus: 1\n", "line 3: bogus is not a fixture field; want machines, fleet or loops"},
-		{"machine unknown field", "machines:\n  m1: {bogus: 1}\n", "line 2: bogus is not a fixture field; want user, seat, slots, runners, tla, os or arch"},
+		{"machine unknown field", "machines:\n  m1: {bogus: 1}\n", "line 2: bogus is not a fixture field; want user, seat, slots, runners, tla, os, arch, cores or width"},
 		{"two problems at once", "machines:\n  - one\nfleet: five\n", "line 2: machines is a map of name to machine, got a list; line 3: fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir, got text"},
 	}
 	for _, tc := range cases {
@@ -302,6 +385,7 @@ func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
 	s := snapshot(nil)
 	s.Machines["bench-beta"]["tla"] = "true"
 	s.Machines["bench-gamma"] = View{"user": "user-c", "seat": "seat-c", "slots": "8", "runners": "0", "tla": "false"}
+	s.Beats["bench-gamma"] = &Beat{OS: "linux", Arch: "amd64", Cores: "4"}
 	inv, err := BuildInventory(s, "")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bench-beta"}, inv.TLA.Hosts)
@@ -310,7 +394,7 @@ func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
 	assert.Equal(t, false, inv.Meta.Hostvars["bench-alpha"]["nova_tla"], "a view with no tla key")
 
 	path := filepath.Join(t.TempDir(), "fx.yml")
-	require.NoError(t, os.WriteFile(path, []byte("machines:\n  bench-alpha: {user: u, seat: s, slots: 1, tla: true}\n  bench-beta: {user: u, seat: s, slots: 1}\nfleet: {redis_port: 6380, pg_dsn: postgres://u@localhost:5432/nova, loops_dir: \"~/nova-bench/loops\"}\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("machines:\n  bench-alpha: {user: u, seat: s, slots: 1, tla: true, os: linux, arch: amd64, cores: 2}\n  bench-beta: {user: u, seat: s, slots: 1, os: linux, arch: amd64, cores: 2}\nfleet: {redis_port: 6380, pg_dsn: postgres://u@localhost:5432/nova, loops_dir: \"~/nova-bench/loops\"}\n"), 0o600))
 	snap, err := LoadFixture(path)
 	require.NoError(t, err)
 	assert.Equal(t, "true", snap.Machines["bench-alpha"]["tla"])

@@ -27,7 +27,9 @@ func inventoryHarness(t *testing.T, n int) *harness {
 	h.env["NOVA_SPRINT_REDIS"] = storeAddr
 	h.redis.views[config.KindMachine] = map[string]config.View{}
 	for i := 1; i <= n; i++ {
-		h.redis.views[config.KindMachine][fmt.Sprintf("bench-%02d", i)] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
+		name := fmt.Sprintf("bench-%02d", i)
+		h.redis.views[config.KindMachine][name] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
+		h.redis.beats[name] = &config.Beat{OS: "linux", Arch: "amd64", Cores: "4"}
 	}
 	h.redis.revs[config.KindMachine] = 1
 	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
@@ -62,7 +64,7 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
 	}}
 	h.redis.revs["loop"] = 1
-	h.redis.beats["bench-02"] = &config.Beat{OS: "linux", Arch: "amd64"}
+	h.redis.beats["bench-02"] = &config.Beat{OS: "linux", Arch: "amd64", Cores: "4"}
 
 	code, out, errs := h.run(t, "inventory")
 	require.Equal(t, 0, code, errs)

@@ -205,6 +205,7 @@ func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t, "m1")
+	h.redis.beats["m1"] = &config.Beat{OS: "linux", Arch: "amd64", Cores: "4"}
 	code, _, errs := h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader","--width","8"]`, "--keepalive", "true")
 	require.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's")

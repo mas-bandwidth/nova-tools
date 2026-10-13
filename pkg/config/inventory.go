@@ -122,30 +122,66 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	runnerHosts, tlaHosts := []string{}, []string{}
 	for _, m := range names {
 		v := snap.Machines[m]
-		slots, _ := strconv.Atoi(v["slots"])
+		seat := v["seat"]
+		if seat == "" {
+			return nil, fmt.Errorf("machine %s: registry_seat is unset in machine row field seat; run: nova-config machine show %s", m, m)
+		}
+		slots, err := inventoryCount(m, "slots_capacity", "machine row field slots", v["slots"])
+		if err != nil {
+			return nil, err
+		}
+		if slots == 0 {
+			return nil, fmt.Errorf("machine %s: slots_capacity must be greater than 0 from machine row field slots; run: nova-config machine show %s", m, m)
+		}
 		runners, _ := strconv.Atoi(v["runners"])
+		beat := snap.Beats[m]
+		if beat == nil || beat.OS == "" {
+			return nil, fmt.Errorf("machine %s: bench_os is unset in beat field os; restore or start the machine's configured beat publisher so bench:%s:beat contains os and ncpu, then rerun nova-config inventory", m, m)
+		}
+		cores, err := inventoryCount(m, "cores", "beat field ncpu", beat.Cores)
+		if err != nil {
+			return nil, fmt.Errorf("%w; restore or start the machine's configured beat publisher so bench:%s:beat contains os and ncpu, then rerun nova-config inventory", err, m)
+		}
+		width, hasWidth := 0, false
+		if v["width"] != "" {
+			width, err = inventoryCount(m, "slots_share", "machine row field width", v["width"])
+			if err != nil {
+				return nil, err
+			}
+			hasWidth = true
+		} else {
+			width, hasWidth = cores/2, true // The machine row's nullable width defaults to half its beat cores.
+		}
+		if hasWidth && width > slots {
+			return nil, fmt.Errorf("machine %s: slots_share %d from machine row field width exceeds slots_capacity %d from machine row field slots; run: nova-config machine show %s", m, width, slots, m)
+		}
 		// ansible_user is the name ansible reads for the login; nova_seat
 		// carries the row's seat under a namespaced name that cannot collide
 		// with a play's own variable. An empty value is left out, never
 		// emitted as "".
 		hv := map[string]any{
-			"ansible_host": m,
-			"slots":        slots,
-			"runners":      runners,
-			"kind":         KindMachine,
+			"ansible_host":   m,
+			"slots":          slots,
+			"slots_capacity": slots,
+			"runners":        runners,
+			"kind":           KindMachine,
 			// a view written before the field existed has no tla: none
-			"nova_tla": v["tla"] == "true",
+			"nova_tla":      v["tla"] == "true",
+			"registry_seat": seat,
 		}
+		if hasWidth {
+			hv["slots_share"] = width
+		}
+		hv["bench_os"], hv["nova_os"] = beat.OS, beat.OS
+		if beat.Arch != "" {
+			hv["nova_arch"] = beat.Arch
+		}
+		hv["cores"] = cores
 		if u := v["user"]; u != "" {
 			hv["ansible_user"] = u
 		}
 		if seat := v["seat"]; seat != "" {
 			hv["nova_seat"] = seat
-		}
-		// The measured platform, when the machine's beat carries it; the
-		// plays read the gathered facts for a machine without one.
-		if b := snap.Beats[m]; b != nil && b.OS != "" && b.Arch != "" {
-			hv["nova_os"], hv["nova_arch"] = b.OS, b.Arch
 		}
 		if loops != nil {
 			hv[loopField] = loops[m]
@@ -191,6 +227,20 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		Runners:       AnsibleGroup{Hosts: runnerHosts},
 		TLA:           AnsibleGroup{Hosts: tlaHosts},
 	}, nil
+}
+
+// inventoryCount reads a non-negative integer from the applied row or beat,
+// naming both the host variable and its source when the inventory cannot
+// provide the value a play would otherwise discover as undefined.
+func inventoryCount(host, variable, source, raw string) (int, error) {
+	if raw == "" {
+		return 0, fmt.Errorf("machine %s: %s is unset in %s; run: nova-config machine show %s", host, variable, source, host)
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("machine %s: %s from %s is not a non-negative integer; run: nova-config machine show %s", host, variable, source, host)
+	}
+	return n, nil
 }
 
 // adoptOrder is the fleet in the order the install play adopts it: the canary
@@ -402,8 +452,8 @@ type fixture struct {
 // the row the inventory reads.
 type fixtureMachines map[string]fixtureMachine
 
-// fixtureMachine is one machine the fixture names; OS and Arch stand in for
-// the machine's beat.
+// fixtureMachine is one machine the fixture names; OS, Arch and Cores stand
+// in for the machine's beat, while Width is the nullable machine-row field.
 type fixtureMachine struct {
 	User    string `yaml:"user"`
 	Seat    string `yaml:"seat"`
@@ -412,6 +462,8 @@ type fixtureMachine struct {
 	TLA     bool   `yaml:"tla"`
 	OS      string `yaml:"os"`
 	Arch    string `yaml:"arch"`
+	Cores   *int   `yaml:"cores"`
+	Width   *int   `yaml:"width"`
 }
 
 // fixtureFleet is the fixture's one fleet row.
@@ -459,16 +511,24 @@ func LoadFixture(path string) (*Snapshot, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
+		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch, cores and width), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
 	for m, r := range f.Machines {
 		if !NamePattern.MatchString(m) {
 			return nil, fmt.Errorf("--fixture %s: machine %q is not a row name (lower-case letters, digits and dashes)", path, m)
 		}
-		snap.Machines[m] = View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
-		if r.OS != "" || r.Arch != "" {
-			snap.Beats[m] = &Beat{OS: r.OS, Arch: r.Arch}
+		machine := View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
+		if r.Width != nil {
+			machine["width"] = strconv.Itoa(*r.Width)
+		}
+		snap.Machines[m] = machine
+		if r.OS != "" || r.Arch != "" || r.Cores != nil {
+			beat := &Beat{OS: r.OS, Arch: r.Arch}
+			if r.Cores != nil {
+				beat.Cores = strconv.Itoa(*r.Cores)
+			}
+			snap.Beats[m] = beat
 		}
 	}
 	redisPort := ""
@@ -506,7 +566,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 var fixtureShapeWords = map[string]string{
 	"config.fixture":         "the document is a map with machines, fleet and loops",
 	"config.fixtureMachines": "machines is a map of name to machine",
-	"config.fixtureMachine":  "a machine is a map of user, seat, slots, runners, tla, os and arch",
+	"config.fixtureMachine":  "a machine is a map of user, seat, slots, runners, tla, os, arch, cores and width",
 	"config.fixtureFleet":    "fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir",
 	"config.fixtureLoops":    "loops is a map of name to loop",
 	"config.fixtureLoop":     "a loop is a map of machine, argv, seat, keys, every, keepalive and enabled",
@@ -522,7 +582,7 @@ var fixtureShapeWords = map[string]string{
 // field's refusal says what that block wants.
 var fixtureFields = map[string]string{
 	"config.fixture":        "machines, fleet or loops",
-	"config.fixtureMachine": "user, seat, slots, runners, tla, os or arch",
+	"config.fixtureMachine": "user, seat, slots, runners, tla, os, arch, cores or width",
 	"config.fixtureFleet":   "store, coordinator, redis_port, pg_dsn or loops_dir",
 	"config.fixtureLoop":    "machine, argv, seat, keys, every, keepalive or enabled",
 }
