@@ -3,11 +3,14 @@
 package main
 
 import (
+	"bytes"
+	"flag"
 	"fmt"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // liftRemedy is a POSIX-shell command over the exact box and normalized surface.
@@ -25,30 +28,49 @@ func liftRemedy(box, surface string) string {
 }
 
 // cmdCheck gates. Every ingestion path calls it, and only exit 0 is permission: 1 means
-// a fuse is positively blown, 2 means it could not be proven clear. tla/FuseBox.tla cmdCheck.
+// a fuse is positively blown, 2 means it could not be proven clear. tla/FuseBox.tla cmdCheck;
+// the JSON form is the same decision in the standard receipt envelope (docs/STANDARD.md §2).
 func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	box, positional, ok, parsed := parseBox("check", rest, stderr, inv.getenv)
+	var asJSON bool
+	var parseErr bytes.Buffer
+	box, positional, ok, parsed, jsonRequested := parseBoxWith("check", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
+		fs.BoolVar(&asJSON, "json", false, "write the standard JSON receipt")
+	})
+	asJSON = asJSON || jsonRequested
 	if !parsed {
-		return 2
+		return parseFailure("check", asJSON, parseErr.String(), stdout, stderr)
 	}
+	var problems []string
 	if len(positional) > 1 {
-		refuse(stderr, " check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]))
+		problem := fmt.Sprintf("takes at most one surface, got %q too", positional[1])
+		problems = append(problems, problem)
 		ok = false
 	}
 	surface := ""
 	if len(positional) == 1 {
 		if fuse.Surface(positional[0]) == "" {
-			refuse(stderr, " check", "surface must not be blank; omit it to check lockdown only")
+			problem := "surface must not be blank; omit it to check lockdown only"
+			problems = append(problems, problem)
 			ok = false
 		}
 		surface = positional[0]
 	}
 	if !ok {
-		return 2
+		if asJSON {
+			problems = append(parsedRefusalReasons("check", parseErr.String()), problems...)
+			return writeFuseJSON(stdout, fuseRefusals("check", problems, "nova-fuse help check"))
+		}
+		return refuseCaptured(stderr, "check", &parseErr, problems)
 	}
 
 	b, err := fuse.ReadBox(boxFile(inv.wd, box))
 	if err != nil {
+		if asJSON {
+			out := fuseRefusal("check", oneline.Err(err), remedy(err, box))
+			out.Fact("decision", "unknown")
+			out.Reasons = []string{fuseBoxReasonCode(err)}
+			return writeFuseJSON(stdout, out)
+		}
 		// Fail closed, and say which fact this is: "could not be read" is not "a fuse is
 		// blown", and a claim must never outrun the measurement. Both refuse.
 		fmt.Fprintf(stderr, "nova-fuse check REFUSED: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
@@ -56,12 +78,28 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	}
 
 	if b.Lockdown != nil {
+		if asJSON {
+			out := tool.Fail(b.Lockdown.Reason)
+			out.Verb = "check"
+			out.Fact("decision", "blown").Fact("checked", "lockdown")
+			out.Reasons = []string{"lockdown_blown"}
+			out.Item("trip", "kind", "lockdown", "at", b.Lockdown.At, "reason", tool.Text(b.Lockdown.Reason))
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stderr, "FUSE FAILED lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with the person you work with)\n",
 			since(*b.Lockdown), why(*b.Lockdown))
 		return 1
 	}
 
 	if name, f, ok := b.Quarantined(surface); ok {
+		if asJSON {
+			out := tool.Fail(f.Reason)
+			out.Verb = "check"
+			out.Fact("decision", "blown").Fact("checked", "surface").Fact("surface", name)
+			out.Reasons = []string{"quarantine_blown"}
+			out.Item("trip", "kind", "quarantine", "surface", name, "at", f.At, "reason", tool.Text(f.Reason))
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
 			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
 		return 1
@@ -72,6 +110,14 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	// typing back that displayed token must refuse with FUSE FAILED rather than failing open.
 	if decoded := unescapeField(surface); decoded != surface {
 		if name, f, ok := b.Quarantined(decoded); ok {
+			if asJSON {
+				out := tool.Fail(f.Reason)
+				out.Verb = "check"
+				out.Fact("decision", "blown").Fact("checked", "surface").Fact("surface", name)
+				out.Reasons = []string{"quarantine_blown"}
+				out.Item("trip", "kind", "quarantine", "surface", name, "at", f.At, "reason", tool.Text(f.Reason))
+				return writeFuseJSON(stdout, out)
+			}
 			fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
 				oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
 			return 1
@@ -79,11 +125,21 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	}
 
 	if surface == "" {
+		if asJSON {
+			out := tool.Done().Fact("decision", "clear").Fact("checked", "lockdown_only")
+			out.Verb = "check"
+			return writeFuseJSON(stdout, out)
+		}
 		// Name what was verified and what was not. A bare check has proven only that there
 		// is no lockdown; it has checked no quarantine at all, and a caller that reads
 		// "clear" as "this surface is clear" leaves reads reaching the wire ungated.
 		fmt.Fprintln(stdout, "FUSE OK lockdown=clear (no surface named; no quarantine checked)")
 		return 0
+	}
+	if asJSON {
+		out := tool.Done().Fact("decision", "clear").Fact("checked", "surface").Fact("surface", fuse.Surface(surface))
+		out.Verb = "check"
+		return writeFuseJSON(stdout, out)
 	}
 	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
 	return 0
