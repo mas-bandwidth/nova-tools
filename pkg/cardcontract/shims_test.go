@@ -271,8 +271,14 @@ func TestShimResetPathspecsMatchGit(t *testing.T) {
 			"git reset STAGED -- HEAD~1",
 			"git reset BELOW -- HEAD~1",
 			"git reset --pathspec-from-file=PATHFILE",
+			"git reset STAGED --pathspec-from-file=paths",
+			"git -C nested reset STAGED --pathspec-from-file=../paths",
 			"git reset STAGED --pathspec-from-file PATHFILE",
 			"git reset BELOW --pathspec-from-fil=PATHFILE",
+			"git reset STAGED --pathspec-from-file=NEWLINEFILE",
+			"git reset STAGED --pathspec-from-file=NEWLINEFILE --pathspec-file-nul",
+			"git reset STAGED --pathspec-from-file=NULFILE",
+			"git reset STAGED --pathspec-from-file=NULFILE --pathspec-file-nul",
 			"git reset --mixed STAGED -- HEAD~1",
 			"git reset --soft STAGED -- HEAD~1",
 			"git reset --merge STAGED -- HEAD~1",
@@ -296,7 +302,12 @@ func TestShimResetPathspecsMatchGit(t *testing.T) {
 				head := shimGit(t, work, "rev-parse", "HEAD")
 				pathfile := filepath.Join(root, "paths")
 				require.NoError(t, os.WriteFile(pathfile, []byte("HEAD~1\n"), 0o644))
-				line = strings.NewReplacer("STAGED", staged, "BELOW", below, "PATHFILE", shq(pathfile)).Replace(line)
+				require.NoError(t, os.WriteFile(filepath.Join(work, "paths"), []byte("HEAD~1\n"), 0o644))
+				require.NoError(t, os.Mkdir(filepath.Join(work, "nested"), 0o755))
+				newlinefile, nulfile := filepath.Join(root, "newline-paths"), filepath.Join(root, "nul-paths")
+				require.NoError(t, os.WriteFile(newlinefile, []byte("\n"), 0o644))
+				require.NoError(t, os.WriteFile(nulfile, []byte{0}, 0o644))
+				line = strings.NewReplacer("STAGED", staged, "BELOW", below, "PATHFILE", shq(pathfile), "NEWLINEFILE", shq(newlinefile), "NULFILE", shq(nulfile)).Replace(line)
 				f := Frame{Kind: "work", Card: "c1", Model: "test/model", Repo: cardURL, Branch: "sprint/c1"}
 				shims := filepath.Join(root, "shim")
 				require.NoError(t, Install(For(family), f, Staged{Job: root, Repo: work, Head: staged, Git: realGit(t)}, shims))
@@ -320,6 +331,44 @@ func TestShimResetPathspecsMatchGit(t *testing.T) {
 				assert.Contains(t, errb, "REFUSED")
 				assert.Equal(t, head, shimGit(t, work, "rev-parse", "HEAD"))
 			})
+		}
+	}
+}
+
+// TestShimEmptyPathspecInputCannotMoveStagedHEAD pins section 5's staged ancestry
+// guard: an empty pathspec source does not select an index-only Git reset.
+func TestShimEmptyPathspecInputCannotMoveStagedHEAD(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-SWARM.md)")
+	}
+	for _, family := range []string{"claude", "plain", "openai"} {
+		for _, mode := range []string{"--mixed", "--soft", "--hard"} {
+			for _, source := range []string{"EMPTYFILE", "-"} {
+				t.Run(family+"/"+mode+"/"+source, func(t *testing.T) {
+					t.Parallel()
+					root := t.TempDir()
+					work := filepath.Join(root, "repo")
+					shimGit(t, root, "init", "-q", work)
+					shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "staged")
+					staged := shimGit(t, work, "rev-parse", "HEAD")
+					shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "own")
+					head := shimGit(t, work, "rev-parse", "HEAD")
+					file := filepath.Join(root, "empty-paths")
+					require.NoError(t, os.WriteFile(file, nil, 0o644))
+					f := Frame{Kind: "work", Card: "c1", Model: "test/model", Repo: cardURL, Branch: "sprint/c1"}
+					shims := filepath.Join(root, "shim")
+					require.NoError(t, Install(For(family), f, Staged{Job: root, Repo: work, Head: staged, Git: realGit(t)}, shims))
+					line := "git reset " + mode + " " + staged + " --pathspec-from-file=" + strings.ReplaceAll(source, "EMPTYFILE", shq(file)) + " < " + shq(file)
+					code, _, errb := shimSh(t, shims, work, line)
+					assert.NotEqual(t, 0, code)
+					assert.Contains(t, errb, "REFUSED")
+					assert.Equal(t, head, shimGit(t, work, "rev-parse", "HEAD"))
+					code, _, errb = shimSh(t, shims, work, strings.Replace(line, "git ", shq(realGit(t))+" ", 1))
+					assert.Equal(t, 0, code, "%s", errb)
+					assert.Equal(t, staged, shimGit(t, work, "rev-parse", "HEAD"), "real Git moves HEAD with empty input")
+				})
+			}
 		}
 	}
 }
