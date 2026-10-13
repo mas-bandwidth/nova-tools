@@ -63,3 +63,76 @@ func TestChangeBaseListAtCommitAndAddedListRowsAgreeInAGitHistory(t *testing.T) 
 	assert.NoError(t, err, "ListAtCommit of a file the base lacks = present %v, %v; want introduced (false, nil)", present, err)
 	assert.False(t, present, "ListAtCommit of a file the base lacks = present %v, %v; want introduced (false, nil)", present, err)
 }
+
+// TestChangeBaseUsesTheFirstParentWhenAReleaseMergeCheckoutHasNoDevRef proves
+// a release merge checkout compares against the actual target parent when the
+// default dev ref is unavailable; the added row remains visible to the shrink
+// check. See docs/SPEC-CI.md, unit-rule burndown.
+func TestChangeBaseUsesTheFirstParentWhenAReleaseCheckoutHasNoDevRef(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := gitOut(root, append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+		require.NoError(t, err)
+		return strings.TrimSpace(out)
+	}
+	git("init", "-q", "-b", "release")
+	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "release baseline")
+	git("checkout", "-q", "-b", "topic")
+	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n$ nova-foo newverb --x 1\n")
+	git("commit", "-q", "-am", "adds an unexecuted example")
+	git("checkout", "-q", "release")
+	writeGo(t, root, "release-note.txt", "release commit\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "release target moves")
+	parents := strings.Fields(git("rev-list", "--parents", "-n", "1", "HEAD"))
+	require.Len(t, parents, 2)
+	parent := parents[1]
+	git("merge", "--no-ff", "-q", "topic", "-m", "release merge")
+
+	base, err := ChangeBase(root, func(string) string { return "" })
+	require.NoError(t, err)
+	assert.Equal(t, parent, base, "the base is the actual first parent, even without a dev ref")
+	baseList, present, err := ListAtCommit(root, base, UnexecutedListPath)
+	require.NoError(t, err)
+	require.True(t, present)
+	head := loadAllowlist(t, filepath.Join(root, UnexecutedListPath), unexecutedListOptions)
+	assert.Equal(t, []string{"$ nova-foo newverb --x 1"}, AddedListRows(baseList, head.Text()), "the shrink-only invariant still sees the increase")
+
+	// A present but unrelated dev ref is different from an absent ref: it is an
+	// intended base whose history is unavailable, so the first parent must not
+	// hide that failure.
+	unrelated := git("commit-tree", git("rev-parse", "HEAD^{tree}"), "-m", "unrelated dev")
+	git("update-ref", "refs/heads/dev", unrelated)
+	_, err = ChangeBase(root, func(string) string { return "" })
+	require.ErrorContains(t, err, "no base commit")
+}
+
+// TestChangeBaseRefusesToGuessForANonMergeCheckoutWithoutDevRefs proves an
+// ordinary local checkout cannot substitute its previous commit for an
+// unavailable intended base. See docs/SPEC-CI.md, unit-rule burndown.
+func TestChangeBaseRefusesToGuessForANonMergeCheckoutWithoutDevRefs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := gitOut(root, append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+		require.NoError(t, err)
+		return strings.TrimSpace(out)
+	}
+	git("init", "-q", "-b", "release")
+	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "release baseline")
+	writeGo(t, root, "release-note.txt", "release commit\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "ordinary release commit")
+
+	_, err := ChangeBase(root, func(string) string { return "" })
+	require.ErrorContains(t, err, "HEAD is not a merge commit with an actual first parent")
+}

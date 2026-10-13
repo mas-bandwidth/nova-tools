@@ -759,7 +759,8 @@ the package before it, so `miniredis.RunT` resolves).
 once at the landing from the tree's measure and allowed until moved (v1.3). It
 only shrinks: a site with no row, a row above or below its file's count, a row
 whose file breaks the rule no more, and a row or a count the change's base (the
-pull request's own base in CI, else the merge base with origin/dev) does not have
+pull request's own base in CI, else the merge base with origin/dev; in a merge
+checkout with neither dev ref, its actual first parent) does not have
 are each red; `NOVA_CI_UPDATE=1` lowers a count and drops a row at zero,
 never raises or adds one. A base with no file is the seed.
 **Its remedy line.** `a unit test uses no real time, no real socket and no external service: fake it (a fake clock, a channel the fake signals, net.Pipe, an in-process RoundTripper, httptest.NewRecorder, the store through hooktest.New or testkit.PipeStore) when the test is about logic, or move the test under //go:build functional when its subject is the real thing; the burn-down only shrinks`.

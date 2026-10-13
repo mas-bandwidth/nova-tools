@@ -698,8 +698,9 @@ func unitRuleGrowth(base, head map[string]int) []string {
 // TestUnitRuleBurndownOnlyShrinksAgainstTheMergeParent: the burn-down at HEAD
 // adds no row and raises no count over the burn-down at the change's base
 // (ChangeBase: the pull request's own base in a GitHub Actions run, else the
-// merge base of HEAD and origin/<GITHUB_BASE_REF>, dev when unset; the
-// comparison the unexecuted-examples list makes), so a change that adds an
+// merge base of HEAD and origin/<GITHUB_BASE_REF>, dev when unset; if those
+// refs are absent in a merge checkout, its actual first parent), the comparison
+// the unexecuted-examples list makes), so a change that adds an
 // offender and its row together is red, and a pull request against a stream
 // branch is held to that stream's list, not dev's. No base at all is a refusal,
 // never a pass. A base with no burn-down is the seed: the change that

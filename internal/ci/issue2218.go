@@ -474,17 +474,38 @@ func ChangeBase(root string, getenv func(string) string) (string, error) {
 	}
 	if sha == "" {
 		ref := getenv("GITHUB_BASE_REF")
+		explicitRef := ref != ""
 		if ref == "" {
 			ref = "dev"
 		}
 		var errs []string
+		baseRefFound := false
 		for _, r := range []string{"origin/" + ref, ref} {
+			if _, err := gitOut(root, "rev-parse", "--verify", "--quiet", r+"^{commit}"); err == nil {
+				baseRefFound = true
+			}
 			out, err := gitOut(root, "merge-base", "HEAD", r)
 			if err == nil {
 				sha = strings.TrimSpace(out)
 				break
 			}
 			errs = append(errs, fmt.Sprintf("merge-base HEAD %s: %v", r, err))
+		}
+		// A local release merge checkout may not have a dev ref. With no
+		// explicitly requested base, its first parent is the actual merge base.
+		// A non-merge checkout still has no trustworthy base and must refuse.
+		if sha == "" && !explicitRef && !baseRefFound {
+			out, err := gitOut(root, "rev-list", "--parents", "-n", "1", "HEAD")
+			parents := strings.Fields(out)
+			if err == nil && len(parents) >= 3 {
+				sha = parents[1]
+			} else {
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("parents of HEAD: %v", err))
+				} else {
+					errs = append(errs, "HEAD is not a merge commit with an actual first parent")
+				}
+			}
 		}
 		if sha == "" {
 			return "", fmt.Errorf("no base commit: %s", strings.Join(errs, "; "))
