@@ -151,15 +151,82 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		"beats":    {config.BeatKey("m")},
 		"friends":  {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},
 		"fleet":    {config.FleetKey("store"), config.FleetKey("coordinator")},
-		"loops":    {config.LoopsKey, config.LoopKey("member-a")},
-		"routes":   {config.RoutesKey, config.RouteKey("pro-a")},
-		"config":   {config.DeclKey},
-		"tokens":   {record.LedgerPrefix + "2026-09-30"},
-		"events":   {wire.Stream},
+		"loops":     {config.LoopsKey, config.LoopKey("member-a")},
+		"providers": {config.ProvidersKey, config.ProviderKey("opencode")},
+		"routes":    {config.RoutesKey, config.RouteKey("pro-a")},
+		"config":    {config.DeclKey},
+		"tokens":    {record.LedgerPrefix + "2026-09-30"},
+		"events":    {wire.Stream},
 	} {
 		for _, k := range ks {
 			assert.True(t, match(family[name], k), "%s: %s", name, k)
 		}
+	}
+}
+
+// TestProvidersFamilyAndReaderRoles verifies that Families includes the
+// providers family with its keys, that Families covers every key prefix/shape
+// written by pkg/config/redis.go, and that the reader roles (member, table,
+// friend) are granted read access to the providers family.
+func TestProvidersFamilyAndReaderRoles(t *testing.T) {
+	t.Parallel()
+
+	// 1. Families must declare providers
+	var provFamily *Family
+	for _, f := range Families {
+		if f.Name == "providers" {
+			copy := f
+			provFamily = &copy
+			break
+		}
+	}
+	require.NotNil(t, provFamily, "Families must include 'providers'")
+	assert.Equal(t, []string{"providers", "provider:*"}, provFamily.Patterns)
+	assert.Contains(t, provFamily.From, "ProvidersKey")
+	assert.Contains(t, provFamily.From, "ProviderKey")
+
+	// 2. Families must cover every key pkg/config/redis.go writes
+	match := func(key string) bool {
+		for _, f := range Families {
+			for _, p := range f.Patterns {
+				if ok, _ := path.Match(p, key); ok {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	writtenKeys := []string{
+		config.DeclKey,
+		config.FriendsKey,
+		config.MachinesKey,
+		config.MachineKey("bench-a"),
+		config.MachineCeilingKey("bench-a"),
+		config.LoopsKey,
+		config.LoopKey("member-1"),
+		config.RoutesKey,
+		config.RouteKey("route-1"),
+		config.ProvidersKey,
+		config.ProviderKey("opencode"),
+		config.FleetKey("store"),
+		config.FleetKey("coordinator"),
+		config.FriendBeatKey("emma"),
+		config.BeatKey("bench-a"),
+	}
+	for _, k := range writtenKeys {
+		assert.True(t, match(k), "key %q written by pkg/config must be covered by Families", k)
+	}
+
+	// 3. Reader roles (member, table, friend) must be granted read access (%R~) to providers
+	rolesByName := map[string]Role{}
+	for _, r := range Roles() {
+		rolesByName[r.Name] = r
+	}
+	for _, roleName := range []string{Member, Table, Friend} {
+		role, ok := rolesByName[roleName]
+		require.True(t, ok, "role %q must exist", roleName)
+		assert.Contains(t, role.Keys, "%R~providers", "role %q must be granted %%R~providers", roleName)
+		assert.Contains(t, role.Keys, "%R~provider:*", "role %q must be granted %%R~provider:*", roleName)
 	}
 }
 
