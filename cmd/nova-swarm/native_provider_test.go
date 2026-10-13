@@ -1,19 +1,15 @@
 package main
 
 import (
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
-	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // A provider failure is not the card's (nativeprovider.go; tla/CardContract.tla,
@@ -137,90 +133,40 @@ func TestAChildTheProviderFailedIsJudgedProviderFailure(t *testing.T) {
 	}
 }
 
-// writeSessionFinish writes a session database in the data home whose last message is
-// an assistant message with the given finish, in the harness's own shape (a user
-// message, a tool call, then the final message), stamped before any window a test
-// opens at the epoch. The one program that writes it is the one the reader itself
-// runs, so a bench without it skips rather than half-proves the case.
-func writeSessionFinish(t *testing.T, dataHome, finish string) {
-	t.Helper()
-	if !swarm.SQLiteOnPath() {
-		t.Skipf("%s is not on PATH, and the session record cannot be written without it", swarm.SQLiteBinary)
-	}
-	db := filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
-	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
-	sql := "CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
-		"INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', 1000);\n" +
-		"INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"tool-calls\"}', 1001);\n" +
-		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"%s\"}', 1002);\n", finish)
-	cmd := exec.Command(swarm.SQLiteBinary, db)
-	cmd.Stdin = strings.NewReader(sql)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "writing the session record: %s", out)
-}
-
-// A finish of "length" is the harness's, not the card's (harness card A): opencode
-// stopped the final message at the output-token ceiling, so a clean exit with no
-// result is a provider fault that redeals the card, never a no-result the card is
-// judged for. A final message that ended on its own (stop) stays the card's, and
-// the tool-result end keeps its own reason.
+// A cutoff is independently decoded as the harness's fault, never folded
+// into provider/no-result classification (LengthIsAHarnessFault).
 func TestAFinishOfLengthIsAHarnessFaultNotNoResult(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, finish, wantMsg string
-		wantFault             bool
+		name, row string
+		fault     bool
 	}{
-		{"length is the harness's fault", "length", "ended at the output token limit", true},
-		{"a stop is the card's own end", "stop", "", false},
-		{"a tool result keeps its reason", "tool-calls", "ended without a final message", true},
+		{"length", "1\tassistant\tlength\tassistant\tlength\t0\t32000", true},
+		{"stop", "1\tassistant\tstop\t\t\t0\t0", false},
+		{"tool", "1\ttool\t\t\t\t0\t0", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			data := t.TempDir()
-			writeSessionFinish(t, data, tc.finish)
-			cause, ok := providerEnd("", data, 0, time.UnixMilli(0), 0, nil)
-			assert.Equal(t, tc.wantFault, ok, "finish %q", tc.finish)
-			if tc.wantFault {
-				assert.Equal(t, swarm.CauseOther, cause.Class, "finish %q", tc.finish)
-				assert.Equal(t, tc.wantMsg, cause.Message, "finish %q", tc.finish)
-			}
+			_, words, ok := parseRunEnd(tc.row)
+			require.True(t, ok)
+			assert.Equal(t, tc.fault, words != "")
 		})
 	}
 }
 
-// An intermediate finish of "length" followed by a brief clean stop is still
-// the harness's fault (cold read of #5668): the truncated turn spent the
-// result, and reading only the newest message (LIMIT 1) missed it and judged
-// the card no-result for the harness's own cap.
+// A midturn length before a clean stop or tool result remains a cutoff.
 func TestALengthFinishBeforeAStopIsStillAHarnessFault(t *testing.T) {
 	t.Parallel()
-	data := t.TempDir()
-	writeSessionFinishes(t, data, "length", "stop")
-	cause, ok := providerEnd("", data, 0, time.UnixMilli(0), 0, nil)
-	require.True(t, ok, "an intermediate length finish is a harness fault even when a later message stops cleanly")
-	assert.Equal(t, swarm.CauseOther, cause.Class)
-	assert.Equal(t, "ended at the output token limit", cause.Message)
-}
-
-// writeSessionFinishes writes a session database whose assistant messages end
-// with the given finishes in order, in the harness's own shape.
-func writeSessionFinishes(t *testing.T, dataHome string, finishes ...string) {
-	t.Helper()
-	if !swarm.SQLiteOnPath() {
-		t.Skipf("%s is not on PATH, and the session record cannot be written without it", swarm.SQLiteBinary)
+	for _, name := range []string{"midturn-stop.tsv", "midturn-tool.tsv"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			row, err := os.ReadFile(filepath.Join("testdata", "length-finish", name))
+			require.NoError(t, err)
+			_, words, ok := parseRunEnd(string(row))
+			require.True(t, ok)
+			assert.Equal(t, "finish length; output 0, reasoning 32000", words)
+		})
 	}
-	db := filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
-	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
-	var sql strings.Builder
-	sql.WriteString("CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n")
-	sql.WriteString("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', 1000);\n")
-	for i, finish := range finishes {
-		fmt.Fprintf(&sql, "INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"%s\"}', %d);\n", finish, 1001+i)
-	}
-	cmd := exec.Command(swarm.SQLiteBinary, db)
-	cmd.Stdin = strings.NewReader(sql.String())
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "writing the session record: %s", out)
 }
 
 // providerOf takes the provider from a model id's first slash, and only when both sides

@@ -94,6 +94,7 @@ MCCardContractBrokenOldHead.cfg	MCCardContract.tla	invariant	ReworkStagedAtTheTi
 MCCardContractBrokenSilentConflict.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenApplyMoved.cfg	MCCardContract.tla	invariant	CollectedAppliesOnlyIfHeld	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenReapAccepted.cfg	MCCardContract.tla	invariant	AcceptedIsNeverReaped	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenLengthNoResult.cfg	MCCardContract.tla	invariant	LengthIsAHarnessFault	ignore-terminal	cardcontract	required	-
 MCBus2.cfg	MCBus2.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPartial.cfg	MCBus2.tla	invariant	OnEveryStreamOrNone	ignore-terminal	bus2	required	-
 MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2	required	-

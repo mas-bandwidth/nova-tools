@@ -261,6 +261,15 @@ member is run as a reader's read is, its verdict reported with `read --as <membe
 
 ## 4. The finish
 
+A run with no published result whose assistant turn ends at the harness's
+output limit (finish `length`, including an intermediate turn before a later
+stop or tool message) is a harness fault, the staging kind: no card attempt,
+redeal or cost is spent. Native checks it before provider hand-back or
+synthetic asked/deadline results, sets `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`
+itself (default 128000, `--output-token-max` selects a positive per-turn
+limit including reasoning), and emits `NATIVE HARNESS-FAULT` with output and
+reasoning counts. A published result keeps its existing judgment.
+
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
 
 - **ok** only when the result has the shape, its verdict is `ok`, its head has a commit the

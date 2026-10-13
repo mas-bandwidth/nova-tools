@@ -50,16 +50,18 @@ import (
 
 // nativeRunConfig is the frozen configuration of one native run.
 type nativeRunConfig struct {
-	binary   string        // the harness binary path, resolved once
-	model    string        // provider/model, one slash, both sides nonempty
-	label    string        // the --title this run is labelled with
-	card     []byte        // the card text, passed as the message, byte-for-byte
-	slotDir  string        // the slot directory; HOME is a data dir beneath it
-	root     string        // the configured root the slot directory must sit under
-	authFile string        // optional: an auth file to copy one entry out of
-	deadline time.Duration // the wall bound that kills the child
-	idle     time.Duration // the idle bound: neither log nor process tree moving this long ends the card (0 = no watch)
-	repos    []string      // repositories a card may clone (owner/name): network to
+	binary         string                                 // the harness binary path, resolved once
+	model          string                                 // provider/model, one slash, both sides nonempty
+	label          string                                 // the --title this run is labelled with
+	card           []byte                                 // the card text, passed as the message, byte-for-byte
+	slotDir        string                                 // the slot directory; HOME is a data dir beneath it
+	root           string                                 // the configured root the slot directory must sit under
+	authFile       string                                 // optional: an auth file to copy one entry out of
+	outputTokenMax int                                    // the per-turn output/reasoning ceiling; zero retains the default
+	lengthRead     func(string, time.Time) (string, bool) // nil uses the session database; tests inject recorded rows
+	deadline       time.Duration                          // the wall bound that kills the child
+	idle           time.Duration                          // the idle bound: neither log nor process tree moving this long ends the card (0 = no watch)
+	repos          []string                               // repositories a card may clone (owner/name): network to
 	// github.com only, expressed as a wall host rule
 	recipients []string // bus lanes a card may address; default none, and a bus
 	// send is denied inside the wall regardless
@@ -1059,7 +1061,7 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 			}
 		}
 	}
-	childEnv := nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath)
+	childEnv := withOutputTokenMax(nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath), p.cfg.outputMax())
 	// A headless harness runs from a private home under the data home, seeded with its credential
 	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one. claude
 	// copies no file: its login is the token --pass hands it by name, and a run without one says so.
@@ -1439,6 +1441,12 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	s.log.Close()
 	s.harnessOut.Close()
 	s.res.harness = harnessState(s.prep.jobDir)
+	harnessFault := false
+	if why, ok := nativeLengthFault(s.prep.cfg, s.prep.jobDir, s.prep.dataHome, s.runStart); ok {
+		fmt.Fprintln(errOut, harnessFaultLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model, why))
+		harnessFault = true
+		s.res.reason = "harness-fault"
+	}
 	s.res.fence = fenceRejected(s.prep.jobDir)
 	if rows := s.timeline.Rows(); len(rows) > 0 {
 		if err := swarm.WriteTimeline(filepath.Join(s.prep.jobDir, swarm.TimelineFileName), rows); err != nil {
@@ -1469,7 +1477,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	if !s.res.lost && ((s.res.wallRefusal != swarm.WallRefusal{}) || (s.res.shellDenial != swarm.ShellDenial{})) {
 		s.res.end = swarm.EndWall
 	}
-	if !s.res.lost && s.res.idled {
+	if !harnessFault && !s.res.lost && s.res.idled {
 		s.res.end = swarm.EndWall
 		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", s.res.idleEnd.Idle.Seconds())
 		if wr, named := s.res.idleEnd.WallRefusal(); named {
@@ -1497,7 +1505,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 	handedBack, providerEnded := false, false
-	if !s.res.lost && !s.res.idled && !s.res.terminated && s.res.wallReport == "" && (s.res.wallRefusal == swarm.WallRefusal{}) {
+	if !harnessFault && !s.res.lost && !s.res.idled && !s.res.terminated && s.res.wallReport == "" && (s.res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(s.outLog); err == nil {
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: s.prep.jobDir, RC: s.res.rc, Wall: time.Duration(s.res.wallSeconds * float64(time.Second)), Route: s.prep.cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
 				printed := printedHarnessError(raw)
@@ -1518,7 +1526,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
-	if !s.res.idled && !s.res.terminated && s.res.rc == 0 && s.res.wallReport == "" && (s.res.wallRefusal == swarm.WallRefusal{}) {
+	if !harnessFault && !s.res.idled && !s.res.terminated && s.res.rc == 0 && s.res.wallReport == "" && (s.res.wallRefusal == swarm.WallRefusal{}) {
 		if question, asked := swarm.AskedEnd(s.prep.jobDir, s.res.rc); asked {
 			if path, wrote, err := swarm.WriteAskedResult(s.prep.jobDir, s.prep.cfg.label, question); err != nil {
 				fmt.Fprintf(errOut, "NATIVE NOTE: the asked report could not be written: %s\n", oneline.Escape(err.Error()))
@@ -1527,7 +1535,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
-	if !s.res.lost && !s.res.idled && !s.res.terminated && !handedBack && s.res.stopped == "" && s.res.wallReport == "" &&
+	if !harnessFault && !s.res.lost && !s.res.idled && !s.res.terminated && !handedBack && s.res.stopped == "" && s.res.wallReport == "" &&
 		(s.res.wallRefusal == swarm.WallRefusal{}) && (s.res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(s.prep.jobDir); !published {
 			if cause, ok := providerEnd(s.prep.cfg.headless(), s.prep.dataHome, s.providerMark, s.runStart, s.res.rc, tailSince(s.outLog, s.captureMark)); ok {
@@ -1538,7 +1546,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	}
 	// AFTER the provider checks, never before: both ask FindCardResult, and a report written
 	// first would hide a provider failure the card must be handed on for (cold read, #5598).
-	if deadlineReportDue(s.res, handedBack, providerEnded) {
+	if !harnessFault && deadlineReportDue(s.res, handedBack, providerEnded) {
 		// the card worked to its wall: a commit in ./repo and no report is work to name, not a silent no-result (fault 9)
 		if path, wrote, err := swarm.WriteDeadlineResult(s.prep.jobDir, s.prep.cfg.label, true); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the deadline report could not be written: %s\n", oneline.Escape(err.Error()))
@@ -1549,7 +1557,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	if s.prep.decided != "" {
 		settleDecided(s.prep.cfg, s.prep.jobDir, s.prep.decided, errOut)
 	}
-	if !s.res.lost && s.prep.stepArgv == nil {
+	if !harnessFault && !s.res.lost && s.prep.stepArgv == nil {
 		run := s.prep.cfg.gateRun
 		if run == nil {
 			run = nativeGateRunner(s.wal.wall, func(argv []string) []string {
@@ -1575,7 +1583,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	if s.res.unrecorded {
 		return s.res, 2
 	}
-	if s.res.rc == 0 {
+	if !harnessFault && s.res.rc == 0 {
 		if _, published := swarm.FindCardResult(s.prep.jobDir); !published {
 			s.res.reason = "harness-silent"
 		}
@@ -2011,14 +2019,51 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	return nativeChildEnvFrom(os.Environ(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, toolPath)
 }
 
-// opencodeOutputTokenMax is the output-token ceiling the harness hands every
-// opencode child itself: opencode caps every completion at 32,000 output tokens
-// by default, reasoning included, and clamps this name to the model's own limit,
-// so a ceiling no current model reaches lifts the cap to each model's real limit
-// and a run stops ending finish "length" mid-work for want of a bench wrapper.
-// A finish of "length" that still happens is the harness's fault, never the
-// card's (nativeprovider.go, providerEndedLength).
-const opencodeOutputTokenMax = "131072"
+// opencodeOutputTokenMax is the harness's per-turn limit, reasoning included
+// (docs/SPEC-SWARM.md, native; LengthIsAHarnessFault).
+const opencodeOutputTokenMax = 128000
+
+func (cfg nativeRunConfig) outputMax() int {
+	if cfg.outputTokenMax > 0 {
+		return cfg.outputTokenMax
+	}
+	return opencodeOutputTokenMax
+}
+
+// withOutputTokenMax makes the harness's selected ceiling the one environment
+// entry; inherited duplicates cannot override it (LengthIsAHarnessFault).
+func withOutputTokenMax(env []string, n int) []string {
+	out := environWithoutName(env, "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX")
+	return append(out, "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX="+strconv.Itoa(n))
+}
+
+// nativeLengthFault runs before provider/asked/deadline fallback reports. A
+// real published result and a headless harness keep their existing judgment.
+// Libraries considered: strings/strconv decode the one session row; existing
+// FindCardResult and the shared sqlite reader own result/session lookup.
+func nativeLengthFault(cfg nativeRunConfig, jobDir, dataHome string, since time.Time) (string, bool) {
+	if cfg.headless() != "" {
+		return "", false
+	}
+	if _, published := swarm.FindCardResult(jobDir); published {
+		return "", false
+	}
+	read := cfg.lengthRead
+	if read == nil {
+		read = lengthFinish
+	}
+	words, ok := read(dataHome, since)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("harness fault: the model's turn ended at the harness's output limit (%s; OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=%d)", words, cfg.outputMax()), true
+}
+
+// harnessFaultLine cites the modeled no-cost staging class, not a provider
+// redeal (tla/CardContract.tla, LengthIsAHarnessFault).
+func harnessFaultLine(label string, wall float64, model, why string) string {
+	return fmt.Sprintf("NATIVE HARNESS-FAULT label=%s wall=%.2fs route=%s reason=%s", oneline.Field(label), wall, oneline.Field(model), oneline.Escape(why))
+}
 
 // nativeChildEnvFrom is nativeChildEnv over environ, native's own environment.
 func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string, toolPath []string) []string {
@@ -2064,7 +2109,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		"OPENCODE_LOG_LEVEL=ERROR",
 		// the harness owns the output-token ceiling (opencodeOutputTokenMax), so a
 		// bench needs no wrapper exporting it outside version control
-		"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX="+opencodeOutputTokenMax,
+		"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX="+strconv.Itoa(opencodeOutputTokenMax),
 	)
 	if cacheDir != "" {
 		out = append(out,

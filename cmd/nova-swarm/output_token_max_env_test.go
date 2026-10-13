@@ -13,7 +13,7 @@ import (
 // with finish "length" and no result. Until now the lift lived only in a per-bench
 // wrapper outside version control, so a bench without the wrapper silently ran
 // capped. The value is the model's own business -- opencode clamps it to the
-// model's limit -- so the harness names a ceiling no current model reaches and
+// model's limit -- so the harness names the configured per-turn ceiling and
 // overrides whatever the caller happened to export, exactly once.
 func TestTheHarnessSetsTheOutputTokenMaxItself(t *testing.T) {
 	t.Parallel()
@@ -29,6 +29,6 @@ func TestTheHarnessSetsTheOutputTokenMaxItself(t *testing.T) {
 				got = append(got, kv)
 			}
 		}
-		assert.Equal(t, []string{name + "=131072"}, got, "the child must carry exactly the harness's own ceiling, from %v", environ)
+		assert.Equal(t, []string{name + "=128000"}, got, "the child must carry exactly the harness's own ceiling, from %v", environ)
 	}
 }

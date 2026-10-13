@@ -1151,6 +1151,10 @@ var nativeGateLine = regexp.MustCompile(`(?m)^NATIVE GATE \S.*? route=(\S+) test
 // before any child ran (native.go; tla/CardContract.tla, StageRefused).
 var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
 
+// nativeHarnessFault is a cutoff the harness owns: staging, with no card cost
+// (tla/CardContract.tla, LengthIsAHarnessFault).
+var nativeHarnessFault = regexp.MustCompile(`(?m)^NATIVE HARNESS-FAULT .* reason=(.+)$`)
+
 // nativeRefusedWhy is native's NATIVE REFUSED line's reason (refuseNative): a launch
 // native would not run, such as one that could not step behind CI (yieldNative). It is
 // the report of a launch that left no result of its own, so the reason reaches the
@@ -1217,6 +1221,12 @@ func (c *nativeChild) Result() member.Result {
 				// the machine's fault, never the card's, so it ends as a staging refusal does
 				// and the sprint deals the card to another member (StageRefused)
 				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
+			if m := nativeHarnessFault.FindSubmatch(b); m != nil {
+				// Return before reading spend= or usage.tsv: this harness fault spends
+				// no card attempt, redeal or cost (LengthIsAHarnessFault).
+				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "harness cutoff (see " + c.logPath + ")"}
 				return
 			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
