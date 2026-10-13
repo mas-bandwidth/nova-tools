@@ -1443,7 +1443,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	s.res.harness = harnessState(s.prep.jobDir)
 	harnessFault := false
 	if why, ok := nativeLengthFault(s.prep.cfg, s.prep.jobDir, s.prep.dataHome, s.runStart); ok {
-		fmt.Fprintln(errOut, harnessFaultLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model, why))
+		fmt.Fprintln(errOut, oneline.Escape(harnessFaultLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model, why)))
 		harnessFault = true
 		s.res.reason = "harness-fault"
 	}
@@ -2056,7 +2056,7 @@ func nativeLengthFault(cfg nativeRunConfig, jobDir, dataHome string, since time.
 	if !ok {
 		return "", false
 	}
-	return fmt.Sprintf("harness fault: the model's turn ended at the harness's output limit (%s; OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=%d)", words, cfg.outputMax()), true
+	return fmt.Sprintf("harness fault: the model's turn ended at the harness's output limit (%s; OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=%d)", oneline.Escape(words), cfg.outputMax()), true
 }
 
 // harnessFaultLine cites the modeled no-cost staging class, not a provider
