@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
@@ -295,7 +296,11 @@ func (g *gitPusher) openPR(url, base, branch, title, body string) (pr, note stri
 	cmd, cancel := subproc.CommandFor(context.Background(), prBudget, bin, args...)
 	defer cancel()
 	cmd.Stdin = strings.NewReader(body)
-	cmd.Env = append(append(os.Environ(), g.env...), "GH_PROMPT_DISABLED=1")
+	cmd.Env, err = seatcred.ForgeCommandEnv(append(os.Environ(), g.env...), os.Getenv)
+	if err != nil {
+		return "", "gh pr create: " + oneLineOf(err.Error())
+	}
+	cmd.Env = append(cmd.Env, "GH_PROMPT_DISABLED=1")
 	var errb strings.Builder
 	cmd.Stderr = &errb
 	out, err := cmd.Output()

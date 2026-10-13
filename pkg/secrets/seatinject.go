@@ -34,14 +34,16 @@ import (
 
 // SeatInjectOptions carries one `seat inject` request and the test seams around it.
 type SeatInjectOptions struct {
-	StoreDir string
-	AsName   string // the existing seat receiving the values
-	From     string // a seat this machine can open
-	Only     string // comma-separated key names to deliver
-	KeyPath  string // this machine's key: the source seat's identity
-	SopsPath string
-	GHPath   string
-	GitPath  string
+	StoreDir     string
+	AsName       string // the existing seat receiving the values
+	From         string // a seat this machine can open
+	Only         string // comma-separated key names to deliver
+	KeyPath      string // this machine's key: the source seat's identity
+	SopsPath     string
+	GHPath       string
+	GHEnv        []string // child environment for the seat-owned forge calls
+	ResolveGHEnv func() ([]string, error)
+	GitPath      string
 
 	NoPR bool
 
@@ -83,6 +85,12 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 	names, err := seatInjectValidate(&opts)
 	if err != nil {
 		return "", err
+	}
+	if !opts.NoPR && !opts.DryRun && opts.ResolveGHEnv != nil {
+		opts.GHEnv, err = opts.ResolveGHEnv()
+		if err != nil {
+			return "", err
+		}
 	}
 
 	run := opts.exec()
@@ -138,6 +146,7 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		storeDir: opts.StoreDir,
 		gitPath:  opts.GitPath,
 		ghPath:   opts.GHPath,
+		ghEnv:    opts.GHEnv,
 		seatFile: seatFile,
 		branch:   branch,
 		message:  commitMsg,
