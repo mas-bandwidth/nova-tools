@@ -13,6 +13,7 @@ import (
 // emitJSON writes v as one JSON document on stdout.
 func emitJSON(stdout io.Writer, v any) {
 	data, err := json.Marshal(v)
+	// ignored: the record types hold only strings, bools and pointers to them, so Marshal cannot fail; dropping the record beats printing half of one.
 	if err != nil {
 		return
 	}
