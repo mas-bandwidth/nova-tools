@@ -76,16 +76,6 @@ func OpenFile(path string) (*FileStore, error) {
 	if st.Schema < 1 || st.Schema > len(all) || st.Rows == nil {
 		return nil, fmt.Errorf("--file %s is not a nova-config store file this binary can read: want schema 1 through %d and rows, got schema %d", path, len(all), st.Schema)
 	}
-	if st.Schema < 41 {
-		var routes []Row
-		for name, row := range st.Rows[KindRoute] {
-			row.Name = name
-			routes = append(routes, row)
-		}
-		if err := CheckProviderNames(routes); err != nil {
-			return nil, err
-		}
-	}
 	for kind, rows := range st.Rows {
 		k, ok := Lookup(kind)
 		if !ok {
@@ -116,6 +106,16 @@ func OpenFile(path string) (*FileStore, error) {
 				}
 			}
 			f.rows[kind][name] = r
+		}
+	}
+	if st.Schema < 41 {
+		var routes []Row
+		for name, row := range st.Rows[KindRoute] {
+			row.Name = name
+			routes = append(routes, row)
+		}
+		if err := CheckProviderNames(routes); err != nil {
+			return nil, err
 		}
 	}
 	// Migration 0041 seeds only legacy route providers, exactly as PostgreSQL:

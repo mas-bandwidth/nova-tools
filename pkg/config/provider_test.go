@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -246,5 +247,28 @@ func TestFileUpgradeRefusesEveryLegacyWordWithoutChangingTheFile(t *testing.T) {
 	require.Len(t, providers, 3)
 	for _, p := range providers {
 		assert.Equal(t, "false", p.Fields["funded"])
+	}
+}
+
+func TestFileProviderUpgradeKeepsInvalidRouteNamesRefused(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, key, rowName string }{{"invalid map key", "a;id", "a"}, {"invalid row name", "a", "a;id"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "legacy.json")
+			state := fileState{Schema: 40, Rows: map[string]map[string]Row{KindRoute: {tc.key: {Name: tc.rowName, Fields: map[string]string{"provider": "vendor.ai", "tier": "pro", "model": "m", "deadline": "60"}}}}}
+			raw, err := json.Marshal(state)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, raw, 0600))
+			_, err = OpenFile(path)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not a row name")
+			assert.NotContains(t, err.Error(), "route set")
+			var legacy *ProviderNamesError
+			assert.False(t, errors.As(err, &legacy), "the original name refusal precedes provider remediation")
+			unchanged, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, raw, unchanged)
+		})
 	}
 }
