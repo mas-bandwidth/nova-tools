@@ -121,3 +121,74 @@ func shimSh(t *testing.T, shims, dir, line string) (int, string, string) {
 	}
 	return code, out.String(), errb.String()
 }
+
+// TestShimRefusesRewriteAtOrBelowStaged pins harness card B (v1.2.17): a take
+// may not rewrite at or below the staged commit. The git shim refuses reset,
+// rebase and commit --amend whose target is the staged commit or below it, at
+// take time (not only at push time), while work above the staged commit and
+// git in any other repository pass through to the real git.
+func TestShimRefusesRewriteAtOrBelowStaged(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-SWARM.md)")
+	}
+	for _, family := range []string{"claude", "plain"} {
+		root := t.TempDir()
+		bare, job, work := filepath.Join(root, "origin.git"), filepath.Join(root, "job"), filepath.Join(root, "job", "repo")
+		shimGit(t, root, "init", "-q", "--bare", bare)
+		shimGit(t, root, "clone", "-q", bare, work)
+		require.NoError(t, os.MkdirAll(job, 0o755))
+		shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "below")
+		below := shimGit(t, work, "rev-parse", "HEAD")
+		shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "staged")
+		staged := shimGit(t, work, "rev-parse", "HEAD")
+		f := Frame{Kind: "work", Card: "c1", Attempt: 1, Model: "test/model", Repo: cardURL, BaseRef: "main", Branch: "sprint/c1", ReviewBase: "main"}
+		s := Staged{Job: job, Repo: work, Head: staged, Git: realGit(t)}
+		shims := filepath.Join(root, "shim")
+		require.NoError(t, Install(For(family), f, s, shims), family)
+
+		// at the staged commit itself, an amend rewrites it: refused, HEAD unmoved
+		code, _, errb := shimSh(t, shims, work, "git commit --amend --allow-empty -m rewritten")
+		require.NotEqual(t, 0, code, "%s amend at staged: %s", family, errb)
+		assert.Contains(t, errb, "REFUSED", family)
+		assert.Contains(t, errb, "staged commit", family)
+		assert.Equal(t, staged, shimGit(t, work, "rev-parse", "HEAD"), family)
+
+		shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "work")
+		head := shimGit(t, work, "rev-parse", "HEAD")
+
+		for _, line := range []string{
+			"git reset --soft " + staged,
+			"git reset --soft " + below,
+			"git reset --soft HEAD~1",
+			"git reset --hard HEAD~2",
+			"git rebase " + below,
+			"git rebase --onto " + below + " " + staged,
+		} {
+			code, _, errb := shimSh(t, shims, work, line)
+			assert.NotEqual(t, 0, code, "%s %s", family, line)
+			assert.Contains(t, errb, "REFUSED", "%s %s", family, line)
+			assert.Contains(t, errb, "staged commit", "%s %s", family, line)
+			assert.Equal(t, head, shimGit(t, work, "rev-parse", "HEAD"), "%s %s: HEAD unmoved", family, line)
+		}
+
+		// work above the staged commit is the child's own: amend, a reset that
+		// stays above it, and a rebase onto it all reach the real git
+		for _, line := range []string{
+			"git commit --amend --allow-empty -m work-amended",
+			"git reset --soft HEAD",
+			"git rebase " + staged,
+		} {
+			code, _, errb := shimSh(t, shims, work, line)
+			assert.Equal(t, 0, code, "%s %s: %s", family, line, errb)
+		}
+
+		// a repository that is not the staged checkout is not guarded
+		scratch := filepath.Join(root, "scratch")
+		shimGit(t, root, "init", "-q", scratch)
+		shimGit(t, scratch, "commit", "-q", "--allow-empty", "-m", "one")
+		shimGit(t, scratch, "commit", "-q", "--allow-empty", "-m", "two")
+		code, _, errb = shimSh(t, shims, scratch, "git reset --soft HEAD~1 && git commit --amend --allow-empty -m one-amended")
+		assert.Equal(t, 0, code, "%s scratch repo: %s", family, errb)
+	}
+}
