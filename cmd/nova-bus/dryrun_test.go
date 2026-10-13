@@ -38,7 +38,7 @@ func TestTheWritingVerbsDryRunWritesNothing(t *testing.T) {
 }
 
 // TestSendDryRunHandlesCall pins the successful JSON simulation and an early
-// store refusal, before send reaches its Call.DryRun read.
+// store refusal after send acknowledges Call.DryRun.
 func TestSendDryRunHandlesCall(t *testing.T) {
 	t.Parallel()
 	r := newRig("ada", "bob")
