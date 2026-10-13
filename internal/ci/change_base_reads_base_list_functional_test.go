@@ -99,9 +99,7 @@ func TestChangeBaseUsesTheFirstParentWhenAReleaseCheckoutHasNoDevRef(t *testing.
 	writeGo(t, root, "release-note.txt", "release commit\n")
 	git("add", "-A")
 	gitFixtureCommit(t, root, "-q", "-m", "release target moves")
-	parents := strings.Fields(git("rev-list", "--parents", "-n", "1", "HEAD"))
-	require.Len(t, parents, 2)
-	parent := parents[1]
+	parent := git("rev-parse", "HEAD")
 	git("merge", "--no-ff", "-q", "topic", "-m", "release merge")
 
 	base, err := ChangeBase(root, func(string) string { return "" })
