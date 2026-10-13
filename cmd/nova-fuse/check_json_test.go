@@ -65,4 +65,13 @@ func TestFuseCheckAndReceiptsJSON(t *testing.T) {
 	exit, stdout, _ = runFuse(t, "check", "--box", box, "other")
 	require.Equal(t, 0, exit)
 	assert.Contains(t, stdout, "FUSE OK")
+
+	// Lockdown (the hard gate) under --json: blown, exit 1.
+	lockBox := boxIn(t)
+	exit, _, stderr = runFuse(t, "lockdown", "--box", lockBox, "suspected compromise")
+	require.Equal(t, 0, exit, "setup lockdown: %s", stderr)
+	exit, stdout, _ = runFuse(t, "check", "--box", lockBox, "--json", "discord")
+	require.Equal(t, 1, exit)
+	require.NoError(t, json.Unmarshal([]byte(stdout), &decision))
+	assert.Equal(t, "blown", decision.Status)
 }

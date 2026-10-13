@@ -39,7 +39,7 @@ func emitRefusalJSON(stdout io.Writer, v any) {
 }
 
 type checkFuseJSON struct {
-	Surface string `json:"surface"`
+	Surface string `json:"surface,omitempty"`
 	Since   string `json:"since"`
 	Reason  string `json:"reason"`
 }

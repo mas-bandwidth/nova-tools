@@ -638,6 +638,10 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		reason = keepableReason(strings.Join(positional[1:], " ")) // folded, never refused -- see cmdLockdown
 	}
 	if surface == "" || reason == "" {
+		if asJSON && ok {
+			emitRefusalJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "refused", DryRun: dry, Error: "needs a surface and a reason"})
+			return 2
+		}
 		// Printed even when --box was missing too: one run, every problem.
 		refuse(stderr, " quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
 		ok = false

@@ -36,12 +36,20 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 		return 2
 	}
 	if len(positional) > 1 {
+		if asJSON {
+			emitRefusalJSON(stdout, checkJSONDoc{Verb: "check", Status: "refused", Error: fmt.Sprintf("takes at most one surface, got %q too", positional[1])})
+			return 2
+		}
 		refuse(stderr, " check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]))
 		ok = false
 	}
 	surface := ""
 	if len(positional) == 1 {
 		if fuse.Surface(positional[0]) == "" {
+			if asJSON {
+				emitRefusalJSON(stdout, checkJSONDoc{Verb: "check", Status: "refused", Error: "surface must not be blank; omit it to check lockdown only"})
+				return 2
+			}
 			refuse(stderr, " check", "surface must not be blank; omit it to check lockdown only")
 			ok = false
 		}
