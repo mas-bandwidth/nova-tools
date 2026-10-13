@@ -155,6 +155,39 @@ func TestDoctorRunsEveryRegisteredCheckAndExitsByTheWorst(t *testing.T) {
 	})
 }
 
+func TestDoctorRefusalEmitsJSONOnStdout(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.Register(fixed("available", false, OK, ""))
+
+	var stdout, stderr bytes.Buffer
+	code := Main(r, fakeEnv{}, "", []string{"run", "--check", "invalid", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, stderr.String(), "JSON refusals are on stdout")
+	var got struct {
+		Result struct {
+			Verb   string   `json:"verb"`
+			Status string   `json:"status"`
+			Exit   int      `json:"exit"`
+			Remedy string   `json:"remedy"`
+			Why    []string `json:"why"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), stdout.String())
+	assert.Equal(t, "run", got.Result.Verb)
+	assert.Equal(t, "refused", got.Result.Status)
+	assert.Equal(t, 2, got.Result.Exit)
+	assert.Equal(t, "nova-doctor run -h", got.Result.Remedy)
+	assert.Equal(t, []string{`no check named "invalid"; the checks are available`}, got.Result.Why)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Main(r, fakeEnv{}, "", []string{"run", "--check", "invalid"}, strings.NewReader(""), &stdout, &stderr)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, stdout.String())
+	assert.Equal(t, "RUN REFUSED: no check named \"invalid\"; the checks are available; run: nova-doctor run -h\n", stderr.String(), "the legacy text refusal stays unchanged")
+}
+
 // fakeEnv is an Env with nothing behind it: every method that is not overridden
 // answers "not there". The fields are the fakes a test fills in.
 type fakeEnv struct {

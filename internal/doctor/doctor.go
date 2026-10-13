@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -51,6 +52,7 @@ type Check struct {
 	Name       string
 	Dependency string
 	Fleet      bool
+	Repository bool // checks the repository containing Options.Dir, when set
 	Run        func(ctx context.Context, env Env) Result
 }
 
@@ -107,6 +109,7 @@ func (r *Registry) Names() []string {
 type Options struct {
 	Only  []string // check names; empty is every check
 	Local bool     // skip the checks only a fleet needs
+	Dir   string   // repository to inspect for repository-scoped checks
 }
 
 // Run runs the selected checks in name order and returns their results and the names
@@ -127,9 +130,27 @@ func (r *Registry) Run(ctx context.Context, env Env, o Options) (results []Resul
 			skipped = append(skipped, n)
 			continue
 		}
-		results = append(results, runOne(ctx, env, c))
+		checkEnv := env
+		if c.Repository && o.Dir != "" {
+			checkEnv = repositoryEnv{Env: env, dir: o.Dir}
+		}
+		results = append(results, runOne(ctx, checkEnv, c))
 	}
 	return results, skipped, nil
+}
+
+// repositoryEnv scopes Go probes to the requested checkout without changing the
+// caller's process-wide working directory.
+type repositoryEnv struct {
+	Env
+	dir string
+}
+
+func (e repositoryEnv) Exec(ctx context.Context, name string, args ...string) (string, error) {
+	if strings.EqualFold(filepath.Base(name), "go") || strings.EqualFold(filepath.Base(name), "go.exe") {
+		args = append([]string{"-C", e.dir}, args...)
+	}
+	return e.Env.Exec(ctx, name, args...)
 }
 
 // runOne runs one check and holds its result to the grammar: the check's name and
@@ -210,15 +231,16 @@ func Tool(reg *Registry, env Env, stamp string) *tool.Tool {
 		Stamp:   stamp,
 		Default: "run",
 		How: `each check covers one dependency: ok, warn or fail, with evidence and a fix line.
-Every check runs; a fail does not stop the others. --local skips the checks only a fleet
+Every check runs; a fail does not stop the others. --dir selects a repository for repository-
+scoped checks without changing the caller's working directory. --local skips the checks only a fleet
 needs and says which. Exit 0 is all ok (or warn), 1 a warn under --strict, 2 a fail.
 first run: nova-doctor run; nothing is changed, no fix is run for you.`,
-		NoJSON:    "run prints one `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line per check; with --json it prints the same results as one object",
+		NoJSON:    "run prints one `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line per check; --json prints results as one object and refusals as the standard JSON envelope",
 		ExitTable: "0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage",
 		Verbs: []tool.Verb{{
 			Name:    "run",
-			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json]",
-			Example: "run --check harness\nrun --local\nrun --local --json",
+			Usage:   "[run] [--check <name>]... [--dir <path>] [--local] [--strict] [--json]",
+			Example: "run --check harness\nrun --dir <checkout>\nrun --local --json",
 			Effect:  tool.Inspection,
 			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\nexample: nova-doctor run --local",
 			Flags: func(f *tool.Flags) {
@@ -227,18 +249,38 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 				f.Bool("local", false, "skip the checks only a fleet needs, and say which")
 				f.Bool("strict", false, "exit 1 on a warn")
 				f.Bool("json", false, "print the results as one JSON object instead of lines")
-				f.Check(func(c *tool.Call) {
-					for _, n := range c.Get("check").([]string) {
-						if !slices.Contains(reg.Names(), n) {
-							c.Problem(fmt.Sprintf("no check named %q; the checks are %s", n, strings.Join(reg.Names(), ", ")))
-						}
-					}
-				})
+				f.String("dir", "", "repository directory for repository-scoped checks")
 			},
 			Run: func(c *tool.Call) *tool.Out {
-				results, skipped, err := reg.Run(c.Ctx, env, Options{Only: c.Get("check").([]string), Local: c.Bool("local")})
+				refuse := func(why ...string) *tool.Out {
+					o := tool.Refuse(why...)
+					o.Verb, o.Remedy = "run", "nova-doctor run -h"
+					if c.Bool("json") {
+						o.Render(c.Stdout, true)
+					} else {
+						o.Render(c.Stderr, false)
+					}
+					return tool.Exit(2)
+				}
+				only := c.Get("check").([]string)
+				var invalid []string
+				for _, n := range only {
+					if !slices.Contains(reg.Names(), n) {
+						invalid = append(invalid, fmt.Sprintf("no check named %q; the checks are %s", n, strings.Join(reg.Names(), ", ")))
+					}
+				}
+				if len(invalid) > 0 {
+					return refuse(invalid...)
+				}
+				dir := c.Str("dir")
+				if dir != "" {
+					if _, err := env.ReadDir(dir); err != nil {
+						return refuse(fmt.Sprintf("--dir %q is not a readable directory: %v", dir, err))
+					}
+				}
+				results, skipped, err := reg.Run(c.Ctx, env, Options{Only: only, Local: c.Bool("local"), Dir: dir})
 				if err != nil {
-					return tool.Refuse(err.Error())
+					return refuse(err.Error())
 				}
 				code := ExitCode(results, c.Bool("strict"))
 				if c.Bool("json") {
