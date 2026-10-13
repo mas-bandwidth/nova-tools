@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -21,8 +22,10 @@ const maxRemedy = "--max <n> raises the ceiling, --max 0 lists every quarantine"
 // not answer at all. Never gate on the exit code of status; check is the gate.
 func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	var max int
+	var asJSON bool
 	box, positional, ok, parsed := parseBoxWith("status", rest, stderr, inv.getenv, func(fs *flag.FlagSet) {
 		fs.IntVar(&max, "max", bounded.Default, "quarantine lines to list before one MORE line stands for the rest; 0 lists all")
+		fs.BoolVar(&asJSON, "json", false, "emit one JSON document instead of text lines")
 	})
 	if !parsed {
 		return 2
@@ -47,6 +50,9 @@ func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	}
 
 	names := b.Surfaces()
+	if asJSON {
+		return statusJSON(stdout, b, names)
+	}
 	if b.Lockdown != nil {
 		fmt.Fprintf(stdout, "STATUS OK lockdown=blown since=%s quarantines=%d: %s\n",
 			since(*b.Lockdown), len(names), why(*b.Lockdown))
@@ -62,5 +68,46 @@ func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 		list.Line(fmt.Sprintf("STATUS OK quarantine=%s since=%s: %s", oneline.Field(n), since(f), why(f)))
 	}
 	list.More()
+	return 0
+}
+
+type statusFuseJSON struct {
+	State  string `json:"state"`
+	Since  string `json:"since,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type statusQuarantineJSON struct {
+	Surface string `json:"surface"`
+	Since   string `json:"since"`
+	Reason  string `json:"reason"`
+}
+
+type statusJSONDoc struct {
+	Lockdown        statusFuseJSON         `json:"lockdown"`
+	Quarantines     []statusQuarantineJSON `json:"quarantines"`
+	QuarantineCount int                    `json:"quarantine_count"`
+}
+
+// statusJSON renders the same facts as the text status as one JSON document.
+// Values are the stored box values; encoding/json escapes them safely.
+func statusJSON(stdout io.Writer, b fuse.Box, names []string) int {
+	doc := statusJSONDoc{
+		Lockdown:        statusFuseJSON{State: "clear"},
+		Quarantines:     []statusQuarantineJSON{},
+		QuarantineCount: len(names),
+	}
+	if b.Lockdown != nil {
+		doc.Lockdown = statusFuseJSON{State: "blown", Since: b.Lockdown.At, Reason: b.Lockdown.Reason}
+	}
+	for _, n := range names {
+		f := b.Quarantine[n]
+		doc.Quarantines = append(doc.Quarantines, statusQuarantineJSON{Surface: n, Since: f.At, Reason: f.Reason})
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return 2
+	}
+	fmt.Fprintln(stdout, string(data))
 	return 0
 }

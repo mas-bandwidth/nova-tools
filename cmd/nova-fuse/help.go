@@ -34,7 +34,7 @@ var fuseHelps = map[string]fuseHelp{
 		true, true,
 	},
 	"status": {
-		"status --box <path> [--max <n>]",
+		"status --box <path> [--max <n>] [--json]",
 		inspection,
 		"Report lockdown and quarantines. A readable blown box still exits 0; status is not a permission gate.",
 		"0 reported a readable box; 2 bad invocation, absent box, or unreadable box.",
@@ -112,6 +112,7 @@ func cmdHelp(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "flags:\n  --box <path>  required JSON box path; no default or environment variable")
 		if name == "status" {
 			fmt.Fprintln(stdout, "  --max <n>    quarantine line limit (default 20); 0 lists all; totals stay uncapped")
+			fmt.Fprintln(stdout, "  --json       emit one JSON document (lockdown, quarantines, quarantine_count)")
 		}
 		if h.dryRun {
 			fmt.Fprintln(stdout, "  --dry-run    make every check the write would, print what it would do, write nothing")
