@@ -432,6 +432,38 @@ func TestApplyInRunWritesARowThatOnlyNamesAPresentRefusedRow(t *testing.T) {
 	require.Equal(t, "Rowan <rowan@mas-bandwidth.com>", ap.views[KindSprint][KindSprint][FieldGitIdentity])
 }
 
+// TestApplyInRunWritesTheSprintRowWhenTheLiveSeatIsHeld: the live seat in
+// Redis is stella, the stored row names rowan, whose set was refused. The row
+// written holds stella, so its coordinator does not change and the ref rule
+// does not refuse it: git_identity lands (ConfigApply.tla
+// SprintRefusedOnlyForItsWrittenRef), in --check too.
+func TestApplyInRunWritesTheSprintRowWhenTheLiveSeatIsHeld(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	for _, check := range []bool{false, true} {
+		st := seed(t)
+		ap := newFake()
+		_, err := Apply(ctx, st, ap, KindSprint, "rowan", false, func(Op) {})
+		require.NoError(t, err)
+		ap.views[KindSprint][KindSprint]["coordinator"] = "stella"
+		_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{FieldGitIdentity: "Rowan <rowan@mas-bandwidth.com>"}, "rowan")
+		require.NoError(t, err)
+		earlier := Earlier{}
+		earlier.Add(KindFriend, "rowan", "CEILING studio", false)
+		var held bool
+		res, err := ApplyInRun(ctx, st, ap, KindSprint, "rowan", check, false, earlier, func(op Op) { held = held || op.Op == OpHeld })
+		require.NoError(t, err, "check=%t: the held row's coordinator does not change", check)
+		require.Empty(t, res.Refused, "check=%t: %+v", check, res)
+		require.True(t, held, "check=%t: the held line is said", check)
+		if !check {
+			require.True(t, res.Stamped, "res %+v", res)
+			require.Equal(t, "Rowan <rowan@mas-bandwidth.com>", ap.views[KindSprint][KindSprint][FieldGitIdentity])
+			require.Equal(t, "stella", ap.views[KindSprint][KindSprint]["coordinator"], "the live seat is held")
+		}
+	}
+}
+
 // TestApplyStopsAtAStoreErrorAfterARefusal: a store or connection error is
 // never a refusal, even after a refusal in the same kind: the apply returns
 // it at once (ConfigApply.tla StoreError), with the refusal before it still

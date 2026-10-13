@@ -123,6 +123,15 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 			for _, r := range res.Refused {
 				refuseRow(kn, r.Name, r.Err, r.Absent)
 			}
+			if *asJSON {
+				// The one object carries the rows refused before the error,
+				// at the error's exit.
+				o.Status = tool.Refused
+				o.Exit = 2
+				o.Why = append(o.Why, plain(err.Error()))
+				o.Remedy = toolName + " apply --dry-run"
+				return emit(stdout, o)
+			}
 			return storeErr(stderr, verb, err, toolName+" apply --dry-run")
 		case len(res.Refused) > 0:
 			// The kind wrote every op it could and is not stamped

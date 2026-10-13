@@ -48,6 +48,9 @@ func TestFileFleetEndpointsStayPartialUntilApply(t *testing.T) {
 				assert.Contains(t, out, " REFUSED kinds=fleet:1 ", "%v: %s", args, out)
 				assert.Contains(t, errs, "endpoints are unset: "+tc.missing)
 				assert.NotContains(t, h.redis.log, "write fleet fleet", "%v", args)
+				if args[len(args)-1] != "apply" {
+					assert.Empty(t, h.redis.log, "%v wrote: nothing at all is written by a dry run or the refused fleet kind alone", args)
+				}
 			}
 			assert.Contains(t, h.redis.log, "write machine bench-beta", "another kind applies while endpoints are partial")
 			after, err := os.ReadFile(path)

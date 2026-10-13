@@ -701,6 +701,9 @@ func TestMissingFleetEndpointsRefuseOnlyTheFleetKind(t *testing.T) {
 			require.NotContains(t, h.redis.log, "write fleet fleet", "a refused fleet row was written")
 			if len(args) == 1 {
 				require.Contains(t, h.redis.log, "write tier flash", "the other kinds apply: %v", h.redis.log)
+			} else {
+				require.Empty(t, h.redis.log, "%v wrote: nothing at all is written by --check or the refused fleet kind alone", args)
+				require.Empty(t, h.redis.revs, "%v stamped", args)
 			}
 			code, _, errs = h.run(t, "apply", "--kind", "machine", "--check")
 			require.Zero(t, code, errs)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -150,14 +149,17 @@ func (e Earlier) Add(kind, name, why string, absent bool) {
 	e[kind][name] = EarlierRow{Why: why, Absent: absent}
 }
 
-// refRefusal is the ref rule (ConfigApply.tla RefRefused): an add or set
-// whose ref or seq field names a row refused earlier in this run is refused
-// with that row's reason, but only when the named row is absent from Redis
-// or the op changes that ref field itself. A row that only names a present
-// row, unchanged (the sprint row's coordinator when the coordinator friend's
-// set was refused), is written: refusing it would leave git_identity
-// unapplied, the incident this rule must not bring back.
-func refRefusal(k *Kind, op Op, earlier Earlier) error {
+// refRefusal is the ref rule (ConfigApply.tla RefRefused, SprintRefRefused):
+// an add or set whose ref or seq field names a row refused earlier in this
+// run is refused with that row's reason, but only when the named row is
+// absent from Redis or the write changes that ref field itself. It judges
+// row, the row actually written (reportSeatHold's, with a held live seat),
+// against Redis's (op.Prev), never the stored row: a row that only names a
+// present row, unchanged as written (the sprint row's coordinator when the
+// coordinator friend's set was refused, or when the live seat is held), is
+// written, so git_identity is never left unapplied, the incident this rule
+// must not bring back.
+func refRefusal(k *Kind, op Op, row Row, earlier Earlier) error {
 	if len(earlier) == 0 || (op.Op != OpAdd && op.Op != OpSet) {
 		return nil
 	}
@@ -165,8 +167,8 @@ func refRefusal(k *Kind, op Op, earlier Earlier) error {
 		if f.Ref == "" || (f.Type != TypeRef && f.Type != TypeSeq) {
 			continue
 		}
-		changed := op.Op == OpSet && slices.Contains(op.Changed, f.Name)
-		for _, name := range strings.Split(op.Row.Fields[f.Name], ",") {
+		changed := op.Op == OpSet && row.Fields[f.Name] != op.Prev[f.Name]
+		for _, name := range strings.Split(row.Fields[f.Name], ",") {
 			name = strings.TrimSpace(name)
 			r, ok := earlier[f.Ref][name]
 			if name == "" || !ok || (!r.Absent && !changed) {
@@ -361,7 +363,7 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		// every other field is written, the live value stands and the one
 		// OpHeld line is said — unless the caller names the seat move.
 		row, _ := reportSeatHold(kind, moveSeat, op, report)
-		if err := refRefusal(k, op, earlier); err != nil {
+		if err := refRefusal(k, op, row, earlier); err != nil {
 			res.Refused = append(res.Refused, Refusal{Kind: kind, Name: op.Name, Err: err, Absent: op.Op == OpAdd})
 			continue
 		}
@@ -400,9 +402,9 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 }
 
 // knownRefusal is what --check already knows would be refused for one op:
-// the ref rule, then the kind's Check on the row it would write.
+// the ref rule on the row it would write, then the kind's Check on it.
 func knownRefusal(k *Kind, op Op, row Row, earlier Earlier) error {
-	if err := refRefusal(k, op, earlier); err != nil {
+	if err := refRefusal(k, op, row, earlier); err != nil {
 		return err
 	}
 	if k.Check != nil && (op.Op == OpAdd || op.Op == OpSet) {

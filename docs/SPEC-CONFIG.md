@@ -633,7 +633,13 @@ the tool never sets, guesses or defaults one.
    (its refused op was an add) or the op changes that ref field itself. A row
    that only names a row still in Redis, its ref unchanged, is written: when
    the coordinator friend's set is refused, the sprint row's `git_identity`
-   still lands;
+   still lands. The rule judges the row actually written against Redis's,
+   so with the live seat held (the coordinator Redis keeps) the stored
+   row's coordinator never refuses it (`SprintRefusedOnlyForItsWrittenRef`).
+   A kind refused whole counts each of its pending rows refused: a route
+   kind refused for one unpriced route refuses a tier whose `routes` names
+   any route with a pending add or set, priced or not, until that route is
+   priced or disabled;
 8. **stamp** `config:decl rev:<kind> = <rev>, at:<kind> = <server ms>`,
    compare-and-set: inside `WATCH config:decl`, the stamp is written only
    while it still reads the value step 2 read; a stamp that moved is
