@@ -36,11 +36,11 @@ a provider. The generated schema names its decision `example` and its question
 `clear`; this complete offline sequence uses only generated files:
 
 ```sh
-nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-wrong
-nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-ok
-nova-decide outcome --record ./decide-example/decisions.jsonl --id example-wrong --label wrong
-nova-decide outcome --record ./decide-example/decisions.jsonl --id example-ok --label ok
-nova-decide calibrate --record ./decide-example/decisions.jsonl --decision example --question clear --positive wrong --negative ok --bars 0.5
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-wrong
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-ok
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-wrong --label wrong
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-ok --label ok
+$ nova-decide calibrate --record ./decide-example/decisions.jsonl --decision example --question clear --positive wrong --negative ok --bars 0.5
 ```
 
 ```text
