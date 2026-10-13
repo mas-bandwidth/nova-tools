@@ -1,0 +1,13 @@
+# The applied state release N-1 (v1.2.18) leaves for release N's adopt: machine rows applied before
+# migration 0042 (no roles field) and no machine beat with os, arch or ncpu (v1.2.18 members never
+# publish them). bench-e is down: it has never beaten. bench-a is the fleet's store and coordinator;
+# bench-c runs runners. pkg/config TestReleaseNInventoryOverReleaseNMinus1Store builds release N's
+# inventory from this and asserts every host and group of inventory-n-1-golden.json (what v1.2.18's
+# own nova-config inventory --fixture printed for it) is present.
+machines:
+  bench-a: {user: nova, seat: seat-a, slots: 32, runners: 0, tla: true}
+  bench-b: {user: nova, seat: seat-b, slots: 16, runners: 0}
+  bench-c: {user: nova, seat: seat-c, slots: 32, runners: 2, tla: true}
+  bench-d: {user: nova, seat: seat-d, slots: 10, runners: 0}
+  bench-e: {user: nova, seat: seat-e, slots: 16, runners: 0}
+fleet: {store: bench-a, coordinator: bench-a, redis_port: 6380, pg_dsn: postgres://nova_config@127.0.0.1:5432/nova, loops_dir: "~/nova-bench/loops"}

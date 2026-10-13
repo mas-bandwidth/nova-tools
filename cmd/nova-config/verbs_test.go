@@ -167,7 +167,7 @@ func TestMigrateDryRunPrintsTheLedger(t *testing.T) {
 	assert.True(t, strings.HasSuffix(lines[n-3], " state=missing"), lines[n-3])
 	assert.True(t, strings.HasSuffix(lines[n-2], " state=applied"), lines[n-2])
 	assert.True(t, strings.HasSuffix(lines[n-1], " state=pending"), lines[n-1])
-	assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=1 missing=1 role=nova_config ready=yes owner=nova_config sessions=0", n-1, n), lines[n])
+	assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=1 missing=1 role=nova_config ready=yes owner=nova_config sessions=0", n-1, schemaTip()), lines[n])
 	assert.Equal(t, fmt.Sprintf("NOTE version(s) %d are not in the ledger and are below %d, the greatest recorded: migrate applies only versions above it, so it will not apply them", n-2, n-1), lines[n+1])
 	assert.Equal(t, n-1, h.store.version, "a dry run applies nothing")
 }

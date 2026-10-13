@@ -98,10 +98,13 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = r.run(t, 0, "migrate")
 	require.True(t, strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:"), "migrate: %q", out)
-	n := currentSchema()
-	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=0 to=%d applied=%d\n", n, n)), "migrate: %q", out)
+	all, err := config.Migrations()
+	require.NoError(t, err)
+	n := len(all)
+	tip := all[n-1].Version
+	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=0 to=%d applied=%d\n", tip, n)), "migrate: %q", out)
 	out, _ = r.run(t, 0, "migrate")
-	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=%d to=%d applied=0\n", n, n)), "migrate twice: %q", out)
+	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=%d to=%d applied=0\n", tip, tip)), "migrate twice: %q", out)
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
 	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=default: a sprint member at half its cores"), "machine add: %q", out)
 	_, errs = r.run(t, 1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
@@ -113,7 +116,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "friend", "set", "rowan", "--width", "16", "--roles", "")
 	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,width\n", out, "friend set: %q", out)
 	out, _ = r.run(t, 0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=- width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=- width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated)\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "studio")
 	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- created="), "machine show: %q", out)
 	// The fleet row: there since migrate, set without a name, a machine it
@@ -325,18 +328,22 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 	build.Env = goenv.Clean(os.Environ())
 	outCheck372, errCheck372 := build.CombinedOutput()
 	require.NoError(t, errCheck372, "go build: %v\n%s", errCheck372, outCheck372)
-	run := func(script string) string {
+	run := func(script string) (string, string) {
 		t.Helper()
 		cmd := exec.Command("/bin/sh", "-c", script)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "NOVA_SPRINT_REDIS="+r.env["NOVA_SPRINT_REDIS"], "NOVA_PG_DSN=postgres://nobody@127.0.0.1:1/none")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s: %v\n%s", script, err, out)
-		return string(out)
+		// stdout alone, as ansible reads it: the NOTE lines are stderr's.
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		require.NoError(t, err, "%s: %v\n%s%s", script, err, out, stderr.String())
+		return string(out), stderr.String()
 	}
 	run(printf + "\n" + chmod)
 	for _, args := range []string{"--list", "--host bench-alpha"} {
-		out := run("./nova-inventory " + args)
+		out, notes := run("./nova-inventory " + args)
+		require.Contains(t, notes, "NOTE machine bench-alpha: its beat has no arch", "./nova-inventory %s: the beat without arch is said on stderr", args)
 		var v map[string]any
 		errCheck390 := json.Unmarshal([]byte(out), &v)
 		require.NoError(t, errCheck390, "./nova-inventory %s: %v\n%s", args, errCheck390, out)

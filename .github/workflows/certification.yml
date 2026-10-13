@@ -646,6 +646,15 @@ jobs:
         shell: bash
         run: go run ./tools/ghrelease controls
 
+      - name: this release's inventory lists every host and group over the store the previous release leaves
+        # The adopt runs this release's inventory over the previous release's applied state
+        # before this release's migrations and apply have run (v1.2.19 refused it twice:
+        # pre-0042 rows with no roles, beats with no os). The fixture is that state, the
+        # golden the previous release's own inventory of it; pkg/config,
+        # TestReleaseNInventoryOverReleaseNMinus1Store.
+        shell: bash
+        run: go test -count=1 -run '^TestReleaseNInventoryOverReleaseNMinus1Store$' ./pkg/config/
+
   perf-plan:
     # Discovery compiles both test lists for every perf package. Run 37159703304 spends
     # 70 s here, leaving only time for the first package before the two-minute cap.

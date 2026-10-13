@@ -111,8 +111,9 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 		require.NotContains(t, errs, "config."+tb, "refusal: %q", errs)
 	}
 	pending := "migration 15"
-	if len(all) > 15 {
-		pending = fmt.Sprintf("migrations 15 to %d", len(all))
+	tip := all[len(all)-1].Version
+	if tip > 15 {
+		pending = fmt.Sprintf("migrations 15 to %d", tip)
 	}
 	require.Contains(t, errs, "nova-config migrate REFUSED: role "+cfg+" cannot apply "+pending+" and applied none", "refusal: %q", errs)
 	require.Contains(t, errs, admin+" owns ", "refusal: %q", errs)
@@ -128,6 +129,6 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	out, _ = r.run(t, 0, "migrate", "--dry-run")
 	require.Contains(t, out, " ready=yes owner=", "dry-run after the remedy: %q", out)
 	out, _ = r.run(t, 0, "migrate")
-	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=14 to=%d applied=%d\n", len(all), len(all)-14)), "migrate after the remedy: %q", out)
-	require.Equal(t, len(all), ledger(t, super))
+	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=14 to=%d applied=%d\n", tip, len(all)-14)), "migrate after the remedy: %q", out)
+	require.Equal(t, tip, ledger(t, super))
 }

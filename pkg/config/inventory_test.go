@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,7 +142,7 @@ func TestInventoryEmitsEveryHostVarThePlaysRead(t *testing.T) {
 	assert.Equal(t, "bench,runner", inv.Meta.Hostvars["linux-bench"]["registry_roles"])
 	assert.Empty(t, inv.Runners.Hosts, "the legacy runners group still comes from the runners count; the explicit role is carried separately")
 
-	t.Run("missing required beat fact refuses with repair", func(t *testing.T) {
+	t.Run("a missing beat fact is a NOTE and the host is listed, never a refusal", func(t *testing.T) {
 		t.Parallel()
 		missing := *s
 		missing.Beats = map[string]*Beat{}
@@ -153,10 +154,25 @@ func TestInventoryEmitsEveryHostVarThePlaysRead(t *testing.T) {
 		beat.Cores = ""
 		missing.Beats["coordinator"] = &beat
 		inv, err := BuildInventory(&missing, "")
-		require.Error(t, err)
-		assert.Nil(t, inv)
-		assert.Contains(t, err.Error(), "machine coordinator: cores is unset in beat field ncpu")
-		assert.Contains(t, err.Error(), "restore or start the machine's configured beat publisher")
+		require.NoError(t, err)
+		assert.Contains(t, inv.All.Hosts, "coordinator")
+		assert.NotContains(t, inv.Meta.Hostvars["coordinator"], "cores", "a fact the beat lacks is left for the play's own facts, never invented")
+		assert.Contains(t, inv.Notes, "machine coordinator: its beat has no ncpu; listed with the facts it has; the play gathers the rest from its facts")
+
+		down := missing
+		down.Beats = maps.Clone(missing.Beats)
+		delete(down.Beats, "coordinator")
+		inv, err = BuildInventory(&down, "")
+		require.NoError(t, err, "a down host never refuses the whole list")
+		assert.Contains(t, inv.All.Hosts, "coordinator")
+		for _, field := range []string{"nova_os", "bench_os", "nova_arch", "cores"} {
+			assert.NotContains(t, inv.Meta.Hostvars["coordinator"], field)
+		}
+		assert.Contains(t, inv.Notes, "machine coordinator: no beat (the machine is down, or its member has never beaten); listed from its row; the play gathers os, arch and cores from its facts")
+		data, err := inv.JSON()
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "NOTE", "notes never reach the JSON ansible reads as groups")
+		assert.NotContains(t, string(data), "notes")
 	})
 }
 
@@ -325,9 +341,8 @@ loops:
 	_, err = BuildInventory(bare, "")
 	assert.ErrorContains(t, err, "endpoints are unset: redis_port, pg_dsn")
 	missingRoles, err := LoadFixture(write("missing-roles.yml", "machines:\n  bench-alpha: {user: u, seat: s, slots: 1}\n"))
-	require.Error(t, err)
-	assert.Nil(t, missingRoles)
-	assert.Contains(t, err.Error(), "machine bench-alpha roles is missing")
+	require.NoError(t, err, "a machine with no roles key is a row the previous release applied")
+	assert.NotContains(t, missingRoles.Machines["bench-alpha"], "roles", "an absent roles key stays absent, apart from an explicit empty list")
 	emptyRoles, err := LoadFixture(write("empty-roles.yml", "machines:\n  bench-alpha: {user: u, seat: s, slots: 1, roles: \"\"}\n"))
 	require.NoError(t, err)
 	assert.Contains(t, emptyRoles.Machines["bench-alpha"], "roles")
@@ -383,18 +398,44 @@ func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
 	assert.ErrorContains(t, err, "--fixture")
 }
 
-func TestInventoryRolesRefuseMissingOrInvalidAppliedDataAndKeepEmptyDistinct(t *testing.T) {
+func TestInventoryRolesDeriveMissingRefuseInvalidAndKeepEmptyDistinct(t *testing.T) {
 	t.Parallel()
-	t.Run("missing field refuses", func(t *testing.T) {
+	t.Run("a missing field is derived as migration 0042 derives it, with a NOTE", func(t *testing.T) {
 		t.Parallel()
 		s := snapshot(nil)
 		delete(s.Machines["bench-alpha"], "roles")
+		delete(s.Machines["bench-beta"], "roles")
+		inv, err := BuildInventory(s, "")
+		require.NoError(t, err)
+		assert.Equal(t, "bench,coordination", inv.Meta.Hostvars["bench-alpha"]["registry_roles"], "the fleet coordinator")
+		assert.Equal(t, "bench,services", inv.Meta.Hostvars["bench-beta"]["registry_roles"], "the fleet store")
+		assert.Equal(t, []string{"bench-alpha"}, inv.Coordinator.Hosts)
+		assert.Equal(t, []string{"bench-beta"}, inv.Store.Hosts)
+		assert.Equal(t, []string{"bench-alpha", "bench-beta"}, inv.Benches.Hosts)
+		require.Len(t, inv.Notes, 2)
+		assert.Contains(t, inv.Notes[0], "machine bench-alpha: the applied row has no roles field (applied before migration 0042); derived bench,coordination as 0042 does")
+		assert.Contains(t, inv.Notes[1], "machine bench-beta: the applied row has no roles field (applied before migration 0042); derived bench,services as 0042 does")
+	})
+	t.Run("a present field wins over the derivation", func(t *testing.T) {
+		t.Parallel()
+		s := snapshot(nil)
+		s.Machines["bench-alpha"]["roles"] = "bench,coordination,runner"
+		inv, err := BuildInventory(s, "")
+		require.NoError(t, err)
+		assert.Equal(t, "bench,coordination,runner", inv.Meta.Hostvars["bench-alpha"]["registry_roles"])
+		assert.Empty(t, inv.Notes)
+	})
+	t.Run("a missing field with nothing to derive it from refuses", func(t *testing.T) {
+		t.Parallel()
+		s := snapshot(nil)
+		delete(s.Machines["bench-alpha"], "roles")
+		delete(s.Revs, KindFleet)
 		inv, err := BuildInventory(s, "")
 		require.Error(t, err)
 		assert.Nil(t, inv)
 		assert.Contains(t, err.Error(), "machine bench-alpha")
-		assert.Contains(t, err.Error(), "machine row field roles")
-		assert.Contains(t, err.Error(), "nova-config apply --kind machine")
+		assert.Contains(t, err.Error(), "machine row field roles and cannot be derived")
+		assert.Contains(t, err.Error(), "nova-config apply")
 	})
 	t.Run("invalid field refuses", func(t *testing.T) {
 		t.Parallel()
