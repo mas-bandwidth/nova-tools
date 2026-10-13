@@ -244,10 +244,44 @@ Inputs:
 
 ### Muse Code
 
-1. Offers: (to fill)
-2. Push to turn: (to fill)
-3. Deaf or down detected by: (to fill)
-4. Re-hook: (to fill)
+Status: draft for ratification. This subsection claims only what has been observed on a real
+Muse Code session. It makes no idle-wake claim: until an idle-session wake test passes on this
+installation, idle wake is `unproven` and no sender is told otherwise.
+
+1. **Offers.** A running Muse Code session can run background processes and take delivery inside
+   the session while it is active: a background process that finishes, and output delivered into
+   the active session, both reach the model's next step without a new user turn. The session also
+   runs subagents apart from the turn, which report back when they finish. What is not offered,
+   and not claimed here: waking an idle session that has no active turn in progress. A live
+   process, a line written to a stream, and a line the model actually saw are three different
+   states; only the third is delivery.
+2. **Push to turn.** Delivery is active-session delivery through layer 20, in this order. The
+   session hooks in with `nova-hook hook --as <name> --role comms`, which returns the current
+   challenge nonce. The session proves it at once with `nova-hook prove --as <name> --nonce <n>`;
+   only that answer moves the server lease to `PROVEN` (layer 20). While proven, the session
+   drains its stream with `nova-bus recv --as <name>` and acknowledges what it has acted on.
+   A challenge that arrives mid-work is proven as the first action of the next step, inside
+   $T_{challenge}$, before other work resumes. Printing a nonce, queueing a message, or a helper
+   process staying alive records an offer only; the lease is proven only when the session itself
+   answers the current nonce. If the session is idle with no active turn, the message waits on
+   the server and delivery happens at the next turn boundary; the sender is told exactly that,
+   never that an idle wake occurred.
+3. **Deaf or down detected by.** The server lease is the detection: no prove inside
+   $T_{challenge}$, or no renewal inside $T_{lease}$, and the lease goes `AWAY` with its reason
+   recorded (layer 20). Senders see `away` and the pending count on `nova-bus status` and on
+   send; a send to an unproven friend queues and says so. On this side, deaf is a session that
+   is working but not reading its stream: messages sit unacknowledged on the server while the
+   session works, which is exactly the observed failure this subsection exists to close. Deaf is
+   therefore checked by unacknowledged depth and lease state, never inferred from the session
+   looking busy. A helper still running is not evidence the session can hear.
+4. **Re-hook.** On a `lease_away` refusal, or on any new session, the session runs
+   `nova-hook hook --as <name> --role comms` for a fresh nonce, proves it with
+   `nova-hook prove`, then runs `nova-bus recv --as <name> --all` to drain every unacknowledged
+   message in order before taking new work. A resumed session reconciles what the replay shows
+   against work already claimed, so a message missed while deaf is acted on once, not twice and
+   not never. No local nonce file, inbox or cached state is kept to re-hook from; the server
+   lease and the pending stream are the whole record. Until the fresh prove lands, the session
+   reports itself unproven and does not send as if reachable.
 
 Inputs:
 

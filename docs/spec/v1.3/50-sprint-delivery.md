@@ -11,7 +11,13 @@ The Muse Code friend (she/her).
 
 In:
 
-- (to fill)
+- One card, one delivery branch: `sprint/<card>.aurora`, cut from the current sprint base.
+  Sprint bases are the `sprint/v1.2.x` lines; a card branch names its base at cut time and is
+  judged against that base.
+- The merge gate, in order: the Linux bench gate on the exact head, then a cold reader's
+  verdict, then the coordinator's merge. No step substitutes for another.
+- Merge candidates are sprint branches only. A card is a candidate when its `sprint/<card>.aurora`
+  branch is pushed and its head is the sha that was gated and read.
 
 Out (later releases):
 
@@ -21,19 +27,58 @@ Out (later releases):
 
 Numbered, each one testable.
 
-1. (to fill)
+1. **Exact head, one fence.** The Linux bench gate runs on the exact head sha that will be
+   merged, and the gate, the cold read and the merge all name that same sha. Any move of the
+   head — a new commit, a rebase, a base merge that changes the card's own files — invalidates
+   the gate and the verdict, and both run again on the new head. There is one fence: nothing
+   crosses to merge on a sha that was not itself gated and read.
+2. **A verdict is about the diff it names.** A cold reader's MERGE quotes at least one changed
+   hunk from the candidate's diff verbatim, and the merge step checks that every quoted path is
+   in that diff at the gated sha. A verdict that quotes source not in the diff, or files that do
+   not exist at that sha, is not a verdict on this candidate and cannot merge it.
+3. **Green means the gated build.** The cold reader's MERGE stands beside a green build of the
+   exact head on the Linux bench: the same sha that was read is the sha that built green. A
+   green build of any other sha, and a correct sha copied into prose, are not proof of a read
+   or of a build.
+4. **Race is checked, not assumed.** Before the merge, the head is checked against its base
+   once, at the fence: a head that is behind its `sprint/v1.2.x` base, or whose race with the
+   base changed the card's own files, returns to the author instead of merging. The check names
+   both shas it compared.
+5. **Only the coordinator merges.** Authors push candidates; the cold reader records MERGE,
+   FIX or HOLD on the head sha; the coordinator alone performs the merge, and only on a
+   candidate sprint branch whose gate and verdict both name the current head. No later note
+   restates a recorded verdict as a different word; a moved tip is one note naming the new sha,
+   and the gate and read run again under guarantee 1.
 
 ## State and transitions
 
-- States: (to fill)
-- Events: (to fill)
-- Who owns each record: (to fill)
+- States: card dealt → taken → candidate pushed (`sprint/<card>.aurora` at a named head) →
+  bench-gated (exact sha, green) → cold-read (MERGE, FIX or HOLD on that sha) → merged by the
+  coordinator. FIX and HOLD return the card to its author; a moved head returns the candidate
+  to bench-gated.
+- Events: branch cut from a `sprint/v1.2.x` base, push, head move, bench gate result, cold
+  reader verdict, base race check, coordinator merge.
+- Who owns each record: the server record owns card state and the recorded verdict on its sha;
+  the bench owns the gate result for the sha it ran; the coordinator owns the merge. The
+  author's local checkout owns none of these.
 
 ## Failure modes
 
 For each: how it is detected, and how it is recovered.
 
-1. (to fill)
+1. **Stale verdict.** The head moved after the cold read. Detected by comparing the verdict's
+   sha to the branch's current head at the fence. Recovered by re-gating and re-reading the new
+   head; the old verdict stays recorded against its own sha and merges nothing.
+2. **Verdict about the wrong source.** A quoted hunk or path is absent from the candidate's
+   diff at the gated sha. Detected by the merge step's quote check (guarantee 2). Recovered by
+   returning the candidate for a fresh cold read of the actual diff; the merge does not proceed
+   on the strength of the author's summary.
+3. **Base race.** The `sprint/v1.2.x` base moved and the head is behind, or the catch-up changed
+   the card's own files. Detected by the race check at the fence, naming both shas. Recovered by
+   the author merging or rebasing the base, then re-gating and re-reading the new head.
+4. **Non-candidate branch.** Work arrives on a branch that is not the card's `sprint/<card>.aurora`
+   branch. Detected at registration: only sprint branches are candidates. Recovered by moving
+   the work onto the card's sprint branch and gating that head; the other branch merges nothing.
 
 ## Interfaces
 
