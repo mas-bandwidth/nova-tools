@@ -145,12 +145,12 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		family[f.Name] = f.Patterns
 	}
 	for name, ks := range map[string][]string{
-		"tables":   {ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry},
-		"views":    {"view:sprint", "views"},
-		"machines": {config.MachineKey("m"), config.MachineCeilingKey("m"), config.MachinesKey},
-		"beats":    {config.BeatKey("m")},
-		"friends":  {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},
-		"fleet":    {config.FleetKey("store"), config.FleetKey("coordinator")},
+		"tables":    {ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry},
+		"views":     {"view:sprint", "views"},
+		"machines":  {config.MachineKey("m"), config.MachineCeilingKey("m"), config.MachinesKey},
+		"beats":     {config.BeatKey("m")},
+		"friends":   {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},
+		"fleet":     {config.FleetKey("store"), config.FleetKey("coordinator")},
 		"loops":     {config.LoopsKey, config.LoopKey("member-a")},
 		"providers": {config.ProvidersKey, config.ProviderKey("opencode")},
 		"routes":    {config.RoutesKey, config.RouteKey("pro-a")},
