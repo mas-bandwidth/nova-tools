@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1104,6 +1105,97 @@ func TestProblemAsCarriesTheReason(t *testing.T) {
 			assert.Equal(t, tc.stderr, r.Stderr)
 		})
 	}
+}
+
+// Early errors retain their result while the unread dry-run diagnostic stays visible.
+func TestDryRunPreservesUnderlyingRefusalOnEarlyExit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		code int
+		run  func(*Call) *Out
+		why  string
+	}{
+		{"refusal", 2, func(*Call) *Out { o := Refuse("store dial failed"); o.Remedy = "check the store address"; return o }, "store dial failed"},
+		{"failure", 1, func(*Call) *Out { return Fail("permission denied") }, "permission denied"},
+		{"recorded problem", 2, func(c *Call) *Out { c.Problem("missing destination"); return Done() }, "missing destination"},
+		{"missing result", 1, func(*Call) *Out { return nil }, "the verb returned no result"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tool := &Tool{Name: "nova-write", Verbs: []Verb{{Name: "save", Usage: "save", Effect: LocalWrite, DryRun: true, Run: tc.run}}}
+			for _, asJSON := range []bool{false, true} {
+				args := []string{"save"}
+				if asJSON {
+					args = append(args, "--json")
+				}
+				rig := NewRig(t, tool)
+				real := rig.Run(tc.code, args...)
+				dry := rig.Run(tc.code, append(args, "--dry-run")...)
+				if asJSON {
+					var realOut, dryOut map[string]any
+					require.NoError(t, json.Unmarshal([]byte(real.Stdout), &realOut))
+					require.NoError(t, json.Unmarshal([]byte(dry.Stdout), &dryOut))
+					assert.Equal(t, realOut["result"], dryOut["result"])
+				} else {
+					assert.True(t, strings.HasPrefix(dry.Stdout+dry.Stderr, real.Stdout+real.Stderr))
+				}
+				assert.Contains(t, dry.Stdout+dry.Stderr, tc.why)
+				assert.Contains(t, dry.Stdout+dry.Stderr, "never read it (Call.DryRun)")
+			}
+		})
+	}
+}
+
+func TestDryRunKeepsSafetyDiagnosticAfterAWriteThenError(t *testing.T) {
+	t.Parallel()
+	for _, refused := range []bool{false, true} {
+		t.Run(fmt.Sprint(refused), func(t *testing.T) {
+			t.Parallel()
+			file := filepath.Join(t.TempDir(), "written")
+			code := 1
+			if refused {
+				code = 2
+			}
+			tool := &Tool{Name: "nova-write", Verbs: []Verb{{Name: "save", Usage: "save", Effect: LocalWrite, DryRun: true,
+				Run: func(*Call) *Out {
+					require.NoError(t, os.WriteFile(file, []byte("changed"), 0600))
+					o := Fail("write completed but receipt failed")
+					if refused {
+						o = Refuse("write completed but receipt failed")
+					}
+					o.Remedy = "inspect the written file"
+					return o
+				}}}}
+			r := NewRig(t, tool).Run(code, "save", "--dry-run")
+			assert.FileExists(t, file, "the framework cannot prevent an arbitrary verb's write")
+			assert.Contains(t, r.Stdout+r.Stderr, "write completed but receipt failed; run: inspect the written file")
+			assert.Contains(t, r.Stdout+r.Stderr, "SAVE NOTE --dry-run was given and the verb never read it")
+		})
+	}
+}
+
+func TestDryRunPreservesPreRunRefusalWithoutStartingVerb(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{Name: "nova-write", Verbs: []Verb{{Name: "save", Usage: "save", Effect: LocalWrite, DryRun: true,
+		Flags: func(f *Flags) { f.Required("file", "target file") },
+		Run:   func(*Call) *Out { t.Fatal("refused invocation started its verb"); return nil }}}}
+	r := NewRig(t, tool).Run(2, "save", "--dry-run")
+	assert.Contains(t, r.Stdout+r.Stderr, "--file is required")
+	assert.NotContains(t, r.Stdout+r.Stderr, "never read it")
+}
+
+func TestDryRunStillRefusesSuccessfulVerbThatIgnoresIt(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{Name: "nova-write", Verbs: []Verb{{Name: "save", Usage: "save", Effect: LocalWrite, DryRun: true,
+		Run: func(*Call) *Out { return Done().Fact("saved", true) }}}}
+	for _, args := range [][]string{{"save", "--dry-run"}, {"save", "--dry-run", "--json"}} {
+		r := NewRig(t, tool).Run(1, args...)
+		assert.Contains(t, r.Stdout+r.Stderr, "never read it (Call.DryRun)")
+		assert.NotContains(t, r.Stdout+r.Stderr, "saved")
+	}
+	real := NewRig(t, tool).Run(0, "save")
+	assert.Equal(t, "SAVE OK saved=true\n", real.Stdout)
 }
 
 // TestWritingVerbUnderDryRunCarriesFactInBothRenderings pins the dry_run fact in text and JSON.
