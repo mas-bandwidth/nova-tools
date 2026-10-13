@@ -14,7 +14,7 @@ func (openai) Family() string { return "openai" }
 // Shims keeps the section 5 push and finish contract through shared recorders.
 func (openai) Shims(f Frame, s Staged) []Shim {
 	return []Shim{
-		{Name: "git", Script: prelude("git", "openai", f, s) + openaiGitGuard + gitHead + gitPush + gitTail},
+		{Name: "git", Script: prelude("git", "openai", f, s) + openaiGitGuard + gitGuardFuncs + gitHead + gitPush + gitGuard + gitTail},
 		{Name: "gh", Script: prelude("gh", "openai", f, s) + openaiGhGuard + ghClaude},
 	}
 }
