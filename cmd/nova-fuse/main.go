@@ -219,12 +219,13 @@ func run(args []string, stdout, stderr io.Writer, now time.Time, inv invocation)
 // --box refusal is already printed and the verb goes on to judge its own arguments
 // before returning 2, so that one run names every problem it can find.
 func parseBox(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed bool) {
-	return parseBoxWith(name, args, stderr, getenv, nil)
+	box, positional, boxOK, parsed, _ = parseBoxWith(name, args, stderr, getenv, nil)
+	return box, positional, boxOK, parsed
 }
 
 // parseWrite is parseBox for a verb that writes the box: it takes --dry-run too.
 func parseWrite(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed, dry bool) {
-	box, positional, boxOK, parsed = parseBoxWith(name, args, stderr, getenv, func(fs *flag.FlagSet) {
+	box, positional, boxOK, parsed, _ = parseBoxWith(name, args, stderr, getenv, func(fs *flag.FlagSet) {
 		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
 	})
 	return box, positional, boxOK, parsed, dry
@@ -233,7 +234,7 @@ func parseWrite(name string, args []string, stderr io.Writer, getenv func(string
 // parseBoxWith is parseBox with a hook for a verb that has a flag of its own, so that a
 // second flag never means a second parser, and so never a second place where package
 // flag could be handed a stream to print an argument through.
-func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(string) string, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed bool) {
+func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(string) string, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed, jsonRequested bool) {
 	var flagArgs, postArgs []string
 	hasDashDash := false
 	for i, a := range args {
@@ -260,6 +261,9 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 	if extra != nil {
 		extra(fs)
 	}
+	if fs.Lookup("json") != nil {
+		jsonRequested = verbflag.BoolGiven(fs, flagArgs, "json")
+	}
 	// Every flag takes one value. Package flag keeps the last value of a repeated flag,
 	// so `check --box ./blown.json --box=./elsewhere.json` would ask about one box and
 	// answer for another. A flag named twice is refused before any box is read.
@@ -268,25 +272,25 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 	if err := fs.Parse(flagArgs); err != nil {
 		if repeated != "" {
 			refuse(stderr, " "+name, fmt.Sprintf("--%s is given more than once; every flag takes one value, and a second is never taken over the first", oneline.Escape(repeated)))
-			return "", nil, false, false
+			return "", nil, false, false, jsonRequested
 		}
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0. check answers permission with 0, and a surface
 		// named "-h" must not be able to reach that answer.
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintf(stderr, "nova-fuse %s REFUSED: -h is refused here so it can never read as CLEAR; run: nova-fuse help %s\n", oneline.Escape(name), oneline.Escape(name))
-			return "", nil, false, false
+			return "", nil, false, false, jsonRequested
 		}
 		// An unknown flag, a flag with no value, a value its flag cannot take: worded
 		// once for every tool by verbflag.Explain, with the verb's flags and the nearest.
 		fmt.Fprintf(stderr, "nova-fuse %s REFUSED: %s; run: nova-fuse help %s\n", oneline.Escape(name),
 			oneline.Escape(oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes)), oneline.Escape(name))
-		return "", nil, false, false
+		return "", nil, false, false, jsonRequested
 	}
 	for _, arg := range fs.Args() {
 		if strings.HasPrefix(arg, "-") {
 			refuse(stderr, " "+name, fmt.Sprintf("flags come before positional arguments, got %q late", arg))
-			return "", nil, false, false
+			return "", nil, false, false, jsonRequested
 		}
 	}
 	positional = append(fs.Args(), postArgs...)
@@ -294,7 +298,7 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 		// `--box --box=./x` hands package flag "--box=./x" as the first --box's
 		// value. A box path never begins with "-"; a box in such a file is ./-name.
 		refuse(stderr, " "+name, fmt.Sprintf("--box %q begins with \"-\", the shape of a flag, not a path; name a file that begins with - as ./-name", *boxFlag))
-		return "", nil, false, false
+		return "", nil, false, false, jsonRequested
 	}
 	// The path is the flag. NOVA_FUSE_BOX is read and never used: a missing
 	// flag stays a refusal, and a flag that was given is not replaced
@@ -302,9 +306,9 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 	chosen := boxPath(*boxFlag, getenv)
 	if chosen == "" {
 		fmt.Fprintf(stderr, "nova-fuse %s REFUSED: --box is required; refusing to guess; run: nova-fuse help\n%s", name, hintFor("box"))
-		return "", positional, false, true
+		return "", positional, false, true, jsonRequested
 	}
-	return chosen, positional, true, true
+	return chosen, positional, true, true, jsonRequested
 }
 
 // boxPath is the box this invocation uses. It is the --box flag. A set
@@ -625,10 +629,11 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	var asJSON bool
 	var dry bool
 	var parseErr bytes.Buffer
-	box, positional, ok, parsed := parseBoxWith("quarantine", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
+	box, positional, ok, parsed, jsonRequested := parseBoxWith("quarantine", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
 		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
 		fs.BoolVar(&asJSON, "json", false, "write the standard JSON receipt")
 	})
+	asJSON = asJSON || jsonRequested
 	if !parsed {
 		return parseFailure("quarantine", asJSON, parseErr.String(), stdout, stderr)
 	}

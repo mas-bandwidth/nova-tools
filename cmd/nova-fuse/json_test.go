@@ -182,3 +182,34 @@ func TestFuseCheckAndReceiptsJSON(t *testing.T) {
 	assert.Equal(t, "refused", got.Result.Status)
 	assert.Equal(t, "unknown", got.Facts["decision"])
 }
+
+func TestFuseJSONSurvivesEarlierFlagParseFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "unknown status flag", args: []string{"status", "--bogus", "--json"}},
+		{name: "invalid status value", args: []string{"status", "--max", "nope", "--json"}},
+		{name: "unknown check flag", args: []string{"check", "--bogus", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, out, stderr := capture(t, tc.args, nowish())
+			assert.Equal(t, 2, code)
+			got := decodeFuseReceipt(t, out, stderr)
+			assert.Equal(t, "refused", got.Result.Status)
+			assert.Equal(t, 2, got.Result.Exit)
+			assert.NotEmpty(t, got.Result.Remedy)
+			assert.NotEmpty(t, got.Result.Why)
+		})
+	}
+
+	box := boxIn(t)
+	code, out, stderr := capture(t, []string{"check", "--box", box, "--", "--json"}, nowish())
+	assert.Equal(t, 0, code, "the terminator makes --json a surface, not a flag")
+	assert.Empty(t, stderr)
+	assert.Contains(t, out, "FUSE OK lockdown=clear quarantine=clear")
+	assert.NotContains(t, out, `"result"`)
+}
