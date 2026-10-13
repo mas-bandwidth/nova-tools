@@ -18,6 +18,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 const usage = `nova-fuse: a recorded decision to stop reading an untrusted source, checked before every read
@@ -47,10 +49,10 @@ path where no box exists.
 usage:
   nova-fuse version    print this build identity (--version also accepted)
   nova-fuse init --box <path> [--dry-run]                  create an empty box where none is; never replaces one
-  nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
-  nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
+  nova-fuse status --box <path> [--max <n>] [--json]      what is blown, and since when (REPORTS; never gate on it)
+  nova-fuse check --box <path> [--json] [surface]          may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> [--dry-run] "<reason>"   blow the one hard fuse: all untrusted reads stop
-  nova-fuse quarantine --box <path> [--dry-run] <surface> "<reason>"
+  nova-fuse quarantine --box <path> [--dry-run] [--json] <surface> "<reason>"
                                                            stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> [--dry-run] <surface>
                                                            rescind your own quarantine (soft, both directions)
@@ -70,10 +72,12 @@ unreadable box, never read as clear.
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
 it. Read a verb's help with nova-fuse help <verb> (for example, help check).
+--json on status, check and quarantine returns the standard result/facts/items
+receipt. It reports only stored facts; the box has no expiry field.
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
-the write would and writes nothing; its line says dry_run=true. There is no
---json: every verb answers in one-line typed records (the grammar in SPEC.md),
-and check's answer is its exit code.
+the write would and writes nothing; its line says dry_run=true. Without --json,
+every verb answers in one-line typed records (the grammar in SPEC.md), and
+check's answer is its exit code.
 
 box JSON example (a quarantine with no lockdown):
   {"lockdown": null, "quarantine": {"a-forum": {"at": "2026-01-01T00:00:00Z", "reason": "an attack is pervasive"}}}
@@ -618,9 +622,18 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv inv
 
 // cmdQuarantine stops ONE surface.
 func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
-	box, positional, ok, parsed, dry := parseWrite("quarantine", rest, stderr, inv.getenv)
+	var asJSON bool
+	var dry bool
+	var parseErr bytes.Buffer
+	box, positional, ok, parsed := parseBoxWith("quarantine", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
+		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
+		fs.BoolVar(&asJSON, "json", false, "write the standard JSON receipt")
+	})
 	if !parsed {
-		return 2
+		return parseFailure("quarantine", asJSON, parseErr.String(), stdout, stderr)
+	}
+	if !asJSON && !ok {
+		_, _ = io.Copy(stderr, &parseErr)
 	}
 	surface, reason := "", ""
 	if len(positional) >= 2 {
@@ -629,10 +642,20 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	}
 	if surface == "" || reason == "" {
 		// Printed even when --box was missing too: one run, every problem.
-		refuse(stderr, " quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
+		if !asJSON {
+			refuse(stderr, " quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
+		}
 		ok = false
 	}
 	if !ok {
+		if asJSON {
+			problems := parsedRefusalReasons("quarantine", parseErr.String())
+			if surface == "" || reason == "" {
+				problems = append(problems, "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
+			}
+			out := fuseRefusals("quarantine", problems, "nova-fuse help quarantine")
+			return writeFuseJSON(stdout, out)
+		}
 		return 2
 	}
 
@@ -671,6 +694,12 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		// Refuse, for the same reason as an unreadable box: with no box there every
 		// surface is refused, and a new box holding only this quarantine would clear
 		// the rest.
+		if asJSON {
+			out := fuseRefusal("quarantine", "no box; refusing to create one containing only this quarantine because that would clear other surfaces", boxRemedy("init", box))
+			out.Fact("surface", surface)
+			out.Reasons = []string{"box_missing"}
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to make a box holding only this quarantine: with no box every surface is refused, and that box would clear the rest; make the box first (%s), or blow lockdown; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(boxRemedy("init", box)))
 		return 2
 	}
@@ -681,19 +710,44 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		// would fail open. Under doubt, no. The remedy quotes the box through boxRemedy,
 		// the same single-quoting seam as the init refusal above, so a path holding shell
 		// metacharacters stays data in the pasted command (security#74 finding 9).
+		if asJSON {
+			out := fuseRefusal("quarantine", oneline.Err(readErr)+"; refusing to narrow an unreadable box", boxRemedy("lockdown", box)+` "<reason>"`)
+			out.Fact("surface", surface)
+			out.Reasons = []string{"box_unreadable"}
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`%s`), or repair the box by hand with the person you work with; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(boxRemedy("lockdown", box)+` "<reason>"`))
 		return 2
 	}
 	if standingKey != "" {
+		if asJSON {
+			out := tool.Done().Fact("receipt", "already_quarantined").Fact("surface", standingKey).Fact("dry_run", dry)
+			out.Verb = "quarantine"
+			out.ItemText("receipt", "standing record kept; new reason was not recorded", "surface", standingKey, "at", standing.At, "reason", tool.Text(standing.Reason), "requested_reason", tool.Text(reason))
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stdout, "QUARANTINE OK %s already=quarantined since=%s: %s (standing record kept; the new reason was not recorded: %s)\n",
 			oneline.Field(standingKey), since(standing), why(standing), oneline.Escape(reason))
 		return 0
 	}
 	if err != nil {
+		if asJSON {
+			out := tool.Fail("could not write box: " + oneline.Err(err))
+			out.Verb = "quarantine"
+			out.Reasons = []string{"write_failed"}
+			out.Fact("receipt", "not_recorded").Fact("surface", surface)
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 	if dry {
+		if asJSON {
+			out := tool.Done().Fact("receipt", "dry_run").Fact("surface", surface)
+			out.Verb = "quarantine"
+			out.ItemText("receipt", "nothing written; the surface is not quarantined", "surface", surface, "requested_reason", tool.Text(reason))
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stdout, "QUARANTINE OK %s dry_run=true: nothing written, the surface is not quarantined; a real run would record: %s\n", oneline.Field(surface), oneline.Escape(reason))
 		return 0
 	}
@@ -707,10 +761,26 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	after, err := fuse.ReadBox(boxFile(inv.wd, box))
 	landed, ok2 := after.Quarantine[surface]
 	if err != nil || !ok2 {
+		if asJSON {
+			out := tool.Fail("written but unverifiable; do not trust it; stop reading the surface by hand")
+			out.Verb = "quarantine"
+			out.Reasons = []string{"write_unverifiable"}
+			out.Fact("receipt", "unverifiable").Fact("surface", surface)
+			if err != nil {
+				out.Fact("verification_error", oneline.Err(err))
+			}
+			return writeFuseJSON(stdout, out)
+		}
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell the person you work with\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 
+	if asJSON {
+		out := tool.Done().Fact("receipt", "recorded_and_verified").Fact("surface", surface)
+		out.Verb = "quarantine"
+		out.Item("receipt", "surface", surface, "at", landed.At, "reason", tool.Text(landed.Reason), "verified", true)
+		return writeFuseJSON(stdout, out)
+	}
 	fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)\n",
 		oneline.Field(surface), since(landed), oneline.Escape(reason))
 	return 0
