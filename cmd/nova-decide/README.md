@@ -32,8 +32,16 @@ twice.
 To create a self-contained fixture outside a checkout, run
 `nova-decide example --dir ./decide-example`. It extracts embedded schema,
 state, fixed-answer and sample-diff files into a new directory without contacting
-a provider. Use those paths with `ask --backend fixed`, then label its record
-with `outcome` and inspect the result with `calibrate`.
+a provider. The generated schema names its decision `example` and its question
+`clear`; this complete offline sequence uses only generated files:
+
+```sh
+nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-wrong
+nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-ok
+nova-decide outcome --record ./decide-example/decisions.jsonl --id example-wrong --label wrong
+nova-decide outcome --record ./decide-example/decisions.jsonl --id example-ok --label ok
+nova-decide calibrate --record ./decide-example/decisions.jsonl --decision example --question clear --positive wrong --negative ok --bars 0.5
+```
 
 ```text
 $ nova-decide example --dir ./decide-example
