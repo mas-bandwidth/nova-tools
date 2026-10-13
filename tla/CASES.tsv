@@ -122,6 +122,7 @@ MCConfigApplyBrokenStampWithARefusal.cfg	MCConfigApply.tla	invariant	StampedKind
 MCConfigApplyBrokenSwallowStoreError.cfg	MCConfigApply.tla	invariant	StoreErrorStopsTheRun	ignore-terminal	configapply	required	-
 MCConfigApplySeat.cfg	MCConfigApply.tla	pass	-	ignore-terminal	configapply	required	-
 MCConfigApplyBrokenHeldSeatJudgedOnRow.cfg	MCConfigApply.tla	invariant	SprintRefusedOnlyForItsWrittenRef	ignore-terminal	configapply	required	-
+MCConfigApplyBrokenFriendCeiling.cfg	MCConfigApply.tla	invariant	FriendWidthNeverRefused	ignore-terminal	configapply	required	-
 MCFriendPresence.cfg	MCFriendPresence.tla	pass	-	check	friendpresence	required	-
 MCFriendPresenceLive.cfg	MCFriendPresence.tla	pass	-	check	friendpresence	required	-
 MCFriendPresenceClosed.cfg	MCFriendPresence.tla	pass	-	check	friendpresence	required	-

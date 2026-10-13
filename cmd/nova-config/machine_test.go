@@ -22,7 +22,7 @@ func (h *harness) machine(t *testing.T, name, width string) {
 
 func (h *harness) friend(t *testing.T, name, slots string) {
 	t.Helper()
-	row := config.Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}
+	row := config.Row{Name: name, Fields: map[string]string{"tiers": "flash", "roles": "builder"}}
 	_, err := h.store.Insert(context.Background(), config.KindFriend, row, "t")
 	require.NoError(t, err)
 }

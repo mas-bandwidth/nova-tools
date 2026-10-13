@@ -163,8 +163,8 @@ CONFIG LIST kind=machine rows=2
 
 `--user` is the login the plays and the seals use on it; `--seat` its
 nova-secrets seat; `--slots` the machine ceiling apply writes
-(`machine:<m>:ceiling`), which the friends' desired slots must fit under, and
-not the sprint's width; `--runners` how many CI runners it hosts (0, the
+(`machine:<m>:ceiling`), which a bench's share fits under (never a cap on a
+friend), and not the sprint's width; `--runners` how many CI runners it hosts (0, the
 default, hosts none); `--width` the most work cards the sprint's member on it
 runs at once (0, the default, is no member); `--tla` whether it is a TLC record
 machine (false, the default, is none): the inventory's `tla` group, where the
@@ -249,33 +249,34 @@ FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_
 
 ### friend
 
-What someone decides for a friend: her slots, which tiers she can do, her
-roles, her width, the jobs she works at once, and her delivery mode. "Anything that a friend would just know, is runtime redis
+What someone decides for a friend: which tiers she can do, her
+roles, her width (her one capacity number: there is no friend slots field), the jobs she works at once, and her delivery mode. "Anything that a friend would just know, is runtime redis
 data": where she runs, her harness, her logins and her wake path are her own
 presence's, never here. Who coordinates is the sprint row's.
 
 ```
-nova-config friend add f1 --slots 64 --tiers frontier,pro --roles builder --as f1
+nova-config friend add f1 --width 16 --tiers frontier,pro --roles builder --as f1
 CONFIG ADD kind=friend name=f1 rev=4
-nova-config friend set f1 --slots 32 --roles builder,reader --width 4 --as f1
-CONFIG SET kind=friend name=f1 rev=5 changed=roles,slots,width
+nova-config friend set f1 --roles builder,reader --width 4 --as f1
+CONFIG SET kind=friend name=f1 rev=5 changed=roles,width
 nova-config friend list
-FRIEND name=f1 slots=32 tiers=frontier,pro roles=builder,reader width=4 mode=one-shot
+FRIEND name=f1 tiers=frontier,pro roles=builder,reader width=4 mode=one-shot
 CONFIG LIST kind=friend rows=1
 nova-config friend history f1
-HISTORY id=4 kind=friend name=f1 op=add actor=f1 at=<t> mode=one-shot roles=builder slots=64 tiers=frontier,pro width=8
-HISTORY id=5 kind=friend name=f1 op=set actor=f1 at=<t> roles=builder>builder,reader slots=64>32 width=8>4
+HISTORY id=4 kind=friend name=f1 op=add actor=f1 at=<t> mode=one-shot roles=builder tiers=frontier,pro width=16
+HISTORY id=5 kind=friend name=f1 op=set actor=f1 at=<t> roles=builder>builder,reader width=16>4
 CONFIG HISTORY kind=friend name=f1 changes=2
 ```
 
-`--slots` is her desired slots; the friends' slots on a machine fit under
-its ceiling together (apply refuses `CEILING` otherwise); she is charged
-to the machine her beat reports (or the fleet's coordinator machine when
-she has no beat); her slots take nothing off any machine's `width`;
+A friend has no `--slots`: her width is her one capacity number, apply
+writes it as her desired slots, and no machine ceiling caps it (the owner,
+2026-10-13: "there is only width in nova-config."); apply records the machine her beat reports (or the fleet's
+coordinator machine, or `-` when neither names one) and refuses nothing for
+capacity; her width takes nothing off any machine's `width`;
 `--tiers` is a comma list of flash, frontier, pro, which she can do (the
 deal's tier filter); `--roles` is a comma list of builder, may-hold, reader;
 `--width` is the jobs she works at once, which nova-sprint friend sync writes
-to her row of the friends table: at least 1, 8 when add is not given one (the
+to her row of the friends table: at least 1, any number above it, 8 when add is not given one (the
 owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends?
 Start at 8 for each?"). `--mode` is how her daemon (nova-friend run) hands her work:
 one-shot, `width` lanes, each its own session of her, each handed one card per
@@ -508,15 +509,10 @@ remove=0`, the revision unchanged.
 
 What Redis refuses, apply reports and stops at, stamping nothing:
 
-- `CEILING m1: friend f2 makes the sum 65 over the machine ceiling 64`:
-  raise the machine's `--slots` or lower a friend's;
 - `roles of f1: --as f2 does not hold the coordinator role in Redis`:
   roles are written by a coordinator (or by the first coordinator, when none
   is set yet). Apply as the coordinator; the coordinator's own row is applied
   first;
-- `friend f3 has no beat naming a machine and the fleet names no
-  coordinator machine to charge her slots to`: run `nova-config fleet set
-  --coordinator <machine>`, then apply;
 - `machine m3 still carries friend:f3 in Redis`: a removed machine keeps
   its keys while a desired hash names it.
 

@@ -97,8 +97,8 @@ func seed(t *testing.T) *Mem {
 	}{
 		{machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64", "runners": "1"}},
 		{machine, "hulk", map[string]string{"user": "gaffer", "seat": "swarm-hulk", "slots": "64"}},
-		{friend, "stella", map[string]string{"slots": "32", "tiers": "frontier,pro", "roles": "builder,reader"}},
-		{friend, "rowan", map[string]string{"slots": "32", "tiers": "frontier", "roles": "builder"}},
+		{friend, "stella", map[string]string{"tiers": "frontier,pro", "roles": "builder,reader"}},
+		{friend, "rowan", map[string]string{"tiers": "frontier", "roles": "builder"}},
 	} {
 		row, err := r.k.NewRow(r.n, r.raw)
 		require.NoError(t, err)
@@ -119,20 +119,20 @@ func TestPlanDiffsRowsAgainstRedis(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	rows := []Row{
-		{Name: "stella", Fields: map[string]string{"slots": "32", "tiers": "pro", "roles": "builder"}},
-		{Name: "rowan", Fields: map[string]string{"slots": "64", "tiers": "frontier", "roles": "coordinator"}},
-		{Name: "emma", Fields: map[string]string{"slots": "8", "tiers": "flash", "roles": ""}},
+		{Name: "stella", Fields: map[string]string{"tiers": "pro", "roles": "builder"}},
+		{Name: "rowan", Fields: map[string]string{"tiers": "frontier", "roles": "coordinator"}},
+		{Name: "emma", Fields: map[string]string{"tiers": "flash", "roles": ""}},
 	}
 	views := map[string]View{
-		"stella": {"slots": "32", "tiers": "pro", "roles": "builder"},
-		"rowan":  {"slots": "32", "tiers": "frontier,pro", "roles": "coordinator"},
-		"gone":   {"slots": "1", "tiers": "", "roles": ""},
+		"stella": {"tiers": "pro", "roles": "builder"},
+		"rowan":  {"tiers": "frontier,pro", "roles": "coordinator"},
+		"gone":   {"tiers": "", "roles": ""},
 	}
 	var got []string
 	for _, op := range Plan(friend, rows, views) {
 		got = append(got, op.Op+":"+op.Name+":"+strings.Join(op.Changed, ","))
 	}
-	want := []string{"set:rowan:slots,tiers", "add:emma:", "remove:gone:"}
+	want := []string{"set:rowan:tiers", "add:emma:", "remove:gone:"}
 	require.Equal(t, strings.Join(want, " "), strings.Join(got, " "), "plan %v, want %v (coordinator first, adds and sets before removes, an unchanged row absent)", got, want)
 }
 
@@ -187,7 +187,7 @@ func TestApplyWritesEveryDifferenceThenStamps(t *testing.T) {
 	require.Equal(t, 2, ap.prepared, "a no-op apply still prepared the library")
 
 	// A change in Postgres is one set; a removal is one remove.
-	_, _, err = st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "48"}, "rowan")
+	_, _, err = st.Update(ctx, KindFriend, "stella", map[string]string{"width": "12"}, "rowan")
 	require.NoError(t, err)
 	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan")
 	require.NoError(t, err)
@@ -354,18 +354,18 @@ func TestApplyGoesOnPastARefusalAndDoesNotStamp(t *testing.T) {
 	ctx := context.Background()
 	st := seed(t)
 	ap := newFake()
-	ceiling := &RefusedError{Err: ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 70 over the machine ceiling 64"}
-	ap.refuse["rowan"] = ceiling
+	refusal := &RefusedError{Err: ErrActor, Detail: "roles of rowan: --as rowan does not hold the coordinator role in Redis"}
+	ap.refuse["rowan"] = refusal
 	var reported []string
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Name) })
-	require.ErrorIs(t, err, ErrCeiling, "the first refusal is returned: %v", err)
-	require.True(t, Refused(err), "ceiling: %v", err)
+	require.ErrorIs(t, err, ErrActor, "the first refusal is returned: %v", err)
+	require.True(t, Refused(err), "refusal: %v", err)
 	require.Equal(t, "add friend stella as=rowan idem=config:friend:4", strings.Join(ap.log, " "), "rowan is refused, stella after it is still written, and no stamp: %v", ap.log)
 	require.Equal(t, int64(0), ap.revs[KindFriend], "a kind with a refused op was stamped")
 	require.False(t, res.Stamped, "res %+v", res)
 	require.Equal(t, 1, res.Written, "res %+v", res)
 	require.Len(t, res.Refused, 1, "res %+v", res)
-	require.Equal(t, Refusal{Kind: KindFriend, Name: "rowan", Err: ceiling, Absent: true}, res.Refused[0], "rowan's refused op was an add: absent from Redis")
+	require.Equal(t, Refusal{Kind: KindFriend, Name: "rowan", Err: refusal, Absent: true}, res.Refused[0], "rowan's refused op was an add: absent from Redis")
 	require.Equal(t, "rowan stella", strings.Join(reported, " "), "reported %v: every op is reported before it is tried", reported)
 
 	// The retry, with the refusal gone, writes only the diff and stamps.
@@ -391,19 +391,19 @@ func TestApplyInRunRefusesARowNamingARowRefusedEarlier(t *testing.T) {
 			st := seed(t)
 			ap := newFake()
 			earlier := Earlier{}
-			earlier.Add(KindFriend, "rowan", "CEILING studio", absent)
+			earlier.Add(KindFriend, "rowan", "roles refused", absent)
 			// A fresh Redis: the sprint op sets coordinator "" -> rowan, so
 			// the ref field changes and even a present rowan refuses it.
 			res, err := ApplyInRun(ctx, st, ap, KindSprint, "rowan", check, false, earlier, func(Op) {})
 			require.ErrorIs(t, err, ErrRefusedRef, "absent=%t check=%t: %v", absent, check, err)
 			require.Len(t, res.Refused, 1, "absent=%t check=%t: %+v", absent, check, res)
-			require.Equal(t, "sprint sprint: its coordinator names friend rowan, refused earlier in this run (CEILING studio)", res.Refused[0].Err.Error())
+			require.Equal(t, "sprint sprint: its coordinator names friend rowan, refused earlier in this run (roles refused)", res.Refused[0].Err.Error())
 			require.Empty(t, ap.log, "absent=%t check=%t: a row naming a refused row was written: %v", absent, check, ap.log)
 			require.Zero(t, ap.revs[KindSprint], "absent=%t check=%t", absent, check)
 		}
 	}
 	// A row whose refs name no refused row is written.
-	res, err := ApplyInRun(ctx, seed(t), newFake(), KindSprint, "rowan", false, false, Earlier{KindFriend: {"stella": {Why: "CEILING studio", Absent: true}}}, func(Op) {})
+	res, err := ApplyInRun(ctx, seed(t), newFake(), KindSprint, "rowan", false, false, Earlier{KindFriend: {"stella": {Why: "roles refused", Absent: true}}}, func(Op) {})
 	require.NoError(t, err)
 	require.True(t, res.Stamped, "res %+v", res)
 }
@@ -423,7 +423,7 @@ func TestApplyInRunWritesARowThatOnlyNamesAPresentRefusedRow(t *testing.T) {
 	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{FieldGitIdentity: "Rowan <rowan@mas-bandwidth.com>"}, "rowan")
 	require.NoError(t, err)
 	earlier := Earlier{}
-	earlier.Add(KindFriend, "rowan", "CEILING studio", false)
+	earlier.Add(KindFriend, "rowan", "roles refused", false)
 	var changed []string
 	res, err := ApplyInRun(ctx, st, ap, KindSprint, "rowan", false, false, earlier, func(op Op) { changed = op.Changed })
 	require.NoError(t, err, "a row naming a present refused row, its ref unchanged, is written")
@@ -450,7 +450,7 @@ func TestApplyInRunWritesTheSprintRowWhenTheLiveSeatIsHeld(t *testing.T) {
 		_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{FieldGitIdentity: "Rowan <rowan@mas-bandwidth.com>"}, "rowan")
 		require.NoError(t, err)
 		earlier := Earlier{}
-		earlier.Add(KindFriend, "rowan", "CEILING studio", false)
+		earlier.Add(KindFriend, "rowan", "roles refused", false)
 		var held bool
 		res, err := ApplyInRun(ctx, st, ap, KindSprint, "rowan", check, false, earlier, func(op Op) { held = held || op.Op == OpHeld })
 		require.NoError(t, err, "check=%t: the held row's coordinator does not change", check)
@@ -474,7 +474,7 @@ func TestApplyStopsAtAStoreErrorAfterARefusal(t *testing.T) {
 	ctx := context.Background()
 	st := seed(t)
 	ap := newFake()
-	ap.refuse["rowan"] = &RefusedError{Err: ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 70 over the machine ceiling 64"}
+	ap.refuse["rowan"] = &RefusedError{Err: ErrActor, Detail: "roles of rowan: --as rowan does not hold the coordinator role in Redis"}
 	ap.refuse["stella"] = fmt.Errorf("redis: connection refused")
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	require.EqualError(t, err, "redis: connection refused")
@@ -594,7 +594,7 @@ func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	const held = "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run nova-config sprint set --coordinator a to make the row agree"
 	// The live seat holds a; the row names b and an unrelated field.
 	st := NewMem()
-	fb, err := friend.NewRow("b", map[string]string{"slots": "8", "tiers": "flash"})
+	fb, err := friend.NewRow("b", map[string]string{"tiers": "flash"})
 	require.NoError(t, err)
 	_, err = st.Insert(ctx, KindFriend, fb, "rowan")
 	require.NoError(t, err)
@@ -640,7 +640,7 @@ func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 
 	// A first apply, with no live key, writes the row's coordinator.
 	st2 := NewMem()
-	fc, err := friend.NewRow("c", map[string]string{"slots": "8", "tiers": "flash"})
+	fc, err := friend.NewRow("c", map[string]string{"tiers": "flash"})
 	require.NoError(t, err)
 	_, err = st2.Insert(ctx, KindFriend, fc, "rowan")
 	require.NoError(t, err)

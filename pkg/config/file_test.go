@@ -159,7 +159,7 @@ func TestOpenFileRefusesARowNameTheKindRefusesToAdd(t *testing.T) {
 	path := migratedFile(t)
 	f, err := OpenFile(path)
 	require.NoError(t, err)
-	_, err = f.Insert(ctx, KindFriend, Row{Name: "ada", Fields: map[string]string{"slots": "8", "tiers": "flash", "width": "8"}}, "a1")
+	_, err = f.Insert(ctx, KindFriend, Row{Name: "ada", Fields: map[string]string{"tiers": "flash", "width": "8"}}, "a1")
 	require.NoError(t, err)
 	ok, err := OpenFile(path)
 	require.NoError(t, err, "the singletons and tiers a migration makes, and a valid row name, still open")

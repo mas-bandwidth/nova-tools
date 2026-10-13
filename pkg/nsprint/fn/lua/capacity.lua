@@ -1,12 +1,14 @@
 -- Capacity control transitions for spec 2.4. No shebang: loader.go prepends the
--- single library header. Every transition is one Redis Function call that reads
--- machine:<m>:ceiling, sums the desired slots of every registered friend and
--- bench on that machine, refuses a raise that would break the ceiling with exit
--- 2 CEILING <m> <sum>/<ceiling>, and otherwise writes the desired hash and one
--- cap:log receipt stamped with server TIME.
+-- single library header. Every transition is one Redis Function call that
+-- writes the desired hash and one cap:log receipt stamped with server TIME. A
+-- bench's share is checked against machine:<m>:ceiling (CEILING <m> <share>
+-- <ceiling>); a friend's desired slots are her width and nothing caps them
+-- against a machine (the owner, 2026-10-13: "there is no ceiling for friend
+-- slots per-machine"), so a friend is never refused CEILING or NOCEILING.
 -- ns_sprint_plan applies a whole sprint plan the same way: every row's
--- desired hash through the one write_desired path, under a multi-row ceiling
--- check, after an ACL authority check and before any write.
+-- desired hash through the one write_desired path, each bench row checked
+-- against its machine's ceiling, after an ACL authority check and before any
+-- write.
 
 local function now_ms()
   local t = redis.call('TIME')
@@ -32,47 +34,6 @@ local function registry_set(kind)
     return 'benches'
   end
   return 'friends'
-end
-
--- add_consumer adds one consumer's desired slots to total when its machine is
--- m. The requesting consumer is substituted: it counts as req_slots on machine
--- m whatever its stored hash says, so a move replaces the old contribution
--- instead of adding to it.
-local function add_consumer(total, kind, name, m, req_kind, req_name, req_slots)
-  if kind == req_kind and name == req_name then
-    return total + req_slots
-  end
-  local key = desired_key(kind, name)
-  if redis.call('HGET', key, 'machine') == m then
-    return total + tonumber(redis.call('HGET', key, 'slots') or '0')
-  end
-  return total
-end
-
--- machine_sum is the prospective sum of desired slots over every FRIEND
--- whose machine is m, with a requesting friend counted even before it is
--- registered. It is the same rule Go's capacity.Evaluate applies; running it
--- here makes the guard and the write atomic.
---
--- Benches are not in the sum: one ceiling per machine bounds the friends'
--- sum and each bench's share. A bench's share is checked against the ceiling on its own
--- (capacity_desired below), and at run time its slots are the ceiling
--- less the slots of the friends awake on its machine, read at every deal
--- and work (TM.bench_slots in 02_card_move.lua), so the split follows who
--- is here within a tick and nothing is re-registered.
-local function machine_sum(m, req_kind, req_name, req_slots)
-  local total = 0
-  local counted = false
-  for _, name in ipairs(redis.call('SMEMBERS', 'friends')) do
-    if req_kind == 'friend' and name == req_name then
-      counted = true
-    end
-    total = add_consumer(total, 'friend', name, m, req_kind, req_name, req_slots)
-  end
-  if not counted and req_name ~= '' and req_kind == 'friend' then
-    total = add_consumer(total, req_kind, req_name, m, req_kind, req_name, req_slots)
-  end
-  return total
 end
 
 -- write_desired is the one write path of a desired hash: it
@@ -137,8 +98,11 @@ local function filter_ok(v, kinds)
   return true
 end
 
--- capacity_desired: set friend:<f>:desired or bench:<b>:desired under the
--- machine ceiling. args = kind, name, slots, machine, actor, idem, and (both
+-- capacity_desired: set friend:<f>:desired or bench:<b>:desired. A bench's
+-- share fits its machine's ceiling on its own (its live slots are the ceiling
+-- less the friends awake there, which the runtime reads in nova-sprint); a
+-- friend's slots are her width, recorded with her machine ('-' for none) and
+-- never checked against a ceiling. args = kind, name, slots, machine, actor, idem, and (both
 -- optional so six-arg callers are unchanged) paused ('' keeps the stored
 -- value, '0' or '1' sets it; a friend's or a bench's, the one flag worker
 -- pause|resume sets) and register ('1' is accepted and implied: every write
@@ -195,20 +159,19 @@ local function capacity_desired(keys, args)
   if not slots or slots < 0 then
     return { 'INVALID', machine, '0', '0', 'slots' }
   end
-  local ceiling_text = redis.call('HGET', 'machine:' .. machine .. ':ceiling', 'slots')
-  if not ceiling_text then
-    return { 'NOCEILING', machine, '0', '0' }
-  end
-  local ceiling = tonumber(ceiling_text)
-
-  -- a friend's slots join the friends' sum on the machine; a bench's share
-  -- fits the ceiling on its own (its live slots are the remainder)
+  -- a bench's share fits the ceiling on its own (its live slots are the
+  -- remainder); a friend has no ceiling
   local sum = slots
-  if kind == 'friend' then
-    sum = machine_sum(machine, kind, name, slots)
-  end
-  if sum > ceiling then
-    return { 'CEILING', machine, tostring(sum), tostring(ceiling) }
+  local ceiling = '-'
+  if kind == 'bench' then
+    local ceiling_text = redis.call('HGET', 'machine:' .. machine .. ':ceiling', 'slots')
+    if not ceiling_text then
+      return { 'NOCEILING', machine, '0', '0' }
+    end
+    ceiling = tonumber(ceiling_text)
+    if sum > ceiling then
+      return { 'CEILING', machine, tostring(sum), tostring(ceiling) }
+    end
   end
 
   local key = desired_key(kind, name)
@@ -247,9 +210,9 @@ local function capacity_desired(keys, args)
 end
 
 -- capacity_machine: set machine:<m>:ceiling and machine:<m>:budget (spec 5.1).
--- Refuses a ceiling below the friends' slots already desired on the machine
--- so config can never break the invariant (a bench's share above a lowered
--- ceiling is capped live by TM.bench_slots, never refused).
+-- Never refused because of friends: no machine caps a friend (2026-10-13). A
+-- bench's share above a lowered ceiling is capped live by the runtime (nova-sprint),
+-- never refused.
 -- args = machine, slots, cores, mem_gb, actor, idem, cpu_milli, mem_mb.
 local function capacity_machine(keys, args)
   local machine, slots = args[1], tonumber(args[2])
@@ -260,10 +223,6 @@ local function capacity_machine(keys, args)
 
   if not slots or slots < 0 then
     return { 'INVALID', machine, '0', '0' }
-  end
-  local sum = machine_sum(machine, '', '', 0)
-  if slots < sum then
-    return { 'CEILING', machine, tostring(sum), tostring(slots) }
   end
 
   local at = now_ms()
@@ -286,7 +245,7 @@ local function capacity_machine(keys, args)
   end
 
   receipt('capacity machine', machine, machine, slots, actor, idem, at)
-  return { 'SET', machine, tostring(sum), tostring(slots) }
+  return { 'SET', machine, '0', tostring(slots) }
 end
 
 -- key_type is TYPE as a plain string ('none' for an absent key).
@@ -294,23 +253,9 @@ local function key_type(key)
   return redis.call('TYPE', key)['ok']
 end
 
--- plan_machine_sum is the ceiling rule of a sprint plan: on
--- machine m, the plan slots of every FRIEND row whose machine is m, plus the
--- stored slots of every registered friend outside the plan whose stored
--- machine is m (outside, summed once per call of ns_sprint_plan). A friend
--- the plan moves off m no longer counts on m. Every plan row is substituted
--- at once, so a transfer between two friends is never refused by the order
--- of its rows. Bench rows are not summed (machine_sum above): each fits
--- the ceiling on its own.
-local function plan_machine_sum(m, rows, outside)
-  local total = outside[m] or 0
-  for _, r in ipairs(rows) do
-    if r.machine == m and r.kind == 'friend' then
-      total = total + r.slots
-    end
-  end
-  return total
-end
+-- The ceiling rule of a sprint plan is the bench rows' alone: each bench row
+-- fits its machine's ceiling on its own. Friend rows are never summed or
+-- checked against a machine (2026-10-13: no machine caps a friend).
 
 -- plan_bench_over is the first bench row on m whose share is over the
 -- ceiling, or nil.
@@ -383,37 +328,15 @@ local function sprint_plan(keys, args)
     if t ~= 'hash' and t ~= 'none' then
       return { 'WRONGTYPE', key }
     end
-    if t == 'hash' then
-      local stored = redis.call('HGET', key, 'machine')
-      if stored and machines[stored] == nil then
-        machines[stored] = false
-      end
-    end
     in_plan[id] = true
-    machines[r.machine] = true
+    if r.kind == 'bench' then
+      machines[r.machine] = true
+    end
     rows[#rows + 1] = r
   end
 
-  local outside = {}
-  for _, kind in ipairs({ 'friend' }) do
-    for _, name in ipairs(redis.call('SMEMBERS', registry_set(kind))) do
-      if not in_plan[kind .. ':' .. name] then
-        local key = desired_key(kind, name)
-        local t = key_type(key)
-        if t ~= 'hash' and t ~= 'none' then
-          return { 'WRONGTYPE', key }
-        end
-        local v = redis.call('HMGET', key, 'machine', 'slots')
-        if v[1] then
-          outside[v[1]] = (outside[v[1]] or 0) + (tonumber(v[2] or '0') or 0)
-        end
-      end
-    end
-  end
-
-  -- One sum per machine named by the plan (machines[m] true, ceiling
-  -- required) or by a plan consumer's stored machine (false, checked when it
-  -- has a ceiling).
+  -- One check per machine a bench row names (its ceiling required). A
+  -- friend row names no machine that is checked.
   local names = {}
   for m in pairs(machines) do
     names[#names + 1] = m
@@ -430,14 +353,8 @@ local function sprint_plan(keys, args)
       ceiling = tonumber(redis.call('HGET', ceiling_key, 'slots') or '')
     end
     if not ceiling then
-      if machines[m] then
-        return { 'NOCEILING', m }
-      end
+      return { 'NOCEILING', m }
     else
-      local sum = plan_machine_sum(m, rows, outside)
-      if sum > ceiling then
-        return { 'CEILING', m, tostring(sum), tostring(ceiling) }
-      end
       local over = plan_bench_over(m, rows, ceiling)
       if over then
         return { 'CEILING', m, tostring(over.slots), tostring(ceiling) }

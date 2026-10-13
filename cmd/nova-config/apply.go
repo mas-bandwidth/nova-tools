@@ -240,17 +240,6 @@ func refusalRemedy(kind, name string, err error) (string, string) {
 	}
 	apply := toolName + " apply"
 	switch {
-	case errors.Is(err, config.ErrCeiling):
-		if kind == config.KindMachine {
-			return why, fmt.Sprintf("%s machine set %s --slots <n> (at least its friends' sum), then %s", toolName, name, apply)
-		}
-		machine := "<machine>" // a CEILING detail names it: "CEILING <machine>: ..."
-		if rest, ok := strings.CutPrefix(why, "CEILING "); ok {
-			if m, _, ok := strings.Cut(rest, ":"); ok && !strings.ContainsAny(m, " ") {
-				machine = m
-			}
-		}
-		return why, fmt.Sprintf("%s %s set %s --slots <n>, or raise the machine's ceiling with %s machine set %s --slots <n>, then %s", toolName, kind, name, toolName, machine, apply)
 	case errors.Is(err, config.ErrActor):
 		return why, apply + " --as <a friend that holds the coordinator role>"
 	case errors.Is(err, config.ErrInUse):

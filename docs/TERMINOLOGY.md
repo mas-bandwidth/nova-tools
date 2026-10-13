@@ -39,7 +39,7 @@ file, and the ledger only shrinks.
   contract; the label is optional. ([SPEC-UPDATE.md](SPEC-UPDATE.md))
 - **friend** — a named participant you exchange notes with, the coordinator
   included; the role is ownership, never an exemption. Her configuration is a
-  `nova-config` friend row (slots, tiers, roles, width, mode); what she would just know is
+  `nova-config` friend row (tiers, roles, width, mode); what she would just know is
   runtime data she reports herself. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
 - **OK** — the verdict a successful verb line carries as its second token:
   `<TOKEN> OK`, on stdout. A count stands where a list would be.
@@ -51,8 +51,8 @@ file, and the ledger only shrinks.
   `<TOKEN> REFUSED: <reason> (<remedy>)`, on stderr, exit 2 (exit 1 where the
   state is a NO). ([SPEC.md, Conventions](SPEC.md#conventions))
 - **slot** — the unit of parallelism: a machine's `slots` is how many cards it
-  may run at once, its ceiling, and a friend's `slots` is how wide she wants to
-  run under that ceiling. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
+  may run at once, its ceiling for benches; a friend has no `slots`: her
+  `width` is her one number, and no machine ceiling caps it. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
 - **STALE** — `nova-update check`'s verdict for an installed version older than
   the latest its source publishes; a version ahead of the latest is NEWER, and a
   pair with no order between them is DIFFERENT, never STALE.

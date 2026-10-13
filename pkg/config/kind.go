@@ -269,19 +269,15 @@ func FriendTokenCap(r Row) int64 {
 }
 
 // checkFriend is the friend kind's Check (docs/SPEC-CONFIG.md, "friend"): her
-// width is at least 1 and no wider than her slots, a friend working no job at
-// once being no friend of the sprint's (remove the row instead), her
-// config_dir, when set, is an absolute path, and each stream restriction is a
-// glob the matcher reads. A width that failed its own validation is absent and
-// skipped.
+// width is at least 1, a friend working no job at once being no friend of the
+// sprint's (remove the row instead), and nothing else bounds it: a friend's
+// width is her one capacity number, with no slots and no machine ceiling (the
+// owner, 2026-10-13). Her config_dir, when set, is an absolute path, and each
+// stream restriction is a glob the matcher reads. A width that failed its own
+// validation is absent and skipped.
 func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs the friend works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
-	}
-	if w, ok := r.Fields["width"]; ok && w != "" {
-		if s, ok := r.Fields["slots"]; ok && s != "" && r.Int("width") > r.Int("slots") {
-			return fmt.Errorf("friend %s has width %s and slots %s; a friend's width cannot exceed the friend's slots: want --width <n> <= --slots <n>", r.Name, w, s)
-		}
 	}
 	if d := r.Fields["config_dir"]; d != "" && !filepath.IsAbs(d) {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
@@ -458,8 +454,8 @@ func checkSprint(r Row) error {
 const CoordinatorRole = "coordinator"
 
 // Kinds is the registry, in apply order: machines first, the fleet row next
-// (it names machines, and a friend's desired slots are charged to the
-// fleet's coordinator machine when her beat names none), friends, the
+// (it names machines, and a friend with no beat is recorded with the
+// fleet's coordinator machine, never charged against it), friends, the
 // sprint row (it names a friend), loops (each names a machine), routes
 // (each names no row), and tiers last (each names routes).
 //
@@ -477,7 +473,7 @@ var Kinds = []*Kind{
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
-			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which a bench's share on it fits under; never a cap on a friend, whose width is the friend's own; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
@@ -506,12 +502,11 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: the friend's slots, which tiers the friend can do, the friend's roles, and the friend's width, the jobs the friend works at once, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by, and the optional streams and kinds restrictions on the work the friend may be dealt",
+		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by, and the optional streams and kinds restrictions on the work the friend may be dealt",
 		Fields: []Field{
-			{Name: "slots", Type: TypeInt, Required: true, Help: "the friend's desired slots, under the ceiling of the machine the friend's beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers the friend can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
-			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs the friend works at once, the width nova-sprint friend sync sets on the friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
+			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs the friend works at once, the width nova-sprint friend sync sets on the friends row and the friend's one capacity number (apply writes it as friend:<f>:desired slots; there is no friend slots field and no machine ceiling caps it); at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how the daemon hands the friend work: one-shot (width lanes, each its own session, handed one card per turn); the retired batch (one session, many cards in one turn) is refused"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, the account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},

@@ -11,8 +11,8 @@ import (
 )
 
 // refusingRedis is the harness's fake Redis with a refusal per row name:
-// a *config.RefusedError the runtime would answer (CEILING, an actor
-// without the role), or a plain error, a Redis that could not answer.
+// a *config.RefusedError the runtime would answer (an actor without
+// the role, a row in use), or a plain error, a Redis that could not answer.
 type refusingRedis struct {
 	*fakeRedis
 	refuse map[string]error
@@ -36,9 +36,9 @@ func everyKindHarness(t *testing.T, refuse map[string]error) (*harness, *refusin
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	for _, args := range [][]string{
 		{"machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64"},
-		{"friend", "add", "rowan", "--slots", "8", "--tiers", "frontier", "--roles", "builder"},
-		{"friend", "add", "stella", "--slots", "16", "--tiers", "frontier,pro"},
-		{"friend", "add", "zara", "--slots", "8", "--tiers", "pro"},
+		{"friend", "add", "rowan", "--width", "8", "--tiers", "frontier", "--roles", "builder"},
+		{"friend", "add", "stella", "--width", "16", "--tiers", "frontier,pro"},
+		{"friend", "add", "zara", "--width", "8", "--tiers", "pro"},
 		{"fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn},
 		{"sprint", "set", "--coordinator", "rowan", "--git_identity", "Rowan <rowan@mas-bandwidth.com>", "--max_attempts", "6"},
 	} {
@@ -58,7 +58,9 @@ func runEveryKind(d deps, args ...string) (int, string, string) {
 }
 
 // TestApplyAppliesEveryKindPastARefusalAndNamesIt is the v1.2.16 incident:
-// a friend refused CEILING stopped the apply before the sprint kind, so the
+// a friend refused (then by the per-machine CEILING, since removed: a friend
+// row has only width; here an actor without the role) stopped the apply
+// before the sprint kind, so the
 // sprint row's git_identity never reached Redis. A refusal now names the row
 // on one line, the kind's later rows are still written, the refused kind is
 // not stamped, and every later kind applies (tla/ConfigApply.tla,
@@ -66,8 +68,8 @@ func runEveryKind(d deps, args ...string) (int, string, string) {
 func TestApplyAppliesEveryKindPastARefusalAndNamesIt(t *testing.T) {
 	t.Parallel()
 
-	ceiling := &config.RefusedError{Err: config.ErrCeiling, Detail: "CEILING studio: friend stella makes the sum 76 over the machine ceiling 64; raise it with nova-config machine set studio --slots <n>, or lower a friend's slots"}
-	h, rr, d := everyKindHarness(t, map[string]error{"stella": ceiling})
+	refusal := &config.RefusedError{Err: config.ErrActor, Detail: "roles of stella: --as rowan does not hold the coordinator role in Redis"}
+	h, rr, d := everyKindHarness(t, map[string]error{"stella": refusal})
 	code, out, errs := runEveryKind(d, "apply")
 	require.Equal(t, 1, code, "a refused row is exit 1\nstdout: %s\nstderr: %s", out, errs)
 
@@ -79,8 +81,8 @@ func TestApplyAppliesEveryKindPastARefusalAndNamesIt(t *testing.T) {
 		}
 	}
 	require.Len(t, refusals, 1, "stdout:\n%s", out)
-	require.True(t, strings.HasPrefix(refusals[0], "CONFIG REFUSED kind=friend name=stella why=CEILING studio: friend stella makes the sum 76 over the machine ceiling 64"), "refusal line %q", refusals[0])
-	require.Contains(t, refusals[0], " run: nova-config friend set stella --slots <n>", "the remedy: %q", refusals[0])
+	require.True(t, strings.HasPrefix(refusals[0], "CONFIG REFUSED kind=friend name=stella why=roles of stella: --as rowan does not hold the coordinator role in Redis"), "refusal line %q", refusals[0])
+	require.Contains(t, refusals[0], " run: nova-config apply --as <a friend that holds the coordinator role>", "the remedy: %q", refusals[0])
 
 	// The friend after the refused one is written; the friend kind is not stamped.
 	require.Contains(t, rr.log, "write friend rowan", "log %v", rr.log)
@@ -188,13 +190,13 @@ func TestApplyCheckNamesAKnownRefusalAndGoesOn(t *testing.T) {
 func TestApplyStopsAtAStoreErrorAfterARefusalInTheSameKind(t *testing.T) {
 	t.Parallel()
 
-	ceiling := &config.RefusedError{Err: config.ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 76 over the machine ceiling 64"}
-	_, rr, d := everyKindHarness(t, map[string]error{"rowan": ceiling, "stella": errors.New("redis at 127.0.0.1:6379: connection refused")})
+	refusal := &config.RefusedError{Err: config.ErrActor, Detail: "roles of rowan: --as rowan does not hold the coordinator role in Redis"}
+	_, rr, d := everyKindHarness(t, map[string]error{"rowan": refusal, "stella": errors.New("redis at 127.0.0.1:6379: connection refused")})
 	code, out, errs := runEveryKind(d, "apply")
 	require.Equal(t, 2, code, "stdout: %s\nstderr: %s", out, errs)
 	require.Contains(t, errs, "nova-config apply REFUSED: redis at 127.0.0.1:6379: connection refused", "the error is said: %q", errs)
 	require.Contains(t, out, "CONFIG REFUSED kind=friend name=rowan ", "the refusal before it is still said:\n%s", out)
-	require.Contains(t, out, "run: nova-config friend set rowan --slots <n>, or raise the machine's ceiling with nova-config machine set studio --slots <n>", "the remedy names the machine:\n%s", out)
+	require.Contains(t, out, "run: nova-config apply --as <a friend that holds the coordinator role>", "the remedy:\n%s", out)
 	require.NotContains(t, rr.log, "write friend zara", "a write after the store error: %v", rr.log)
 	require.NotContains(t, rr.log, "write sprint sprint", "a later kind was written against a failed Redis: %v", rr.log)
 	require.Zero(t, rr.revs[config.KindFriend], "%v", rr.revs)
@@ -213,13 +215,13 @@ func TestApplyWritesTheSprintRowWhenTheCoordinatorsSetIsRefused(t *testing.T) {
 	code, out, errs := runEveryKind(d, "apply")
 	require.Equal(t, 0, code, "first apply\nstdout: %s\nstderr: %s", out, errs)
 	for _, args := range [][]string{
-		{"friend", "set", "rowan", "--slots", "16"},
+		{"friend", "set", "rowan", "--width", "16"},
 		{"sprint", "set", "--git_identity", "Nova Sprint <sprint@mas-bandwidth.com>"},
 	} {
 		code, out, errs := h.run(t, args...)
 		require.Equal(t, 0, code, "%v\nstdout: %s\nstderr: %s", args, out, errs)
 	}
-	rr.refuse["rowan"] = &config.RefusedError{Err: config.ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 80 over the machine ceiling 64"}
+	rr.refuse["rowan"] = &config.RefusedError{Err: config.ErrActor, Detail: "roles of rowan: --as rowan does not hold the coordinator role in Redis"}
 	rr.log = nil
 	code, out, errs = runEveryKind(d, "apply")
 	require.Equal(t, 1, code, "stdout: %s\nstderr: %s", out, errs)
@@ -247,15 +249,15 @@ func TestApplyWritesTheSprintRowWhenTheLiveSeatIsHeld(t *testing.T) {
 	require.Equal(t, 0, code, "first apply\nstdout: %s\nstderr: %s", out, errs)
 	rr.views[config.KindSprint][config.KindSprint]["coordinator"] = "stella"
 	for _, args := range [][]string{
-		{"friend", "set", "rowan", "--slots", "16"},
+		{"friend", "set", "rowan", "--width", "16"},
 		{"sprint", "set", "--git_identity", "Nova Sprint <sprint@mas-bandwidth.com>"},
 	} {
 		code, out, errs := h.run(t, args...)
 		require.Equal(t, 0, code, "%v\nstdout: %s\nstderr: %s", args, out, errs)
 	}
-	rr.refuse["rowan"] = &config.RefusedError{Err: config.ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 80 over the machine ceiling 64"}
+	rr.refuse["rowan"] = &config.RefusedError{Err: config.ErrActor, Detail: "roles of rowan: --as rowan does not hold the coordinator role in Redis"}
 	code, out, errs = runEveryKind(d, "apply", "--check")
-	require.Equal(t, 0, code, "--check knows no refusal (the runtime's CEILING is not --check's)\nstdout: %s\nstderr: %s", out, errs)
+	require.Equal(t, 0, code, "--check knows no refusal (the runtime's role refusal is not --check's)\nstdout: %s\nstderr: %s", out, errs)
 	require.NotContains(t, out, "REFUSED kind=sprint", "stdout:\n%s", out)
 	rr.log = nil
 	code, out, errs = runEveryKind(d, "apply")
@@ -277,8 +279,8 @@ func TestApplyWritesTheSprintRowWhenTheLiveSeatIsHeld(t *testing.T) {
 func TestApplyJSONKeepsTheRefusalsBeforeAStoreError(t *testing.T) {
 	t.Parallel()
 
-	ceiling := &config.RefusedError{Err: config.ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 76 over the machine ceiling 64"}
-	_, _, d := everyKindHarness(t, map[string]error{"rowan": ceiling, "stella": errors.New("redis at 127.0.0.1:6379: connection refused")})
+	refusal := &config.RefusedError{Err: config.ErrActor, Detail: "roles of rowan: --as rowan does not hold the coordinator role in Redis"}
+	_, _, d := everyKindHarness(t, map[string]error{"rowan": refusal, "stella": errors.New("redis at 127.0.0.1:6379: connection refused")})
 	code, out, errs := runEveryKind(d, "apply", "--json")
 	require.Equal(t, 2, code, "stdout: %s\nstderr: %s", out, errs)
 	require.Equal(t, 1, strings.Count(out, `"result"`), "one object: %s", out)
