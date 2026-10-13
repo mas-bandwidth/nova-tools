@@ -257,43 +257,69 @@ func TestShimCommitValuesAreNotAmendFlags(t *testing.T) {
 	}
 }
 
-// TestShimResetPathBoundaryKeepsHEAD pins section 5's ordinary-reset pass-through:
-// a path named like a revision is a path after --, while a revision before it is guarded.
-func TestShimResetPathBoundaryKeepsHEAD(t *testing.T) {
+// TestShimResetPathspecsMatchGit pins section 5's ordinary-reset pass-through:
+// index-only resets use Git's pathspec semantics, including mode incompatibilities.
+func TestShimResetPathspecsMatchGit(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-SWARM.md)")
 	}
 	for _, family := range []string{"claude", "plain", "openai"} {
-		t.Run(family, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			work := filepath.Join(root, "repo")
-			shimGit(t, root, "init", "-q", work)
-			shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "below")
-			path := filepath.Join(work, "HEAD~1")
-			require.NoError(t, os.WriteFile(path, []byte("staged"), 0o644))
-			shimGit(t, work, "add", "--", "HEAD~1")
-			shimGit(t, work, "commit", "-q", "-m", "staged")
-			staged := shimGit(t, work, "rev-parse", "HEAD")
-			f := Frame{Kind: "work", Card: "c1", Model: "test/model", Repo: cardURL, Branch: "sprint/c1"}
-			shims := filepath.Join(root, "shim")
-			require.NoError(t, Install(For(family), f, Staged{Job: root, Repo: work, Head: staged, Git: realGit(t)}, shims))
-			for _, line := range []string{"git reset -- HEAD~1", "git reset HEAD -- HEAD~1"} {
+		for _, line := range []string{
+			"git reset -- HEAD~1",
+			"git reset HEAD -- HEAD~1",
+			"git reset STAGED -- HEAD~1",
+			"git reset BELOW -- HEAD~1",
+			"git reset --pathspec-from-file=PATHFILE",
+			"git reset STAGED --pathspec-from-file PATHFILE",
+			"git reset BELOW --pathspec-from-fil=PATHFILE",
+			"git reset --mixed STAGED -- HEAD~1",
+			"git reset --soft STAGED -- HEAD~1",
+			"git reset --merge STAGED -- HEAD~1",
+			"git reset --keep STAGED -- HEAD~1",
+			"git reset --hard STAGED -- HEAD~1",
+			"git reset --hard STAGED --pathspec-from-file=PATHFILE",
+		} {
+			t.Run(family+"/"+line, func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				work := filepath.Join(root, "repo")
+				shimGit(t, root, "init", "-q", work)
+				shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "below")
+				below := shimGit(t, work, "rev-parse", "HEAD")
+				path := filepath.Join(work, "HEAD~1")
+				require.NoError(t, os.WriteFile(path, []byte("staged"), 0o644))
+				shimGit(t, work, "add", "--", "HEAD~1")
+				shimGit(t, work, "commit", "-q", "-m", "staged")
+				staged := shimGit(t, work, "rev-parse", "HEAD")
+				shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "own")
+				head := shimGit(t, work, "rev-parse", "HEAD")
+				pathfile := filepath.Join(root, "paths")
+				require.NoError(t, os.WriteFile(pathfile, []byte("HEAD~1\n"), 0o644))
+				line = strings.NewReplacer("STAGED", staged, "BELOW", below, "PATHFILE", shq(pathfile)).Replace(line)
+				f := Frame{Kind: "work", Card: "c1", Model: "test/model", Repo: cardURL, Branch: "sprint/c1"}
+				shims := filepath.Join(root, "shim")
+				require.NoError(t, Install(For(family), f, Staged{Job: root, Repo: work, Head: staged, Git: realGit(t)}, shims))
 				require.NoError(t, os.WriteFile(path, []byte("work"), 0o644))
 				shimGit(t, work, "add", "--", "HEAD~1")
-				code, _, errb := shimSh(t, shims, work, line)
-				assert.Equal(t, 0, code, "%s: %s", line, errb)
-				assert.Equal(t, staged, shimGit(t, work, "rev-parse", "HEAD"))
-				assert.Empty(t, shimGit(t, work, "diff", "--cached", "--name-only"))
+				wantCode, wantOut, wantErr := shimSh(t, shims, work, strings.Replace(line, "git ", shq(realGit(t))+" ", 1))
+				require.Equal(t, head, shimGit(t, work, "rev-parse", "HEAD"), "real Git keeps HEAD")
+				wantIndex := shimGit(t, work, "diff", "--cached", "--name-status")
+				shimGit(t, work, "add", "--", "HEAD~1")
+				code, out, errb := shimSh(t, shims, work, line)
+				assert.Equal(t, wantCode, code, "%s", errb)
+				assert.Equal(t, wantOut, out)
+				assert.Equal(t, wantErr, errb)
+				assert.Equal(t, head, shimGit(t, work, "rev-parse", "HEAD"))
+				assert.Equal(t, wantIndex, shimGit(t, work, "diff", "--cached", "--name-status"))
 				content, err := os.ReadFile(path)
 				require.NoError(t, err)
 				assert.Equal(t, "work", string(content))
-			}
-			code, _, errb := shimSh(t, shims, work, "git reset --soft HEAD~1 --")
-			assert.NotEqual(t, 0, code)
-			assert.Contains(t, errb, "REFUSED")
-			assert.Equal(t, staged, shimGit(t, work, "rev-parse", "HEAD"))
-		})
+				code, _, errb = shimSh(t, shims, work, "git reset --soft "+staged+" --")
+				assert.NotEqual(t, 0, code)
+				assert.Contains(t, errb, "REFUSED")
+				assert.Equal(t, head, shimGit(t, work, "rev-parse", "HEAD"))
+			})
+		}
 	}
 }

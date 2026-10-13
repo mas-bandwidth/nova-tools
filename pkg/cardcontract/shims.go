@@ -182,17 +182,22 @@ nova_refuse_rewrite() {
 const gitGuard = `reset)
 	shift "$nova_n"
 	if ! nova_guard_top || [ -z "$NOVA_HEAD" ]; then nova_git reset "$@"; exit $?; fi
-	nova_target=""; nova_npos=0; nova_skip=""
+	nova_target=""; nova_npos=0; nova_skip=""; nova_boundary=""; nova_paths=""
 	for nova_a in "$@"; do
 		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
+		if [ -n "$nova_boundary" ]; then nova_paths=1; continue; fi
 		case "$nova_a" in
-		--) break ;;
-		--pathspec-from-file) nova_skip=1 ;;
+		--) nova_boundary=1 ;;
+		--?*)
+			nova_opt="${nova_a#--}"; nova_opt="${nova_opt%%=*}"
+			case pathspec-from-file in "$nova_opt"*)
+				nova_paths=1; case "$nova_a" in *=*) ;; *) nova_skip=1 ;; esac ;;
+			esac ;;
 		-*) ;;
 		*) nova_npos=$((nova_npos + 1)); if [ "$nova_npos" -eq 1 ]; then nova_target="$nova_a"; fi ;;
 		esac
 	done
-	if [ "$nova_npos" -ge 2 ]; then nova_git reset "$@"; exit $?; fi
+	if [ -n "$nova_paths" ] || [ "$nova_npos" -ge 2 ]; then nova_git reset "$@"; exit $?; fi
 	[ -n "$nova_target" ] || nova_target=HEAD
 	nova_t=$(nova_git rev-parse --verify -q "$nova_target^{commit}" 2>/dev/null) || { nova_git reset "$@"; exit $?; }
 	nova_h=$(nova_git rev-parse --verify -q "HEAD^{commit}" 2>/dev/null) || { nova_git reset "$@"; exit $?; }

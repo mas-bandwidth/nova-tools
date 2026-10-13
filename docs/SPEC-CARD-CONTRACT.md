@@ -494,7 +494,8 @@ at or below the staged commit. The guard covers the staged checkout and every li
 worktree sharing its Git common directory, including commands using `-C`. Accepted
 abbreviations of history flags and rebase options taking values keep the same
 guard. Commit option values and paths after `--` are not amend flags; reset
-operands after `--` are pathspecs. Commits above the staged commit may be amended, resets
+operands after `--` and `--pathspec-from-file` select an index-only reset even
+with an explicit revision. Git reports incompatible reset modes. Commits above the staged commit may be amended, resets
 staying above it and rebases onto it pass through, as do commands in independent
 repositories and targets Git cannot resolve.
 
