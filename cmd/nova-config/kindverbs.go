@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -186,7 +187,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		problems = append(problems, err.Error())
 	}
 	if len(problems) > 0 {
-		return refuse(stderr, verb, strings.Join(problems, "; "))
+		why := strings.Join(problems, "; ")
+		if options := invalidEnumOptions(k, given, err); len(options) > 0 {
+			return refuseOptions(stderr, verb, why, options)
+		}
+		return refuse(stderr, verb, why)
 	}
 	st, err := d.openStore(ctx, dsn)
 	if err != nil {
@@ -275,6 +280,30 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	printNotes(stdout, notes)
 	return 0
+}
+
+// invalidEnumOptions returns descriptor choices only when a supplied enum
+// field is the source of the validation error. The descriptor remains the
+// authority for choices, including kinds added after this CLI was written.
+func invalidEnumOptions(k *config.Kind, given map[string]string, validationErr error) []string {
+	if validationErr == nil {
+		return nil
+	}
+	message := validationErr.Error()
+	for _, field := range k.Fields {
+		if field.Type != config.TypeEnum && field.Type != config.TypeList {
+			continue
+		}
+		raw, supplied := given[field.Name]
+		if !supplied || len(field.Enum) == 0 {
+			continue
+		}
+		_, err := field.Canonical(raw)
+		if err != nil && strings.Contains(message, err.Error()) {
+			return slices.Clone(field.Enum)
+		}
+	}
+	return nil
 }
 
 // checkLoopVerb refuses a loop whose verb is gone (config.CheckLoopVerb), the
@@ -517,12 +546,16 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	fs := verbflag.New(verb)
 	c := seatStoreFlags(fs)
 	redisFlag := liveFlag(fs, k)
+	max := fs.Int("max", 0, "maximum rows to print; 0 prints all")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
 		return code
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "list takes no name; want "+verb)
+	}
+	if *max < 0 {
+		return refuse(stderr, verb, "--max must be zero or more; run: "+toolName+" "+verb+" -h")
 	}
 	dsn, err := c.dsn(ctx, d)
 	if err != nil {
@@ -558,10 +591,19 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		for _, row := range rows {
 			o.Item(k.Name, rowFields(k, row, liveFields(bs, row.Name)...)...)
 		}
+		o.Cap(*max)
 		return emit(stdout, o)
 	}
-	for _, row := range rows {
-		fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name))
+	if *max == 0 {
+		for _, row := range rows {
+			fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name))
+		}
+	} else {
+		listing := bounded.Capped(stdout, *max, "CONFIG", k.Name, tool.MaxRemedy)
+		for _, row := range rows {
+			listing.Line(config.ListLine(k, row) + liveSuffix(bs, row.Name))
+		}
+		listing.More()
 	}
 	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
 	return 0
@@ -575,6 +617,10 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if which == "show" {
 		redisFlag = liveFlag(fs, k)
 	}
+	var max *int
+	if which == "history" {
+		max = fs.Int("max", 0, "maximum history rows to print; 0 prints all")
+	}
 	asJSON := jsonFlag(fs)
 	name, rest := nameAndRest(k, args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
@@ -587,6 +633,9 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		name = fs.Arg(0)
 	case fs.NArg() > 0:
 		return refuse(stderr, verb, "want "+verb+" <name>")
+	}
+	if max != nil && *max < 0 {
+		return refuse(stderr, verb, "--max must be zero or more; run: "+toolName+" "+verb+" -h")
 	}
 	var problems []string
 	if err := config.ValidateName(name); err != nil {
@@ -625,10 +674,21 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		for _, ch := range changes {
 			o.Item("change", "id", ch.ID, "op", ch.Op, "actor", ch.Actor, "at", ch.At, "before", ch.Before, "after", ch.After)
 		}
+		if max != nil {
+			o.Cap(*max)
+		}
 		return emit(stdout, o)
 	}
-	for _, ch := range changes {
-		fmt.Fprintln(stdout, config.HistoryLine(ch))
+	if max == nil || *max == 0 {
+		for _, ch := range changes {
+			fmt.Fprintln(stdout, config.HistoryLine(ch))
+		}
+	} else {
+		listing := bounded.Capped(stdout, *max, "CONFIG", "change", tool.MaxRemedy)
+		for _, ch := range changes {
+			listing.Line(config.HistoryLine(ch))
+		}
+		listing.More()
 	}
 	fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), len(changes))
 	return 0

@@ -130,9 +130,9 @@ true of one is true of all:
 nova-config <kind> add <name> --<field> <value> ... --as <friend>
 nova-config <kind> set <name> --<field> <value> ... --as <friend>
 nova-config <kind> remove <name> --as <friend>
-nova-config <kind> list
+nova-config <kind> list [--max <n>]
 nova-config <kind> show <name>
-nova-config <kind> history <name>
+nova-config <kind> history <name> [--max <n>]
 nova-config <kind> <verb> -h
 ```
 
@@ -142,6 +142,12 @@ field and refuses a value outside its type, naming every problem in one line.
 `-h` on any verb prints its flags with one help line each. A singleton kind
 (the fleet, the sprint) is one row `migrate` creates: `set`, `show` and
 `history` take no name, and there is no `add`, `remove` or `list`.
+
+List and history accept `--max <n>` to show only the first `n` rows in their
+existing stable order. The summary and JSON `rows`/`changes` fact still report
+the full count; a shortened text or JSON listing has a `MORE` count. `--max 0`
+means all rows and preserves the output without the flag. Negative or
+non-integer values are refused before the store is opened.
 
 ### machine
 
@@ -181,6 +187,10 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 nova-config machine list --redis db1:6380
 MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=- beat=none
 MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=<t>
+CONFIG LIST kind=machine rows=2
+nova-config machine list --max 1
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
+CONFIG MORE kind=machine shown=1 total=2 --max <n> raises the ceiling, --max 0 lists all
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -444,7 +454,8 @@ nova-config route remove REFUSED: route flash-a is in the --routes of tier flash
 nova-config route set REFUSED: --enabled false takes a route out of the deal and a disabled route carries its reason; say why: --note '<the measured reason>'; run: nova-config route set -h
 nova-config fleet set REFUSED: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config fleet set -h
 nova-config loop set REFUSED: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
-nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis; run: nova-config machine list -h
+nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --max, --pg, --redis; run: nova-config machine list -h
+nova-config provider add REFUSED: --billing "foo": want one of metered, plan, both; valid options: metered, plan, both; run: nova-config provider add -h
 ```
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run
