@@ -44,7 +44,9 @@ func TestLoadSeatEnvironmentValidatesAndReturnsForgeReference(t *testing.T) {
 	root := t.TempDir()
 	forge := filepath.Join(root, "gh-config")
 	require.NoError(t, os.Mkdir(forge, 0o700))
-	path := filepath.Join(root, EnvironmentFile)
+	private := filepath.Join(root, "private")
+	require.NoError(t, os.Mkdir(private, 0o700))
+	path := filepath.Join(private, EnvironmentFile)
 	body := `{"version":1,"environment":{"NOVA_SPRINT_REDIS":"127.0.0.1:6381"},"forge_identity":"` + forge + `"}`
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
