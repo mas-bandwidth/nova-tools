@@ -67,6 +67,9 @@ func TestLoadSeatEnvironmentRejectsDuplicateUnknownAndCredentialValues(t *testin
 		`{"version":1,"environment":null}`,
 		`{"version":1,"login":null}`,
 		`{"version":1,"environment":{"nova_sprint_redis":"127.0.0.1:6381"}}`,
+		`{"version":1,"environment":{"NOVA_SPRINT_REDIS":"redis.example"}}`,
+		`{"version":1,"environment":{"NOVA_SPRINT_REDIS":"redis.example:not-a-port"}}`,
+		`{"version":1,"environment":{"NOVA_SPRINT_REDIS":"redis.example:65536"}}`,
 		`{"version":1,"environment":{"NOVA_SPRINT_REDIS":"redis://user:password@host"}}`,
 	} {
 		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
@@ -81,7 +84,8 @@ func TestForgeCommandEnvUsesSeatDefaultButKeepsExplicitOverrides(t *testing.T) {
 	root := t.TempDir()
 	forge := filepath.Join(root, "gh-config")
 	require.NoError(t, os.Mkdir(forge, 0o700))
-	path := filepath.Join(root, EnvironmentFile)
+	path := filepath.Join(root, EnvironmentDir, EnvironmentFile)
+	require.NoError(t, os.Mkdir(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"forge_identity":"`+forge+`"}`), 0o600))
 	getenv := func(key string) string {
 		if key == "XDG_CONFIG_HOME" {

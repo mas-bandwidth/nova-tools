@@ -14,9 +14,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -240,7 +242,20 @@ func (l StoreLogin) missing() bool {
 
 // seatEndpoint accepts an address and rejects credential-bearing URL syntax.
 func seatEndpoint(value string) bool {
-	return value != "" && !strings.ContainsAny(value, "@/?#\x00\r\n\t ") && !strings.Contains(value, "://")
+	if strings.HasPrefix(value, "mem:") || strings.Contains(value, "://") || strings.ContainsAny(value, "@/?#") {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f || r == '\'' || r == '"' || r == ' ' {
+			return false
+		}
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err != nil || host == "" {
+		return false
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && n > 0
 }
 
 // validateEnvironmentKeys rejects duplicate and unknown keys in the v1 schema.

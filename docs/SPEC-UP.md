@@ -31,7 +31,8 @@ with no group or other permissions, under a real directory owned by the user
 that is not writable by group or other users. Unknown or duplicate keys are refused.
 
 The top-level `version` is `1`. `environment`, when present, contains only the
-`NOVA_SPRINT_REDIS`, `NOVA_SPRINT_SERVER` and `NOVA_BUS_REDIS` endpoint strings.
+`NOVA_SPRINT_REDIS`, `NOVA_SPRINT_SERVER` and `NOVA_BUS_REDIS` host:port
+endpoints (with a numeric port from 1 through 65535).
 `login`, when present, is complete and contains only the existing
 `redis`, `user`, `store`, `as`, `key`, `sops` and `secret` references; the
 password stays in nova-secrets. `forge_identity`, when present, is an absolute
