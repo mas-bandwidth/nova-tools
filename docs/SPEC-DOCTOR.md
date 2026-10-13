@@ -23,7 +23,7 @@ edits no other. A duplicate or unnamed registration panics at start-up.
 ## The command
 
 ```
-nova-doctor [run] [--check <name>]... [--local] [--strict] [--json]
+nova-doctor [run] [--check <name>]... [--dir <path>] [--local] [--strict] [--json]
 ```
 
 `run` is the one verb and the default: `nova-doctor --local` is `nova-doctor run --local`.
@@ -32,7 +32,11 @@ stderr, naming the verbs and `run: nova-doctor help`, as every tool's bare comma
 (docs/ONBOARDING.md point 1).
 
 - `--check <name>` runs only that check; repeatable. A name that is no check is refused
-  at exit 2, naming the checks there are.
+  at exit 2, naming the checks there are. With `--json`, refusals use the standard
+  `pkg/tool` JSON envelope on stdout; plain refusals stay on stderr.
+- `--dir <path>` selects the repository for repository-scoped checks. It does not
+  change the caller's working directory. A missing or unreadable directory is refused
+  at exit 2 before any check runs. Checks that do not inspect a repository ignore it.
 - `--local` skips the checks only a fleet needs and says which, in one line:
   `DOCTOR local skipped=<name,name> (...)`.
 - `--strict` makes a `warn` exit 1.
