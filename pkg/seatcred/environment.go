@@ -240,6 +240,14 @@ func (l StoreLogin) missing() bool {
 	return strings.TrimSpace(l.Store) == "" || strings.TrimSpace(l.As) == "" || strings.TrimSpace(l.Key) == "" || strings.TrimSpace(l.Sops) == "" || !environmentSecretName.MatchString(l.Secret)
 }
 
+// ValidSeatEndpoint reports whether value is an accepted host:port endpoint.
+// It rejects URL syntax and credential-bearing forms. Writers of the shared
+// seat-environment.json contract should use this rather than maintaining a
+// second endpoint parser.
+func ValidSeatEndpoint(value string) bool {
+	return seatEndpoint(value)
+}
+
 // seatEndpoint accepts an address and rejects credential-bearing URL syntax.
 func seatEndpoint(value string) bool {
 	if strings.HasPrefix(value, "mem:") || strings.Contains(value, "://") || strings.ContainsAny(value, "@/?#") {
