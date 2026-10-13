@@ -106,7 +106,9 @@ func TestLoadSeatEnvironmentRejectsDuplicateUnknownAndCredentialValues(t *testin
 func TestLoadSeatEnvironmentPreservesSafeInputFailureCause(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), EnvironmentFile)
+	dir := filepath.Join(t.TempDir(), "private")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	path := filepath.Join(dir, EnvironmentFile)
 	for _, tc := range []struct {
 		name string
 		body string
