@@ -1107,7 +1107,7 @@ func TestProblemAsCarriesTheReason(t *testing.T) {
 	}
 }
 
-// TestWritingVerbUnderDryRunCarriesFactInBothRenderings pins the dry_run fact in text and JSON.
+// Early errors retain their result while the unread dry-run diagnostic stays visible.
 func TestDryRunPreservesUnderlyingRefusalOnEarlyExit(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1194,6 +1194,7 @@ func TestDryRunStillRefusesSuccessfulVerbThatIgnoresIt(t *testing.T) {
 	assert.Equal(t, "SAVE OK saved=true\n", real.Stdout)
 }
 
+// TestWritingVerbUnderDryRunCarriesFactInBothRenderings pins the dry_run fact in text and JSON.
 func TestWritingVerbUnderDryRunCarriesFactInBothRenderings(t *testing.T) {
 	t.Parallel()
 	tool := &Tool{
