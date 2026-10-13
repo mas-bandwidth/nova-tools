@@ -34,6 +34,12 @@ func TestEachHeadlessHarnessHasAProviderOfItsOwn(t *testing.T) {
 	seen := map[string]string{}
 	for _, k := range Headless {
 		p := ProviderOf(k)
+		if k == Muse {
+			// muse is the frontier exception: provider meta, its key on stdin.
+			assert.Equal(t, MuseProvider, p)
+			seen[p] = k
+			continue
+		}
 		assert.Equal(t, "subscription-"+k, p)
 		assert.NotContains(t, seen, p, "%s shares a provider with %s", k, seen[p])
 		seen[p] = k

@@ -22,13 +22,14 @@ const (
 	Claude   = "claude"
 	Codex    = "codex"
 	Grok     = "grok"
+	Muse     = "muse"
 )
 
 // Kinds is every harness word a route row may carry, in the order a list prints them.
-var Kinds = []string{OpenCode, Claude, Codex, Grok}
+var Kinds = []string{OpenCode, Claude, Codex, Grok, Muse}
 
 // Headless are the harnesses that run as a one-shot child and print their own usage.
-var Headless = []string{Claude, Codex, Grok}
+var Headless = []string{Claude, Codex, Grok, Muse}
 
 // IsHeadless reports whether kind is one of the headless harnesses.
 func IsHeadless(kind string) bool { return slices.Contains(Headless, kind) }
@@ -53,8 +54,16 @@ const ProviderPrefix = "subscription-"
 // kind. A rest is a provider's (internal/sprint route_rest.go), so one word per harness
 // keeps one harness's expired login from resting the other two.
 func ProviderOf(kind string) string {
+	if kind == Muse {
+		// Muse's provider is the provider word itself (meta), not a
+		// subscription login: its key arrives on stdin per run (muse.go).
+		return MuseProvider
+	}
 	if !IsHeadless(kind) {
 		return ""
 	}
 	return ProviderPrefix + kind
 }
+
+// MuseProvider is the provider word a muse route carries.
+const MuseProvider = "meta"

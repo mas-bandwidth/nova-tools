@@ -328,6 +328,28 @@ ansible-playbook fleet/tools.yml --tags toolchains
 `--check --diff` reports the same hosts, tool paths and versions without
 installing archives.
 
+### Muse
+
+Every fleet host installs Muse (Muse Code) at the version the Studio
+runs, 1.4.7 (`1.4.7-R6101.1`), from the release artefact pinned with its
+SHA-256 in `fleet/roles/muse/defaults/main.yml` (the darwin-arm64 artefact is
+the Studio's own binary; a platform with no pinned pair is refused). The
+`muse` play in `tools.yml` (tag `muse`) installs it as `~/.local/bin/muse`;
+a second run reads the installed version and checksum and changes nothing.
+The member's provider key is the `MUSE_API_KEY` entry of its seat's secret
+store, opened only inside the member unit through `nova-secrets exec`
+(`--only MUSE_API_KEY --require=MUSE_API_KEY`), as the DeepSeek key is, and
+the harness feeds it to `muse exec --api-key-stdin` on stdin alone: never in
+argv, the child's environment or a file. A member whose seat holds no such
+key is named in its adoption line (`muse=not-given`) and is not given the
+harness. Routes name it as harness `muse` on provider `meta` at the frontier
+tier (docs/SPEC-CONFIG.md, "route"); the route row itself is added with
+`nova-config` after the harness lands.
+
+```sh
+ansible-playbook fleet/tools.yml --tags muse
+```
+
 ## redis.yml
 
 `nova-redis acl render` on the machine running the play prints the users this

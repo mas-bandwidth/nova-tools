@@ -1,0 +1,27 @@
+---
+# Muse (Muse Code) on every fleet member, at the version the Studio
+# runs (docs/FLEET.md, "Muse"). The release artefact and its SHA-256 are
+# pinned together per platform; a platform with no pinned pair is refused,
+# never guessed. The darwin-arm64 pair is the Studio's own installed binary
+# (muse-bin-1.4.7-R6101.1, `muse --version` on studio.local, 2026-10-13).
+muse_version: "1.4.7"
+muse_release: "1.4.7-R6101.1"
+muse_bin: "{{ nova_bin_dir }}/muse"
+# The seat secret-store key holding the member's provider key. The value is
+# opened only inside the member unit by nova-secrets exec and fed to muse on
+# stdin (--api-key-stdin); it is never written to disk or a unit file.
+muse_provider_key: "MUSE_API_KEY"
+muse_platform_map:
+  Darwin:
+    arm64: darwin-arm64
+    aarch64: darwin-arm64
+  Linux:
+    x86_64: linux-x86_64
+    aarch64: linux-arm64
+muse_platform: >-
+  {{ muse_platform_map.get(ansible_facts['system'], {}).get(ansible_facts['architecture'], 'unsupported') }}
+muse_artefacts:
+  darwin-arm64:
+    file: "muse-bin-{{ muse_release }}"
+    url: "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version={{ muse_release }}&file=muse-bin-{{ muse_release }}-darwin-arm64"
+    sha256: "87ff5a31b63e30b6ac04d3e8298285517e753c126fb6f3aee80accf28c4562f1"

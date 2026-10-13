@@ -92,6 +92,38 @@ func TestARouteMayBeFrontier(t *testing.T) {
 	assert.Contains(t, err.Error(), `--tier "max": want one of flash, frontier, heavy, pro`)
 }
 
+// A muse route (kind.go: the route kind's harness field, harness.Muse;
+// docs/SPEC-CONFIG.md, "route"): harness=muse on provider meta at frontier
+// tier adds, lists and reads back; muse on a subscription provider word is
+// refused, because its key arrives on stdin from the member's secret store.
+func TestAMuseRouteAddsListsAndReadsBack(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := reopening{t: t, path: migratedFile(t)}
+	k, _ := Lookup(KindRoute)
+	row, err := k.NewRow("frontier-muse", map[string]string{
+		"tier": "frontier", "provider": "meta", "model": "muse-wonder-1.0", "harness": "muse", "deadline": "1800",
+	})
+	require.NoError(t, err)
+	addProvider(t, st, row.Fields["provider"])
+	_, err = st.Insert(ctx, KindRoute, row, "a1")
+	require.NoError(t, err)
+	rows, err := st.List(ctx, KindRoute)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "muse", rows[0].Fields["harness"])
+	assert.Equal(t, "meta", rows[0].Fields["provider"])
+	got, found, err := st.Get(ctx, KindRoute, "frontier-muse")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "muse", got.Fields["harness"], "read back carries the muse harness")
+	_, err = k.NewRow("bad-muse", map[string]string{
+		"tier": "frontier", "provider": "subscription-muse", "model": "m", "harness": "muse", "deadline": "60",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want --provider meta")
+}
+
 func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 	t.Parallel()
 

@@ -42,6 +42,15 @@
       tags: [toolchains]
   tags: [toolchains, never]
 
+- name: muse on every fleet host
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - role: muse
+      tags: [muse]
+  tags: [muse, never]
+
 - name: the platform of every machine
   hosts: all
   gather_facts: true

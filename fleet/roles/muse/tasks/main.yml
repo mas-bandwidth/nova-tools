@@ -1,0 +1,79 @@
+---
+# Muse on this member (docs/FLEET.md, "Muse"): the pinned binary in the
+# bin directory, and only on a member whose seat secret store holds the
+# provider key. A member without the key is named in the adoption line and
+# is not given the harness. A second run changes nothing: the installed
+# binary's version and checksum are read before any download.
+
+- name: the platform has a pinned muse artefact
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - muse_platform in muse_artefacts
+      - muse_artefacts[muse_platform].sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      muse role: no pinned artefact and SHA-256 for platform {{ muse_platform }};
+      pin the {{ muse_release }} artefact for it in fleet/roles/muse/defaults/main.yml first.
+
+- name: the installed muse, if any
+  ansible.builtin.stat:
+    path: "{{ muse_bin }}"
+    checksum_algorithm: sha256
+  register: muse_installed
+
+- name: the installed muse version, if any
+  ansible.builtin.command:
+    argv: ["{{ muse_bin }}", "--version"]
+  register: muse_installed_version
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: muse_installed.stat.exists | default(false)
+
+- name: whether the pinned muse must be installed
+  ansible.builtin.set_fact:
+    muse_replace: >-
+      {{ not (muse_installed.stat.exists | default(false))
+         or (muse_installed.stat.checksum | default('')) != muse_artefacts[muse_platform].sha256
+         or muse_release not in (muse_installed_version.stdout | default('')) }}
+
+- name: the member's seat holds the provider key (opened by nova-secrets exec, value never printed)
+  ansible.builtin.command:
+    argv: >-
+      {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+          '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops | default(''),
+          '--only', muse_provider_key, '--require=' ~ muse_provider_key, '--', 'true'] }}
+  register: muse_key_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  no_log: true
+  when: nova_seat is defined
+
+- name: whether this member is given the muse harness
+  ansible.builtin.set_fact:
+    muse_given: "{{ (muse_key_probe.rc | default(1)) == 0 }}"
+
+- name: download the pinned muse artefact, verified by its checksum
+  ansible.builtin.get_url:
+    url: "{{ muse_artefacts[muse_platform].url }}"
+    dest: "{{ muse_bin }}"
+    checksum: "sha256:{{ muse_artefacts[muse_platform].sha256 }}"
+    mode: "0755"
+  when: muse_given and muse_replace and not ansible_check_mode
+
+- name: a member without the provider key is not given the harness
+  ansible.builtin.debug:
+    msg: >-
+      ADOPT TABLE host={{ inventory_hostname }} muse=not-given
+      reason=no provider key ({{ muse_provider_key }}) in the seat secret store;
+      the member unit is not given the muse harness
+  when: not muse_given
+
+- name: the muse harness on this member
+  ansible.builtin.debug:
+    msg: >-
+      ADOPT TABLE host={{ inventory_hostname }} muse={{ muse_version }}
+      harness={{ 'would-install' if (ansible_check_mode and muse_replace) else 'present' }}
+      key={{ muse_provider_key }} (stdin only, via nova-secrets exec in the member unit)
+  when: muse_given
