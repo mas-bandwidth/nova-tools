@@ -245,12 +245,12 @@ projected when present but is not a required play variable.
 |---|---|---|
 | `ansible_host` | the machine row name | Ansible connection target for every play |
 | `ansible_connection` | `local` when the inventory runs on that machine; otherwise absent | the local host in the play that invokes Ansible |
-| `bench_os` | beat `os` | `fleet/bench.yml`, `fleet/monitoring.yml`, `fleet/tools.yml` |
-| `cores` | beat `ncpu`, as an integer | `fleet/bench-register.yml`, `fleet/runners.yml` |
-| `registry_seat` | machine row `seat` | `fleet/bench.yml`, `fleet/group_vars/all.yml` |
-| `slots_capacity` | machine row `slots` | `fleet/bench-register.yml` |
-| `slots_share` | machine row `width`; when width is unset, half the beat cores | `fleet/bench-register.yml` |
-| `registry_roles` | unavailable: the machine row has no roles field and beats carry none | `fleet/bench.yml`, `fleet/runners.yml` |
+| `bench_os` | beat `os` | bench, monitoring and tools plays |
+| `cores` | beat `ncpu`, as an integer | bench-register and runners plays |
+| `registry_seat` | machine row `seat` | bench play and fleet group variables |
+| `slots_capacity` | machine row `slots` | bench-register play |
+| `slots_share` | machine row `width`; when width is unset, half the beat cores | bench-register play |
+| `registry_roles` | unavailable: the machine row has no roles field and beats carry none | bench and runners plays |
 
 Role-based group membership is also unavailable from the current configuration
 schema. `benches` still contains every machine row; `store` and `coordinator`
