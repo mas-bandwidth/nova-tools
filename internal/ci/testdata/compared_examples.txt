@@ -99,6 +99,7 @@ cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example:
 cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check quickstart --dir ./self
 cmd/nova-decide/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
+cmd/nova-decide/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-decide example --dir ./decide-example
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus wait --as bob --timeout 1s
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus send --as ada --to bob --subject hello --body "are you there?"
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus peek --as bob
