@@ -44,17 +44,21 @@ import (
 // and at:<kind> the server time it was written (the shape of friends:decl in
 // friend_declare.lua).
 const (
-	DeclKey     = "config:decl"
-	FriendsKey  = "friends"
-	MachinesKey = "machines"
-	CapLogKey   = "cap:log"
-	LoopsKey    = "loops"
-	RoutesKey   = "routes"
-	TiersKey    = "tiers"
+	DeclKey      = "config:decl"
+	FriendsKey   = "friends"
+	MachinesKey  = "machines"
+	CapLogKey    = "cap:log"
+	LoopsKey     = "loops"
+	ProvidersKey = "providers"
+	RoutesKey    = "routes"
+	TiersKey     = "tiers"
 )
 
 // LoopKey is a loop's hash: its fields, log, rev and at.
 func LoopKey(name string) string { return "loop:" + name }
+
+// ProviderKey is a provider hash: its declared funding, billing, name, rev and at.
+func ProviderKey(name string) string { return "provider:" + name }
 
 // RouteKey is a route's hash: its fields, name, rev and at. The deal reads
 // every route of the set RoutesKey (internal/sprint/store, the routes read).
@@ -129,7 +133,7 @@ func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, 
 		return a.readSingleton(ctx, KindFleet, FleetKey)
 	case KindSprint:
 		return a.readSingleton(ctx, KindSprint, SprintKey)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindProvider, KindRoute, KindTier:
 		return a.readHashes(ctx, hashKinds[kind])
 	}
 	return nil, 0, fmt.Errorf("apply: no Redis reader for kind %q", kind)
@@ -145,7 +149,7 @@ func (a *RedisApplier) Write(ctx context.Context, kind string, row Row, prev Vie
 		return a.writeSingleton(ctx, KindFleet, FleetKey, row)
 	case KindSprint:
 		return a.writeSingleton(ctx, KindSprint, SprintKey, row)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindProvider, KindRoute, KindTier:
 		return a.writeHash(ctx, hashKinds[kind], row, idem)
 	}
 	return fmt.Errorf("apply: no Redis writer for kind %q", kind)
@@ -159,7 +163,7 @@ func (a *RedisApplier) Remove(ctx context.Context, kind, name, actor, idem strin
 		return a.removeMachine(ctx, name, actor, idem)
 	case KindFleet, KindSprint:
 		return fmt.Errorf("apply: the %s row is never removed", kind)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindProvider, KindRoute, KindTier:
 		return a.removeHash(ctx, hashKinds[kind], name, actor, idem)
 	}
 	return fmt.Errorf("apply: no Redis remover for kind %q", kind)
@@ -780,9 +784,10 @@ type hashKind struct {
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(r Row) []any { return []any{"log", r.Fields["log"]} }},
-	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
-	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
+	KindProvider: {kind: KindProvider, set: ProvidersKey, key: ProviderKey},
+	KindLoop:     {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(r Row) []any { return []any{"log", r.Fields["log"]} }},
+	KindRoute:    {kind: KindRoute, set: RoutesKey, key: RouteKey},
+	KindTier:     {kind: KindTier, set: TiersKey, key: TierKey},
 }
 
 // readHashes reads the set and the stamp in one round trip, then every

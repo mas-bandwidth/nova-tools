@@ -33,6 +33,7 @@ func TestPostgresRouteRoundTripsAndHoldsItsRules(t *testing.T) {
 	slashed := newRoute(t, "pro-openrouter", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false", "note": "held while the price is read"})
 	frontier := newRoute(t, "frontier-a", map[string]string{"tier": "frontier", "provider": "p", "model": "m", "deadline": "1800"})
 	for _, row := range []Row{direct, slashed, frontier} {
+		addProvider(t, st, row.Fields["provider"])
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
 	}
@@ -141,6 +142,7 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 		newRoute(t, "frontier-c", map[string]string{"tier": "frontier", "provider": "p", "model": "m", "deadline": "600", "price_input": "1"}),
 		newRoute(t, "flash-b", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "tokens": "3", "price_input": "0.5"}),
 	} {
+		addProvider(t, st, row.Fields["provider"])
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
 	}
@@ -208,6 +210,7 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 		newRoute(t, "flash-off", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "enabled": "false", "note": "off for the test"}),
 		newRoute(t, "pro-a", map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "600", "price_input": "1"}),
 	} {
+		addProvider(t, st, row.Fields["provider"])
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
 	}

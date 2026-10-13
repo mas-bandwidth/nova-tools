@@ -19,6 +19,7 @@ func TestTheNoteIsSetShownCutListedClearedAndRecordedForARoute(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t)
+	addProviders(t, h.store, "p")
 	long := strings.Repeat("ran to the deadline with no result; ", 6) + "END"
 	steps := []struct {
 		name string
@@ -29,17 +30,17 @@ func TestTheNoteIsSetShownCutListedClearedAndRecordedForARoute(t *testing.T) {
 		errs string // a phrase stderr must hold
 	}{
 		{name: "add with a note", args: []string{"route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--note", "the cheap one"},
-			out: "CONFIG ADD kind=route name=r1 rev=1\n"},
+			out: "CONFIG ADD kind=route name=r1 rev=2\n"},
 		{name: "show carries the note", args: []string{"route", "show", "r1"}, out: " note=the\\x20cheap\\x20one created="},
-		{name: "set a long note", args: []string{"route", "set", "r1", "--note", long}, out: "CONFIG SET kind=route name=r1 rev=2 changed=note\n"},
+		{name: "set a long note", args: []string{"route", "set", "r1", "--note", long}, out: "CONFIG SET kind=route name=r1 rev=3 changed=note\n"},
 		{name: "show keeps it whole", args: []string{"route", "show", "r1"}, out: "END created="},
 		{name: "list cuts it to one line", args: []string{"route", "list"}, out: "...\n", not: "END"},
 		{name: "json list keeps it whole", args: []string{"route", "list", "--json"}, out: "END"},
 		{name: "disabling with no note is refused before the store opens", args: []string{"route", "set", "r1", "--enabled", "false"}, code: 2, errs: sayWhy},
-		{name: "disabling with a note", args: []string{"route", "set", "r1", "--enabled", "false", "--note", "4 of 52 ok"}, out: "CONFIG SET kind=route name=r1 rev=3 changed=enabled,note\n"},
+		{name: "disabling with a note", args: []string{"route", "set", "r1", "--enabled", "false", "--note", "4 of 52 ok"}, out: "CONFIG SET kind=route name=r1 rev=4 changed=enabled,note\n"},
 		{name: "clearing the note of a disabled route is refused", args: []string{"route", "set", "r1", "--note", ""}, code: 1, errs: sayWhy},
-		{name: "enabling needs no note", args: []string{"route", "set", "r1", "--enabled", "true"}, out: "CONFIG SET kind=route name=r1 rev=4 changed=enabled\n"},
-		{name: "a note is cleared with --note ''", args: []string{"route", "set", "r1", "--note", ""}, out: "CONFIG SET kind=route name=r1 rev=5 changed=note\n"},
+		{name: "enabling needs no note", args: []string{"route", "set", "r1", "--enabled", "true"}, out: "CONFIG SET kind=route name=r1 rev=5 changed=enabled\n"},
+		{name: "a note is cleared with --note ''", args: []string{"route", "set", "r1", "--note", ""}, out: "CONFIG SET kind=route name=r1 rev=6 changed=note\n"},
 		{name: "cleared, the list prints a dash", args: []string{"route", "list"}, out: " price_as_of=- note=-\n"},
 		{name: "history shows who wrote which note when", args: []string{"route", "history", "r1"}, out: "op=set actor=a1 at="},
 		{name: "adding a disabled route with no note is refused", args: []string{"route", "add", "r2", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false"}, code: 2, errs: sayWhy},
@@ -103,6 +104,7 @@ func TestApplyCarriesTheNoteIntoTheViewsTheSprintReads(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t)
+	addProviders(t, h.store, "p")
 	for _, args := range [][]string{
 		{"route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false", "--note", "4 of 52 ok"},
 		{"machine", "add", "superman", "--user", "u", "--seat", "s", "--slots", "8", "--width", "8", "--note", "held 1:46 PM"},

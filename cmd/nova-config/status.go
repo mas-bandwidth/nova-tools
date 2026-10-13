@@ -41,6 +41,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	key, value := where(dsn)
 	o := tool.Done().Fact(key, value).Fact("schema", schema)
 	o.Verb = verb
+	var providerLines, providerWarnings []string
 	line := "CONFIG STATUS " + key + "=" + config.Value(value) + " schema=" + strconv.Itoa(schema)
 	// finish prints the result (lines or JSON) and, for a refusal, its line.
 	finish := func(code int, why, next string) int {
@@ -51,7 +52,13 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 			emit(stdout, o)
 		} else {
 			fmt.Fprintln(stdout, line)
-			printNotes(stdout, o.Notes)
+			for _, providerLine := range providerLines {
+				fmt.Fprintln(stdout, providerLine)
+			}
+			printNotes(stdout, o.Notes[:len(o.Notes)-len(providerWarnings)])
+			for _, warning := range providerWarnings {
+				fmt.Fprintln(stdout, "CONFIG WARN "+warning)
+			}
 		}
 		if code != 0 {
 			return refused(stderr, verb, why, next)
@@ -92,6 +99,21 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		line += fmt.Sprintf(" %s=%d %s_rev=%d", k.Name, counts[k.Name], k.Name, rev)
 		o.Fact(k.Name, counts[k.Name]).Fact(k.Name+"_rev", rev)
 	}
+	providers, err := st.List(ctx, config.KindProvider)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	routes, err := st.List(ctx, config.KindRoute)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	tiers, err := st.List(ctx, config.KindTier)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	providerLines, providerWarnings = config.ProviderReport(providers, routes, tiers)
+	o.Fact("providers", providerLines)
+	o.Notes = append(o.Notes, providerWarnings...)
 	addr, redisFrom, addrErr := redisAddressFrom(*redisFlag, d.getenv)
 	if addrErr != nil {
 		line += " redis=-"

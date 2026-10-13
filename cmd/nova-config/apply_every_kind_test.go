@@ -105,7 +105,7 @@ func TestApplyAppliesEveryKindPastARefusalAndNamesIt(t *testing.T) {
 	}
 
 	// The end line names the refused kind and the kinds that applied.
-	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=friend:1 applied=machine,fleet,sprint,loop,route,tier; run: ", "end line:\n%s", out)
+	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=friend:1 applied=machine,fleet,sprint,loop,provider,route,tier; run: ", "end line:\n%s", out)
 	require.NotContains(t, out, "CONFIG APPLY OK", "stdout:\n%s", out)
 	require.Empty(t, errs, "stderr %q", errs)
 
@@ -115,7 +115,7 @@ func TestApplyAppliesEveryKindPastARefusalAndNamesIt(t *testing.T) {
 	code, out, errs = runEveryKind(d, "apply")
 	require.Equal(t, 0, code, "stdout: %s\nstderr: %s", out, errs)
 	require.Equal(t, []string{"write friend stella"}, rr.log, "the retry writes only the refused row")
-	require.True(t, strings.HasSuffix(out, "CONFIG APPLY OK kinds=7\n"), "stdout:\n%s", out)
+	require.True(t, strings.HasSuffix(out, "CONFIG APPLY OK kinds=8\n"), "stdout:\n%s", out)
 }
 
 // TestApplyRefusesARowThatNamesARowRefusedEarlier: the sprint row names the
@@ -133,7 +133,7 @@ func TestApplyRefusesARowThatNamesARowRefusedEarlier(t *testing.T) {
 	require.Contains(t, out, "CONFIG REFUSED kind=sprint name=sprint why=sprint sprint: its coordinator names friend rowan, refused earlier in this run", "stdout:\n%s", out)
 	require.NotContains(t, rr.log, "write sprint sprint", "a row naming a refused row was written: %v", rr.log)
 	require.Zero(t, rr.revs[config.KindSprint], "the sprint kind was stamped: %v", rr.revs)
-	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=friend:1,sprint:1 applied=machine,fleet,loop,route,tier; run: ", "stdout:\n%s", out)
+	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=friend:1,sprint:1 applied=machine,fleet,loop,provider,route,tier; run: ", "stdout:\n%s", out)
 }
 
 // TestApplyStopsAtOnceOnAStoreError: a Redis that could not answer is not a
@@ -164,7 +164,7 @@ func TestApplyConflictStopsOnlyItsKind(t *testing.T) {
 	require.Contains(t, errs, "nova-config apply REFUSED: CONFLICT fleet: Redis holds rev 99", "stderr %q", errs)
 	require.NotContains(t, rr.log, "write fleet fleet", "a CONFLICT kind wrote: %v", rr.log)
 	require.Contains(t, rr.log, "write sprint sprint", "a kind after the CONFLICT was not applied: %v", rr.log)
-	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=fleet:1 applied=machine,friend,sprint,loop,route,tier; run: ", "stdout:\n%s", out)
+	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=fleet:1 applied=machine,friend,sprint,loop,provider,route,tier; run: ", "stdout:\n%s", out)
 }
 
 // TestApplyCheckNamesAKnownRefusalAndGoesOn: --check reports the ops it
@@ -179,7 +179,7 @@ func TestApplyCheckNamesAKnownRefusalAndGoesOn(t *testing.T) {
 	require.Equal(t, 1, code, "stdout: %s\nstderr: %s", out, errs)
 	require.Contains(t, out, "CONFIG CHECK REFUSED kind=sprint name=sprint why=sprint sprint: its coordinator names friend rowan, refused earlier in this run (CONFLICT friend: Redis holds rev 99", "stdout:\n%s", out)
 	require.Contains(t, out, "CONFIG CHECK kind=tier ", "the check went on past the refusals:\n%s", out)
-	require.Contains(t, out, "CONFIG CHECK REFUSED kinds=friend:1,sprint:1 applied=machine,fleet,loop,route,tier; run: ", "stdout:\n%s", out)
+	require.Contains(t, out, "CONFIG CHECK REFUSED kinds=friend:1,sprint:1 applied=machine,fleet,loop,provider,route,tier; run: ", "stdout:\n%s", out)
 	require.Empty(t, rr.log, "--check wrote: %v", rr.log)
 }
 
@@ -232,7 +232,7 @@ func TestApplyWritesTheSprintRowWhenTheCoordinatorsSetIsRefused(t *testing.T) {
 	sprintRev, err := h.store.Rev(context.Background(), config.KindSprint)
 	require.NoError(t, err)
 	require.Equal(t, sprintRev, rr.revs[config.KindSprint], "the sprint kind is stamped: %v", rr.revs)
-	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=friend:1 applied=machine,fleet,sprint,loop,route,tier; run: ", "stdout:\n%s", out)
+	require.Contains(t, out, "CONFIG APPLY REFUSED kinds=friend:1 applied=machine,fleet,sprint,loop,provider,route,tier; run: ", "stdout:\n%s", out)
 }
 
 // TestApplyWritesTheSprintRowWhenTheLiveSeatIsHeld: the live seat in Redis is

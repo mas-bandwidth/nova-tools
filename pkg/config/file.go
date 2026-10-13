@@ -108,6 +108,26 @@ func OpenFile(path string) (*FileStore, error) {
 			f.rows[kind][name] = r
 		}
 	}
+	// Migration 0041 seeds only legacy route providers, exactly as PostgreSQL:
+	// unknown funding stays false with a reminder, without operator history.
+	if st.Schema < 41 {
+		provider, _ := Lookup(KindProvider)
+		if f.rows[KindProvider] == nil {
+			f.rows[KindProvider] = map[string]Row{}
+		}
+		for _, route := range f.rows[KindRoute] {
+			name := route.Fields["provider"]
+			if _, exists := f.rows[KindProvider][name]; exists {
+				continue
+			}
+			row, err := provider.NewRow(name, map[string]string{"billing": "metered", "funded": "false", "note": "made by migrate from the routes: set --funded and --billing"})
+			if err != nil {
+				return nil, fmt.Errorf("--file %s: provider migration: %w", path, err)
+			}
+			row.CreatedAt, row.UpdatedAt = f.stamp(), f.stamp()
+			f.rows[KindProvider][name] = row
+		}
+	}
 	f.history = st.History
 	f.exists = true
 	return f, nil

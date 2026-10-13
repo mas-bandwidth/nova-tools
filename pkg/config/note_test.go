@@ -85,6 +85,7 @@ func TestAStoreRefusesADisabledRouteWithNoReasonAndKeepsTheRuleOnClear(t *testin
 	k, _ := Lookup(KindRoute)
 	row, err := k.NewRow("r1", proRoute("p"))
 	require.NoError(t, err)
+	addProvider(t, st, row.Fields["provider"])
 	_, err = st.Insert(ctx, KindRoute, row, "t")
 	require.NoError(t, err)
 

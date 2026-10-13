@@ -623,12 +623,10 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 // loop and route kinds' one read trip each on a store with none of their
 // rows (readHashes), and the tier kind's two read trips (its flash and pro rows
 // are made by migrate), added to every apply of all kinds:
-//   - first run: 38 trips (32 before the tier kind, whose first apply also writes
-//     its two rows and its stamp; 30 before the loop and route kinds; 42 before
-//     Cuts 2, 3, 4)
-//   - steady apply: 10 trips (8 before the tier kind; 6 before the loop and route
+//   - first run: 40 measured trips, within the unchanged bound of 41 (42 before batching cuts)
+//   - steady apply: 11 trips (10 before provider; 8 before the tier kind; 6 before the loop and route
 //     kinds; 18 before Cut 1)
-//   - two changes: 15 trips (13 before the tier kind; 11 before the loop and route
+//   - two changes: 16 trips (15 before provider; 13 before the tier kind; 11 before the loop and route
 //     kinds; 25 before Cut 2)
 func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	t.Parallel()
@@ -637,6 +635,9 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	ap, c := redisApplier(t)
 	st := seed(t)
 
+	// The new provider kind has no rows in this fixture and adds exactly one
+	// hash-kind read to each apply of all kinds, beyond the existing bounds.
+	const providerReadTrips int64 = 1
 	trips := redisconn.CountTrips(c)
 
 	// 1. First run: applies machine (2 adds), fleet (1 set), friend (2 adds), sprint (1 set)
@@ -644,14 +645,14 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	firstRunTrips := trips.N() - before
 	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
-	require.LessOrEqual(t, firstRunTrips, int64(41), "first run took %d trips, want <= 41: 30 for the four first kinds, 1 each for the loop and route kinds with no row, and 9 for the tier kind's three rows (flash, heavy, pro; was 42 before batching cuts)", firstRunTrips)
+	require.LessOrEqual(t, firstRunTrips, int64(41), "first run took %d trips, want <= 41: 30 for the four first kinds, 1 each for the loop, provider and route kinds with no row, and 9 for the tier kind's three rows (flash, heavy, pro; was 42 before batching cuts)", firstRunTrips)
 
 	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	steadyTrips := trips.N() - before
 	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
-	require.Equal(t, int64(10), steadyTrips, "steady apply took %d trips, want 10: 6 for the four first kinds, 1 each for the loop and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
+	require.Equal(t, int64(10)+providerReadTrips, steadyTrips, "steady apply took %d trips, want 11: 6 for the four first kinds, 1 each for the loop, provider and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
 
 	// 3. Two changes: update two friends (tiers on stella, tiers on rowan) (25 -> 11);
 	// a tiers change is the one ns_capacity_desired call, as a slots change was
@@ -665,7 +666,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	twoChangesTrips := trips.N() - before
 	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
-	require.LessOrEqual(t, twoChangesTrips, int64(15), "two changes took %d trips, want <= 15: 11, the loop and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
+	require.LessOrEqual(t, twoChangesTrips, int64(15)+providerReadTrips, "two changes took %d trips, want <= 16: 11, the loop, provider and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
 
 	// 3b. Two width changes (width on stella, width on rowan): a friend's width
 	// is her desired slots, so each is the ns_capacity_desired call and the
@@ -679,7 +680,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	widthChangesTrips := trips.N() - before
 	t.Logf("two width changes trips = %d", widthChangesTrips)
 	require.LessOrEqual(t, widthChangesTrips, twoChangesTrips+2, "two width changes took %d trips, want <= %d: the two tiers changes' %d and one width write per friend", widthChangesTrips, twoChangesTrips+2, twoChangesTrips)
-	require.LessOrEqual(t, widthChangesTrips, int64(17), "two width changes took %d trips, want <= 17", widthChangesTrips)
+	require.LessOrEqual(t, widthChangesTrips, int64(17)+providerReadTrips, "two width changes took %d trips, want <= 18", widthChangesTrips)
 
 	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
 	machine, _ := Lookup(KindMachine)
@@ -695,7 +696,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	machineRemovalTrips := trips.N() - before
 	t.Logf("machine removal trips = %d", machineRemovalTrips)
-	require.LessOrEqual(t, machineRemovalTrips, int64(17), "machine removal took %d trips, want <= 17: 15 and the loop and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
+	require.LessOrEqual(t, machineRemovalTrips, int64(17)+providerReadTrips, "machine removal took %d trips, want <= 18: 15 and the loop, provider and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
 }
 
 // TestApplyFriendRecordsNoMachineWhenCoordinatorClearedAcrossApplies verifies
