@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -66,7 +67,7 @@ func verdict(failures []check.Failure) *tool.Out {
 func quickstartVerb() tool.Verb {
 	return tool.Verb{
 		Name:      "quickstart",
-		Usage:     "quickstart --dir <dir> [--exclude <prefix>] [--max <n>]",
+		Usage:     "quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]",
 		Example:   "quickstart --dir ./self",
 		Effect:    tool.Effect("inspection: reads markdown under --dir, runs links then nocode, writes nothing"),
 		Detail:    "Both checks run even if the first says NO.",
@@ -76,9 +77,54 @@ func quickstartVerb() tool.Verb {
 			f.Required("dir", dirHint)
 			addMax(f)
 			f.Var(&repeatable{}, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
+			f.Bool("json", false, "print the composite result as one JSON object instead of lines")
 		},
 		Run: quickstart,
 	}
+}
+
+type quickstartCheckJSON struct {
+	Name   string         `json:"name"`
+	Status string         `json:"status"`
+	Exit   int            `json:"exit"`
+	Facts  map[string]any `json:"facts"`
+	Items  []qsItemJSON   `json:"items"`
+}
+
+type qsItemJSON struct {
+	Kind   string         `json:"kind"`
+	Fields map[string]any `json:"fields"`
+	Text   string         `json:"text,omitempty"`
+}
+
+func qsItems(o *tool.Out) []qsItemJSON {
+	out := []qsItemJSON{}
+	for _, it := range o.Items {
+		fields := make(map[string]any, len(it.Fields))
+		for _, f := range it.Fields {
+			fields[f.K] = f.V
+		}
+		out = append(out, qsItemJSON{Kind: it.Kind, Fields: fields, Text: it.Text})
+	}
+	return out
+}
+
+type quickstartJSON struct {
+	Verb      string                `json:"verb"`
+	Status    string                `json:"status"`
+	Exit      int                   `json:"exit"`
+	Dir       string                `json:"dir"`
+	Checks    []quickstartCheckJSON `json:"checks"`
+	Failed    []string              `json:"failed"`
+	WorstExit int                   `json:"worst_exit"`
+}
+
+func factsMap(o *tool.Out) map[string]any {
+	m := make(map[string]any, len(o.Facts))
+	for _, f := range o.Facts {
+		m[f.K] = f.V
+	}
+	return m
 }
 
 func quickstart(c *tool.Call) *tool.Out {
@@ -86,7 +132,50 @@ func quickstart(c *tool.Call) *tool.Out {
 	dir := c.Str("dir")
 	deny, source, err := effectiveDenyList("", "")
 	if err != nil {
+		if c.Bool("json") {
+			payload := quickstartJSON{Verb: "quickstart", Status: string(tool.Refused), Exit: 2, Dir: dir, Checks: []quickstartCheckJSON{}, Failed: []string{}, WorstExit: 2}
+			raw, merr := json.Marshal(payload)
+			if merr == nil {
+				printJSON(c.Stdout, raw)
+			}
+			return tool.Exit(2)
+		}
 		return tool.Refuse(oneline.Err(err))
+	}
+	if c.Bool("json") {
+		lo := linksOut(dir, nil, c.Get("exclude").([]string))
+		no := nocodeOut(dir, nil, deny, source)
+		lo.Cap(c.Int("max"))
+		no.Cap(c.Int("max"))
+		worst := max(lo.Exit, no.Exit)
+		failed := []string{}
+		for _, p := range []struct {
+			name string
+			code int
+		}{{"links", lo.Exit}, {"nocode", no.Exit}} {
+			if p.code != 0 {
+				failed = append(failed, p.name)
+			}
+		}
+		status := string(tool.OK)
+		if worst == 1 {
+			status = string(tool.Failed)
+		} else if worst != 0 {
+			status = string(tool.Refused)
+		}
+		payload := quickstartJSON{
+			Verb: "quickstart", Status: status, Exit: worst, Dir: dir, WorstExit: worst, Failed: failed,
+			Checks: []quickstartCheckJSON{
+				{Name: "links", Status: string(lo.Status), Exit: lo.Exit, Facts: factsMap(lo), Items: qsItems(lo)},
+				{Name: "nocode", Status: string(no.Status), Exit: no.Exit, Facts: factsMap(no), Items: qsItems(no)},
+			},
+		}
+		raw, merr := json.Marshal(payload)
+		if merr != nil {
+			return tool.Refuse(oneline.Err(merr))
+		}
+		printJSON(c.Stdout, raw)
+		return tool.Exit(worst)
 	}
 	fmt.Fprintf(c.Stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(dir))
 	lo := linksOut(dir, nil, c.Get("exclude").([]string))
