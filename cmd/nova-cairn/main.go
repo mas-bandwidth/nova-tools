@@ -169,7 +169,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					record(f)
 					f.Required("entry", "the stable entry identifier")
 					checkID(f, "entry")
-					f.Bool("text", false, "include the entry's stored words as a quoted text fact")
+					f.Bool("text", false, "include the entry's stored words as a quoted text fact (always included under --json)")
 				},
 				Run: receipt,
 			},
@@ -374,7 +374,7 @@ func receipt(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
 		Fact("bytes", rc.Bytes).Fact("source", cmp.Or(rc.Source, "-")).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
-	if c.Bool("text") {
+	if c.Bool("text") || c.Bool("json") {
 		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
 		if err != nil {
 			return refusal(err)
