@@ -20,15 +20,21 @@ func TestProviderLaunchFailureReadsTheProviderTail(t *testing.T) {
 	}{
 		{"Unexpected server error: the provider answered 503\nref=err_abc123\n", "err_abc123", true},
 		{"internal server error\n", "", true},
+		{"message=\"stream error\" error.error.message=\"Streaming response failed: [internal_error] Stream error: h2 protocol error: error reading a body from connection\"\n", "", true},
+		{"stream error: h2 protocol error\n", "", true},
+		{"H2 protocol error\nref=err_h2\n", "err_h2", true},
 		{"the upstream said 502 bad gateway\n", "", true},
 		{"provider is busy (529)\n", "", true},
 		{"all good, findings: 2\n", "", false},
 		{"a task with 5036 tokens\n", "", false},
 	}
 	for _, c := range cases {
-		ref, ok := ProviderLaunchFailure([]byte(c.tail))
-		assert.Equal(t, c.wantOK, ok, "ProviderLaunchFailure(%q) = (%q,%t), want (%q,%t)", c.tail, ref, ok, c.wantRef, c.wantOK)
-		assert.Equal(t, c.wantRef, ref, "ProviderLaunchFailure(%q) = (%q,%t), want (%q,%t)", c.tail, ref, ok, c.wantRef, c.wantOK)
+		t.Run(c.tail, func(t *testing.T) {
+			t.Parallel()
+			ref, ok := ProviderLaunchFailure([]byte(c.tail))
+			assert.Equal(t, c.wantOK, ok, "ProviderLaunchFailure(%q) = (%q,%t), want (%q,%t)", c.tail, ref, ok, c.wantRef, c.wantOK)
+			assert.Equal(t, c.wantRef, ref, "ProviderLaunchFailure(%q) = (%q,%t), want (%q,%t)", c.tail, ref, ok, c.wantRef, c.wantOK)
+		})
 	}
 }
 
