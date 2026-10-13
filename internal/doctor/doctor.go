@@ -254,7 +254,7 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 			Run: func(c *tool.Call) *tool.Out {
 				refuse := func(why ...string) *tool.Out {
 					o := tool.Refuse(why...)
-					o.Verb, o.Remedy = "run", "nova-doctor run -h"
+					o.Verb, o.Remedy = "run", "nova-doctor help"
 					if c.Bool("json") {
 						o.Render(c.Stdout, true)
 					} else {

@@ -177,7 +177,7 @@ func TestDoctorRefusalEmitsJSONOnStdout(t *testing.T) {
 	assert.Equal(t, "run", got.Result.Verb)
 	assert.Equal(t, "refused", got.Result.Status)
 	assert.Equal(t, 2, got.Result.Exit)
-	assert.Equal(t, "nova-doctor run -h", got.Result.Remedy)
+	assert.Equal(t, "nova-doctor help", got.Result.Remedy)
 	assert.Equal(t, []string{`no check named "invalid"; the checks are available`}, got.Result.Why)
 
 	stdout.Reset()
@@ -185,7 +185,7 @@ func TestDoctorRefusalEmitsJSONOnStdout(t *testing.T) {
 	code = Main(r, fakeEnv{}, "", []string{"run", "--check", "invalid"}, strings.NewReader(""), &stdout, &stderr)
 	assert.Equal(t, 2, code)
 	assert.Empty(t, stdout.String())
-	assert.Equal(t, "RUN REFUSED: no check named \"invalid\"; the checks are available; run: nova-doctor run -h\n", stderr.String(), "the legacy text refusal stays unchanged")
+	assert.Equal(t, "RUN REFUSED: no check named \"invalid\"; the checks are available; run: nova-doctor help\n", stderr.String(), "the legacy text refusal stays unchanged")
 }
 
 // fakeEnv is an Env with nothing behind it: every method that is not overridden
