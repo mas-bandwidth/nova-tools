@@ -19,6 +19,24 @@ func emitJSON(stdout io.Writer, v any) {
 	fmt.Fprintln(stdout, string(data))
 }
 
+// emitRefusalJSON writes a refused JSON record, filling its remedy field
+// with the house remedy when the caller left it empty.
+func emitRefusalJSON(stdout io.Writer, v any) {
+	switch d := v.(type) {
+	case checkJSONDoc:
+		if d.Remedy == "" {
+			d.Remedy = "run: nova-fuse help"
+		}
+		v = d
+	case quarantineJSONDoc:
+		if d.Remedy == "" {
+			d.Remedy = "run: nova-fuse help"
+		}
+		v = d
+	}
+	emitJSON(stdout, v)
+}
+
 type checkFuseJSON struct {
 	Surface string `json:"surface"`
 	Since   string `json:"since"`
@@ -34,6 +52,7 @@ type checkJSONDoc struct {
 	Quarantine     *checkFuseJSON `json:"quarantine,omitempty"`
 	LockdownFuse   *checkFuseJSON `json:"lockdown_fuse,omitempty"`
 	Error          string         `json:"error,omitempty"`
+	Remedy         string         `json:"remedy,omitempty"`
 }
 
 type quarantineJSONDoc struct {
@@ -45,4 +64,5 @@ type quarantineJSONDoc struct {
 	Already bool   `json:"already,omitempty"`
 	DryRun  bool   `json:"dry_run"`
 	Error   string `json:"error,omitempty"`
+	Remedy  string `json:"remedy,omitempty"`
 }

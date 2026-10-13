@@ -54,7 +54,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	b, err := fuse.ReadBox(boxFile(inv.wd, box))
 	if err != nil {
 		if asJSON {
-			emitJSON(stdout, checkJSONDoc{Verb: "check", Status: "refused", Surface: surface, SurfaceChecked: surface != "", Error: err.Error()})
+			emitRefusalJSON(stdout, checkJSONDoc{Verb: "check", Status: "refused", Surface: surface, SurfaceChecked: surface != "", Error: err.Error()})
 			return 2
 		}
 		// Fail closed, and say which fact this is: "could not be read" is not "a fuse is

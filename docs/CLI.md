@@ -771,9 +771,9 @@ usage:
   nova-fuse version    print this build identity (--version also accepted)
   nova-fuse init --box <path> [--dry-run]                  create an empty box where none is; never replaces one
   nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
-  nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
+  nova-fuse check --box <path> [--json] [surface]          may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> [--dry-run] "<reason>"   blow the one hard fuse: all untrusted reads stop
-  nova-fuse quarantine --box <path> [--dry-run] <surface> "<reason>"
+  nova-fuse quarantine --box <path> [--dry-run] [--json] <surface> "<reason>"
                                                            stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> [--dry-run] <surface>
                                                            rescind your own quarantine (soft, both directions)
@@ -794,9 +794,10 @@ unreadable box, never read as clear.
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
 it. Read a verb's help with nova-fuse help <verb> (for example, help check).
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
-the write would and writes nothing; its line says dry_run=true. There is no
---json: every verb answers in one-line typed records (the grammar in SPEC.md),
-and check's answer is its exit code.
+the write would and writes nothing; its line says dry_run=true. Apart from
+check --json and quarantine --json (one JSON record each, same exit codes),
+every verb answers in one-line typed records (the grammar in SPEC.md), and
+check's answer is its exit code.
 
 box JSON example (a quarantine with no lockdown):
   {"lockdown": null, "quarantine": {"a-forum": {"at": "2026-01-01T00:00:00Z", "reason": "an attack is pervasive"}}}
@@ -872,10 +873,11 @@ Help: nova-fuse help status; -h after a verb is refused at exit 2.
 `nova-fuse check -h`:
 
 ```
-usage: nova-fuse check --box <path> [--] [surface]
+usage: nova-fuse check --box <path> [--json] [--] [surface]
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
+  --json       emit one JSON record instead of a text line; exit codes unchanged
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 verified clear for what was checked; 1 lockdown or the named surface's quarantine is blown; 2 cannot prove clear (bad invocation, absent box, or unreadable box).
 effect: inspection: reads, writes nothing; the permission gate: act only on exit 0
@@ -899,11 +901,12 @@ Help: nova-fuse help lockdown; -h after a verb is refused at exit 2.
 `nova-fuse quarantine -h`:
 
 ```
-usage: nova-fuse quarantine --box <path> [--dry-run] [--] <surface> <reason>
+usage: nova-fuse quarantine --box <path> [--dry-run] [--json] [--] <surface> <reason>
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
   --dry-run    make every check the write would, print what it would do, write nothing
+  --json       emit one JSON record instead of a text line; exit codes unchanged
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 quarantined and verified; 1 write or verification failed; 2 bad invocation, absent box, or unreadable box.
 effect: local write: writes the box file named by --box

@@ -679,7 +679,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	})
 	if errors.Is(readErr, fuse.ErrNoBox) {
 		if asJSON {
-			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "refused", Surface: string(surface), DryRun: dry, Error: readErr.Error()})
+			emitRefusalJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "refused", Surface: string(surface), DryRun: dry, Error: readErr.Error()})
 			return 2
 		}
 		// Refuse, for the same reason as an unreadable box: with no box there every
@@ -690,7 +690,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	}
 	if readErr != nil {
 		if asJSON {
-			emitJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "refused", Surface: string(surface), DryRun: dry, Error: readErr.Error()})
+			emitRefusalJSON(stdout, quarantineJSONDoc{Verb: "quarantine", Status: "refused", Surface: string(surface), DryRun: dry, Error: readErr.Error()})
 			return 2
 		}
 		// Refuse: this is the asymmetry with lockdown, not an inconsistency with it. An
