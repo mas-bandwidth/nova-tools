@@ -51,6 +51,14 @@ func ReceiptUsage(job string) (usage cardcost.Usage, found bool, err error) {
 	for i, name := range strings.Split(sc.Text(), "\t") {
 		col[name] = i
 	}
+	// A malformed capable header must not erase the expected typed contract.
+	_, typedHeader := col["raw_usage"]
+	defer func() {
+		if err != nil && typedHeader {
+			usage = cardcost.NoUsage()
+			usage.ReceiptVersion = cardcost.ReceiptVersion
+		}
+	}()
 	for _, name := range []string{"provider", "model", "tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd"} {
 		if _, ok := col[name]; !ok {
 			return cardcost.NoUsage(), false, fmt.Errorf("%s has no %s column", ReceiptName, name)
@@ -64,7 +72,11 @@ func ReceiptUsage(job string) (usage cardcost.Usage, found bool, err error) {
 			return cardcost.NoUsage(), false, fmt.Errorf("%s row has %d fields; its header has %d", ReceiptName, len(row), len(col))
 		}
 		value := func(name string) string {
-			if v := row[col[name]]; v != "-" {
+			index, exists := col[name]
+			if !exists {
+				return ""
+			}
+			if v := row[index]; v != "-" {
 				return v
 			}
 			return ""
@@ -80,8 +92,20 @@ func ReceiptUsage(job string) (usage cardcost.Usage, found bool, err error) {
 			}
 			words = append(words, t[1]+"="+v)
 		}
-		u := cardcost.ParseUsage(strings.Join(words, " "))
-		if usd := value("usd"); usd != "" {
+		for _, key := range []string{"receipt_version", "billing", "raw_usage"} {
+			if v := value(key); v != "" {
+				words = append(words, key+"="+v)
+			}
+		}
+		u, parseErr := cardcost.ParseUsageChecked(strings.Join(words, " "))
+		if parseErr != nil {
+			return cardcost.NoUsage(), false, parseErr
+		}
+		usd := value("usd")
+		if _, exactColumn := col["actual_usd"]; exactColumn && u.ReceiptVersion == cardcost.ReceiptVersion {
+			usd = value("actual_usd")
+		}
+		if usd != "" {
 			if _, ok := cardcost.Sum(usd, "0"); !ok {
 				return cardcost.NoUsage(), false, fmt.Errorf("%s row has usd %q, not an amount", ReceiptName, usd)
 			}
@@ -100,9 +124,30 @@ func ReceiptUsage(job string) (usage cardcost.Usage, found bool, err error) {
 	if len(runs) == 0 {
 		return cardcost.NoUsage(), false, nil
 	}
+	version := runs[0].ReceiptVersion
+	for _, run := range runs {
+		if run.ReceiptVersion != version {
+			return cardcost.NoUsage(), false, fmt.Errorf("mixed legacy and typed receipts; start a fresh paired-binary attempt, do not synthesize raw usage")
+		}
+	}
 	total := cardcost.SumUsage(runs)
 	if !priced {
 		total.Actual = ""
 	}
-	return cardcost.ParseSpend(cardcost.SpendWord(total.Tokens, total.Actual, model)), true, nil
+	u := cardcost.ParseSpend(cardcost.SpendWord(total.Tokens, total.Actual, model))
+	for _, run := range runs {
+		if run.ReceiptVersion != 0 {
+			if u.Billing != "" && u.Billing != run.Billing {
+				return cardcost.NoUsage(), false, fmt.Errorf("mixed receipt billing")
+			}
+			u.ReceiptVersion = run.ReceiptVersion
+			u.Billing = run.Billing
+		}
+	}
+	raw, err := cardcost.MergeRaw(runs)
+	if err != nil {
+		return cardcost.NoUsage(), false, err
+	}
+	u.Raw = raw
+	return u, true, nil
 }

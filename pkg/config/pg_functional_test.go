@@ -74,14 +74,24 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 	require.Equal(t, tip, from, assertionMsg69...)
 	require.Equal(t, tip, to, assertionMsg69...)
 	require.Empty(t, applied, assertionMsg69...)
+	counts, err := st.Counts(ctx)
+	require.NoError(t, err)
+	machine, ok := Lookup(KindMachine)
+	require.True(t, ok)
+	row, err := machine.NewRow("fresh-machine", map[string]string{"user": "u", "seat": "fresh-machine", "slots": "2"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindMachine, row, "operator")
+	require.NoError(t, err)
+	rows, err := st.List(ctx, KindMachine)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "bench", rows[0].Fields["roles"], "a fresh migrated database reads the descriptor default through the ordinary store path")
 	{
 		v, err := st.Version(ctx)
 		assertionMsg72 := []any{"version after: %d %v", v, err}
 		require.NoError(t, err, assertionMsg72...)
 		require.Equal(t, tip, v, assertionMsg72...)
 	}
-	counts, err := st.Counts(ctx)
-	require.NoError(t, err)
 	fleet, found, err := st.Get(ctx, KindFleet, KindFleet)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -191,6 +201,73 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, all[len(all)-1].Version, to)
 			assert.NotContains(t, applied, 12, "migrate after the fill applied 0012 again")
+		})
+	}
+}
+
+func TestMachineRolesMigrationPreservesExistingGroups(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		store       string
+		coordinator string
+		want        map[string]string
+	}{
+		{name: "separate references", store: "store-a", coordinator: "coord-a", want: map[string]string{
+			"bench-a": "bench", "store-a": "bench,services", "coord-a": "bench,coordination", "shared": "bench",
+		}},
+		{name: "same reference", store: "shared", coordinator: "shared", want: map[string]string{
+			"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench,coordination,services",
+		}},
+		{name: "empty references", want: map[string]string{
+			"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st, err := OpenPG(ctx, server.Database(t))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, st.Close()) })
+			migrations, err := Migrations()
+			require.NoError(t, err)
+			for _, migration := range migrations {
+				if migration.Version >= 42 {
+					break
+				}
+				require.NoError(t, st.applyOne(ctx, migration), migration.Name)
+			}
+			_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('bench-a','u','bench-a',8,2),('store-a','u','store-a',8,0),('coord-a','u','coord-a',8,0),('shared','u','shared',8,0)`)
+			require.NoError(t, err)
+			_, err = st.db.ExecContext(ctx, `UPDATE config.fleet SET store = NULLIF($1, ''), coordinator = NULLIF($2, '') WHERE name = 'fleet'`, tc.store, tc.coordinator)
+			require.NoError(t, err)
+
+			from, to, applied, err := st.Migrate(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, 41, from)
+			assert.Equal(t, 43, to)
+			assert.Equal(t, []int{42, 43}, applied)
+			rows, err := st.List(ctx, KindMachine)
+			require.NoError(t, err)
+			got := make(map[string]string, len(rows))
+			for _, row := range rows {
+				got[row.Name] = row.Fields["roles"]
+			}
+			assert.Equal(t, tc.want, got, "migration uses only machine rows and fleet refs; runner count is not a role")
+			from, to, applied, err = st.Migrate(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, 43, from)
+			assert.Equal(t, 43, to)
+			assert.Empty(t, applied)
+
+			_, _, err = st.Update(ctx, KindMachine, "bench-a", map[string]string{"roles": "runner"}, "operator")
+			require.NoError(t, err)
+			_, err = st.db.ExecContext(ctx, migrations[41].SQL)
+			require.NoError(t, err, "the SQL is safe to rerun and keeps later declared roles")
+			declared, found, err := st.Get(ctx, KindMachine, "bench-a")
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.Equal(t, "runner", declared.Fields["roles"])
 		})
 	}
 }

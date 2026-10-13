@@ -40,7 +40,7 @@ func TestAnUnstatedPronounIsShownUnstatedAndASetOneSurvivesEverySet(t *testing.T
 
 	unstated, err := friend.NewRow("quinn", map[string]string{"tiers": "flash", "width": "4"})
 	require.NoError(t, err)
-	unstated.Fields["pronouns"] = ""
+	assert.Equal(t, "", unstated.Fields["pronouns"], "add without --pronouns stores an unstated pronoun")
 	_, err = st.Insert(ctx, KindFriend, unstated, "ada")
 	require.NoError(t, err)
 	gotU, _, err := st.Update(ctx, KindFriend, "quinn", width, "ada")

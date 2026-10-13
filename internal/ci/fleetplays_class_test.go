@@ -231,6 +231,15 @@ func fleetInventories(t *testing.T, root string) map[string]*config.AnsibleInven
 		require.NoError(t, err, fixture)
 		out[fixture] = inv
 	}
+	// The file fixtures leave bus empty, so they omit nova_bus_addr. This
+	// snapshot is a fleet whose applied row names a bus: that is what puts
+	// nova_bus_addr in the defined set the loop templates may read.
+	busSnap, err := config.LoadFixture(filepath.Join(root, "fleet", "testdata", "inventory-fixture.yml"))
+	require.NoError(t, err)
+	busSnap.Fleet["bus"] = "127.0.0.1:6381"
+	busInv, err := config.BuildInventory(busSnap, "")
+	require.NoError(t, err)
+	out["with-bus"] = busInv
 	return out
 }
 
@@ -389,4 +398,45 @@ func TestFleetPlaysRuleReadsTheShapes(t *testing.T) {
 			assert.Contains(t, got, tc.want)
 		})
 	}
+}
+
+// TestTheLoopTemplatesCarryTheBusAddress: both loop unit templates render
+// NOVA_BUS_REDIS from nova_bus_addr only when that variable is defined and
+// not empty, and nova_bus_addr is one the inventory provides.
+func TestTheLoopTemplatesCarryTheBusAddress(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	plistGuard := "{% if nova_bus_addr is defined and nova_bus_addr | length > 0 %}\n<key>NOVA_BUS_REDIS</key>\n<string>{{ nova_bus_addr | e }}</string>\n{% endif %}"
+	serviceGuard := "{% if nova_bus_addr is defined and nova_bus_addr | length > 0 %}\nEnvironment=\"NOVA_BUS_REDIS={{ nova_bus_addr }}\"\n{% endif %}"
+	for _, tc := range []struct{ name, guard string }{
+		{"nova-loop.plist.j2", plistGuard},
+		{"nova-loop.service.j2", serviceGuard},
+	} {
+		b, err := os.ReadFile(filepath.Join(root, "fleet", "templates", tc.name))
+		require.NoError(t, err)
+		assert.Contains(t, string(b), tc.guard, tc.name)
+	}
+
+	invs := fleetInventories(t, root)
+	src, _ := readFleetSource(t, root, invs)
+	assert.True(t, src.defined["nova_bus_addr"], "nova_bus_addr is one the inventory provides")
+	providers := 0
+	for name, inv := range invs {
+		with, without := 0, 0
+		for host, hv := range inv.Meta.Hostvars {
+			v, ok := hv["nova_bus_addr"].(string)
+			if !ok {
+				without++
+				continue
+			}
+			with++
+			assert.Equal(t, "127.0.0.1:6381", v, "%s %s", name, host)
+		}
+		if with == 0 {
+			continue
+		}
+		providers++
+		assert.Zero(t, without, "%s: a fleet row with a bus gives every host nova_bus_addr", name)
+	}
+	assert.NotZero(t, providers, "nova_bus_addr is one the inventory provides")
 }

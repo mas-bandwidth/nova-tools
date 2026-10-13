@@ -185,6 +185,15 @@ const (
 // still sees exactly one coordinator.
 var FriendRoles = []string{"builder", "may-hold", "reader"}
 
+// MachineRoles are the explicit roles a machine carries into the workshop
+// inventory: bench, services, coordination, or runner. They are read from
+// the machine row and never inferred from other machine facts.
+var MachineRoles = []string{"bench", "coordination", "runner", "services"}
+
+// DefaultMachineRoles gives a new machine the current inventory's bench
+// membership until its other roles are explicitly declared.
+const DefaultMachineRoles = "bench"
+
 // DefaultFriendWidth is a friend's width when her row names none: the jobs
 // she works at once (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to
 // setup width for friends? Start at 8 for each?"). Migration 0018 fills every
@@ -473,12 +482,13 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, the sprint member's width on it, and whether it is a TLC record machine",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, its explicit inventory roles, the sprint member's width on it, and whether it is a TLC record machine",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which a bench's share on it fits under; never a cap on a friend, whose width is the friend's own; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
+			{Name: "roles", Type: TypeList, Enum: MachineRoles, Default: DefaultMachineRoles, Help: "comma list of explicit inventory roles: " + strings.Join(MachineRoles, ", ") + "; bench by default, other roles are never inferred"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
@@ -578,7 +588,7 @@ var Kinds = []*Kind{
 		Table: "providers",
 		Doc:   "a model provider's declared funding and billing: every route names one; migration seeds unfunded rows until the owner declares the facts",
 		Fields: []Field{
-			{Name: "billing", Type: TypeEnum, Enum: []string{"metered", "plan", "both"}, Required: true, Help: "how it is paid: metered (usage), plan (subscription), or both"},
+			{Name: "billing", Type: TypeEnum, Enum: []string{"metered", "plan", "both", "subscription"}, Required: true, Help: "how it is paid: metered (usage), plan (metered reference value), both, or subscription (zero marginal card cost)"},
 			{Name: "funded", Type: TypeBool, Required: true, Help: "whether it is funded, explicitly true or false; migration's false means the owner has not declared funding yet (see note)"},
 			{Name: "balance_usd", Type: TypeDecimal, Help: "the last known USD balance, a non-negative decimal; empty when unknown, with --balance_as_of when set"},
 			{Name: "balance_as_of", Type: TypeText, Help: "the balance's observation date, YYYY-MM-DD; required when --balance_usd is set"},
@@ -617,7 +627,7 @@ var Kinds = []*Kind{
 			{Name: cardcost.FieldInputLong, Type: TypeDecimal, Help: "USD per million input tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldOutputLong, Type: TypeDecimal, Help: "USD per million output tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldRequest, Type: TypeDecimal, Help: "USD per request, on top of the tokens; empty when there is no fee"},
-			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) or plan (a subscription, so the predicted cost is the metered price of the same tokens)"},
+			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) plan (metered reference value), or subscription (zero marginal card cost)"},
 			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
 			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
 			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
@@ -1240,14 +1250,16 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 	return row, nil
 }
 
-// zero is the canonical value add stores for a field it is not given:
-// Default when the field has one, else the type's zero.
+// zero is the canonical value add stores for a field it is not given.
+// An omitted Nullable field stays unset, including when Default names the
+// value a reader substitutes for that empty store. Otherwise Default, else
+// the type's zero.
 func (f Field) zero() string {
 	switch {
-	case f.Default != "":
-		return f.Default
 	case f.Nullable:
 		return ""
+	case f.Default != "":
+		return f.Default
 	case f.Type == TypeInt:
 		return "0"
 	case f.Type == TypeBool:

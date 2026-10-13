@@ -23,7 +23,7 @@ and an optional checkout through git; the other checks read the manifests and le
 first run: create the small markdown tree below, then run the example commands.
 
 usage:
-  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>]
+  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]
   nova-check attest --home <dir> --manifest <file> [--max <n>]
   nova-check links --dir <dir> [--file <path>] [--exclude <prefix>] [--max <n>]
   nova-check kernel --file <file> --max-bytes <n>
@@ -36,7 +36,7 @@ usage:
   nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
   nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]
   nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]
   nova-check version
@@ -53,7 +53,7 @@ The exit-1 line prints trend=widening on the CONVERGENCE line, and the next run 
 nova-check convergence --state <file> again once the source moves, or nova-check dogfood record the
 finding the stream names.
 
-Every verb but quickstart, dogfood ledger, dogfood record, dogfood gate, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling and convergence take it too, through their own printers (convergence prints its reading object), and quickstart and dogfood print typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+Every verb but dogfood ledger, dogfood record, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling and convergence take it too, through their own printers (convergence prints its reading object), quickstart and dogfood gate support it too; dogfood ledger and record print typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 
@@ -72,12 +72,13 @@ example:
 ```
 usage: nova-check quickstart [flags]
 from `nova-check help`:
-  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>]
+  nova-check quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]
   nova-check quickstart --dir ./self
 flags:
   --dir <string>  --dir <dir> is the tree to walk, your self repo's root or a directory inside it; it is never guessed from the working directory, so write it out every run (required)
   --exclude <value>  path prefix not scanned by links (repeatable; empty by default)
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
+  --json  print the result as one JSON object instead of lines
   --max <int>  items listed before one MORE line stands for the rest; 0 lists all
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 effect: inspection: reads markdown under --dir, runs links then nocode, writes nothing
@@ -261,14 +262,15 @@ effect: local write: appends one receipt file to --receipts (--dry-run writes no
 ```
 usage: nova-check dogfood gate [flags]
 from `nova-check help`:
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
   a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`
 flags:
   --allow-empty  pass on an empty receipt set; without it, no receipts is a refusal and not a green line
-  --authors <<tool> <verb> = <who wrote it>>  file mapping <tool> <verb> = <who wrote it>, one per line
+  --authors <string>  file mapping tool verb = author, one per line
   --cli <string>  the command reference the verbs are read from, usually docs/CLI.md
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
   --git-timeout <int>  seconds one --repo authorship read may take before it is killed and named
+  --json  print the result as one JSON object instead of lines
   --max <int>  items listed before one MORE line stands for the rest; 0 lists all
   --receipts <string>  --receipts <dir> is the directory the receipts live in, one file per receipt: the same directory record appends to and ledger reads, kept in a repository so the record outlives the bench (required)
   --repo <string>  repository to read authorship from when there is no --authors file
@@ -770,10 +772,10 @@ path where no box exists.
 usage:
   nova-fuse version    print this build identity (--version also accepted)
   nova-fuse init --box <path> [--dry-run]                  create an empty box where none is; never replaces one
-  nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
-  nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
+  nova-fuse status --box <path> [--max <n>] [--json]      what is blown, and since when (REPORTS; never gate on it)
+  nova-fuse check --box <path> [--json] [surface]          may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> [--dry-run] "<reason>"   blow the one hard fuse: all untrusted reads stop
-  nova-fuse quarantine --box <path> [--dry-run] <surface> "<reason>"
+  nova-fuse quarantine --box <path> [--dry-run] [--json] <surface> "<reason>"
                                                            stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> [--dry-run] <surface>
                                                            rescind your own quarantine (soft, both directions)
@@ -793,10 +795,12 @@ unreadable box, never read as clear.
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
 it. Read a verb's help with nova-fuse help <verb> (for example, help check).
+--json on status, check and quarantine returns the standard result/facts/items
+receipt. It reports only stored facts; the box has no expiry field.
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
-the write would and writes nothing; its line says dry_run=true. There is no
---json: every verb answers in one-line typed records (the grammar in SPEC.md),
-and check's answer is its exit code.
+the write would and writes nothing; its line says dry_run=true. Without --json,
+every verb answers in one-line typed records (the grammar in SPEC.md), and
+check's answer is its exit code.
 
 box JSON example (a quarantine with no lockdown):
   {"lockdown": null, "quarantine": {"a-forum": {"at": "2026-01-01T00:00:00Z", "reason": "an attack is pervasive"}}}
@@ -858,11 +862,12 @@ Help: nova-fuse help init; -h after a verb is refused at exit 2.
 `nova-fuse status -h`:
 
 ```
-usage: nova-fuse status --box <path> [--max <n>]
+usage: nova-fuse status --box <path> [--max <n>] [--json]
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
   --max <n>    quarantine line limit (default 20); 0 lists all; totals stay uncapped
+  --json       write the standard result/facts/items receipt
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 reported a readable box; 2 bad invocation, absent box, or unreadable box.
 effect: inspection: reads, writes nothing
@@ -872,10 +877,11 @@ Help: nova-fuse help status; -h after a verb is refused at exit 2.
 `nova-fuse check -h`:
 
 ```
-usage: nova-fuse check --box <path> [--] [surface]
+usage: nova-fuse check --box <path> [--json] [--] [surface]
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
+  --json       write the standard result/facts/items receipt
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 verified clear for what was checked; 1 lockdown or the named surface's quarantine is blown; 2 cannot prove clear (bad invocation, absent box, or unreadable box).
 effect: inspection: reads, writes nothing; the permission gate: act only on exit 0
@@ -899,10 +905,11 @@ Help: nova-fuse help lockdown; -h after a verb is refused at exit 2.
 `nova-fuse quarantine -h`:
 
 ```
-usage: nova-fuse quarantine --box <path> [--dry-run] [--] <surface> <reason>
+usage: nova-fuse quarantine --box <path> [--dry-run] [--json] [--] <surface> <reason>
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
+  --json       write the standard result/facts/items receipt
   --dry-run    make every check the write would, print what it would do, write nothing
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 quarantined and verified; 1 write or verification failed; 2 bad invocation, absent box, or unreadable box.
@@ -3280,7 +3287,9 @@ OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. `slowtests` and `functional` work in any Go module; `local`,
+a budget. `functional --json <packages...>` projects its existing package selection
+as `{"packages":[...],"pattern":"..."}`; without --json its two make-facing lines
+remain unchanged. `slowtests` and `functional` work in any Go module; `local`,
 `new-rule` and `new-verb` need a nova-tools checkout; `github receipt` writes to
 a Redis store. It also reports its own build with `nova-ci version`.
 
@@ -3295,7 +3304,10 @@ binary alone. On your own module, pipe `go test -json` in and check that test
 run's exit status separately: `slowtests` checks timing, not whether the tests
 passed. The default budget is 60 seconds per package; a package over it is a
 `CI-SLOW` line, and exit 0 still means a measurement unless `--enforce` is given
-(then exit 1: the check ran and said no). A terminal on stdin or a line that is
+(then exit 1: the check ran and said no). An unenforced overrun also prints
+`CI-SLOW WARN within_budget=false enforce=false` and the command that enforces
+the same budget; pipe the same event stream into that command. In JSON the warning
+and `within_budget: false` are facts, with the command in `result.remedy`. A terminal on stdin or a line that is
 not a TestEvent is refused at exit 2, and so is a float flag that is not a finite
 number (`NaN`, `Inf`). `--json` prints the same verdict as one JSON object
 (`{"result":{...},"facts":{...},"items":[...]}`), and a refusal as that object
@@ -3427,9 +3439,9 @@ nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name
 nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # insert a row; a duplicate name is refused with the set to run; --dry-run prints CONFIG DRY-RUN and writes nothing
 nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # update the fields named
 nova-config <kind> remove <name> --as <name> [--dry-run] [--json]        # delete the row
-nova-config <kind> list [--json]                                         # one typed line per row
+nova-config <kind> list [--max <n>] [--json]                             # typed rows in stable order; --max limits shown rows, --max 0 shows all; count stays total
 nova-config <kind> show <name> [--json]                                  # one line with every field and the stamps
-nova-config <kind> history <name> [--json]                               # every change to the row: who, when, what changed
+nova-config <kind> history <name> [--max <n>] [--json]                   # changes in stable order; --max limits shown changes, --max 0 shows all; count stays total
 nova-config <kind> <verb> -h                                             # the verb's flags (required ones marked), its effect and a worked example
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
 nova-config machine width <name> [--pg <dsn> | --file <path>] [--json]  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member, 0 is none, unset (--width default) is the default, half the machine's cores as fleet sync resolves them from its beat; no Redis
@@ -3502,7 +3514,7 @@ ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --l
 
 Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova-config` missing from the PATH, a `nova-config` without the verb, an unknown `NOVA_MACHINE`, a store that is down, a timeout, a loop it cannot render), `ansible-inventory` and `ansible-playbook` log a warning, use an empty inventory and exit 0, so a playbook does nothing. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` in the environment, or `[inventory] unparsed_is_failed = True` in `ansible.cfg`, makes the same run exit non-zero. The plays that read the inventory are [FLEET.md](FLEET.md)'s.
 
-**Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; for sprint, a live coordinator the row disagrees with is left as it is, every other field is written, and the library reports one `APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: the seat moves by nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run nova-config sprint set --coordinator <a> to make the row agree` line (exits 0), printed whole (`SaidLine`). `--json` emits the line as the op's `name`. `--move-seat` (the owner's word) writes the row's differing coordinator instead (`ApplyMovingSeat`). A held coordinator whose only difference is that field still counts as one `SET` and advances the revision stamp, so `status` can read in sync while the row disagrees; the held line is the signal. `--dry-run` (or `--check`) prints the same plan as `CHECK` lines and `CONFIG CHECK`. Kinds apply in order (machine, fleet, friend, sprint, loop, route, tier), and **a refusal never stops a later kind**: a refused row prints `CONFIG REFUSED kind=<k> name=<row> why=<one line> run: <remedy>` (`CONFIG CHECK REFUSED ...` for what `--check` already knows would be refused), the kind's other rows are still written, the refused kind is not stamped (status stays behind and the next apply retries only the diff), a row whose ref names a row refused earlier in the run is refused with it when that row is absent from Redis or the ref field changes, and a whole-kind refusal (`CONFLICT`, the fleet's endpoints, an unpriced route) is said on stderr and skips that kind only. The run ends `CONFIG APPLY OK kinds=<n>` (exit 0), or `CONFIG APPLY REFUSED kinds=<k:count,...> applied=<kinds>; run: <the first remedy>` (exit 1); a store or connection error that is not a refusal stops it at once (exit 2), even after a refusal in the same kind. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`). A machine added with no `--width` is no sprint member: `add` prints a `NOTE` saying so with the `machine set <m> --width <n>` line.
+**Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST kind=<k> rows=<total>` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>` and a `CONFIG HISTORY kind=<k> name=<n> changes=<total>` count. Both accept `--max <n>` to show only the first `n` items in stable order; `--max 0` shows all. A shortened output adds `CONFIG MORE kind=<k> shown=<n> total=<n> --max <n> raises the ceiling, --max 0 shows all`; JSON likewise keeps the total count and includes a top-level `more` array when shortened. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; for sprint, a live coordinator the row disagrees with is left as it is, every other field is written, and the library reports one `APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: the seat moves by nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run nova-config sprint set --coordinator <a> to make the row agree` line (exits 0), printed whole (`SaidLine`). `--json` emits the line as the op's `name`. `--move-seat` (the owner's word) writes the row's differing coordinator instead (`ApplyMovingSeat`). A held coordinator whose only difference is that field still counts as one `SET` and advances the revision stamp, so `status` can read in sync while the row disagrees; the held line is the signal. `--dry-run` (or `--check`) prints the same plan as `CHECK` lines and `CONFIG CHECK`. Kinds apply in order (machine, fleet, friend, sprint, loop, route, tier), and **a refusal never stops a later kind**: a refused row prints `CONFIG REFUSED kind=<k> name=<row> why=<one line> run: <remedy>` (`CONFIG CHECK REFUSED ...` for what `--check` already knows would be refused), the kind's other rows are still written, the refused kind is not stamped (status stays behind and the next apply retries only the diff), a row whose ref names a row refused earlier in the run is refused with it when that row is absent from Redis or the ref field changes, and a whole-kind refusal (`CONFLICT`, the fleet's endpoints, an unpriced route) is said on stderr and skips that kind only. The run ends `CONFIG APPLY OK kinds=<n>` (exit 0), or `CONFIG APPLY REFUSED kinds=<k:count,...> applied=<kinds>; run: <the first remedy>` (exit 1); a store or connection error that is not a refusal stops it at once (exit 2), even after a refusal in the same kind. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`). A machine added with no `--width` is no sprint member: `add` prints a `NOTE` saying so with the `machine set <m> --width <n>` line.
 
 **Refusals.** Every refusal is one stderr line, `nova-config <verb> REFUSED: <what>; run: <next>`. Exit 1 is the store or Redis saying no, naming the next step: `machine m1 exists; run: nova-config machine set m1 ...`, `--store m9 names no machine row`, `machine m1 is the --coordinator of the fleet`, `friend f1 is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`. No refusal is ever about a friend's capacity: a friend's width is the friend's one number and no machine caps it. Exit 2 is an invocation that could not run (a name on a singleton is one, an unknown flag another), and names the verb's `-h`. `apply` is the exception for a refused row: each is one `CONFIG REFUSED kind=<k> name=<row> why=<..> run: <remedy>` line on stdout and the run goes on to every later kind; a whole-kind refusal (`CONFLICT`, the fleet's endpoints, an unpriced route) is still one stderr line; the exit 1 is carried by the stdout end line `CONFIG APPLY REFUSED ...; run: <next>`, and a store error is the stderr line and exit 2.
 
@@ -3643,6 +3655,23 @@ counts the file. An append addressing a session neither shape holds refuses with
 the whole remedy verb: `open first: nova-cairn open --store <dir> --session <id>
 --publish <policy>`.
 
+
+`index --since <entry-id|RFC3339>` returns entries strictly after the cursor,
+then applies `--max`. An entry ID uses the existing ascending order of stamp,
+session, and entry ID, so later entries at the same stamp remain reachable.
+IDs shared across sessions refuse; select the cursor with `--session`.
+An RFC3339 timestamp (including fractional seconds and offsets) excludes all
+entries at or before that instant. Missing IDs, invalid cursors, and an explicit
+empty cursor refuse at exit 2. Entry totals and per-session counts describe
+filtered matches; session context remains visible even when no entries match.
+Without `--since`, the index is unchanged. Filtering still reads the existing
+store index: the cursor bounds returned records, not reads. Physical metadata
+walking remains; indexed storage and bounded I/O are deferred to v1.3.
+It does not create a cache or change stored records.
+
+Receipt JSON includes the complete stored `text` by default. `--text=false`
+explicitly omits it. Plaintext continues to omit text unless `--text` is given;
+byte counts and all other existing receipt facts remain unchanged.
 
 ## nova-decide
 

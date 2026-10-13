@@ -822,7 +822,7 @@ source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=42 applied=42
+CONFIG MIGRATE file=try.json from=0 to=44 applied=44
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -831,11 +831,11 @@ $ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false note=-
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 roles=bench width=6 tla=false note=-
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- runners=0 seat=s1 slots=8 tla=false user=nova width=4
+HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- roles=bench runners=0 seat=s1 slots=8 tla=false user=nova width=4
 HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```
@@ -1046,6 +1046,7 @@ transcript was produced by running the built binary, not written by hand.
 $ nova-ci slowtests --example --budget 60 --load 4 --cpus 16
 CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
+CI-SLOW WARN within_budget=false enforce=false: budget exceeded without enforcement; reuse the same event stream; run: nova-ci slowtests '--example' '--budget' '60' '--load' '4' '--cpus' '16' --enforce
 
 $ nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s

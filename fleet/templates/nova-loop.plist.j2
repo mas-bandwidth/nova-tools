@@ -29,6 +29,10 @@
 <string>{{ nova_loop_path | e }}</string>
 <key>NOVA_SPRINT_REDIS</key>
 <string>{{ nova_redis_addr | e }}</string>
+{% if nova_bus_addr is defined and nova_bus_addr | length > 0 %}
+<key>NOVA_BUS_REDIS</key>
+<string>{{ nova_bus_addr | e }}</string>
+{% endif %}
 </dict>
 <key>WorkingDirectory</key>
 <string>{{ nova_home | e }}</string>

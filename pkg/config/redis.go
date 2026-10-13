@@ -1,7 +1,6 @@
 package config
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -268,9 +267,9 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			// her optional work restriction, "" for none
 			"streams": str(d, 5),
 			"kinds":   str(d, 6),
-			// the pronouns the friend goes by; a row that names none reads as the default,
-			// so apply writes the field only when the row says something else
-			"pronouns": cmp.Or(str(d, 7), DefaultFriendPronouns),
+			// the pronouns the friend goes by. Empty is unstated and must stay
+			// empty, so apply does not rewrite it into a stated they/them.
+			"pronouns": str(d, 7),
 		}
 	}
 	return views, revValue(rev), nil
@@ -612,6 +611,10 @@ func machineView(reg map[string]string, ceiling string) View {
 	for _, f := range k.Fields {
 		switch {
 		case f.Name == "slots":
+		case f.Name == "roles" && f.Type == TypeList:
+			if roles, ok := reg[f.Name]; ok {
+				v[f.Name] = roles
+			}
 		case f.Type == TypeInt && f.Nullable && reg[f.Name] == "":
 			v[f.Name] = "" // unset (a machine's width: the default), as the row holds it
 		case f.Type == TypeInt:

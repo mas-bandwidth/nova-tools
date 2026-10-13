@@ -209,9 +209,10 @@ fleet's copy of the same pass.
 ## A fixture inventory
 
 `nova-config inventory --fixture <file>` reads the rows from a YAML or JSON
-file instead of the store: machines (with `os`, `arch` and `cores` standing in
-for the beat, and optional `width` for the machine row), the fleet row and
-loops. A file with no `loops` key is a fleet whose
+file instead of the store: machines (with an explicit `roles` list, `os`,
+`arch` and `cores` standing in for the beat, and optional `width` for the
+machine row), the fleet row and loops. Empty `roles` is valid; a missing key
+is not. A file with no `loops` key is a fleet whose
 loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
 machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
 running the play, named `localhost`, with no store deployer, which is what
@@ -222,8 +223,9 @@ with `--check`.
 
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
 `runners`, `nova_tla` (its row's `tla`; the `tla` group is the hosts where it
-is true), `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
-`nova_os` and `nova_arch` (from its beat) and `nova_loops`,
+is true), `nova_redis_port`, `nova_redis_addr`, `nova_bus_addr` (the applied fleet row's `bus`, omitted when empty), the explicit `nova_pg_dsn`,
+`registry_roles` (the machine row's canonical roles), `nova_os` and
+`nova_arch` (from its beat) and `nova_loops`,
 and `all.vars` `nova_store`. The rest are defaults in
 `fleet/group_vars/all.yml`. The inventory's host variables override them, and
 so do a `group_vars/benches.yml` and `host_vars/<machine>.yml` beside the
@@ -234,7 +236,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 
 The play variables with a machine-row or beat source are projected as follows.
 Inventory refuses a machine without beat `os` or `ncpu` before emitting any
-inventory: every machine remains in `benches`, whose plays read `bench_os` and
+inventory: every `bench` role member is in `benches`, whose plays read `bench_os` and
 `cores`. Restore or start the machine's configured beat publisher so
 `bench:<machine>:beat` contains `os` and `ncpu`, then rerun
 `nova-config inventory`. The publisher is external to this config reader; its
@@ -250,14 +252,26 @@ projected when present but is not a required play variable.
 | `registry_seat` | machine row `seat` | bench play and fleet group variables |
 | `slots_capacity` | machine row `slots` | bench-register play |
 | `slots_share` | machine row `width`; when width is unset, half the beat cores | bench-register play |
-| `registry_roles` | unavailable: the machine row has no roles field and beats carry none | bench and runners plays |
+| `registry_roles` | canonical machine row `roles` list | bench and runners plays |
 
-Role-based group membership is also unavailable from the current configuration
-schema. `benches` still contains every machine row; `store` and `coordinator`
-still come from the fleet row's `store` and `coordinator` references. This does
-not reproduce the former inventory's role-derived `benches`, `store`, and
-`coordinator` groups, or provide `registry_roles`; a schema change is required
-for plays that read those roles to run from this inventory alone.
+The `benches`, `store`, and `coordinator` groups contain hosts with the
+`bench`, `services`, and `coordination` roles, respectively. `runner` is an
+explicit role carried in `registry_roles`; the existing `runners` group still
+comes from the row's runner count. The store and coordinator role groups must
+match the fleet row's `store` and `coordinator` singleton references exactly:
+one matching role host when a reference is set, and both empty when it is
+unset. Inventory refuses a mismatch before output so Ansible's role groups
+cannot point at different hosts than `nova_store`, Redis routing, or adoption.
+Other groups (`all`, `adopt`, `store_deployer`, `runners`, and `tla`) retain
+their existing sources and ordering. Empty role groups serialize as `[]`.
+
+Migration 0042 backfills each existing config machine with `bench` and adds
+`services` and `coordination` from the current fleet row references. It does
+not infer `runner` or restore assignments from the former external
+`machines.tsv`; those roles must be set explicitly with `nova-config machine
+set <machine> --roles <roles>` and applied. The migration uses only
+`config.machines` and `config.fleet` and changes no live rows until a caller
+runs the normal migration and apply steps.
 
 | variable | default | what it is |
 |---|---|---|
@@ -270,6 +284,7 @@ for plays that read those roles to run from this inventory alone.
 | `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
 | `nova_disk_guard`, `nova_disk_guard_every`, `nova_disk_guard_args` | `true`, `900`, `--scan ~/nova-bench/run --cache ~/runner-*/_cache/go-build` | the disk guard `loops.yml` adds to every machine (below): on or off, its period in seconds, and its arguments after the `--root` of each record |
 | `nova_redis_port`, `nova_redis_addr` | the explicit applied fleet row (no port default) | the store |
+| `nova_bus_addr` | the applied fleet row's `bus`, omitted when that bus is empty | `NOVA_BUS_REDIS` in the loop units, rendered only when this variable is defined and not empty |
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
 | `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |
@@ -569,3 +584,39 @@ subscription billing and raw receipts follow-up.
 The coordinator adds `frontier-muse` with
 `nova-config route add` and the selected model, deadline, subscription billing and zero marginal price sheet;
 the tools play writes no route or configuration-store value.
+
+Typed subscription receipt adoption uses a paired installation. Upgrade the sprint
+server first while the existing Muse `plan` route with explicit zero prices remains
+active, then upgrade each member and its native binary. Activate `billing=subscription`
+only after both binaries can pass receipt contract 2. A new native invoked by an old
+member remains on the legacy bridge; the upgraded server refuses that legacy receipt
+for a typed subscription route before writing a result. A new member passes `--billing`
+to native and `--receipt-contract 2` with finish/read; older binaries refuse those flags.
+Do not synthesize original Muse fields from legacy token-only receipts.
+
+The `raw_usage` word is unpadded base64url JSON: version 1, an ordered `records`
+array with `harness=muse`, `execution=fleet`, `source_schema=muse-jsonl-v1`,
+`producer_version`, declared `billing`, and a `tokens` map. Its optional integer
+keys are `input_tokens`, `output_tokens`, `cached_tokens`, `cache_write_tokens`,
+`cache_read_tokens`, and `reasoning_tokens`. Missing differs from zero. Records
+retain launch order and are never summed into disjoint accounting classes.
+`cached_tokens` remains distinct from explicit `cache_read_tokens`; no cache
+subtraction is performed. Envelopes over 32768 JSON bytes are refused.
+
+Before typed activation, let every old native launch end; an old writer does not
+participate in the new usage-file lock. New writers serialize header expansion and
+append through the existing process file lock. A released thirteen- or fourteen-column
+header expands once to the current eighteen columns with one atomic replacement,
+including the first typed row; historical values and file permissions stay intact.
+New historical columns are `-`, including absent raw data. An unknown header or
+incomplete row refuses expansion before publication. Normal appends read only a
+bounded header. Mixed legacy and typed launch rows refuse durable cost recovery;
+start a fresh generation rather than fabricate missing original counters. A durable
+receipt error forces an invalid contract-2 report even if a valid final summary exists.
+The expected contract is stamped in the launch generation and restored on adoption.
+
+Typed rows retain the exact reported amount in optional `actual_usd`; `-` is
+unreported and `0` is a measured zero. The legacy four-place `usd` display remains.
+Receipts with no exact column, and legacy rows, retain their historical display
+precision; recovery never invents a more precise amount. A typed row with an exact
+column uses that column's absence or value independently of the display column.

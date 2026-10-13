@@ -45,7 +45,7 @@ Where each field of this cut sits:
 
 | side | fields |
 | --- | --- |
-| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
+| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `roles`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `pronouns` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
@@ -137,9 +137,20 @@ nothing invented.
 | `seat` | text | yes | nova-secrets: the seat on that machine (a seat, another seat, ...) | `machine:<m>` |
 | `slots` | int | yes | apply: the machine ceiling a bench's share on it fits under (`ns_capacity_machine`, `ns_capacity_desired` for a bench); never a cap on a friend, whose width is her own (2026-10-13); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
+| `roles` | list | (`bench`) | inventory membership: `bench`, `services`, `coordination`, `runner`; empty is an intentional no-role list | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
+
+Machine roles are typed, canonical comma lists. `machine add` stores `bench`
+when `--roles` is omitted; an explicit empty list stores no roles. The only
+accepted words are `bench`, `services`, `coordination`, and `runner`; they are
+not inferred from runner counts, machine names, seats, or beats. Migration
+0042 adds `roles` and backfills every existing `config.machines` row with
+`bench`, then adds `services` and `coordination` only to the machine names in
+the existing fleet row's `store` and `coordinator` references. It leaves
+`runner` unassigned. This reproduces the config inventory's existing groups;
+it does not recover former assignments from an external `machines.tsv`.
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
 never typed and never columns: they come live from the machine's own
@@ -227,7 +238,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
 | `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
 | `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
-| `pronouns` | enum: she/her, he/him, they/them. A stated value is the stored word and list/show prints it bare (`pronouns=she/her`). An empty value (SQL NULL) is unstated: it reads they/them and list/show prints `pronouns=they/them(unstated)`. A stored they/them stays stated and prints bare. Add without `--pronouns` stores they/them. A set that names other fields leaves the stored value | | nova-friend run and install (`--pronouns`, written into the agent) and the beat's `row_pronouns=`: the pronouns every text the daemon writes about the friend says, rendered through one helper (`Pronouns.Say` in pkg/friend). Pronouns are read, never inferred: an unstated row goes by they/them, and no text calls a friend "it". Migration 0038 adds the column NOT NULL DEFAULT they/them. Migration 0044 drops NOT NULL and the default and rewrites no row, so every row from before 0044 keeps the value it holds | `friend:<f>:desired` pronouns |
+| `pronouns` | enum: she/her, he/him, they/them. A stated value is the stored word and list/show prints it bare (`pronouns=she/her`). An empty value (SQL NULL) is unstated: it reads they/them and list/show prints `pronouns=they/them(unstated)`. A stored they/them stays stated and prints bare. Add without `--pronouns` stores empty, which is unstated. A set that names other fields leaves the stored value | | nova-friend run and install (`--pronouns`, written into the agent) and the beat's `row_pronouns=`: the pronouns every text the daemon writes about the friend says, rendered through one helper (`Pronouns.Say` in pkg/friend). Pronouns are read, never inferred: an unstated row goes by they/them, and no text calls a friend "it". Migration 0038 adds the column NOT NULL DEFAULT they/them. Migration 0044 drops NOT NULL and the default and rewrites no row, so every row from before 0044 keeps the value it holds | `friend:<f>:desired` pronouns |
 
 A friend row may restrict the work the sprint deals her: `streams` is a
 comma-separated list of glob patterns over stream names, and `kinds` is a
@@ -541,7 +552,8 @@ config.machines          (name PK, "user", seat, slots, runners,
                           filled with slots less the friends' slots on the
                           coordinator machine, slots elsewhere; note added
                           by 0015, text NOT NULL DEFAULT ''; tla added by
-                          0016, false; width nullable by 0019, NULL the
+                          0016, false; roles added by 0042, text NOT NULL
+                          DEFAULT 'bench'; width nullable by 0019, NULL the
                           default)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
@@ -715,7 +727,7 @@ each machine running its ceiling check before its write transaction).
 **machine:** `ns_capacity_machine(m, slots)` for the ceiling (never
 refused because of friends: no machine caps a friend; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
-width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
+roles, width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
@@ -988,3 +1000,13 @@ a fake secrets reader.
 - secrets: the store holds the name of the variable, never a password;
 - the sprint plan (`ns_sprint_plan`): a sprint is bounded work, not the
   fleet.
+
+Billing `subscription` is a declared zero marginal card charge, independent of
+numeric token prices. Reported harness dollars remain `actual_usd` with their
+reporter; totals charge zero without changing that evidence. Existing `plan`
+continues to calculate its metered reference value. Route billing takes precedence;
+provider billing is inherited only when route metadata is absent. A receipt retains
+its explicit billing when repriced, including after the current route changes.
+Migration 0043 expands both route and provider CHECK constraints after roles0042.
+Monthly subscription fees remain outside per-card usage. Activate typed subscription
+only after the paired receipt-contract installation described in FLEET.md.
