@@ -26,7 +26,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	stdflag "flag"
 	"fmt"
 	"io"
@@ -119,7 +118,9 @@ password, when its variable is unset, is read in this process from the
 nova-secrets seat nova-sprint seat login names), or the login nova-config login records
 (the DSN and friend; the password is read in this process from nova-secrets,
 never recorded and never put in an environment). --pg, NOVA_PG_DSN and
-NOVA_PG_PASSWORD_ENV still win when given. --redis is host:port
+NOVA_PG_PASSWORD_ENV still win when given. With none named, the applied
+fleet row in Redis supplies pg_dsn; status names its source as pg-from.
+--redis is host:port
 (NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --actor is
 the name a write is recorded under (NOVA_FRIEND, the recorded friend, or the
 seat name); its old spelling --as works for one release.
@@ -579,7 +580,7 @@ const filePrefix = "file:"
 // conn is the store a verb opens, from its flags: --pg (or NOVA_PG_DSN) for
 // PostgreSQL, --file for a local JSON file in its place, --seat (or NOVA_SEAT)
 // for a seat profile in seats.tsv supplying the DSN and password variable name,
-// or the login nova-config login recorded when none of those is given.
+// the login nova-config login recorded, then the applied fleet row in Redis.
 type conn struct {
 	pg   *string
 	file *string
@@ -602,72 +603,42 @@ func seatStoreFlags(fs *stdflag.FlagSet) conn {
 	return c
 }
 
-// dsn is the store to open: the file when --file is given, else the DSN by
-// the rules every reader of nova-config shares (config.ResolveDSN), or from
-// the selected seat profile.
-func (c conn) dsn(getenv func(string) string) (string, error) {
-	seat := ""
-	if c.seat != nil && *c.seat != "" {
-		seat = *c.seat
-	} else if getenv != nil {
-		seat = getenv(seatcred.SeatEnv)
+// dsn opens the first store named by Connecting in docs/SPEC-CONFIG.md.
+func (c conn) dsn(ctx context.Context, d deps) (string, error) {
+	dsn, _, _, err := c.discoverPG(ctx, d.getenv, d)
+	return dsn, err
+}
+
+// seatPG resolves the selected profile and its in-process password
+// (docs/SPEC-CONFIG.md, "Connecting").
+func seatPG(seat string, getenv func(string) string) (string, error) {
+	path, err := seatcred.ProfilePath(toolName, getenv)
+	if err != nil {
+		return "", err
 	}
-	switch {
-	case c.file != nil && *c.file != "" && c.pg != nil && *c.pg != "":
-		return "", errors.New("--pg and --file are exclusive: --file keeps the rows in a local file in PostgreSQL's place")
-	case c.file != nil && *c.file != "" && seat != "":
-		return "", errors.New("--seat and --file are exclusive: --file keeps the rows in a local file in PostgreSQL's place")
-	case c.file != nil && *c.file != "":
-		return filePrefix + *c.file, nil
+	prof, err := seatcred.LoadConfigProfile(path, seat)
+	if err != nil {
+		return "", err
 	}
-	if seat != "" {
-		path, err := seatcred.ProfilePath(toolName, getenv)
+	envNames := getenv(config.EnvPGPassEnv) != ""
+	var pw string
+	var read bool
+	if !envNames {
+		pw, read, err = seatPassword(prof, getenv)
 		if err != nil {
 			return "", err
 		}
-		prof, err := seatcred.LoadConfigProfile(path, seat)
-		if err != nil {
-			return "", err
-		}
-		if getenv == nil {
-			getenv = func(string) string { return "" }
-		}
-		// NOVA_PG_PASSWORD_ENV still wins when given, as the help says: the
-		// seat's secret is not read for it (resolvePG's own rule for the
-		// recorded login), so a coordinator that names a set variable needs no
-		// store login at all.
-		envNames := getenv(config.EnvPGPassEnv) != ""
-		var pw string
-		var read bool
-		if !envNames {
-			var err error
-			pw, read, err = seatPassword(prof, getenv) // the variable unset: from the store login's seat (seat_secret.go)
-			if err != nil {
-				return "", err
-			}
-		}
-		lookup := func(k string) string {
-			if k == config.EnvPGPassEnv && !envNames {
-				return prof.PasswordEnv
-			}
-			if read && k == prof.PasswordEnv {
-				return pw
-			}
-			return getenv(k)
-		}
-		dsn := ""
-		if c.pg != nil && *c.pg != "" {
-			dsn = *c.pg
-		} else {
-			dsn = prof.DSN
-		}
-		return config.ResolveDSN(dsn, lookup)
 	}
-	pg := ""
-	if c.pg != nil {
-		pg = *c.pg
+	lookup := func(k string) string {
+		if k == config.EnvPGPassEnv && !envNames {
+			return prof.PasswordEnv
+		}
+		if read && k == prof.PasswordEnv {
+			return pw
+		}
+		return getenv(k)
 	}
-	return resolvePG(pg, getenv)
+	return config.ResolveDSN(prof.DSN, lookup)
 }
 
 // again is the store flag a printed command repeats.

@@ -159,7 +159,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -394,7 +394,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -524,7 +524,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "list takes no name; want "+verb)
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -592,7 +592,7 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if err := config.ValidateName(name); err != nil {
 		problems = append(problems, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}

@@ -843,6 +843,37 @@ local JSON file (`config.FileStore`), for trying the tool with no database.
 
 ## Connecting
 
+The first named store wins: `--file`, then `--pg`, `NOVA_PG_DSN`, the
+`--seat`/`NOVA_SEAT` profile, the recorded `nova-config login`, then the
+applied fleet row's `pg_dsn` in Redis (`fleet:pg_dsn`). `--file` is exclusive
+with `--pg` and the selected seat. A selected source's invalid DSN, missing
+password or failed connection is a refusal; it never falls through to another
+source. Explicit DSNs do not read the seat or login or dial Redis to discover
+the store.
+
+The last lookup reads the fleet view from the Redis reached without a flag:
+`NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, the seat, then the recorded
+`nova-sprint seat login`. It uses the same Redis credentials as other reads
+and bounds the Redis network open/read to ten seconds, or the caller's
+shorter deadline, after the existing recorded-credential resolution, which
+keeps its own timeout. The fleet DSN goes through `config.ResolveDSN`: the variable
+`NOVA_PG_PASSWORD_ENV` names, else `NOVA_PG_PASSWORD`, else no password.
+Redis remains a rebuildable copy: losing it removes this last discovery
+source, while explicit store sources still work. `status` names the selected
+PostgreSQL source as `pg-from=flag|env|seat|login|fleet-redis` beside
+`redis-from=`; a file store has no `pg-from`.
+
+When no store is named, the one-line refusal names each absent source in
+order: `no store named: --pg not given; NOVA_PG_DSN unset;
+--seat/NOVA_SEAT unset; nova-config login <path>: none; fleet:pg_dsn in
+Redis <addr> (from <source>): empty|<error class>`. With no Redis address,
+the last entry is `no Redis named (NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR,
+seat, nova-sprint seat login <path>: none|<error class>)`. Redis errors
+print `unreachable`, `auth-refused` or `other` through `redisconn.Classify`,
+never their raw text or credentials. The remedy is
+`run: nova-config login, or export
+NOVA_PG_DSN=postgres://user@host:5432/nova, or --file <path>`.
+
 `--pg <dsn>` (env `NOVA_PG_DSN`) is `postgres://user@host:port/db` with **no
 password on the line**: a `--pg` carrying one is refused, because a `ps`
 reads the line. The password is read from the variable `NOVA_PG_PASSWORD_ENV`
@@ -923,8 +954,8 @@ paths are recorded absolute and `--sops` left off is the `sops` on `PATH`. A
 login is recorded only when its secret resolves, and a `--dsn` that carries a
 password is refused without recording and without quoting it.
 
-Every verb after it opens PostgreSQL as follows. The DSN is `--pg`, else
-`NOVA_PG_DSN`, else the recorded DSN. The password is the environment's when
+Every verb follows Connecting above: `--pg`, `NOVA_PG_DSN`, the selected
+seat, the recorded DSN, then the applied fleet row in Redis. The password is the environment's when
 `NOVA_PG_PASSWORD_ENV` is set (the variable it names), which wins, including
 when the address is the recorded DSN; else, when the DSN is `--pg` or
 `NOVA_PG_DSN`, the variable `NOVA_PG_PASSWORD` when that is set, and the
@@ -933,8 +964,8 @@ process through `secrets.ReadLogin` (pkg/secrets/login.go), the path
 `nova-secrets exec` takes (`OpenSeatFile`), and put into the connection in
 memory. It is never printed, never written, and never in the process's
 environment, so no child of the verb inherits it. `--as`, else `NOVA_FRIEND`,
-else the recorded friend, is the actor. `--file` and `--seat` are unchanged
-and do not read the recorded secret.
+else the recorded friend, is the actor. `--file`, the selected seat, and
+the applied fleet row do not read the nova-config login secret.
 
 A recorded secret that does not resolve, or a login file that is not a whole
 login, is a refusal naming the file and the remedy (`nova-config login

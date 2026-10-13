@@ -26,7 +26,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "status takes no arguments")
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, pgFrom, _, err := c.discoverPG(ctx, d.getenv, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -44,6 +44,10 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	o.Verb = verb
 	var providerLines, providerWarnings []string
 	line := "CONFIG STATUS " + key + "=" + config.Value(value) + " schema=" + strconv.Itoa(schema)
+	if pgFrom != "" {
+		line += " pg-from=" + pgFrom
+		o.Fact("pg-from", pgFrom)
+	}
 	// finish prints the result (lines or JSON) and, for a refusal, its line.
 	finish := func(code int, why, next string) int {
 		if *asJSON {

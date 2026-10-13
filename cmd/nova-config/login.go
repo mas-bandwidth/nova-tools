@@ -13,14 +13,20 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
@@ -176,10 +182,6 @@ func loadLogin(getenv func(string) string) (loginRecord, bool, error) {
 	return readLoginFile(getenv(loginFileKey))
 }
 
-func loginOn(getenv func(string) string) bool {
-	return getenv != nil && (getenv(loginFileKey) != "" || getenv(loginFileErrKey) != "")
-}
-
 // loginSecret reads the password: the reader registered for this file, else
 // nova-secrets' own.
 func loginSecret(path string, l secrets.Login) (secrets.Secret, error) {
@@ -205,48 +207,122 @@ func readRecordedSecret(path string, rec loginRecord) (secrets.Secret, error) {
 	return s, nil
 }
 
-// resolvePG is the Postgres DSN a verb dials. --pg, NOVA_PG_DSN and
-// NOVA_PG_PASSWORD_ENV win when set and the recorded secret is not read for
-// them. With none of them, and a login recorded, the DSN is that login's and
-// the password is read in process. The login off is the old rule exactly.
-func resolvePG(pg string, getenv func(string) string) (string, error) {
+// discoverPG implements the first-match order in docs/SPEC-CONFIG.md,
+// Connecting. Only an absent source permits the next lookup; a selected
+// source's parse, login or authentication error never falls through.
+// Libraries considered: context bounds the read, strings.Join renders the
+// lookup trail, and the existing seat/login/Redis readers own their formats.
+func (c conn) discoverPG(ctx context.Context, getenv func(string) string, d deps) (dsn, source string, looked []string, err error) {
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	if !loginOn(getenv) {
-		if pg == "" && getenv(envPG) == "" {
-			return "", pgRequired(false)
-		}
-		return config.ResolveDSN(pg, getenv)
+	pg, file, seat := "", "", getenv(seatcred.SeatEnv)
+	if c.pg != nil {
+		pg = *c.pg
 	}
+	if c.file != nil {
+		file = *c.file
+	}
+	if c.seat != nil && *c.seat != "" {
+		seat = *c.seat
+	}
+	switch {
+	case file != "" && pg != "":
+		return "", "", nil, errors.New("--pg and --file are exclusive: --file keeps the rows in a local file in PostgreSQL's place")
+	case file != "" && seat != "":
+		return "", "", nil, errors.New("--seat and --file are exclusive: --file keeps the rows in a local file in PostgreSQL's place")
+	case file != "":
+		return filePrefix + file, "", nil, nil
+	case pg != "":
+		dsn, err = config.ResolveDSN(pg, getenv)
+		return dsn, "flag", nil, err
+	}
+	looked = append(looked, "--pg not given")
+	if getenv(envPG) != "" {
+		dsn, err = config.ResolveDSN("", getenv)
+		return dsn, "env", looked, err
+	}
+	looked = append(looked, "NOVA_PG_DSN unset")
+	if seat != "" {
+		dsn, err = seatPG(seat, getenv)
+		return dsn, "seat", looked, err
+	}
+	looked = append(looked, "--seat/NOVA_SEAT unset")
 	rec, ok, err := loadLogin(getenv)
 	if err != nil {
-		return "", err
+		return "", "login", looked, err
 	}
-	explicit := pg != "" || getenv(envPG) != ""
-	passNamed := getenv(envPGPassEnv) != ""
-	if explicit || passNamed {
-		flag := pg
-		if flag == "" && getenv(envPG) == "" {
-			if !ok {
-				return "", pgRequired(true)
-			}
-			flag = rec.DSN
+	if ok {
+		if getenv(envPGPassEnv) != "" {
+			dsn, err = config.ResolveDSN(rec.DSN, getenv)
+		} else {
+			dsn, err = dsnWithSecret(getenv(loginFileKey), rec)
 		}
-		return config.ResolveDSN(flag, getenv)
+		return dsn, "login", looked, err
 	}
-	if !ok {
-		return "", pgRequired(true)
+	path, pathErr := loginPath(getenv)
+	if pathErr != nil {
+		return "", "", looked, pathErr
 	}
-	return dsnWithSecret(getenv(loginFileKey), rec)
+	if named := getenv(loginFileKey); named != "" {
+		path = named
+	}
+	looked = append(looked, "nova-config login "+path+": none")
+	addr, redisFrom, addrErr := redisAddressFrom("", getenv)
+	if addrErr != nil {
+		path, pathErr := sprintLoginPath(getenv)
+		if pathErr != nil {
+			return "", "", looked, pathErr
+		}
+		_, _, recorded, loginErr := sprintLoginRecord(getenv)
+		found := "none"
+		if loginErr != nil {
+			found = fmt.Sprintf("%T", loginErr)
+		} else if recorded {
+			found = "recorded"
+		}
+		looked = append(looked, "no Redis named (NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, seat, nova-sprint seat login "+path+": "+found+")")
+		return "", "", looked, pgRequired(looked)
+	}
+	shown := "(unparsed Redis address)"
+	host, port, splitErr := net.SplitHostPort(addr)
+	n, portErr := strconv.Atoi(port)
+	if splitErr == nil && portErr == nil && n > 0 && n <= 65535 && !strings.ContainsAny(host, "@/ \t\r\n") {
+		shown = addr
+	}
+	prefix := "fleet:pg_dsn in Redis " + shown + " (from " + redisFrom + "): "
+	// The Redis network open/read is bounded after the existing recorded-
+	// credential reader, which retains its own timeout (Connecting).
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if d.openRedis == nil {
+		looked = append(looked, prefix+"unavailable")
+		return "", "", looked, pgRequired(looked)
+	}
+	rs, redisErr := d.openRedis(ctx, addr)
+	if redisErr == nil {
+		defer func() { _ = rs.Close() }() // ignored: discovery has read its only value; closing changes no reply
+		var rows map[string]config.View
+		rows, _, redisErr = rs.Read(ctx, config.KindFleet)
+		if redisErr == nil {
+			if named := rows[config.KindFleet]["pg_dsn"]; named != "" {
+				dsn, err = config.ResolveDSN(named, getenv)
+				return dsn, "fleet-redis", looked, err
+			}
+		}
+	}
+	found := "empty"
+	if redisErr != nil {
+		found = redisconn.Classify(redisErr).String()
+	}
+	looked = append(looked, prefix+found)
+	return "", "", looked, pgRequired(looked)
 }
 
-func pgRequired(withLoginHint bool) error {
-	msg := "--pg is required: postgres://user@host:5432/db (or " + envPG + "), or --file <path> for a local file with no database"
-	if withLoginHint {
-		msg += ", or a login recorded by nova-config login"
-	}
-	return errors.New(msg)
+// pgRequired names the bounded lookup trail and its store-free remedy
+// (docs/SPEC-CONFIG.md, "Connecting").
+func pgRequired(looked []string) error {
+	return errors.New("no store named: " + strings.Join(looked, "; ") + "; run: nova-config login, or export NOVA_PG_DSN=postgres://user@host:5432/nova, or --file <path>")
 }
 
 // dsnWithSecret applies the recorded password in memory. The getenv handed to
