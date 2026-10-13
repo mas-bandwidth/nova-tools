@@ -149,13 +149,14 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 			},
 			{
 				Name:    "index",
-				Usage:   "index --store <dir> [--session <id>] [--max <n>]",
+				Usage:   "index --store <dir> [--session <id>] [--since <entry-id|RFC3339>] [--max <n>]",
 				Example: "index --store ./cairns",
 				Effect:  tool.Inspection,
 				Flags: func(f *tool.Flags) {
 					f.Required("store", "the checkpoint store directory")
 					f.String("session", "", "one session to index; default every record")
 					checkID(f, "session")
+					f.String("since", "", "only entries strictly after this cursor: an entry id or an RFC3339 time")
 					f.Max()
 				},
 				Run: index,
@@ -329,6 +330,19 @@ func index(c *tool.Call) *tool.Out {
 	if err != nil {
 		return refusal(err)
 	}
+	if since := c.Str("since"); since != "" {
+		cursor, ok := sinceCursor(since, all)
+		if !ok {
+			return tool.Refuse("--since " + quote(since) + " is neither an RFC3339 time nor an entry in the index; refusing to guess")
+		}
+		var filtered []cairn.IndexRow
+		for _, r := range all {
+			if r.Stamp.After(cursor) {
+				filtered = append(filtered, r)
+			}
+		}
+		all, total = filtered, len(filtered)
+	}
 	perSession := map[string]int{}
 	for _, r := range all {
 		perSession[r.Session]++
@@ -342,10 +356,29 @@ func index(c *tool.Call) *tool.Out {
 		o.Item("session", "session", s, "publish", publish, "opened", opened, "entries", perSession[s])
 	}
 	o.Fact("sessions", len(names)).Fact("entries", total)
+	if since := c.Str("since"); since != "" {
+		o.Fact("since", since)
+	}
 	for _, r := range all {
 		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", cmp.Or(r.Source, "-"))
 	}
 	return o
+}
+
+// sinceCursor resolves a --since value to its cutoff time: an RFC3339 time
+// used directly, otherwise the stamp of the entry with that id.
+func sinceCursor(since string, rows []cairn.IndexRow) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, since); err == nil {
+			return t.UTC(), true
+		}
+	}
+	for _, r := range rows {
+		if r.ID == since {
+			return r.Stamp, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // sessionFacts is the policy and opened stamp index prints for one session.
