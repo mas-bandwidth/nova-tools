@@ -45,6 +45,10 @@ func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 
 	b, err := fuse.ReadBox(boxFile(inv.wd, box))
 	if err != nil {
+		if asJSON {
+			fmt.Fprintf(stdout, "{\"status\":\"refused\",\"error\":%s,\"remedy\":\"run: nova-fuse help status\"}\n", jsonString(err.Error()))
+			return 2
+		}
 		fmt.Fprintf(stderr, "nova-fuse status REFUSED: %s -- a box that cannot be read is treated as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
 		return 2
 	}
@@ -89,8 +93,19 @@ type statusJSONDoc struct {
 	QuarantineCount int                    `json:"quarantine_count"`
 }
 
+// jsonString renders s as a JSON string literal.
+func jsonString(s string) string {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(data)
+}
+
 // statusJSON renders the same facts as the text status as one JSON document.
 // Values are the stored box values; encoding/json escapes them safely.
+// --max caps only the text listing; the JSON document always lists every
+// quarantine, with quarantine_count as the uncapped total.
 func statusJSON(stdout io.Writer, b fuse.Box, names []string) int {
 	doc := statusJSONDoc{
 		Lockdown:        statusFuseJSON{State: "clear"},

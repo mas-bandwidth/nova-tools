@@ -51,4 +51,25 @@ func TestFuseStatusJSON(t *testing.T) {
 	exit, stdout, _ = runFuse(t, "status", "--box", box)
 	require.Equal(t, 0, exit)
 	assert.Contains(t, stdout, "STATUS OK lockdown=blown")
+
+	// Clear box: lockdown clear, empty (non-null) quarantines.
+	clearBox := boxIn(t)
+	exit, stdout, _ = runFuse(t, "status", "--box", clearBox, "--json")
+	require.Equal(t, 0, exit)
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	assert.Equal(t, "clear", doc.Lockdown.State)
+	assert.NotNil(t, doc.Quarantines)
+	assert.Empty(t, doc.Quarantines)
+	assert.Equal(t, 0, doc.QuarantineCount)
+
+	// Absent box under --json: refused record on stdout, exit 2.
+	exit, stdout, _ = runFuse(t, "status", "--box", absentBoxIn(t), "--json")
+	require.Equal(t, 2, exit)
+	var refusal struct {
+		Status string `json:"status"`
+		Remedy string `json:"remedy"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &refusal), "refused stdout: %q", stdout)
+	assert.Equal(t, "refused", refusal.Status)
+	assert.Contains(t, refusal.Remedy, "run:")
 }

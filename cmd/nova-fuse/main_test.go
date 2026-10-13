@@ -1247,7 +1247,7 @@ var fuseAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"why", "since", "hintFor", "buildinfo.Line"},
+	Escapers: []string{"why", "since", "hintFor", "buildinfo.Line", "jsonString"},
 	// One entry per site, keyed by file, function and source text. Each is a claim, and
 	// each claim is either checked by a test named here or stated as the reason a reader
 	// would accept. The usage constant needs no entry: a package constant is a literal.
