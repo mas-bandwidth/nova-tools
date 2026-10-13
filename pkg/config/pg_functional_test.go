@@ -207,22 +207,10 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 
 func TestMachineRolesMigrationPreservesExistingGroups(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name        string
-		store       string
-		coordinator string
-		want        map[string]string
-	}{
-		{name: "separate references", store: "store-a", coordinator: "coord-a", want: map[string]string{
-			"bench-a": "bench", "store-a": "bench,services", "coord-a": "bench,coordination", "shared": "bench",
-		}},
-		{name: "same reference", store: "shared", coordinator: "shared", want: map[string]string{
-			"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench,coordination,services",
-		}},
-		{name: "empty references", want: map[string]string{
-			"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench",
-		}},
-	} {
+	// The table is the one DeriveMachineRoles is held to
+	// (TestDeriveMachineRolesIsMigration0042): the SQL and the inventory's
+	// derivation of a pre-0042 row are one rule.
+	for _, tc := range machineRoleDerivationCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()

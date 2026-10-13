@@ -147,6 +147,11 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}
 		return refused(stderr, verb, err.Error(), again())
 	}
+	// What the inventory derived or left to the play's own facts rather than
+	// refused: on stderr, never in the JSON ansible reads.
+	for _, note := range inv.Notes {
+		fmt.Fprintf(stderr, "NOTE %s\n", note)
+	}
 	if explicit && !inv.Has(self) {
 		return refused(stderr, verb, fmt.Sprintf("%s=%q names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), toolName+" machine list")
 	}
