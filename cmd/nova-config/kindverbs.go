@@ -113,6 +113,27 @@ func fieldUsage(f config.Field, add bool) string {
 	return head + ": " + f.Help
 }
 
+// invalidEnumOptions returns the valid words of every enum or list field in
+// given whose value fails validation, in kind declaration order, deduplicated.
+func invalidEnumOptions(k *config.Kind, given map[string]string) []string {
+	var opts []string
+	for _, f := range k.Fields {
+		v, ok := given[f.Name]
+		if !ok || (f.Type != config.TypeEnum && f.Type != config.TypeList) {
+			continue
+		}
+		if _, err := f.Canonical(v); err == nil {
+			continue
+		}
+		for _, w := range f.Enum {
+			if !slices.Contains(opts, w) {
+				opts = append(opts, w)
+			}
+		}
+	}
+	return opts
+}
+
 func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, stdout, stderr io.Writer, d deps) int {
 	verb, op := k.Name+" set", config.OpSet
 	if add {
@@ -186,6 +207,12 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		problems = append(problems, err.Error())
 	}
 	if len(problems) > 0 {
+		if opts := invalidEnumOptions(k, given); *asJSON && len(opts) > 0 {
+			o := tool.Refuse(strings.Join(problems, "; "))
+			o.Verb = verb
+			o.Fact("valid_options", opts)
+			return emit(stdout, o)
+		}
 		return refuse(stderr, verb, strings.Join(problems, "; "))
 	}
 	st, err := d.openStore(ctx, dsn)
