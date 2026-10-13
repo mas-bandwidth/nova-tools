@@ -167,7 +167,7 @@ func TestFuseCheckAndReceiptsJSON(t *testing.T) {
 	require.NotEmpty(t, got.Result.Why)
 	assert.Contains(t, strings.Join(got.Result.Why, " "), "--box is required")
 
-	code, out, stderr = capture(t, []string{"quarantine", "--json", "surface", "reason"}, now)
+	code, out, stderr = capture(t, []string{"quarantine", "--json", "surface"}, now)
 	assert.Equal(t, 2, code)
 	got = decodeFuseReceipt(t, out, stderr)
 	assert.Equal(t, "refused", got.Result.Status)
