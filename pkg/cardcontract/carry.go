@@ -47,8 +47,14 @@ func (c Carry) Words() string {
 	return w
 }
 
-// sentence is what JOB.md says of the carry, right after the attempt line.
+// sentence states the carry and the actual push boundary's ancestry rule
+// (tla/CardContract.tla RewriteKeptIsPushed), right after the attempt line.
 func (c Carry) sentence() string {
+	return c.startSentence() + "\nThe member refuses any pushed head that does not descend from the recorded staged commit, including a head made by rewriting Git refs directly; a second refusal leaves origin unchanged."
+}
+
+// startSentence is where the carry starts, as JOB.md describes it.
+func (c Carry) startSentence() string {
 	at := fmt.Sprintf("This checkout is staged at the tip of %s as origin held it when it was staged, %s", orDash(c.Base), c.Tip)
 	switch c.State {
 	case CarryOK:

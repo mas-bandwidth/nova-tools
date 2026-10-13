@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -134,12 +135,12 @@ func dogfoodVerb(sub string, s seams) tool.Verb {
 		v.Run = func(c *tool.Call) *tool.Out { return dogfoodRecord(c, s.dogfood) }
 	default:
 		v.Usage = "dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] " +
-			"[--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]"
+			"[--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]"
 		v.Effect = tool.Effect("inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing")
 		v.Flags = func(f *tool.Flags) {
-			f.Prints()
 			addDogfoodSourceFlags(f)
 			addDogfoodReadFlags(f)
+			f.Lookup("authors").Usage = "file mapping tool verb = author, one per line"
 			cmdDogfoodGate(f)
 			addMax(f)
 		}
@@ -239,6 +240,14 @@ func dogfoodGather(seams dogfoodSeams, c *tool.Call) (dogfoodRead, *tool.Out) {
 		return read, tool.Refuse(oneline.Err(err))
 	}
 	if len(failures) > 0 {
+		if c.Given("json") && c.Bool("json") {
+			out := tool.Fail("one or more receipt files could not be read")
+			out.Fact("verdict", false).Fact("invalid_receipts", len(failures))
+			for _, failure := range failures {
+				out.Item("invalid-receipt", "file", failure.Subject, "reason", tool.Text(failure.Reason))
+			}
+			return read, out
+		}
 		list := bounded.Capped(stderr, maxFlag, "DOGFOOD", "record", tool.MaxRemedy)
 		for _, f := range failures {
 			list.Line(fmt.Sprintf("DOGFOOD FAILED %s: %s",
@@ -340,6 +349,27 @@ func cmdDogfoodGate(fs *tool.Flags) {
 }
 
 func dogfoodGate(c *tool.Call, seams dogfoodSeams) *tool.Out {
+	if !c.Bool("json") {
+		return dogfoodGateOut(c, seams)
+	}
+	// Diagnostics are evidence too; keep them inside the single JSON answer.
+	copyCall := *c
+	var diagnostics bytes.Buffer
+	copyCall.Stderr = &diagnostics
+	out := dogfoodGateOut(&copyCall, seams)
+	if out.Exit == 1 && len(out.Facts) == 0 && len(out.Why) == 0 {
+		out = tool.Fail(strings.TrimSpace(diagnostics.String()))
+	}
+	if out.Exit != 0 && len(out.Facts) == 0 {
+		out.Fact("verdict", false)
+	}
+	if diagnostics.Len() > 0 {
+		dogfoodJSONList(out, "diagnostics", strings.Split(strings.TrimSpace(diagnostics.String()), "\n"), c.Int("max"))
+	}
+	return out
+}
+
+func dogfoodGateOut(c *tool.Call, seams dogfoodSeams) *tool.Out {
 	aliasNote(c)
 	read, out := dogfoodGather(seams, c)
 	if out != nil {
@@ -371,6 +401,42 @@ func dogfoodGate(c *tool.Call, seams dogfoodSeams) *tool.Out {
 	// The discarded receipts are said FIRST, and on every outcome.
 	reportStranded(read, maxFlag, stderr)
 	findings, summary := dogfood.Gate(read.verbs, read.receipts, read.authors, requireAll)
+	if c.Bool("json") {
+		out := tool.Done()
+		if len(findings) > 0 {
+			out = tool.Fail()
+		}
+		rows, _ := dogfood.Ledger(read.verbs, read.receipts, read.authors)
+		missing := []tool.Fields{}
+		uncovered := []tool.Fields{}
+		requirements := []tool.Fields{}
+		verified := []tool.Fields{}
+		for _, receipt := range read.receipts {
+			verified = append(verified, tool.Fields{{K: "file", V: receipt.File}, {K: "receipt", V: receipt}})
+		}
+		for _, verb := range read.verbs {
+			if read.authors.Author(verb.Key()) == "" {
+				missing = append(missing, tool.Fields{{K: "tool", V: verb.Tool}, {K: "verb", V: verb.Verb}})
+			}
+		}
+		coverage, _ := dogfood.Gate(read.verbs, read.receipts, read.authors, true)
+		for _, finding := range coverage {
+			if finding.Kind == "not-dogfooded" {
+				uncovered = append(uncovered, tool.Fields{{K: "tool", V: finding.Tool}, {K: "verb", V: finding.Verb}, {K: "reason", V: finding.Reason}})
+			}
+		}
+		for _, finding := range findings {
+			item := tool.Fields{{K: "kind", V: finding.Kind}, {K: "tool", V: finding.Tool}, {K: "verb", V: finding.Verb}, {K: "reason", V: finding.Reason}}
+			requirements = append(requirements, item)
+		}
+		out.Fact("verdict", len(findings) == 0).Fact("require_all", requireAll).Fact("summary", summary)
+		dogfoodJSONList(out, "verified_receipts", verified, maxFlag)
+		dogfoodJSONList(out, "uncovered_verbs", uncovered, maxFlag)
+		dogfoodJSONList(out, "missing_authors", missing, maxFlag)
+		dogfoodJSONList(out, "findings", requirements, maxFlag)
+		dogfoodJSONList(out, "rows", rows, maxFlag)
+		return out
+	}
 	if len(findings) == 0 {
 		fmt.Fprintln(c.Stdout, oneline.Escape(summary.GateLine(requireAll)))
 		return tool.Exit(0)
@@ -385,6 +451,21 @@ func dogfoodGate(c *tool.Call, seams dogfoodSeams) *tool.Out {
 	list.More()
 	fmt.Fprintln(stderr, oneline.Escape(summary.GateCountLine(list.Total(), list.Shown())))
 	return tool.Exit(1)
+}
+
+// dogfoodJSONList preserves STANDARD section 2 listing totals under --max.
+func dogfoodJSONList[T any](out *tool.Out, kind string, values []T, maxFlag int) {
+	tally := bounded.NewTally(maxFlag)
+	shown := make([]T, 0)
+	for _, value := range values {
+		if tally.Add(kind) {
+			shown = append(shown, value)
+		}
+	}
+	out.Fact(kind, shown)
+	if tally.Shown(kind) < tally.Total(kind) {
+		out.More = append(out.More, tool.More{Kind: kind, Shown: tally.Shown(kind), Total: tally.Total(kind), Remedy: tool.MaxRemedy})
+	}
 }
 
 func dogfoodRecord(c *tool.Call, seams dogfoodSeams) *tool.Out {
