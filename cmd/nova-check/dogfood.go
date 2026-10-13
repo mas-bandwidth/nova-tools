@@ -140,6 +140,7 @@ func dogfoodVerb(sub string, s seams) tool.Verb {
 		v.Flags = func(f *tool.Flags) {
 			addDogfoodSourceFlags(f)
 			addDogfoodReadFlags(f)
+			f.Lookup("authors").Usage = "file mapping tool verb = author, one per line"
 			cmdDogfoodGate(f)
 			addMax(f)
 		}
