@@ -536,7 +536,7 @@ func TestGhForgeRejectsInvalidSeatAsBadInput(t *testing.T) {
 		return ""
 	}
 	forge := ghForge{repo: t.TempDir(), getenv: getenv, git: func(string, ...string) (string, error) {
-		return "https://github.com/owner/repo.git", nil
+		return "https://localhost/owner/repo.git", nil
 	}}
 	_, err := forge.PR(7)
 	require.ErrorIs(t, err, errBadSeat)

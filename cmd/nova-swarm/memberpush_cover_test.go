@@ -59,7 +59,7 @@ func TestMemberpushOpenPRSurfacesInvalidSeatEnvironment(t *testing.T) {
 		},
 		processEnv: func() []string { return []string{"PATH=/bin"} },
 	}
-	pr, note := g.openPR("https://github.com/o/n.git", "main", "sprint/c1", "title", "body")
+	pr, note := g.openPR("https://localhost/o/n.git", "main", "sprint/c1", "title", "body")
 	assert.Empty(t, pr)
 	assert.Contains(t, note, "seat environment is invalid")
 	assert.NotContains(t, note, "retry", "an invalid identity is not a forge outage")
