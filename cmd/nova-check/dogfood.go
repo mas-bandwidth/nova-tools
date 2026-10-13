@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -134,7 +135,7 @@ func dogfoodVerb(sub string, s seams) tool.Verb {
 		v.Run = func(c *tool.Call) *tool.Out { return dogfoodRecord(c, s.dogfood) }
 	default:
 		v.Usage = "dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] " +
-			"[--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]"
+			"[--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]"
 		v.Effect = tool.Effect("inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing")
 		v.Flags = func(f *tool.Flags) {
 			f.Prints()
@@ -142,6 +143,7 @@ func dogfoodVerb(sub string, s seams) tool.Verb {
 			addDogfoodReadFlags(f)
 			cmdDogfoodGate(f)
 			addMax(f)
+			f.Bool("json", false, "print the gate result as one JSON object instead of lines")
 		}
 		v.Run = func(c *tool.Call) *tool.Out { return dogfoodGate(c, s.dogfood) }
 	}
@@ -306,7 +308,7 @@ func reportStranded(read dogfoodRead, maxFlag int, stderr io.Writer) {
 
 func addDogfoodReadFlags(f *tool.Flags) {
 	f.Required("receipts", receiptsHint)
-	f.String("authors", "", "file mapping `<tool> <verb> = <who wrote it>`, one per line")
+	f.String("authors", "", "file mapping tool and verb to who wrote it, one per line as: <tool> <verb> = <name>")
 	f.String("repo", "", "repository to read authorship from when there is no --authors file")
 	f.Int("git-timeout", gitTimeoutDefault, "seconds one --repo authorship read may take before it is killed and named")
 }
@@ -339,10 +341,72 @@ func cmdDogfoodGate(fs *tool.Flags) {
 	fs.String("shipped", "", "a checkout's cmd/ directory: the gate judges only the tools under it, the set a release ships")
 }
 
+type dogfoodGateFindingJSON struct {
+	Kind   string `json:"kind"`
+	Tool   string `json:"tool"`
+	Verb   string `json:"verb"`
+	Reason string `json:"reason"`
+}
+
+type dogfoodGateVerbJSON struct {
+	Tool string `json:"tool"`
+	Verb string `json:"verb"`
+}
+
+type dogfoodGateJSON struct {
+	Verb          string                    `json:"verb"`
+	Status        string                    `json:"status"`
+	Exit          int                       `json:"exit"`
+	Passed        bool                      `json:"passed"`
+	RequireAll    bool                      `json:"require_all"`
+	Receipts      int                       `json:"receipts"`
+	Summary       dogfoodGateSummaryJSON    `json:"summary"`
+	Findings      []dogfoodGateFindingJSON  `json:"findings"`
+	Uncovered     []dogfoodGateVerbJSON     `json:"uncovered"`
+	MissingAuthor []dogfoodGateVerbJSON     `json:"missing_authors"`
+	Why           []string                  `json:"why,omitempty"`
+}
+
+type dogfoodGateSummaryJSON struct {
+	Verbs       int `json:"verbs"`
+	Dogfooded   int `json:"dogfooded"`
+	ByNonAuthor int `json:"by_nonauthor"`
+	OpenEdges   int `json:"open_edges"`
+	Unfiled     int `json:"unfiled"`
+	Unmatched   int `json:"unmatched"`
+}
+
+func emitDogfoodGateJSON(c *tool.Call, payload dogfoodGateJSON) *tool.Out {
+	if payload.Findings == nil {
+		payload.Findings = []dogfoodGateFindingJSON{}
+	}
+	if payload.Uncovered == nil {
+		payload.Uncovered = []dogfoodGateVerbJSON{}
+	}
+	if payload.MissingAuthor == nil {
+		payload.MissingAuthor = []dogfoodGateVerbJSON{}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return tool.Refuse(oneline.Err(err))
+	}
+	printJSON(c.Stdout, raw)
+	return tool.Exit(payload.Exit)
+}
+
 func dogfoodGate(c *tool.Call, seams dogfoodSeams) *tool.Out {
 	aliasNote(c)
+	asJSON := c.Bool("json")
 	read, out := dogfoodGather(seams, c)
 	if out != nil {
+		if asJSON {
+			exit := out.Exit
+			status := string(out.Status)
+			if status == "" {
+				status = string(tool.Refused)
+			}
+			return emitDogfoodGateJSON(c, dogfoodGateJSON{Verb: "dogfood gate", Status: status, Exit: exit, Passed: false, Why: out.Why})
+		}
 		return out
 	}
 	maxFlag, stderr, requireAll := c.Int("max"), c.Stderr, c.Bool("require-all")
@@ -353,6 +417,9 @@ func dogfoodGate(c *tool.Call, seams dogfoodSeams) *tool.Out {
 	if shippedDir := c.Str("shipped"); shippedDir != "" {
 		set, err := dogfood.ReadShipped(shippedDir)
 		if err != nil {
+			if asJSON {
+				return emitDogfoodGateJSON(c, dogfoodGateJSON{Verb: "dogfood gate", Status: string(tool.Refused), Exit: 2, Passed: false, Why: []string{"--shipped names a cmd/ directory of nova-* programs: " + oneline.Err(err)}})
+			}
 			return tool.Refuse("--shipped names a cmd/ directory of nova-* programs: " + oneline.Err(err))
 		}
 		var outside []dogfood.Receipt
@@ -366,7 +433,38 @@ func dogfoodGate(c *tool.Call, seams dogfoodSeams) *tool.Out {
 	// this refusal by name so it cannot go green on nothing. It is a verdict
 	// that the gate ran and said no, so it carries no door.
 	if len(read.receipts) == 0 && !c.Bool("allow-empty") {
-		return tool.Fail(fmt.Sprintf("no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate", oneline.Escape(c.Str("receipts"))))
+		msg := fmt.Sprintf("no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate", oneline.Escape(c.Str("receipts")))
+		if asJSON {
+			_, summary := dogfood.Gate(read.verbs, read.receipts, read.authors, requireAll)
+			return emitDogfoodGateJSON(c, dogfoodGateJSON{Verb: "dogfood gate", Status: string(tool.Failed), Exit: 1, Passed: false, RequireAll: requireAll, Receipts: 0, Summary: dogfoodGateSummaryJSON{Verbs: summary.Verbs, Dogfooded: summary.Dogfooded, ByNonAuthor: summary.ByNonAuthor, OpenEdges: summary.OpenEdges, Unfiled: summary.Unfiled, Unmatched: summary.Unmatched}, Why: []string{msg}})
+		}
+		return tool.Fail(msg)
+	}
+	if asJSON {
+		findings, summary := dogfood.Gate(read.verbs, read.receipts, read.authors, requireAll)
+		passed := len(findings) == 0
+		exit := 0
+		status := string(tool.OK)
+		if !passed {
+			exit = 1
+			status = string(tool.Failed)
+		}
+		payload := dogfoodGateJSON{
+			Verb: "dogfood gate", Status: status, Exit: exit, Passed: passed, RequireAll: requireAll, Receipts: len(read.receipts),
+			Summary: dogfoodGateSummaryJSON{Verbs: summary.Verbs, Dogfooded: summary.Dogfooded, ByNonAuthor: summary.ByNonAuthor, OpenEdges: summary.OpenEdges, Unfiled: summary.Unfiled, Unmatched: summary.Unmatched},
+		}
+		for _, f := range findings {
+			payload.Findings = append(payload.Findings, dogfoodGateFindingJSON{Kind: f.Kind, Tool: f.Tool, Verb: f.Verb, Reason: f.Reason})
+			if f.Kind == "not-dogfooded" {
+				payload.Uncovered = append(payload.Uncovered, dogfoodGateVerbJSON{Tool: f.Tool, Verb: f.Verb})
+			}
+		}
+		for _, v := range read.verbs {
+			if read.authors.Author(v.Key()) == "" {
+				payload.MissingAuthor = append(payload.MissingAuthor, dogfoodGateVerbJSON{Tool: v.Tool, Verb: v.Spelling()})
+			}
+		}
+		return emitDogfoodGateJSON(c, payload)
 	}
 	// The discarded receipts are said FIRST, and on every outcome.
 	reportStranded(read, maxFlag, stderr)

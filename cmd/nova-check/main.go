@@ -51,8 +51,8 @@ func novaCheck(s seams) *tool.Tool {
 			"stores its streak, and --dry-run writes none of it. convergence reads forge data through gh\n" +
 			"and an optional checkout through git; the other checks read the manifests and ledgers you name.\n" +
 			"first run: create the small markdown tree below, then run the example commands.",
-		NoJSON: "the same result as one JSON object on stdout; spelling and convergence take it too, through their own " +
-			"printers (convergence prints its reading object), and quickstart and dogfood print typed lines",
+		NoJSON: "the same result as one JSON object on stdout; spelling, convergence and dogfood gate take it too, through their own " +
+			"printers (convergence prints its reading object), and quickstart and dogfood ledger/record print typed lines",
 		UsageNote: "  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes\n" +
 			"dogfood gate exits 1 with the verbs no non-author has run and the edges nobody has cleared.\n" +
 			"An edge is what the run found; a receipt records it: --not-ok, or an Edge: or Edges: in the notes.\n" +

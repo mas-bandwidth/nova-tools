@@ -36,7 +36,7 @@ usage:
   nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
   nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]
   nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]
   nova-check version
@@ -53,7 +53,7 @@ The exit-1 line prints trend=widening on the CONVERGENCE line, and the next run 
 nova-check convergence --state <file> again once the source moves, or nova-check dogfood record the
 finding the stream names.
 
-Every verb but quickstart, dogfood ledger, dogfood record, dogfood gate, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling and convergence take it too, through their own printers (convergence prints its reading object), and quickstart and dogfood print typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+Every verb but quickstart, dogfood ledger, dogfood record, dogfood gate, convergence, spelling takes --json: the same result as one JSON object on stdout; spelling, convergence and dogfood gate take it too, through their own printers (convergence prints its reading object), and quickstart and dogfood ledger/record print typed lines. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 
@@ -216,7 +216,7 @@ from `nova-check help`:
   nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]
   a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`
 flags:
-  --authors <<tool> <verb> = <who wrote it>>  file mapping <tool> <verb> = <who wrote it>, one per line
+  --authors <string>  file mapping tool and verb to who wrote it, one per line as: <tool> <verb> = <name>
   --cli <string>  the command reference the verbs are read from, usually docs/CLI.md
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
   --git-timeout <int>  seconds one --repo authorship read may take before it is killed and named
@@ -261,14 +261,15 @@ effect: local write: appends one receipt file to --receipts (--dry-run writes no
 ```
 usage: nova-check dogfood gate [flags]
 from `nova-check help`:
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>]
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
   a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`
 flags:
   --allow-empty  pass on an empty receipt set; without it, no receipts is a refusal and not a green line
-  --authors <<tool> <verb> = <who wrote it>>  file mapping <tool> <verb> = <who wrote it>, one per line
+  --authors <string>  file mapping tool and verb to who wrote it, one per line as: <tool> <verb> = <name>
   --cli <string>  the command reference the verbs are read from, usually docs/CLI.md
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
   --git-timeout <int>  seconds one --repo authorship read may take before it is killed and named
+  --json  print the gate result as one JSON object instead of lines
   --max <int>  items listed before one MORE line stands for the rest; 0 lists all
   --receipts <string>  --receipts <dir> is the directory the receipts live in, one file per receipt: the same directory record appends to and ledger reads, kept in a repository so the record outlives the bench (required)
   --repo <string>  repository to read authorship from when there is no --authors file
