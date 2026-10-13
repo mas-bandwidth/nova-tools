@@ -406,7 +406,11 @@ func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 	}{{nil, 0}, {[]string{"--enforce"}, 1}} {
 		code, stdout, _ := runCI(t, append([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, c.args...), stdin)
 		assert.Equal(t, c.code, code, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
-		assert.Equal(t, want, stdout, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
+		expected := want
+		if c.code == 0 {
+			expected += "CI-SLOW WARN within_budget=false enforce=false: budget exceeded without enforcement; reuse the same event stream; run: nova-ci slowtests '--budget' '60' '--load' '1' '--cpus' '2' --enforce\n"
+		}
+		assert.Equal(t, expected, stdout, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, expected)
 	}
 }
 
@@ -570,7 +574,16 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 				"CI-LOAD load=" + load + ".00 cpus=32 per-cpu="
 			assert.Equal(t, leg.code, code, "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			assert.True(t, strings.HasPrefix(stdout, want), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
-			assert.True(t, strings.HasSuffix(stdout, ": measured, not a verdict\n"), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
+			metrics := stdout
+			if leg.code == 0 {
+				before, warning, found := strings.Cut(stdout, "CI-SLOW WARN ")
+				require.True(t, found, "an unenforced overrun needs its warning")
+				assert.True(t, strings.HasPrefix(warning, "within_budget=false enforce=false:"))
+				metrics = before
+			} else {
+				assert.NotContains(t, stdout, "CI-SLOW WARN", "the enforced leg remains unchanged")
+			}
+			assert.True(t, strings.HasSuffix(metrics, ": measured, not a verdict\n"), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			code, stdout, _ = runCI(t, args, sleeps)
 			assert.Equal(t, 1, code, "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
 			assert.Contains(t, stdout, "CI-SLEEPS test=TestNew package=example.com/internal/pkg", "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
