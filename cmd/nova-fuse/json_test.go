@@ -28,10 +28,10 @@ type fuseReceipt struct {
 		Text   string         `json:"text"`
 	} `json:"items"`
 	More []struct {
-		Kind    string `json:"kind"`
-		Shown   int    `json:"shown"`
-		Total   int    `json:"total"`
-		Remedy  string `json:"remedy"`
+		Kind   string `json:"kind"`
+		Shown  int    `json:"shown"`
+		Total  int    `json:"total"`
+		Remedy string `json:"remedy"`
 	} `json:"more"`
 }
 
