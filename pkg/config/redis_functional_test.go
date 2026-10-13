@@ -67,7 +67,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	// The machine: the ceiling ns_capacity_machine writes (slots alone:
 	// cores and memory are never declared, so the ceiling carries none and
 	// no budget is derived) and the registry hash nova-config owns, exactly
-	// the five declared fields with the revision and time.
+	// the eight declared fields with the revision and time.
 	{
 		got := c.HGetAll(ctx, "machine:studio:ceiling").Val()
 		assertionMsg76 := []any{"machine:studio:ceiling %v", got}
@@ -87,7 +87,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	assert.Equal(t, int64(0), c.Exists(ctx, "machine:studio:budget").Val(), "a budget was derived from cores nobody declared")
 	{
 		got := c.HGetAll(ctx, "machine:studio").Val()
-		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, tla, note, rev, at and nothing else", got}
+		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, roles, width, tla, note, rev, at and nothing else", got}
 		func() {
 			if !assert.Equal(t, "glenn", got["user"], assertionMsg81...) {
 				return
@@ -116,7 +116,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 			if !assert.Equal(t, "", got["note"], assertionMsg81...) {
 				return
 			}
-			assert.Len(t, got, 9, assertionMsg81...)
+			assert.Len(t, got, 10, assertionMsg81...)
 		}()
 	}
 	{

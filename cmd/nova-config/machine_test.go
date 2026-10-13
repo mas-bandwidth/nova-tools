@@ -15,7 +15,7 @@ import (
 // any width, so a width read from them would be seen.
 func (h *harness) machine(t *testing.T, name, width string) {
 	t.Helper()
-	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": width, "tla": "false"}}
+	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "roles": "bench", "width": width, "tla": "false"}}
 	_, err := h.store.Insert(context.Background(), config.KindMachine, row, "t")
 	require.NoError(t, err)
 }
@@ -202,7 +202,7 @@ func TestMachineTLAIsTheRecordMachineFact(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	h.machine(t, "m2", "4")
 	_, out, _ := h.run(t, "machine", "list", "--pg", dsn)
-	assert.Equal(t, "MACHINE name=m1 user=u seat=s slots=8 runners=0 width=4 tla=true note=-\nMACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false note=-\nCONFIG LIST kind=machine rows=2\n", out)
+	assert.Equal(t, "MACHINE name=m1 user=u seat=s slots=8 runners=0 roles=bench width=4 tla=true note=-\nMACHINE name=m2 user=u seat=s slots=160 runners=0 roles=bench width=4 tla=false note=-\nCONFIG LIST kind=machine rows=2\n", out)
 	code, _, errs = h.run(t, "machine", "set", "m1", "--tla", "false", "--pg", dsn, "--as", "a1")
 	require.Equal(t, 0, code, errs)
 	_, out, _ = h.run(t, "machine", "show", "m1", "--pg", dsn)

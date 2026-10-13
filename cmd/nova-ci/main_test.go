@@ -341,8 +341,8 @@ func TestSlowtestsJSONIsTheSameVerdict(t *testing.T) {
 `
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json"}, stdin)
 	require.Equal(t, 0, code, stderr)
-	assert.JSONEq(t, `{"result":{"verb":"slowtests","status":"ok","exit":0},
-		"facts":{"packages":1,"slowest":"example.com/pkg","slowest_seconds":75.3,"enforce":false,"load":1,"cpus":2},
+	assert.JSONEq(t, `{"result":{"verb":"slowtests","status":"ok","exit":0,"remedy":"nova-ci slowtests '--budget' '60' '--load' '1' '--cpus' '2' '--json' --enforce"},
+		"facts":{"packages":1,"slowest":"example.com/pkg","slowest_seconds":75.3,"enforce":false,"load":1,"cpus":2,"within_budget":false,"warning":"budget exceeded without enforcement; reuse the same event stream"},
 		"items":[{"kind":"slow-package","fields":{"package":"example.com/pkg","seconds":75.3,"budget":60,"slowest":"TestA:3.2s"}}]}`, stdout)
 
 	code, stdout, _ = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json", "--enforce"}, stdin)
@@ -406,7 +406,11 @@ func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 	}{{nil, 0}, {[]string{"--enforce"}, 1}} {
 		code, stdout, _ := runCI(t, append([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, c.args...), stdin)
 		assert.Equal(t, c.code, code, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
-		assert.Equal(t, want, stdout, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
+		expected := want
+		if c.code == 0 {
+			expected += "CI-SLOW WARN within_budget=false enforce=false: budget exceeded without enforcement; reuse the same event stream; run: nova-ci slowtests '--budget' '60' '--load' '1' '--cpus' '2' --enforce\n"
+		}
+		assert.Equal(t, expected, stdout, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, expected)
 	}
 }
 
@@ -570,7 +574,16 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 				"CI-LOAD load=" + load + ".00 cpus=32 per-cpu="
 			assert.Equal(t, leg.code, code, "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			assert.True(t, strings.HasPrefix(stdout, want), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
-			assert.True(t, strings.HasSuffix(stdout, ": measured, not a verdict\n"), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
+			metrics := stdout
+			if leg.code == 0 {
+				before, warning, found := strings.Cut(stdout, "CI-SLOW WARN ")
+				require.True(t, found, "an unenforced overrun needs its warning")
+				assert.True(t, strings.HasPrefix(warning, "within_budget=false enforce=false:"))
+				metrics = before
+			} else {
+				assert.NotContains(t, stdout, "CI-SLOW WARN", "the enforced leg remains unchanged")
+			}
+			assert.True(t, strings.HasSuffix(metrics, ": measured, not a verdict\n"), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			code, stdout, _ = runCI(t, args, sleeps)
 			assert.Equal(t, 1, code, "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
 			assert.Contains(t, stdout, "CI-SLEEPS test=TestNew package=example.com/internal/pkg", "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
@@ -639,7 +652,7 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		{"missing tree", []string{"./nope/..."}, []string{`package pattern "./nope/..." matches no package (no such directory)`}},
 		{"not a dir", []string{file}, []string{"matches no package (not a directory)"}},
 		{"no go files", []string{empty}, []string{"matches no package (the directory holds no .go file)"}},
-		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes no flags`}},
+		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes --json`}},
 		// Every independent problem in the one refusal.
 		{"all at once", []string{"--bogus", "./nope", ".", "./also-nope"}, []string{`unknown flag "--bogus"`, `"./nope" matches no package`, `"./also-nope" matches no package`}},
 	} {

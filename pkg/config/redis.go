@@ -612,6 +612,10 @@ func machineView(reg map[string]string, ceiling string) View {
 	for _, f := range k.Fields {
 		switch {
 		case f.Name == "slots":
+		case f.Name == "roles" && f.Type == TypeList:
+			if roles, ok := reg[f.Name]; ok {
+				v[f.Name] = roles
+			}
 		case f.Type == TypeInt && f.Nullable && reg[f.Name] == "":
 			v[f.Name] = "" // unset (a machine's width: the default), as the row holds it
 		case f.Type == TypeInt:
