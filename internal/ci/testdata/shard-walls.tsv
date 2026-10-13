@@ -119,6 +119,7 @@ pkg/sandbox/darwincheck	0.2	@local	-
 internal/scaffold	0.0	@run37411066588	self-hosted
 pkg/seatcred	0.4	@run37411066588	self-hosted
 pkg/seatcred/seattest	0.0	@local	-
+pkg/secretcheck	0.0	@hetzner1	-
 pkg/secrets	0.7	@run37411066588	self-hosted
 internal/selftalk	0.0	@run37411066588	self-hosted
 internal/shippedsmoke	0.0	@local	-
