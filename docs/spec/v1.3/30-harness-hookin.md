@@ -226,7 +226,7 @@ Inputs:
    - Autonomous subagents (`invoke_subagent`) that run in isolated context and wake the parent turn reactively when sending messages via `send_message`.
 2. **Push to turn.**
    - Primary wake: A non-daemon background command runs the Layer 20 blocking wait primitive:
-     `nova-bus wait --as emma --nonce <current_nonce> --timeout 90s`
+     `nova-bus wait --as <name> --nonce <current_nonce> --timeout 90s`
      launched with `IsDaemon: false` and small `WaitMsBeforeAsync` (e.g. 500ms).
    - The process blocks synchronously in the background on the server notification channel. When a push message arrives or a challenge is issued, the process unblocks, writes arrival JSON and the next nonce to stdout, and exits with code 0 immediately.
    - The process exit triggers an instant turn wakeup. Output is delivered directly to the agent context.
@@ -235,12 +235,12 @@ Inputs:
 3. **Deaf or down detected by.**
    - Running `nova-hook hook` as a daemon task (`IsDaemon: true`) without an accompanying blocking wait process results in a deaf agent: challenges accumulate silently in task log files on disk without waking the turn.
    - If a challenge window ($T_{challenge}$) expires without a `prove` call, the server transitions the lease to `AWAY` (`reason: lease_expired`).
-   - Senders querying `nova-bus status --as emma` or attempting `nova-bus send` immediately detect the `away` presence state, preventing lost notes.
+   - Senders querying `nova-bus status --as <name>` or attempting `nova-bus send` immediately detect the `away` presence state, preventing lost notes.
    - On the client side, if `nova-bus wait` exits with code 2 (`refusal: lease_away`), the agent immediately detects that its session lease has lapsed.
 4. **Re-hook.**
-   - When awakened with a challenge line or after a lease expiration, the agent runs `nova-hook prove --as emma --nonce <nonce>` immediately in the foreground.
-   - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as emma --role comms` to obtain a fresh challenge nonce, proves it with `nova-hook prove`, and re-launches the non-daemon `nova-bus wait` background task.
-   - After re-proving, the agent drains and acknowledges any pending messages received while away via `nova-bus recv --as emma --all --ack`.
+   - When awakened with a challenge line or after a lease expiration, the agent runs `nova-hook prove --as <name> --nonce <nonce>` immediately in the foreground.
+   - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as <name> --role comms` to obtain a fresh challenge nonce, proves it with `nova-hook prove`, and re-launches the non-daemon `nova-bus wait` background task.
+   - After re-proving, the agent drains and acknowledges any pending messages received while away via `nova-bus recv --as <name> --all --ack`.
 
 ### Muse Code
 
@@ -251,7 +251,7 @@ Inputs:
 
 Inputs:
 
-- Aurora was observed working but deaf: bus messages sat unread on her stream while she worked, and
+- The Muse Code friend was observed working but deaf: bus messages sat unread on her stream while she worked, and
   she missed several, including an ownership change. The friend installer knows no Muse Code
   harness, so there is no proven push for her.
 - Find how Muse Code can take an event inside a running session (a background-process
