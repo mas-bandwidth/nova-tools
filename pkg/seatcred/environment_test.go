@@ -63,6 +63,9 @@ func TestLoadSeatEnvironmentRejectsDuplicateUnknownAndCredentialValues(t *testin
 		`{"version":1,"version":1}`,
 		`{"Version":1}`,
 		`{"version":1,"unknown":true}`,
+		`{"version":1,"forge_identity":null}`,
+		`{"version":1,"environment":null}`,
+		`{"version":1,"login":null}`,
 		`{"version":1,"environment":{"nova_sprint_redis":"127.0.0.1:6381"}}`,
 		`{"version":1,"environment":{"NOVA_SPRINT_REDIS":"redis://user:password@host"}}`,
 	} {

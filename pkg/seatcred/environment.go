@@ -90,6 +90,9 @@ func LoadSeatEnvironment(path string) (SeatEnvironment, error) {
 	if err := validateEnvironmentKeys(b); err != nil {
 		return zero, errors.New("seat environment is invalid")
 	}
+	if err := validateEnvironmentNulls(b); err != nil {
+		return zero, errors.New("seat environment is invalid")
+	}
 	var record SeatEnvironment
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
@@ -100,6 +103,22 @@ func LoadSeatEnvironment(path string) (SeatEnvironment, error) {
 		return zero, err
 	}
 	return record, nil
+}
+
+// validateEnvironmentNulls keeps explicit null distinct from an omitted
+// optional object or string. encoding/json otherwise treats null as an empty
+// value for several non-pointer fields.
+func validateEnvironmentNulls(b []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"forge_identity", "environment", "login"} {
+		if raw, ok := fields[key]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return errors.New("null is not a seat environment value")
+		}
+	}
+	return nil
 }
 
 // ReadSeatEnvironment returns no record when the per-user file is absent
