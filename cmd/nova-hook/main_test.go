@@ -42,7 +42,7 @@ func newRig(t *testing.T) *rig {
 // of what answering a hook challenge proves.
 func TestHookHelpClarifiesEnforcementScope(t *testing.T) {
 	t.Parallel()
-	cli := newRig(t).cli().NoStdin()
+	cli := newRig(t).cli()
 
 	mainHelp := cli.Run("--help")
 	require.Zero(t, mainHelp.Code, mainHelp.Stdout+mainHelp.Stderr)
