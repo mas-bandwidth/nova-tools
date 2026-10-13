@@ -147,7 +147,7 @@ func TestRedisCoverReadDispatch(t *testing.T) {
 	a, c, _ := coverStore(t)
 	c.HSet(ctx, DeclKey, revField(KindFriend), "3")
 	c.SAdd(ctx, FriendsKey, "ada")
-	c.HSet(ctx, "friend:ada:desired", "slots", "8", "tiers", "pro,flash", "width", "4")
+	c.HSet(ctx, "friend:ada:desired", "slots", "4", "tiers", "pro,flash", "width", "4")
 	c.HSet(ctx, "friend:ada:roles", "roles", "builder")
 	c.HSet(ctx, FriendBeatKey("ada"), "host", "m1")
 	c.Set(ctx, FleetKey("coordinator"), "m9", 0)
@@ -157,7 +157,6 @@ func TestRedisCoverReadDispatch(t *testing.T) {
 		check func(t *testing.T, views map[string]View, rev int64)
 	}{
 		{kind: KindFriend, check: func(t *testing.T, views map[string]View, rev int64) {
-			assert.Equal(t, "8", views["ada"]["slots"])
 			assert.Equal(t, "flash,pro", views["ada"]["tiers"])
 			assert.Equal(t, "builder", views["ada"]["roles"])
 			assert.Equal(t, int64(3), rev)
@@ -222,16 +221,6 @@ func TestRedisCoverWriteDispatch(t *testing.T) {
 		assert.True(t, c.SIsMember(ctx, LoopsKey, "l1").Val())
 		assert.Equal(t, "1", c.HGet(ctx, LoopKey("l1"), "rev").Val())
 		assert.Equal(t, LoopLog("~/nova-bench/loops", "l1"), c.HGet(ctx, LoopKey("l1"), "log").Val())
-	})
-
-	t.Run("a friend with nobody to charge refuses", func(t *testing.T) {
-		t.Parallel()
-		a, _, _ := coverStore(t)
-		row := Row{Name: "ada", Fields: map[string]string{"slots": "8", "tiers": "flash", "roles": "", "width": "4"}}
-		err := a.Write(ctx, KindFriend, row, nil, "ada", "idem")
-		require.Error(t, err)
-		assert.True(t, Refused(err))
-		assert.ErrorIs(t, err, ErrCeiling)
 	})
 
 	t.Run("a machine whose ceiling call fails errors", func(t *testing.T) {
@@ -371,7 +360,7 @@ func TestRedisCoverReadFriends(t *testing.T) {
 	ctx := context.Background()
 	a, c, _ := coverStore(t)
 	c.SAdd(ctx, FriendsKey, "b", "a")
-	c.HSet(ctx, "friend:a:desired", "slots", "8", "tiers", "pro,flash", "width", "4")
+	c.HSet(ctx, "friend:a:desired", "slots", "4", "tiers", "pro,flash", "width", "4")
 	c.HSet(ctx, "friend:a:roles", "roles", "reader,builder")
 	c.HSet(ctx, FriendBeatKey("a"), "host", "m1")
 	c.Set(ctx, FleetKey("coordinator"), "m9", 0)
@@ -381,7 +370,6 @@ func TestRedisCoverReadFriends(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), rev)
 	require.Contains(t, views, "a")
-	assert.Equal(t, "8", views["a"]["slots"])
 	assert.Equal(t, "flash,pro", views["a"]["tiers"], "the tiers list is sorted")
 	assert.Equal(t, "builder,reader", views["a"]["roles"], "the roles list is sorted")
 	assert.Equal(t, "4", views["a"]["width"])
@@ -448,32 +436,32 @@ func TestRedisCoverCharge(t *testing.T) {
 		assert.Equal(t, "m9", host)
 	})
 
-	t.Run("nobody to charge refuses with the remedy", func(t *testing.T) {
+	t.Run("nobody to charge is recorded as no machine, never refused", func(t *testing.T) {
 		t.Parallel()
 		a, _, _ := coverStore(t)
-		_, err := a.charge(ctx, "ada")
-		require.Error(t, err)
-		assert.True(t, Refused(err))
-		assert.ErrorIs(t, err, ErrCeiling)
-		assert.Contains(t, err.Error(), "nova-config fleet set --coordinator")
+		host, err := a.charge(ctx, "ada")
+		require.NoError(t, err, "a friend with no beat and no coordinator machine was refused")
+		assert.Equal(t, noMachine, host)
 	})
 }
 
-// TestRedisCoverWriteFriend: writeFriend charges the friend before its function
-// call, so a friend nobody can charge refuses, and a charged one reaches the
-// function with its host.
+// TestRedisCoverWriteFriend: writeFriend records the friend's machine before its
+// function call and never refuses for want of one: a friend nobody can charge
+// reaches the function as well as a charged one (the cover store has no
+// function library, so the call itself errors, never a refusal).
 func TestRedisCoverWriteFriend(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	row := Row{Name: "ada", Fields: map[string]string{"slots": "8", "tiers": "flash", "roles": "builder", "width": "4"}}
+	row := Row{Name: "ada", Fields: map[string]string{"tiers": "flash", "roles": "builder", "width": "4"}}
 
-	t.Run("a friend nobody can charge refuses before any write", func(t *testing.T) {
+	t.Run("a friend nobody can charge reaches the capacity function, never refused", func(t *testing.T) {
 		t.Parallel()
 		a, _, _ := coverStore(t)
 		err := a.writeFriend(ctx, row, nil, "ada", "idem")
 		require.Error(t, err)
-		assert.True(t, Refused(err))
+		assert.False(t, Refused(err), "a friend with no machine was refused: %v", err)
+		assert.Contains(t, err.Error(), "friend ada slots")
 	})
 
 	t.Run("a charged friend reaches the capacity function", func(t *testing.T) {

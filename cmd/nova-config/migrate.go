@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -61,13 +62,13 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 		fmt.Fprintf(stdout, "CONFIG MIGRATE print=%d pg=-\n", len(all))
 		return 0
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	st, err := d.openStore(ctx, dsn)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return migrateError(stderr, err, c, d)
 	}
 	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	key, value := where(dsn)
@@ -83,6 +84,13 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	if *dry && have < 41 {
+		if upgrade, ok := st.(interface{ CheckProviderUpgrade(context.Context) error }); ok {
+			if err := upgrade.CheckProviderUpgrade(ctx); err != nil {
+				return migrateError(stderr, err, c, d)
+			}
+		}
+	}
 	if *dry {
 		return migrateDryRun(ctx, st, all, owners, held, stdout, stderr, key, value, dsn, *asJSON)
 	}
@@ -95,7 +103,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	}
 	from, to, applied, err := st.Migrate(ctx)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return migrateError(stderr, err, c, d)
 	}
 	if *asJSON {
 		o := tool.Done().Fact(key, value).Fact("from", from).Fact("to", to).Fact("applied", len(applied)).Fact("versions", applied)
@@ -104,6 +112,22 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	}
 	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=%d\n", key, config.Value(value), from, to, len(applied))
 	return 0
+}
+
+// migrateError scopes the complete legacy-provider correction list to this
+// store. The commands explicitly require the previous binary; there is no
+// compatibility bypass in this binary's route writer.
+func migrateError(stderr io.Writer, err error, c conn, d deps) int {
+	var legacy *config.ProviderNamesError
+	if errors.As(err, &legacy) {
+		actor, actorErr := actorName("", d.getenv)
+		quotedActor := "<name>"
+		if actorErr == nil {
+			quotedActor = shq(actor)
+		}
+		return refused(stderr, "migrate", legacy.Remediation(c.again(), quotedActor), toolName+" migrate"+c.again())
+	}
+	return refuse(stderr, "migrate", err.Error())
 }
 
 // migrationLines is a migration's SQL as the lines a reader sees: one entry

@@ -155,7 +155,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 		got := c.HGetAll(ctx, "friend:rowan:desired").Val()
 		assertionMsg105 := []any{"friend:rowan:desired %v (charged to the coordinator machine: no beat)", got}
 		func() {
-			if !assert.Equal(t, "32", got["slots"], assertionMsg105...) {
+			if !assert.Equal(t, "8", got["slots"], assertionMsg105...) { // her width, the default
 				return
 			}
 			if !assert.Equal(t, "studio", got["machine"], assertionMsg105...) {
@@ -174,7 +174,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 		got := c.HGetAll(ctx, "friend:stella:desired").Val()
 		assertionMsg109 := []any{"friend:stella:desired %v (charged to the host her beat reports)", got}
 		func() {
-			if !assert.Equal(t, "32", got["slots"], assertionMsg109...) {
+			if !assert.Equal(t, "8", got["slots"], assertionMsg109...) { // her width, the default
 				return
 			}
 			if !assert.Equal(t, "hulk", got["machine"], assertionMsg109...) {
@@ -263,8 +263,8 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
 
-	// A set in Postgres: slots, tiers, a role and her width.
-	_, _, setupErr9031 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader", "width": "4"}, "rowan")
+	// A set in Postgres: tiers, a role and her width (her desired slots).
+	_, _, setupErr9031 := st.Update(ctx, KindFriend, "stella", map[string]string{"tiers": "flash", "roles": "reader", "width": "4"}, "rowan")
 	require.NoError(t, setupErr9031)
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	assertionMsg173 := []any{"apply after set: %+v %v", res, err}
@@ -274,7 +274,7 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 		got := c.HGetAll(ctx, "friend:stella:desired").Val()
 		assertionMsg187 := []any{"stella desired %v", got}
 		func() {
-			if !assert.Equal(t, "30", got["slots"], assertionMsg187...) {
+			if !assert.Equal(t, "4", got["slots"], assertionMsg187...) {
 				return
 			}
 			assert.Equal(t, "flash", got["tiers"], assertionMsg187...)
@@ -328,9 +328,10 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 }
 
 // TestApplyRefusesAFriendNobodyCanCharge: a friend with no beat and no
-// coordinator machine in the fleet row cannot be charged to a ceiling; the
-// refusal names the fleet set that fixes it and nothing is written.
-func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
+// coordinator machine in the fleet row is recorded with machine "-" and
+// never refused: a friend's width is her one capacity number, and no machine
+// caps it (the owner, 2026-10-13).
+func TestApplyRecordsAFriendNobodyCanChargeWithNoMachine(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -343,11 +344,11 @@ func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
 		require.NoError(t, setupErr12958)
 	}
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	assertionMsg255 := []any{"nobody to charge: %v", err}
-	require.Error(t, err, assertionMsg255...)
-	require.True(t, Refused(err), assertionMsg255...)
-	require.ErrorContains(t, err, "friend rowan has no beat naming a machine and the fleet names no coordinator machine to charge the friend's slots to; run: nova-config fleet set --coordinator <machine>, then apply", assertionMsg255...)
-	require.False(t, c.SIsMember(ctx, FriendsKey, "rowan").Val(), "a refused friend was registered")
+	require.NoError(t, err, "a friend nobody can charge was refused: %v", err)
+	require.True(t, c.SIsMember(ctx, FriendsKey, "rowan").Val(), "the friend was not registered")
+	got := c.HGetAll(ctx, "friend:rowan:desired").Val()
+	require.Equal(t, noMachine, got["machine"], "friend:rowan:desired %v", got)
+	require.Equal(t, "8", got["slots"], "friend:rowan:desired %v: her slots are her width", got)
 }
 
 // TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat: the fleet row is
@@ -470,34 +471,16 @@ func TestApplyRefusesConflictWhenRedisIsAheadOfPostgres(t *testing.T) {
 	require.Equal(t, "5", scopedGot487, "stamp %s", scopedGot487)
 }
 
-func TestApplyRefusesACeilingAndAMachineInUse(t *testing.T) {
+func TestApplyRefusesAMachineInUse(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	ap, _ := redisApplier(t)
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
-	// stella 32 + rowan 32 = 64 on studio; one more slot is over the
-	// ceiling, refused by ns_capacity_desired, and named with the remedy.
-	_, _, setupErr18524 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "33"}, "rowan")
-	require.NoError(t, setupErr18524)
-	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	assertionMsg357 := []any{"over the ceiling: %v", err}
-	require.Error(t, err, assertionMsg357...)
-	require.ErrorIs(t, err, ErrCeiling, assertionMsg357...)
-	require.ErrorContains(t, err, "CEILING studio: friend stella makes the sum 65 over the machine ceiling 64", "ceiling refusal %q", err)
-	// A machine's ceiling below its friends' sum is refused by
-	// ns_capacity_machine.
-	_, _, setupErr19099 := st.Update(ctx, KindMachine, "studio", map[string]string{"slots": "10"}, "rowan")
-	require.NoError(t, setupErr19099)
-	_, err = Apply(ctx, st, ap, KindMachine, "rowan", false, func(Op) {})
-	assertionMsg366 := []any{"ceiling below the sum: %v", err}
-	require.Error(t, err, assertionMsg366...)
-	require.ErrorIs(t, err, ErrCeiling, assertionMsg366...)
-	require.ErrorContains(t, err, "CEILING studio: its friends desire 64 slots and the row says 10", assertionMsg366...)
 	// A machine that Redis still has consumers on cannot be removed (here
 	// the Redis side is exercised directly).
-	err = ap.Remove(ctx, KindMachine, "studio", "rowan", "test")
+	err := ap.Remove(ctx, KindMachine, "studio", "rowan", "test")
 	assertionMsg370 := []any{"remove a machine in use: %v", err}
 	require.Error(t, err, assertionMsg370...)
 	require.ErrorIs(t, err, ErrInUse, assertionMsg370...)
@@ -640,12 +623,10 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 // loop and route kinds' one read trip each on a store with none of their
 // rows (readHashes), and the tier kind's two read trips (its flash and pro rows
 // are made by migrate), added to every apply of all kinds:
-//   - first run: 38 trips (32 before the tier kind, whose first apply also writes
-//     its two rows and its stamp; 30 before the loop and route kinds; 42 before
-//     Cuts 2, 3, 4)
-//   - steady apply: 10 trips (8 before the tier kind; 6 before the loop and route
+//   - first run: 40 measured trips, within the unchanged bound of 41 (42 before batching cuts)
+//   - steady apply: 11 trips (10 before provider; 8 before the tier kind; 6 before the loop and route
 //     kinds; 18 before Cut 1)
-//   - two changes: 15 trips (13 before the tier kind; 11 before the loop and route
+//   - two changes: 16 trips (15 before provider; 13 before the tier kind; 11 before the loop and route
 //     kinds; 25 before Cut 2)
 func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	t.Parallel()
@@ -654,6 +635,9 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	ap, c := redisApplier(t)
 	st := seed(t)
 
+	// The new provider kind has no rows in this fixture and adds exactly one
+	// hash-kind read to each apply of all kinds, beyond the existing bounds.
+	const providerReadTrips int64 = 1
 	trips := redisconn.CountTrips(c)
 
 	// 1. First run: applies machine (2 adds), fleet (1 set), friend (2 adds), sprint (1 set)
@@ -661,25 +645,42 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	firstRunTrips := trips.N() - before
 	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
-	require.LessOrEqual(t, firstRunTrips, int64(41), "first run took %d trips, want <= 41: 30 for the four first kinds, 1 each for the loop and route kinds with no row, and 9 for the tier kind's three rows (flash, heavy, pro; was 42 before batching cuts)", firstRunTrips)
+	require.LessOrEqual(t, firstRunTrips, int64(41), "first run took %d trips, want <= 41: 30 for the four first kinds, 1 each for the loop, provider and route kinds with no row, and 9 for the tier kind's three rows (flash, heavy, pro; was 42 before batching cuts)", firstRunTrips)
 
 	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	steadyTrips := trips.N() - before
 	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
-	require.Equal(t, int64(10), steadyTrips, "steady apply took %d trips, want 10: 6 for the four first kinds, 1 each for the loop and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
+	require.Equal(t, int64(10)+providerReadTrips, steadyTrips, "steady apply took %d trips, want 11: 6 for the four first kinds, 1 each for the loop, provider and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
 
-	// 3. Two changes: update two friends (slots on stella, slots on rowan) (25 -> 11)
-	_, _, setupErr25760 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
+	// 3. Two changes: update two friends (tiers on stella, tiers on rowan) (25 -> 11);
+	// a tiers change is the one ns_capacity_desired call, as a slots change was
+	// before a friend row had only width (a width change is that call and the
+	// width field's write, one trip more)
+	_, _, setupErr25760 := st.Update(ctx, KindFriend, "stella", map[string]string{"tiers": "pro"}, "rowan")
 	require.NoError(t, setupErr25760)
-	_, _, setupErr25887 := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "24"}, "rowan")
+	_, _, setupErr25887 := st.Update(ctx, KindFriend, "rowan", map[string]string{"tiers": "frontier,pro"}, "rowan")
 	require.NoError(t, setupErr25887)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	twoChangesTrips := trips.N() - before
 	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
-	require.LessOrEqual(t, twoChangesTrips, int64(15), "two changes took %d trips, want <= 15: 11, the loop and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
+	require.LessOrEqual(t, twoChangesTrips, int64(15)+providerReadTrips, "two changes took %d trips, want <= 16: 11, the loop, provider and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
+
+	// 3b. Two width changes (width on stella, width on rowan): a friend's width
+	// is her desired slots, so each is the ns_capacity_desired call and the
+	// width field's write, one trip more per friend than a tiers change.
+	_, _, setupErrW1 := st.Update(ctx, KindFriend, "stella", map[string]string{"width": "24"}, "rowan")
+	require.NoError(t, setupErrW1)
+	_, _, setupErrW2 := st.Update(ctx, KindFriend, "rowan", map[string]string{"width": "24"}, "rowan")
+	require.NoError(t, setupErrW2)
+	before = trips.N()
+	applyKinds(t, st, ap, "rowan")
+	widthChangesTrips := trips.N() - before
+	t.Logf("two width changes trips = %d", widthChangesTrips)
+	require.LessOrEqual(t, widthChangesTrips, twoChangesTrips+2, "two width changes took %d trips, want <= %d: the two tiers changes' %d and one width write per friend", widthChangesTrips, twoChangesTrips+2, twoChangesTrips)
+	require.LessOrEqual(t, widthChangesTrips, int64(17)+providerReadTrips, "two width changes took %d trips, want <= 18", widthChangesTrips)
 
 	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
 	machine, _ := Lookup(KindMachine)
@@ -695,48 +696,14 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	machineRemovalTrips := trips.N() - before
 	t.Logf("machine removal trips = %d", machineRemovalTrips)
-	require.LessOrEqual(t, machineRemovalTrips, int64(17), "machine removal took %d trips, want <= 17: 15 and the loop and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
+	require.LessOrEqual(t, machineRemovalTrips, int64(17)+providerReadTrips, "machine removal took %d trips, want <= 18: 15 and the loop, provider and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
 }
 
-// TestRefusedMachineCeilingLeavesMachineHashUntouched proves that when
-// ns_capacity_machine refuses a lower ceiling, the writeMachine execution stops
-// immediately and leaves machine:<m> completely byte-identical / untouched.
-func TestRefusedMachineCeilingLeavesMachineHashUntouched(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	ap, c := redisApplier(t)
-	st := seed(t)
-	applyKinds(t, st, ap, "rowan")
-
-	// Capture the exact machine:studio hash fields before the refused apply.
-	beforeFields, err := c.HGetAll(ctx, MachineKey("studio")).Result()
-	require.NoError(t, err, "read machine:studio before: %v", err)
-	require.NotEmpty(t, beforeFields, "expected machine:studio to exist before update")
-
-	// Try to lower studio's slots to 10 when its friends desire 64 slots.
-	_, _, setupErr27920 := st.Update(ctx, KindMachine, "studio", map[string]string{"slots": "10"}, "rowan")
-	require.NoError(t, setupErr27920)
-	_, err = Apply(ctx, st, ap, KindMachine, "rowan", false, func(Op) {})
-	assertionMsg591 := []any{"expected ErrCeiling, got %v", err}
-	require.Error(t, err, assertionMsg591...)
-	require.ErrorIs(t, err, ErrCeiling, assertionMsg591...)
-
-	// Capture the machine:studio hash fields after the refused apply.
-	afterFields, err := c.HGetAll(ctx, MachineKey("studio")).Result()
-	require.NoError(t, err, "read machine:studio after: %v", err)
-
-	// Assert byte-identical / untouched.
-	require.Len(t, afterFields, len(beforeFields), "field count changed: before %d, after %d", len(beforeFields), len(afterFields))
-	for k, v := range beforeFields {
-		assert.Equal(t, v, afterFields[k], "machine:studio field %q was modified: before=%q, after=%q", k, v, afterFields[k])
-	}
-}
-
-// TestApplyFriendRefusesWhenCoordinatorClearedAcrossApplies verifies that clearing
-// fleet:coordinator across applies on the same RedisApplier causes an unbeat friend
-// apply to refuse ErrCeiling, rather than retaining the old cached coordinator.
-func TestApplyFriendRefusesWhenCoordinatorClearedAcrossApplies(t *testing.T) {
+// TestApplyFriendRecordsNoMachineWhenCoordinatorClearedAcrossApplies verifies
+// that clearing fleet:coordinator across applies on the same RedisApplier
+// records an unbeat friend with machine "-" rather than the old cached
+// coordinator, and never refuses her: no machine caps a friend.
+func TestApplyFriendRecordsNoMachineWhenCoordinatorClearedAcrossApplies(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -750,15 +717,15 @@ func TestApplyFriendRefusesWhenCoordinatorClearedAcrossApplies(t *testing.T) {
 	// Clear fleet:coordinator in Redis.
 	c.Del(ctx, FleetKey("coordinator"))
 
-	// Update friend rowan's slots so an apply has an OpSet for rowan (who has no beat).
-	_, _, setupErr29554 := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "20"}, "rowan")
+	// Update friend rowan's width so an apply has an OpSet for rowan (who has no beat).
+	_, _, setupErr29554 := st.Update(ctx, KindFriend, "rowan", map[string]string{"width": "20"}, "rowan")
 	require.NoError(t, setupErr29554)
 
-	// Apply friend on the same applier. It must refuse ErrCeiling because fleet coordinator is now empty.
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	assertionMsg631 := []any{"expected ErrCeiling when coordinator cleared, got %v", err}
-	require.Error(t, err, assertionMsg631...)
-	require.ErrorIs(t, err, ErrCeiling, assertionMsg631...)
+	require.NoError(t, err, "a friend with no machine to record was refused: %v", err)
+	got := c.HGetAll(ctx, "friend:rowan:desired").Val()
+	require.Equal(t, noMachine, got["machine"], "friend:rowan:desired %v: the cached coordinator was kept", got)
+	require.Equal(t, "20", got["slots"], "friend:rowan:desired %v", got)
 }
 
 // TestApplyFriendRechargesWhenBeatHostChangesAcrossApplies verifies that when a friend's
@@ -790,7 +757,7 @@ func TestApplyFriendRechargesWhenBeatHostChangesAcrossApplies(t *testing.T) {
 	// Re-add stella to the store with 16 slots and apply.
 	friendKind, ok := Lookup(KindFriend)
 	require.True(t, ok, "KindFriend not found")
-	row, err := friendKind.NewRow("stella", map[string]string{"slots": "16", "roles": "reader", "tiers": "frontier,pro"})
+	row, err := friendKind.NewRow("stella", map[string]string{"roles": "reader", "tiers": "frontier,pro"})
 	require.NoError(t, err)
 	_, setupErr31440 := st.Insert(ctx, KindFriend, row, "rowan")
 	require.NoError(t, setupErr31440)

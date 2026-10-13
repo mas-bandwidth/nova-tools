@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `pronouns` |
+| friend (decided for her) | `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `pronouns` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -135,7 +135,7 @@ nothing invented.
 | --- | --- | --- | --- | --- |
 | `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
 | `seat` | text | yes | nova-secrets: the seat on that machine (a seat, another seat, ...) | `machine:<m>` |
-| `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
+| `slots` | int | yes | apply: the machine ceiling a bench's share on it fits under (`ns_capacity_machine`, `ns_capacity_desired` for a bench); never a cap on a friend, whose width is her own (2026-10-13); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
@@ -219,10 +219,9 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `slots` | int | yes | apply: her desired slots, under the ceiling of the machine she is charged to; no machine's width | `friend:<f>:desired` slots (`ns_capacity_desired`) |
 | `tiers` | list: flash, frontier, heavy, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
-| `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
+| `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?"); and apply: her one capacity number, written as her desired slots. A friend row has no `slots` and no machine caps her width (the owner, 2026-10-13: "there is only width in nova-config."); `friend set <f> --width <n>` takes any n >= 1. the old `slots` column stays in `config.friends` (NOT NULL DEFAULT 0) and nova-tools neither reads nor writes it: nova-sprint's own copy of the friend kind still selects it, so the migration that drops it comes after nova-sprint's twin of this change is deployed | `friend:<f>:desired` width, and slots (`ns_capacity_desired`) |
 | `mode` | enum: one-shot; one-shot by default | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Batch, one session taking many cards in one turn, is retired: nova-config refuses it and every row reads as one-shot, so Migration 0030's rows too | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
@@ -313,18 +312,61 @@ would print with `dry_run=true`, and takes no lock, writes nothing and runs noth
 refuses it refuses the same. The pieces are `config.LoopRunArgv`,
 `config.NextLoopStarts` and `config.LoopMetrics` (pkg/config/looprun.go).
 
+**`provider`** (`config.providers`): one row per provider word named by a
+route. `billing` is required (`metered`, `plan`, or `both`), and `funded` is
+required (`true` or `false`), so add forces an explicit funding decision.
+`balance_usd` is an optional non-negative decimal, empty when unknown;
+when set it needs `balance_as_of` (`YYYY-MM-DD`). `console_url` is an HTTPS
+console URL or empty; `note` carries the owner's facts. Migration 0041 seeds
+one row per existing route provider with `billing=metered`, `funded=false`
+and note `made by migrate from the routes: set --funded and --billing`.
+Those defaults are a reminder to declare the facts, not evidence that the
+provider is unfunded. The migration never infers a balance or funding. Before any migration writes,
+upgrade refuses non-conforming provider words, with the fix listed for every
+route: use the previous nova-config build matching the store's schema
+(the schema40 build for a schema40 store) to run each printed
+`route set <route> --provider <new>` correction, then retry the upgrade.
+Postgres data and ledger, and FileStore bytes, stay untouched on refusal;
+no provider word is silently renamed. A legacy FileStore gets the same check
+before opening its provider seed rows.
+
+A route's `provider` is a reference to a provider row: an absent row refuses
+add or set with `nova-config provider add <name> --billing metered --funded false`
+as the usable next command; the owner then sets its actual billing and funding.
+A provider referenced by a route cannot be removed. This is the reference
+and apply-order pattern already represented by machine and friend in
+`tla/ConfigApply.tla`; route to provider introduces no new state or action
+and this cut changes no model or TLC receipt. Providers apply before routes.
+
+`status` always prints a `PROVIDER name=<name> funded=<bool> billing=<word>
+balance_usd=<value or -> as_of=<date or ->` line for each provider, followed
+by `<tier>=<enabled in array>/<enabled total>` for every tier it serves.
+Empty or absent tier arrays select all enabled routes, including frontier's
+implicit array; disabled routes do not contribute. A non-empty provider note
+appears on its line, including the migration reminder. A funded provider's enabled
+routes excluded by a non-empty array produce `CONFIG WARN provider=<name>
+funded=true routes-in-no-tier-array=<names>` and a concrete `tier set --routes`
+command preserving the existing array. A configured tier selecting no enabled
+route of any funded provider produces `CONFIG WARN tier=<tier> holds no route
+of a funded provider` and `tier show` as its remedy. These warnings are advisory
+and never change the exit code. CLI warning commands retain the chosen
+`--file`, `--pg` or `--seat`; writes carry the known actor or an explicit
+`--actor <name>` placeholder. JSON carries the provider lines as the
+`providers` fact and the same warnings as notes.
+
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
-`model:` header pins it instead. Frontier cards are never dealt from
-routes: they escalate to the coordinator, so `frontier` is no route's tier. A heavy route
+`model:` header pins it instead. The route kind accepts `frontier` alongside
+flash, pro and heavy and carries it through add, set, list and apply. Automatic
+frontier fleet dispatch requires the sprint deal integration. A heavy route
 names a headless harness (`harness`), the class of the owner's 2026-10-04 "the tier is a
 class, never a model name". Every value is data in the row: the code names no provider or model.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `tier` | enum `flash`, `pro`, `heavy` | yes | the deal: the cards of this tier are dealt on it; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
+| `tier` | enum `flash`, `frontier`, `heavy`, `pro` | yes | the deal reads the stored tier; frontier route configuration is accepted, with automatic fleet dispatch a separate sprint integration; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `harness` | enum `opencode`, `claude`, `codex`, `grok` | (opencode) | the member: the harness a card on the route runs under; `opencode` launches through the providers table with the provider's key, a headless one is the machine's own program and subscription login (the heavy tier) and its route's provider is `subscription-<harness>` (`subscription-claude`, `subscription-codex`, `subscription-grok`; refused otherwise), so a provider's rest never spans two harnesses | `route:<r>` |
@@ -508,7 +550,8 @@ config.fleet             (name PK = 'fleet', store -> machines.name,
                           added by 0033, text NOT NULL DEFAULT '~/nova-bench/loops')
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
-                          CHECK (width >= 1))
+                          CHECK (width >= 1); slots no longer read or written, dropped by a later
+                          migration once nova-sprint stops selecting it)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration; reader_tier added by 0010, dropped
@@ -533,7 +576,7 @@ config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every > 0 and keepalive, keys only with a seat,
                           argv a JSON array: the kind's Check again, as a
                           wall behind the tool)
-config.routes            (name PK, tier flash|pro, provider, model, tokens,
+config.routes            (name PK, tier flash|frontier|heavy|pro, provider, model, tokens,
                           deadline, enabled boolean, created_at,
                           updated_at; CHECK provider one word with no slash,
                           model with no blank, deadline > 0, tokens >= 0:
@@ -543,8 +586,8 @@ config.routes            (name PK, tier flash|pro, provider, model, tokens,
                           reasoning_as_output boolean, long_context,
                           billing metered|plan, price_source, price_as_of;
                           note added by 0015, text NOT NULL DEFAULT '')
-config.tiers             (name PK flash|pro, routes, created_at, updated_at;
-                          CHECK routes a comma list of names; the two rows
+config.tiers             (name PK flash|pro|heavy, routes, created_at, updated_at;
+                          CHECK routes a comma list of names; the three rows
                           inserted by the migration)
 ```
 
@@ -569,20 +612,29 @@ global ids, so they rise across kinds and never repeat.
 
 ## Apply
 
-`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
-machines (the ceilings), the fleet row (a friend with no beat is charged to
-its coordinator machine), friends, the sprint row, loops (each names a
-machine), routes:
+`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order
+(`KindNames`): machines (the ceilings), the fleet row (a friend with no beat
+is recorded with its coordinator machine), friends, the sprint row, loops (each
+names a machine), routes, tiers. **A refusal never stops a later kind**
+(tla/ConfigApply.tla, `EveryPlannedKindIsAttemptedUnlessCrashed`): every
+kind is attempted, whatever an earlier kind refused, so a refused friend
+never leaves the sprint row unapplied (the v1.2.16 incident, 2026-10-13,
+was a friend refused by the per-machine ceiling, since removed: a friend
+row has only width). There is no whole-run pre-check: each kind's own check (the
+fleet's endpoints, the routes' prices) refuses that kind only:
 
-**An enabled route with no price is refused before the plan and any write.**
+**An enabled route with no price refuses the route kind before any write.**
 Every route row that is enabled (`enabled` absent or true) must carry a price
 sheet (`cardcost.PricesOf(row.Fields).Priced`): the sprint prices a take from
 the sheet (`cardcost.Predict`), so an unpriced route records no prediction and
 a cost of `-`, or the harness's own `$0.00`, and the dashboard undercounts.
-For an every-kind apply (no `--kind`), the refusal comes before any kind is
-written, for `--kind route` before the route kind is planned or written. The
+The refusal is the route kind's only: no route is written or reported, the
+plan is read so the unwritten routes count as refused for the ref rule (a
+tier naming a new one is refused with it), and every other kind of an
+every-kind apply still applies. Missing or invalid fleet endpoints refuse the
+fleet kind the same way, and only it. The
 one `ErrInvalid` names every such route with its provider/model and the command
-that sets its price: `nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>`, plus `or nova-config route prices --refresh --provider <p>` when the provider has a list, plus `or take it out: --enabled false --note '<why>'`. Nothing is written, and `--check` refuses the same. A
+that sets its price: `nova-config route set <r> --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>`, plus `or nova-config route prices --refresh --provider <p>` when the provider has a list, plus `or take it out: --enabled false --note '<why>'`. No route is written, and `--check` refuses the same. A
 disabled route is never refused for its price, and the prices are the owner's:
 the tool never sets, guesses or defaults one.
 
@@ -596,26 +648,60 @@ the tool never sets, guesses or defaults one.
    read stops before its results are used or cached;
 3. **refuse `CONFLICT`** when the stamp is greater than the Postgres
    revision: a newer Postgres applied it, and this process would roll it
-   back. Nothing is written;
+   back. Nothing of that kind is written; the plan is made first so the
+   rows it leaves unwritten count as refused for the ref rule (step 7), and
+   every later kind still runs;
 4. **plan** the difference: `ADD` for a row Redis lacks, `SET` for one that
    differs in any field (naming the fields), `REMOVE` for a name in Redis that
    Postgres has not. Adds and sets come in the kind's apply order (friends:
    the coordinator first, so `ns_friend_roles` has one to bootstrap and a
    handover writes the new coordinator before the old), then removes by
    name;
-5. with `--check`, print the plan as `CHECK` lines and stop; nothing is
-   written, not even the function library;
+5. with `--check`, print the plan as `CHECK` lines; nothing is written, not
+   even the function library. An op `--check` already knows would be
+   refused (the kind's `Check` on the row, or the ref rule) is named on a
+   `CONFIG CHECK REFUSED kind=<k> name=<row> why=<one line> run: <remedy>`
+   line, and the check goes on to every later kind;
 6. install the `nova_sprint` function library only when the store has none
    (`fn.LoadMissing`; a deployed one is never replaced);
 7. write every op in order through the runtime's own functions, each write
    carrying `--as` and the idempotency marker `config:<kind>:<rev>` into
-   `cap:log`. A refusal from a function (`CEILING`, an actor without the
-   coordinator role) stops the apply there, is printed with its remedy, and the
-   stamp is not moved;
+   `cap:log`. A refusal (`*RefusedError`: an actor without the coordinator
+   role, a friend name that is a login, a row still in use, an invalid row;
+   never a friend's capacity) is named on one line,
+   `CONFIG REFUSED kind=<k> name=<row> why=<one line> run: <remedy>`, and the
+   kind's remaining ops are still written (`DoOps`). **The ref rule:** a row
+   whose ref or seq field names a row refused earlier in this run (the sprint
+   row's coordinator, a loop's machine, a tier's routes, the fleet's machines)
+   is refused with that reason (`ErrRefusedRef`) and never written
+   half-referenced (`RefRefused`), when the named row is absent from Redis
+   (its refused op was an add) or the op changes that ref field itself. A row
+   that only names a row still in Redis, its ref unchanged, is written: when
+   the coordinator friend's set is refused, the sprint row's `git_identity`
+   still lands. The rule judges the row actually written against Redis's,
+   so with the live seat held (the coordinator Redis keeps) the stored
+   row's coordinator never refuses it (`SprintRefusedOnlyForItsWrittenRef`).
+   A kind refused whole counts each of its pending rows refused: a route
+   kind refused for one unpriced route refuses a tier whose `routes` names
+   any route with a pending add or set, priced or not, until that route is
+   priced or disabled;
 8. **stamp** `config:decl rev:<kind> = <rev>, at:<kind> = <server ms>`,
    compare-and-set: inside `WATCH config:decl`, the stamp is written only
    while it still reads the value step 2 read; a stamp that moved is
-   `CONFLICT`.
+   `CONFLICT`. **A kind with any refused op is not stamped**
+   (`StampedKindHasNoRefusal`): its revision stays behind, so `nova-config
+   status` still says so and the next apply retries only the diff.
+
+What still stops the run at once: a store or connection error that is not a
+refusal (exit 2), even after a refusal in the same kind; that kind's refusals
+are named first, and no later kind is written (`StoreErrorStopsTheRun`). The run ends with `CONFIG APPLY OK kinds=<n>` and exit 0
+when nothing was refused; else with one `CONFIG APPLY REFUSED
+kinds=<k:count,...> applied=<kinds fully applied, or -> run: <the first remedy>` line and exit 1
+(`CONFIG CHECK REFUSED ...` under `--check`, which prints no end line when
+nothing would be refused). The per-kind `CONFIG APPLY kind=...` line is
+printed for each kind that applied, and not for a refused one; a whole-kind
+refusal (`CONFLICT`, the fleet's endpoints, an unpriced route) is one stderr
+line, as before, and counted in the end line.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
 zero, the revision unchanged (steady apply is 8 Redis round trips down from 18, two of them the loop
@@ -626,9 +712,8 @@ each machine running its ceiling check before its write transaction).
 
 ### What apply writes, per kind
 
-**machine:** `ns_capacity_machine(m, slots)` for the ceiling (refused
-`CEILING` when the friends and benches on it already desire more than
-`slots`; cores and memory are never declared, so the call carries none and
+**machine:** `ns_capacity_machine(m, slots)` for the ceiling (never
+refused because of friends: no machine caps a friend; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
 width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
@@ -639,13 +724,15 @@ deleted and the name leaves `machines`.
 **fleet:** one plain `SET fleet:<field> <value>` per declared field, `DEL` for
 a field the row leaves empty. Never removed.
 
-**friend:** `ns_capacity_desired(friend, f, slots, machine, ..., tiers)`
-(registers in `friends`, writes `friend:<f>:desired`, refuses `CEILING`).
-The machine is the one her slots are charged to: the `host` her own beat
-(`friend:<f>:beat`) reports when she has one (friends may run on any bench),
-else the fleet's coordinator machine (`fleet:coordinator`, written a moment
-before) as the default charge; neither is a refusal naming `nova-config
-fleet set --coordinator <machine>`. Her width, when it differs, is a plain
+**friend:** `ns_capacity_desired(friend, f, width, machine, ..., tiers)`
+(registers in `friends`, writes `friend:<f>:desired` with her width as its
+`slots`, so every reader of the desired slots reads her width). Nothing caps
+a friend: the function has no ceiling for kind friend and never answers
+`CEILING` or `NOCEILING` for her (tla/ConfigApply.tla,
+`FriendWidthNeverRefused`). The machine is recorded, never charged: the
+`host` her own beat (`friend:<f>:beat`) reports when she has one (friends
+may run on any bench), else the fleet's coordinator machine
+(`fleet:coordinator`, written a moment before), else `-`; none is a refusal. Her width, when it differs, is a plain
 `HSET friend:<f>:desired width <n>`, a field no function reads or writes, and
 her mode and config_dir the same way, `HSET friend:<f>:desired mode <m>` and
 `HSET friend:<f>:desired config_dir <dir>` (`""` when unset).
@@ -691,6 +778,11 @@ the hash lacks or holds out of shape reads back as the type's zero, so a
 hash changed by hand is put back by the next apply. Remove: the hash and the
 name in `loops` go in one transaction, with a `config-remove` receipt in
 `cap:log`.
+
+**provider:** the hash `provider:<name>` with name, billing, funded,
+balance_usd, balance_as_of, console_url, note, rev and at; the set `providers`.
+Remove deletes the hash and removes the name from the set. nova-sprint's
+`ProviderSubject` uses the same word for a judgment subject, not a Redis key.
 
 **route:** the hash `route:<r>` with every field of the row, `name`, `rev`
 and `at`, written whole in one transaction with the name added to the set
@@ -739,7 +831,7 @@ CONFIG KINDS count=<n>
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
 missing row, a ref naming no row, a row another names, a set that breaks
-the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind;
+the kind's `Check`, working copies, `CONFLICT`, a status behind;
 and `migrate --dry-run` ending `ready=no`, which prints its lines and no
 refusal line, since nothing was attempted); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is
@@ -750,6 +842,37 @@ result as one object in `pkg/tool`'s shape (`result`, `facts`, `items`,
 local JSON file (`config.FileStore`), for trying the tool with no database.
 
 ## Connecting
+
+The first named store wins: `--file`, then `--pg`, `NOVA_PG_DSN`, the
+`--seat`/`NOVA_SEAT` profile, the recorded `nova-config login`, then the
+applied fleet row's `pg_dsn` in Redis (`fleet:pg_dsn`). `--file` is exclusive
+with `--pg` and the selected seat. A selected source's invalid DSN, missing
+password or failed connection is a refusal; it never falls through to another
+source. Explicit DSNs do not read the seat or login or dial Redis to discover
+the store.
+
+The last lookup reads the fleet view from the Redis reached without a flag:
+`NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, the seat, then the recorded
+`nova-sprint seat login`. It uses the same Redis credentials as other reads
+and bounds the Redis network open/read to ten seconds, or the caller's
+shorter deadline, after the existing recorded-credential resolution, which
+keeps its own timeout. The fleet DSN goes through `config.ResolveDSN`: the variable
+`NOVA_PG_PASSWORD_ENV` names, else `NOVA_PG_PASSWORD`, else no password.
+Redis remains a rebuildable copy: losing it removes this last discovery
+source, while explicit store sources still work. `status` names the selected
+PostgreSQL source as `pg-from=flag|env|seat|login|fleet-redis` beside
+`redis-from=`; a file store has no `pg-from`.
+
+When no store is named, the one-line refusal names each absent source in
+order: `no store named: --pg not given; NOVA_PG_DSN unset;
+--seat/NOVA_SEAT unset; nova-config login <path>: none; fleet:pg_dsn in
+Redis <addr> (from <source>): empty|<error class>`. With no Redis address,
+the last entry is `no Redis named (NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR,
+seat, nova-sprint seat login <path>: none|<error class>)`. Redis errors
+print `unreachable`, `auth-refused` or `other` through `redisconn.Classify`,
+never their raw text or credentials. The remedy is
+`run: nova-config login, or export
+NOVA_PG_DSN=postgres://user@host:5432/nova, or --file <path>`.
 
 `--pg <dsn>` (env `NOVA_PG_DSN`) is `postgres://user@host:port/db` with **no
 password on the line**: a `--pg` carrying one is refused, because a `ps`
@@ -831,8 +954,8 @@ paths are recorded absolute and `--sops` left off is the `sops` on `PATH`. A
 login is recorded only when its secret resolves, and a `--dsn` that carries a
 password is refused without recording and without quoting it.
 
-Every verb after it opens PostgreSQL as follows. The DSN is `--pg`, else
-`NOVA_PG_DSN`, else the recorded DSN. The password is the environment's when
+Every verb follows Connecting above: `--pg`, `NOVA_PG_DSN`, the selected
+seat, the recorded DSN, then the applied fleet row in Redis. The password is the environment's when
 `NOVA_PG_PASSWORD_ENV` is set (the variable it names), which wins, including
 when the address is the recorded DSN; else, when the DSN is `--pg` or
 `NOVA_PG_DSN`, the variable `NOVA_PG_PASSWORD` when that is set, and the
@@ -841,8 +964,8 @@ process through `secrets.ReadLogin` (pkg/secrets/login.go), the path
 `nova-secrets exec` takes (`OpenSeatFile`), and put into the connection in
 memory. It is never printed, never written, and never in the process's
 environment, so no child of the verb inherits it. `--as`, else `NOVA_FRIEND`,
-else the recorded friend, is the actor. `--file` and `--seat` are unchanged
-and do not read the recorded secret.
+else the recorded friend, is the actor. `--file`, the selected seat, and
+the applied fleet row do not read the nova-config login secret.
 
 A recorded secret that does not resolve, or a login file that is not a whole
 login, is a refusal naming the file and the remedy (`nova-config login

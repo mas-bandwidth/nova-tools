@@ -69,7 +69,7 @@ const (
 // output: a stream error, a server_error, a rate limit, an overload, an account out of
 // credit or quota (`Insufficient credits`, `Insufficient account funds`, `out of credit`,
 // a quota, a payment required), or an HTTP 402, 429 or 5xx status (nova-tools#5199).
-var providerErrorRE = regexp.MustCompile(`(?i)message="?stream error|server_error|rate.?limit|overloaded|insufficient|out of credit|quota|payment required|\b(?:http|status|statuscode)\W{0,3}(?:402|429|5\d\d)\b`)
+var providerErrorRE = regexp.MustCompile(`(?i)message="?stream error|h2 protocol error|internal_error|server_error|rate.?limit|overloaded|insufficient|out of credit|quota|payment required|\b(?:http|status|statuscode)\W{0,3}(?:402|429|5\d\d)\b`)
 
 // providerLogError is the first provider error line in what the run appended to the
 // harness's log after offset (bounded to its tail), trimmed to the line's own message;

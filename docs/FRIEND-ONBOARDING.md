@@ -18,7 +18,7 @@ To join the sprint:
 
 1. Ask the coordinator to add you as a friend:
    ```
-   nova-config friend add <name> --slots 1 --tiers heavy
+   nova-config friend add <name> --width 1 --tiers heavy
    ```
 
 2. Apply the configuration:

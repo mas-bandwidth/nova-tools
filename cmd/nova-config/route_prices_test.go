@@ -38,6 +38,7 @@ func TestRoutePricesRefreshSetsTheListPrice(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t)
+	addProviders(t, h.store, "deepseek", "opencode", "openrouter")
 	for _, args := range [][]string{
 		{"route", "add", "flash-ds-openrouter", "--tier", "flash", "--provider", "openrouter", "--model", "deepseek/deepseek-v4-flash", "--deadline", "60",
 			"--price_input", "0.29", "--price_cache_read", "0.006", "--price_output", "1.10", "--price_as_of", "2026-10-01", "--price_source", "typed"},

@@ -106,14 +106,14 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=default: a sprint member at half its cores"), "machine add: %q", out)
 	_, errs = r.run(t, 1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	require.Equal(t, "nova-config machine add REFUSED: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate machine: %q", errs)
-	out, _ = r.run(t, 0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier,pro", "--roles", "builder")
+	out, _ = r.run(t, 0, "friend", "add", "rowan", "--tiers", "frontier,pro", "--roles", "builder")
 	require.Equal(t, "CONFIG ADD kind=friend name=rowan rev=2\n", out, "friend add: %q", out)
-	_, errs = r.run(t, 1, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier")
+	_, errs = r.run(t, 1, "friend", "add", "rowan", "--tiers", "frontier")
 	require.Equal(t, "nova-config friend add REFUSED: friend rowan exists; run: nova-config friend set rowan --<field> <value>\n", errs, "duplicate friend: %q", errs)
-	out, _ = r.run(t, 0, "friend", "set", "rowan", "--slots", "64", "--roles", "")
-	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,slots\n", out, "friend set: %q", out)
+	out, _ = r.run(t, 0, "friend", "set", "rowan", "--width", "16", "--roles", "")
+	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,width\n", out, "friend set: %q", out)
 	out, _ = r.run(t, 0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=- width=8 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=- width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "studio")
 	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false note=- created="), "machine show: %q", out)
 	// The fleet row: there since migrate, set without a name, a machine it
@@ -136,7 +136,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	require.Len(t, lines, 3, "history:\n%s", out)
 	require.True(t, strings.HasPrefix(lines[0], "HISTORY id=2 kind=friend name=rowan op=add actor=rowan at="), "history:\n%s", out)
-	require.True(t, strings.HasSuffix(lines[1], " roles=builder>- slots=32>64"), "history:\n%s", out)
+	require.True(t, strings.HasSuffix(lines[1], " roles=builder>- width=8>16"), "history:\n%s", out)
 	require.Equal(t, "CONFIG HISTORY kind=friend name=rowan changes=2", lines[2], "history:\n%s", out)
 	out, _ = r.run(t, 0, "friend", "remove", "rowan")
 	require.Equal(t, "CONFIG REMOVE kind=friend name=rowan rev=7\n", out, "friend remove: %q", out)
@@ -156,7 +156,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "machine", "remove", "studio")
 	require.Equal(t, "CONFIG REMOVE kind=machine name=studio rev=9\n", out, "machine remove: %q", out)
 	out, _ = r.run(t, 0, "status")
-	require.Contains(t, out, " schema="+strconv.Itoa(n)+" machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=-", "status: %q", out)
+	require.Contains(t, out, " schema="+strconv.Itoa(n)+" pg-from=env machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=-", "status: %q", out)
 	// The width: set on the row, printed as set, with no Redis anywhere.
 	r.run(t, 0, "machine", "add", "wide", "--user", "u", "--seat", "s", "--slots", "160", "--width", "16")
 	out, _ = r.run(t, 0, "machine", "set", "wide", "--width", "32")
@@ -173,8 +173,8 @@ func TestApplyEndToEnd(t *testing.T) {
 	r.run(t, 0, "migrate")
 	r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	r.run(t, 0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "64", "--runners", "2")
-	r.run(t, 0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier", "--roles", "builder")
-	r.run(t, 0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro", "--roles", "reader")
+	r.run(t, 0, "friend", "add", "rowan", "--tiers", "frontier", "--roles", "builder")
+	r.run(t, 0, "friend", "add", "stella", "--tiers", "frontier,pro", "--roles", "reader")
 	r.run(t, 0, "fleet", "set", "--store", "hulk", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", "postgres://nova_config@localhost:5432/nova")
 	r.run(t, 0, "sprint", "set", "--coordinator", "rowan")
 	// stella's beat says she runs on hulk; rowan has none and is charged to
@@ -183,7 +183,7 @@ func TestApplyEndToEnd(t *testing.T) {
 
 	// --check prints the plan and writes nothing but that beat.
 	out, _ := r.run(t, 0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn,loops_dir\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,git_identity,max_attempts\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=heavy\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=3 set=0 remove=0 rev=0 applied=0\n"
+	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn,loops_dir\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,git_identity,max_attempts\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=provider add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=heavy\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=3 set=0 remove=0 rev=0 applied=0\n"
 	require.Equal(t, want, out, "apply --check:\n%s\nwant:\n%s", out, want)
 	nCheck221, _ := r.client.DBSize(ctx).Result()
 	require.Equal(t, int64(1), nCheck221, "--check wrote %d keys (the beat is the one)", nCheck221-1)
@@ -194,7 +194,7 @@ func TestApplyEndToEnd(t *testing.T) {
 		require.Contains(t, out, want, "apply output lacks %q:\n%s", want, out)
 	}
 	gotCheck232 := r.client.HGetAll(ctx, "friend:rowan:desired").Val()
-	require.Equal(t, "32", gotCheck232["slots"], "friend:rowan:desired %v (charged to the coordinator machine)", gotCheck232)
+	require.Equal(t, "8", gotCheck232["slots"], "friend:rowan:desired %v (charged to the coordinator machine)", gotCheck232)
 	require.Equal(t, "studio", gotCheck232["machine"], "friend:rowan:desired %v (charged to the coordinator machine)", gotCheck232)
 	require.Equal(t, "frontier", gotCheck232["tiers"], "friend:rowan:desired %v (charged to the coordinator machine)", gotCheck232)
 	gotCheck235 := r.client.HGetAll(ctx, "friend:stella:desired").Val()
@@ -228,7 +228,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	require.Equal(t, "5", gotCheck262["rev:fleet"], "config:decl %v", gotCheck262)
 	require.Equal(t, "6", gotCheck262["rev:sprint"], "config:decl %v", gotCheck262)
 	out, _ = r.run(t, 0, "status")
-	require.Contains(t, out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6 loop_applied=0 route_applied=0 tier_applied=0\n", "status after apply: %q", out)
+	require.Contains(t, out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n", "status after apply: %q", out)
 
 	// The live measured facts: list and show with the Redis at hand print
 	// what the beat says after the declared fields, beat=none for a
@@ -503,4 +503,32 @@ func TestAnsibleInventoryFailsLoudlyWithTheVariableTheHelpPrints(t *testing.T) {
 	require.Equal(t, 0, codeCheck499, "without the variable ansible exits %d, want 0 (it hides the failure): %s", codeCheck499, outCheck499)
 	codeCheck502, outCheck502 := sh(ansibleLine)
 	require.NotEqual(t, 0, codeCheck502, "with the variable ansible exits 0 on a failing inventory script: %s", outCheck502)
+}
+
+// TestAFriendOfWidthSixteenAppliesOnAOneSlotMachine is the functional half of
+// a-friend-row-has-only-width (the owner, 2026-10-13: "there is only width in
+// nova-config."): on a real Postgres
+// and Redis, a friend of width 16 whose only machine has one slot applies
+// with exit 0, and her desired slots are her width. No machine caps a friend
+// (tla/ConfigApply.tla, FriendWidthNeverRefused).
+func TestAFriendOfWidthSixteenAppliesOnAOneSlotMachine(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	r := newReal(t, true)
+	r.env["NOVA_FRIEND"] = "x" // the first coordinator writes the roles as herself
+	r.run(t, 0, "migrate")
+	r.run(t, 0, "machine", "add", "m", "--user", "u", "--seat", "m", "--slots", "1")
+	r.run(t, 0, "friend", "add", "x", "--width", "16", "--tiers", "frontier,pro", "--roles", "builder")
+	r.run(t, 0, "fleet", "set", "--coordinator", "m", "--redis_port", "6380", "--pg_dsn", "postgres://nova_config@localhost:5432/nova")
+	r.run(t, 0, "sprint", "set", "--coordinator", "x")
+	out, errs := r.run(t, 0, "apply")
+	require.Contains(t, out, "APPLY ADD kind=friend name=x\n", "apply:\n%s\n%s", out, errs)
+	got := r.client.HGetAll(ctx, "friend:x:desired").Val()
+	require.Equal(t, "16", got["slots"], "friend:x:desired %v: her desired slots are her width", got)
+	require.Equal(t, "16", got["width"], "friend:x:desired %v", got)
+	require.Equal(t, "m", got["machine"], "friend:x:desired %v", got)
+	require.Equal(t, "1", r.client.HGet(ctx, config.MachineCeilingKey("m"), "slots").Val(), "machine m's slots")
+	_, errs = r.run(t, 2, "friend", "set", "x", "--slots", "16")
+	require.Contains(t, errs, "unknown flag --slots", "friend set --slots: %q", errs)
 }

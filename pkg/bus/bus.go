@@ -52,7 +52,7 @@ const Consumer = "nova-bus2"
 
 // unknown is the refusal of a name the roster does not hold, with how to add one.
 func unknown(n string) string {
-	return fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus names lists them); add one with nova-config friend add %s --slots 1 --tiers flash --as <you>, then nova-config apply", n, n)
+	return fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus names lists them); add one with nova-config friend add %s --width 1 --tiers flash --as <you>, then nova-config apply", n, n)
 }
 
 // nameRe is a name: lowercase letters, digits and hyphens.

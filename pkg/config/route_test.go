@@ -29,7 +29,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	assert.Equal(t, "tier,provider,model,harness,tokens,usd,deadline,enabled,first,"+
 		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
 		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "harness": TypeEnum, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool, "first": TypeBool,
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeRef, "model": TypeText, "harness": TypeEnum, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool, "first": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
 		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
@@ -39,7 +39,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 		assert.Equal(t, required[f.Name], f.Required, "--%s required", f.Name)
 	}
 	tier, _ := k.Field("tier")
-	assert.Equal(t, []string{"flash", "pro", "heavy"}, tier.Enum, "frontier cards escalate to the coordinator and are never drawn from routes")
+	assert.Equal(t, []string{"flash", "frontier", "heavy", "pro"}, tier.Enum, "a frontier card is dealt only on a frontier route")
 	for _, w := range tier.Enum {
 		assert.Contains(t, Tiers, w, "a route tier is a tier")
 	}
@@ -54,6 +54,42 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	assert.Nil(t, h.extra, "a route has no derived field")
 	assert.Equal(t, []any{"log", LoopLog("~/nova-bench/loops", "l1")}, hashKinds[KindLoop].extra(Row{Name: "l1", Fields: map[string]string{"log": LoopLog("~/nova-bench/loops", "l1")}}))
 	assert.Equal(t, LoopsKey, hashKinds[KindLoop].set)
+}
+
+// A route may be frontier tier (kind.go: the route kind's tier field, Tiers;
+// docs/SPEC-CONFIG.md, "route"): a frontier card is dealt only on a frontier
+// route, so the route kind's tier field accepts frontier beside flash, pro and
+// heavy. The file store adds, lists and reads a frontier route back, and an
+// unknown tier is still refused naming the four route tiers.
+func TestARouteMayBeFrontier(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := reopening{t: t, path: migratedFile(t)}
+
+	k, _ := Lookup(KindRoute)
+	row, err := k.NewRow("frontier-a", map[string]string{
+		"tier": "frontier", "provider": "opencode", "model": "frontier-1", "deadline": "1800",
+	})
+	require.NoError(t, err)
+	addProvider(t, st, row.Fields["provider"])
+	_, err = st.Insert(ctx, KindRoute, row, "a1")
+	require.NoError(t, err)
+
+	rows, err := st.List(ctx, KindRoute)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "frontier", rows[0].Fields["tier"], "list carries the frontier tier")
+
+	got, found, err := st.Get(ctx, KindRoute, "frontier-a")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "frontier", got.Fields["tier"], "read back carries the frontier tier")
+
+	_, err = k.NewRow("bad", map[string]string{
+		"tier": "max", "provider": "p", "model": "m", "deadline": "60",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `--tier "max": want one of flash, frontier, heavy, pro`)
 }
 
 func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
@@ -96,11 +132,6 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			name: "a headless harness on another headless harness's provider word",
 			raw:  map[string]string{"tier": "heavy", "provider": "subscription-claude", "model": "m", "harness": "codex", "deadline": "900"},
 			errs: []string{"want --provider subscription-codex"},
-		},
-		{
-			name: "frontier is no route's tier",
-			raw:  map[string]string{"tier": "frontier", "provider": "p", "model": "m", "deadline": "60"},
-			errs: []string{`--tier "frontier": want one of flash, pro`},
 		},
 		{
 			name: "a provider with a slash",
@@ -208,10 +239,11 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 	cases := []struct {
 		name    string
 		changes map[string]string
+		usage   bool   // refused before a store, because the provider is a reference
 		refuse  string // "" when the set is accepted
 	}{
 		{name: "deadline 0", changes: map[string]string{"deadline": "0"}, refuse: "--deadline 0"},
-		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash"},
+		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash", usage: true},
 		{name: "an empty model", changes: map[string]string{"model": ""}, refuse: `--model ""`},
 		{name: "out of the deal with its reason", changes: map[string]string{"enabled": "false", "note": "4 of 52 ok"}},
 		{name: "a headless harness left on the provider word of opencode", changes: map[string]string{"harness": "claude"}, refuse: "want --provider subscription-claude"},
@@ -235,9 +267,21 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 			st := NewMem()
 			row, err := k.NewRow("r1", proRoute("opencode"))
 			require.NoError(t, err)
+			addProvider(t, st, row.Fields["provider"])
 			_, err = st.Insert(ctx, KindRoute, row, "t")
 			require.NoError(t, err)
 			changes, err := k.Changes(tc.changes)
+			if tc.usage {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.refuse)
+				hist, historyErr := st.History(ctx, KindRoute, "r1")
+				require.NoError(t, historyErr)
+				assert.Len(t, hist, 1, "a usage refusal writes nothing")
+				return
+			}
+			if name := changes["provider"]; name != "" {
+				addProvider(t, st, name)
+			}
 			require.NoError(t, err, "each field is valid alone")
 			after, _, err := st.Update(ctx, KindRoute, "r1", changes, "t")
 			hist, _ := st.History(ctx, KindRoute, "r1")
@@ -287,6 +331,7 @@ func TestApplyWritesRoutesAndReachesParity(t *testing.T) {
 	for _, p := range []string{"opencode", "deepseek"} {
 		row, err := k.NewRow("pro-"+p, proRoute(p))
 		require.NoError(t, err)
+		addProvider(t, st, row.Fields["provider"])
 		_, err = st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
 	}
@@ -348,6 +393,7 @@ func TestARouteATierNamesIsHeld(t *testing.T) {
 	for _, name := range []string{"flash-a", "flash-b"} {
 		row, err := route.NewRow(name, map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"})
 		require.NoError(t, err)
+		addProvider(t, st, row.Fields["provider"])
 		_, err = st.Insert(ctx, KindRoute, row, "a1")
 		require.NoError(t, err)
 	}

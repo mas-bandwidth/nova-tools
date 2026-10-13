@@ -96,7 +96,7 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 
 	code, _, errs = do("friend", "list")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "--pg is required")
+	assert.Contains(t, errs, "no store named")
 	assert.Contains(t, errs, "nova-config login")
 	assert.Empty(t, dsns)
 	assert.Empty(t, reads)
@@ -143,7 +143,7 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 	ok, fact := applied(dsns[len(dsns)-1], "nova_config", "127.0.0.1:5432", recordedPassword)
 	require.True(t, ok, "bare list: %s", fact)
 
-	code, _, errs = do("friend", "add", "f1", "--slots", "8", "--tiers", "flash", "--roles", "builder")
+	code, _, errs = do("friend", "add", "f1", "--tiers", "flash", "--roles", "builder")
 	require.Equal(t, 0, code, errs)
 	ok, fact = applied(dsns[len(dsns)-1], "nova_config", "127.0.0.1:5432", recordedPassword)
 	require.True(t, ok, "bare add: %s", fact)
@@ -207,7 +207,7 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 	assert.Contains(t, out, "resolves=yes")
 	delete(h.env, "NOVA_PG_DSN")
 	delete(h.env, "NOVA_PG_PASSWORD_ENV")
-	code, _, errs = do("friend", "set", "f1", "--slots", "8")
+	code, _, errs = do("friend", "set", "f1", "--width", "8")
 	require.Equal(t, 0, code, errs)
 	code, out, errs = do("friend", "history", "f1")
 	require.Equal(t, 0, code, errs)

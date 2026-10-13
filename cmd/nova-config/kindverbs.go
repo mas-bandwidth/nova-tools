@@ -159,7 +159,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -207,6 +207,15 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			next = toolName + " " + k.Name + " show"
 		}
 	}
+	// Preserve the typed provider target on add, set and dry-run, even when
+	// the invalid reference was unchanged by set. One scoped command is runnable.
+	refuseWrite := func(err error) int {
+		var ref *config.RefusedError
+		if errors.As(err, &ref) && ref.MissingRefKind == config.KindProvider {
+			return refused(stderr, verb, ref.Detail, ref.Remedy+" --actor "+shq(actor)+c.again())
+		}
+		return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+	}
 	if k.Name == config.KindLoop && d.probe != nil {
 		if err := checkLoopVerb(ctx, st, add, row, changes, d.probe); err != nil {
 			return refuse(stderr, verb, err.Error())
@@ -225,7 +234,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if *dry {
 		plan, err := config.PlanWrite(ctx, st, op, k.Name, row, changes)
 		if err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return refuseWrite(err)
 		}
 		plan.Actor = actor
 		plan.Reason = reasonText
@@ -243,11 +252,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	if add {
 		if id, err = st.Insert(config.WithReason(ctx, reasonText), k.Name, row, actor); err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return refuseWrite(err)
 		}
 	} else {
 		if _, id, err = st.Update(config.WithReason(ctx, reasonText), k.Name, name, changes, actor); err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return refuseWrite(err)
 		}
 		changed = slices.Sorted(maps.Keys(changes))
 	}
@@ -385,7 +394,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -515,7 +524,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "list takes no name; want "+verb)
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -583,7 +592,7 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if err := config.ValidateName(name); err != nil {
 		problems = append(problems, err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
+	dsn, err := c.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -669,5 +678,5 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 // a route and a machine since 15): each of its verbs refuses on a store older
 // than this binary's migrations (behindSchema), which does not have it.
 func laterKind(k *config.Kind) bool {
-	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine
+	return k.Name == config.KindProvider || k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine
 }

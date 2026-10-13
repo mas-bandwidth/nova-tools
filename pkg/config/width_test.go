@@ -25,7 +25,7 @@ func seedWidths(t *testing.T) *Mem {
 
 func addFriend(t *testing.T, m *Mem, name, slots string) {
 	t.Helper()
-	_, setupErr1036 := m.Insert(context.Background(), KindFriend, Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}, "t")
+	_, setupErr1036 := m.Insert(context.Background(), KindFriend, Row{Name: name, Fields: map[string]string{"tiers": "flash", "roles": "builder"}}, "t")
 	require.NoError(t, setupErr1036)
 }
 

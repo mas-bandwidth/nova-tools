@@ -22,7 +22,7 @@ func (h *harness) machine(t *testing.T, name, width string) {
 
 func (h *harness) friend(t *testing.T, name, slots string) {
 	t.Helper()
-	row := config.Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}
+	row := config.Row{Name: name, Fields: map[string]string{"tiers": "flash", "roles": "builder"}}
 	_, err := h.store.Insert(context.Background(), config.KindFriend, row, "t")
 	require.NoError(t, err)
 }
@@ -78,7 +78,7 @@ func TestMachineSelfCheckIsTwoWhenTheNameIsNoRowAndThreeWhenUnreadable(t *testin
 	require.Contains(t, errsCheck74, "the config cannot be read", "store down: %d %q", codeCheck74, errsCheck74)
 	codeCheck77, _, errsCheck77 := h.run(t, "machine", "self", "--check")
 	require.Equal(t, 3, codeCheck77, "no dsn: %d %q", codeCheck77, errsCheck77)
-	require.Contains(t, errsCheck77, "--pg is required", "no dsn: %d %q", codeCheck77, errsCheck77)
+	require.Contains(t, errsCheck77, "no store named", "no dsn: %d %q", codeCheck77, errsCheck77)
 	h2 := newHarness()
 	h2.hostname = ".x"
 	codeCheck82, _, errsCheck82 := h2.run(t, "machine", "self")

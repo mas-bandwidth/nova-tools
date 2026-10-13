@@ -169,13 +169,14 @@ const (
 
 // The kinds of this cut (docs/SPEC-CONFIG.md, "The kinds of this cut").
 const (
-	KindMachine = "machine"
-	KindFleet   = "fleet"
-	KindFriend  = "friend"
-	KindSprint  = "sprint"
-	KindLoop    = "loop"
-	KindRoute   = "route"
-	KindTier    = "tier"
+	KindMachine  = "machine"
+	KindFleet    = "fleet"
+	KindFriend   = "friend"
+	KindSprint   = "sprint"
+	KindLoop     = "loop"
+	KindProvider = "provider"
+	KindRoute    = "route"
+	KindTier     = "tier"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -269,19 +270,15 @@ func FriendTokenCap(r Row) int64 {
 }
 
 // checkFriend is the friend kind's Check (docs/SPEC-CONFIG.md, "friend"): her
-// width is at least 1 and no wider than her slots, a friend working no job at
-// once being no friend of the sprint's (remove the row instead), her
-// config_dir, when set, is an absolute path, and each stream restriction is a
-// glob the matcher reads. A width that failed its own validation is absent and
-// skipped.
+// width is at least 1, a friend working no job at once being no friend of the
+// sprint's (remove the row instead), and nothing else bounds it: a friend's
+// width is her one capacity number, with no slots and no machine ceiling (the
+// owner, 2026-10-13). Her config_dir, when set, is an absolute path, and each
+// stream restriction is a glob the matcher reads. A width that failed its own
+// validation is absent and skipped.
 func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs the friend works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
-	}
-	if w, ok := r.Fields["width"]; ok && w != "" {
-		if s, ok := r.Fields["slots"]; ok && s != "" && r.Int("width") > r.Int("slots") {
-			return fmt.Errorf("friend %s has width %s and slots %s; a friend's width cannot exceed the friend's slots: want --width <n> <= --slots <n>", r.Name, w, s)
-		}
 	}
 	if d := r.Fields["config_dir"]; d != "" && !filepath.IsAbs(d) {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
@@ -298,13 +295,16 @@ func checkFriend(r Row) error {
 	return nil
 }
 
-// Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
-// (docs/SPEC-CONFIG.md, "friend"); TestTiersMatchCapacityFilter holds the Go
-// and Lua lists equal.
+// Tiers are the model tiers, capacity.lua's filter_ok list
+// (docs/SPEC-CONFIG.md, "friend"); a friend's tiers field and a route's tier
+// field are both one of these. TestTiersMatchCapacityFilter holds the Go and
+// Lua lists equal.
 var Tiers = []string{"flash", "frontier", "heavy", "pro"}
 
-// RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
-// are never drawn from routes and escalate to the coordinator.
+// RouteTiers are the tiers migrate makes a route array row for (the tier
+// kind's Seed, and checkTier's names): flash, pro and heavy. A route's tier
+// field is the wider Tiers, accepting frontier beside them for storage and
+// apply. Automatic frontier fleet dispatch requires the sprint deal integration.
 var RouteTiers = []string{"flash", "pro", "heavy"}
 
 // The sprint row's two bars on a decide read's p(defect) (pkg/decide, Bars;
@@ -458,8 +458,8 @@ func checkSprint(r Row) error {
 const CoordinatorRole = "coordinator"
 
 // Kinds is the registry, in apply order: machines first, the fleet row next
-// (it names machines, and a friend's desired slots are charged to the
-// fleet's coordinator machine when her beat names none), friends, the
+// (it names machines, and a friend with no beat is recorded with the
+// fleet's coordinator machine, never charged against it), friends, the
 // sprint row (it names a friend), loops (each names a machine), routes
 // (each names no row), and tiers last (each names routes).
 //
@@ -477,7 +477,7 @@ var Kinds = []*Kind{
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
-			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which a bench's share on it fits under; never a cap on a friend, whose width is the friend's own; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
@@ -506,12 +506,11 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: the friend's slots, which tiers the friend can do, the friend's roles, and the friend's width, the jobs the friend works at once, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by, and the optional streams and kinds restrictions on the work the friend may be dealt",
+		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by, and the optional streams and kinds restrictions on the work the friend may be dealt",
 		Fields: []Field{
-			{Name: "slots", Type: TypeInt, Required: true, Help: "the friend's desired slots, under the ceiling of the machine the friend's beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers the friend can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
-			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs the friend works at once, the width nova-sprint friend sync sets on the friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
+			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs the friend works at once, the width nova-sprint friend sync sets on the friends row and the friend's one capacity number (apply writes it as friend:<f>:desired slots; there is no friend slots field and no machine ceiling caps it); at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how the daemon hands the friend work: one-shot (width lanes, each its own session, handed one card per turn); the retired batch (one session, many cards in one turn) is refused"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, the account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
@@ -575,16 +574,30 @@ var Kinds = []*Kind{
 		Derive: deriveLoopLog,
 	},
 	{
+		Name:  KindProvider,
+		Table: "providers",
+		Doc:   "a model provider's declared funding and billing: every route names one; migration seeds unfunded rows until the owner declares the facts",
+		Fields: []Field{
+			{Name: "billing", Type: TypeEnum, Enum: []string{"metered", "plan", "both"}, Required: true, Help: "how it is paid: metered (usage), plan (subscription), or both"},
+			{Name: "funded", Type: TypeBool, Required: true, Help: "whether it is funded, explicitly true or false; migration's false means the owner has not declared funding yet (see note)"},
+			{Name: "balance_usd", Type: TypeDecimal, Help: "the last known USD balance, a non-negative decimal; empty when unknown, with --balance_as_of when set"},
+			{Name: "balance_as_of", Type: TypeText, Help: "the balance's observation date, YYYY-MM-DD; required when --balance_usd is set"},
+			{Name: "console_url", Type: TypeText, Help: "the provider's HTTPS console URL; empty when unknown"},
+			noteField("the owner's funding facts, or migration's reminder to declare them"),
+		},
+		Check: checkProvider,
+	},
+	{
 		// A route is one way to run a model tier: the provider and model a
 		// card of that tier runs on, its budget and deadline. The deal takes
 		// the routes of a card's tier in the order of the tier's array (the
 		// tier kind; docs/SPEC-CONFIG.md, "route").
 		Name:  KindRoute,
 		Table: "routes",
-		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes; frontier cards are never dealt from routes, they escalate to the coordinator",
+		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes",
 		Fields: []Field{
-			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
-			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
+			{Name: "tier", Type: TypeEnum, Enum: Tiers, Required: true, Help: "the tier it serves: one of " + strings.Join(Tiers, ", ")},
+			{Name: "provider", Type: TypeRef, Ref: KindProvider, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "harness", Type: TypeEnum, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harness a card on this route runs under: opencode (the default: the providers table launches it with the provider's key) or a headless program of the machine's own subscription login, " + strings.Join(harness.Headless, ", ") + " (the heavy tier), whose --provider is " + harness.ProviderPrefix + "<harness>, one word per harness so one login's failure rests only its own routes"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
@@ -1086,6 +1099,9 @@ func (f Field) Canonical(raw string) (string, error) {
 		}
 		return strings.Join(words, ","), nil
 	case TypeRef:
+		if f.Ref == KindProvider && (raw == "" || strings.ContainsFunc(raw, func(c rune) bool { return c == '/' || unicode.IsSpace(c) })) {
+			return "", fmt.Errorf("--%s %q; want the provider word of the model id <provider>/<model>: one word, no slash, no blank", f.Name, raw)
+		}
 		if raw == "" {
 			if f.Required {
 				return "", fmt.Errorf("--%s: want the name of a %s row", f.Name, f.Ref)

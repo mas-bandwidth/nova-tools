@@ -30,7 +30,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		assertionMsg54 := []any{"add machine: id %d err %v", id, err}
 		require.NoError(t, err, assertionMsg54...)
 		require.Equal(t, int64(1), id, assertionMsg54...)
-		id, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "32", "tiers": "frontier,pro", "roles": "builder"}), "rowan")
+		id, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"tiers": "frontier,pro", "roles": "builder"}), "rowan")
 		assertionMsg56 := []any{"add friend: id %d err %v", id, err}
 		require.NoError(t, err, assertionMsg56...)
 		require.Equal(t, int64(2), id, assertionMsg56...)
@@ -38,7 +38,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		assertionMsg58 := []any{"get: %+v %v %v", row, found, err}
 		require.NoError(t, err, assertionMsg58...)
 		require.True(t, found, assertionMsg58...)
-		require.Equal(t, "32", row.Fields["slots"], assertionMsg58...)
+		require.Equal(t, "8", row.Fields["width"], assertionMsg58...)
 		require.Equal(t, "frontier,pro", row.Fields["tiers"], assertionMsg58...)
 		require.Equal(t, "builder", row.Fields["roles"], assertionMsg58...)
 		require.NotEqual(t, "", row.CreatedAt, assertionMsg58...)
@@ -54,11 +54,11 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.NoError(t, err, assertionMsg64...)
 		require.Len(t, rows, 1, assertionMsg64...)
 		require.Equal(t, "rowan", rows[0].Name, assertionMsg64...)
-		after, id, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "64", "roles": "builder,reader"}, "stella")
+		after, id, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"width": "16", "roles": "builder,reader"}, "stella")
 		assertionMsg66 := []any{"set: %+v id %d err %v", after, id, err}
 		require.NoError(t, err, assertionMsg66...)
 		require.Equal(t, int64(3), id, assertionMsg66...)
-		require.Equal(t, "64", after.Fields["slots"], assertionMsg66...)
+		require.Equal(t, "16", after.Fields["width"], assertionMsg66...)
 		require.Equal(t, "builder,reader", after.Fields["roles"], assertionMsg66...)
 		require.Equal(t, "frontier,pro", after.Fields["tiers"], assertionMsg66...)
 		rev, err := st.Rev(ctx, KindFriend)
@@ -102,7 +102,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 			if !assert.Nil(t, hist[0].Before, assertionMsg136...) {
 				return
 			}
-			if !assert.Equal(t, "32", hist[0].After["slots"], assertionMsg136...) {
+			if !assert.Equal(t, "8", hist[0].After["width"], assertionMsg136...) {
 				return
 			}
 			if !assert.Equal(t, "rowan", hist[0].Actor, assertionMsg136...) {
@@ -118,10 +118,10 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 			if !assert.Equal(t, OpSet, hist[1].Op, assertionMsg137...) {
 				return
 			}
-			if !assert.Equal(t, "32", hist[1].Before["slots"], assertionMsg137...) {
+			if !assert.Equal(t, "8", hist[1].Before["width"], assertionMsg137...) {
 				return
 			}
-			if !assert.Equal(t, "64", hist[1].After["slots"], assertionMsg137...) {
+			if !assert.Equal(t, "16", hist[1].After["width"], assertionMsg137...) {
 				return
 			}
 			if !assert.Equal(t, "builder,reader", hist[1].After["roles"], assertionMsg137...) {
@@ -134,7 +134,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 			if !assert.Equal(t, OpRemove, hist[2].Op, assertionMsg138...) {
 				return
 			}
-			if !assert.Equal(t, "64", hist[2].Before["slots"], assertionMsg138...) {
+			if !assert.Equal(t, "16", hist[2].Before["width"], assertionMsg138...) {
 				return
 			}
 			assert.Nil(t, hist[2].After, assertionMsg138...)
@@ -166,11 +166,11 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.NoError(t, setupErr8221)
 		_, err := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
 		refusal(err, ErrExists, "machine studio exists")
-		_, setupErr8590 := st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "8", "tiers": "frontier"}), "rowan")
+		_, setupErr8590 := st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"tiers": "frontier"}), "rowan")
 		require.NoError(t, setupErr8590)
-		_, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "8", "tiers": "frontier"}), "rowan")
+		_, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"tiers": "frontier"}), "rowan")
 		refusal(err, ErrExists, "friend rowan exists")
-		_, _, err = st.Update(ctx, KindFriend, "nobody", map[string]string{"slots": "2"}, "rowan")
+		_, _, err = st.Update(ctx, KindFriend, "nobody", map[string]string{"width": "2"}, "rowan")
 		refusal(err, ErrNotFound, "friend nobody not found")
 		_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "nobody"}, "rowan")
 		refusal(err, ErrNoRef, "--coordinator nobody names no friend row")
@@ -309,13 +309,14 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		box := map[string]string{"user": "u", "seat": "box", "slots": "8"}
 		id, err := st.Insert(ctx, KindMachine, mk(machine, "box", box), "t")
 		readBack(KindMachine, "box", OpAdd, box, id, err)
-		who := map[string]string{"slots": "8", "tiers": "frontier"}
+		who := map[string]string{"tiers": "frontier"}
 		id, err = st.Insert(ctx, KindFriend, mk(friend, "f", who), "t")
 		readBack(KindFriend, "f", OpAdd, who, id, err)
 		cmd := map[string]string{"machine": "box", "argv": `["/bin/x"]`, "every": "5"}
 		id, err = st.Insert(ctx, KindLoop, mk(loop, "l", cmd), "t")
 		readBack(KindLoop, "l", OpAdd, cmd, id, err)
 		via := map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"}
+		addProvider(t, st, via["provider"])
 		id, err = st.Insert(ctx, KindRoute, mk(route, "r", via), "t")
 		readBack(KindRoute, "r", OpAdd, via, id, err)
 		_, id, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "r"}, "t")

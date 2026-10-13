@@ -45,6 +45,10 @@ func TestTheProviderErrorPatterns(t *testing.T) {
 	t.Parallel()
 	for line, want := range map[string]bool{
 		`level=ERROR message="stream error" error.error="x"`:                            true,
+		`level=ERROR error.error="h2 protocol error"`:                                   true,
+		`level=ERROR error.error.type=internal_error`:                                   true,
+		`level=INFO error.error="h2 protocol error"`:                                    false,
+		`level=INFO error.error.type=internal_error`:                                    false,
 		`level=ERROR error.error.type=server_error`:                                     true,
 		`level=ERROR error.error="AI_APICallError: Rate limit reached"`:                 true,
 		`level=ERROR message=failed statusCode=503`:                                     true,

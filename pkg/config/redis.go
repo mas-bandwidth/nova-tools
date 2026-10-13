@@ -19,7 +19,8 @@ import (
 // The Redis keys apply writes, per kind. A friend's keys are the ones the
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (pkg/nsprint/fn/lua: capacity.lua's ns_capacity_desired
-// for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
+// for her width, written as the desired slots, and tiers; friend_roles.lua's
+// ns_friend_roles for roles), and her
 // width, delivery mode, config_dir, token_cap and the optional streams and
 // kinds work restriction, plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
@@ -43,17 +44,21 @@ import (
 // and at:<kind> the server time it was written (the shape of friends:decl in
 // friend_declare.lua).
 const (
-	DeclKey     = "config:decl"
-	FriendsKey  = "friends"
-	MachinesKey = "machines"
-	CapLogKey   = "cap:log"
-	LoopsKey    = "loops"
-	RoutesKey   = "routes"
-	TiersKey    = "tiers"
+	DeclKey      = "config:decl"
+	FriendsKey   = "friends"
+	MachinesKey  = "machines"
+	CapLogKey    = "cap:log"
+	LoopsKey     = "loops"
+	ProvidersKey = "providers"
+	RoutesKey    = "routes"
+	TiersKey     = "tiers"
 )
 
 // LoopKey is a loop's hash: its fields, log, rev and at.
 func LoopKey(name string) string { return "loop:" + name }
+
+// ProviderKey is a provider hash: its declared funding, billing, name, rev and at.
+func ProviderKey(name string) string { return "provider:" + name }
 
 // RouteKey is a route's hash: its fields, name, rev and at. The deal reads
 // every route of the set RoutesKey (internal/sprint/store, the routes read).
@@ -128,7 +133,7 @@ func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, 
 		return a.readSingleton(ctx, KindFleet, FleetKey)
 	case KindSprint:
 		return a.readSingleton(ctx, KindSprint, SprintKey)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindProvider, KindRoute, KindTier:
 		return a.readHashes(ctx, hashKinds[kind])
 	}
 	return nil, 0, fmt.Errorf("apply: no Redis reader for kind %q", kind)
@@ -144,7 +149,7 @@ func (a *RedisApplier) Write(ctx context.Context, kind string, row Row, prev Vie
 		return a.writeSingleton(ctx, KindFleet, FleetKey, row)
 	case KindSprint:
 		return a.writeSingleton(ctx, KindSprint, SprintKey, row)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindProvider, KindRoute, KindTier:
 		return a.writeHash(ctx, hashKinds[kind], row, idem)
 	}
 	return fmt.Errorf("apply: no Redis writer for kind %q", kind)
@@ -158,7 +163,7 @@ func (a *RedisApplier) Remove(ctx context.Context, kind, name, actor, idem strin
 		return a.removeMachine(ctx, name, actor, idem)
 	case KindFleet, KindSprint:
 		return fmt.Errorf("apply: the %s row is never removed", kind)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindProvider, KindRoute, KindTier:
 		return a.removeHash(ctx, hashKinds[kind], name, actor, idem)
 	}
 	return fmt.Errorf("apply: no Redis remover for kind %q", kind)
@@ -233,7 +238,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns", "slots")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -252,21 +257,20 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	for i, f := range names {
 		d := desired[i].Val()
 		views[f] = View{
-			"slots": intText(str(d, 0)),
-			"tiers": sortedList(str(d, 1)),
+			"tiers": sortedList(str(d, 0)),
 			"roles": sortedList(roles[i].Val()),
-			"width": intText(str(d, 2)),
-			"mode":  str(d, 3),
+			"width": friendWidthView(str(d, 1), str(d, 8)),
+			"mode":  str(d, 2),
 			// her claude lanes' CLAUDE_CONFIG_DIR, "" when unset
-			"config_dir": str(d, 4),
+			"config_dir": str(d, 3),
 			// her per-card token cap; a missing field reads as 0, and apply writes the row's
-			"token_cap": intText(str(d, 5)),
+			"token_cap": intText(str(d, 4)),
 			// her optional work restriction, "" for none
-			"streams": str(d, 6),
-			"kinds":   str(d, 7),
+			"streams": str(d, 5),
+			"kinds":   str(d, 6),
 			// the pronouns the friend goes by; a row that names none reads as the default,
 			// so apply writes the field only when the row says something else
-			"pronouns": cmp.Or(str(d, 8), DefaultFriendPronouns),
+			"pronouns": cmp.Or(str(d, 7), DefaultFriendPronouns),
 		}
 	}
 	return views, revValue(rev), nil
@@ -313,6 +317,19 @@ func (a *RedisApplier) PrefetchFriends(ctx context.Context, names []string) erro
 	return nil
 }
 
+// friendWidthView is a friend's width as Redis holds it: the desired hash's
+// width field, and its slots, which apply writes from the same number. When
+// the two disagree (a hash written before a friend row had only width, when
+// slots was its own field) the view's width is empty, so the plan sets the
+// row's width and writeFriend rewrites both: Redis stays a copy.
+func friendWidthView(width, slots string) string {
+	w := intText(width)
+	if intText(slots) != w {
+		return ""
+	}
+	return w
+}
+
 func str(vals []any, i int) string {
 	if i >= len(vals) || vals[i] == nil {
 		return ""
@@ -352,10 +369,14 @@ func replyWords(reply any) []string {
 	return out
 }
 
-// charge is the machine a friend's desired slots count against: the host
-// her beat reports (friends may run on any bench), else the fleet's
-// coordinator machine as the default charge, else a refusal naming the
-// fleet set that fixes it.
+// noMachine is the machine recorded for a friend whose beat names none when
+// the fleet names no coordinator machine either. It is a record, never a
+// refusal: a friend's capacity is her width, and no machine caps it.
+const noMachine = "-"
+
+// charge is the machine recorded in a friend's desired hash: the host her
+// beat reports (friends may run on any bench), else the fleet's coordinator
+// machine, else noMachine. It never refuses: no machine caps a friend.
 func (a *RedisApplier) charge(ctx context.Context, f string) (string, error) {
 	var host string
 	if a.friendHosts != nil {
@@ -386,7 +407,7 @@ func (a *RedisApplier) charge(ctx context.Context, f string) (string, error) {
 		a.coordinatorRead = true
 	}
 	if a.coordinator == "" {
-		return "", &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("friend %s has no beat naming a machine and the fleet names no coordinator machine to charge the friend's slots to; run: nova-config fleet set --coordinator <machine>, then apply", f)}
+		return noMachine, nil
 	}
 	return a.coordinator, nil
 }
@@ -400,30 +421,30 @@ func tiersArg(tiers string) string {
 	return tiers
 }
 
-// writeFriend applies one friend row: her slots and tiers through
-// ns_capacity_desired, charged to the machine her beat reports or the fleet's
-// coordinator machine, then her width, delivery mode, config directory,
-// token cap, work restriction and roles (docs/SPEC-CONFIG.md, "friend").
+// writeFriend applies one friend row: her width (as the desired hash's
+// slots, every reader of friend:<f>:desired slots reads it) and tiers through
+// ns_capacity_desired, recorded with the machine her beat reports or the
+// fleet's coordinator machine, then her width field, delivery mode, config
+// directory, token cap, work restriction and roles (docs/SPEC-CONFIG.md,
+// "friend"). A friend's width is her one capacity number: nothing caps it
+// against a machine.
 func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, actor, idem string) error {
 	f := row.Name
-	// 1. slots and tiers, registering the friend (ns_capacity_desired),
-	// charged to the machine her beat reports or the coordinator machine.
+	// 1. width and tiers, registering the friend (ns_capacity_desired),
+	// recorded with the machine her beat reports or the coordinator machine.
 	machine, err := a.charge(ctx, f)
 	if err != nil {
 		return err
 	}
-	reply, err := a.Client.FCall(ctx, "ns_capacity_desired", nil, KindFriend, f, row.Fields["slots"], machine, actor, idem, "", "", "", "", "", tiersArg(row.Fields["tiers"])).Result()
+	reply, err := a.Client.FCall(ctx, "ns_capacity_desired", nil, KindFriend, f, row.Fields["width"], machine, actor, idem, "", "", "", "", "", tiersArg(row.Fields["tiers"])).Result()
 	if err != nil {
 		return fmt.Errorf("redis: friend %s slots: %w", f, err)
 	}
 	words := replyWords(reply)
 	switch words[0] {
 	case "SET", "SAME":
-	case "CEILING":
-		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("CEILING %s: friend %s makes the sum %s over the machine ceiling %s; raise it with nova-config machine set %s --slots <n>, or lower a friend's slots",
-			word(words, 1), f, word(words, 2), word(words, 3), word(words, 1))}
-	case "NOCEILING":
-		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("machine %s has no ceiling in Redis; run: nova-config machine add %s ... (the friend's beat names it) then apply", machine, machine)}
+	case "CEILING", "NOCEILING":
+		return staleLibrary(KindFriend, f, words)
 	case "NAME-IS-LOGIN":
 		return &RefusedError{Err: ErrActor, Detail: fmt.Sprintf("%s is a login in Redis (friends:login), not a friend", f)}
 	default:
@@ -518,10 +539,24 @@ func word(words []string, i int) string {
 
 // The refusals the runtime's functions answer with.
 var (
-	ErrCeiling = errors.New("ceiling")
-	ErrActor   = errors.New("actor")
-	ErrInUse   = errors.New("in use")
+	ErrActor = errors.New("actor")
+	ErrInUse = errors.New("in use")
+	// ErrStaleLibrary is a reply only an older nova_sprint library gives: the
+	// store still runs the capacity functions from before a friend row had
+	// only width (CEILING or NOCEILING for a friend, CEILING for a machine's
+	// slots under its friends). Prepare installs the library only when the
+	// store has none (fn.LoadMissing), so until the deploy loads the new one
+	// such a reply is named as this refusal, never a store error: the apply
+	// goes on to every later kind.
+	ErrStaleLibrary = errors.New("stale function library")
 )
+
+// staleLibrary is the refusal of a row the store's older nova_sprint library
+// refused for capacity (ErrStaleLibrary), with the reply and the deploy step
+// that loads the library this tool carries.
+func staleLibrary(kind, name string, words []string) *RefusedError {
+	return &RefusedError{Err: ErrStaleLibrary, Detail: fmt.Sprintf("%s %s: the store's nova_sprint function library answered %s; it is older than this tool and still caps friends against a machine's slots; run: nova-redis fn load --addr <store> (the deploy step that loads the nova_sprint library this release carries), then nova-config apply", kind, name, strings.Join(words, " "))}
+}
 
 // RedisRefusal is a *RefusedError with a formatted detail.
 func RedisRefusal(format string, args ...any) *RefusedError {
@@ -665,8 +700,7 @@ func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, act
 		switch words[0] {
 		case "SET":
 		case "CEILING":
-			return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("CEILING %s: its friends desire %s slots and the row says %s; lower their slots first, or set --slots to at least %s",
-				m, word(words, 2), word(words, 3), word(words, 2))}
+			return staleLibrary(KindMachine, m, words)
 		default:
 			return fmt.Errorf("redis: machine %s ceiling: %s", m, strings.Join(words, " "))
 		}
@@ -750,9 +784,10 @@ type hashKind struct {
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(r Row) []any { return []any{"log", r.Fields["log"]} }},
-	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
-	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
+	KindProvider: {kind: KindProvider, set: ProvidersKey, key: ProviderKey},
+	KindLoop:     {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(r Row) []any { return []any{"log", r.Fields["log"]} }},
+	KindRoute:    {kind: KindRoute, set: RoutesKey, key: RouteKey},
+	KindTier:     {kind: KindTier, set: TiersKey, key: TierKey},
 }
 
 // readHashes reads the set and the stamp in one round trip, then every
