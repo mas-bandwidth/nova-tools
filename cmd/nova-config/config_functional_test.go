@@ -156,7 +156,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "machine", "remove", "studio")
 	require.Equal(t, "CONFIG REMOVE kind=machine name=studio rev=9\n", out, "machine remove: %q", out)
 	out, _ = r.run(t, 0, "status")
-	require.Contains(t, out, " schema="+strconv.Itoa(n)+" machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=-", "status: %q", out)
+	require.Contains(t, out, " schema="+strconv.Itoa(n)+" pg-from=env machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=-", "status: %q", out)
 	// The width: set on the row, printed as set, with no Redis anywhere.
 	r.run(t, 0, "machine", "add", "wide", "--user", "u", "--seat", "s", "--slots", "160", "--width", "16")
 	out, _ = r.run(t, 0, "machine", "set", "wide", "--width", "32")
