@@ -11,6 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // cmdFunctional prints the functional tier's selection for `make
@@ -25,37 +26,69 @@ func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 	// package list: make test-functional would hand the help text to go test, which
 	// fails on it out loud.
 	verbflag.HelpIfAsked(args, "functional")
+	asJSON := false
+	var rest []string
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	args = rest
 	if len(args) == 0 {
+		if asJSON {
+			return (&tool.Out{Verb: "functional", Status: tool.Refused, Exit: 2, Why: []string{"no package directory given; pass the packages the change touched (./cmd/nova-table ...)"}, Remedy: "nova-ci functional -h"}).Render(stdout, true)
+		}
 		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-table ...)")
 	}
 	var problems, patterns []string
 	for _, arg := range args {
 		switch {
 		case strings.HasPrefix(arg, "-"):
-			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...)", arg))
+			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags besides --json, only package directories such as ./cmd/nova-table or ./internal/...)", arg))
 		default:
 			patterns = append(patterns, arg)
 		}
 	}
 	problems = append(problems, functional.Unmatched(patterns)...)
 	if len(problems) > 0 {
+		if asJSON {
+			return (&tool.Out{Verb: "functional", Status: tool.Refused, Exit: 2, Why: []string{strings.Join(problems, "; ")}, Remedy: "nova-ci functional -h"}).Render(stdout, true)
+		}
 		return refuse(stderr, " functional", strings.Join(problems, "; "))
 	}
 	dirs, err := functional.Expand(patterns)
 	if err != nil {
+		if asJSON {
+			return (&tool.Out{Verb: "functional", Status: tool.Refused, Exit: 2, Why: []string{oneline.Err(err)}, Remedy: "nova-ci functional -h"}).Render(stdout, true)
+		}
 		return refuse(stderr, " functional", oneline.Err(err))
 	}
 	pkgs, err := functional.Select(dirs)
 	if err != nil {
+		if asJSON {
+			return (&tool.Out{Verb: "functional", Status: tool.Refused, Exit: 2, Why: []string{oneline.Err(err)}, Remedy: "nova-ci functional -h"}).Render(stdout, true)
+		}
 		return refuse(stderr, " functional", oneline.Err(err))
 	}
 	if len(pkgs) == 0 {
+		if asJSON {
+			o := &tool.Out{Verb: "functional", Status: tool.OK, Exit: 0}
+			o.Fact("packages", []string{}).Fact("pattern", "")
+			return o.Render(stdout, true)
+		}
 		fmt.Fprintf(stdout, "CI FUNCTIONAL OK packages=0 reason=no-functional-tag-in-%d-dirs\n", len(dirs))
 		return 0
 	}
 	dirs = make([]string, 0, len(pkgs))
 	for _, p := range pkgs {
 		dirs = append(dirs, packagePath(p.Dir))
+	}
+	if asJSON {
+		o := &tool.Out{Verb: "functional", Status: tool.OK, Exit: 0}
+		o.Fact("packages", dirs).Fact("pattern", functional.RunPattern(pkgs))
+		return o.Render(stdout, true)
 	}
 	fmt.Fprintln(stdout, strings.Join(dirs, " "))
 	fmt.Fprintln(stdout, functional.RunPattern(pkgs))

@@ -70,7 +70,7 @@ usage, in any Go module (no state, no store):
                       and one CI-SLOW MORE shown=<n> total=<n> line naming the
                       flag that prints the rest; --max 0 prints every finding.
                       --json prints the same verdict as one JSON object.
-  nova-ci functional <package-dir>...
+  nova-ci functional [--json] <package-dir>...
                       (inspection) print the packages among these that hold
                       functional tests (a _test.go built only under the
                       functional build tag) on one line and a go test -run
