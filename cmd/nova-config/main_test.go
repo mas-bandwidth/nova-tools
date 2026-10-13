@@ -732,6 +732,12 @@ func TestVerbsOnAnOlderSchemaRefuseWithMigrate(t *testing.T) {
 			{"route", "list"},
 			{"route", "show", "r1"},
 			{"route", "history", "r1"},
+			{"provider", "add", "p1", "--billing", "metered", "--funded", "false"},
+			{"provider", "set", "p1", "--funded", "true"},
+			{"provider", "remove", "p1"},
+			{"provider", "list"},
+			{"provider", "show", "p1"},
+			{"provider", "history", "p1"},
 			// the machine row carries the note since 0015: every verb that reads or writes the row waits for it
 			{"machine", "add", "m9", "--user", "u", "--seat", "s", "--slots", "8"},
 			{"machine", "set", "studio", "--note", "held"},
@@ -747,7 +753,7 @@ func TestVerbsOnAnOlderSchemaRefuseWithMigrate(t *testing.T) {
 			h.store.version = have
 			code, _, errs := h.run(t, args...)
 			verb := args[0]
-			if args[0] == "machine" || args[0] == "loop" || args[0] == "route" || args[0] == "fleet" {
+			if args[0] == "machine" || args[0] == "loop" || args[0] == "route" || args[0] == "provider" || args[0] == "fleet" {
 				verb = args[0] + " " + args[1]
 			}
 			want := fmt.Sprintf("nova-config %s REFUSED: schema config is at version %d and this binary carries %d; run: nova-config migrate\n", verb, have, len(all))

@@ -207,3 +207,44 @@ func TestProviderDescriptorAndUnknownFacts(t *testing.T) {
 	assert.Contains(t, lines[0], "note=")
 	assert.Empty(t, warns)
 }
+
+func TestFileUpgradeRefusesEveryLegacyWordWithoutChangingTheFile(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "legacy.json")
+	state := fileState{Schema: 40, Rows: map[string]map[string]Row{KindRoute: {}}}
+	for name, word := range map[string]string{"a": "OpenRouter", "b": "my_provider", "c": "vendor.ai"} {
+		state.Rows[KindRoute][name] = Row{Name: name, Fields: map[string]string{"provider": word, "tier": "pro", "model": "m", "deadline": "60"}}
+	}
+	raw, err := json.Marshal(state)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, raw, 0600))
+	_, err = OpenFile(path)
+	var legacy *ProviderNamesError
+	require.ErrorAs(t, err, &legacy)
+	assert.Len(t, legacy.Routes, 3)
+	for _, want := range []string{"OpenRouter", "my_provider", "vendor.ai", "route set a --provider <new>", "route set b --provider <new>", "route set c --provider <new>"} {
+		assert.Contains(t, err.Error(), want)
+	}
+	unchanged, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, raw, unchanged)
+	// Fixture-only correction represents the previous binary's route writes.
+	for name, word := range map[string]string{"a": "openrouter", "b": "my-provider", "c": "vendor-ai"} {
+		row := state.Rows[KindRoute][name]
+		row.Fields["provider"] = word
+		state.Rows[KindRoute][name] = row
+	}
+	raw, err = json.Marshal(state)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, raw, 0600))
+	st, err := OpenFile(path)
+	require.NoError(t, err)
+	_, _, _, err = st.Migrate(context.Background())
+	require.NoError(t, err)
+	providers, err := st.List(context.Background(), KindProvider)
+	require.NoError(t, err)
+	require.Len(t, providers, 3)
+	for _, p := range providers {
+		assert.Equal(t, "false", p.Fields["funded"])
+	}
+}

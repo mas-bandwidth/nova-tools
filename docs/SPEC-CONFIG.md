@@ -321,7 +321,14 @@ console URL or empty; `note` carries the owner's facts. Migration 0041 seeds
 one row per existing route provider with `billing=metered`, `funded=false`
 and note `made by migrate from the routes: set --funded and --billing`.
 Those defaults are a reminder to declare the facts, not evidence that the
-provider is unfunded. The migration never infers a balance or funding.
+provider is unfunded. The migration never infers a balance or funding. Before any migration writes,
+upgrade refuses non-conforming provider words, with the fix listed for every
+route: use the previous nova-config build matching the store's schema
+(the schema40 build for a schema40 store) to run each printed
+`route set <route> --provider <new>` correction, then retry the upgrade.
+Postgres data and ledger, and FileStore bytes, stay untouched on refusal;
+no provider word is silently renamed. A legacy FileStore gets the same check
+before opening its provider seed rows.
 
 A route's `provider` is a reference to a provider row: an absent row refuses
 add or set with `nova-config provider add <name> --billing metered --funded false`
@@ -342,7 +349,9 @@ funded=true routes-in-no-tier-array=<names>` and a concrete `tier set --routes`
 command preserving the existing array. A configured tier selecting no enabled
 route of any funded provider produces `CONFIG WARN tier=<tier> holds no route
 of a funded provider` and `tier show` as its remedy. These warnings are advisory
-and never change the exit code; JSON carries the provider lines as the
+and never change the exit code. CLI warning commands retain the chosen
+`--file`, `--pg` or `--seat`; writes carry the known actor or an explicit
+`--actor <name>` placeholder. JSON carries the provider lines as the
 `providers` fact and the same warnings as notes.
 
 **`route`** (`config.routes`): one way to run a model tier, the provider

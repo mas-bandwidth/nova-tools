@@ -212,7 +212,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	refuseWrite := func(err error) int {
 		var ref *config.RefusedError
 		if errors.As(err, &ref) && ref.MissingRefKind == config.KindProvider {
-			return refused(stderr, verb, ref.Detail, ref.Remedy+" --actor "+config.Value(actor)+c.again())
+			return refused(stderr, verb, ref.Detail, ref.Remedy+" --actor "+shq(actor)+c.again())
 		}
 		return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 	}
@@ -678,5 +678,5 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 // a route and a machine since 15): each of its verbs refuses on a store older
 // than this binary's migrations (behindSchema), which does not have it.
 func laterKind(k *config.Kind) bool {
-	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine
+	return k.Name == config.KindProvider || k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine
 }

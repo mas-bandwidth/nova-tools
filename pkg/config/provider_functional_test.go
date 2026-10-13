@@ -90,3 +90,65 @@ func TestProviderApplyWritesAndRemovesTheFundingView(t *testing.T) {
 	assert.Zero(t, c.Exists(ctx, ProviderKey("opencode")).Val())
 	assert.Empty(t, c.SMembers(ctx, ProvidersKey).Val())
 }
+
+func TestProviderUpgradeRefusesEveryLegacyWordBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	all, err := Migrations()
+	require.NoError(t, err)
+	for _, m := range all {
+		if m.Version >= 40 {
+			break
+		}
+		require.NoError(t, st.applyOne(ctx, m))
+	}
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.routes(name,tier,provider,model,deadline) VALUES ('a','pro','OpenRouter','m',60),('b','pro','my_provider','m',60),('c','pro','vendor.ai','m',60)`)
+	require.NoError(t, err)
+	ledger, err := st.Applied(ctx)
+	require.NoError(t, err)
+	from, to, applied, err := st.Migrate(ctx)
+	var legacy *ProviderNamesError
+	require.ErrorAs(t, err, &legacy)
+	assert.Len(t, legacy.Routes, 3)
+	assert.Equal(t, 39, from)
+	assert.Equal(t, from, to)
+	assert.Empty(t, applied, "even migration40 must not write first")
+	for _, want := range []string{"OpenRouter", "my_provider", "vendor.ai", "route set a --provider <new>", "route set b --provider <new>", "route set c --provider <new>", "previous/schema40"} {
+		assert.Contains(t, err.Error(), want)
+	}
+	after, err := st.Applied(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, ledger, after)
+	var absent bool
+	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT to_regclass('config.providers') IS NULL`).Scan(&absent))
+	assert.True(t, absent)
+	var words []string
+	rows, err := st.db.QueryContext(ctx, `SELECT provider FROM config.routes ORDER BY name`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var word string
+		require.NoError(t, rows.Scan(&word))
+		words = append(words, word)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	assert.Equal(t, []string{"OpenRouter", "my_provider", "vendor.ai"}, words, "no silent rename")
+	// Fixture-only correction in the old schema. Production remediation names
+	// the matching previous binary; a separate CLI receipt verifies that path.
+	_, err = st.db.ExecContext(ctx, `UPDATE config.routes SET provider=CASE name WHEN 'a' THEN 'openrouter' WHEN 'b' THEN 'my-provider' ELSE 'vendor-ai' END`)
+	require.NoError(t, err)
+	from, to, applied, err = st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 39, from)
+	assert.Equal(t, 41, to)
+	assert.Equal(t, []int{40, 41}, applied)
+	providers, err := st.List(ctx, KindProvider)
+	require.NoError(t, err)
+	require.Len(t, providers, 3)
+	for _, p := range providers {
+		assert.Equal(t, "false", p.Fields["funded"])
+	}
+}
