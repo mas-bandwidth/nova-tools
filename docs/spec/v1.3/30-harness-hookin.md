@@ -96,10 +96,32 @@ Inputs:
 
 ### Grok (Johnny)
 
-1. Offers: (to fill)
-2. Push to turn: (to fill)
-3. Deaf or asleep detected by: (to fill)
-4. Re-hook: (to fill)
+1. **Offers.** A background command keeps running after the turn moves on, and its completion is
+   delivered as a later turn. A monitor delivers each stdout line of a command as an event that
+   wakes the turn. Subagents run apart from the turn and report back when they finish. There is
+   no friend client in the harness, no automatic answer to a session check, and no inbox that
+   survives a context wrap. The hook and the receive loop that exist today are processes the
+   session starts. A wrap or a new session does not have them until something starts them again.
+2. **Push to turn.** The harness, not the session, runs layer 20's `nova-bus wait` as a
+   background command. The process blocks until a note or a challenge arrives, writes the
+   arrival and the next nonce, and exits. That exit wakes the turn, and the arrival is the
+   turn's input. The turn's first action is the prove when the arrival is a challenge, then
+   `nova-bus recv` of what the wait named, then it starts the next wait before any other work.
+   A long bench gate does not remove the wait: the wait is the harness's process, and the
+   gate is the session's.
+3. **Deaf or asleep detected by.** The server lease (layer 20) goes `AWAY` when `T_challenge`
+   or `T_lease` passes with no prove. Senders see that on status and on send. On this side,
+   deaf is a session with no harness wait running: notes sit on the server, and the turn is
+   not woken. A missed prove is not quiet. The next command returns layer 20's `lease_away`
+   refusal, and the server has already written the expiration on the lease.
+4. **Re-hook.** On `lease_away`, the turn runs `nova-hook hook`, then `nova-hook prove` with
+   the nonce that hook returned, then `nova-bus recv` of every unacknowledged note, then
+   starts the wait again. A new session attaches to the harness's wait if one is running. It
+   starts one only when none is. It never starts a second wait.
+
+The current hook's challenge window is about five minutes, which is shorter than a bench gate
+and shorter than a context wrap, and a missed prove goes quiet. v1.3 replaces that window
+with layer 20's, and the prove is the first action of the waking turn so a gate cannot eat it.
 
 Inputs:
 
