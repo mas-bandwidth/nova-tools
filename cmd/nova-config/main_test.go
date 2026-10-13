@@ -589,7 +589,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Contains(t, errs, "apply REFUSED: --actor is required: the name the write is recorded under (or NOVA_FRIEND); run: nova-config apply -h", "apply without --actor refusal: %q", errs)
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
-	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn,loops_dir\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,git_identity,max_attempts\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=heavy\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=3 set=0 remove=0 rev=0 ms=0\n"
+	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn,loops_dir\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,git_identity,max_attempts\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=heavy\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=3 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY OK kinds=7\n"
 	require.Equal(t, want, out, "apply:\n%s\nwant:\n%s", out, want)
 	require.Equal(t, "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint write tier flash write tier heavy write tier pro", strings.Join(h.redis.log, " "), "redis after apply: %v %v", h.redis.log, h.redis.revs)
 	require.Equal(t, int64(3), h.redis.revs["friend"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
@@ -605,7 +605,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
-	require.Equal(t, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\n", out, "second apply: %q", out)
+	require.Equal(t, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\nCONFIG APPLY OK kinds=1\n", out, "second apply: %q", out)
 	// The seat: a live coordinator the row disagrees with is held, its line printed whole
 	// (SaidLine), and moved only by --move-seat (ApplyMovingSeat).
 	h.redis.views["sprint"]["sprint"]["coordinator"] = "stella"
@@ -681,7 +681,11 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	require.Equal(t, int64(3), h.redis.revs["fleet"], "apply --check wrote to redis: %v", h.redis.revs)
 }
 
-func TestApplyRefusesMissingFleetEndpointsBeforeAnyMutation(t *testing.T) {
+// Missing fleet endpoints are the fleet kind's own check: they refuse that
+// kind only, on one stderr line with the command that sets them, the fleet
+// row is never written, and every other kind applies (docs/SPEC-CONFIG.md,
+// "Apply").
+func TestMissingFleetEndpointsRefuseOnlyTheFleetKind(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"apply"}, {"apply", "--check"}, {"apply", "--kind", "fleet"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -690,13 +694,17 @@ func TestApplyRefusesMissingFleetEndpointsBeforeAnyMutation(t *testing.T) {
 			h.env["NOVA_PG_DSN"], h.env["NOVA_FRIEND"], h.env["NOVA_SPRINT_REDIS"] = dsn, "operator", "bench-beta:6380"
 			code, out, errs := h.run(t, args...)
 			require.Equal(t, 1, code, errs)
-			require.Empty(t, out)
+			require.Contains(t, out, " REFUSED kinds=fleet:1 ", "stdout %q", out)
 			require.Contains(t, errs, "endpoints are unset: redis_port, pg_dsn")
 			require.Contains(t, errs, "fleet set --redis_port <port> --pg_dsn <dsn>")
 			require.Equal(t, 1, strings.Count(errs, "fleet set"), errs)
-			require.Equal(t, 1, h.opens, "the authoritative fleet is read before its endpoints can be checked")
-			require.Zero(t, h.redis.opens)
-			require.Empty(t, h.redis.log)
+			require.NotContains(t, h.redis.log, "write fleet fleet", "a refused fleet row was written")
+			if len(args) == 1 {
+				require.Contains(t, h.redis.log, "write tier flash", "the other kinds apply: %v", h.redis.log)
+			} else {
+				require.Empty(t, h.redis.log, "%v wrote: nothing at all is written by --check or the refused fleet kind alone", args)
+				require.Empty(t, h.redis.revs, "%v stamped", args)
+			}
 			code, _, errs = h.run(t, "apply", "--kind", "machine", "--check")
 			require.Zero(t, code, errs)
 		})

@@ -43,10 +43,32 @@
 \*   checked          an ApplyCheck has run since the last store write
 \*   seen             a Read has run
 \*
+\*   refusedRows      the rows this apply did not write: a write the runtime
+\*                    refused (CEILING, an actor without the role, a row
+\*                    in use), a row whose ref names one of those, and the
+\*                    pending rows of a kind stopped by CONFLICT
+\*   refusals         how many runtime refusals so far (bounded)
+\*   planned          the kinds this apply has stages for
+\*   attempted        the kinds whose ops this apply has started
+\*   crashedRun       this apply ended by a crash, or by a store error
+\*                    (exit 2)
+\*   storeErred       a store or connection error that is not a refusal
+\*                    happened in this apply
+\*   sRow, sGit       the sprint row in the store: its coordinator (a ref to
+\*                    a friend) and one other field (git_identity), present
+\*                    only when WithSprint
+\*   sView            Redis's sprint row: coordinator and git_identity; its
+\*                    coordinator is the live seat
+\*   seatMoved        the seat verb has moved the live coordinator (once)
+\*   sOutcome, sDue   what this apply did with the sprint row, and whether
+\*                    the ref rule on the row actually written refuses it
+\*
 \* Actions: InsertMachine, UpdateMachine, DeleteMachine, InsertFriend,
 \* UpdateFriend, DeleteFriend (each refused on a name taken or missing, on
 \* a ref that names no row, and on deleting a machine a friend names);
-\* StartApply, Advance (the writes and the stamp); ApplyCheck (plan, write
+\* StartApply, Advance (the writes and the stamp; each write is written or
+\* refused, and a refusal never stops the apply); StoreError (a write fails
+\* with an error that is not a refusal: the run stops at once, exit 2); ApplyCheck (plan, write
 \* nothing); ApplyCrash (stop after a proper prefix of the ops, no stamp);
 \* OutsideRedisWrite (Redis's stamp moves ahead of the store);
 \* Read (a view is read, nothing is written).
@@ -60,6 +82,13 @@
 \*   StampOnlyWhenComplete   apply.go Apply, the stamp after the ops
 \*   RetryIsIdempotent        apply.go Idem, and a second apply of the same
 \*                            Postgres
+\*   EveryPlannedKindIsAttemptedUnlessCrashed
+\*                            cmd/nova-config/apply.go runApply, the kind
+\*                            loop goes on past a refusal
+\*   StoreErrorStopsTheRun    cmd/nova-config/apply.go runApply, a store
+\*                            error is never classed as a refusal
+\*   StampedKindHasNoRefusal  apply.go apply, no stamp when an op was
+\*                            refused
 \*   CrashedApplyCompletes    a crashed apply is finished by the next apply
 \*                            of its kind once crashes are exhausted and
 \*                            no earlier kind's stamp is ahead
@@ -72,10 +101,23 @@
 \*   "nohistory"    a row changes with no history    HistoryCoversEveryWrite
 \*   "overahead"    an apply writes while the stamp  ConflictRefusesAhead
 \*                  it read is ahead
+\*   "stopatrefusal" the apply stops at the first    EveryPlannedKindIsAttemptedUnlessCrashed
+\*                  refused write (v1.2.16's apply)
+\*   "stamprefused" a kind with a refused write is   StampedKindHasNoRefusal
+\*                  stamped
+\*   "heldjudgedonrow" the ref rule judges the stored SprintRefusedOnlyForItsWrittenRef
+\*                  row, not the row written with the
+\*                  live seat held (the second cut of
+\*                  PR 5662)
+\*   "swallowerr"   a store error after a refusal    StoreErrorStopsTheRun
+\*                  in the same kind is classed as a
+\*                  refusal and the run goes on (the
+\*                  first cut of PR 5662)
 
 EXTENDS Naturals, Sequences
 
-CONSTANTS m1, m2, f1, f2, MaxRev, MaxFaults, MaxCrashes, Broken
+CONSTANTS m1, m2, f1, f2, MaxRev, MaxFaults, MaxCrashes, MaxRefusals, Broken,
+          WithSprint
 
 MachineList == <<m1, m2>>
 FriendList == <<f1, f2>>
@@ -85,8 +127,11 @@ Kinds == {"machine", "friend"}
 Absent == "absent"
 ASSUME Len(MachineList) = 2 /\ MachineList[1] # MachineList[2]
 ASSUME Len(FriendList) = 2 /\ FriendList[1] # FriendList[2]
-ASSUME MaxRev \in Nat /\ MaxFaults \in Nat /\ MaxCrashes \in Nat
-ASSUME Broken \in {"none", "stampfirst", "friendfirst", "nohistory", "overahead"}
+ASSUME MaxRev \in Nat /\ MaxFaults \in Nat /\ MaxCrashes \in Nat /\ MaxRefusals \in Nat
+ASSUME Broken \in {"none", "stampfirst", "friendfirst", "nohistory", "overahead",
+                    "stopatrefusal", "stamprefused", "swallowerr",
+                    "heldjudgedonrow"}
+ASSUME WithSprint \in BOOLEAN
 
 \* Idem is the marker apply.go builds: config:<kind>:<rev>.
 Idem(k, r) == <<"config", k, r>>
@@ -95,20 +140,30 @@ VARIABLES
   mRows, fRows, history, mViews, fViews, stamp,
   phase, stages, si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0,
   stampMoved, opsDone, clean, idemApplied, wroteAhead, owed,
-  crashes, faults, checked, seen
+  crashes, faults, checked, seen,
+  refusedRows, refusals, planned, attempted, crashedRun, storeErred,
+  sRow, sGit, sView, seatMoved, sOutcome, sDue
 
 vars == <<mRows, fRows, history, mViews, fViews, stamp,
           phase, stages, si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0,
           stampMoved, opsDone, clean, idemApplied, wroteAhead, owed,
-          crashes, faults, checked, seen>>
+          crashes, faults, checked, seen,
+          refusedRows, refusals, planned, attempted, crashedRun, storeErred,
+          sRow, sGit, sView, seatMoved, sOutcome, sDue>>
+
+\* The variables the refusal rule adds; a step that does not touch them
+\* leaves them as they are.
+rvars == <<refusedRows, refusals, planned, attempted, crashedRun, storeErred,
+           sRow, sGit, sView, seatMoved, sOutcome, sDue>>
 
 TypeOK ==
   /\ mRows \in [Machines -> 0..2]
   /\ fRows \in [Friends -> Machines \cup {Absent}]
   /\ Len(history) <= MaxRev
   /\ \A i \in 1..Len(history) :
-       /\ history[i].kind \in Kinds
+       /\ history[i].kind \in Kinds \cup {"sprint"}
        /\ history[i].op \in {"add", "set", "remove"}
+       /\ history[i].kind = "sprint" => history[i].value \in Friends
        /\ history[i].kind = "machine" =>
             history[i].name \in Machines /\ history[i].value \in 0..2
        /\ history[i].kind = "friend" =>
@@ -118,9 +173,9 @@ TypeOK ==
   /\ fViews \in [Friends -> Machines \cup {Absent}]
   /\ stamp \in [Kinds -> 0..(MaxRev + 1)]
   /\ phase \in {"idle", "applying"}
-  /\ Len(stages) <= 4
-  /\ \A i \in 1..Len(stages) : stages[i] \in {"mops", "mstamp", "fops", "fstamp"}
-  /\ si \in 0..5
+  /\ Len(stages) <= 5
+  /\ \A i \in 1..Len(stages) : stages[i] \in {"mops", "mstamp", "fops", "fstamp", "sops"}
+  /\ si \in 0..6
   /\ oi \in 0..3
   /\ Len(mPlan) <= 2 /\ Len(fPlan) <= 2 /\ Len(prefix) <= 4
   /\ ceilAtStart \in [Machines -> BOOLEAN]
@@ -135,6 +190,18 @@ TypeOK ==
   /\ faults \in 0..MaxFaults
   /\ checked \in BOOLEAN
   /\ seen \in BOOLEAN
+  /\ refusedRows \subseteq (Machines \cup Friends)
+  /\ refusals \in 0..MaxRefusals
+  /\ planned \in [Kinds -> BOOLEAN]
+  /\ attempted \in [Kinds -> BOOLEAN]
+  /\ crashedRun \in BOOLEAN
+  /\ storeErred \in BOOLEAN
+  /\ sRow \in Friends \cup {Absent}
+  /\ sGit \in 0..1
+  /\ sView \in [coord : Friends \cup {Absent}, git : 0..1]
+  /\ seatMoved \in BOOLEAN
+  /\ sOutcome \in {"none", "written", "refused"}
+  /\ sDue \in BOOLEAN
 
 Rev(k) ==
   LET ids == {i \in 1..Len(history) : history[i].kind = k}
@@ -197,25 +264,51 @@ Want(k) ==
      \/ (k = "friend" /\ Len(FriendPlan) > 0)
      \/ stamp[k] # Rev(k)
 
-\* The command stops at the first kind whose stamp is ahead, and writes
-\* nothing of that kind or of a later kind (cmd/nova-config/apply.go).
-RefuseAll ==
-  /\ Broken # "overahead"
-  /\ Ahead(IF Broken = "friendfirst" THEN "friend" ELSE "machine")
+\* A kind whose stamp is ahead is refused CONFLICT and writes nothing; the
+\* command goes on to every later kind (cmd/nova-config/apply.go runApply).
+\* Want leaves it out of the stages, and StartApply counts its pending rows
+\* as refused, so a later row that names one is refused too.
 
 Pair(k, a, b) == IF Want(k) THEN <<a, b>> ELSE None
 
+\* The sprint row is one more kind after friends (kind.go KindNames), modelled
+\* by its one op: a set when any field differs from Redis (apply.go Plan).
+\* Its stamp is outside the instance.
+SprintOp == WithSprint /\ sRow # Absent /\ (sRow # sView.coord \/ sGit # sView.git)
+SprintStage == IF SprintOp THEN <<"sops">> ELSE None
+
 BuildStages ==
-  IF RefuseAll THEN None
-  ELSE IF Broken = "friendfirst" THEN
-    Pair("friend", "fops", "fstamp") \o Pair("machine", "mops", "mstamp")
+  IF Broken = "friendfirst" THEN
+    Pair("friend", "fops", "fstamp") \o Pair("machine", "mops", "mstamp") \o SprintStage
   ELSE IF Broken = "stampfirst" THEN
     (IF Want("machine") THEN <<"mstamp", "mops">> ELSE None) \o
-    (IF Want("friend") THEN <<"fstamp", "fops">> ELSE None)
+    (IF Want("friend") THEN <<"fstamp", "fops">> ELSE None) \o SprintStage
   ELSE
-    Pair("machine", "mops", "mstamp") \o Pair("friend", "fops", "fstamp")
+    Pair("machine", "mops", "mstamp") \o Pair("friend", "fops", "fstamp") \o SprintStage
 
-KindOf(s) == IF s \in {"mops", "mstamp"} THEN "machine" ELSE "friend"
+KindOf(s) == CASE s \in {"mops", "mstamp"} -> "machine"
+               [] s \in {"fops", "fstamp"} -> "friend"
+               [] OTHER -> "sprint"
+
+\* The rows of kind k this apply refused.
+RefusedOf(k) == refusedRows \cap (IF k = "machine" THEN Machines ELSE Friends)
+
+\* The machine rows a CONFLICT kind leaves unwritten: its pending adds and
+\* sets (apply.go apply plans before it refuses CONFLICT, so the caller can
+\* name them).
+PendingMachines ==
+  {MachPlan[i].name : i \in {j \in 1..Len(MachPlan) : MachPlan[j].op # "remove"}}
+
+\* A row whose ref names a row refused earlier in this run is itself
+\* refused, never written half-referenced (apply.go refRefusal), but only
+\* when the named row is absent from Redis (its refused op was an add) or
+\* the op changes the ref field itself. The friend names its machine: an add
+\* is refused only on an absent machine; a set always changes the machine.
+RefRefused(op) ==
+  /\ op.kind = "friend"
+  /\ op.op # "remove"
+  /\ op.value \in refusedRows
+  /\ (mViews[op.value] = 0 \/ op.op = "set")
 
 Init ==
   /\ mRows = [m \in Machines |-> 0]
@@ -243,6 +336,18 @@ Init ==
   /\ faults = 0
   /\ checked = FALSE
   /\ seen = FALSE
+  /\ refusedRows = {}
+  /\ refusals = 0
+  /\ planned = [k \in Kinds |-> FALSE]
+  /\ attempted = [k \in Kinds |-> FALSE]
+  /\ crashedRun = FALSE
+  /\ storeErred = FALSE
+  /\ sRow = Absent
+  /\ sGit = 0
+  /\ sView = [coord |-> Absent, git |-> 0]
+  /\ seatMoved = FALSE
+  /\ sOutcome = "none"
+  /\ sDue = FALSE
 
 \* A store write appends one history row, unless the witness removes that
 \* append. The guards are the refusals PlanWrite names.
@@ -260,6 +365,7 @@ InsertMachine(m) ==
   /\ UNCHANGED <<fRows, mViews, fViews, stamp, phase, stages, si, oi, mPlan,
                  fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  idemApplied, wroteAhead, owed, crashes, faults, seen>>
+  /\ UNCHANGED rvars
 
 UpdateMachine(m) ==
   /\ phase = "idle"
@@ -273,6 +379,7 @@ UpdateMachine(m) ==
   /\ UNCHANGED <<fRows, mViews, fViews, stamp, phase, stages, si, oi, mPlan,
                  fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  idemApplied, wroteAhead, owed, crashes, faults, seen>>
+  /\ UNCHANGED rvars
 
 DeleteMachine(m) ==
   /\ phase = "idle"
@@ -287,6 +394,7 @@ DeleteMachine(m) ==
   /\ UNCHANGED <<fRows, mViews, fViews, stamp, phase, stages, si, oi, mPlan,
                  fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  idemApplied, wroteAhead, owed, crashes, faults, seen>>
+  /\ UNCHANGED rvars
 
 InsertFriend(f, h) ==
   /\ phase = "idle"
@@ -301,6 +409,7 @@ InsertFriend(f, h) ==
   /\ UNCHANGED <<mRows, mViews, fViews, stamp, phase, stages, si, oi, mPlan,
                  fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  idemApplied, wroteAhead, owed, crashes, faults, seen>>
+  /\ UNCHANGED rvars
 
 UpdateFriend(f, h) ==
   /\ phase = "idle"
@@ -316,10 +425,12 @@ UpdateFriend(f, h) ==
   /\ UNCHANGED <<mRows, mViews, fViews, stamp, phase, stages, si, oi, mPlan,
                  fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  idemApplied, wroteAhead, owed, crashes, faults, seen>>
+  /\ UNCHANGED rvars
 
 DeleteFriend(f) ==
   /\ phase = "idle"
   /\ fRows[f] # Absent
+  /\ sRow # f
   /\ StoreRoom
   /\ fRows' = [fRows EXCEPT ![f] = Absent]
   /\ IF Broken = "nohistory" THEN UNCHANGED history
@@ -329,18 +440,53 @@ DeleteFriend(f) ==
   /\ UNCHANGED <<mRows, mViews, fViews, stamp, phase, stages, si, oi, mPlan,
                  fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  idemApplied, wroteAhead, owed, crashes, faults, seen>>
+  /\ UNCHANGED rvars
+
+\* The sprint row names a friend as its coordinator, with git_identity set
+\* in the same write (store.go: the ref must name a row).
+SetSprint(f) ==
+  /\ WithSprint
+  /\ phase = "idle"
+  /\ fRows[f] # Absent
+  /\ sRow # f
+  /\ Len(history) < MaxRev
+  /\ sRow' = f
+  /\ sGit' = 1
+  /\ history' = Append(history, Rec("sprint", "sprint", "set", f))
+  /\ checked' = FALSE
+  /\ UNCHANGED <<mRows, fRows, mViews, fViews, stamp, phase, stages, si, oi,
+                 mPlan, fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
+                 clean, idemApplied, wroteAhead, owed, crashes, faults, seen,
+                 refusedRows, refusals, planned, attempted, crashedRun,
+                 storeErred, sView, seatMoved, sOutcome, sDue>>
+
+\* nova-sprint's seat verb moves the live coordinator in Redis, once; a
+\* publish never moves it back (apply.go reportSeatHold).
+MoveSeat(f) ==
+  /\ WithSprint
+  /\ phase = "idle"
+  /\ ~seatMoved
+  /\ sView.coord # f
+  /\ sView' = [sView EXCEPT !.coord = f]
+  /\ seatMoved' = TRUE
+  /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, phase, stages,
+                 si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0, stampMoved,
+                 opsDone, clean, idemApplied, wroteAhead, owed, crashes, faults,
+                 checked, seen, refusedRows, refusals, planned, attempted,
+                 crashedRun, storeErred, sRow, sGit, sOutcome, sDue>>
 
 \* ApplyCheck plans and reports, and writes nothing (apply.go, check set).
 \* A stamp that is ahead refuses the command before the plan is used.
+\* A kind ahead is said CONFLICT and the check goes on to the next kind.
 ApplyCheck ==
   /\ phase = "idle"
   /\ ~checked
-  /\ ~RefuseAll
   /\ checked' = TRUE
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, phase, stages,
                  si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0, stampMoved,
                  opsDone, clean, idemApplied, wroteAhead, owed, crashes,
                  faults, seen>>
+  /\ UNCHANGED rvars
 
 \* Read returns one view. It writes neither store (store.go) nor Redis
 \* (apply.go Read).
@@ -352,6 +498,7 @@ Read ==
                  si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0, stampMoved,
                  opsDone, clean, idemApplied, wroteAhead, owed, crashes,
                  faults, checked>>
+  /\ UNCHANGED rvars
 
 \* Something writes Redis directly and moves a stamp ahead of the store.
 \* It does not run while a crash is still owed, so the next apply of an
@@ -367,6 +514,7 @@ OutsideRedisWrite(k) ==
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, phase, stages, si, oi,
                  mPlan, fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  idemApplied, wroteAhead, owed, crashes, checked, seen>>
+  /\ UNCHANGED rvars
 
 StartApply ==
   /\ phase = "idle"
@@ -384,8 +532,17 @@ StartApply ==
   /\ stampMoved' = [k \in Kinds |-> FALSE]
   /\ opsDone' = [k \in Kinds |-> IF k = "machine" THEN Len(MachPlan) = 0
                                  ELSE Len(FriendPlan) = 0]
+  /\ refusedRows' = IF Ahead("machine") /\ Broken # "overahead"
+                    THEN PendingMachines ELSE {}
+  /\ planned' = [k \in Kinds |-> \E i \in 1..Len(stages') : KindOf(stages'[i]) = k]
+  /\ attempted' = [k \in Kinds |-> FALSE]
+  /\ crashedRun' = FALSE
+  /\ storeErred' = FALSE
+  /\ sOutcome' = "none"
+  /\ sDue' = FALSE
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, clean,
-                 idemApplied, wroteAhead, owed, crashes, faults, checked, seen>>
+                 idemApplied, wroteAhead, owed, crashes, faults, checked, seen,
+                 refusals, sRow, sGit, sView, seatMoved>>
 
 WriteM(op) ==
   /\ mViews' = [mViews EXCEPT ![op.name] = IF op.op = "remove" THEN 0 ELSE op.value]
@@ -409,26 +566,77 @@ LeaveOps(k) ==
   /\ oi' = 1
   /\ opsDone' = [opsDone EXCEPT ![k] = TRUE]
 
+NextOp(k, plan) ==
+  IF oi = Len(plan) THEN LeaveOps(k)
+  ELSE /\ oi' = oi + 1
+       /\ UNCHANGED <<si, opsDone>>
+
+\* One op of the kind: written, or refused. A refusal (the runtime's, at most
+\* MaxRefusals in a behaviour, or the ref rule's) writes nothing, names the
+\* row, and the apply goes on to the next op (apply.go apply, the op loop).
+\* The witness "stopatrefusal" is v1.2.16: the apply ends at the refusal.
 DoOps(k, plan) ==
-  /\ UNCHANGED <<stamp, stampMoved, idemApplied>>
+  /\ attempted' = [attempted EXCEPT ![k] = TRUE]
+  /\ UNCHANGED <<stamp, stampMoved, idemApplied, planned, crashedRun, storeErred,
+                 sRow, sGit, sView, seatMoved, sOutcome, sDue>>
   /\ IF oi > Len(plan) THEN
        /\ LeaveOps(k)
-       /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean>>
+       /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean, phase,
+                      refusedRows, refusals>>
      ELSE
-       /\ IF k = "machine" THEN WriteM(plan[oi]) ELSE WriteF(plan[oi])
-       /\ IF oi = Len(plan) THEN LeaveOps(k)
-          ELSE /\ oi' = oi + 1
-               /\ UNCHANGED <<si, opsDone>>
+       LET op == plan[oi] IN
+       \/ /\ ~RefRefused(op)
+          /\ IF k = "machine" THEN WriteM(op) ELSE WriteF(op)
+          /\ NextOp(k, plan)
+          /\ UNCHANGED <<phase, refusedRows, refusals>>
+       \/ /\ RefRefused(op) \/ refusals < MaxRefusals
+          /\ refusedRows' = refusedRows \cup {op.name}
+          /\ refusals' = IF RefRefused(op) THEN refusals ELSE refusals + 1
+          /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean>>
+          /\ IF Broken = "stopatrefusal"
+             THEN /\ phase' = "idle"
+                  /\ UNCHANGED <<si, oi, opsDone>>
+             ELSE /\ NextOp(k, plan)
+                  /\ UNCHANGED phase
 
+\* A kind with a refused op is not stamped: its revision stays behind, so
+\* status says so and the next apply retries only the diff (apply.go apply).
+\* The witness "stamprefused" stamps it anyway.
 DoStamp(k) ==
-  /\ stamp' = [stamp EXCEPT ![k] = Rev(k)]
-  /\ stampMoved' = [stampMoved EXCEPT ![k] = TRUE]
-  /\ clean' = [clean EXCEPT ![k] = ViewEq(k)]
-  /\ idemApplied' = [idemApplied EXCEPT ![k] = Rev(k)]
-  /\ wroteAhead' = (wroteAhead \/ ahead0[k])
+  /\ IF RefusedOf(k) # {} /\ Broken # "stamprefused"
+     THEN UNCHANGED <<stamp, stampMoved, clean, idemApplied, wroteAhead>>
+     ELSE /\ stamp' = [stamp EXCEPT ![k] = Rev(k)]
+          /\ stampMoved' = [stampMoved EXCEPT ![k] = TRUE]
+          /\ clean' = [clean EXCEPT ![k] = ViewEq(k)]
+          /\ idemApplied' = [idemApplied EXCEPT ![k] = Rev(k)]
+          /\ wroteAhead' = (wroteAhead \/ ahead0[k])
   /\ si' = si + 1
   /\ oi' = 1
-  /\ UNCHANGED <<mViews, fViews, prefix, opsDone>>
+  /\ UNCHANGED <<mViews, fViews, prefix, opsDone, phase, rvars>>
+
+\* The row the sprint op actually writes (apply.go reportSeatHold): a live
+\* coordinator the row disagrees with is held, every other field is written.
+WrittenCoord == IF sView.coord # Absent /\ sView.coord # sRow THEN sView.coord ELSE sRow
+
+\* The ref rule on a sprint row naming c (apply.go refRefusal): c was refused
+\* in this run, and is absent from Redis or the write changes the ref.
+SprintRefRefused(c) == c \in refusedRows /\ (fViews[c] = Absent \/ c # sView.coord)
+
+\* The sprint op: refused by the ref rule judged on the row written, or
+\* written. The witness "heldjudgedonrow" judges the stored row instead.
+DoSprint ==
+  /\ LET judged == IF Broken = "heldjudgedonrow" THEN sRow ELSE WrittenCoord
+     IN IF SprintRefRefused(judged)
+        THEN /\ sOutcome' = "refused"
+             /\ UNCHANGED sView
+        ELSE /\ sOutcome' = "written"
+             /\ sView' = [coord |-> WrittenCoord, git |-> sGit]
+  /\ sDue' = SprintRefRefused(WrittenCoord)
+  /\ si' = si + 1
+  /\ oi' = 1
+  /\ UNCHANGED <<stamp, stampMoved, clean, idemApplied, wroteAhead, mViews,
+                 fViews, prefix, opsDone, phase, refusedRows, refusals, planned,
+                 attempted, crashedRun, storeErred, sRow, sGit, seatMoved>>
 
 Step ==
   /\ phase = "applying"
@@ -438,7 +646,8 @@ Step ==
           \/ /\ s = "fops" /\ DoOps("friend", fPlan)
           \/ /\ s = "mstamp" /\ DoStamp("machine")
           \/ /\ s = "fstamp" /\ DoStamp("friend")
-       /\ UNCHANGED <<mRows, fRows, history, phase, stages, mPlan, fPlan,
+          \/ /\ s = "sops" /\ DoSprint
+       /\ UNCHANGED <<mRows, fRows, history, stages, mPlan, fPlan,
                       ceilAtStart, ahead0, owed, crashes, faults, checked, seen>>
 
 Finish ==
@@ -451,6 +660,7 @@ Finish ==
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, stages, si, oi,
                  mPlan, fPlan, ceilAtStart, ahead0, opsDone, clean, idemApplied,
                  wroteAhead, crashes, faults, checked, seen>>
+  /\ UNCHANGED rvars
 
 Advance == Step \/ Finish
 
@@ -460,25 +670,59 @@ ApplyCrash ==
   /\ phase = "applying"
   /\ crashes < MaxCrashes
   /\ si \in 1..Len(stages)
+  /\ stages[si] # "sops"
   /\ LET k == KindOf(stages[si]) IN
        /\ ~ (ViewEq(k) /\ stamp[k] = Rev(k))
        /\ owed' = [owed EXCEPT ![k] = TRUE]
        /\ clean' = [clean EXCEPT ![k] = FALSE]
   /\ crashes' = crashes + 1
   /\ phase' = "idle"
+  /\ crashedRun' = TRUE
+  /\ UNCHANGED <<refusedRows, refusals, planned, attempted, storeErred,
+                 sRow, sGit, sView, seatMoved, sOutcome, sDue>>
   /\ stampMoved' = [k \in Kinds |-> FALSE]
   /\ prefix' = <<>>
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, stages, si, oi,
                  mPlan, fPlan, ceilAtStart, ahead0, opsDone, idemApplied,
                  wroteAhead, faults, checked, seen>>
 
+\* A write fails with an error that is not a refusal (a store or connection
+\* error). The run stops there, exit 2, as a crash does: the kind is owed and
+\* no later kind is written (cmd/nova-config/apply.go runApply, the first
+\* case of the kind switch). It shares the crash budget. The witness
+\* "swallowerr" is the first cut of PR 5662: after a refusal in the same
+\* kind, the error is classed as one more refusal and the run goes on.
+StoreError ==
+  /\ phase = "applying"
+  /\ crashes < MaxCrashes
+  /\ si \in 1..Len(stages)
+  /\ stages[si] \in {"mops", "fops"}
+  /\ LET k == KindOf(stages[si])
+         plan == IF k = "machine" THEN mPlan ELSE fPlan
+     IN /\ oi <= Len(plan)
+        /\ crashes' = crashes + 1
+        /\ storeErred' = TRUE
+        /\ IF Broken = "swallowerr" /\ RefusedOf(k) # {}
+           THEN /\ refusedRows' = refusedRows \cup {plan[oi].name}
+                /\ NextOp(k, plan)
+                /\ UNCHANGED <<phase, crashedRun, owed, clean>>
+           ELSE /\ phase' = "idle"
+                /\ crashedRun' = TRUE
+                /\ owed' = [owed EXCEPT ![k] = TRUE]
+                /\ clean' = [clean EXCEPT ![k] = FALSE]
+                /\ UNCHANGED <<refusedRows, si, oi, opsDone>>
+  /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, stages, mPlan,
+                 fPlan, prefix, ceilAtStart, ahead0, stampMoved, idemApplied,
+                 wroteAhead, faults, checked, seen, refusals, planned,
+                 attempted, sRow, sGit, sView, seatMoved, sOutcome, sDue>>
+
 Next ==
   \/ \E m \in Machines : InsertMachine(m) \/ UpdateMachine(m) \/ DeleteMachine(m)
   \/ \E f \in Friends : \E h \in Machines : InsertFriend(f, h) \/ UpdateFriend(f, h)
-  \/ \E f \in Friends : DeleteFriend(f)
+  \/ \E f \in Friends : DeleteFriend(f) \/ SetSprint(f) \/ MoveSeat(f)
   \/ ApplyCheck \/ Read
   \/ \E k \in Kinds : OutsideRedisWrite(k)
-  \/ StartApply \/ Advance \/ ApplyCrash
+  \/ StartApply \/ Advance \/ ApplyCrash \/ StoreError
 
 \* Fairness is the next apply: once a crash has left a kind owed, and no
 \* further crash is left, the apply that is enabled runs to its stamp.
@@ -538,5 +782,27 @@ CanFinish(k) ==
   /\ k = "friend" => stamp["machine"] <= Rev("machine")
 
 CrashedApplyCompletes == \A k \in Kinds : CanFinish(k) ~> ~owed[k]
+
+\* A refusal never stops a later kind: once an apply has ended other than
+\* by a crash or a store error (exit 2), every kind it had stages for was
+\* attempted (cmd/nova-config apply.go runApply). This is stronger than
+\* "every kind after a refused kind": no planned kind is ever skipped.
+EveryPlannedKindIsAttemptedUnlessCrashed ==
+  (phase = "idle" /\ ~crashedRun) => \A k \in Kinds : planned[k] => attempted[k]
+
+\* A stamped kind has no refused op in the apply that stamped it (apply.go
+\* apply: a kind with any refusal is not stamped).
+StampedKindHasNoRefusal == \A k \in Kinds : stampMoved[k] => RefusedOf(k) = {}
+
+\* A store error is never classed as a refusal: the step it happens in ends
+\* the run, exit 2 (cmd/nova-config apply.go runApply). The excuse the
+\* invariant above gives a crashed run is earned only by stopping.
+StoreErrorStopsTheRun == storeErred => (phase = "idle" /\ crashedRun)
+
+\* The sprint row is refused only by the ref rule on the row it would write:
+\* with the live seat held, a refused coordinator in the stored row does not
+\* refuse it, and its git_identity lands (apply.go refRefusal on the row
+\* reportSeatHold returns).
+SprintRefusedOnlyForItsWrittenRef == sOutcome = "refused" => sDue
 
 =============================================================================

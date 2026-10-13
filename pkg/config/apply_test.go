@@ -344,22 +344,152 @@ func TestApplyRefusesConflictWhenRedisIsAhead(t *testing.T) {
 	require.True(t, IsConflict(err), assertionMsg301...)
 }
 
-func TestApplyStopsAtARefusalAndNamesIt(t *testing.T) {
+// TestApplyGoesOnPastARefusalAndDoesNotStamp: a refused write names its row
+// and the kind's later ops are still written; a kind with any refusal is not
+// stamped, and the first refusal is returned (tla/ConfigApply.tla, DoOps and
+// DoStamp; StampedKindHasNoRefusal).
+func TestApplyGoesOnPastARefusalAndDoesNotStamp(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	st := seed(t)
 	ap := newFake()
-	ceiling := &RefusedError{Err: ErrCeiling, Detail: "CEILING studio: friend stella makes the sum 70 over the machine ceiling 64"}
-	ap.refuse["stella"] = ceiling
+	ceiling := &RefusedError{Err: ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 70 over the machine ceiling 64"}
+	ap.refuse["rowan"] = ceiling
 	var reported []string
-	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Name) })
-	assertionMsg314 := []any{"ceiling: %v", err}
-	require.ErrorIs(t, err, ErrCeiling, assertionMsg314...)
-	require.True(t, Refused(err), assertionMsg314...)
-	require.Equal(t, "add friend rowan as=rowan idem=config:friend:4", strings.Join(ap.log, " "), "writes before the refusal %v: rowan is written, stella refused, nothing after and no stamp", ap.log)
-	require.Equal(t, int64(0), ap.revs[KindFriend], "a refused apply stamped the revision")
-	require.Equal(t, "rowan stella", strings.Join(reported, " "), "reported %v: the refused op is reported before it is tried", reported)
+	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Name) })
+	require.ErrorIs(t, err, ErrCeiling, "the first refusal is returned: %v", err)
+	require.True(t, Refused(err), "ceiling: %v", err)
+	require.Equal(t, "add friend stella as=rowan idem=config:friend:4", strings.Join(ap.log, " "), "rowan is refused, stella after it is still written, and no stamp: %v", ap.log)
+	require.Equal(t, int64(0), ap.revs[KindFriend], "a kind with a refused op was stamped")
+	require.False(t, res.Stamped, "res %+v", res)
+	require.Equal(t, 1, res.Written, "res %+v", res)
+	require.Len(t, res.Refused, 1, "res %+v", res)
+	require.Equal(t, Refusal{Kind: KindFriend, Name: "rowan", Err: ceiling, Absent: true}, res.Refused[0], "rowan's refused op was an add: absent from Redis")
+	require.Equal(t, "rowan stella", strings.Join(reported, " "), "reported %v: every op is reported before it is tried", reported)
+
+	// The retry, with the refusal gone, writes only the diff and stamps.
+	delete(ap.refuse, "rowan")
+	ap.log = nil
+	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	require.NoError(t, err)
+	require.True(t, res.Stamped, "res %+v", res)
+	require.Equal(t, "add friend rowan as=rowan idem=config:friend:4 stamp friend 4", strings.Join(ap.log, " "), "the retry: %v", ap.log)
+}
+
+// TestApplyInRunRefusesARowNamingARowRefusedEarlier: the ref rule
+// (ConfigApply.tla RefRefused). A row whose ref names a row refused earlier
+// in the run is refused with that reason, never written, and its kind is not
+// stamped, when the named row is absent from Redis or the op changes the ref
+// field; --check names it too.
+func TestApplyInRunRefusesARowNamingARowRefusedEarlier(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	for _, absent := range []bool{true, false} {
+		for _, check := range []bool{false, true} {
+			st := seed(t)
+			ap := newFake()
+			earlier := Earlier{}
+			earlier.Add(KindFriend, "rowan", "CEILING studio", absent)
+			// A fresh Redis: the sprint op sets coordinator "" -> rowan, so
+			// the ref field changes and even a present rowan refuses it.
+			res, err := ApplyInRun(ctx, st, ap, KindSprint, "rowan", check, false, earlier, func(Op) {})
+			require.ErrorIs(t, err, ErrRefusedRef, "absent=%t check=%t: %v", absent, check, err)
+			require.Len(t, res.Refused, 1, "absent=%t check=%t: %+v", absent, check, res)
+			require.Equal(t, "sprint sprint: its coordinator names friend rowan, refused earlier in this run (CEILING studio)", res.Refused[0].Err.Error())
+			require.Empty(t, ap.log, "absent=%t check=%t: a row naming a refused row was written: %v", absent, check, ap.log)
+			require.Zero(t, ap.revs[KindSprint], "absent=%t check=%t", absent, check)
+		}
+	}
+	// A row whose refs name no refused row is written.
+	res, err := ApplyInRun(ctx, seed(t), newFake(), KindSprint, "rowan", false, false, Earlier{KindFriend: {"stella": {Why: "CEILING studio", Absent: true}}}, func(Op) {})
+	require.NoError(t, err)
+	require.True(t, res.Stamped, "res %+v", res)
+}
+
+// TestApplyInRunWritesARowThatOnlyNamesAPresentRefusedRow is the incident
+// the ref rule must not bring back: the coordinator friend's set is refused
+// (the friend is still in Redis), and the sprint row, whose coordinator does
+// not change, is still written, its git_identity with it.
+func TestApplyInRunWritesARowThatOnlyNamesAPresentRefusedRow(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := seed(t)
+	ap := newFake()
+	_, err := Apply(ctx, st, ap, KindSprint, "rowan", false, func(Op) {})
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{FieldGitIdentity: "Rowan <rowan@mas-bandwidth.com>"}, "rowan")
+	require.NoError(t, err)
+	earlier := Earlier{}
+	earlier.Add(KindFriend, "rowan", "CEILING studio", false)
+	var changed []string
+	res, err := ApplyInRun(ctx, st, ap, KindSprint, "rowan", false, false, earlier, func(op Op) { changed = op.Changed })
+	require.NoError(t, err, "a row naming a present refused row, its ref unchanged, is written")
+	require.Equal(t, []string{FieldGitIdentity}, changed)
+	require.True(t, res.Stamped, "res %+v", res)
+	require.Equal(t, "Rowan <rowan@mas-bandwidth.com>", ap.views[KindSprint][KindSprint][FieldGitIdentity])
+}
+
+// TestApplyInRunWritesTheSprintRowWhenTheLiveSeatIsHeld: the live seat in
+// Redis is stella, the stored row names rowan, whose set was refused. The row
+// written holds stella, so its coordinator does not change and the ref rule
+// does not refuse it: git_identity lands (ConfigApply.tla
+// SprintRefusedOnlyForItsWrittenRef), in --check too.
+func TestApplyInRunWritesTheSprintRowWhenTheLiveSeatIsHeld(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	for _, check := range []bool{false, true} {
+		st := seed(t)
+		ap := newFake()
+		_, err := Apply(ctx, st, ap, KindSprint, "rowan", false, func(Op) {})
+		require.NoError(t, err)
+		ap.views[KindSprint][KindSprint]["coordinator"] = "stella"
+		_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{FieldGitIdentity: "Rowan <rowan@mas-bandwidth.com>"}, "rowan")
+		require.NoError(t, err)
+		earlier := Earlier{}
+		earlier.Add(KindFriend, "rowan", "CEILING studio", false)
+		var held bool
+		res, err := ApplyInRun(ctx, st, ap, KindSprint, "rowan", check, false, earlier, func(op Op) { held = held || op.Op == OpHeld })
+		require.NoError(t, err, "check=%t: the held row's coordinator does not change", check)
+		require.Empty(t, res.Refused, "check=%t: %+v", check, res)
+		require.True(t, held, "check=%t: the held line is said", check)
+		if !check {
+			require.True(t, res.Stamped, "res %+v", res)
+			require.Equal(t, "Rowan <rowan@mas-bandwidth.com>", ap.views[KindSprint][KindSprint][FieldGitIdentity])
+			require.Equal(t, "stella", ap.views[KindSprint][KindSprint]["coordinator"], "the live seat is held")
+		}
+	}
+}
+
+// TestApplyStopsAtAStoreErrorAfterARefusal: a store or connection error is
+// never a refusal, even after a refusal in the same kind: the apply returns
+// it at once (ConfigApply.tla StoreError), with the refusal before it still
+// in Result.Refused, and stamps nothing.
+func TestApplyStopsAtAStoreErrorAfterARefusal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := seed(t)
+	ap := newFake()
+	ap.refuse["rowan"] = &RefusedError{Err: ErrCeiling, Detail: "CEILING studio: friend rowan makes the sum 70 over the machine ceiling 64"}
+	ap.refuse["stella"] = fmt.Errorf("redis: connection refused")
+	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	require.EqualError(t, err, "redis: connection refused")
+	require.False(t, Refused(err), "a store error classed as a refusal")
+	require.Len(t, res.Refused, 1, "res %+v", res)
+	require.Equal(t, "rowan", res.Refused[0].Name)
+	require.Empty(t, ap.log, "nothing written: %v", ap.log)
+	require.Zero(t, ap.revs[KindFriend], "a kind stopped by a store error was stamped")
+	// A plain error with no refusal before it stops the same way.
+	ap = newFake()
+	ap.refuse["rowan"] = fmt.Errorf("redis: connection refused")
+	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	require.EqualError(t, err, "redis: connection refused")
+	require.Empty(t, res.Refused, "a store error is not a refusal: %+v", res)
+	require.Empty(t, ap.log, "a write after the store error: %v", ap.log)
 }
 
 func TestApplyRefusesAnUnknownKind(t *testing.T) {

@@ -140,7 +140,8 @@ func TestApplyRefusalNamesTheRouteAndAsksForItsPrice(t *testing.T) {
 	} {
 		code, out, errs := h.run(t, args...)
 		require.Equal(t, 1, code, "%v: %s", args, errs)
-		assert.Empty(t, out, "%v wrote %q", args, out)
+		assert.Equal(t, 1, strings.Count(out, "\n"), "%v: only the end line %q", args, out)
+		assert.Contains(t, out, " REFUSED kinds=route:1 applied=-; run: nova-config apply --dry-run", "%v", args)
 		assert.Contains(t, errs, "route pro-mercury3 (inception/mercury-3-preview-1002) is enabled with no price", "%v", args)
 		assert.Contains(t, errs, asks, "%v", args)
 		assert.Contains(t, errs, "take it out: --enabled false --note '<why>'", "%v", args)
@@ -149,10 +150,10 @@ func TestApplyRefusalNamesTheRouteAndAsksForItsPrice(t *testing.T) {
 	assert.Empty(t, h.redis.log, "a refused apply wrote: %v", h.redis.log)
 }
 
-// A bare every-kind apply refuses an enabled route with no price before any
-// kind is written, so machine/fleet/friend/sprint/loop do not reach Redis
-// first (docs/SPEC-CONFIG.md, "Apply"); apply --check refuses the same.
-func TestApplyRefusesAnEnabledRouteWithNoPriceBeforeAnyKindWritten(t *testing.T) {
+// An enabled route with no price refuses the route kind only: a bare
+// every-kind apply writes every other kind and writes no route
+// (docs/SPEC-CONFIG.md, "Apply"); apply --check refuses the same.
+func TestAnUnpricedRouteRefusesOnlyTheRouteKind(t *testing.T) {
 	t.Parallel()
 
 	for _, args := range [][]string{{"apply"}, {"apply", "--check"}} {
@@ -165,11 +166,16 @@ func TestApplyRefusesAnEnabledRouteWithNoPriceBeforeAnyKindWritten(t *testing.T)
 			require.Equal(t, 0, code, errs)
 			code, out, errs := h.run(t, args...)
 			require.Equal(t, 1, code, "%v: %s", args, errs)
-			assert.Empty(t, out, "%v wrote %q", args, out)
+			assert.Contains(t, out, " REFUSED kinds=route:1 applied=machine,fleet,friend,sprint,loop,tier; run: ", "%v: %s", args, out)
 			assert.Contains(t, errs, "route pro-mercury3 (inception/mercury-3-preview-1002) is enabled with no price", "%v", args)
 			assert.Contains(t, errs, "nova-config route set pro-mercury3 --price_input <USD per million>", "%v", args)
 			assert.Equal(t, 1, strings.Count(errs, "\n"), "%v: one refusal line", args)
-			assert.Empty(t, h.redis.log, "a refused apply wrote kinds before the route: %v", h.redis.log)
+			assert.NotContains(t, strings.Join(h.redis.log, " "), "write route", "an unpriced route was written: %v", h.redis.log)
+			if args[len(args)-1] == "apply" {
+				assert.Contains(t, h.redis.log, "write machine m1", "the other kinds apply: %v", h.redis.log)
+			} else {
+				assert.Empty(t, h.redis.log, "--check wrote: %v", h.redis.log)
+			}
 		})
 	}
 }
@@ -222,7 +228,7 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 
 	code, out, _ = h.run(t, "apply", "--kind", "route")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=1 ms=0\n", out)
+	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=1 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	assert.Equal(t, []string{"write route r1"}, h.redis.log)
 	assert.Equal(t, "true", h.redis.views["route"]["r1"]["enabled"])
 
@@ -236,7 +242,7 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	code, out, _ = h.run(t, "apply", "--kind", "route")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=2 ms=0\n", out)
+	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=2 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	view := h.redis.views["route"]["r1"]
 	assert.Equal(t, "0.10000000000000000000000000001", view["price_input"], "a decimal, never through a float")
 	assert.Equal(t, "2.5", view["price_output"])
