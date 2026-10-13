@@ -57,10 +57,23 @@ func TestMain(m *testing.M) {
 
 func TestMuseRunsACardHeadless(t *testing.T) {
 	t.Parallel()
-	for _, model := range []string{"frontier-model", "refused"} {
-		t.Run(model, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, model string
+		symlink bool
+	}{
+		{name: "frontier-model", model: "frontier-model"},
+		{name: "refused", model: "refused"},
+		{name: "symlink working directory", model: "frontier-model", symlink: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			model := tc.model
 			dir := t.TempDir()
+			if tc.symlink {
+				link := filepath.Join(t.TempDir(), "card")
+				require.NoError(t, os.Symlink(dir, link))
+				dir = link
+			}
 			prompt := filepath.Join(dir, "prompt")
 			require.NoError(t, os.WriteFile(prompt, []byte("card prompt"), 0o600))
 			self, err := os.Executable()
