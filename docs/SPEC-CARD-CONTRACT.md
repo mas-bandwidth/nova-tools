@@ -492,8 +492,8 @@ Every git profile refuses `reset` to or below the staged commit when it moves HE
 `rebase --root` and rebases onto history below the staged commit, and `commit --amend`
 at or below the staged commit. The guard covers the staged checkout and every linked
 worktree sharing its Git common directory, including commands using `-C`. Accepted
-abbreviations of `--amend`, `--root` and `--onto`, and short rebase options taking
-values, keep the same guard. Commits above the staged commit may be amended, resets
+abbreviations of history flags and rebase options taking values keep the same
+guard. Commit option values and paths after `--` are not amend flags. Commits above the staged commit may be amended, resets
 staying above it and rebases onto it pass through, as do commands in independent
 repositories and targets Git cannot resolve.
 

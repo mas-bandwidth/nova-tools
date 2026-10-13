@@ -209,10 +209,19 @@ rebase)
 		if [ "$nova_skip" = onto ]; then nova_onto="$nova_a"; nova_skip=""; continue; fi
 		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
 		case "$nova_a" in
-		--r|--ro|--roo|--root) nova_refuse_rewrite "git rebase $nova_a" ;;
-		--o|--on|--ont|--onto) nova_skip=onto ;;
-		--o=*|--on=*|--ont=*|--onto=*) nova_onto="${nova_a#*=}" ;;
-		--ex|--exe|--exec|-x|--strategy-option|-X|--strategy|-s|--whitespace|--empty|-C) nova_skip=1 ;;
+		-x|-X|-s|-C) nova_skip=1 ;;
+		--?*)
+			nova_opt="${nova_a#--}"; nova_opt="${nova_opt%%=*}"
+			for nova_r in root onto exec strategy strategy-option whitespace empty; do
+				case "$nova_r" in "$nova_opt"*)
+					case "$nova_r" in
+					root) nova_refuse_rewrite "git rebase $nova_a" ;;
+					onto) case "$nova_a" in *=*) nova_onto="${nova_a#*=}" ;; *) nova_skip=onto ;; esac ;;
+					*) case "$nova_a" in *=*) ;; *) nova_skip=1 ;; esac ;;
+					esac
+					break ;;
+				esac
+			done ;;
 		-*) ;;
 		*) nova_npos=$((nova_npos + 1)); if [ "$nova_npos" -eq 1 ]; then nova_base="$nova_a"; fi ;;
 		esac
@@ -230,9 +239,27 @@ rebase)
 	nova_git rebase "$@"; exit $? ;;
 commit)
 	shift "$nova_n"
-	nova_amend=""
+	nova_amend=""; nova_skip=""
 	for nova_a in "$@"; do
-		case "$nova_a" in --am|--ame|--amen|--amend|--am=*|--ame=*|--amen=*|--amend=*) nova_amend=1 ;; esac
+		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
+		case "$nova_a" in
+		--) break ;;
+		--?*)
+			nova_opt="${nova_a#--}"; nova_opt="${nova_opt%%=*}"
+			for nova_r in amend message file reuse-message reedit-message template fixup squash author date cleanup trailer pathspec-from-file; do
+				case "$nova_r" in "$nova_opt"*)
+					if [ "$nova_r" = amend ]; then nova_amend=1
+					else case "$nova_a" in *=*) ;; *) nova_skip=1 ;; esac; fi
+					break ;;
+				esac
+			done ;;
+		-?*)
+			nova_short="${nova_a#-}"
+			while [ -n "$nova_short" ]; do
+				nova_ch="${nova_short%"${nova_short#?}"}"; nova_short="${nova_short#?}"
+				case "$nova_ch" in m|F|C|c|t) [ -n "$nova_short" ] || nova_skip=1; break ;; esac
+			done ;;
+		esac
 	done
 	if [ -z "$nova_amend" ]; then nova_git commit "$@"; exit $?; fi
 	if ! nova_guard_top || [ -z "$NOVA_HEAD" ]; then nova_git commit "$@"; exit $?; fi

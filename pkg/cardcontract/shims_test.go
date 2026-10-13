@@ -171,6 +171,10 @@ func TestShimRefusesRewriteAtOrBelowStaged(t *testing.T) {
 			"git rebase -x true " + below,
 			"git rebase --ex true " + below,
 			"git rebase --empty drop " + below,
+			"git rebase -f --empt keep " + below,
+			"git rebase -f --strategy-o ours " + below,
+			"git rebase --whitespace nowarn " + below,
+			"git rebase --wh nowarn " + below,
 			"git rebase -s ort " + below,
 			"git rebase -C 1 " + below,
 		} {
@@ -213,5 +217,42 @@ func TestShimRefusesRewriteAtOrBelowStaged(t *testing.T) {
 		shimGit(t, scratch, "commit", "-q", "--allow-empty", "-m", "two")
 		code, _, errb = shimSh(t, shims, scratch, "git reset --soft HEAD~1 && git commit --amend --allow-empty -m one-amended")
 		assert.Equal(t, 0, code, "%s scratch repo: %s", family, errb)
+	}
+}
+
+// TestShimCommitValuesAreNotAmendFlags pins the normal-commit pass-through of
+// docs/SPEC-CARD-CONTRACT.md section 5, including values and the path boundary.
+func TestShimCommitValuesAreNotAmendFlags(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-SWARM.md)")
+	}
+	for _, family := range []string{"claude", "plain", "openai"} {
+		for _, line := range []string{
+			"git commit --allow-empty -m --amend",
+			"git commit --allow-empty -am --amend",
+			"git commit --allow-empty --message --amend",
+			"git commit --allow-empty --mes --amend",
+			"git commit --allow-empty -F --amend",
+			"git commit --allow-empty --fil --amend",
+			"git commit -m normal -- --amend",
+		} {
+			t.Run(family+"/"+line, func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				work := filepath.Join(root, "repo")
+				shimGit(t, root, "init", "-q", work)
+				shimGit(t, work, "commit", "-q", "--allow-empty", "-m", "staged")
+				staged := shimGit(t, work, "rev-parse", "HEAD")
+				require.NoError(t, os.WriteFile(filepath.Join(work, "--amend"), []byte("work"), 0o644))
+				shimGit(t, work, "add", "--", "--amend")
+				f := Frame{Kind: "work", Card: "c1", Model: "test/model", Repo: cardURL, Branch: "sprint/c1"}
+				shims := filepath.Join(root, "shim")
+				require.NoError(t, Install(For(family), f, Staged{Job: root, Repo: work, Head: staged, Git: realGit(t)}, shims))
+				code, _, errb := shimSh(t, shims, work, line)
+				assert.Equal(t, 0, code, "%s", errb)
+				assert.Equal(t, staged, shimGit(t, work, "rev-parse", "HEAD^"))
+			})
+		}
 	}
 }
