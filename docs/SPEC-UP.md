@@ -20,6 +20,46 @@ but for one unit file in the service manager's own directory (step 6). The layou
 | `logs/` | the Redis loop's log (Linux; on macOS it is `~/Library/Logs/nova-loop-redis-local.log`) | redis |
 | `smoke/` | the smoke's twin, its throwaway repository and its record `landed` | smoke |
 
+## The seat environment
+
+`$XDG_CONFIG_HOME/nova-sprint/seat-environment.json` is the optional, private
+version-1 record tools read for seat defaults. When `XDG_CONFIG_HOME` is not an
+absolute path, the file is `$HOME/.config/nova-sprint/seat-environment.json`.
+This is separate from the legacy `seat.json` used by nova-sprint; neither reader
+rewrites or renames that file. The record is a regular file owned by the user,
+with no group or other permissions, under a real directory owned by the user
+that is not writable by group or other users. Unknown or duplicate keys are refused.
+
+The top-level `version` is `1`. `environment`, when present, contains only the
+`NOVA_SPRINT_REDIS`, `NOVA_SPRINT_SERVER` and `NOVA_BUS_REDIS` endpoint strings.
+`login`, when present, is complete and contains only the existing
+`redis`, `user`, `store`, `as`, `key`, `sops` and `secret` references; the
+password stays in nova-secrets. `forge_identity`, when present, is an absolute
+path to an existing GitHub CLI configuration directory. It is a reference, not
+a credential: tools validate that it names a directory but never read or list
+its contents, create it, log in, or infer it from a seat name.
+
+For a seat that uses a separate GitHub CLI identity, the setting is one field in
+that record:
+
+```json
+{
+  "version": 1,
+  "forge_identity": "/home/seat/.config/gh-profile"
+}
+```
+
+Forge commands preserve an explicit process `GH_CONFIG_DIR` first; when it is
+unset, an explicit `GH_CONFIG_DIR` composed for the child command takes
+precedence over the seat default. Otherwise, a seat-owned forge command passes
+`forge_identity` to that one `gh` child. It does not change the parent process
+environment. A missing setting leaves GitHub CLI's normal configuration
+choice in effect.
+This covers convergence, sandbox worktree, member pull-request and secrets
+carry operations. The `--gh` option still selects an executable and does not
+select an identity. CI, release automation and arbitrary children such as
+`nova-secrets exec -- gh ...` keep the environment their caller supplied.
+
 ## Plan, then apply
 
 A setup is a list of steps. Each step has a plan, which reads and never writes, and an apply,

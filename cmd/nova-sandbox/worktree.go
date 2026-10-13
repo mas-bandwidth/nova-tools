@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
@@ -580,7 +581,10 @@ func (g ghForge) PR(id int) (worktreePR, error) {
 	cmd, cancel := subproc.Command(context.Background(), subproc.GH, "gh", "pr", "view", strconv.Itoa(id), "--repo", ownerRepo,
 		"--json", "headRefOid,baseRefName,state")
 	defer cancel()
-	cmd.Env = g.env
+	cmd.Env, err = seatcred.ForgeCommandEnv(g.env, os.Getenv)
+	if err != nil {
+		return worktreePR{}, errNoForge
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError

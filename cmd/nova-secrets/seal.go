@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
 
@@ -28,7 +29,6 @@ func runSealCLI(args []string, s streams) int {
 	if err := parseFlags(fs, args); err != nil {
 		return s.refuse("seal", 2, err)
 	}
-
 	// A hidden prompt needs a terminal: only the process's own stdin can be one.
 	stdinIsTerminal := false
 	if f, ok := s.stdin.(*os.File); ok {
@@ -43,6 +43,7 @@ func runSealCLI(args []string, s streams) int {
 		SopsPath:        *sopsFlag,
 		Name:            *nameFlag,
 		GHPath:          *ghFlag,
+		ResolveGHEnv:    func() ([]string, error) { return seatcred.ForgeCommandEnv(nil, os.Getenv) },
 		GitPath:         *gitFlag,
 		NoPR:            *noPRFlag,
 		DryRun:          *dryRunFlag,
