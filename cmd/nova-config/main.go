@@ -89,9 +89,9 @@ usage:
   nova-config <kind> add <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> remove <name> --actor <name> [--dry-run] [--json]
-  nova-config <kind> list [--json]
+  nova-config <kind> list [--max <n>] [--json]
   nova-config <kind> show <name> [--json]
-  nova-config <kind> history <name> [--json]
+  nova-config <kind> history <name> [--max <n>] [--json]
   nova-config machine width <name> [--json]
   nova-config machine self [--check] [--json]
   nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
@@ -454,6 +454,18 @@ func refuse(stderr io.Writer, verb, what string) int {
 		next = "" // the reason names its own next command (a --file migrate has not made)
 	}
 	return refuseLine(stderr, verb, plain(what)+next, 2)
+}
+
+// refuseOptions is a validation refusal whose choices come from the field
+// descriptor. Plain output names every choice; JSON carries the same list as
+// a structured fact for callers that want to render it themselves.
+func refuseOptions(stderr io.Writer, verb, what string, options []string) int {
+	what += "; valid options: " + strings.Join(options, ", ")
+	code := refuse(stderr, verb, what)
+	if j, ok := stderr.(*jsonRefusals); ok {
+		j.out.Fact("valid_options", append([]string(nil), options...))
+	}
+	return code
 }
 
 // refused is the exit 1 line: the verb ran and the store or Redis said no.
