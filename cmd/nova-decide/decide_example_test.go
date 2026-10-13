@@ -19,6 +19,11 @@ func TestDecideExampleDir(t *testing.T) {
 	for _, name := range []string{"schema.json", "state.txt", "answers.json", "card.md", "card.diff", "read-answers.json"} {
 		assert.FileExists(t, filepath.Join(dir, name), name)
 	}
+	// read runs against the emitted card, diff and answers.
+	recRead := filepath.Join(dir, "read.jsonl")
+	cli.Do(t, "read", "--card", filepath.Join(dir, "card.md"), "--diff", filepath.Join(dir, "card.diff"),
+		"--backend", "fixed", "--answers", filepath.Join(dir, "read-answers.json"), "--record", recRead, "--op", "card-1").Exit(0).Out("READ OK")
+
 	rec := filepath.Join(dir, "decisions.jsonl")
 	cli.Do(t, "ask", "--schema", filepath.Join(dir, "schema.json"), "--state", filepath.Join(dir, "state.txt"),
 		"--backend", "fixed", "--answers", filepath.Join(dir, "answers.json"), "--record", rec, "--op", "first").Exit(0).Out("ASK OK")
