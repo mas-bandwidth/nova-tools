@@ -1440,9 +1440,14 @@ done; 1 the verb ran and said no; 2 could not run.
 Hooks an identity in: the pushes its role needs (`coordinator`: bus and sprint;
 `friend`: bus and work; `comms`: bus; `member` and `reader`: work), each live while
 its holder renews a lease in the bus Redis and proven while a proof stands
-([SPEC-HOOK](SPEC-HOOK.md)). Every `nova-bus` verb, the friend daemon's lanes and
-beat, and the coordinator's `nova-friend` verbs refuse an identity that is not
-hooked in, naming the command below.
+([SPEC-HOOK](SPEC-HOOK.md)). A command that uses the hook gates its acting
+identity on the required live, proven role push. For `nova-bus`, the acting name must have its own proven
+`bus` push even when sending. Separately, `send` notes unproven `from`/`to`/`cc`
+mailbox pushes and `recv` notes an unproven mailbox push, then continues by
+default. `--require-push` or `NOVA_BUS_REQUIRE_PUSH=1` makes those mailbox checks
+refuse instead. The friend daemon's lanes and beat, and the coordinator's
+`nova-friend` verbs, also refuse an acting identity without their required push
+and role, naming the command below.
 
 ### First run
 
@@ -1464,7 +1469,9 @@ It prints `HOOK CHALLENGE nonce=<n>` at start and every 30 minutes; the session
 runs the `nova-hook prove --as ada --nonce <n>` line it carries within five
 minutes. A friend's daemon (`nova-friend run`) is her hook: it hooks her in at
 its start. `nova-hook status` lists every record; `nova-hook unhook --as <name>`
-ends one, and every tool refuses the name until it hooks in again.
+ends one, and tools refuse that name when it acts without its required proven push.
+The proof records a protocol response to the challenge; it does not establish
+foreground session presence or native idle-wake behavior.
 `nova-hook hook` and `nova-hook prove` take `--dry-run`: each reads the record
 and prints what it would write -- the plan, or the pushes it would prove -- and
 writes nothing.
@@ -3687,6 +3694,7 @@ From a checkout root; the fixed backend answers from a file, so these need no
 network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
 
 ```sh
+nova-decide example --dir ./decide-example
 nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
 nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
@@ -3698,6 +3706,12 @@ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "th
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
 nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
 ```
+
+`example` writes embedded `schema.json`, `state.txt`, `answers.json` and
+`sample.diff` into a new directory, so the fixed-backend walkthrough also works
+outside a source checkout. For example, run `ask` with the generated schema,
+state and answers, then label that record with `outcome` and inspect it with
+`calibrate`; the example needs no provider key and makes no network request.
 
 `read` prints `READ OK id= decision=read backend= verdict= p= tokens_in=
 tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=
