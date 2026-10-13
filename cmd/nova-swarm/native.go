@@ -2420,6 +2420,9 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
 	if err := swarm.AppendCardUsage(filepath.Join(jobDir, "usage.tsv"), row); err != nil {
 		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
+		if cfg.billing != "" {
+			usage.Values["raw_usage"] = "INVALID"
+		}
 	}
 	// THE DURABLE COPY. The job file above is the working copy the
 	// batch still reads. The same row is also appended under this run's own

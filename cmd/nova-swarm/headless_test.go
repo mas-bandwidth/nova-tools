@@ -359,7 +359,7 @@ func TestNativeTypedReplayRefusesDurableErrorsWithAndWithoutSummary(t *testing.T
 	t.Parallel()
 	for _, billing := range cardcost.Billings {
 		for _, withSummary := range []bool{false, true} {
-			for _, issue := range []string{"mixed", "malformed raw"} {
+			for _, issue := range []string{"mixed", "malformed raw", "missing"} {
 				t.Run(billing+strconv.FormatBool(withSummary)+issue, func(t *testing.T) {
 					t.Parallel()
 					dir := t.TempDir()
@@ -370,7 +370,9 @@ func TestNativeTypedReplayRefusesDurableErrorsWithAndWithoutSummary(t *testing.T
 					if issue == "malformed raw" {
 						rows = "meta\tfixture\t2\t-\t-\t-\t-\t-\t2\t" + billing + "\tINVALID\n"
 					}
-					require.NoError(t, os.WriteFile(filepath.Join(job, member.ReceiptName), []byte(header+rows), 0600))
+					if issue != "missing" {
+						require.NoError(t, os.WriteFile(filepath.Join(job, member.ReceiptName), []byte(header+rows), 0600))
+					}
 					logPath := filepath.Join(dir, "native.log")
 					if withSummary {
 						u := cardcost.NoUsage()
@@ -404,4 +406,39 @@ func TestTypedLaunchMissingAllReceiptsCannotBecomeLegacy(t *testing.T) {
 			assert.Error(t, cardcost.ValidateUsage(result.Usage))
 		})
 	}
+}
+
+func TestRestoreLaunchReceiptStampRefusesTypedLossButAllowsLegacy(t *testing.T) {
+	t.Parallel()
+	for _, billing := range append([]string{""}, cardcost.Billings...) {
+		t.Run(billing, func(t *testing.T) {
+			t.Parallel()
+			slot := t.TempDir()
+			got, err := restoreLaunchBilling(slot, billing)
+			if billing == "" {
+				require.NoError(t, err)
+				assert.Empty(t, got)
+			} else {
+				require.Error(t, err)
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(slot, "receipt-billing"), []byte(billing+"\n"), 0644))
+			got, err = restoreLaunchBilling(slot, billing)
+			require.NoError(t, err)
+			assert.Equal(t, billing, got)
+		})
+	}
+}
+
+func TestTypedNativeDurableWriteFailureCannotEmitAcceptedSummary(t *testing.T) {
+	t.Parallel()
+	cfg := nativeRunConfig{billing: cardcost.BillingPlan, binary: "muse", slotDir: t.TempDir(), label: "fixture"}
+	// Missing job parent forces the authoritative append failure; slot copy alone
+	// cannot make it a complete per-launch durable receipt.
+	var out bytes.Buffer
+	now := time.Now()
+	usage, _, _, _ := writeNativeUsage(cfg, "", "meta", "fixture", now, now, time.Time{}, 0, 1, "ok", []byte(`{"payload":{"kind":"model_completed","usage":{"input_tokens":12}}}`), &out)
+	assert.Contains(t, out.String(), "could not be written")
+	assert.Equal(t, "INVALID", usage.Values["raw_usage"])
+	_, err := cardcost.ParseSpendChecked(spendWord([]cardcost.Usage{launchSpend(usage.Values)}))
+	assert.Error(t, err)
 }

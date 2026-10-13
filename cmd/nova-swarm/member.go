@@ -701,15 +701,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
-		launchBilling, readErr := os.ReadFile(filepath.Join(slot, "receipt-billing"))
-		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-			return nil, fmt.Errorf("cannot restore launch receipt contract: %w", readErr)
+		launchBilling, readErr := restoreLaunchBilling(slot, p.Billing)
+		if readErr != nil {
+			return nil, readErr
 		}
 		proc, started, why := adoptLane(pidPath, slot, pid)
 		if why != nil {
 			return nil, why
 		}
-		c := &nativeChild{billing: strings.TrimSpace(string(launchBilling)), card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
+		c := &nativeChild{billing: launchBilling, card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
 		r.addLane(name, c)
 		go func() {
 			defer proc.Release() // ignored: the adopted process handle, after its final observation
@@ -1077,7 +1077,7 @@ func spendMatchesReceipt(summary string, recovered cardcost.Usage) bool {
 			return false
 		}
 	}
-	if recovered.Model != "" && u.Model != recovered.Model {
+	if u.ReceiptVersion != cardcost.ReceiptVersion && recovered.Model != "" && u.Model != recovered.Model {
 		return false
 	}
 	if recovered.Actual != "" {
@@ -1269,7 +1269,11 @@ func (c *nativeChild) Result() member.Result {
 				// and what the job spent by token class with the harness's cost (spend=)
 				u := cardcost.NoUsage()
 				if s := nativeSpend.FindSubmatch(b); s != nil {
-					u = cardcost.ParseSpend(string(s[1]))
+					var spendErr error
+					u, spendErr = cardcost.ParseSpendChecked(string(s[1]))
+					if spendErr != nil {
+						usageError = "invalid native receipt: " + spendErr.Error()
+					}
 				}
 				u.Wall, u.Budget = string(m[1]), string(m[2])
 				wall, _ = time.ParseDuration(string(m[1])) // ignored: a wall that does not parse leaves 0, Judge's unknown
@@ -1301,6 +1305,10 @@ func (c *nativeChild) Result() member.Result {
 				if recovered.ReceiptVersion != 0 && !strings.Contains(usage, "receipt_version=") {
 					usage += " receipt_version=2"
 				}
+			} else if !found && (c.billing != "" || strings.Contains(usage, "receipt_version=")) {
+				usageError = "typed launch has no authoritative durable receipt"
+			} else if found && nativeHasSpend && (c.billing != "" || recovered.ReceiptVersion != 0) && !spendMatchesReceipt(nativeSpendLine, recovered) {
+				usageError = "typed summary disagrees with authoritative durable receipt; preserve all attempt files"
 			} else if found && (usage == "" || !nativeHasSpend || !spendMatchesReceipt(nativeSpendLine, recovered)) {
 				if usage == "" {
 					usage = recovered.String()
@@ -1740,4 +1748,26 @@ func scriptRun(base, sandbox string, noWall bool) func(context.Context, string, 
 		cmd.Dir, cmd.Env = dir, wall.Env(os.Environ())
 		return cmd.Run()
 	}
+}
+
+// restoreLaunchBilling never infers an old launch's contract from its current route.
+func restoreLaunchBilling(slot, declared string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(slot, "receipt-billing"))
+	if errors.Is(err, os.ErrNotExist) && declared == "" {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("launch receipt stamp unavailable; preserve files and finish with original member or start a fresh paired-binary attempt: %w", err)
+	}
+	billing := strings.TrimSpace(string(b))
+	if billing == "" && declared != "" {
+		return "", fmt.Errorf("typed launch receipt stamp empty; preserve files and start a fresh paired-binary attempt")
+	}
+	if billing != "" && billing != cardcost.BillingMetered && billing != cardcost.BillingPlan && billing != cardcost.BillingSubscription {
+		return "", fmt.Errorf("unsupported launch receipt billing; preserve files and start a fresh paired-binary attempt")
+	}
+	if declared != "" && billing != declared {
+		return "", fmt.Errorf("launch receipt billing disagrees with immutable packet; preserve files and start a fresh paired-binary attempt")
+	}
+	return billing, nil
 }
