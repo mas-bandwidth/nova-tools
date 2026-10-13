@@ -156,9 +156,10 @@ const gitClone = `clone)
 
 // gitGuardFuncs are the git shim's helpers for the history guard (gitGuard).
 const gitGuardFuncs = `nova_guard_top() {
-	nova_gt=$(nova_git rev-parse --show-toplevel 2>/dev/null) || return 1
+	nova_gt=$(nova_git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
 	nova_gt=$(cd "$nova_gt" 2>/dev/null && pwd -P) || return 1
-	nova_gs=$(cd "$NOVA_STAGED" 2>/dev/null && pwd -P) || return 1
+	nova_gs=$(cd "$NOVA_STAGED" 2>/dev/null && "$NOVA_GIT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	nova_gs=$(cd "$nova_gs" 2>/dev/null && pwd -P) || return 1
 	[ -n "$nova_gt" ] && [ "$nova_gt" = "$nova_gs" ]
 }
 nova_refuse_rewrite() {
@@ -173,7 +174,7 @@ nova_refuse_rewrite() {
 // staged commit and the refusal only arrived at push time, when the member
 // found the result's head did not descend from the staged commit (memberpush.go);
 // six pushes were refused that way. The guard refuses the rewriting operation
-// itself, in the staged checkout only -- a repository the child made of its
+// itself, in the staged checkout and its linked worktrees -- a repository the child made of its
 // own, and ordinary commits, resets that stay above the staged commit, a
 // rebase onto it, and an amend of the child's own commit all reach the real
 // git unchanged. A target git cannot resolve is handed through too, so git
@@ -208,10 +209,10 @@ rebase)
 		if [ "$nova_skip" = onto ]; then nova_onto="$nova_a"; nova_skip=""; continue; fi
 		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
 		case "$nova_a" in
-		--root) nova_refuse_rewrite "git rebase --root" ;;
-		--onto) nova_skip=onto ;;
-		--onto=*) nova_onto="${nova_a#--onto=}" ;;
-		--exec|--strategy-option|-X|--strategy|--whitespace) nova_skip=1 ;;
+		--r|--ro|--roo|--root) nova_refuse_rewrite "git rebase $nova_a" ;;
+		--o|--on|--ont|--onto) nova_skip=onto ;;
+		--o=*|--on=*|--ont=*|--onto=*) nova_onto="${nova_a#*=}" ;;
+		--ex|--exe|--exec|-x|--strategy-option|-X|--strategy|-s|--whitespace|--empty|-C) nova_skip=1 ;;
 		-*) ;;
 		*) nova_npos=$((nova_npos + 1)); if [ "$nova_npos" -eq 1 ]; then nova_base="$nova_a"; fi ;;
 		esac
@@ -231,7 +232,7 @@ commit)
 	shift "$nova_n"
 	nova_amend=""
 	for nova_a in "$@"; do
-		case "$nova_a" in --amend|--amend=*) nova_amend=1 ;; esac
+		case "$nova_a" in --am|--ame|--amen|--amend|--am=*|--ame=*|--amen=*|--amend=*) nova_amend=1 ;; esac
 	done
 	if [ -z "$nova_amend" ]; then nova_git commit "$@"; exit $?; fi
 	if ! nova_guard_top || [ -z "$NOVA_HEAD" ]; then nova_git commit "$@"; exit $?; fi

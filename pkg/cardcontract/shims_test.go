@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,7 +96,7 @@ func shimGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(realGit(t), append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "init.defaultBranch=main"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v: %s", args, out)
 	return strings.TrimSpace(string(out))
@@ -106,10 +108,8 @@ func shimSh(t *testing.T, shims, dir, line string) (int, string, string) {
 	t.Helper()
 	cmd := exec.Command("/bin/sh", "-c", line)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "PATH="+shims+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+	cmd.Env = testgit.Environ("PATH="+shims+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -132,7 +132,7 @@ func TestShimRefusesRewriteAtOrBelowStaged(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the shims are POSIX sh; a windows bench writes none (docs/SPEC-SWARM.md)")
 	}
-	for _, family := range []string{"claude", "plain"} {
+	for _, family := range []string{"claude", "plain", "openai"} {
 		root := t.TempDir()
 		bare, job, work := filepath.Join(root, "origin.git"), filepath.Join(root, "job"), filepath.Join(root, "job", "repo")
 		shimGit(t, root, "init", "-q", "--bare", bare)
@@ -148,7 +148,7 @@ func TestShimRefusesRewriteAtOrBelowStaged(t *testing.T) {
 		require.NoError(t, Install(For(family), f, s, shims), family)
 
 		// at the staged commit itself, an amend rewrites it: refused, HEAD unmoved
-		code, _, errb := shimSh(t, shims, work, "git commit --amend --allow-empty -m rewritten")
+		code, _, errb := shimSh(t, shims, work, "git commit --am --allow-empty -m rewritten")
 		require.NotEqual(t, 0, code, "%s amend at staged: %s", family, errb)
 		assert.Contains(t, errb, "REFUSED", family)
 		assert.Contains(t, errb, "staged commit", family)
@@ -164,6 +164,15 @@ func TestShimRefusesRewriteAtOrBelowStaged(t *testing.T) {
 			"git reset --hard HEAD~2",
 			"git rebase " + below,
 			"git rebase --onto " + below + " " + staged,
+			"git rebase --on=" + below + " " + staged,
+			"git rebase --on " + below + " " + staged,
+			"git rebase --roo",
+			"git rebase -X ours " + below,
+			"git rebase -x true " + below,
+			"git rebase --ex true " + below,
+			"git rebase --empty drop " + below,
+			"git rebase -s ort " + below,
+			"git rebase -C 1 " + below,
 		} {
 			code, _, errb := shimSh(t, shims, work, line)
 			assert.NotEqual(t, 0, code, "%s %s", family, line)
@@ -171,6 +180,20 @@ func TestShimRefusesRewriteAtOrBelowStaged(t *testing.T) {
 			assert.Contains(t, errb, "staged commit", "%s %s", family, line)
 			assert.Equal(t, head, shimGit(t, work, "rev-parse", "HEAD"), "%s %s: HEAD unmoved", family, line)
 		}
+
+		// Linked worktrees share the staged history even with another worktree root.
+		linked := filepath.Join(root, "linked")
+		shimGit(t, work, "worktree", "add", "-q", "--detach", linked, staged)
+		code, _, errb = shimSh(t, shims, linked, "git commit --am --allow-empty -m rewritten")
+		assert.NotEqual(t, 0, code, "%s linked amend", family)
+		assert.Contains(t, errb, "REFUSED", family)
+		assert.Equal(t, staged, shimGit(t, linked, "rev-parse", "HEAD"), family)
+		shimGit(t, linked, "commit", "-q", "--allow-empty", "-m", "linked-work")
+		linkedHead := shimGit(t, linked, "rev-parse", "HEAD")
+		code, _, errb = shimSh(t, shims, work, "git -C "+shq(linked)+" reset --soft "+below)
+		assert.NotEqual(t, 0, code, "%s linked reset", family)
+		assert.Contains(t, errb, "REFUSED", family)
+		assert.Equal(t, linkedHead, shimGit(t, linked, "rev-parse", "HEAD"), family)
 
 		// work above the staged commit is the child's own: amend, a reset that
 		// stays above it, and a rebase onto it all reach the real git
