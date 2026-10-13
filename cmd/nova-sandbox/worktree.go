@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
@@ -102,12 +103,14 @@ func prodWorktreeSeams() *worktreeSeams {
 }
 
 // The sentinel failures the forge seam can report, which the verb turns into
-// reason=no_pr, reason=no_forge, reason=bad_origin and reason=bad_head.
+// reason=no_pr, reason=no_forge, reason=bad_seat, reason=bad_origin and
+// reason=bad_head.
 // errBadOrigin and errBadHead are bad input rather than an outage: nothing was
 // asked of the forge at all.
 var (
 	errNoPR      = errors.New("the forge does not know this pull request")
 	errNoForge   = errors.New("the forge could not be reached")
+	errBadSeat   = errors.New("the seat forge identity is invalid")
 	errBadOrigin = errors.New("--repo wants an origin remote whose path names <owner>/<name>")
 	errBadHead   = errors.New("the forge reported a head that is not forty lowercase hex characters")
 )
@@ -326,6 +329,8 @@ func worktreeForgeRefuse(stderr io.Writer, err error) int {
 		reason, detail = "no_pr", "the forge does not know this pull request"
 	case errors.Is(err, errBadOrigin):
 		reason, detail, remedy = "bad_origin", err.Error(), worktreeRemedy
+	case errors.Is(err, errBadSeat):
+		reason, detail, remedy = "bad_seat", err.Error(), worktreeRemedy
 	case errors.Is(err, errBadHead):
 		reason, detail, remedy = "bad_head", err.Error(), worktreeRemedy
 	}
@@ -558,8 +563,9 @@ func inUseByAProcess(dir string) bool {
 // GH_TOKEN/GITHUB_TOKEN in the environment is the only credential. The token is
 // never read, echoed or written by this tool.
 type ghForge struct {
-	repo string
-	env  []string
+	repo   string
+	env    []string
+	getenv func(string) string
 	// git is how the origin is read; nil is the package default.
 	git gitRunner
 }
@@ -580,7 +586,14 @@ func (g ghForge) PR(id int) (worktreePR, error) {
 	cmd, cancel := subproc.Command(context.Background(), subproc.GH, "gh", "pr", "view", strconv.Itoa(id), "--repo", ownerRepo,
 		"--json", "headRefOid,baseRefName,state")
 	defer cancel()
-	cmd.Env = g.env
+	getenv := g.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	cmd.Env, err = seatcred.ForgeCommandEnv(g.env, getenv)
+	if err != nil {
+		return worktreePR{}, fmt.Errorf("%w: %w", errBadSeat, err)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
