@@ -1,14 +1,18 @@
 # SPEC-HOOK: an identity is hooked in, or nothing runs
 
-Every tool that sends, reads or takes work as an identity runs only while that identity is hooked in:
-the pushes its role needs are live and proven, in one record in the bus Redis. A tool that finds the
+Each tool that gates an acting identity permits its operation only while the required pushes for that
+identity's role are live and proven, in one record in the bus Redis. A tool that finds its acting
 identity not hooked in refuses, and its refusal is a breadcrumb: the role, which push is not live, who
-holds it, and the exact command that hooks the identity in, runnable as printed.
+holds it, and the exact command that hooks the identity in, runnable as printed. A mailbox push check
+on `nova-bus send` or `recv` is separate: it is advisory by default and becomes a refusal only when
+`--require-push` or `NOVA_BUS_REQUIRE_PUSH=1` is set.
 
 ## What this checks: liveness, not identity
 
 The hook checks that the pushes of a name are live and answered: a holder renews them, and the
-session or the daemon that receives them proves it reads them. It does not check who the caller is.
+session or the daemon that receives them proves it reads them. A proof is a protocol response to a
+challenge; it does not establish foreground session presence or native idle-wake behavior. It does
+not check who the caller is.
 Any process that can reach the bus Redis can run `nova-hook hook --as <anyone>`, and every tool's
 `--as` is the caller's own word. The bus Redis has only its default user (checked read-only with
 `ACL USERS` on the keeper, 127.0.0.1:6381), so every client may write every `hook:*` key. Protection
@@ -106,7 +110,10 @@ A sprint's clear does not touch the hook keys: a hook is the bus's, not the spri
 ## The gate in every tool
 
 - `nova-bus`: every verb (`wait`, `send`, `peek`, `recv`, `ack`, `receipts`, `overdue`, `log`, `names`)
-  gates the identity acting (the login user, else `--as`) on the `bus` push, before it reads or writes.
+  strictly gates the acting identity (the login user, else `--as`) on its own `bus` push before it reads or writes.
+  Separately, `send` notes unproven `from`/`to`/`cc` mailbox pushes and continues; `recv` notes an
+  unproven mailbox push and continues. `--require-push` or `NOVA_BUS_REQUIRE_PUSH=1` makes those
+  mailbox checks strict. A `send` caller still needs its own proven `bus` push either way.
 - `nova-friend run`: the daemon is its friend's hook as `friend` (`comms` under `--notifications-only`).
   While the gate says no, her lanes take nothing and report nothing (take, progress, finish), her reads
   begin nothing, and her beat says her down with the reason `unhooked: <why>`, so the server deals her
@@ -121,9 +128,11 @@ A sprint's clear does not touch the hook keys: a hook is the bus's, not the spri
 - `pkg/hookgate` is the one place a nova-tools verb meets the gate: `Gate` over the bus store it opened,
   and `Out`, the gate's no as the verb's result.
 
-A gate's no is `FAILED` at exit 1, `reason=unhooked`, the remedy and every other line of the
-breadcrumb a `NOTE`. A record that cannot be read is `REFUSED` at exit 2: the gate fails closed, and
-only its yes lets a verb act.
+A strict acting-identity gate's no is `FAILED` at exit 1, `reason=unhooked`, the remedy and every other
+line of the breadcrumb a `NOTE`. A record that cannot be read is `REFUSED` at exit 2: the gate fails
+closed, and only its yes lets that identity act. An advisory mailbox check instead adds a `NOTE` and
+lets the operation continue; the explicit `--require-push` flag or environment setting makes that
+check refuse before reading or writing.
 
 ## The breadcrumb
 
@@ -139,7 +148,9 @@ Every line of it runs as printed: no elision for the reader to fill in.
   one: the remedy is `nova-hook status --as <name>`, and the lines offer each role that carries the
   push, comms first, then friend, then coordinator.
 
-What is not gated, and why: `nova-hook` itself (it is the hook); `nova-friend pong` and the delivery
+What is not gated, and why: `nova-hook` itself (it is the hook); the default `nova-bus` mailbox
+proof check on `send`/`recv` (it is advisory, unless `--require-push` or `NOVA_BUS_REQUIRE_PUSH=1`);
+`nova-friend pong` and the delivery
 check `nova-friend check --harness` (they are how a session proves its bus push: gating them would
 leave the push unprovable); the local verbs that open no bus store (`install`, `uninstall`, `host`,
 `status`, `resume`, `refuse-go`, `acceptance`, the Claude `hook` adapter); `wait-pong`, which names no

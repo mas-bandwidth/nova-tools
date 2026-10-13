@@ -1433,9 +1433,14 @@ done; 1 the verb ran and said no; 2 could not run.
 Hooks an identity in: the pushes its role needs (`coordinator`: bus and sprint;
 `friend`: bus and work; `comms`: bus; `member` and `reader`: work), each live while
 its holder renews a lease in the bus Redis and proven while a proof stands
-([SPEC-HOOK](SPEC-HOOK.md)). Every `nova-bus` verb, the friend daemon's lanes and
-beat, and the coordinator's `nova-friend` verbs refuse an identity that is not
-hooked in, naming the command below.
+([SPEC-HOOK](SPEC-HOOK.md)). A command that uses the hook gates its acting
+identity on the required live, proven role push. For `nova-bus`, the acting name must have its own proven
+`bus` push even when sending. Separately, `send` notes unproven `from`/`to`/`cc`
+mailbox pushes and `recv` notes an unproven mailbox push, then continues by
+default. `--require-push` or `NOVA_BUS_REQUIRE_PUSH=1` makes those mailbox checks
+refuse instead. The friend daemon's lanes and beat, and the coordinator's
+`nova-friend` verbs, also refuse an acting identity without their required push
+and role, naming the command below.
 
 ### First run
 
@@ -1457,7 +1462,9 @@ It prints `HOOK CHALLENGE nonce=<n>` at start and every 30 minutes; the session
 runs the `nova-hook prove --as ada --nonce <n>` line it carries within five
 minutes. A friend's daemon (`nova-friend run`) is her hook: it hooks her in at
 its start. `nova-hook status` lists every record; `nova-hook unhook --as <name>`
-ends one, and every tool refuses the name until it hooks in again.
+ends one, and tools refuse that name when it acts without its required proven push.
+The proof records a protocol response to the challenge; it does not establish
+foreground session presence or native idle-wake behavior.
 `nova-hook hook` and `nova-hook prove` take `--dry-run`: each reads the record
 and prints what it would write -- the plan, or the pushes it would prove -- and
 writes nothing.
