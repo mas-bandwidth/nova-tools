@@ -189,6 +189,12 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if store := snap.Fleet["store"]; store != "" {
 			hv["nova_redis_addr"] = store + ":" + strconv.Itoa(redisPort)
 		}
+		// An empty bus is left out. The loop templates render NOVA_BUS_REDIS
+		// only when nova_bus_addr is defined and not empty, so a fleet with
+		// no bus still renders the units as it does today.
+		if bus := snap.Fleet["bus"]; bus != "" {
+			hv["nova_bus_addr"] = bus
+		}
 		hv["nova_redis_port"] = redisPort
 		hv["nova_pg_dsn"] = snap.Fleet["pg_dsn"]
 		if localHost != "" && m == localHost {

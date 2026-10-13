@@ -421,3 +421,31 @@ func TestBuildInventoryRefusesAMachineNameThatIsNotARowName(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, valid)
 }
+
+// TestTheInventoryCarriesTheBusAddress: the applied fleet row's bus is
+// nova_bus_addr on every host when it is set, and the variable is absent
+// when the bus is empty.
+func TestTheInventoryCarriesTheBusAddress(t *testing.T) {
+	t.Parallel()
+	const bus = "127.0.0.1:6381"
+	with := snapshot(nil)
+	with.Fleet["bus"] = bus
+	inv, err := BuildInventory(with, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, inv.All.Hosts)
+	for _, host := range inv.All.Hosts {
+		assert.Equal(t, bus, inv.Meta.Hostvars[host]["nova_bus_addr"], host)
+	}
+
+	for _, fleetBus := range []string{"", "absent"} {
+		empty := snapshot(nil)
+		if fleetBus == "" {
+			empty.Fleet["bus"] = ""
+		}
+		got, err := BuildInventory(empty, "")
+		require.NoError(t, err)
+		for _, host := range got.All.Hosts {
+			assert.NotContains(t, got.Meta.Hostvars[host], "nova_bus_addr", "%s %s", fleetBus, host)
+		}
+	}
+}
