@@ -294,13 +294,16 @@ func checkFriend(r Row) error {
 	return nil
 }
 
-// Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
-// (docs/SPEC-CONFIG.md, "friend"); TestTiersMatchCapacityFilter holds the Go
-// and Lua lists equal.
+// Tiers are the model tiers, capacity.lua's filter_ok list
+// (docs/SPEC-CONFIG.md, "friend"); a friend's tiers field and a route's tier
+// field are both one of these. TestTiersMatchCapacityFilter holds the Go and
+// Lua lists equal.
 var Tiers = []string{"flash", "frontier", "heavy", "pro"}
 
-// RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
-// are never drawn from routes and escalate to the coordinator.
+// RouteTiers are the tiers migrate makes a route array row for (the tier
+// kind's Seed, and checkTier's names): flash, pro and heavy. A route's tier
+// field is the wider Tiers, accepting frontier beside them for storage and
+// apply. Automatic frontier fleet dispatch requires the sprint deal integration.
 var RouteTiers = []string{"flash", "pro", "heavy"}
 
 // The sprint row's two bars on a decide read's p(defect) (pkg/decide, Bars;
@@ -576,9 +579,9 @@ var Kinds = []*Kind{
 		// tier kind; docs/SPEC-CONFIG.md, "route").
 		Name:  KindRoute,
 		Table: "routes",
-		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes; frontier cards are never dealt from routes, they escalate to the coordinator",
+		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes",
 		Fields: []Field{
-			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
+			{Name: "tier", Type: TypeEnum, Enum: Tiers, Required: true, Help: "the tier it serves: one of " + strings.Join(Tiers, ", ")},
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "harness", Type: TypeEnum, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harness a card on this route runs under: opencode (the default: the providers table launches it with the provider's key) or a headless program of the machine's own subscription login, " + strings.Join(harness.Headless, ", ") + " (the heavy tier), whose --provider is " + harness.ProviderPrefix + "<harness>, one word per harness so one login's failure rests only its own routes"},

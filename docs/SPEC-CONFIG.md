@@ -316,14 +316,15 @@ refuses it refuses the same. The pieces are `config.LoopRunArgv`,
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
-`model:` header pins it instead. Frontier cards are never dealt from
-routes: they escalate to the coordinator, so `frontier` is no route's tier. A heavy route
+`model:` header pins it instead. The route kind accepts `frontier` alongside
+flash, pro and heavy and carries it through add, set, list and apply. Automatic
+frontier fleet dispatch requires the sprint deal integration. A heavy route
 names a headless harness (`harness`), the class of the owner's 2026-10-04 "the tier is a
 class, never a model name". Every value is data in the row: the code names no provider or model.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `tier` | enum `flash`, `pro`, `heavy` | yes | the deal: the cards of this tier are dealt on it; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
+| `tier` | enum `flash`, `frontier`, `heavy`, `pro` | yes | the deal reads the stored tier; frontier route configuration is accepted, with automatic fleet dispatch a separate sprint integration; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `harness` | enum `opencode`, `claude`, `codex`, `grok` | (opencode) | the member: the harness a card on the route runs under; `opencode` launches through the providers table with the provider's key, a headless one is the machine's own program and subscription login (the heavy tier) and its route's provider is `subscription-<harness>` (`subscription-claude`, `subscription-codex`, `subscription-grok`; refused otherwise), so a provider's rest never spans two harnesses | `route:<r>` |
@@ -533,7 +534,7 @@ config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every > 0 and keepalive, keys only with a seat,
                           argv a JSON array: the kind's Check again, as a
                           wall behind the tool)
-config.routes            (name PK, tier flash|pro, provider, model, tokens,
+config.routes            (name PK, tier flash|frontier|heavy|pro, provider, model, tokens,
                           deadline, enabled boolean, created_at,
                           updated_at; CHECK provider one word with no slash,
                           model with no blank, deadline > 0, tokens >= 0:
@@ -543,8 +544,8 @@ config.routes            (name PK, tier flash|pro, provider, model, tokens,
                           reasoning_as_output boolean, long_context,
                           billing metered|plan, price_source, price_as_of;
                           note added by 0015, text NOT NULL DEFAULT '')
-config.tiers             (name PK flash|pro, routes, created_at, updated_at;
-                          CHECK routes a comma list of names; the two rows
+config.tiers             (name PK flash|pro|heavy, routes, created_at, updated_at;
+                          CHECK routes a comma list of names; the three rows
                           inserted by the migration)
 ```
 

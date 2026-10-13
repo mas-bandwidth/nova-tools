@@ -122,6 +122,30 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 }
 
+// Frontier routes pass through add, set and list while migrate keeps the
+// three tier arrays (docs/SPEC-CONFIG.md, "route" and "tier").
+func TestFrontierRouteVerbsKeepThreeTierRows(t *testing.T) {
+	t.Parallel()
+
+	h := loopHarness(t)
+	for _, args := range [][]string{
+		{"route", "add", "frontier-a", "--tier", "frontier", "--provider", "p", "--model", "m", "--deadline", "60"},
+		{"route", "add", "pro-a", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"},
+		{"route", "set", "pro-a", "--tier", "frontier"},
+	} {
+		code, _, errs := h.run(t, args...)
+		require.Equal(t, 0, code, errs)
+	}
+	code, out, errs := h.run(t, "route", "list")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "ROUTE name=frontier-a tier=frontier provider=p model=m harness=opencode tokens=0 usd=- deadline=60 enabled=true first=false"+noPrices+"\n"+
+		"ROUTE name=pro-a tier=frontier provider=p model=m harness=opencode tokens=0 usd=- deadline=60 enabled=true first=false"+noPrices+"\n"+
+		"CONFIG LIST kind=route rows=2\n", out)
+	code, out, errs = h.run(t, "tier", "list")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "TIER name=flash routes=-\nTIER name=heavy routes=-\nTIER name=pro routes=-\nCONFIG LIST kind=tier rows=3\n", out)
+}
+
 // An enabled route with no price refuses apply and apply --check: the one line
 // names the route and its model, asks for a price with the command that sets
 // it, and carries placeholders where the numbers go, never an invented number
@@ -189,9 +213,9 @@ func TestRouteUsageRefusalsOpenNoStore(t *testing.T) {
 		errs []string
 	}{
 		{
-			name: "frontier, a slashed provider and deadline 0, all at once",
-			args: []string{"route", "add", "r1", "--tier", "frontier", "--provider", "x-ai/grok", "--model", "m", "--deadline", "0"},
-			errs: []string{`--tier "frontier": want one of flash, pro`, `--provider "x-ai/grok"`, "--deadline 0"},
+			name: "an unknown tier, a slashed provider and deadline 0, all at once",
+			args: []string{"route", "add", "r1", "--tier", "max", "--provider", "x-ai/grok", "--model", "m", "--deadline", "0"},
+			errs: []string{`--tier "max": want one of flash, frontier, heavy, pro`, `--provider "x-ai/grok"`, "--deadline 0"},
 		},
 		{
 			name: "every required field missing",
