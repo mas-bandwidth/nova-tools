@@ -85,6 +85,9 @@ func newGitPusher(root, slots string) *gitPusher {
 var pushBranchRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
 
 // Push pushes the child's commit, or says why it did not (member.Push).
+// tla/CardContract.tla RewriteKeptIsPushed holds at this boundary: only a head
+// descending from the slot's recorded stage reaches origin, even if Git plumbing
+// bypasses the shim. A repeated ancestry refusal leaves origin unchanged.
 func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	head := strings.ToLower(strings.TrimSpace(r.Head))
 	if !typedrec.IsSha(head) {
