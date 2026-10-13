@@ -896,6 +896,13 @@ twice.
 ### First run
 
 ```text
+$ nova-decide example --dir ./decide-example
+EXAMPLE OK files=4
+EXAMPLE FILE name=answers.json
+EXAMPLE FILE name=sample.diff
+EXAMPLE FILE name=schema.json
+EXAMPLE FILE name=state.txt
+
 $ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
 ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94

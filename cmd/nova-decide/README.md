@@ -29,7 +29,20 @@ so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
 the test's own directory. The ids come from `--op`, so every line reads the same
 twice.
 
+To create a self-contained fixture outside a checkout, run
+`nova-decide example --dir ./decide-example`. It extracts embedded schema,
+state, fixed-answer and sample-diff files into a new directory without contacting
+a provider. Use those paths with `ask --backend fixed`, then label its record
+with `outcome` and inspect the result with `calibrate`.
+
 ```text
+$ nova-decide example --dir ./decide-example
+EXAMPLE OK files=4
+EXAMPLE FILE name=answers.json
+EXAMPLE FILE name=sample.diff
+EXAMPLE FILE name=schema.json
+EXAMPLE FILE name=state.txt
+
 $ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
 ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94
@@ -101,6 +114,7 @@ FINDINGS FINDING class=unnamed count=1 cards=s1-4
 
 The [nova-decide section of the command reference](../../docs/CLI.md#nova-decide) documents every verb's flags, effect and exit codes.
 
+- `example`
 - `ask`
 - `read`
 - `score`

@@ -3658,6 +3658,7 @@ From a checkout root; the fixed backend answers from a file, so these need no
 network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
 
 ```sh
+nova-decide example --dir ./decide-example
 nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
 nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
@@ -3669,6 +3670,12 @@ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "th
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
 nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
 ```
+
+`example` writes embedded `schema.json`, `state.txt`, `answers.json` and
+`sample.diff` into a new directory, so the fixed-backend walkthrough also works
+outside a source checkout. For example, run `ask` with the generated schema,
+state and answers, then label that record with `outcome` and inspect it with
+`calibrate`; the example needs no provider key and makes no network request.
 
 `read` prints `READ OK id= decision=read backend= verdict= p= tokens_in=
 tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=
