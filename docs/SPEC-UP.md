@@ -1,8 +1,18 @@
 # nova-up: one machine, from nothing to a first sprint
 
-`nova-up` sets up nova on one machine. Its first mode, `nova-up --local`, takes one machine with
-no config to the point where a coordinator runs a first sprint on it. The tool is `cmd/nova-up`
-over `internal/up`; its tests run every step on a fake machine (`internal/up/up_test.go`).
+`nova-up` sets up nova on one machine. Its `nova-up --local` mode takes one machine with no config
+to the point where a coordinator runs a first sprint on it. Its separate `nova-up --seat` mode
+writes a fleet seat environment profile from explicit endpoint flags or matching process
+environment values. The tool is `cmd/nova-up` over `internal/up`; its tests run every step on a
+fake machine (`internal/up/up_test.go`).
+
+`--seat` requires `NOVA_SPRINT_REDIS`, `NOVA_SPRINT_SERVER`, and `NOVA_BUS_REDIS`, supplied by
+`--sprint-redis`, `--server`, `--bus-redis` or the corresponding environment variables. It never
+uses `--local`'s `mem:` twin as a fleet endpoint. The writer accepts password-free `host:port`
+addresses and refuses credential-bearing URLs. It writes the versioned
+`seat-environment.json` under the user's `nova-sprint` config directory, preserves the legacy
+`seat.json` and `~/nova/seat.env`, and carries forward validated login and forge identity
+references without recording credentials.
 
 ## The root
 
@@ -27,7 +37,10 @@ version-1 record tools read for seat defaults. When `XDG_CONFIG_HOME` is not an
 absolute path, the file is `$HOME/.config/nova-sprint/seat-environment.json`;
 when neither location is absolute, the optional record is absent.
 This is separate from the legacy `seat.json` used by nova-sprint; neither reader
-rewrites or renames that file. The record is a regular file owned by the user,
+rewrites or renames that file. The matching nova-sprint reader is a separate,
+pending change in [PR #256](https://github.com/mas-bandwidth/nova-sprint/pull/256).
+The standalone nova-bus command continues to read `NOVA_BUS_REDIS` from its
+process environment. The record is a regular file owned by the user,
 with no group or other permissions, under a real directory owned by the user
 that is not writable by group or other users. Unknown or duplicate keys are refused.
 

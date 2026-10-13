@@ -1152,7 +1152,7 @@ UP seat create /home/you/nova-try/seat.env seat=coordinator
 UP smoke create one card on /home/you/nova-try/smoke/sprint.twin beside the throwaway repository /home/you/nova-try/smoke/repo
 
 $ nova-up --dry-run --root ./nova-try
-! UP REFUSED: --local is required; it wants nothing after it: the mode that sets up this one machine with no config; run: nova-up help
+! UP REFUSED: choose exactly one mode: --local sets up this machine; --seat writes the per-user seat environment; run: nova-up help
 ```
 
 ## nova-doctor
