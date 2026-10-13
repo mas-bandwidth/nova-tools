@@ -29,7 +29,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	assert.Equal(t, "tier,provider,model,harness,tokens,usd,deadline,enabled,first,"+
 		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
 		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "harness": TypeEnum, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool, "first": TypeBool,
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeRef, "model": TypeText, "harness": TypeEnum, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool, "first": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
 		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
@@ -71,6 +71,7 @@ func TestARouteMayBeFrontier(t *testing.T) {
 		"tier": "frontier", "provider": "opencode", "model": "frontier-1", "deadline": "1800",
 	})
 	require.NoError(t, err)
+	addProvider(t, st, row.Fields["provider"])
 	_, err = st.Insert(ctx, KindRoute, row, "a1")
 	require.NoError(t, err)
 
@@ -238,10 +239,11 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 	cases := []struct {
 		name    string
 		changes map[string]string
+		usage   bool   // refused before a store, because the provider is a reference
 		refuse  string // "" when the set is accepted
 	}{
 		{name: "deadline 0", changes: map[string]string{"deadline": "0"}, refuse: "--deadline 0"},
-		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash"},
+		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash", usage: true},
 		{name: "an empty model", changes: map[string]string{"model": ""}, refuse: `--model ""`},
 		{name: "out of the deal with its reason", changes: map[string]string{"enabled": "false", "note": "4 of 52 ok"}},
 		{name: "a headless harness left on the provider word of opencode", changes: map[string]string{"harness": "claude"}, refuse: "want --provider subscription-claude"},
@@ -265,9 +267,21 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 			st := NewMem()
 			row, err := k.NewRow("r1", proRoute("opencode"))
 			require.NoError(t, err)
+			addProvider(t, st, row.Fields["provider"])
 			_, err = st.Insert(ctx, KindRoute, row, "t")
 			require.NoError(t, err)
 			changes, err := k.Changes(tc.changes)
+			if tc.usage {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.refuse)
+				hist, historyErr := st.History(ctx, KindRoute, "r1")
+				require.NoError(t, historyErr)
+				assert.Len(t, hist, 1, "a usage refusal writes nothing")
+				return
+			}
+			if name := changes["provider"]; name != "" {
+				addProvider(t, st, name)
+			}
 			require.NoError(t, err, "each field is valid alone")
 			after, _, err := st.Update(ctx, KindRoute, "r1", changes, "t")
 			hist, _ := st.History(ctx, KindRoute, "r1")
@@ -317,6 +331,7 @@ func TestApplyWritesRoutesAndReachesParity(t *testing.T) {
 	for _, p := range []string{"opencode", "deepseek"} {
 		row, err := k.NewRow("pro-"+p, proRoute(p))
 		require.NoError(t, err)
+		addProvider(t, st, row.Fields["provider"])
 		_, err = st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
 	}
@@ -378,6 +393,7 @@ func TestARouteATierNamesIsHeld(t *testing.T) {
 	for _, name := range []string{"flash-a", "flash-b"} {
 		row, err := route.NewRow(name, map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"})
 		require.NoError(t, err)
+		addProvider(t, st, row.Fields["provider"])
 		_, err = st.Insert(ctx, KindRoute, row, "a1")
 		require.NoError(t, err)
 	}

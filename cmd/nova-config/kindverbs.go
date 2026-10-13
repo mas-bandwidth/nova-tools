@@ -207,6 +207,15 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			next = toolName + " " + k.Name + " show"
 		}
 	}
+	// Preserve the typed provider target on add, set and dry-run, even when
+	// the invalid reference was unchanged by set. One scoped command is runnable.
+	refuseWrite := func(err error) int {
+		var ref *config.RefusedError
+		if errors.As(err, &ref) && ref.MissingRefKind == config.KindProvider {
+			return refused(stderr, verb, ref.Detail, ref.Remedy+" --actor "+config.Value(actor)+c.again())
+		}
+		return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+	}
 	if k.Name == config.KindLoop && d.probe != nil {
 		if err := checkLoopVerb(ctx, st, add, row, changes, d.probe); err != nil {
 			return refuse(stderr, verb, err.Error())
@@ -225,7 +234,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if *dry {
 		plan, err := config.PlanWrite(ctx, st, op, k.Name, row, changes)
 		if err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return refuseWrite(err)
 		}
 		plan.Actor = actor
 		plan.Reason = reasonText
@@ -243,11 +252,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	if add {
 		if id, err = st.Insert(config.WithReason(ctx, reasonText), k.Name, row, actor); err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return refuseWrite(err)
 		}
 	} else {
 		if _, id, err = st.Update(config.WithReason(ctx, reasonText), k.Name, name, changes, actor); err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return refuseWrite(err)
 		}
 		changed = slices.Sorted(maps.Keys(changes))
 	}

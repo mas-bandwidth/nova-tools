@@ -56,4 +56,6 @@ func TestMigrationsHoldEveryNamedTableToTheRowNamePattern(t *testing.T) {
 
 	const pattern = `^[a-z0-9][a-z0-9-]*$`
 	assert.Contains(t, sql, pattern, "migration 27 SQL must contain the name pattern")
+	require.GreaterOrEqual(t, len(all), 41)
+	assert.Contains(t, all[40].SQL, "providers_name_pattern CHECK (name ~ '"+pattern+"')")
 }
