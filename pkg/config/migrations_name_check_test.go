@@ -9,6 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// migrationVersion is the migration number at index i. Files 0001 through
+// 0041 are consecutive. 0042 and 0043 are reserved and absent, so every later
+// file is two ahead of its index.
+func migrationVersion(i int) int {
+	v := i + 1
+	if v > 41 {
+		v += 2
+	}
+	return v
+}
+
 // TestMigrationsHoldEveryNamedTableToTheRowNamePattern asserts that the
 // migration chain is unique and consecutive, ending with
 // 0032_route_first.sql, and that migration 27 enforces the NamePattern
@@ -22,9 +33,10 @@ func TestMigrationsHoldEveryNamedTableToTheRowNamePattern(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, all)
 
-	// Migrations() numbers stay unique and consecutive from 1 to len(all).
+	// Migrations() numbers stay unique. 0042 and 0043 are reserved and absent,
+	// so the file after 0041 is 0044 and the numbers resume from there.
 	for i, m := range all {
-		wantVersion := i + 1
+		wantVersion := migrationVersion(i)
 		assert.Equal(t, wantVersion, m.Version, "migration at index %d has version %d, want %d", i, m.Version, wantVersion)
 		prefix := fmt.Sprintf("%04d_", wantVersion)
 		assert.True(t, strings.HasPrefix(m.Name, prefix), "migration %s should have prefix %s", m.Name, prefix)

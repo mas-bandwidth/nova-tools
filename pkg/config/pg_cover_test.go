@@ -790,14 +790,14 @@ func TestPgCoverMigrate(t *testing.T) {
 			case strings.Contains(q, "information_schema.tables"):
 				return reply([]string{"exists"}, []driver.Value{true})
 			case strings.Contains(q, "max(version)"):
-				return reply([]string{"max"}, []driver.Value{int64(len(all))})
+				return reply([]string{"max"}, []driver.Value{int64(all[len(all)-1].Version)})
 			}
 			return reply(nil)
 		})
 		from, to, applied, err := p.Migrate(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, len(all), from)
-		assert.Equal(t, len(all), to)
+		assert.Equal(t, all[len(all)-1].Version, from)
+		assert.Equal(t, all[len(all)-1].Version, to)
 		assert.Empty(t, applied)
 	}
 	{

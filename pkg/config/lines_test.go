@@ -13,7 +13,7 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	row := Row{Name: "rowan", Fields: map[string]string{"slots": "64", "roles": "builder,reader"}, CreatedAt: "2026-09-27T01:00:00Z", UpdatedAt: "2026-09-27T02:00:00Z"}
-	want := `FRIEND name=rowan tiers=- roles=builder,reader width=- mode=- config_dir=- token_cap=- streams=- kinds=- pronouns=-`
+	want := `FRIEND name=rowan tiers=- roles=builder,reader width=- mode=- config_dir=- token_cap=- streams=- kinds=- pronouns=they/them(unstated)`
 	scopedGot17 := RowLine(friend, row)
 	require.Equal(t, want, scopedGot17, "row line\n got %s\nwant %s", scopedGot17, want)
 	scopedGot21 := ShowLine(friend, row)
@@ -82,7 +82,7 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(all), 1+len(Kinds), "%d migrations for the schema and %d kinds", len(all), len(Kinds))
 	for i, m := range all {
-		assert.Equal(t, i+1, m.Version, "migration %s is version %d at position %d; the numbers run 1, 2, 3 with no gap", m.Name, m.Version, i+1)
+		assert.Equal(t, migrationVersion(i), m.Version, "migration %s is version %d at position %d; 0042 and 0043 are reserved and absent", m.Name, m.Version, i+1)
 	}
 	joined := ""
 	for _, m := range all {
