@@ -563,6 +563,10 @@ func names(csv string) []string {
 }
 
 func (w world) send(c *tool.Call) *tool.Out {
+	// Read DryRun before any return: a refusal met on the way to the store
+	// (a dial failure, an identity refusal) must keep its own message, not
+	// be masked by the skeleton's never-read-it failure.
+	dry := c.DryRun()
 	body := c.Str("body")
 	if c.Bool("stdin") {
 		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus.MaxBody+1))
@@ -604,7 +608,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 			return b.Send(ctx, m)
 		}
 	}
-	if c.DryRun() {
+	if dry {
 		// the message as it would be sent, with no id: nothing is written, and the
 		// push gate the write would meet is asked for by name
 		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
