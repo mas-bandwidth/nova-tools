@@ -357,6 +357,7 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 // Packet is what a card hands the member, as `nova-sprint queue --json` and
 // `take --json` print it.
 type Packet struct {
+	Billing    string   `json:"billing,omitempty"`
 	Card       string   `json:"card"`
 	Kind       string   `json:"kind"` // work or read
 	As         string   `json:"as"`
@@ -2954,7 +2955,14 @@ func usageArgs(r Result) []string {
 	if r.Usage == "" {
 		return nil
 	}
-	return []string{"--usage", r.Usage}
+	args := []string{"--usage", r.Usage}
+	for _, w := range strings.Fields(r.Usage) {
+		if strings.HasPrefix(w, "receipt_version=") {
+			args = append(args, "--receipt-contract", "2")
+			break
+		}
+	}
+	return args
 }
 
 // deathFlags is the --exit and --harness a finish or a return carries when the child

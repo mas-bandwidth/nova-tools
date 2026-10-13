@@ -701,11 +701,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
+		launchBilling, readErr := restoreLaunchBilling(slot, p.Billing)
+		if readErr != nil {
+			return nil, readErr
+		}
 		proc, started, why := adoptLane(pidPath, slot, pid)
 		if why != nil {
 			return nil, why
 		}
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
+		c := &nativeChild{billing: launchBilling, card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
 		r.addLane(name, c)
 		go func() {
 			defer proc.Release() // ignored: the adopted process handle, after its final observation
@@ -762,9 +766,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err := cardcontract.WriteFrame(framePath, frameOf(p, model, r.root)); err != nil {
 		return nil, err
 	}
+	if err := os.WriteFile(filepath.Join(slot, "receipt-billing"), []byte(p.Billing+"\n"), 0644); err != nil {
+		return nil, fmt.Errorf("cannot record launch receipt contract: %w", err)
+	}
 	args := []string{"native", "--harness", bin, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
 		"--stage-timeout", r.stageTimeout().String()}
+	if p.Billing != "" {
+		args = append(args, "--billing", p.Billing)
+	}
 	if p.USD != "" {
 		// the route's dollar budget, beside its token budget (#5094); a reader's override
 		// names tokens, not dollars, so an overridden read keeps the route's
@@ -821,7 +831,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
+	c := &nativeChild{billing: p.Billing, card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
 	r.addLane(name, c)
 	go func() {
 		c.err = cmd.Wait()
@@ -957,6 +967,7 @@ func processAlive(pid int) bool {
 }
 
 type nativeChild struct {
+	billing                     string // immutable launch declaration, restored from the generation slot on adoption
 	card, logPath, results, job string
 	// read is whether this launch is a READ (member.Packet.Kind): a wall refusal on a read
 	// is the reader's own environment, never the work's (member.EndEnvironment).
@@ -1040,6 +1051,7 @@ func mergeReceiptSpend(line string, recovered cardcost.Usage) string {
 	// The receipt is authoritative when the summary is absent or disagrees. Its
 	// empty actual is unknown, and must clear any partial summary price.
 	u.Actual, u.ActualBy = recovered.Actual, recovered.ActualBy
+	u.Billing, u.ReceiptVersion, u.Raw = recovered.Billing, recovered.ReceiptVersion, recovered.Raw
 	return u.String()
 }
 
@@ -1047,17 +1059,25 @@ func mergeReceiptSpend(line string, recovered cardcost.Usage) string {
 // durable receipt rows independently report. A disagreement marks a truncated summary.
 func spendMatchesReceipt(summary string, recovered cardcost.Usage) bool {
 	u := cardcost.ParseSpend(summary)
+	if u.Billing != recovered.Billing || u.ReceiptVersion != recovered.ReceiptVersion {
+		return false
+	}
+	a, aErr := cardcost.EncodeRaw(u.Raw)
+	b, bErr := cardcost.EncodeRaw(recovered.Raw)
+	if aErr != nil || bErr != nil || a != b {
+		return false
+	}
 	counts := [][2]int64{
 		{u.Tokens.Input, recovered.Tokens.Input}, {u.Tokens.CacheRead, recovered.Tokens.CacheRead},
 		{u.Tokens.CacheWrite, recovered.Tokens.CacheWrite}, {u.Tokens.Output, recovered.Tokens.Output},
 		{u.Tokens.Reasoning, recovered.Tokens.Reasoning},
 	}
 	for _, pair := range counts {
-		if pair[1] >= 0 && pair[0] != pair[1] {
+		if pair[0] != pair[1] && (u.ReceiptVersion == cardcost.ReceiptVersion || pair[1] >= 0) {
 			return false
 		}
 	}
-	if recovered.Model != "" && u.Model != recovered.Model {
+	if u.ReceiptVersion != cardcost.ReceiptVersion && recovered.Model != "" && u.Model != recovered.Model {
 		return false
 	}
 	if recovered.Actual != "" {
@@ -1249,7 +1269,11 @@ func (c *nativeChild) Result() member.Result {
 				// and what the job spent by token class with the harness's cost (spend=)
 				u := cardcost.NoUsage()
 				if s := nativeSpend.FindSubmatch(b); s != nil {
-					u = cardcost.ParseSpend(string(s[1]))
+					var spendErr error
+					u, spendErr = cardcost.ParseSpendChecked(string(s[1]))
+					if spendErr != nil {
+						usageError = "invalid native receipt: " + spendErr.Error()
+					}
 				}
 				u.Wall, u.Budget = string(m[1]), string(m[2])
 				wall, _ = time.ParseDuration(string(m[1])) // ignored: a wall that does not parse leaves 0, Judge's unknown
@@ -1278,6 +1302,13 @@ func (c *nativeChild) Result() member.Result {
 			recovered, found, receiptErr := receiptSpend(c.job)
 			if receiptErr != nil {
 				usageError = receiptErr.Error()
+				if recovered.ReceiptVersion != 0 && !strings.Contains(usage, "receipt_version=") {
+					usage += " receipt_version=2"
+				}
+			} else if !found && (c.billing != "" || strings.Contains(usage, "receipt_version=")) {
+				usageError = "typed launch has no authoritative durable receipt"
+			} else if found && nativeHasSpend && (c.billing != "" || recovered.ReceiptVersion != 0) && !spendMatchesReceipt(nativeSpendLine, recovered) {
+				usageError = "typed summary disagrees with authoritative durable receipt; preserve all attempt files"
 			} else if found && (usage == "" || !nativeHasSpend || !spendMatchesReceipt(nativeSpendLine, recovered)) {
 				if usage == "" {
 					usage = recovered.String()
@@ -1329,6 +1360,19 @@ func (c *nativeChild) Result() member.Result {
 			// Keep the missing receipt visible in the stored cost record and the finish
 			// words; never turn an unreadable snapshot into a measured zero.
 			u := cardcost.ParseUsage(usage)
+			if c.billing != "" || u.ReceiptVersion != 0 || strings.Contains(usage, "receipt_version=") {
+				billing := u.Billing
+				if billing == "" {
+					billing = c.billing
+				}
+				wall, budget := u.Wall, u.Budget
+				u = cardcost.NoUsage()
+				u.ReceiptVersion = cardcost.ReceiptVersion
+				u.Billing = billing
+				u.Wall = wall
+				u.Budget = budget
+				u.Extra = append(u.Extra, "raw_usage=INVALID")
+			}
 			u.Extra = append(u.Extra, "usage_source_error=receipt-unreadable")
 			usage = u.String()
 			report = oneline.Cap(report+"; usage receipt unreadable: "+oneline.Escape(usageError), 300)
@@ -1338,7 +1382,15 @@ func (c *nativeChild) Result() member.Result {
 			// still carries --usage, saying so (noUsageReported), so a routed read's
 			// verdict is kept and recorded unpriced=no-tokens, never refused for a
 			// missing --usage (docs/SPEC-SPRINT.md, "Reads are priced like work")
-			usage = noUsageReported
+			if c.billing != "" {
+				u := cardcost.NoUsage()
+				u.ReceiptVersion = cardcost.ReceiptVersion
+				u.Billing = c.billing
+				u.Extra = []string{"raw_usage=INVALID", "usage_source_error=receipt-missing"}
+				usage = u.String()
+			} else {
+				usage = noUsageReported
+			}
 		}
 		if verdict == "not-done" && gate == member.GateGreen {
 			// the child's gate was red only on failures the gate decision classed flaky, and
@@ -1696,4 +1748,26 @@ func scriptRun(base, sandbox string, noWall bool) func(context.Context, string, 
 		cmd.Dir, cmd.Env = dir, wall.Env(os.Environ())
 		return cmd.Run()
 	}
+}
+
+// restoreLaunchBilling never infers an old launch's contract from its current route.
+func restoreLaunchBilling(slot, declared string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(slot, "receipt-billing"))
+	if errors.Is(err, os.ErrNotExist) && declared == "" {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("launch receipt stamp unavailable; preserve files and finish with original member or start a fresh paired-binary attempt: %w", err)
+	}
+	billing := strings.TrimSpace(string(b))
+	if billing == "" && declared != "" {
+		return "", fmt.Errorf("typed launch receipt stamp empty; preserve files and start a fresh paired-binary attempt")
+	}
+	if billing != "" && billing != cardcost.BillingMetered && billing != cardcost.BillingPlan && billing != cardcost.BillingSubscription {
+		return "", fmt.Errorf("unsupported launch receipt billing; preserve files and start a fresh paired-binary attempt")
+	}
+	if declared != "" && billing != declared {
+		return "", fmt.Errorf("launch receipt billing disagrees with immutable packet; preserve files and start a fresh paired-binary attempt")
+	}
+	return billing, nil
 }

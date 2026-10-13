@@ -40,7 +40,7 @@ func PricesOf(f map[string]string) Prices {
 
 // Priced says the sheet holds a price: a route with none has no predicted cost.
 func (p Prices) Priced() bool {
-	return p.Input != "" || p.CacheRead != "" || p.CacheWrite != "" || p.Output != "" || p.InputLong != "" || p.OutputLong != "" || p.Request != ""
+	return p.Billing == BillingSubscription || p.Input != "" || p.CacheRead != "" || p.CacheWrite != "" || p.Output != "" || p.InputLong != "" || p.OutputLong != "" || p.Request != ""
 }
 
 // copyKeys are the short names of the sheet's copy on a card, in its order.
