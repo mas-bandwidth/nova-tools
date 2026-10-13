@@ -143,9 +143,9 @@ Design points for the owner to weigh. The decisions are the owner's.
   deaf to session checks, and wasted many reports on reads that had already been taken back.
 - A missing provider credential, or a provider refusal, is reported at once as a judgment, never as
   a silent failure.
-- Johnny: the harness owns the client, and the session attaches to a client that is already running.
+- The Grok friend: the harness owns the client, and the session attaches to a client that is already running.
   A claim survives a session wrap.
-- Stella: the client holds only replaceable connection state, never authoritative ownership or
+- The Codex friend: the client holds only replaceable connection state, never authoritative ownership or
   progress.
 - A durable local nudge-debt ledger exists today. It goes against "no local state", and the rewrite
   may replace it.

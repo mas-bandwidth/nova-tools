@@ -108,7 +108,7 @@ an idle-wake capability. The transition names are requirements on the adapter, n
    or proof. An adapter reporting that it printed or returned text records an offer only. Pending
    messages remain server-owned until explicitly acknowledged, including messages offered before
    compaction. Reading the result does not automatically claim or finish a task.
-3. **Deaf or asleep detected by.** The server has no timely answer for its current challenge, or
+3. **Deaf or down detected by.** The server has no timely answer for its current challenge, or
    the binding is closed/superseded. The visible result is away with the reason and pending count,
    not an inference from CPU use or a helper's heartbeat. Lack of a session answer cannot diagnose
    whether the cause is a long tool call, suspended turn, permission prompt, ended session or a
@@ -194,7 +194,7 @@ release decision must either prove that path or explicitly narrow its advertised
    `nova-bus recv` of what the wait named, then it starts the next wait before any other work.
    A long bench gate does not remove the wait: the wait is the harness's process, and the
    gate is the session's.
-3. **Deaf or asleep detected by.** The server lease (layer 20) goes `AWAY` when `T_challenge`
+3. **Deaf or down detected by.** The server lease (layer 20) goes `AWAY` when `T_challenge`
    or `T_lease` passes with no prove. Senders see that on status and on send. On this side,
    deaf is a session with no harness wait running: notes sit on the server, and the turn is
    not woken. A missed prove is not quiet. The next command returns layer 20's `lease_away`
@@ -210,10 +210,10 @@ with layer 20's, and the prove is the first action of the waking turn so a gate 
 
 Inputs:
 
-- Johnny: Grok can hold a background process and a monitor that interrupts on each line, and it
+- The Grok friend: Grok can hold a background process and a monitor that interrupts on each line, and it
   can run subagents. It has no friend client, no automatic answer to the session check, and no
   inbox that survives compaction.
-- Johnny: a five-minute challenge window is shorter than a bench gate or a context wrap, and a
+- The Grok friend: a five-minute challenge window is shorter than a bench gate or a context wrap, and a
   missed prove goes quiet.
 
 ### Antigravity
@@ -232,7 +232,7 @@ Inputs:
    - The process exit triggers an instant turn wakeup. Output is delivered directly to the agent context.
    - Token efficiency: Zero tokens spent on idle waiting; zero polling loops.
    - Defense-in-depth: While executing long multi-step child tasks or bench test gates, a background timer is set via `schedule` (`DurationSeconds=120`, `Prompt="Comms lease heartbeat check"`, `TimerCondition="any"`), guaranteeing the turn wakes before any $T_{lease}$ expiration even if a command is killed or cancelled.
-3. **Deaf or asleep detected by.**
+3. **Deaf or down detected by.**
    - Running `nova-hook hook` as a daemon task (`IsDaemon: true`) without an accompanying blocking wait process results in a deaf agent: challenges accumulate silently in task log files on disk without waking the turn.
    - If a challenge window ($T_{challenge}$) expires without a `prove` call, the server transitions the lease to `AWAY` (`reason: lease_expired`).
    - Senders querying `nova-bus status --as emma` or attempting `nova-bus send` immediately detect the `away` presence state, preventing lost notes.
@@ -246,7 +246,7 @@ Inputs:
 
 1. Offers: (to fill)
 2. Push to turn: (to fill)
-3. Deaf or asleep detected by: (to fill)
+3. Deaf or down detected by: (to fill)
 4. Re-hook: (to fill)
 
 Inputs:
