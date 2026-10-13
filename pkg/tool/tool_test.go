@@ -1251,3 +1251,19 @@ func TestToolExistsSeam(t *testing.T) {
 		assert.Contains(t, rMissing.Stderr, "is no verb and no file")
 	})
 }
+
+// TestDryRunPreservesUnderlyingRefusalOnEarlyExit pins card pkg-tool-dryrun-preserves-refusals:
+// an early refusal under --dry-run keeps its own message, not the dry-run unread error.
+func TestDryRunPreservesUnderlyingRefusalOnEarlyExit(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{Name: "nova-demo2", What: "demo", ExitTable: "0 done, 2 could not run.", Verbs: []Verb{
+		{Name: "save", Usage: "save", Effect: LocalWrite, DryRun: true, Run: func(*Call) *Out { return Refuse("store did not open") }},
+		{Name: "careless", Usage: "careless", Effect: LocalWrite, DryRun: true, Run: func(*Call) *Out { return Done() }},
+	}}
+	rig := NewRig(t, tool)
+	r := rig.Run(2, "save", "--dry-run")
+	assert.Contains(t, r.Stdout+r.Stderr, "store did not open")
+	assert.NotContains(t, r.Stdout+r.Stderr, "never read it")
+	r2 := rig.Run(1, "careless", "--dry-run")
+	assert.Contains(t, r2.Stdout+r2.Stderr, "never read it")
+}

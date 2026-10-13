@@ -584,7 +584,7 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 	if o == nil {
 		o = Fail("the verb returned no result") // never silent
 	}
-	if c.Given("dry-run") && c.Bool("dry-run") {
+	if c.Given("dry-run") && c.Bool("dry-run") && o.Status == OK {
 		switch {
 		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
 			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
