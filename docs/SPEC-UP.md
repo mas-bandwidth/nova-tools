@@ -24,7 +24,8 @@ but for one unit file in the service manager's own directory (step 6). The layou
 
 `$XDG_CONFIG_HOME/nova-sprint/seat-environment.json` is the optional, private
 version-1 record tools read for seat defaults. When `XDG_CONFIG_HOME` is not an
-absolute path, the file is `$HOME/.config/nova-sprint/seat-environment.json`.
+absolute path, the file is `$HOME/.config/nova-sprint/seat-environment.json`;
+when neither location is absolute, the optional record is absent.
 This is separate from the legacy `seat.json` used by nova-sprint; neither reader
 rewrites or renames that file. The record is a regular file owned by the user,
 with no group or other permissions, under a real directory owned by the user

@@ -103,6 +103,44 @@ func TestLoadSeatEnvironmentRejectsDuplicateUnknownAndCredentialValues(t *testin
 	}
 }
 
+func TestLoadSeatEnvironmentPreservesSafeInputFailureCause(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), EnvironmentFile)
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "duplicate key", body: `{"version":1,"version":1}`, want: "duplicate key"},
+		{name: "unknown key", body: `{"version":1,"unexpected":true}`, want: "unknown key"},
+		{name: "null value", body: `{"version":1,"login":{"redis":null}}`, want: "null value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+			_, err := LoadSeatEnvironment(path)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.NotContains(t, err.Error(), tc.body, "validation errors must not echo file contents")
+		})
+	}
+}
+
+func TestReadSeatEnvironmentTreatsMissingAbsoluteConfigHomeAsAbsent(t *testing.T) {
+	t.Parallel()
+
+	getenv := func(string) string { return "" }
+	record, ok, err := ReadSeatEnvironment(getenv)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Zero(t, record)
+
+	env := []string{"PATH=/bin"}
+	got, err := ForgeCommandEnv(env, getenv)
+	require.NoError(t, err)
+	assert.Equal(t, env, got)
+}
+
 func TestForgeCommandEnvUsesSeatDefaultButKeepsExplicitOverrides(t *testing.T) {
 	t.Parallel()
 
