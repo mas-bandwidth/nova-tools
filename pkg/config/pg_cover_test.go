@@ -179,11 +179,11 @@ func TestPgCoverValues(t *testing.T) {
 	k, ok := Lookup(KindFriend)
 	require.True(t, ok)
 	row := Row{Name: "f1", Fields: map[string]string{"tiers": "flash", "roles": "", "width": "8", "mode": "one-shot"}}
-	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", nil, int64(0), "", "", ""}, values(k, row), "an unset config_dir is NULL, and an unset token_cap binds as 0")
+	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", nil, int64(0), "", "", nil}, values(k, row), "an unset config_dir is NULL, an unset token_cap binds as 0, and an unset pronouns is NULL")
 	row.Fields["config_dir"] = "/accounts/heavy-a"
-	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(0), "", "", ""}, values(k, row))
+	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(0), "", "", nil}, values(k, row))
 	row.Fields["token_cap"] = "6000000"
-	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(6000000), "", "", ""}, values(k, row))
+	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(6000000), "", "", nil}, values(k, row))
 }
 
 // TestPgCoverKindOf: a known kind is returned, an unknown one refused.
