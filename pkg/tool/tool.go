@@ -586,8 +586,15 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 	}
 	if c.Given("dry-run") && c.Bool("dry-run") {
 		switch {
-		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
-			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
+		case !c.dryRead:
+			// A non-OK result keeps its underlying error and remedy. It does not
+			// prove that the verb wrote nothing, so the safety diagnostic stays.
+			why := "--dry-run was given and the verb never read it (Call.DryRun); it may have written"
+			if o.Status == OK {
+				o = Fail(why)
+			} else {
+				o.Note(why)
+			}
 		case o.Status == OK && !hasFact(o, "dry_run"):
 			o.Fact("dry_run", true)
 		}
