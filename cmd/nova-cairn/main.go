@@ -149,13 +149,21 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 			},
 			{
 				Name:    "index",
-				Usage:   "index --store <dir> [--session <id>] [--max <n>]",
+				Usage:   "index --store <dir> [--session <id>] [--since <entry-id|RFC3339>] [--max <n>]",
 				Example: "index --store ./cairns",
 				Effect:  tool.Inspection,
 				Flags: func(f *tool.Flags) {
 					f.Required("store", "the checkpoint store directory")
 					f.String("session", "", "one session to index; default every record")
 					checkID(f, "session")
+					f.String("since", "", "return entries strictly after an entry ID or RFC3339 instant")
+					f.Check(func(c *tool.Call) {
+						if c.Given("since") {
+							if _, err := time.Parse(time.RFC3339Nano, c.Str("since")); err != nil && !cairn.ValidID(c.Str("since")) {
+								c.Problem("--since wants an entry ID or RFC3339 instant")
+							}
+						}
+					})
 					f.Max()
 				},
 				Run: index,
@@ -325,7 +333,15 @@ func readWords(name string, stdin io.Reader) ([]byte, error) {
 func index(c *tool.Call) *tool.Out {
 	store := c.Str("store")
 	session := c.Str("session")
-	all, names, total, err := cairn.Index(store, session)
+	var all []cairn.IndexRow
+	var names []string
+	var total int
+	var err error
+	if c.Given("since") {
+		all, names, total, err = cairn.IndexSince(store, session, c.Str("since"))
+	} else {
+		all, names, total, err = cairn.Index(store, session)
+	}
 	if err != nil {
 		return refusal(err)
 	}
@@ -374,7 +390,7 @@ func receipt(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
 		Fact("bytes", rc.Bytes).Fact("source", cmp.Or(rc.Source, "-")).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
-	if c.Bool("text") {
+	if c.Bool("text") || (c.Bool("json") && !c.Given("text")) {
 		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
 		if err != nil {
 			return refusal(err)

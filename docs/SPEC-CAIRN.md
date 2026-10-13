@@ -109,12 +109,24 @@ prints one `MORE` line with its remedy; the count is never capped and the
 first line, `INDEX OK sessions=<n> entries=<n>`, carries the total whether
 or not entries were elided.
 
+`index --since <entry-id|RFC3339>` returns entries strictly after the cursor,
+then applies `--max`. An entry ID uses the existing ascending order of stamp,
+session, and entry ID, so later entries at the same stamp remain reachable.
+IDs shared across sessions refuse; select the cursor with `--session`.
+An RFC3339 timestamp (including fractional seconds and offsets) excludes all
+entries at or before that instant. Missing IDs, invalid cursors, and an explicit
+empty cursor refuse at exit 2. Entry totals and per-session counts describe
+filtered matches; session context remains visible even when no entries match.
+Without `--since`, the index is unchanged. Filtering still reads the existing
+store index; it does not create a cache or change stored records.
+
 **`receipt --store <dir> --session <id> --entry <id> [--text]` names what was
 preserved for one entry**: its stamp, source pointers, size and the same
 `persisted=true published=false publish=<policy>` split the append
 reported for nested entries, so a reader never infers the remote from the local.
 Flat records report `publish=unknown` because the policy was not stored.
-With `--text`, the result includes the stored words as a `text` fact. For a
+JSON includes the stored words as a `text` fact by default; `--text=false`
+omits them. Plaintext includes them only with `--text`. For a
 nested entry this is the exact stored text; for a flat record it is the
 whitespace-trimmed indexed section body, because the flat format does not retain
 the original append's trailing newlines. JSON carries the same text value.
