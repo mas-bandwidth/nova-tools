@@ -141,6 +141,19 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
+// refuseCaptured replays a parser refusal byte-for-byte, then reports the other
+// invocation problems in the same order as the legacy command.
+func refuseCaptured(stderr io.Writer, verb string, parser io.Reader, problems []string) int {
+	if parser != nil {
+		// ignored: parser is an in-memory refusal; if stderr is broken there is no reliable secondary output channel.
+		_, _ = io.Copy(stderr, parser)
+	}
+	for _, problem := range problems {
+		refuse(stderr, " "+verb, problem)
+	}
+	return 2
+}
+
 // verbs is every first word run dispatches, for the unknown-verb answer.
 var verbs = []string{"init", "status", "check", "lockdown", "quarantine", "lift", "path", "version", "help"}
 
@@ -637,9 +650,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	if !parsed {
 		return parseFailure("quarantine", asJSON, parseErr.String(), stdout, stderr)
 	}
-	if !asJSON && !ok {
-		_, _ = io.Copy(stderr, &parseErr)
-	}
+	var problems []string
 	surface, reason := "", ""
 	if len(positional) >= 2 {
 		surface = fuse.Surface(positional[0])
@@ -647,21 +658,16 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	}
 	if surface == "" || reason == "" {
 		// Printed even when --box was missing too: one run, every problem.
-		if !asJSON {
-			refuse(stderr, " quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
-		}
+		problems = append(problems, "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
 		ok = false
 	}
 	if !ok {
 		if asJSON {
-			problems := parsedRefusalReasons("quarantine", parseErr.String())
-			if surface == "" || reason == "" {
-				problems = append(problems, "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
-			}
+			problems = append(parsedRefusalReasons("quarantine", parseErr.String()), problems...)
 			out := fuseRefusals("quarantine", problems, "nova-fuse help quarantine")
 			return writeFuseJSON(stdout, out)
 		}
-		return 2
+		return refuseCaptured(stderr, "quarantine", &parseErr, problems)
 	}
 
 	// One cross-process read-modify-write: the read, the entry and the write all

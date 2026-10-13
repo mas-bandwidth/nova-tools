@@ -36,35 +36,22 @@ func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	var problems []string
 	if !ok {
 		problems = append(problems, parsedRefusalReasons("status", parseErr.String())...)
-		if !asJSON {
-			_, _ = io.Copy(stderr, &parseErr)
-		}
 	}
 	if len(positional) > 0 {
 		problem := fmt.Sprintf("unexpected argument %q", positional[0])
 		problems = append(problems, problem)
-		if asJSON {
-			ok = false
-		} else {
-			refuse(stderr, " status", problem)
-			ok = false
-		}
+		ok = false
 	}
 	if max < 0 {
 		problem := fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 lists them all", max)
 		problems = append(problems, problem)
-		if asJSON {
-			ok = false
-		} else {
-			fmt.Fprintf(stderr, "nova-fuse status REFUSED: %s; run: nova-fuse help\n", oneline.Escape(problem))
-			ok = false
-		}
+		ok = false
 	}
 	if !ok {
 		if asJSON {
 			return writeFuseJSON(stdout, fuseRefusals("status", problems, "nova-fuse help status"))
 		}
-		return 2
+		return refuseCaptured(stderr, "status", &parseErr, problems)
 	}
 
 	b, err := fuse.ReadBox(boxFile(inv.wd, box))

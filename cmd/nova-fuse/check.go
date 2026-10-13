@@ -40,16 +40,10 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	if !parsed {
 		return parseFailure("check", asJSON, parseErr.String(), stdout, stderr)
 	}
-	if !asJSON && !ok {
-		_, _ = io.Copy(stderr, &parseErr)
-	}
 	var problems []string
 	if len(positional) > 1 {
 		problem := fmt.Sprintf("takes at most one surface, got %q too", positional[1])
 		problems = append(problems, problem)
-		if !asJSON {
-			refuse(stderr, " check", problem)
-		}
 		ok = false
 	}
 	surface := ""
@@ -57,9 +51,6 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 		if fuse.Surface(positional[0]) == "" {
 			problem := "surface must not be blank; omit it to check lockdown only"
 			problems = append(problems, problem)
-			if !asJSON {
-				refuse(stderr, " check", problem)
-			}
 			ok = false
 		}
 		surface = positional[0]
@@ -69,7 +60,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 			problems = append(parsedRefusalReasons("check", parseErr.String()), problems...)
 			return writeFuseJSON(stdout, fuseRefusals("check", problems, "nova-fuse help check"))
 		}
-		return 2
+		return refuseCaptured(stderr, "check", &parseErr, problems)
 	}
 
 	b, err := fuse.ReadBox(boxFile(inv.wd, box))

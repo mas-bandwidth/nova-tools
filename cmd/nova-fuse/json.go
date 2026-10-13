@@ -50,8 +50,7 @@ func parsedRefusalReasons(verb, message string) []string {
 // exact message into a structured refusal when the caller selected JSON.
 func parseFailure(verb string, asJSON bool, message string, stdout, stderr io.Writer) int {
 	if !asJSON {
-		_, _ = fmt.Fprint(stderr, message)
-		return 2
+		return refuseCaptured(stderr, verb, strings.NewReader(message), nil)
 	}
 	reasons := parsedRefusalReasons(verb, message)
 	if len(reasons) == 0 {
