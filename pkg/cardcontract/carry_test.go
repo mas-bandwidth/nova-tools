@@ -35,8 +35,9 @@ func TestJobTextSaysWhereAReworkWasStaged(t *testing.T) {
 			[]string{at + "; no attempt before this one pushed work to carry.\n"}, []string{"must be redone"}},
 	} {
 		c := tc.carry
-		for _, family := range []string{"claude", "plain"} {
+		for _, family := range []string{"claude", "plain", "openai"} {
 			text := For(family).JobText(f, Staged{Job: "/j", Repo: "/j/repo", Head: c.Staged, Carry: &c})
+			assert.Contains(t, text, "The member refuses any pushed head that does not descend from the recorded staged commit, including a head made by rewriting Git refs directly; a second refusal leaves origin unchanged.")
 			for _, w := range tc.want {
 				assert.Contains(t, text, w, "%s %s", tc.name, family)
 			}
