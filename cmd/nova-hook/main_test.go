@@ -37,6 +37,30 @@ func newRig(t *testing.T) *rig {
 	return &rig{h: h, clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
 }
 
+// TestHookHelpClarifiesEnforcementScope pins the distinction between a strict
+// acting-identity gate and nova-bus's advisory mailbox proof, plus the limits
+// of what answering a hook challenge proves.
+func TestHookHelpClarifiesEnforcementScope(t *testing.T) {
+	t.Parallel()
+	cli := newRig(t).cli()
+
+	mainHelp := cli.Run("--help")
+	require.Zero(t, mainHelp.Code, mainHelp.Stdout+mainHelp.Stderr)
+	for _, want := range []string{
+		"strict gates require the acting name's role push to be live and proven.",
+		"nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.",
+		"a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.",
+	} {
+		assert.Contains(t, mainHelp.Stdout, want)
+	}
+
+	hookHelp := cli.Run("hook", "--help")
+	require.Zero(t, hookHelp.Code, hookHelp.Stdout+hookHelp.Stderr)
+	assert.Contains(t, hookHelp.Stdout, "nova-hook hook --as <me> --role <role> [--once]")
+	assert.Contains(t, hookHelp.Stdout, "This proof records a protocol response to the challenge")
+	assert.Contains(t, hookHelp.Stdout, "it does not establish foreground session presence or native idle-wake behavior.")
+}
+
 func (r *rig) now() time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
