@@ -772,10 +772,10 @@ path where no box exists.
 usage:
   nova-fuse version    print this build identity (--version also accepted)
   nova-fuse init --box <path> [--dry-run]                  create an empty box where none is; never replaces one
-  nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
-  nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
+  nova-fuse status --box <path> [--max <n>] [--json]      what is blown, and since when (REPORTS; never gate on it)
+  nova-fuse check --box <path> [--json] [surface]          may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> [--dry-run] "<reason>"   blow the one hard fuse: all untrusted reads stop
-  nova-fuse quarantine --box <path> [--dry-run] <surface> "<reason>"
+  nova-fuse quarantine --box <path> [--dry-run] [--json] <surface> "<reason>"
                                                            stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> [--dry-run] <surface>
                                                            rescind your own quarantine (soft, both directions)
@@ -795,10 +795,12 @@ unreadable box, never read as clear.
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
 it. Read a verb's help with nova-fuse help <verb> (for example, help check).
+--json on status, check and quarantine returns the standard result/facts/items
+receipt. It reports only stored facts; the box has no expiry field.
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
-the write would and writes nothing; its line says dry_run=true. There is no
---json: every verb answers in one-line typed records (the grammar in SPEC.md),
-and check's answer is its exit code.
+the write would and writes nothing; its line says dry_run=true. Without --json,
+every verb answers in one-line typed records (the grammar in SPEC.md), and
+check's answer is its exit code.
 
 box JSON example (a quarantine with no lockdown):
   {"lockdown": null, "quarantine": {"a-forum": {"at": "2026-01-01T00:00:00Z", "reason": "an attack is pervasive"}}}
@@ -860,11 +862,12 @@ Help: nova-fuse help init; -h after a verb is refused at exit 2.
 `nova-fuse status -h`:
 
 ```
-usage: nova-fuse status --box <path> [--max <n>]
+usage: nova-fuse status --box <path> [--max <n>] [--json]
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
   --max <n>    quarantine line limit (default 20); 0 lists all; totals stay uncapped
+  --json       write the standard result/facts/items receipt
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 reported a readable box; 2 bad invocation, absent box, or unreadable box.
 effect: inspection: reads, writes nothing
@@ -874,10 +877,11 @@ Help: nova-fuse help status; -h after a verb is refused at exit 2.
 `nova-fuse check -h`:
 
 ```
-usage: nova-fuse check --box <path> [--] [surface]
+usage: nova-fuse check --box <path> [--json] [--] [surface]
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
+  --json       write the standard result/facts/items receipt
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 verified clear for what was checked; 1 lockdown or the named surface's quarantine is blown; 2 cannot prove clear (bad invocation, absent box, or unreadable box).
 effect: inspection: reads, writes nothing; the permission gate: act only on exit 0
@@ -901,10 +905,11 @@ Help: nova-fuse help lockdown; -h after a verb is refused at exit 2.
 `nova-fuse quarantine -h`:
 
 ```
-usage: nova-fuse quarantine --box <path> [--dry-run] [--] <surface> <reason>
+usage: nova-fuse quarantine --box <path> [--dry-run] [--json] [--] <surface> <reason>
 
 flags:
   --box <path>  required JSON box path; no default or environment variable
+  --json       write the standard result/facts/items receipt
   --dry-run    make every check the write would, print what it would do, write nothing
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 quarantined and verified; 1 write or verification failed; 2 bad invocation, absent box, or unreadable box.
@@ -3682,6 +3687,7 @@ From a checkout root; the fixed backend answers from a file, so these need no
 network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
 
 ```sh
+nova-decide example --dir ./decide-example
 nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
 nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
@@ -3693,6 +3699,12 @@ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "th
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
 nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
 ```
+
+`example` writes embedded `schema.json`, `state.txt`, `answers.json` and
+`sample.diff` into a new directory, so the fixed-backend walkthrough also works
+outside a source checkout. For example, run `ask` with the generated schema,
+state and answers, then label that record with `outcome` and inspect it with
+`calibrate`; the example needs no provider key and makes no network request.
 
 `read` prints `READ OK id= decision=read backend= verdict= p= tokens_in=
 tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=

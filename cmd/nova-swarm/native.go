@@ -25,6 +25,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
@@ -50,6 +51,7 @@ import (
 
 // nativeRunConfig is the frozen configuration of one native run.
 type nativeRunConfig struct {
+	billing        string
 	binary         string                                 // the harness binary path, resolved once
 	model          string                                 // provider/model, one slash, both sides nonempty
 	label          string                                 // the --title this run is labelled with
@@ -2392,9 +2394,35 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		row[c] = dash(usage.Values[c])
 	}
 	row["usd"] = dash(usage.Values["usd"])
+	if cfg.billing != "" {
+		usage.Values["receipt_version"], usage.Values["billing"] = "2", cfg.billing
+		row["actual_usd"] = dash(usage.Values["cost"])
+		if cfg.headless() == "muse" {
+			raw := &cardcost.RawUsage{Version: cardcost.RawVersion, Records: []cardcost.RawRecord{{Harness: "muse", Execution: "fleet", SourceSchema: "muse-jsonl-v1", ProducerVersion: buildinfo.Version(version), Billing: cfg.billing, Tokens: usage.RawCounts}}}
+			if raw.Records[0].Tokens == nil {
+				raw.Records[0].Tokens = map[string]int64{}
+			}
+			encoded, err := cardcost.EncodeRaw(raw)
+			if rr == "unreadable" {
+				err = fmt.Errorf("muse original usage could not be read; preserve source and start a fresh attempt")
+			}
+			if err != nil {
+				usage.Values["raw_usage"] = "INVALID"
+				fmt.Fprintf(errOut, "NATIVE NOTE: invalid raw receipt: %s\n", oneline.Err(err))
+			} else {
+				usage.Values["raw_usage"] = encoded
+			}
+		}
+		for _, key := range []string{"receipt_version", "billing", "raw_usage"} {
+			row[key] = usage.Values[key]
+		}
+	}
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
 	if err := swarm.AppendCardUsage(filepath.Join(jobDir, "usage.tsv"), row); err != nil {
 		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
+		if cfg.billing != "" {
+			usage.Values["raw_usage"] = "INVALID"
+		}
 	}
 	// THE DURABLE COPY. The job file above is the working copy the
 	// batch still reads. The same row is also appended under this run's own
@@ -2475,6 +2503,11 @@ func launchSpend(v map[string]string) cardcost.Usage {
 			line = append(line, key+"="+v[col])
 		}
 	}
+	for _, key := range []string{"receipt_version", "billing", "raw_usage"} {
+		if v[key] != "" {
+			line = append(line, key+"="+v[key])
+		}
+	}
 	u := cardcost.ParseUsage(strings.Join(line, " "))
 	if v["cost"] != "" {
 		u.Actual, u.ActualBy = v["cost"], cardcost.ActualByHarness
@@ -2498,9 +2531,17 @@ func spendWord(launches []cardcost.Usage) string {
 	if len(launches) == 0 {
 		return ""
 	}
+	for _, launch := range launches {
+		if launch.ReceiptVersion != launches[0].ReceiptVersion {
+			return "receipt_version:2,raw_usage:INVALID"
+		}
+	}
 	total := cardcost.SumUsage(launches)
 	model, priced := "", 0
 	for _, u := range launches {
+		if err := cardcost.ValidateUsage(u.String()); err != nil {
+			return "receipt_version:2,raw_usage:INVALID"
+		}
 		if u.Model != "" {
 			model = u.Model
 		}
@@ -2512,7 +2553,26 @@ func spendWord(launches []cardcost.Usage) string {
 	if priced < len(launches) {
 		cost = ""
 	}
-	return cardcost.SpendWord(total.Tokens, cost, model)
+	u := cardcost.ParseSpend(cardcost.SpendWord(total.Tokens, cost, model))
+	for _, launch := range launches {
+		if launch.ReceiptVersion != 0 {
+			if u.Billing != "" && u.Billing != launch.Billing {
+				return "receipt_version:2,raw_usage:INVALID"
+			}
+			u.ReceiptVersion = launch.ReceiptVersion
+			u.Billing = launch.Billing
+		}
+	}
+	raw, err := cardcost.MergeRaw(launches)
+	if err != nil {
+		return "receipt_version:2,raw_usage:INVALID"
+	}
+	u.Raw = raw
+	encoded, err := cardcost.EncodeSpend(u)
+	if err != nil {
+		return "receipt_version:2,raw_usage:INVALID"
+	}
+	return encoded
 }
 
 // nativeRunSeq distinguishes invocations that share a process, which is what a

@@ -46,8 +46,9 @@ func (r UsageRow) Int(name string) (int, bool) {
 // ProviderUsage is what the harness's own accounting said, read from the data home the
 // dispatcher exported for THIS job -- one job, one database, which is why slots exist.
 type ProviderUsage struct {
-	Values   map[string]string
-	Observed bool // the source answered with a row
+	RawCounts map[string]int64 // original Muse counters, without accounting interpretation
+	Values    map[string]string
+	Observed  bool // the source answered with a row
 	// Turns is the usage row count: the message rows folded into Values, the
 	// same assistant-turn count the card budget reads where the harness log
 	// has fewer. Zero where nothing was observed.

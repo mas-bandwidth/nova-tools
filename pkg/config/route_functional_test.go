@@ -235,3 +235,40 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	assert.Equal(t, "flash-a,flash-a", c.HGet(ctx, TierKey("flash"), "routes").Val())
 	assert.ElementsMatch(t, []string{"flash", "heavy", "pro"}, c.SMembers(ctx, TiersKey).Val())
 }
+
+func TestSubscriptionBillingMigrationPreservesDeclaredRows(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := migrated(t)
+	addProvider(t, st, "meta")
+	_, _, err := st.Update(ctx, KindProvider, "meta", map[string]string{"billing": "subscription"}, "fixture")
+	require.NoError(t, err)
+	route := newRoute(t, "muse-fixture", map[string]string{"tier": "pro", "provider": "meta", "model": "fixture", "deadline": "60", "billing": "subscription"})
+	_, err = st.Insert(ctx, KindRoute, route, "fixture")
+	require.NoError(t, err)
+	all, err := Migrations()
+	require.NoError(t, err)
+	for _, m := range all {
+		if m.Version == 43 {
+			_, err = st.db.ExecContext(ctx, m.SQL)
+			require.NoError(t, err)
+		}
+	}
+	for _, kind := range []string{KindRoute, KindProvider} {
+		name := "muse-fixture"
+		if kind == KindProvider {
+			name = "meta"
+		}
+		row, found, err := st.Get(ctx, kind, name)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "subscription", row.Fields["billing"])
+	}
+	_, err = st.db.ExecContext(ctx, `UPDATE config.routes SET billing='invented' WHERE name='muse-fixture'`)
+	require.Error(t, err)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.providers SET billing='invented' WHERE name='meta'`)
+	require.Error(t, err)
+	_, _, applied, err := st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, applied)
+}

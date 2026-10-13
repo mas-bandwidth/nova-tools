@@ -822,7 +822,7 @@ source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=42 applied=42
+CONFIG MIGRATE file=try.json from=0 to=43 applied=43
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -893,9 +893,27 @@ so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
 the test's own directory. The ids come from `--op`, so every line reads the same
 twice.
 
+The extracted fixture supports a complete offline decision and calibration
+loop:
+
+```text
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-wrong
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-ok
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-wrong --label wrong
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-ok --label ok
+$ nova-decide calibrate --record ./decide-example/decisions.jsonl --decision example --question clear --positive wrong --negative ok --bars 0.5
+```
+
 ### First run
 
 ```text
+$ nova-decide example --dir ./decide-example
+EXAMPLE OK files=4
+EXAMPLE FILE name=answers.json
+EXAMPLE FILE name=sample.diff
+EXAMPLE FILE name=schema.json
+EXAMPLE FILE name=state.txt
+
 $ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
 ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94

@@ -34,14 +34,14 @@ var fuseHelps = map[string]fuseHelp{
 		true, true,
 	},
 	"status": {
-		"status --box <path> [--max <n>]",
+		"status --box <path> [--max <n>] [--json]",
 		inspection,
 		"Report lockdown and quarantines. A readable blown box still exits 0; status is not a permission gate.",
 		"0 reported a readable box; 2 bad invocation, absent box, or unreadable box.",
 		true, false,
 	},
 	"check": {
-		"check --box <path> [--] [surface]",
+		"check --box <path> [--json] [--] [surface]",
 		inspection + "; the permission gate: act only on exit 0",
 		"Without a surface, checks lockdown only; no quarantine is checked.",
 		"0 verified clear for what was checked; 1 lockdown or the named surface's quarantine is blown; 2 cannot prove clear (bad invocation, absent box, or unreadable box).",
@@ -55,7 +55,7 @@ var fuseHelps = map[string]fuseHelp{
 		true, true,
 	},
 	"quarantine": {
-		"quarantine --box <path> [--dry-run] [--] <surface> <reason>",
+		"quarantine --box <path> [--dry-run] [--json] [--] <surface> <reason>",
 		localWrite,
 		"Stop reading one surface and verify it. Surface spellings match after normalization; the reason is recorded. Requires a readable existing box.",
 		"0 quarantined and verified; 1 write or verification failed; 2 bad invocation, absent box, or unreadable box.",
@@ -112,6 +112,9 @@ func cmdHelp(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "flags:\n  --box <path>  required JSON box path; no default or environment variable")
 		if name == "status" {
 			fmt.Fprintln(stdout, "  --max <n>    quarantine line limit (default 20); 0 lists all; totals stay uncapped")
+		}
+		if name == "status" || name == "check" || name == "quarantine" {
+			fmt.Fprintln(stdout, "  --json       write the standard result/facts/items receipt")
 		}
 		if h.dryRun {
 			fmt.Fprintln(stdout, "  --dry-run    make every check the write would, print what it would do, write nothing")
