@@ -1255,9 +1255,13 @@ var fuseAudit = audit.Config{
 		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
 		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
 		"main.go|parseBoxWith|name":     "the verb's own name, chosen by this file at every call site",
+		"json.go|parseFailure|message":  "the parser has already escaped caller-controlled fields; preserving its captured refusal byte-for-byte keeps the legacy non-JSON error stream",
 	},
 	Shadows: []string{"fuse", "Fold", "why", "since"},
 	Imports: []string{
+		// bytes captures the parser's refusal so --json can convert it once; its buffer
+		// is never itself exposed to an output stream.
+		`"bytes"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
@@ -1286,6 +1290,9 @@ var fuseAudit = audit.Config{
 		// else.
 		`"github.com/mas-bandwidth/nova-tools/pkg/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
+		// tool.Out owns the standard envelope and renders text through oneline and JSON
+		// through encoding/json, so its one Render call cannot bypass either escape.
+		`"github.com/mas-bandwidth/nova-tools/pkg/tool"`,
 	},
 	MinClassified: 40,
 }

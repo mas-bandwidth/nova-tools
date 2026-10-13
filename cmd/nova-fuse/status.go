@@ -55,7 +55,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 		if asJSON {
 			ok = false
 		} else {
-			fmt.Fprintf(stderr, "nova-fuse status REFUSED: %s; run: nova-fuse help\n", problem)
+			fmt.Fprintf(stderr, "nova-fuse status REFUSED: %s; run: nova-fuse help\n", oneline.Escape(problem))
 			ok = false
 		}
 	}

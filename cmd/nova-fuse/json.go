@@ -49,12 +49,12 @@ func parsedRefusalReasons(verb, message string) []string {
 // exact message into a structured refusal when the caller selected JSON.
 func parseFailure(verb string, asJSON bool, message string, stdout, stderr io.Writer) int {
 	if !asJSON {
-		_, _ = io.WriteString(stderr, message)
+		_, _ = fmt.Fprint(stderr, message)
 		return 2
 	}
 	reasons := parsedRefusalReasons(verb, message)
 	if len(reasons) == 0 {
-		reasons = []string{fmt.Sprintf("%s could not parse this invocation", verb)}
+		reasons = []string{fmt.Sprintf("%s could not parse this invocation", oneline.Field(verb))}
 	}
 	return writeFuseJSON(stdout, fuseRefusals(verb, reasons, "nova-fuse help"))
 }
