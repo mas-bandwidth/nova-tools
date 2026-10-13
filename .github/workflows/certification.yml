@@ -185,7 +185,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+          fetch-depth: 0  # class-test ratchets need the complete merge base with dev
       - name: name the Go toolchain's tool-cache directory
         # The toolchain rides in the race cache entry below. setup-go downloads, extracts and
         # then copies it into the runner's tool cache: 26-27 s on macos-latest, 16 s of it the
@@ -253,18 +253,18 @@ jobs:
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
         # allowlist against the merge base with refs/remotes/origin/dev and refuses when that
         # ref is missing. actions/checkout creates it only on a run of dev itself; a dispatch
-        # on a tag, on main or on a branch has no such ref. One commit is enough: with no
-        # shared history in the shallow clone the test compares against HEAD's first parent.
+        # on a tag, on main or on a branch has no such ref. Fetch its full history so
+        # every ratchet can resolve the real merge base rather than a shallow boundary.
         if: contains(format(' {0} ', env.HOSTED_PKGS), '/internal/ci ')
         shell: bash
-        run: git fetch --no-tags --depth=1 origin +dev:refs/remotes/origin/dev
+        run: git fetch --no-tags origin +dev:refs/remotes/origin/dev
 
       - name: fetch dev's ancestry for a main run
         # On main (the default branch) at a merge commit, the landed promotion,
         # the classtests rule excuses a deletion only when the second parent's
         # ancestry shows dev deleting it; a shallow ancestry is a red run naming
         # this fetch. blob:none brings commits and trees only; --unshallow
-        # completes them, after the depth-1 fetch above as well as instead of it
+        # completes them when a caller starts with a shallow checkout
         # (`go run ./tools/ci help fetch-ancestry`).
         if: github.ref_name == github.event.repository.default_branch
         shell: bash
