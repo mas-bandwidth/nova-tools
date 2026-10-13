@@ -39,7 +39,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 		assert.Equal(t, required[f.Name], f.Required, "--%s required", f.Name)
 	}
 	tier, _ := k.Field("tier")
-	assert.Equal(t, []string{"flash", "pro", "heavy"}, tier.Enum, "frontier cards escalate to the coordinator and are never drawn from routes")
+	assert.Equal(t, []string{"flash", "frontier", "heavy", "pro"}, tier.Enum, "a frontier card is dealt only on a frontier route")
 	for _, w := range tier.Enum {
 		assert.Contains(t, Tiers, w, "a route tier is a tier")
 	}
@@ -54,6 +54,41 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	assert.Nil(t, h.extra, "a route has no derived field")
 	assert.Equal(t, []any{"log", LoopLog("~/nova-bench/loops", "l1")}, hashKinds[KindLoop].extra(Row{Name: "l1", Fields: map[string]string{"log": LoopLog("~/nova-bench/loops", "l1")}}))
 	assert.Equal(t, LoopsKey, hashKinds[KindLoop].set)
+}
+
+// A route may be frontier tier (kind.go: RouteTiers; docs/SPEC-CONFIG.md,
+// "route"): a frontier card is dealt only on a frontier route, so the route
+// kind's tier field accepts frontier beside flash, pro and heavy. The file
+// store adds, lists and reads a frontier route back, and an unknown tier is
+// still refused naming the four route tiers.
+func TestARouteMayBeFrontier(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := reopening{t: t, path: migratedFile(t)}
+
+	k, _ := Lookup(KindRoute)
+	row, err := k.NewRow("frontier-a", map[string]string{
+		"tier": "frontier", "provider": "opencode", "model": "frontier-1", "deadline": "1800",
+	})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindRoute, row, "a1")
+	require.NoError(t, err)
+
+	rows, err := st.List(ctx, KindRoute)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "frontier", rows[0].Fields["tier"], "list carries the frontier tier")
+
+	got, found, err := st.Get(ctx, KindRoute, "frontier-a")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "frontier", got.Fields["tier"], "read back carries the frontier tier")
+
+	_, err = k.NewRow("bad", map[string]string{
+		"tier": "max", "provider": "p", "model": "m", "deadline": "60",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `--tier "max": want one of flash, frontier, heavy, pro`)
 }
 
 func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
@@ -96,11 +131,6 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			name: "a headless harness on another headless harness's provider word",
 			raw:  map[string]string{"tier": "heavy", "provider": "subscription-claude", "model": "m", "harness": "codex", "deadline": "900"},
 			errs: []string{"want --provider subscription-codex"},
-		},
-		{
-			name: "frontier is no route's tier",
-			raw:  map[string]string{"tier": "frontier", "provider": "p", "model": "m", "deadline": "60"},
-			errs: []string{`--tier "frontier": want one of flash, pro`},
 		},
 		{
 			name: "a provider with a slash",
