@@ -215,7 +215,8 @@ func TestApplyEndToEnd(t *testing.T) {
 	require.Equal(t, "", gotCheck250["width"], "machine:hulk %v: no width, the default", gotCheck250)
 	require.Equal(t, "false", gotCheck250["tla"], "machine:hulk %v", gotCheck250)
 	require.Equal(t, "", gotCheck250["note"], "machine:hulk %v", gotCheck250)
-	require.Len(t, gotCheck250, 9, "machine:hulk %v", gotCheck250)
+	require.Equal(t, "bench", gotCheck250["roles"], "machine:hulk %v", gotCheck250)
+	require.Len(t, gotCheck250, 10, "machine:hulk %v", gotCheck250)
 	gotCheck253 := r.client.HGet(ctx, "machine:hulk:ceiling", "slots").Val()
 	require.Equal(t, "64", gotCheck253, "hulk ceiling %q", gotCheck253)
 	gotCheck256 := r.client.Get(ctx, config.FleetKey("store")).Val()
@@ -314,6 +315,7 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
 	r.run(t, 0, "fleet", "set", "--redis_port", "6380", "--pg_dsn", "postgres://nova_config@localhost:5432/nova", "--as", "operator")
 	r.run(t, 0, "apply", "--as", "operator")
+	require.NoError(t, r.client.HSet(context.Background(), "bench:bench-alpha:beat", "os", "linux", "ncpu", "4").Err())
 
 	help, _ := r.run(t, 0, "inventory", "-h")
 	printf, chmod := helpCommands(t, help)
