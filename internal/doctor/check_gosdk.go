@@ -141,6 +141,13 @@ func goEnvValue(ctx context.Context, env Env, goPath, key string) string {
 // goX.Y.Z` line exactly, else the `go X.Y` directive's major.minor. exact is
 // true for the toolchain line. A go.mod that names neither is an error.
 func toolchainVersion(ctx context.Context, env Env, goPath string) (want string, exact bool, err error) {
+	if dir := dirFrom(ctx); dir != "" {
+		raw, rerr := env.ReadFile(filepath.Join(dir, "go.mod"))
+		if rerr != nil {
+			return "", false, fmt.Errorf("no go.mod in --dir %s: %v", dir, rerr)
+		}
+		return parseGoMod(raw)
+	}
 	gomod := goEnvValue(ctx, env, goPath, "GOMOD")
 	if gomod == "" || gomod == "/dev/null" || gomod == "NUL" {
 		return "", false, fmt.Errorf("no go.mod here: the bench's toolchain is not named")
@@ -149,6 +156,11 @@ func toolchainVersion(ctx context.Context, env Env, goPath string) (want string,
 	if rerr != nil {
 		return "", false, fmt.Errorf("go.mod is not readable: %v", rerr)
 	}
+	return parseGoMod(raw)
+}
+
+// parseGoMod is the toolchain version go.mod bytes name.
+func parseGoMod(raw []byte) (want string, exact bool, err error) {
 	var directive string
 	for _, line := range strings.Split(string(raw), "\n") {
 		fields := strings.Fields(line)

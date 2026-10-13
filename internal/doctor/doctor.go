@@ -107,11 +107,23 @@ func (r *Registry) Names() []string {
 type Options struct {
 	Only  []string // check names; empty is every check
 	Local bool     // skip the checks only a fleet needs
+	Dir   string   // repository root for repository-scoped checks; empty is the working directory
+}
+
+type dirCtxKey struct{}
+
+// dirFrom is the --dir target a run carries, or "" for the working directory.
+func dirFrom(ctx context.Context) string {
+	d, _ := ctx.Value(dirCtxKey{}).(string)
+	return d
 }
 
 // Run runs the selected checks in name order and returns their results and the names
 // --local skipped. A name that is no check is an error naming the ones there are.
 func (r *Registry) Run(ctx context.Context, env Env, o Options) (results []Result, skipped []string, err error) {
+	if o.Dir != "" {
+		ctx = context.WithValue(ctx, dirCtxKey{}, o.Dir)
+	}
 	names := r.Names()
 	for _, n := range o.Only {
 		if !slices.Contains(names, n) {
@@ -217,7 +229,7 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 		ExitTable: "0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage",
 		Verbs: []tool.Verb{{
 			Name:    "run",
-			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json]",
+			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json] [--dir <path>]",
 			Example: "run --check harness\nrun --local\nrun --local --json",
 			Effect:  tool.Inspection,
 			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\nexample: nova-doctor run --local",
@@ -227,6 +239,7 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 				f.Bool("local", false, "skip the checks only a fleet needs, and say which")
 				f.Bool("strict", false, "exit 1 on a warn")
 				f.Bool("json", false, "print the results as one JSON object instead of lines")
+				f.String("dir", "", "scope repository checks (e.g. gosdk) to this directory instead of the working directory")
 				f.Check(func(c *tool.Call) {
 					for _, n := range c.Get("check").([]string) {
 						if !slices.Contains(reg.Names(), n) {
@@ -236,7 +249,12 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 				})
 			},
 			Run: func(c *tool.Call) *tool.Out {
-				results, skipped, err := reg.Run(c.Ctx, env, Options{Only: c.Get("check").([]string), Local: c.Bool("local")})
+				if dir := c.Str("dir"); dir != "" {
+					if _, err := env.ReadDir(dir); err != nil {
+						return tool.Refuse(fmt.Sprintf("--dir %s is not a readable directory: %v", dir, err))
+					}
+				}
+				results, skipped, err := reg.Run(c.Ctx, env, Options{Only: c.Get("check").([]string), Local: c.Bool("local"), Dir: c.Str("dir")})
 				if err != nil {
 					return tool.Refuse(err.Error())
 				}
