@@ -2,11 +2,14 @@
 
 ## What it is
 
-nova-hook: hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs
+nova-hook: hooks an acting identity to the live, proven pushes its role needs; some bus mailbox checks are advisory
 
 ## Why use it
 
-Every bus, friend and sprint tool refuses an identity that is not hooked in; this is how you hook in, see who is, and unhook.
+Tools gate the acting identity on the live, proven pushes its role needs. Some
+`nova-bus send` and `recv` mailbox checks are advisory by default;
+`--require-push` or `NOVA_BUS_REQUIRE_PUSH=1` makes them strict. This is how you
+hook in, see who is, and unhook.
 
 ## Install
 
