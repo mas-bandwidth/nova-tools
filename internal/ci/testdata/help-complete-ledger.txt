@@ -22,7 +22,7 @@ nova-check attest example
 nova-check convergence example
 nova-check corpus example
 nova-check dogfood example
-nova-check dogfood gate example,flag-missing:authors,flag-missing:cli,flag-missing:fail-max,flag-missing:git-timeout,flag-missing:max,flag-missing:receipts,flag-missing:repo,flag-missing:require-all,flag-missing:shipped,flag-missing:tools,flag-missing:tools-timeout
+nova-check dogfood gate example
 nova-check dogfood ledger example,flag-missing:authors,flag-missing:cli,flag-missing:fail-max,flag-missing:git-timeout,flag-missing:max,flag-missing:receipts,flag-missing:repo,flag-missing:tools,flag-missing:tools-timeout
 nova-check dogfood record example
 nova-check floors example
