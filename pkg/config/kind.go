@@ -299,9 +299,10 @@ func checkFriend(r Row) error {
 // and Lua lists equal.
 var Tiers = []string{"flash", "frontier", "heavy", "pro"}
 
-// RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
-// are never drawn from routes and escalate to the coordinator.
-var RouteTiers = []string{"flash", "pro", "heavy"}
+// RouteTiers are the tiers a route serves: the same four as Tiers, a frontier
+// card dealt only on a frontier route (the deal draws a route of the card's
+// own tier, never another's).
+var RouteTiers = []string{"flash", "frontier", "heavy", "pro"}
 
 // The sprint row's two bars on a decide read's p(defect) (pkg/decide, Bars;
 // docs/SPEC-SPRINT.md section 6, the decide read): apply writes them to
@@ -576,9 +577,9 @@ var Kinds = []*Kind{
 		// tier kind; docs/SPEC-CONFIG.md, "route").
 		Name:  KindRoute,
 		Table: "routes",
-		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes; frontier cards are never dealt from routes, they escalate to the coordinator",
+		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes",
 		Fields: []Field{
-			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
+			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (a frontier card is dealt only on a frontier route)"},
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "harness", Type: TypeEnum, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harness a card on this route runs under: opencode (the default: the providers table launches it with the provider's key) or a headless program of the machine's own subscription login, " + strings.Join(harness.Headless, ", ") + " (the heavy tier), whose --provider is " + harness.ProviderPrefix + "<harness>, one word per harness so one login's failure rests only its own routes"},
