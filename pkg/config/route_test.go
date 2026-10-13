@@ -56,11 +56,11 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	assert.Equal(t, LoopsKey, hashKinds[KindLoop].set)
 }
 
-// A route may be frontier tier (kind.go: RouteTiers; docs/SPEC-CONFIG.md,
-// "route"): a frontier card is dealt only on a frontier route, so the route
-// kind's tier field accepts frontier beside flash, pro and heavy. The file
-// store adds, lists and reads a frontier route back, and an unknown tier is
-// still refused naming the four route tiers.
+// A route may be frontier tier (kind.go: the route kind's tier field, Tiers;
+// docs/SPEC-CONFIG.md, "route"): a frontier card is dealt only on a frontier
+// route, so the route kind's tier field accepts frontier beside flash, pro and
+// heavy. The file store adds, lists and reads a frontier route back, and an
+// unknown tier is still refused naming the four route tiers.
 func TestARouteMayBeFrontier(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
