@@ -3139,7 +3139,7 @@ func deadlineReportDue(res nativeRunResult, handedBack, providerEnded bool) bool
 func museNativeInput(cmd *exec.Cmd, environ []string) error {
 	key, _ := harness.MuseInput(environ)
 	if strings.TrimSpace(key) == "" {
-		return fmt.Errorf("Muse has no META_API_KEY; run the member with --pass META_API_KEY and its seat login, or add META_API_KEY to NOVA_SWARM_KEYS names")
+		return fmt.Errorf("muse has no META_API_KEY; run the member with --pass META_API_KEY and its seat login, or add META_API_KEY to NOVA_SWARM_KEYS names")
 	}
 	_, cmd.Env = harness.MuseInput(cmd.Env)
 	cmd.Stdin = strings.NewReader(key + "\n")
