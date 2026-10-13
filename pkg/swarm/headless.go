@@ -37,6 +37,8 @@ import (
 // An unknown kind is refused, never guessed.
 func HeadlessArgv(kind, bin, model, prompt string) ([]string, error) {
 	switch kind {
+	case harness.Muse:
+		return append(harness.MuseArgv(bin, model, prompt), "--disable-web-tools", "--disable-reminders", "--no-session-log", "--no-foreign-personal-context", "--yolo"), nil
 	case harness.Claude:
 		return []string{bin, "-p", "--model", model, "--output-format", "json", "--permission-mode", "bypassPermissions", "--disallowed-tools", "WebFetch,WebSearch", "--", prompt}, nil
 	case harness.Codex:
@@ -78,6 +80,8 @@ type HeadlessHome struct {
 func HeadlessHomeOf(kind, benchHome, dataHome string) HeadlessHome {
 	h := HeadlessHome{Source: filepath.Join(benchHome, "."+kind), Dir: filepath.Join(dataHome, "."+kind)}
 	switch kind {
+	case harness.Muse:
+		// The provider key arrives on stdin; no credential file or token environment.
 	case harness.Claude:
 		h.Env, h.Token = []string{"CLAUDE_CONFIG_DIR=" + h.Dir}, ClaudeTokenEnv
 	case harness.Codex:
@@ -162,6 +166,19 @@ func HeadlessUsage(kind string, out []byte) (ProviderUsage, error) {
 		return resultUsage(kind, out)
 	case harness.Codex:
 		return codexUsage(out)
+	case harness.Muse:
+		result, err := harness.ReadMuse(out)
+		if err != nil {
+			return ProviderUsage{}, err
+		}
+		values := map[string]string{"provider": "meta", "model": result.Model, "repo": Dash}
+		for source, column := range map[string]string{"input_tokens": "tokens_in", "output_tokens": "tokens_out", "cache_write_tokens": "cache_write", "cache_read_tokens": "cache_read", "reasoning_tokens": "reasoning"} {
+			values[column] = Dash
+			if count, ok := result.Usage[source]; ok {
+				values[column] = strconv.FormatInt(count, 10)
+			}
+		}
+		return ProviderUsage{Values: values, Observed: len(result.Usage) > 0, Turns: result.Turns}, nil
 	}
 	return ProviderUsage{}, fmt.Errorf("%q is not a headless harness", kind)
 }
@@ -337,6 +354,11 @@ func codexUsage(out []byte) (ProviderUsage, error) {
 // `out-of-credit`. ok is false when the output names none.
 func HeadlessFailure(kind string, out []byte) (ProviderCause, bool) {
 	switch kind {
+	case harness.Muse:
+		result, err := harness.ReadMuse(out)
+		if err == nil && result.Failure != "" {
+			return CauseFromText(result.Failure), true
+		}
 	case harness.Claude, harness.Grok:
 		obj, found, err := lastResult(out)
 		if err != nil || !found {

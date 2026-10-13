@@ -899,6 +899,12 @@ func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline ti
 // harnesses) that program on this member's PATH. A headless program this machine has not
 // got refuses the launch, so the sprint deals the card to a member that has.
 func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
+	if p.Harness == harness.Muse {
+		museKey, _ := harness.MuseInput(r.childEnv("meta/"))
+		if strings.TrimSpace(museKey) == "" {
+			return "", fmt.Errorf("card %s route %s needs META_API_KEY for muse; add the key to this member seat and --pass META_API_KEY or NOVA_SWARM_KEYS names, or deal the card to a member with the key", p.Card, p.Route)
+		}
+	}
 	if !harness.IsHeadless(p.Harness) {
 		return r.harness, nil
 	}
