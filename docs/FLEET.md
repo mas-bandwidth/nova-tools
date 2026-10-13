@@ -209,9 +209,10 @@ fleet's copy of the same pass.
 ## A fixture inventory
 
 `nova-config inventory --fixture <file>` reads the rows from a YAML or JSON
-file instead of the store: machines (with `os`, `arch` and `cores` standing in
-for the beat, and optional `width` for the machine row), the fleet row and
-loops. A file with no `loops` key is a fleet whose
+file instead of the store: machines (with an explicit `roles` list, `os`,
+`arch` and `cores` standing in for the beat, and optional `width` for the
+machine row), the fleet row and loops. Empty `roles` is valid; a missing key
+is not. A file with no `loops` key is a fleet whose
 loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
 machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
 running the play, named `localhost`, with no store deployer, which is what
@@ -223,7 +224,8 @@ with `--check`.
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
 `runners`, `nova_tla` (its row's `tla`; the `tla` group is the hosts where it
 is true), `nova_redis_port`, `nova_redis_addr`, `nova_bus_addr` (the applied fleet row's `bus`, omitted when empty), the explicit `nova_pg_dsn`,
-`nova_os` and `nova_arch` (from its beat) and `nova_loops`,
+`registry_roles` (the machine row's canonical roles), `nova_os` and
+`nova_arch` (from its beat) and `nova_loops`,
 and `all.vars` `nova_store`. The rest are defaults in
 `fleet/group_vars/all.yml`. The inventory's host variables override them, and
 so do a `group_vars/benches.yml` and `host_vars/<machine>.yml` beside the
@@ -234,7 +236,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 
 The play variables with a machine-row or beat source are projected as follows.
 Inventory refuses a machine without beat `os` or `ncpu` before emitting any
-inventory: every machine remains in `benches`, whose plays read `bench_os` and
+inventory: every `bench` role member is in `benches`, whose plays read `bench_os` and
 `cores`. Restore or start the machine's configured beat publisher so
 `bench:<machine>:beat` contains `os` and `ncpu`, then rerun
 `nova-config inventory`. The publisher is external to this config reader; its
@@ -250,14 +252,26 @@ projected when present but is not a required play variable.
 | `registry_seat` | machine row `seat` | bench play and fleet group variables |
 | `slots_capacity` | machine row `slots` | bench-register play |
 | `slots_share` | machine row `width`; when width is unset, half the beat cores | bench-register play |
-| `registry_roles` | unavailable: the machine row has no roles field and beats carry none | bench and runners plays |
+| `registry_roles` | canonical machine row `roles` list | bench and runners plays |
 
-Role-based group membership is also unavailable from the current configuration
-schema. `benches` still contains every machine row; `store` and `coordinator`
-still come from the fleet row's `store` and `coordinator` references. This does
-not reproduce the former inventory's role-derived `benches`, `store`, and
-`coordinator` groups, or provide `registry_roles`; a schema change is required
-for plays that read those roles to run from this inventory alone.
+The `benches`, `store`, and `coordinator` groups contain hosts with the
+`bench`, `services`, and `coordination` roles, respectively. `runner` is an
+explicit role carried in `registry_roles`; the existing `runners` group still
+comes from the row's runner count. The store and coordinator role groups must
+match the fleet row's `store` and `coordinator` singleton references exactly:
+one matching role host when a reference is set, and both empty when it is
+unset. Inventory refuses a mismatch before output so Ansible's role groups
+cannot point at different hosts than `nova_store`, Redis routing, or adoption.
+Other groups (`all`, `adopt`, `store_deployer`, `runners`, and `tla`) retain
+their existing sources and ordering. Empty role groups serialize as `[]`.
+
+Migration 0042 backfills each existing config machine with `bench` and adds
+`services` and `coordination` from the current fleet row references. It does
+not infer `runner` or restore assignments from the former external
+`machines.tsv`; those roles must be set explicitly with `nova-config machine
+set <machine> --roles <roles>` and applied. The migration uses only
+`config.machines` and `config.fleet` and changes no live rows until a caller
+runs the normal migration and apply steps.
 
 | variable | default | what it is |
 |---|---|---|

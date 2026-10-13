@@ -30,7 +30,7 @@ const loopField = "nova_loops"
 // Snapshot is the applied state the inventory is built from: one read of
 // the Redis view (RedisApplier.Snapshot), or a fixture file (LoadFixture).
 type Snapshot struct {
-	// Machines are the machine views by name: user, seat, slots, runners.
+	// Machines are the machine views by name: user, seat, slots, runners and roles.
 	Machines map[string]View
 	// Fleet is the fleet row's view: store, coordinator, redis_port, pg_dsn, bus.
 	Fleet View
@@ -120,8 +120,29 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 
 	hostvars := make(map[string]map[string]any, len(names))
 	runnerHosts, tlaHosts := []string{}, []string{}
+	benchHosts, serviceHosts, coordinatorHosts := []string{}, []string{}, []string{}
+	machineKind, _ := Lookup(KindMachine)
+	rolesField, _ := machineKind.Field("roles")
 	for _, m := range names {
 		v := snap.Machines[m]
+		rolesRaw, hasRoles := v["roles"]
+		if !hasRoles {
+			return nil, fmt.Errorf("machine %s: registry_roles is missing from applied machine row field roles; reapply the machine rows with: nova-config apply --kind machine", m)
+		}
+		roles, roleErr := rolesField.Canonical(rolesRaw)
+		if roleErr != nil || roles != rolesRaw {
+			return nil, fmt.Errorf("machine %s: registry_roles in applied machine row field roles is invalid; want a canonical comma list of %s; correct the config row if needed, then run: nova-config apply --kind machine", m, strings.Join(MachineRoles, ", "))
+		}
+		for _, role := range strings.Split(roles, ",") {
+			switch role {
+			case "bench":
+				benchHosts = append(benchHosts, m)
+			case "services":
+				serviceHosts = append(serviceHosts, m)
+			case "coordination":
+				coordinatorHosts = append(coordinatorHosts, m)
+			}
+		}
 		seat := v["seat"]
 		if seat == "" {
 			return nil, fmt.Errorf("machine %s: registry_seat is unset in machine row field seat; run: nova-config machine show %s", m, m)
@@ -200,6 +221,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if localHost != "" && m == localHost {
 			hv["ansible_connection"] = "local"
 		}
+		hv["registry_roles"] = roles
 		hostvars[m] = hv
 		if runners > 0 {
 			runnerHosts = append(runnerHosts, m)
@@ -207,6 +229,12 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if v["tla"] == "true" {
 			tlaHosts = append(tlaHosts, m)
 		}
+	}
+	if err := matchRoleReference("services", serviceHosts, "store", snap.Fleet["store"]); err != nil {
+		return nil, err
+	}
+	if err := matchRoleReference("coordination", coordinatorHosts, "coordinator", snap.Fleet["coordinator"]); err != nil {
+		return nil, err
 	}
 
 	one := func(name string) []string {
@@ -226,13 +254,27 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		Meta:          AnsibleMeta{Hostvars: hostvars},
 		All:           AnsibleGroup{Hosts: append([]string{}, names...), Vars: vars},
 		Adopt:         AnsibleGroup{Hosts: adoptOrder(names, snap.Fleet["coordinator"])},
-		Benches:       AnsibleGroup{Hosts: append([]string{}, names...)},
-		Coordinator:   AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
-		Store:         AnsibleGroup{Hosts: one(snap.Fleet["store"])},
+		Benches:       AnsibleGroup{Hosts: benchHosts},
+		Coordinator:   AnsibleGroup{Hosts: coordinatorHosts},
+		Store:         AnsibleGroup{Hosts: serviceHosts},
 		StoreDeployer: AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
 		Runners:       AnsibleGroup{Hosts: runnerHosts},
 		TLA:           AnsibleGroup{Hosts: tlaHosts},
 	}, nil
+}
+
+// matchRoleReference keeps the explicit inventory role and fleet singleton
+// reference in agreement: plays consume the role group while nova_store,
+// Redis routing and adoption consume the fleet row (docs/FLEET.md).
+func matchRoleReference(role string, hosts []string, field, reference string) error {
+	want := []string{}
+	if reference != "" {
+		want = []string{reference}
+	}
+	if slices.Equal(hosts, want) {
+		return nil
+	}
+	return fmt.Errorf("inventory: machine roles role %s selects hosts %v, but fleet row field %s selects %q; align them with nova-config machine set <machine> --roles <roles> and nova-config fleet set --%s <machine>", role, hosts, field, reference, field)
 }
 
 // inventoryCount reads a non-negative integer from the applied row or beat,
@@ -461,15 +503,16 @@ type fixtureMachines map[string]fixtureMachine
 // fixtureMachine is one machine the fixture names; OS, Arch and Cores stand
 // in for the machine's beat, while Width is the nullable machine-row field.
 type fixtureMachine struct {
-	User    string `yaml:"user"`
-	Seat    string `yaml:"seat"`
-	Slots   int    `yaml:"slots"`
-	Runners int    `yaml:"runners"`
-	TLA     bool   `yaml:"tla"`
-	OS      string `yaml:"os"`
-	Arch    string `yaml:"arch"`
-	Cores   *int   `yaml:"cores"`
-	Width   *int   `yaml:"width"`
+	User    string  `yaml:"user"`
+	Seat    string  `yaml:"seat"`
+	Slots   int     `yaml:"slots"`
+	Runners int     `yaml:"runners"`
+	Roles   *string `yaml:"roles"`
+	TLA     bool    `yaml:"tla"`
+	OS      string  `yaml:"os"`
+	Arch    string  `yaml:"arch"`
+	Cores   *int    `yaml:"cores"`
+	Width   *int    `yaml:"width"`
 }
 
 // fixtureFleet is the fixture's one fleet row.
@@ -517,14 +560,18 @@ func LoadFixture(path string) (*Snapshot, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch, cores and width), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
+		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, roles, tla, os, arch, cores and width), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
 	for m, r := range f.Machines {
 		if !NamePattern.MatchString(m) {
 			return nil, fmt.Errorf("--fixture %s: machine %q is not a row name (lower-case letters, digits and dashes)", path, m)
 		}
+		if r.Roles == nil {
+			return nil, fmt.Errorf("--fixture %s: machine %s roles is missing; include an explicit roles list (empty is allowed)", path, m)
+		}
 		machine := View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
+		machine["roles"] = *r.Roles
 		if r.Width != nil {
 			machine["width"] = strconv.Itoa(*r.Width)
 		}
@@ -572,7 +619,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 var fixtureShapeWords = map[string]string{
 	"config.fixture":         "the document is a map with machines, fleet and loops",
 	"config.fixtureMachines": "machines is a map of name to machine",
-	"config.fixtureMachine":  "a machine is a map of user, seat, slots, runners, tla, os, arch, cores and width",
+	"config.fixtureMachine":  "a machine is a map of user, seat, slots, runners, roles, tla, os, arch, cores and width",
 	"config.fixtureFleet":    "fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir",
 	"config.fixtureLoops":    "loops is a map of name to loop",
 	"config.fixtureLoop":     "a loop is a map of machine, argv, seat, keys, every, keepalive and enabled",
@@ -588,7 +635,7 @@ var fixtureShapeWords = map[string]string{
 // field's refusal says what that block wants.
 var fixtureFields = map[string]string{
 	"config.fixture":        "machines, fleet or loops",
-	"config.fixtureMachine": "user, seat, slots, runners, tla, os, arch, cores or width",
+	"config.fixtureMachine": "user, seat, slots, runners, roles, tla, os, arch, cores or width",
 	"config.fixtureFleet":   "store, coordinator, redis_port, pg_dsn or loops_dir",
 	"config.fixtureLoop":    "machine, argv, seat, keys, every, keepalive or enabled",
 }
