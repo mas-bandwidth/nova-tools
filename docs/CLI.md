@@ -3646,6 +3646,23 @@ the whole remedy verb: `open first: nova-cairn open --store <dir> --session <id>
 --publish <policy>`.
 
 
+`index --since <entry-id|RFC3339>` returns entries strictly after the cursor,
+then applies `--max`. An entry ID uses the existing ascending order of stamp,
+session, and entry ID, so later entries at the same stamp remain reachable.
+IDs shared across sessions refuse; select the cursor with `--session`.
+An RFC3339 timestamp (including fractional seconds and offsets) excludes all
+entries at or before that instant. Missing IDs, invalid cursors, and an explicit
+empty cursor refuse at exit 2. Entry totals and per-session counts describe
+filtered matches; session context remains visible even when no entries match.
+Without `--since`, the index is unchanged. Filtering still reads the existing
+store index: the cursor bounds returned records, not reads. Physical metadata
+walking remains; indexed storage and bounded I/O are deferred to v1.3.
+It does not create a cache or change stored records.
+
+Receipt JSON includes the complete stored `text` by default. `--text=false`
+explicitly omits it. Plaintext continues to omit text unless `--text` is given;
+byte counts and all other existing receipt facts remain unchanged.
+
 ## nova-decide
 
 Typed decisions with probabilities, recorded so each one can be calibrated
