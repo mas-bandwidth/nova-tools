@@ -4,6 +4,7 @@ package config
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,11 +31,12 @@ func TestPostgresRouteRoundTripsAndHoldsItsRules(t *testing.T) {
 	st := migrated(t)
 	direct := newRoute(t, "pro-direct", map[string]string{"tier": "pro", "provider": "deepseek", "model": "deepseek-v4", "tokens": "400000", "deadline": "1800"})
 	slashed := newRoute(t, "pro-openrouter", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false", "note": "held while the price is read"})
-	for _, row := range []Row{direct, slashed} {
+	frontier := newRoute(t, "frontier-a", map[string]string{"tier": "frontier", "provider": "p", "model": "m", "deadline": "1800"})
+	for _, row := range []Row{direct, slashed, frontier} {
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
 	}
-	for _, want := range []Row{direct, slashed} {
+	for _, want := range []Row{direct, slashed, frontier} {
 		got, found, err := st.Get(ctx, KindRoute, want.Name)
 		require.NoError(t, err)
 		require.True(t, found)
@@ -45,19 +47,23 @@ func TestPostgresRouteRoundTripsAndHoldsItsRules(t *testing.T) {
 	// history row.
 	_, _, err := st.Update(ctx, KindRoute, "pro-direct", map[string]string{"deadline": "0"}, "t")
 	require.ErrorIs(t, err, ErrInvalid)
-	_, id, err := st.Update(ctx, KindRoute, "pro-direct", map[string]string{"tokens": "0"}, "t")
+	_, id, err := st.Update(ctx, KindRoute, "pro-direct", map[string]string{"tokens": "0", "tier": "frontier"}, "t")
 	require.NoError(t, err)
 	hist, err := st.History(ctx, KindRoute, "pro-direct")
 	require.NoError(t, err)
 	require.Len(t, hist, 2, "an add and a set; the refused set left none")
 	assert.Equal(t, id, hist[1].ID)
+	got, found, err := st.Get(ctx, KindRoute, "pro-direct")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "frontier", got.Fields["tier"])
 
 	// The schema is a second wall behind the descriptor.
 	walls := []struct {
 		name string
 		sql  string
 	}{
-		{name: "frontier", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w1', 'frontier', 'p', 'm', 60)`},
+		{name: "an unknown tier", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w1', 'max', 'p', 'm', 60)`},
 		{name: "a slashed provider", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w2', 'pro', 'a/b', 'm', 60)`},
 		{name: "a model with a blank", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w3', 'pro', 'p', 'a b', 60)`},
 		{name: "deadline 0", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w4', 'pro', 'p', 'm', 0)`},
@@ -70,6 +76,60 @@ func TestPostgresRouteRoundTripsAndHoldsItsRules(t *testing.T) {
 	}
 }
 
+// An existing database takes the new route CHECK once without changing tier
+// rows or routes already stored (docs/SPEC-CONFIG.md, "route" and "tier").
+func TestFrontierRouteMigrationUpgradesTheExistingSchema(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	all, err := Migrations()
+	require.NoError(t, err)
+	var frontier Migration
+	frontierIndex := -1
+	for i, m := range all {
+		if strings.HasSuffix(m.Name, "_route_tier_frontier.sql") {
+			frontier = m
+			frontierIndex = i
+			break
+		}
+		require.NoError(t, st.applyOne(ctx, m), m.Name)
+	}
+	require.NotZero(t, frontier.Version)
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('existing', 'heavy', 'p', 'm', 60)`)
+	require.NoError(t, err)
+	const insert = `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('frontier-a', 'frontier', 'p', 'm', 60)`
+	_, err = st.db.ExecContext(ctx, insert)
+	require.Error(t, err, "the preceding migration still refuses frontier")
+
+	from, to, applied, err := st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, all[frontierIndex-1].Version, from)
+	assert.Equal(t, all[len(all)-1].Version, to)
+	var wantApplied []int
+	for _, m := range all[frontierIndex:] {
+		wantApplied = append(wantApplied, m.Version)
+	}
+	assert.Equal(t, wantApplied, applied)
+	_, err = st.db.ExecContext(ctx, insert)
+	require.NoError(t, err, "the new migration accepts frontier")
+	got, found, err := st.Get(ctx, KindRoute, "existing")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "heavy", got.Fields["tier"])
+	tiers, err := st.List(ctx, KindTier)
+	require.NoError(t, err)
+	require.Len(t, tiers, 3)
+	assert.Equal(t, []string{"flash", "heavy", "pro"}, []string{tiers[0].Name, tiers[1].Name, tiers[2].Name})
+	from, to, applied, err = st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, all[len(all)-1].Version, from)
+	assert.Equal(t, from, to)
+	assert.Empty(t, applied, "the new migration is not reapplied")
+}
+
 func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	t.Parallel()
 
@@ -78,6 +138,7 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	st := migrated(t)
 	for _, row := range []Row{
 		newRoute(t, "pro-a", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "tokens": "300000", "deadline": "1800", "price_input": "3.00", "price_output": "15.00"}),
+		newRoute(t, "frontier-c", map[string]string{"tier": "frontier", "provider": "p", "model": "m", "deadline": "600", "price_input": "1"}),
 		newRoute(t, "flash-b", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "tokens": "3", "price_input": "0.5"}),
 	} {
 		_, err := st.Insert(ctx, KindRoute, row, "t")
@@ -86,9 +147,10 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	_, _, endpointErr := st.Update(ctx, KindFleet, KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, "t")
 	require.NoError(t, endpointErr)
 	res := applyKinds(t, st, ap, "t")
-	assert.Equal(t, 2, res[KindRoute].Add)
+	assert.Equal(t, 3, res[KindRoute].Add)
 
-	assert.ElementsMatch(t, []string{"pro-a", "flash-b"}, c.SMembers(ctx, RoutesKey).Val())
+	assert.ElementsMatch(t, []string{"pro-a", "flash-b", "frontier-c"}, c.SMembers(ctx, RoutesKey).Val())
+	assert.Equal(t, "frontier", c.HGet(ctx, RouteKey("frontier-c"), "tier").Val())
 	got := c.HGetAll(ctx, RouteKey("pro-a")).Val()
 	want := map[string]string{
 		"name": "pro-a", "tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "harness": "opencode",
