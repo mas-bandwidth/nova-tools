@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,5 +35,41 @@ func TestMemberpushCoverOpenPRNoGHOnPath(t *testing.T) {
 				"the refusal names the missing binary, got %q", note)
 			assert.NotContains(t, note, "\n", "the note is one line")
 		})
+	}
+}
+
+func TestMemberpushOpenPRSurfacesInvalidSeatEnvironment(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	seatDir := filepath.Join(root, "nova-sprint")
+	if err := os.Mkdir(seatDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seatDir, "seat-environment.json"), []byte(`{"version":1,"forge_identity":null}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "gh-ran")
+	gh := filepath.Join(root, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nprintf called > \""+marker+"\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	g := &gitPusher{
+		gh: gh,
+		getenv: func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return root
+			}
+			return ""
+		},
+		processEnv: func() []string { return []string{"PATH=/bin"} },
+	}
+	pr, note := g.openPR("https://github.com/o/n.git", "main", "sprint/c1", "title", "body")
+	assert.Empty(t, pr)
+	assert.Contains(t, note, "seat environment is invalid")
+	assert.NotContains(t, note, "retry", "an invalid identity is not a forge outage")
+	assert.NotContains(t, note, "\n")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("gh ran despite invalid seat environment; marker stat error = %v", err)
 	}
 }

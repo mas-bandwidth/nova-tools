@@ -11,6 +11,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidSeatEndpointSharesTheSeatEnvironmentRules(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{
+		{value: "127.0.0.1:6381", valid: true},
+		{value: "redis.example:6379", valid: true},
+		{value: "mem:6379", valid: false},
+		{value: "redis://user:password@host", valid: false},
+		{value: "redis.example:not-a-port", valid: false},
+	} {
+		assert.Equal(t, tc.valid, ValidSeatEndpoint(tc.value), "ValidSeatEndpoint(%q)", tc.value)
+	}
+}
+
 func TestSeatEnvironmentPathUsesTheVersionedXDGFile(t *testing.T) {
 	t.Parallel()
 
