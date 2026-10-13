@@ -182,10 +182,6 @@ func loadLogin(getenv func(string) string) (loginRecord, bool, error) {
 	return readLoginFile(getenv(loginFileKey))
 }
 
-func loginOn(getenv func(string) string) bool {
-	return getenv != nil && (getenv(loginFileKey) != "" || getenv(loginFileErrKey) != "")
-}
-
 // loginSecret reads the password: the reader registered for this file, else
 // nova-secrets' own.
 func loginSecret(path string, l secrets.Login) (secrets.Secret, error) {
