@@ -7,6 +7,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// machineRoleDerivationCases is the one table migration 0042's derivation is
+// held to, in both places it runs: in SQL over the configuration store
+// (TestMachineRolesMigrationPreservesExistingGroups) and in Go over an applied
+// row written before 0042 (TestDeriveMachineRolesIsMigration0042, through
+// DeriveMachineRoles). Four machines: a plain bench with runners (a runner
+// count is not a role), the fleet store, the fleet coordinator, and one the
+// store and the coordinator may share.
+var machineRoleDerivationCases = []struct {
+	name        string
+	store       string
+	coordinator string
+	want        map[string]string
+}{
+	{name: "separate references", store: "store-a", coordinator: "coord-a", want: map[string]string{
+		"bench-a": "bench", "store-a": "bench,services", "coord-a": "bench,coordination", "shared": "bench",
+	}},
+	{name: "same reference", store: "shared", coordinator: "shared", want: map[string]string{
+		"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench,coordination,services",
+	}},
+	{name: "empty references", want: map[string]string{
+		"bench-a": "bench", "store-a": "bench", "coord-a": "bench", "shared": "bench",
+	}},
+}
+
+func TestDeriveMachineRolesIsMigration0042(t *testing.T) {
+	t.Parallel()
+	machine, ok := Lookup(KindMachine)
+	require.True(t, ok)
+	field, ok := machine.Field("roles")
+	require.True(t, ok)
+	for _, tc := range machineRoleDerivationCases {
+		fleet := View{"store": tc.store, "coordinator": tc.coordinator}
+		for name, want := range tc.want {
+			got := DeriveMachineRoles(name, fleet)
+			assert.Equal(t, want, got, "%s: %s", tc.name, name)
+			canonical, err := field.Canonical(got)
+			require.NoError(t, err)
+			assert.Equal(t, canonical, got, "%s: %s: a derived list is canonical, as the inventory requires", tc.name, name)
+		}
+	}
+}
+
 func TestMachineRoleDefaultsAndValidation(t *testing.T) {
 	t.Parallel()
 	machine, ok := Lookup(KindMachine)

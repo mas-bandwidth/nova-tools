@@ -235,23 +235,41 @@ outranks every group default. The Postgres URI is preserved exactly, including
 an explicit localhost; it is never derived from the Redis store machine.
 
 The play variables with a machine-row or beat source are projected as follows.
-Inventory refuses a machine without beat `os` or `ncpu` before emitting any
-inventory: every `bench` role member is in `benches`, whose plays read `bench_os` and
-`cores`. Restore or start the machine's configured beat publisher so
-`bench:<machine>:beat` contains `os` and `ncpu`, then rerun
-`nova-config inventory`. The publisher is external to this config reader; its
-installation and exact start command are not described here. Beat `arch` is
-projected when present but is not a required play variable.
+The measured facts are optional, and the inventory never refuses a host for
+them: a machine that is down, or whose beat lacks a fact, is listed from its
+row with the facts it has, and the verb prints one `NOTE machine <m>: ...` line
+on stderr for each (never in the JSON, where ansible would read it as a group).
+The play gathers `os`, `arch` and cores from its own facts for any host whose
+beat lacks them (`fleet/tools.yml`). A beat is read from one source per fact:
+`cores` is the nova-sprint member's beat record, `sprint:beat:<machine>` (JSON,
+written by every member on every beat), the source of truth; a configured bench
+publisher's `bench:<machine>:beat` hash `ncpu` is read only when the member's
+record has no cores, so a stale hash never overrides a live beat; `os`, `arch`
+and `memory_gb` are only ever in that hash. When neither carries cores,
+`cores` is absent, and so is `slots_share` unless the row sets `width`.
+
+A machine row applied before migration 0042 has no `roles` field (the store the
+previous release leaves for this release's adopt): the inventory derives it as
+0042 does (`bench`; `coordination` on the fleet coordinator; `services` on the
+fleet store; `config.DeriveMachineRoles`, one rule with the migration's SQL,
+held to one table of cases) and prints a NOTE; `nova-config apply --kind
+machine` stores it. Only a row with nothing to derive from (the fleet row was
+never applied) is refused. A present field always wins. The release gate
+`TestReleaseNInventoryOverReleaseNMinus1Store` (certification.yml,
+release-checks) builds this release's inventory from the store the previous
+release leaves (`fleet/testdata/inventory-fixture-n-1.yml`) and asserts every
+host and group of the previous release's own inventory of it
+(`fleet/testdata/inventory-n-1-golden.json`) is present.
 
 | variable | inventory source | plays that read it |
 |---|---|---|
 | `ansible_host` | the machine row name | Ansible connection target for every play |
 | `ansible_connection` | `local` when the inventory runs on that machine; otherwise absent | the local host in the play that invokes Ansible |
 | `bench_os` | beat `os` | bench, monitoring and tools plays |
-| `cores` | beat `ncpu`, as an integer | bench-register and runners plays |
+| `cores` | beat cores (`ncpu`), as an integer; absent when no beat has it | bench-register and runners plays |
 | `registry_seat` | machine row `seat` | bench play and fleet group variables |
 | `slots_capacity` | machine row `slots` | bench-register play |
-| `slots_share` | machine row `width`; when width is unset, half the beat cores | bench-register play |
+| `slots_share` | machine row `width`; when width is unset, half the beat cores; absent when neither is known | bench-register play |
 | `registry_roles` | canonical machine row `roles` list | bench and runners plays |
 
 The `benches`, `store`, and `coordinator` groups contain hosts with the

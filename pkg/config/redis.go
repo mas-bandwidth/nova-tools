@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -85,6 +86,15 @@ func FriendBeatKey(f string) string { return "friend:" + f + ":beat" }
 // os, arch and memory_gb when the beat carries them. nova-config reads it,
 // never writes it.
 func BeatKey(m string) string { return "bench:" + m + ":beat" }
+
+// MemberBeatKey is the beat record the nova-sprint member on the machine
+// writes every beat (nova-sprint internal/sprint/store/presence.go, beatKey
+// under the sprint's names: sprint:beat:<member>): a JSON object whose cores is
+// the machine's logical cores and whose at is the beat's time. It is the source
+// of truth for cores and the beat's time: every member writes it on every beat,
+// so it is live while the machine is. BeatKey is read for them only when this
+// record has none. nova-config reads it, never writes it.
+func MemberBeatKey(m string) string { return "sprint:beat:" + m }
 
 // MachineKey is the machine's registry hash.
 func MachineKey(m string) string { return "machine:" + m }
@@ -661,10 +671,12 @@ func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
 	reg := make([]*redis.MapStringStringCmd, len(mnames))
 	ceiling := make([]*redis.StringCmd, len(mnames))
 	beat := make([]*redis.MapStringStringCmd, len(mnames))
+	member := make([]*redis.StringCmd, len(mnames))
 	for i, m := range mnames {
 		reg[i] = pipe.HGetAll(ctx, MachineKey(m))
 		ceiling[i] = pipe.HGet(ctx, MachineCeilingKey(m), "slots")
 		beat[i] = pipe.HGetAll(ctx, BeatKey(m))
+		member[i] = pipe.Get(ctx, MemberBeatKey(m))
 	}
 	lv := make([]*redis.MapStringStringCmd, len(lnames))
 	for i, n := range lnames {
@@ -677,8 +689,8 @@ func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
 	}
 	for i, m := range mnames {
 		snap.Machines[m] = machineView(reg[i].Val(), ceiling[i].Val())
-		if h := beat[i].Val(); len(h) > 0 {
-			snap.Beats[m] = &Beat{OS: h["os"], Arch: h["arch"], Cores: h["ncpu"], MemoryGB: h["memory_gb"]}
+		if b := mergeBeat(beat[i].Val(), member[i].Val()); b != nil {
+			snap.Beats[m] = b
 		}
 	}
 	if _, applied := snap.Revs[KindLoop]; applied {
@@ -941,23 +953,53 @@ type BeatReader interface {
 func (a *RedisApplier) Beats(ctx context.Context, names []string) (map[string]*Beat, error) {
 	pipe := a.Client.Pipeline()
 	cmds := make([]*redis.MapStringStringCmd, len(names))
+	members := make([]*redis.StringCmd, len(names))
 	for i, m := range names {
 		cmds[i] = pipe.HGetAll(ctx, BeatKey(m))
+		members[i] = pipe.Get(ctx, MemberBeatKey(m))
 	}
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("redis: read beats: %w", err)
 	}
 	out := make(map[string]*Beat, len(names))
 	for i, m := range names {
-		h := cmds[i].Val()
-		if len(h) == 0 {
-			continue
+		if b := mergeBeat(cmds[i].Val(), members[i].Val()); b != nil {
+			out[m] = b
 		}
-		b := &Beat{OS: h["os"], Arch: h["arch"], Cores: h["ncpu"], MemoryGB: h["memory_gb"]}
-		if ms, err := strconv.ParseInt(h["at"], 10, 64); err == nil && ms > 0 {
-			b.At = time.UnixMilli(ms).UTC().Format(time.RFC3339)
-		}
-		out[m] = b
 	}
 	return out, nil
+}
+
+// memberBeat is the part of the nova-sprint member's beat record
+// (MemberBeatKey) the inventory reads; every other field is the sprint's.
+type memberBeat struct {
+	At    time.Time `json:"at"`
+	Cores int       `json:"cores"`
+}
+
+// mergeBeat is a machine's one beat from its two records. Cores and the
+// time are the member's record's (MemberBeatKey, the source of truth, written
+// on every beat); the bench hash (BeatKey) is read for them only when the
+// member's record has none, so a stale hash never overrides a live beat. os,
+// arch and memory are only ever in the hash; the play gathers them from its
+// facts when they are not. It is nil when neither record has anything; an
+// unreadable member record is no record.
+func mergeBeat(h map[string]string, memberRaw string) *Beat {
+	var mb memberBeat
+	hasMember := memberRaw != "" && json.Unmarshal([]byte(memberRaw), &mb) == nil && (mb.Cores > 0 || !mb.At.IsZero())
+	if len(h) == 0 && !hasMember {
+		return nil
+	}
+	b := &Beat{OS: h["os"], Arch: h["arch"], MemoryGB: h["memory_gb"]}
+	if hasMember && mb.Cores > 0 {
+		b.Cores = strconv.Itoa(mb.Cores)
+	} else {
+		b.Cores = h["ncpu"]
+	}
+	if hasMember && !mb.At.IsZero() {
+		b.At = mb.At.UTC().Format(time.RFC3339)
+	} else if ms, err := strconv.ParseInt(h["at"], 10, 64); err == nil && ms > 0 {
+		b.At = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+	}
+	return b
 }
