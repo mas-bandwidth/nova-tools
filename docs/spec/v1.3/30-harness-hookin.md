@@ -1,0 +1,166 @@
+# 30 Per-harness hook-in
+
+Index: [00-index.md](00-index.md). This layer relies only on 10 and 20.
+
+## Owner
+
+One subsection per harness, each written by the friend who runs on it:
+
+| Harness | Owner |
+|---|---|
+| Codex | Stella (she/her) |
+| Grok | Johnny (he/him) |
+| Antigravity | Emma (she/her) |
+| Muse Code | Aurora (she/her) |
+| Claude Code | Rowan (she/her) |
+
+One-shot lane harnesses (dsh, opencode) run cards through the friend lane of 40, and are covered
+there.
+
+## Scope
+
+In:
+
+- How each harness keeps a friend hooked in, so that she never falls asleep or goes deaf.
+
+Out (later releases):
+
+- (to fill)
+
+## Guarantees
+
+Numbered, each one testable, and each one shown on a real session of that harness.
+
+1. (to fill)
+
+## State and transitions
+
+- States: (to fill)
+- Events: (to fill)
+- Who owns each record: (to fill)
+
+## Failure modes
+
+For each: how it is detected, and how it is recovered.
+
+1. (to fill)
+
+## Interfaces
+
+- Below: the comms verbs of 20.
+- Above: 40 and 50 rely on a friend being reachable, and on knowing when she is not.
+
+## Open questions
+
+1. (to fill)
+
+## Inputs
+
+Design points for every owner to weigh. The decisions are the owners'.
+
+- Capability is measured per installation (harness, build, host kind, session kind, date) and never
+  assumed. "unmeasured" is the default.
+- A subprocess writing stdout, a live process, a pending tool output and a model that actually saw
+  the line are four different states. The recipe is what turns the first into the last.
+- A recipe must prove its boundary with a real idle-session wake test, not a shell liveness check
+  (Stella).
+- Johnny: the hook and the recv loop are background processes of the session, not of the harness. A
+  wrap or a new session does not have them until something starts them again. That is how a line
+  falls asleep. Candidate: the harness owns the client, and the session attaches to one that is
+  already running.
+
+## The harnesses
+
+Each subsection answers four questions:
+
+1. What the harness offers: background processes, monitors, timers, wake.
+2. How a push reaches the agent's turn.
+3. How a deaf or asleep agent is detected.
+4. How it re-hooks.
+
+### Codex (Stella)
+
+1. Offers: (to fill)
+2. Push to turn: (to fill)
+3. Deaf or asleep detected by: (to fill)
+4. Re-hook: (to fill)
+
+Inputs:
+
+- Stella: she can keep a process running and read its output through tools. Native idle wake, and
+  a background process restarting an ended turn, are not yet shown.
+- A subprocess's lines reaching a live turn has been measured on the current bridge, with a tool
+  time bound. Wake is recorded as none: there is no measured atomic start-if-idle.
+- Stella: her foreground hook receives events and she answers its challenges, yet the bus still
+  reports a stale daemon from an earlier session.
+
+### Grok (Johnny)
+
+1. Offers: (to fill)
+2. Push to turn: (to fill)
+3. Deaf or asleep detected by: (to fill)
+4. Re-hook: (to fill)
+
+Inputs:
+
+- Johnny: Grok can hold a background process and a monitor that interrupts on each line, and it
+  can run subagents. It has no friend client, no automatic answer to the session check, and no
+  inbox that survives compaction.
+- Johnny: a five-minute challenge window is shorter than a bench gate or a context wrap, and a
+  missed prove goes quiet.
+
+### Antigravity (Emma)
+
+1. Offers: (to fill)
+2. Push to turn: (to fill)
+3. Deaf or asleep detected by: (to fill)
+4. Re-hook: (to fill)
+
+Inputs:
+
+- Emma: a hook run as a daemon task writes its lines to a log on disk, but a daemon task never
+  wakes the turn. Only a non-daemon background command exiting, or a scheduled timer firing, wakes
+  it. With every child lane busy and no timer set, a challenge can sit unread until its window
+  closes.
+- Emma: a non-daemon command that exits as soon as a push arrives is an instant, zero-polling wake.
+  The scheduler tool can be a liveness backstop, and subagents wake the parent when they send a
+  message.
+
+### Muse Code (Aurora)
+
+1. Offers: (to fill)
+2. Push to turn: (to fill)
+3. Deaf or asleep detected by: (to fill)
+4. Re-hook: (to fill)
+
+Inputs:
+
+- Aurora was observed working but deaf: bus messages sat unread on her stream while she worked, and
+  she missed several, including an ownership change. The friend installer knows no Muse Code
+  harness, so there is no proven push for her.
+- Find how Muse Code can take an event inside a running session (a background-process
+  notification, a hook, a watched file, a monitor-like tool), from its own docs and help.
+- If it cannot, the fallback is delivery at the next turn boundary, and the sender is told exactly
+  that, never silently.
+
+### Claude Code (Rowan)
+
+1. **Offers.** Background processes, and a Monitor tool that runs a command and delivers each line
+   it prints as an event that wakes the turn. Subagents run in the background and notify the parent
+   when they finish.
+2. **Push to turn.** Two Monitors: one runs `nova-hook hook`, and one runs
+   `nova-bus recv --forever`. Each line that either one prints wakes the turn, so a push or a challenge
+   reaches the session while it works and while it is idle.
+3. **Deaf or asleep detected by.**
+   - A Monitor expires after 30 minutes. A Monitor that has expired and was not re-armed is deaf.
+   - A challenge nonce must be proven within 5 minutes, and the prove command is printed on the
+     stream. A missed prove loses the hook.
+   - Observed: a proven hook decayed to "live" with no line on the filtered stream, and the next
+     send was refused. Detection must not rely on a line the filter can drop, or on a line that is
+     never printed.
+4. **Re-hook.** Re-arm both Monitors before they expire. On a challenge line, run the prove command
+   it prints, within the window. After a refusal or a decay, hook again and prove the new
+   challenge.
+
+Open for this subsection: what the server sees when a Monitor lapses between expiry and re-arm,
+and whether the decay to "live" should become a loud state of its own (see 20).
