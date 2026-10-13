@@ -79,7 +79,7 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 			},
 			{
 				Name:    "read",
-				Usage:   "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "read --card <file|-> --diff <file|-> [--rule <file|->] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "read --card " + fixture + "card.md --diff " + fixture + "card.diff --backend fixed --answers " + fixture + "read-answers.json --record ./decisions.jsonl --op card-1",
 				Effect:  tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The read decision: a worker's diff against the card that asked for it, five questions:
@@ -97,7 +97,7 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 			},
 			{
 				Name:    "score",
-				Usage:   "score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "score --card <file|-> --diff <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "score --card " + fixture + "card.md --diff " + fixture + "card.diff --backend fixed --answers " + fixture + "score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab",
 				Effect:  tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The score decision: a landed diff against its card, the read's five questions and one noul
@@ -153,7 +153,7 @@ ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed out
 			},
 			{
 				Name:    "gate",
-				Usage:   "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "gate --output <file|-> --card <file|-> [--diff <file|->] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "gate --output " + fixture + "gate-output.txt --card " + fixture + "card.md --diff " + fixture + "card.diff --base-red TestPortInUse --backend fixed --answers " + fixture + "gate-answers.json --record ./decisions.jsonl --op c1@1@gate",
 				Effect:  tool.Delivery + "; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record",
 				Detail: `The gate decision: a red gate's go test output, read failure by failure; each failing test
@@ -166,8 +166,8 @@ default) routes no failure. The gate's route is caused when one failure is, else
 is, else pre-existing.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("output", "the gate's output, a file of go test's output (plain or -v)")
-					f.Required("card", "the card the worker was given, a file: its PATHS line is read")
+					f.Required("output", "the gate's output, a file of go test's output (plain or -v), or - for stdin")
+					f.Required("card", "the card the worker was given, a file, or - for stdin: its PATHS line is read")
 					f.String("diff", "", "the card's unified diff, a file: its files and line counts are summarised")
 					f.String("base-red", "", "the failing tests red at the card's base, comma-separated (<Test> or <pkg>.<Test>); given empty, none is")
 					f.String("bars", "", "the flaky and the pre-existing bars, <flaky>,<pre-existing>: each a probability or empty (that route taken by no failure), two set ones summing above 1; empty (the default) routes none, as the sprint row's defaults do; 0.8,0.8 is the starting point")
@@ -450,14 +450,27 @@ func (w world) grade(c *tool.Call) *tool.Out {
 
 // readFiles reads each named file flag that is given: its text, and the record's inputs
 // (the path and its SHA-256); every file it cannot read is named in one refusal.
+// A flag value of - reads stdin (once; every - flag shares that one stream).
 func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, refused *tool.Out) {
 	texts, inputs = map[string]string{}, map[string]string{}
 	var problems []string
+	var stdin []byte
+	stdinRead := false
 	for _, name := range names {
 		if !c.Given(name) {
 			continue
 		}
-		raw, err := os.ReadFile(c.Str(name))
+		var raw []byte
+		var err error
+		if c.Str(name) == "-" {
+			if !stdinRead {
+				stdin, err = io.ReadAll(c.Stdin)
+				stdinRead = true
+			}
+			raw = stdin
+		} else {
+			raw, err = os.ReadFile(c.Str(name))
+		}
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
@@ -565,11 +578,23 @@ func (w world) findings(c *tool.Call) *tool.Out {
 func (w world) gate(c *tool.Call) *tool.Out {
 	texts := map[string]string{}
 	var problems []string
+	var stdin []byte
+	stdinRead := false
 	for _, name := range []string{"output", "card", "diff"} {
 		if !c.Given(name) {
 			continue
 		}
-		raw, err := os.ReadFile(c.Str(name))
+		var raw []byte
+		var err error
+		if c.Str(name) == "-" {
+			if !stdinRead {
+				stdin, err = io.ReadAll(c.Stdin)
+				stdinRead = true
+			}
+			raw = stdin
+		} else {
+			raw, err = os.ReadFile(c.Str(name))
+		}
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
