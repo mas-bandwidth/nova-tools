@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,13 +25,38 @@ func identityLane(t *testing.T, mark string) *exec.Cmd {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("kernel lane identity is available on Linux and macOS")
 	}
-	cmd := exec.Command("sleep", "600")
+	bin, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(bin, "-test.run=^TestIdentityLaneProcess$")
 	cmd.Env = append(environWithoutName(os.Environ(), swarm.LaneEnv), swarm.LaneEnv+"="+mark)
+	cmd.Env = append(cmd.Env, "NOVA_TEST_LANE_HELPER=1")
 	ownLaneSession(cmd)
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	ready, err := cmd.StdoutPipe()
+	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // ignored: cleanup of only this fixture-owned child
-	require.NotEqual(t, "-", swarm.LaneStartStamp(cmd.Process.Pid))
+	t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Wait() }) // ignored: cleanup of only this fixture-owned child
+	got, err := bufio.NewReader(ready).ReadString('\n')
+	require.NoError(t, err, "fixture child exited before signalling readiness")
+	require.Equal(t, "lane identity fixture ready\n", got)
+	started := swarm.LaneStartStamp(cmd.Process.Pid)
+	require.NotEqual(t, "-", started)
+	require.True(t, swarm.LaneIdentityMatches(cmd.Process.Pid, started, mark), "the ready fixture's exact process birth and lane mark must be visible")
 	return cmd
+}
+
+// TestIdentityLaneProcess keeps the marked subprocess alive after confirming its
+// Go test process has exec'd with the environment set by identityLane.
+func TestIdentityLaneProcess(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("NOVA_TEST_LANE_HELPER") != "1" {
+		t.Skip("subprocess fixture only")
+	}
+	_, err := fmt.Fprintln(os.Stdout, "lane identity fixture ready")
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, os.Stdin)
+	require.NoError(t, err)
 }
 
 // An old PID reused by a stranger, a changed birth, and a different lane mark all

@@ -90,10 +90,10 @@ func LoadSeatEnvironment(path string) (SeatEnvironment, error) {
 		return zero, errors.New("seat environment is unreadable")
 	}
 	if err := validateEnvironmentKeys(b); err != nil {
-		return zero, errors.New("seat environment is invalid")
+		return zero, fmt.Errorf("seat environment is invalid: %w", err)
 	}
 	if err := validateEnvironmentNulls(b); err != nil {
-		return zero, errors.New("seat environment is invalid")
+		return zero, fmt.Errorf("seat environment is invalid: %w", err)
 	}
 	var record SeatEnvironment
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -107,18 +107,52 @@ func LoadSeatEnvironment(path string) (SeatEnvironment, error) {
 	return record, nil
 }
 
-// validateEnvironmentNulls keeps explicit null distinct from an omitted
-// optional object or string. encoding/json otherwise treats null as an empty
-// value for several non-pointer fields.
+// validateEnvironmentNulls rejects explicit null values without exposing the
+// input value in the returned error.
 func validateEnvironmentNulls(b []byte) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(b, &fields); err != nil {
+	d := json.NewDecoder(bytes.NewReader(b))
+	var value func() error
+	value = func() error {
+		tok, err := d.Token()
+		if err != nil {
+			return errors.New("invalid JSON")
+		}
+		if tok == nil {
+			return errors.New("null value")
+		}
+		delim, ok := tok.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			for d.More() {
+				if _, err := d.Token(); err != nil { // object key
+					return errors.New("invalid JSON")
+				}
+				if err := value(); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for d.More() {
+				if err := value(); err != nil {
+					return err
+				}
+			}
+		default:
+			return errors.New("invalid JSON")
+		}
+		if _, err := d.Token(); err != nil { // closing delimiter
+			return errors.New("invalid JSON")
+		}
+		return nil
+	}
+	if err := value(); err != nil {
 		return err
 	}
-	for _, key := range []string{"forge_identity", "environment", "login"} {
-		if raw, ok := fields[key]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return errors.New("null is not a seat environment value")
-		}
+	if _, err := d.Token(); err != io.EOF {
+		return errors.New("trailing JSON")
 	}
 	return nil
 }
@@ -128,7 +162,9 @@ func validateEnvironmentNulls(b []byte) error {
 func ReadSeatEnvironment(getenv func(string) string) (SeatEnvironment, bool, error) {
 	path, err := SeatEnvironmentPath(getenv)
 	if err != nil {
-		return SeatEnvironment{}, false, err
+		// A seat record is optional. When neither XDG_CONFIG_HOME nor HOME
+		// identifies an absolute location, no record can be present.
+		return SeatEnvironment{}, false, nil
 	}
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return SeatEnvironment{}, false, nil
@@ -273,7 +309,7 @@ func validateEnvironmentKeys(b []byte) error {
 	value = func(parent string) error {
 		tok, err := d.Token()
 		if err != nil {
-			return err
+			return errors.New("invalid JSON")
 		}
 		delim, ok := tok.(json.Delim)
 		if !ok {
@@ -285,11 +321,17 @@ func validateEnvironmentKeys(b []byte) error {
 			for d.More() {
 				key, err := d.Token()
 				if err != nil {
-					return err
+					return errors.New("invalid JSON")
 				}
 				name, ok := key.(string)
-				if !ok || seen[name] || !environmentKeyAllowed(parent, name) {
-					return errors.New("duplicate or unknown key")
+				if !ok {
+					return errors.New("invalid JSON object key")
+				}
+				if seen[name] {
+					return errors.New("duplicate key")
+				}
+				if !environmentKeyAllowed(parent, name) {
+					return errors.New("unknown key")
 				}
 				seen[name] = true
 				if err := value(name); err != nil {
@@ -305,8 +347,10 @@ func validateEnvironmentKeys(b []byte) error {
 		default:
 			return errors.New("invalid JSON")
 		}
-		_, err = d.Token()
-		return err
+		if _, err := d.Token(); err != nil {
+			return errors.New("invalid JSON")
+		}
+		return nil
 	}
 	if err := value(""); err != nil {
 		return err

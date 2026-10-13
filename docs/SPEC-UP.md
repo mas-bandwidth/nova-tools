@@ -33,14 +33,14 @@ but for one unit file in the service manager's own directory (step 6). The layou
 ## The seat environment
 
 `$XDG_CONFIG_HOME/nova-sprint/seat-environment.json` is the optional, private
-version-1 record for seat defaults. When `XDG_CONFIG_HOME` is not an
-absolute path, the file is `$HOME/.config/nova-sprint/seat-environment.json`.
-This is separate from the legacy `seat.json` used by nova-sprint; the writer
-does not rewrite or rename that file. Reader support is tool-specific: the matching
-nova-sprint reader is a separate, pending change in
-[PR #256](https://github.com/mas-bandwidth/nova-sprint/pull/256), and nova-bus currently
-continues to read `NOVA_BUS_REDIS` from its process environment.
-The record is a regular file owned by the user,
+version-1 record tools read for seat defaults. When `XDG_CONFIG_HOME` is not an
+absolute path, the file is `$HOME/.config/nova-sprint/seat-environment.json`;
+when neither location is absolute, the optional record is absent.
+This is separate from the legacy `seat.json` used by nova-sprint; neither reader
+rewrites or renames that file. The matching nova-sprint reader is a separate,
+pending change in [PR #256](https://github.com/mas-bandwidth/nova-sprint/pull/256).
+The standalone nova-bus command continues to read `NOVA_BUS_REDIS` from its
+process environment. The record is a regular file owned by the user,
 with no group or other permissions, under a real directory owned by the user
 that is not writable by group or other users. Unknown or duplicate keys are refused.
 

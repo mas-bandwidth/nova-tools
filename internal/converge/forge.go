@@ -52,7 +52,8 @@ type GH struct {
 	// Bin is the gh executable, "gh" unless a caller names another. A test
 	// names a fake; nothing here searches a path of its own.
 	Bin string
-	// Env is an optional child environment. An explicit GH_CONFIG_DIR in it wins.
+	// Env is an optional child environment. The process GH_CONFIG_DIR wins;
+	// when it is unset, an explicit value in Env wins over the seat default.
 	Env []string
 	// Getenv supplies process settings; nil uses os.Getenv.
 	Getenv func(string) string
