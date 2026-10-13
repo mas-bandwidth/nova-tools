@@ -294,7 +294,8 @@ func (c conn) discoverPG(ctx context.Context, getenv func(string) string, d deps
 		shown = addr
 	}
 	prefix := "fleet:pg_dsn in Redis " + shown + " (from " + redisFrom + "): "
-	// A lost applied copy must not hold a bare command indefinitely.
+	// The Redis network open/read is bounded after the existing recorded-
+	// credential reader, which retains its own timeout (Connecting).
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if d.openRedis == nil {

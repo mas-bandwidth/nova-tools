@@ -807,8 +807,9 @@ the store.
 The last lookup reads the fleet view from the Redis reached without a flag:
 `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, the seat, then the recorded
 `nova-sprint seat login`. It uses the same Redis credentials as other reads
-and bounds discovery to ten seconds, or the caller's shorter deadline. The
-fleet DSN goes through `config.ResolveDSN`: the variable
+and bounds the Redis network open/read to ten seconds, or the caller's
+shorter deadline, after the existing recorded-credential resolution, which
+keeps its own timeout. The fleet DSN goes through `config.ResolveDSN`: the variable
 `NOVA_PG_PASSWORD_ENV` names, else `NOVA_PG_PASSWORD`, else no password.
 Redis remains a rebuildable copy: losing it removes this last discovery
 source, while explicit store sources still work. `status` names the selected
