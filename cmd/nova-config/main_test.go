@@ -179,6 +179,16 @@ func currentSchema() int {
 	return len(all)
 }
 
+// schemaTip is the greatest migration version this binary carries. The files
+// are consecutive, so the tip is the file count.
+func schemaTip() int {
+	all, err := config.Migrations()
+	if err != nil {
+		panic(err)
+	}
+	return all[len(all)-1].Version
+}
+
 func (h *harness) deps() deps {
 	return deps{
 		getenv: func(k string) string { return h.env[k] },
@@ -433,7 +443,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	_, errs = step(1, "friend", "set", "nobody", "--width", "1")
 	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=builder,reader width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=builder,reader width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated)\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
 	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan tiers=frontier,pro roles=builder,reader width=16 mode=one-shot config_dir=- "), "friend show: %q", out)
 	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
@@ -559,16 +569,17 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = step(0, "migrate")
 	n := currentSchema()
-	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=%d\n", n, n), out, "migrate: %q", out)
+	tip := schemaTip()
+	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=%d\n", tip, n), out, "migrate: %q", out)
 	out, _ = step(0, "migrate")
-	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0\n", n, n), out, "migrate twice: %q", out)
+	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0\n", tip, tip), out, "migrate twice: %q", out)
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	step(0, "friend", "add", "rowan", "--tiers", "frontier", "--roles", "builder")
 	step(0, "friend", "add", "stella", "--tiers", "frontier,pro")
 	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn)
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" pg-from=env machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 redis-from=env machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n"+noFundedTierWarnings, out, "status behind: %q %q", out, errs)
+	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(tip)+" pg-from=env machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 redis-from=env machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n"+noFundedTierWarnings, out, "status behind: %q %q", out, errs)
 	require.Contains(t, errs, "status REFUSED: Redis is not at the store's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	// The dry run takes the real run's checks: without an actor both refuse.
@@ -598,7 +609,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
 	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan tiers=frontier roles=builder width=8 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them created="), "rowan's stored row: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan tiers=frontier roles=builder width=8 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated) created="), "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n"+noFundedTierWarnings), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
