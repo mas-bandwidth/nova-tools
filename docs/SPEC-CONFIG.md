@@ -449,7 +449,7 @@ every route verb on one older than 0007 (`behindSchema`).
 
 **`tier`** (`config.tiers`): a model tier's route array (the owner,
 2026-10-01: "the per-tier provider/model array should be specified in
-nova-config"). It has four rows, `flash`, `frontier`, `heavy` and `pro`, made by migrate, so `set`
+nova-config"). It has three rows, `flash`, `pro` and `heavy`, made by migrate, so `set`
 takes them on a new store and there is nothing to add. The deal takes
 `routes[index mod len]` for each card of the tier, the index a uint64
 counter on the fleet table (`route_index_flash`, `route_index_pro`), moved
@@ -543,8 +543,8 @@ config.routes            (name PK, tier flash|frontier|heavy|pro, provider, mode
                           reasoning_as_output boolean, long_context,
                           billing metered|plan, price_source, price_as_of;
                           note added by 0015, text NOT NULL DEFAULT '')
-config.tiers             (name PK flash|frontier|heavy|pro, routes, created_at, updated_at;
-                          CHECK routes a comma list of names; the four rows
+config.tiers             (name PK flash|pro|heavy, routes, created_at, updated_at;
+                          CHECK routes a comma list of names; the three rows
                           inserted by the migration)
 ```
 
