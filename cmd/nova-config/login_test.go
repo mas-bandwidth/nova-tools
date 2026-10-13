@@ -96,7 +96,7 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 
 	code, _, errs = do("friend", "list")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "--pg is required")
+	assert.Contains(t, errs, "no store named: --pg not given")
 	assert.Contains(t, errs, "nova-config login")
 	assert.Empty(t, dsns)
 	assert.Empty(t, reads)

@@ -208,45 +208,99 @@ func readRecordedSecret(path string, rec loginRecord) (secrets.Secret, error) {
 // resolvePG is the Postgres DSN a verb dials. --pg, NOVA_PG_DSN and
 // NOVA_PG_PASSWORD_ENV win when set and the recorded secret is not read for
 // them. With none of them, and a login recorded, the DSN is that login's and
-// the password is read in process. The login off is the old rule exactly.
-func resolvePG(pg string, getenv func(string) string) (string, error) {
+// the password is read in process. With none of those, discoverPG discovers
+// the store from Redis (fleet:pg_dsn).
+func resolvePG(ctx context.Context, pg string, getenv func(string) string, d deps) (string, string, error) {
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	if !loginOn(getenv) {
-		if pg == "" && getenv(envPG) == "" {
-			return "", pgRequired(false)
+	if pg != "" {
+		resolved, err := config.ResolveDSN(pg, getenv)
+		return resolved, "flag", err
+	}
+	if v := getenv(envPG); v != "" {
+		resolved, err := config.ResolveDSN(v, getenv)
+		return resolved, "env", err
+	}
+	if loginOn(getenv) {
+		rec, ok, err := loadLogin(getenv)
+		if err != nil {
+			return "", "", err
 		}
-		return config.ResolveDSN(pg, getenv)
-	}
-	rec, ok, err := loadLogin(getenv)
-	if err != nil {
-		return "", err
-	}
-	explicit := pg != "" || getenv(envPG) != ""
-	passNamed := getenv(envPGPassEnv) != ""
-	if explicit || passNamed {
-		flag := pg
-		if flag == "" && getenv(envPG) == "" {
-			if !ok {
-				return "", pgRequired(true)
+		passNamed := getenv(envPGPassEnv) != ""
+		if ok {
+			if passNamed {
+				resolved, err := config.ResolveDSN(rec.DSN, getenv)
+				return resolved, "login", err
 			}
-			flag = rec.DSN
+			resolved, err := dsnWithSecret(getenv(loginFileKey), rec)
+			return resolved, "login", err
 		}
-		return config.ResolveDSN(flag, getenv)
 	}
-	if !ok {
-		return "", pgRequired(true)
-	}
-	return dsnWithSecret(getenv(loginFileKey), rec)
+	dsn, src, _, err := discoverPG(ctx, getenv, d)
+	return dsn, src, err
 }
 
-func pgRequired(withLoginHint bool) error {
-	msg := "--pg is required: postgres://user@host:5432/db (or " + envPG + "), or --file <path> for a local file with no database"
-	if withLoginHint {
-		msg += ", or a login recorded by nova-config login"
-	}
+func pgRequired(looked []string) error {
+	msg := "no store named: " + strings.Join(looked, "; ") + "; run: nova-config login, or export NOVA_PG_DSN=postgres://user@host:5432/nova, or --file <path>"
 	return errors.New(msg)
+}
+
+// discoverPG resolves the store from the fleet row in Redis (fleet:pg_dsn) when
+// no explicit flag, environment variable, seat or login is provided. With no
+// store found, it names each place looked and what it found there.
+func discoverPG(ctx context.Context, getenv func(string) string, d deps) (dsn, source string, looked []string, err error) {
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	looked = []string{
+		"--pg not given",
+		"NOVA_PG_DSN unset",
+		"--seat/NOVA_SEAT unset",
+	}
+	cfgPath, _ := loginPath(getenv)
+	looked = append(looked, fmt.Sprintf("nova-config login %s: none", cfgPath))
+
+	addr, src, rerr := redisAddressFrom("", getenv)
+	if rerr != nil {
+		slPath, _ := sprintLoginPath(getenv)
+		looked = append(looked, fmt.Sprintf("no Redis named (%s, %s, seat, nova-sprint seat login %s: none)", envSprintRedis, envRedisAddr, slPath))
+		return "", "", looked, pgRequired(looked)
+	}
+
+	if d.openRedis == nil {
+		looked = append(looked, fmt.Sprintf("fleet:pg_dsn in Redis %s (from %s): no redis opener", addr, src))
+		return "", "", looked, pgRequired(looked)
+	}
+
+	rs, oerr := d.openRedis(ctx, addr)
+	if oerr != nil {
+		looked = append(looked, fmt.Sprintf("fleet:pg_dsn in Redis %s (from %s): %v", addr, src, oerr))
+		return "", "", looked, pgRequired(looked)
+	}
+	defer func() { _ = rs.Close() }()
+
+	views, _, rderr := rs.Read(ctx, config.KindFleet)
+	if rderr != nil {
+		looked = append(looked, fmt.Sprintf("fleet:pg_dsn in Redis %s (from %s): %v", addr, src, rderr))
+		return "", "", looked, pgRequired(looked)
+	}
+
+	fleetRow := views[config.KindFleet]
+	rawDSN := ""
+	if fleetRow != nil {
+		rawDSN = strings.TrimSpace(fleetRow["pg_dsn"])
+	}
+	if rawDSN == "" {
+		looked = append(looked, fmt.Sprintf("fleet:pg_dsn in Redis %s (from %s): empty", addr, src))
+		return "", "", looked, pgRequired(looked)
+	}
+
+	resolved, resErr := config.ResolveDSN(rawDSN, getenv)
+	if resErr != nil {
+		return "", "", looked, resErr
+	}
+	return resolved, "fleet-redis", looked, nil
 }
 
 // dsnWithSecret applies the recorded password in memory. The getenv handed to

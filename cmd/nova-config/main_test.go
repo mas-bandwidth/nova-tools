@@ -290,7 +290,7 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 	h := newHarness()
 	code, _, errs := h.run(t, "friend", "add", "rowan")
 	require.Equal(t, 2, code, "exit %d", code)
-	for _, want := range []string{"--actor is required", "--pg is required", "--tiers is required", "NOVA_FRIEND", "NOVA_PG_DSN"} {
+	for _, want := range []string{"--actor is required", "no store named: --pg not given", "--tiers is required", "NOVA_FRIEND", "NOVA_PG_DSN"} {
 		assert.Contains(t, errs, want, "the refusal does not say %q:\n%s", want, errs)
 	}
 	require.Equal(t, 1, strings.Count(errs, "\n"), "refusal is not one line:\n%s", errs)
@@ -357,7 +357,7 @@ func TestFileIsTheStoreAndExclusiveWithPg(t *testing.T) {
 	assert.ErrorContains(t, err, "--pg and --file are exclusive")
 	pg, file = "", ""
 	_, err = conn{pg: &pg, file: &file}.dsn(env(nil))
-	assert.ErrorContains(t, err, "or --file <path> for a local file with no database")
+	assert.ErrorContains(t, err, "or --file <path>")
 }
 
 func TestPgDSNKeepsThePasswordOffTheLine(t *testing.T) {
@@ -365,7 +365,7 @@ func TestPgDSNKeepsThePasswordOffTheLine(t *testing.T) {
 
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	_, errCheck321 := pgDSN("", env(nil))
-	assert.ErrorContains(t, errCheck321, "--pg is required", "no dsn: %v", errCheck321)
+	assert.ErrorContains(t, errCheck321, "no store named: --pg not given", "no dsn: %v", errCheck321)
 	_, errCheck324 := pgDSN("postgres://u:secret@127.0.0.1/nova", env(nil))
 	assert.ErrorContains(t, errCheck324, "carries a password", "password on the line: %v", errCheck324)
 	got, err := pgDSN(dsn, env(map[string]string{"NOVA_PG_PASSWORD": "pw"}))
@@ -568,7 +568,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn)
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 redis-from=env machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
+	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 redis-from=env pg-from=env machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
 	require.Contains(t, errs, "status REFUSED: Redis is not at the store's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	// The dry run takes the real run's checks: without an actor both refuse.

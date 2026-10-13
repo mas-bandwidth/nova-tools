@@ -324,8 +324,8 @@ func TestRunOnABenchRefusesWhatIsNotARecordMachine(t *testing.T) {
 		{"no jar", nil, []string{"--bench", "vision"}, nil, "holds no jar at"},
 		{"shards", jar, []string{"--bench", "vision", "--shards", "2"}, nil, "--shards is not taken with --bench"},
 		{"rows unreadable", jar, []string{"--bench", "any"}, func(context.Context) ([]benchRow, error) {
-			return nil, errors.New("nova-config machine list: --pg is required")
-		}, "the fleet's machine rows cannot be read: nova-config machine list: --pg is required"},
+			return nil, errors.New("nova-config machine list: no store named: --pg not given")
+		}, "the fleet's machine rows cannot be read: nova-config machine list: no store named: --pg not given"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

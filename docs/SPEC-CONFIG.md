@@ -846,7 +846,8 @@ the recorded address, it is the recorded user with the password read in this
 process through the same `secrets.ReadLogin` path `seat_secret.go` makes,
 served to the connection in memory, never into an environment or an output;
 else the store's default user. `status` names where the Redis address
-came from as `redis-from=<flag|env|seat|seat-login>`. `machine
+came from as `redis-from=<flag|env|seat|seat-login>`, and names where the store
+came from as `pg-from=<flag|env|seat|login|fleet-redis>` beside `redis-from=`. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
 open no store. `--as` is the flag, else `NOVA_FRIEND`, else the friend recorded by
@@ -875,8 +876,16 @@ paths are recorded absolute and `--sops` left off is the `sops` on `PATH`. A
 login is recorded only when its secret resolves, and a `--dsn` that carries a
 password is refused without recording and without quoting it.
 
-Every verb after it opens PostgreSQL as follows. The DSN is `--pg`, else
-`NOVA_PG_DSN`, else the recorded DSN. The password is the environment's when
+Every verb after it opens PostgreSQL as follows. The store, first match wins:
+`--file`; `--pg`; `NOVA_PG_DSN`; `--seat` or `NOVA_SEAT` (the seat profile);
+the login `nova-config login` recorded; then, discovered from the applied
+fleet row's `pg_dsn` (`fleet:pg_dsn`) read from the Redis reachable with no
+flag (`NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, the selected seat, or `nova-sprint seat login`),
+opened with the credentials it uses for that Redis (`sprintCreds`). An explicit
+source always wins and never dials Redis to look. With no store found, the refusal
+names each place looked and what it found there:
+`no store named: --pg not given; NOVA_PG_DSN unset; --seat/NOVA_SEAT unset; nova-config login <path>: none; fleet:pg_dsn in Redis <addr> (from <source>): empty | <error class> | no Redis named (NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, seat, nova-sprint seat login <path>: none); run: nova-config login, or export NOVA_PG_DSN=postgres://user@host:5432/nova, or --file <path>`.
+The password is the environment's when
 `NOVA_PG_PASSWORD_ENV` is set (the variable it names), which wins, including
 when the address is the recorded DSN; else, when the DSN is `--pg` or
 `NOVA_PG_DSN`, the variable `NOVA_PG_PASSWORD` when that is set, and the

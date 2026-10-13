@@ -105,6 +105,10 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	defer func() { _ = rs.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	line += " redis=" + config.Value(addr) + " redis-from=" + redisFrom
 	o.Fact("redis", addr).Fact("redis-from", redisFrom)
+	if pgFrom := c.from(); pgFrom != "" {
+		line += " pg-from=" + pgFrom
+		o.Fact("pg-from", pgFrom)
+	}
 	behind := 0
 	for _, k := range config.Kinds {
 		_, applied, err := rs.Read(ctx, k.Name)

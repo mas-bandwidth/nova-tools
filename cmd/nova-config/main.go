@@ -32,7 +32,9 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -343,10 +345,60 @@ func realDepsWith(getenv func(string) string) deps {
 	}
 }
 
+const depsKey = "__nova_config_deps_id__"
+
+var (
+	depsMu  sync.RWMutex
+	depsMap = make(map[string]deps)
+	depsSeq int64
+)
+
+func wireDeps(d deps) (deps, func()) {
+	depsMu.Lock()
+	depsSeq++
+	id := strconv.FormatInt(depsSeq, 10)
+	depsMap[id] = d
+	depsMu.Unlock()
+
+	origGetenv := d.getenv
+	if origGetenv == nil {
+		origGetenv = func(string) string { return "" }
+	}
+	d.getenv = func(k string) string {
+		if k == depsKey {
+			return id
+		}
+		return origGetenv(k)
+	}
+	cleanup := func() {
+		depsMu.Lock()
+		delete(depsMap, id)
+		depsMu.Unlock()
+	}
+	return d, cleanup
+}
+
+func getDeps(getenv func(string) string) deps {
+	if getenv == nil {
+		return deps{}
+	}
+	id := getenv(depsKey)
+	if id == "" {
+		return deps{}
+	}
+	depsMu.RLock()
+	d := depsMap[id]
+	depsMu.RUnlock()
+	return d
+}
+
 // run is the entry: a verb asked for --json goes through runJSON, so a refusal
 // is the one object on stdout (jsonRefusals); every other run prints the
 // refusal to stderr (docs/STANDARD.md, "One output structure, two renderings").
 func run(args []string, stdout, stderr io.Writer, d deps) int {
+	var cleanup func()
+	d, cleanup = wireDeps(d)
+	defer cleanup()
 	if verbflag.BoolAsked(args, "json") {
 		return runJSON(args, stdout, stderr, d)
 	}
@@ -581,16 +633,31 @@ const filePrefix = "file:"
 // for a seat profile in seats.tsv supplying the DSN and password variable name,
 // or the login nova-config login recorded when none of those is given.
 type conn struct {
-	pg   *string
-	file *string
-	seat *string
+	pg     *string
+	file   *string
+	seat   *string
+	source *string
+}
+
+func (c conn) setSource(src string) {
+	if c.source != nil {
+		*c.source = src
+	}
+}
+
+func (c conn) from() string {
+	if c.source != nil {
+		return *c.source
+	}
+	return ""
 }
 
 // storeFlags adds --pg and --file to a verb's flag set.
 func storeFlags(fs *stdflag.FlagSet) conn {
 	return conn{
-		pg:   fs.String("pg", "", "the PostgreSQL `dsn`, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file"),
-		file: fs.String("file", "", "a local JSON file standing in for PostgreSQL, at `path` (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store"),
+		pg:     fs.String("pg", "", "the PostgreSQL `dsn`, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file"),
+		file:   fs.String("file", "", "a local JSON file standing in for PostgreSQL, at `path` (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store"),
+		source: new(string),
 	}
 }
 
@@ -605,7 +672,13 @@ func seatStoreFlags(fs *stdflag.FlagSet) conn {
 // dsn is the store to open: the file when --file is given, else the DSN by
 // the rules every reader of nova-config shares (config.ResolveDSN), or from
 // the selected seat profile.
-func (c conn) dsn(getenv func(string) string) (string, error) {
+func (c conn) dsn(getenv func(string) string, extra ...deps) (string, error) {
+	var d deps
+	if len(extra) > 0 {
+		d = extra[0]
+	} else {
+		d = getDeps(getenv)
+	}
 	seat := ""
 	if c.seat != nil && *c.seat != "" {
 		seat = *c.seat
@@ -661,13 +734,26 @@ func (c conn) dsn(getenv func(string) string) (string, error) {
 		} else {
 			dsn = prof.DSN
 		}
-		return config.ResolveDSN(dsn, lookup)
+		resolved, err := config.ResolveDSN(dsn, lookup)
+		if err == nil {
+			if c.pg != nil && *c.pg != "" {
+				c.setSource("flag")
+			} else {
+				c.setSource("seat")
+			}
+		}
+		return resolved, err
 	}
 	pg := ""
 	if c.pg != nil {
 		pg = *c.pg
 	}
-	return resolvePG(pg, getenv)
+	ctx := context.Background()
+	resolved, src, err := resolvePG(ctx, pg, getenv, d)
+	if err == nil {
+		c.setSource(src)
+	}
+	return resolved, err
 }
 
 // again is the store flag a printed command repeats.

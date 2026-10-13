@@ -78,7 +78,7 @@ func TestMachineSelfCheckIsTwoWhenTheNameIsNoRowAndThreeWhenUnreadable(t *testin
 	require.Contains(t, errsCheck74, "the config cannot be read", "store down: %d %q", codeCheck74, errsCheck74)
 	codeCheck77, _, errsCheck77 := h.run(t, "machine", "self", "--check")
 	require.Equal(t, 3, codeCheck77, "no dsn: %d %q", codeCheck77, errsCheck77)
-	require.Contains(t, errsCheck77, "--pg is required", "no dsn: %d %q", codeCheck77, errsCheck77)
+	require.Contains(t, errsCheck77, "no store named: --pg not given", "no dsn: %d %q", codeCheck77, errsCheck77)
 	h2 := newHarness()
 	h2.hostname = ".x"
 	codeCheck82, _, errsCheck82 := h2.run(t, "machine", "self")
