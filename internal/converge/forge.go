@@ -104,10 +104,11 @@ func (g GH) list(ctx context.Context, state, search string) ([]PR, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	cmd.Env, err := seatcred.ForgeCommandEnv(g.Env, getenv)
+	childEnv, err := seatcred.ForgeCommandEnv(g.Env, getenv)
 	if err != nil {
 		return nil, fmt.Errorf("gh environment: %s", oneline.Err(err))
 	}
+	cmd.Env = childEnv
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
