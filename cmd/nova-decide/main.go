@@ -10,11 +10,13 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +28,9 @@ import (
 )
 
 var version string
+
+//go:embed examples/*
+var exampleFiles embed.FS
 
 // world is what the tool reaches outside itself: the clock every record stamp
 // reads, the environment the backend's key comes from, the Jev transport (its
@@ -61,6 +66,18 @@ ASK ANSWER question=ok type=noul value=yes p=yes:0.9; exit 0 means recorded, nev
 		ExitTable: "0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).",
 		Verbs: []tool.Verb{
 			{
+				Name:    "example",
+				Usage:   "example --dir <new-directory>",
+				Example: "example --dir ./decide-example",
+				Effect:  tool.LocalWrite + ": creates a runnable fixed-backend example in a new directory",
+				Detail:  "Writes a schema, state, fixed answers and sample diff from files embedded in this binary; it makes no provider request.",
+				DryRun:  true,
+				Flags: func(f *tool.Flags) {
+					f.Required("dir", "a new directory for the example files")
+				},
+				Run: w.example,
+			},
+			{
 				Name:    "ask",
 				Usage:   "ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "ask --schema " + fixture + "schema.json --state " + fixture + "state.txt --backend fixed --answers " + fixture + "answers.json --record ./decisions.jsonl --op first",
@@ -79,7 +96,7 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 			},
 			{
 				Name:    "read",
-				Usage:   "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "read --card <file|-> --diff <file|-> [--rule <file|->] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "read --card " + fixture + "card.md --diff " + fixture + "card.diff --backend fixed --answers " + fixture + "read-answers.json --record ./decisions.jsonl --op card-1",
 				Effect:  tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The read decision: a worker's diff against the card that asked for it, five questions:
@@ -87,9 +104,9 @@ does_task, lines_changed, inside_paths and defect (nouls, p of yes) and verdict 
 or UNSURE). The state is the card, the rule when --rule names one, and the diff, nothing else.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("card", "the card the worker was given, a file")
-					f.Required("diff", "the worker's unified diff, a file")
-					f.String("rule", "", "a rule text the read holds the diff to as well, a file")
+					f.Required("card", "the card the worker was given, a file, or - for stdin")
+					f.Required("diff", "the worker's unified diff, a file, or - for stdin")
+					f.String("rule", "", "a rule text the read holds the diff to as well, a file, or - for stdin")
 					w.asking(f)
 					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
@@ -97,7 +114,7 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 			},
 			{
 				Name:    "score",
-				Usage:   "score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "score --card <file|-> --diff <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "score --card " + fixture + "card.md --diff " + fixture + "card.diff --backend fixed --answers " + fixture + "score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab",
 				Effect:  tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The score decision: a landed diff against its card, the read's five questions and one noul
@@ -107,8 +124,8 @@ fenced_block_edit, asserted_data_cut, load_bearing_word_cut; outside_paths is 1 
 The line names the top class and its p; nova-sprint land asks it as <card>@landed@<head>.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("card", "the card the worker was given, a file")
-					f.Required("diff", "the landed unified diff, a file")
+					f.Required("card", "the card the worker was given, a file, or - for stdin")
+					f.Required("diff", "the landed unified diff, a file, or - for stdin")
 					w.asking(f)
 					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
@@ -153,7 +170,7 @@ ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed out
 			},
 			{
 				Name:    "gate",
-				Usage:   "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:   "gate --output <file|-> --card <file|-> [--diff <file|->] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "gate --output " + fixture + "gate-output.txt --card " + fixture + "card.md --diff " + fixture + "card.diff --base-red TestPortInUse --backend fixed --answers " + fixture + "gate-answers.json --record ./decisions.jsonl --op c1@1@gate",
 				Effect:  tool.Delivery + "; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record",
 				Detail: `The gate decision: a red gate's go test output, read failure by failure; each failing test
@@ -166,9 +183,9 @@ default) routes no failure. The gate's route is caused when one failure is, else
 is, else pre-existing.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("output", "the gate's output, a file of go test's output (plain or -v)")
-					f.Required("card", "the card the worker was given, a file: its PATHS line is read")
-					f.String("diff", "", "the card's unified diff, a file: its files and line counts are summarised")
+					f.Required("output", "the gate's output, a file of go test's output (plain or -v), or - for stdin")
+					f.Required("card", "the card the worker was given, a file or - for stdin: its PATHS line is read")
+					f.String("diff", "", "the card's unified diff, a file or - for stdin: its files and line counts are summarised")
 					f.String("base-red", "", "the failing tests red at the card's base, comma-separated (<Test> or <pkg>.<Test>); given empty, none is")
 					f.String("bars", "", "the flaky and the pre-existing bars, <flaky>,<pre-existing>: each a probability or empty (that route taken by no failure), two set ones summing above 1; empty (the default) routes none, as the sprint row's defaults do; 0.8,0.8 is the starting point")
 					w.asking(f)
@@ -386,6 +403,48 @@ func (w world) ask(c *tool.Call) *tool.Out {
 	return w.decision(c, s, string(state), map[string]string{"state": c.Str("state"), "state_sha256": decide.Sum(state)})
 }
 
+// example writes the files embedded with the CLI so a reader can run the fixed
+// backend without a repository checkout or provider key (SPEC-NOVA-DECIDE §§2–5).
+func (w world) example(c *tool.Call) *tool.Out {
+	dir := c.Str("dir")
+	if c.DryRun() {
+		if _, err := os.Lstat(dir); err == nil {
+			return tool.Refuse(fmt.Sprintf("--dir %q already exists; give a new directory so the example does not overwrite your files", dir))
+		} else if !os.IsNotExist(err) {
+			return tool.Refuse(fmt.Sprintf("--dir %q cannot be checked: %s", dir, err))
+		}
+		parent, err := os.Stat(filepath.Dir(dir))
+		if err != nil || !parent.IsDir() {
+			if err == nil {
+				err = errors.New("parent is not a directory")
+			}
+			return tool.Refuse(fmt.Sprintf("parent of --dir %q cannot be used: %s", dir, err))
+		}
+		return tool.Done().Fact("files", 4).Note("dry run: no example files written")
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		if os.IsExist(err) {
+			return tool.Refuse(fmt.Sprintf("--dir %q already exists; give a new directory so the example does not overwrite your files", dir))
+		}
+		return tool.Refuse(fmt.Sprintf("--dir %q cannot be created: %s", dir, err))
+	}
+	files := []string{"answers.json", "sample.diff", "schema.json", "state.txt"}
+	for _, name := range files {
+		body, err := exampleFiles.ReadFile("examples/" + name)
+		if err != nil {
+			return tool.Refuse(fmt.Sprintf("the embedded example file %q cannot be read: %s", name, err))
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+			return tool.Refuse(fmt.Sprintf("example file %q could not be written: %s", name, err))
+		}
+	}
+	o := tool.Done().Fact("files", len(files))
+	for _, name := range files {
+		o.Item("file", "name", name)
+	}
+	return o
+}
+
 func (w world) read(c *tool.Call) *tool.Out {
 	texts, inputs, refused := readFiles(c, "card", "diff", "rule")
 	if refused != nil {
@@ -449,15 +508,28 @@ func (w world) grade(c *tool.Call) *tool.Out {
 }
 
 // readFiles reads each named file flag that is given: its text, and the record's inputs
-// (the path and its SHA-256); every file it cannot read is named in one refusal.
+// (the path and its SHA-256); every file it cannot read is named in one refusal. A single
+// `-` reads the one stdin stream directly (SPEC-NOVA-DECIDE §§6, 9, 12).
 func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, refused *tool.Out) {
 	texts, inputs = map[string]string{}, map[string]string{}
 	var problems []string
+	stdinNames := make([]string, 0, 1)
+	for _, name := range names {
+		if c.Given(name) && c.Str(name) == "-" {
+			stdinNames = append(stdinNames, name)
+		}
+	}
+	if len(stdinNames) > 1 {
+		for i := range stdinNames {
+			stdinNames[i] = "--" + stdinNames[i]
+		}
+		return nil, nil, tool.Refuse(fmt.Sprintf("%s all name stdin; one invocation can read stdin for only one file input, so use - for one input and files for the others", strings.Join(stdinNames, " and ")))
+	}
 	for _, name := range names {
 		if !c.Given(name) {
 			continue
 		}
-		raw, err := os.ReadFile(c.Str(name))
+		raw, err := readInput(c.Str(name), c.Stdin)
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
@@ -563,19 +635,11 @@ func (w world) findings(c *tool.Call) *tool.Out {
 // gate reads the gate's output, the card and the diff, names every input it cannot read in
 // one refusal, and asks the gate decision of each failure (decide.Gate).
 func (w world) gate(c *tool.Call) *tool.Out {
-	texts := map[string]string{}
-	var problems []string
-	for _, name := range []string{"output", "card", "diff"} {
-		if !c.Given(name) {
-			continue
-		}
-		raw, err := os.ReadFile(c.Str(name))
-		if err != nil {
-			problems = append(problems, err.Error())
-			continue
-		}
-		texts[name] = string(raw)
+	texts, _, refused := readFiles(c, "output", "card", "diff")
+	if refused != nil {
+		return refused
 	}
+	var problems []string
 	failures := decide.ParseGateOutput(texts["output"])
 	if len(problems) == 0 && len(failures) == 0 {
 		problems = append(problems, "--output "+c.Str("output")+" holds no go test failure (no `--- FAIL:` or `FAIL <pkg>` line); the gate decision reads a red go test run")

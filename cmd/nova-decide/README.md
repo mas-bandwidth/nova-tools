@@ -29,7 +29,28 @@ so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
 the test's own directory. The ids come from `--op`, so every line reads the same
 twice.
 
+To create a self-contained fixture outside a checkout, run
+`nova-decide example --dir ./decide-example`. It extracts embedded schema,
+state, fixed-answer and sample-diff files into a new directory without contacting
+a provider. The generated schema names its decision `example` and its question
+`clear`; this complete offline sequence uses only generated files:
+
+```sh
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-wrong
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-ok
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-wrong --label wrong
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-ok --label ok
+$ nova-decide calibrate --record ./decide-example/decisions.jsonl --decision example --question clear --positive wrong --negative ok --bars 0.5
+```
+
 ```text
+$ nova-decide example --dir ./decide-example
+EXAMPLE OK files=4
+EXAMPLE FILE name=answers.json
+EXAMPLE FILE name=sample.diff
+EXAMPLE FILE name=schema.json
+EXAMPLE FILE name=state.txt
+
 $ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
 ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94
@@ -101,6 +122,7 @@ FINDINGS FINDING class=unnamed count=1 cards=s1-4
 
 The [nova-decide section of the command reference](../../docs/CLI.md#nova-decide) documents every verb's flags, effect and exit codes.
 
+- `example`
 - `ask`
 - `read`
 - `score`
