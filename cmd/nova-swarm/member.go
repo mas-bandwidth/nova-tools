@@ -1073,7 +1073,7 @@ func spendMatchesReceipt(summary string, recovered cardcost.Usage) bool {
 		{u.Tokens.Reasoning, recovered.Tokens.Reasoning},
 	}
 	for _, pair := range counts {
-		if pair[1] >= 0 && pair[0] != pair[1] {
+		if pair[0] != pair[1] && (u.ReceiptVersion == cardcost.ReceiptVersion || pair[1] >= 0) {
 			return false
 		}
 	}

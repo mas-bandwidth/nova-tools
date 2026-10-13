@@ -442,3 +442,20 @@ func TestTypedNativeDurableWriteFailureCannotEmitAcceptedSummary(t *testing.T) {
 	_, err := cardcost.ParseSpendChecked(spendWord([]cardcost.Usage{launchSpend(usage.Values)}))
 	assert.Error(t, err)
 }
+
+func TestTypedSummaryRequiresExactDurableCommonCountsIncludingAbsence(t *testing.T) {
+	t.Parallel()
+	u := cardcost.NoUsage()
+	u.Billing = cardcost.BillingPlan
+	u.ReceiptVersion = 2
+	u.Tokens.Input = 12
+	spend, err := cardcost.EncodeSpend(u)
+	require.NoError(t, err)
+	absent := cardcost.NoUsage()
+	absent.Billing = u.Billing
+	absent.ReceiptVersion = 2
+	assert.False(t, spendMatchesReceipt(spend, absent))
+	assert.True(t, spendMatchesReceipt(spend, u))
+	legacy := cardcost.SpendWord(u.Tokens, "", "")
+	assert.True(t, spendMatchesReceipt(legacy, cardcost.NoUsage()))
+}
