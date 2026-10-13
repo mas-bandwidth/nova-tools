@@ -16,8 +16,10 @@ func TestConfigListMaxFlag(t *testing.T) {
 	h := newHarness()
 	h.dir = t.TempDir()
 	var out string
+	code, out, stderr := h.run(t, "migrate", "--file", "try.json")
+	require.Equal(t, 0, code, "migrate fixture: stdout=%q stderr=%q", out, stderr)
 	for _, name := range []string{"a", "b", "c"} {
-		code, out, stderr := h.run(t, "machine", "add", name, "--user", "nova", "--seat", "seat", "--slots", "2", "--actor", "tester", "--file", "try.json")
+		code, out, stderr = h.run(t, "machine", "add", name, "--user", "nova", "--seat", "seat", "--slots", "2", "--actor", "tester", "--file", "try.json")
 		require.Equal(t, 0, code, "add %s: stdout=%q stderr=%q", name, out, stderr)
 	}
 
