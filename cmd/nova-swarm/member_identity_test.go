@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +11,7 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
@@ -22,13 +26,57 @@ func identityLane(t *testing.T, mark string) *exec.Cmd {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("kernel lane identity is available on Linux and macOS")
 	}
-	cmd := exec.Command("sleep", "600")
+	bin, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(bin, "-test.run=^TestIdentityLaneProcess$")
 	cmd.Env = append(environWithoutName(os.Environ(), swarm.LaneEnv), swarm.LaneEnv+"="+mark)
+	cmd.Env = append(cmd.Env, "NOVA_TEST_LANE_HELPER=1")
 	ownLaneSession(cmd)
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	ready, err := cmd.StdoutPipe()
+	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // ignored: cleanup of only this fixture-owned child
-	require.NotEqual(t, "-", swarm.LaneStartStamp(cmd.Process.Pid))
+	t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Wait() }) // ignored: cleanup of only this fixture-owned child
+	line := make(chan string, 1)
+	go func() {
+		got, _ := bufio.NewReader(ready).ReadString('\n')
+		line <- got
+	}()
+	select {
+	case got := <-line:
+		require.Equal(t, "lane identity fixture ready\n", got)
+	case <-time.After(laneIdentityWait()):
+		t.Fatal("fixture child never signalled readiness")
+	}
+	started := swarm.LaneStartStamp(cmd.Process.Pid)
+	require.NotEqual(t, "-", started)
+	require.True(t, swarm.LaneIdentityMatches(cmd.Process.Pid, started, mark), "the ready fixture's exact process birth and lane mark must be visible")
 	return cmd
+}
+
+// TestIdentityLaneProcess keeps the marked subprocess alive after confirming its
+// Go test process has exec'd with the environment set by identityLane.
+func TestIdentityLaneProcess(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("NOVA_TEST_LANE_HELPER") != "1" {
+		t.Skip("subprocess fixture only")
+	}
+	_, err := fmt.Fprintln(os.Stdout, "lane identity fixture ready")
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, os.Stdin)
+	require.NoError(t, err)
+}
+
+// laneIdentityWait bounds observation of the process identity fixture while letting
+// loaded CI hosts name their own polling allowance (SPEC-CI, fixed waits).
+func laneIdentityWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
 }
 
 // An old PID reused by a stranger, a changed birth, and a different lane mark all
