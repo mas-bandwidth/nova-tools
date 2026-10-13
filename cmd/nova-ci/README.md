@@ -28,6 +28,7 @@ transcript was produced by running the built binary, not written by hand.
 $ nova-ci slowtests --example --budget 60 --load 4 --cpus 16
 CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
+CI-SLOW WARN within_budget=false enforce=false: budget exceeded without enforcement; reuse the same event stream; run: nova-ci slowtests '--example' '--budget' '60' '--load' '4' '--cpus' '16' --enforce
 
 $ nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s
@@ -51,3 +52,16 @@ The [nova-ci section of the command reference](../../docs/CLI.md#nova-ci) docume
 ## Spec
 
 The contract is [docs/SPEC-CI.md](../../docs/SPEC-CI.md).
+
+## Structured functional selection
+
+`nova-ci functional --json <packages...>` prints the same selected package paths
+and test regex as `{"packages":[...],"pattern":"..."}`. No selected functional
+tests produces an empty array and an empty pattern. The plain selection remains
+the two lines consumed by `make test-functional`.
+
+An unenforced slowtests overrun remains a measurement at exit 0, but prints
+`within_budget=false`, a warning, and an enforcement command retaining its budget
+and allowlist options. Pipe the same event stream into that command. JSON carries
+the same warning and `result.remedy`. Independent failures retain their exit code;
+`--enforce` retains its failure behavior.
