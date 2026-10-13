@@ -1,0 +1,11 @@
+{
+  "name": "reply",
+  "questions": {
+    "asks_something": {"type": "noul", "instructions": "The message asks its reader to do or answer something."},
+    "kind": {"type": "choice", "instructions": "What the message is.", "criteria": {
+      "question": "it asks for an answer",
+      "report": "it states what happened and asks nothing",
+      "request": "it asks for an action"
+    }}
+  }
+}

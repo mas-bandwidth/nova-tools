@@ -10,11 +10,13 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -335,6 +337,16 @@ shadow read's BOUNCE (a shadow read is never a read).`,
 					})
 				},
 				Run: w.findings,
+			},
+			{
+				Name:   "example",
+				Usage:  "example --dir <dir>",
+				Effect: tool.LocalWrite + ": writes the embedded starter files into --dir",
+				Detail: "Writes schema.json, state.txt, answers.json, card.md, card.diff and read-answers.json into --dir, so ask, read, outcome and calibrate run against that directory with no repository testdata.",
+				Flags: func(f *tool.Flags) {
+					f.Required("dir", "the directory the starter files are written to (created if absent)")
+				},
+				Run: exampleDir,
 			},
 		},
 	}
@@ -973,6 +985,31 @@ func since(s string, now time.Time) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("--since %q is not an RFC 3339 time or a date (2006-01-02)", s)
+}
+
+//go:embed exampledata/*
+var exampleFS embed.FS
+
+var exampleFiles = []string{"schema.json", "state.txt", "answers.json", "card.md", "card.diff", "read-answers.json"}
+
+// exampleDir writes the embedded starter files into --dir.
+func exampleDir(c *tool.Call) *tool.Out {
+	dir := c.Str("dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o := tool.Done().Fact("dir", dir).Fact("files", len(exampleFiles))
+	for _, name := range exampleFiles {
+		raw, err := exampleFS.ReadFile("exampledata/" + name)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
+			return tool.Refuse(err.Error())
+		}
+		o.Item("file", "name", name)
+	}
+	return o
 }
 
 // readInput reads a file, or stdin when the name is -.
