@@ -5,16 +5,22 @@ package ci
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
-func gitFixtureCommit(git func(...string) string, args ...string) string {
-	return git("commit", args...)
+func gitFixtureCommit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", root, "commit"}, args...)...)
+	cmd.Env = testgit.Environ()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
 }
 
 // TestChangeBaseListAtCommitAndAddedListRowsAgreeInAGitHistory is the git half of
@@ -37,12 +43,12 @@ func TestChangeBaseListAtCommitAndAddedListRowsAgreeInAGitHistory(t *testing.T) 
 	writeGo(t, root, "docs/CLI.md", "```\n$ nova-foo run\n```\n")
 	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n")
 	git("add", "-A")
-	gitFixtureCommit(git, "-q", "-m", "base")
+	gitFixtureCommit(t, root, "-q", "-m", "base")
 	base := git("rev-parse", "HEAD")
 	git("checkout", "-q", "-b", "pr")
 	writeGo(t, root, "docs/CLI.md", "```\n$ nova-foo run\n$ nova-foo newverb --x 1\n```\n")
 	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n$ nova-foo newverb --x 1\n")
-	gitFixtureCommit(git, "-q", "-am", "adds an unexecuted example")
+	gitFixtureCommit(t, root, "-q", "-am", "adds an unexecuted example")
 
 	event := filepath.Join(t.TempDir(), "event.json")
 	require.NoError(t, os.WriteFile(event, []byte(`{"pull_request":{"base":{"sha":"`+base+`"}}}`), 0o600))
@@ -85,14 +91,14 @@ func TestChangeBaseUsesTheFirstParentWhenAReleaseCheckoutHasNoDevRef(t *testing.
 	git("init", "-q", "-b", "release")
 	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n")
 	git("add", "-A")
-	gitFixtureCommit(git, "-q", "-m", "release baseline")
+	gitFixtureCommit(t, root, "-q", "-m", "release baseline")
 	git("checkout", "-q", "-b", "topic")
 	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n$ nova-foo newverb --x 1\n")
-	gitFixtureCommit(git, "-q", "-am", "adds an unexecuted example")
+	gitFixtureCommit(t, root, "-q", "-am", "adds an unexecuted example")
 	git("checkout", "-q", "release")
 	writeGo(t, root, "release-note.txt", "release commit\n")
 	git("add", "-A")
-	gitFixtureCommit(git, "-q", "-m", "release target moves")
+	gitFixtureCommit(t, root, "-q", "-m", "release target moves")
 	parents := strings.Fields(git("rev-list", "--parents", "-n", "1", "HEAD"))
 	require.Len(t, parents, 2)
 	parent := parents[1]
@@ -132,10 +138,10 @@ func TestChangeBaseRefusesToGuessForANonMergeCheckoutWithoutDevRefs(t *testing.T
 	git("init", "-q", "-b", "release")
 	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n")
 	git("add", "-A")
-	gitFixtureCommit(git, "-q", "-m", "release baseline")
+	gitFixtureCommit(t, root, "-q", "-m", "release baseline")
 	writeGo(t, root, "release-note.txt", "release commit\n")
 	git("add", "-A")
-	gitFixtureCommit(git, "-q", "-m", "ordinary release commit")
+	gitFixtureCommit(t, root, "-q", "-m", "ordinary release commit")
 
 	_, err := ChangeBase(root, func(string) string { return "" })
 	require.ErrorContains(t, err, "HEAD is not a merge commit with an actual first parent")
