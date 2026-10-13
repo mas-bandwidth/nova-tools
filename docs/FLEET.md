@@ -583,3 +583,39 @@ subscription billing and raw receipts follow-up.
 The coordinator adds `frontier-muse` with
 `nova-config route add` and the selected model, deadline, subscription billing and zero marginal price sheet;
 the tools play writes no route or configuration-store value.
+
+Typed subscription receipt adoption uses a paired installation. Upgrade the sprint
+server first while the existing Muse `plan` route with explicit zero prices remains
+active, then upgrade each member and its native binary. Activate `billing=subscription`
+only after both binaries can pass receipt contract 2. A new native invoked by an old
+member remains on the legacy bridge; the upgraded server refuses that legacy receipt
+for a typed subscription route before writing a result. A new member passes `--billing`
+to native and `--receipt-contract 2` with finish/read; older binaries refuse those flags.
+Do not synthesize original Muse fields from legacy token-only receipts.
+
+The `raw_usage` word is unpadded base64url JSON: version 1, an ordered `records`
+array with `harness=muse`, `execution=fleet`, `source_schema=muse-jsonl-v1`,
+`producer_version`, declared `billing`, and a `tokens` map. Its optional integer
+keys are `input_tokens`, `output_tokens`, `cached_tokens`, `cache_write_tokens`,
+`cache_read_tokens`, and `reasoning_tokens`. Missing differs from zero. Records
+retain launch order and are never summed into disjoint accounting classes.
+`cached_tokens` remains distinct from explicit `cache_read_tokens`; no cache
+subtraction is performed. Envelopes over 32768 JSON bytes are refused.
+
+Before typed activation, let every old native launch end; an old writer does not
+participate in the new usage-file lock. New writers serialize header expansion and
+append through the existing process file lock. A released thirteen- or fourteen-column
+header expands once to the current eighteen columns with one atomic replacement,
+including the first typed row; historical values and file permissions stay intact.
+New historical columns are `-`, including absent raw data. An unknown header or
+incomplete row refuses expansion before publication. Normal appends read only a
+bounded header. Mixed legacy and typed launch rows refuse durable cost recovery;
+start a fresh generation rather than fabricate missing original counters. A durable
+receipt error forces an invalid contract-2 report even if a valid final summary exists.
+The expected contract is stamped in the launch generation and restored on adoption.
+
+Typed rows retain the exact reported amount in optional `actual_usd`; `-` is
+unreported and `0` is a measured zero. The legacy four-place `usd` display remains.
+Receipts with no exact column, and legacy rows, retain their historical display
+precision; recovery never invents a more precise amount. A typed row with an exact
+column uses that column's absence or value independently of the display column.

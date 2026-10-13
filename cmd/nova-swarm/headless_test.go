@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -305,4 +306,102 @@ func TestMuseSubscriptionReceiptHasZeroMarginalCostWithoutNormalizingCounters(t 
 	assert.Equal(t, int64(3), receipt.Tokens.CacheWrite)
 	assert.Equal(t, int64(2), receipt.Tokens.Reasoning)
 	assert.Empty(t, receipt.Unpriced)
+}
+
+func TestNativeTypedSpendRetainsRawAcrossLaunchesAndRefusesInvalid(t *testing.T) {
+	t.Parallel()
+	raw := &cardcost.RawUsage{Version: 1, Records: []cardcost.RawRecord{{Harness: "muse", Execution: "fleet", SourceSchema: "muse-jsonl-v1", ProducerVersion: "fixture", Billing: cardcost.BillingSubscription, Tokens: map[string]int64{"cached_tokens": 0}}}}
+	encoded, err := cardcost.EncodeRaw(raw)
+	require.NoError(t, err)
+	u := launchSpend(map[string]string{"receipt_version": "2", "billing": "subscription", "raw_usage": encoded, "cost": "1.50"})
+	parsed, err := cardcost.ParseSpendChecked(spendWord([]cardcost.Usage{u, u}))
+	require.NoError(t, err)
+	require.NotNil(t, parsed.Raw)
+	assert.Len(t, parsed.Raw.Records, 2)
+	assert.Contains(t, parsed.Raw.Records[0].Tokens, "cached_tokens")
+	assert.Equal(t, "3", parsed.Actual)
+	invalid := launchSpend(map[string]string{"receipt_version": "2", "billing": "subscription", "raw_usage": "INVALID"})
+	_, err = cardcost.ParseSpendChecked(spendWord([]cardcost.Usage{invalid}))
+	assert.Error(t, err)
+}
+
+func TestNativeTypedMuseRefusesUnreadableOriginalUsage(t *testing.T) {
+	t.Parallel()
+	cfg := nativeRunConfig{billing: cardcost.BillingSubscription, binary: "muse", slotDir: t.TempDir(), label: "fixture"}
+	var errOut bytes.Buffer
+	now := time.Now()
+	usage, _, _, _ := writeNativeUsage(cfg, "", "meta", "fixture", now, now, time.Time{}, 0, 1, "ok", []byte(`{"payload":{"kind":"model_completed","usage":{"cached_tokens":-1}}}`), &errOut)
+	assert.Equal(t, "INVALID", usage.Values["raw_usage"])
+	_, err := cardcost.ParseSpendChecked(spendWord([]cardcost.Usage{launchSpend(usage.Values)}))
+	assert.Error(t, err)
+}
+
+func TestNativeTypedMusePreservesZeroAndAbsenceInDurableReceipt(t *testing.T) {
+	t.Parallel()
+	cfg := nativeRunConfig{billing: cardcost.BillingSubscription, binary: "muse", slotDir: t.TempDir(), label: "fixture"}
+	require.NoError(t, os.MkdirAll(filepath.Join(cfg.slotDir, "jobs", cfg.label), 0755))
+	var errOut bytes.Buffer
+	now := time.Now()
+	usage, _, _, _ := writeNativeUsage(cfg, "", "meta", "fixture", now, now, time.Time{}, 0, 1, "ok", []byte(`{"schema_version":1,"payload":{"kind":"model_completed","usage":{"cached_tokens":0,"input_tokens":12}}}`), &errOut)
+	u, err := cardcost.ParseSpendChecked(spendWord([]cardcost.Usage{launchSpend(usage.Values)}))
+	require.NoError(t, err)
+	require.NotNil(t, u.Raw)
+	assert.Contains(t, u.Raw.Records[0].Tokens, "cached_tokens")
+	assert.NotContains(t, u.Raw.Records[0].Tokens, "cache_read_tokens")
+	recovered, found, err := member.ReceiptUsage(filepath.Join(cfg.slotDir, "jobs", cfg.label))
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, u.Raw, recovered.Raw)
+	assert.Equal(t, cardcost.BillingSubscription, recovered.Billing)
+}
+
+func TestNativeTypedReplayRefusesDurableErrorsWithAndWithoutSummary(t *testing.T) {
+	t.Parallel()
+	for _, billing := range cardcost.Billings {
+		for _, withSummary := range []bool{false, true} {
+			for _, issue := range []string{"mixed", "malformed raw"} {
+				t.Run(billing+strconv.FormatBool(withSummary)+issue, func(t *testing.T) {
+					t.Parallel()
+					dir := t.TempDir()
+					job := filepath.Join(dir, "job")
+					require.NoError(t, os.MkdirAll(job, 0755))
+					header := "provider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\treceipt_version\tbilling\traw_usage\n"
+					rows := "meta\tfixture\t1\t-\t-\t-\t-\t-\t-\t-\t-\nmeta\tfixture\t2\t-\t-\t-\t-\t-\t2\t" + billing + "\t-\n"
+					if issue == "malformed raw" {
+						rows = "meta\tfixture\t2\t-\t-\t-\t-\t-\t2\t" + billing + "\tINVALID\n"
+					}
+					require.NoError(t, os.WriteFile(filepath.Join(job, member.ReceiptName), []byte(header+rows), 0600))
+					logPath := filepath.Join(dir, "native.log")
+					if withSummary {
+						u := cardcost.NoUsage()
+						u.Billing = billing
+						u.ReceiptVersion = 2
+						u.Raw = &cardcost.RawUsage{Version: 1, Records: []cardcost.RawRecord{{Harness: "muse", Execution: "fleet", SourceSchema: "muse-jsonl-v1", ProducerVersion: "fixture", Billing: billing, Tokens: map[string]int64{"input_tokens": 2}}}}
+						spend, err := cardcost.EncodeSpend(u)
+						require.NoError(t, err)
+						require.NoError(t, os.WriteFile(logPath, []byte("NATIVE OK label=fixture rc=0 wall=1s harness=ok budget=unmetered spend="+spend+"\n"), 0600))
+					}
+					child := &nativeChild{billing: billing, job: job, logPath: logPath, results: filepath.Join(dir, "results")}
+					result := child.Result()
+					assert.Contains(t, result.Usage, "receipt_version=2")
+					assert.Contains(t, result.Usage, "raw_usage=INVALID")
+					assert.Error(t, cardcost.ValidateUsage(result.Usage))
+				})
+			}
+		}
+	}
+}
+
+func TestTypedLaunchMissingAllReceiptsCannotBecomeLegacy(t *testing.T) {
+	t.Parallel()
+	for _, billing := range cardcost.Billings {
+		t.Run(billing, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			child := &nativeChild{billing: billing, job: filepath.Join(dir, "missing-job"), logPath: filepath.Join(dir, "missing-log"), results: filepath.Join(dir, "missing-results")}
+			result := child.Result()
+			assert.Contains(t, result.Usage, "receipt_version=2")
+			assert.Error(t, cardcost.ValidateUsage(result.Usage))
+		})
+	}
 }
