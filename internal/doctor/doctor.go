@@ -240,7 +240,7 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 		Verbs: []tool.Verb{{
 			Name:    "run",
 			Usage:   "[run] [--check <name>]... [--dir <path>] [--local] [--strict] [--json]",
-			Example: "run --check harness\nrun --dir <checkout>\nrun --local --json",
+			Example: "run --check harness\nrun --dir .\nrun --local --json",
 			Effect:  tool.Inspection,
 			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\nexample: nova-doctor run --local",
 			Flags: func(f *tool.Flags) {
