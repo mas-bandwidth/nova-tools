@@ -227,17 +227,16 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 				f.Bool("local", false, "skip the checks only a fleet needs, and say which")
 				f.Bool("strict", false, "exit 1 on a warn")
 				f.Bool("json", false, "print the results as one JSON object instead of lines")
-				f.Check(func(c *tool.Call) {
-					for _, n := range c.Get("check").([]string) {
-						if !slices.Contains(reg.Names(), n) {
-							c.Problem(fmt.Sprintf("no check named %q; the checks are %s", n, strings.Join(reg.Names(), ", ")))
-						}
-					}
-				})
 			},
 			Run: func(c *tool.Call) *tool.Out {
 				results, skipped, err := reg.Run(c.Ctx, env, Options{Only: c.Get("check").([]string), Local: c.Bool("local")})
 				if err != nil {
+					if c.Bool("json") {
+						o := tool.Refuse(err.Error())
+						o.Verb, o.Remedy = "run", "nova-doctor help"
+						o.Render(c.Stdout, true)
+						return tool.Exit(2)
+					}
 					return tool.Refuse(err.Error())
 				}
 				code := ExitCode(results, c.Bool("strict"))
