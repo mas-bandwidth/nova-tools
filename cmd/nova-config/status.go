@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
@@ -116,6 +117,21 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		return refuse(stderr, verb, err.Error())
 	}
 	providerLines, providerWarnings = config.ProviderReport(providers, routes, tiers)
+	seat := ""
+	if c.seat != nil {
+		seat = *c.seat
+	}
+	actor, actorErr := actorName("", d.getenv, seat)
+	for i, warning := range providerWarnings {
+		if strings.HasPrefix(warning, "provider=") {
+			if actorErr == nil {
+				warning += " --actor " + shq(actor)
+			} else {
+				warning += " --actor <name>"
+			}
+		}
+		providerWarnings[i] = warning + c.again()
+	}
 	o.Fact("providers", providerLines)
 	o.Notes = append(o.Notes, providerWarnings...)
 	addr, redisFrom, addrErr := redisAddressFrom(*redisFlag, d.getenv)

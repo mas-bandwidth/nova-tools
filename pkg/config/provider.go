@@ -114,3 +114,37 @@ func ProviderReport(providers, routes, tiers []Row) (lines, warns []string) {
 	}
 	return lines, warns
 }
+
+// ProviderNamesError lists every route whose legacy provider word cannot name
+// a provider row. No store or ledger changes before this refusal is returned.
+// The correction uses the previous binary, whose route provider is still text.
+type ProviderNamesError struct{ Routes []Row }
+
+func (e *ProviderNamesError) Error() string { return e.Remediation("", "<name>") }
+
+// Remediation retains the selected store and actor in each previous-build
+// correction command. again already holds the shell-quoted store flags, and
+// actor is a shell-quoted identity or the explicit <name> placeholder.
+func (e *ProviderNamesError) Remediation(again, actor string) string {
+	parts := []string{"upgrade refuses non-conforming provider words; before upgrading, use the previous nova-config build matching this store's schema (the previous/schema40 nova-config build for a schema40 store) for these corrections"}
+	for _, r := range e.Routes {
+		parts = append(parts, fmt.Sprintf("route %s has --provider %q (provider rows require %s); run with the previous build: nova-config route set %s --provider <new> --actor %s%s", r.Name, r.Fields["provider"], NamePattern.String(), r.Name, actor, again))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// CheckProviderNames is the shared upgrade preflight. It uses the existing
+// row-name regexp and slices sorting; no renaming or funding inference occurs.
+func CheckProviderNames(routes []Row) error {
+	var invalid []Row
+	for _, r := range routes {
+		if !NamePattern.MatchString(r.Fields["provider"]) {
+			invalid = append(invalid, r.Clone())
+		}
+	}
+	if len(invalid) == 0 {
+		return nil
+	}
+	slices.SortFunc(invalid, func(a, b Row) int { return strings.Compare(a.Name, b.Name) })
+	return &ProviderNamesError{Routes: invalid}
+}

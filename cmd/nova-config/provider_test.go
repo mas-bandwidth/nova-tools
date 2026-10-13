@@ -43,9 +43,9 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 	code, out, errs := h.run(t, "status", "--file", "case.json")
 	require.Zero(t, code, errs)
 	assert.Contains(t, out, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 pro=1/7\n")
-	warning := "provider=opencode funded=true routes-in-no-tier-array=pro-b,pro-c,pro-d,pro-e,pro-f,pro-g; run: nova-config tier set pro --routes pro-a,pro-b,pro-c,pro-d,pro-e,pro-f,pro-g"
+	warning := "provider=opencode funded=true routes-in-no-tier-array=pro-b,pro-c,pro-d,pro-e,pro-f,pro-g; run: nova-config tier set pro --routes pro-a,pro-b,pro-c,pro-d,pro-e,pro-f,pro-g --actor operator --file case.json"
 	assert.Contains(t, out, "CONFIG WARN "+warning+"\n")
-	assert.Contains(t, out, "CONFIG WARN tier=heavy holds no route of a funded provider; run: nova-config tier show heavy\n")
+	assert.Contains(t, out, "CONFIG WARN tier=heavy holds no route of a funded provider; run: nova-config tier show heavy --file case.json\n")
 	code, out, errs = h.run(t, "status", "--file", "case.json", "--json")
 	require.Zero(t, code, errs)
 	var result struct {
@@ -162,6 +162,94 @@ func TestSetRepairsTheUnchangedMissingProvider(t *testing.T) {
 			require.Zero(t, code, errs)
 			code, _, errs = h.run(t, args...)
 			require.Zero(t, code, errs)
+		})
+	}
+}
+
+func TestMissingProviderRemedyQuotesItsActor(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.dir = t.TempDir()
+	h.env["NOVA_FRIEND"] = "review bot"
+	code, _, errs := h.run(t, "migrate", "--file", "case.json")
+	require.Zero(t, code, errs)
+	code, _, errs = h.run(t, "route", "add", "r", "--tier", "pro", "--provider", "nope", "--model", "m", "--deadline", "60", "--file", "case.json")
+	require.Equal(t, 1, code, errs)
+	remedy := "nova-config provider add nope --billing metered --funded false --actor 'review bot' --file case.json"
+	assert.Contains(t, errs, "; run: "+remedy+"\n")
+	command := words(remedy)
+	code, _, errs = h.run(t, command[1:]...)
+	require.Zero(t, code, errs)
+	st, err := config.OpenFile(filepath.Join(h.dir, "case.json"))
+	require.NoError(t, err)
+	history, err := st.History(context.Background(), config.KindProvider, "nope")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "review bot", history[0].Actor)
+}
+
+func TestLegacyProviderMigrateRefusalNamesTheSameFile(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.dir = t.TempDir()
+	h.env["NOVA_FRIEND"] = "review bot"
+	path := filepath.Join(h.dir, "case.json")
+	raw := []byte(`{"schema":40,"rows":{"route":{"r":{"name":"r","fields":{"provider":"OpenRouter","tier":"pro","model":"m","deadline":"60"}}}}}`)
+	require.NoError(t, os.WriteFile(path, raw, 0600))
+	code, _, errs := h.run(t, "migrate", "--file", "case.json")
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "previous/schema40 nova-config build")
+	assert.Contains(t, errs, `--provider "OpenRouter"`)
+	assert.Contains(t, errs, "nova-config route set r --provider <new> --actor 'review bot' --file case.json")
+	unchanged, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, raw, unchanged)
+}
+
+func TestStatusWarningRemediesUseTheChosenStore(t *testing.T) {
+	t.Parallel()
+	for _, flag := range []string{"--file", "--pg", "--seat"} {
+		t.Run(flag, func(t *testing.T) {
+			t.Parallel()
+			h := loopHarness(t)
+			h.dir = t.TempDir()
+			h.env["NOVA_FRIEND"] = "review bot"
+			delete(h.env, "NOVA_SPRINT_REDIS")
+			value := "case.json"
+			if flag == "--pg" {
+				value = dsn
+			}
+			if flag == "--seat" {
+				value = "seat-a"
+			}
+			flags := []string{flag, value}
+			if flag == "--seat" {
+				h.env["XDG_CONFIG_HOME"] = h.dir
+				h.env["NOVA_PROVIDER_TEST_PASSWORD"] = "fixture-password"
+				profileDir := filepath.Join(h.dir, "nova-config")
+				require.NoError(t, os.MkdirAll(profileDir, 0700))
+				require.NoError(t, os.WriteFile(filepath.Join(profileDir, "seats.tsv"), []byte("seat-a\t"+dsn+"\tNOVA_PROVIDER_TEST_PASSWORD\n"), 0600))
+			} else {
+				code, _, errs := h.run(t, append([]string{"migrate"}, flags...)...)
+				require.Zero(t, code, errs)
+			}
+			commands := [][]string{{"provider", "add", "p", "--billing", "metered", "--funded", "true"}, {"route", "add", "a", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"route", "add", "b", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"tier", "set", "pro", "--routes", "a"}}
+			for _, command := range commands {
+				code, _, errs := h.run(t, append(command, flags...)...)
+				require.Zero(t, code, errs)
+			}
+			code, out, errs := h.run(t, append([]string{"status"}, flags...)...)
+			require.Zero(t, code, errs)
+			write := "nova-config tier set pro --routes a,b --actor 'review bot' " + flag + " " + value
+			show := "nova-config tier show heavy " + flag + " " + value
+			assert.Contains(t, out, "; run: "+write+"\n")
+			assert.Contains(t, out, "; run: "+show+"\n")
+			command := words(write)
+			code, _, errs = h.run(t, command[1:]...)
+			require.Zero(t, code, errs, "the warning's correction runs on this store")
+			code, out, errs = h.run(t, append([]string{"status"}, flags...)...)
+			require.Zero(t, code, errs)
+			assert.NotContains(t, out, "routes-in-no-tier-array")
 		})
 	}
 }
