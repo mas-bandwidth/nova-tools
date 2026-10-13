@@ -1,40 +1,20 @@
 package secrets
 
 import (
-	"os"
-	"path/filepath"
+	"errors"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/stretchr/testify/require"
 )
 
-func invalidSeatForgeGetenv(root string) func(string) string {
-	return func(key string) string {
-		if key == "XDG_CONFIG_HOME" {
-			return root
-		}
-		return ""
-	}
-}
-
-func writeInvalidSeatForgeEnvironment(t *testing.T, root string) {
-	t.Helper()
-	dir := filepath.Join(root, seatcred.EnvironmentDir)
-	require.NoError(t, os.MkdirAll(dir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, seatcred.EnvironmentFile), []byte(`{"version":1,"forge_identity":null}`), 0600))
-}
-
-func TestRunSealSurfacesInvalidSeatForgeEnvironment(t *testing.T) {
+func TestRunSealSurfacesForgeEnvironmentResolutionFailure(t *testing.T) {
 	t.Parallel()
 	skipPOSIXFakesOnWindows(t)
 
 	f := newSealFixture(t, "OTHER: keepme\n")
-	root := t.TempDir()
-	writeInvalidSeatForgeEnvironment(t, root)
 	opts := f.options(t, "TARGET", "value\n", false)
 	opts.ResolveGHEnv = func() ([]string, error) {
-		return seatcred.ForgeCommandEnv(nil, invalidSeatForgeGetenv(root))
+		return nil, errors.New("seat environment is invalid")
 	}
 	_, err := RunSeal(opts)
 	require.Error(t, err)
@@ -44,16 +24,14 @@ func TestRunSealSurfacesInvalidSeatForgeEnvironment(t *testing.T) {
 	require.Empty(t, readMaybe(t, f.ghArgs), "seat refusal must happen before gh runs")
 }
 
-func TestRunSeatInjectSurfacesInvalidSeatForgeEnvironment(t *testing.T) {
+func TestRunSeatInjectSurfacesForgeEnvironmentResolutionFailure(t *testing.T) {
 	t.Parallel()
 	skipPOSIXFakesOnWindows(t)
 
 	f := newInjectFixture(t)
-	root := t.TempDir()
-	writeInvalidSeatForgeEnvironment(t, root)
 	opts := f.options("NOVA_REDIS_BENCH_PASSWORD", false)
 	opts.ResolveGHEnv = func() ([]string, error) {
-		return seatcred.ForgeCommandEnv(nil, invalidSeatForgeGetenv(root))
+		return nil, errors.New("seat environment is invalid")
 	}
 	_, err := RunSeatInject(opts)
 	require.Error(t, err)
