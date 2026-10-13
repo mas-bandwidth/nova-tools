@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The unit tier's per-function coverage table showed openPR (memberpush.go:254) at
@@ -43,17 +44,11 @@ func TestMemberpushOpenPRSurfacesInvalidSeatEnvironment(t *testing.T) {
 
 	root := t.TempDir()
 	seatDir := filepath.Join(root, "nova-sprint")
-	if err := os.Mkdir(seatDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(seatDir, "seat-environment.json"), []byte(`{"version":1,"forge_identity":null}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(seatDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(seatDir, "seat-environment.json"), []byte(`{"version":1,"forge_identity":null}`), 0600))
 	marker := filepath.Join(root, "gh-ran")
 	gh := filepath.Join(root, "gh")
-	if err := os.WriteFile(gh, []byte("#!/bin/sh\nprintf called > \""+marker+"\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(gh, []byte("#!/bin/sh\nprintf called > \""+marker+"\"\n"), 0700))
 	g := &gitPusher{
 		gh: gh,
 		getenv: func(key string) string {
@@ -69,7 +64,5 @@ func TestMemberpushOpenPRSurfacesInvalidSeatEnvironment(t *testing.T) {
 	assert.Contains(t, note, "seat environment is invalid")
 	assert.NotContains(t, note, "retry", "an invalid identity is not a forge outage")
 	assert.NotContains(t, note, "\n")
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("gh ran despite invalid seat environment; marker stat error = %v", err)
-	}
+	assert.NoFileExists(t, marker, "gh ran despite invalid seat environment")
 }
