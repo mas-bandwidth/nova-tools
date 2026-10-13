@@ -223,7 +223,7 @@ with `--check`.
 
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
 `runners`, `nova_tla` (its row's `tla`; the `tla` group is the hosts where it
-is true), `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
+is true), `nova_redis_port`, `nova_redis_addr`, `nova_bus_addr` (the applied fleet row's `bus`, omitted when empty), the explicit `nova_pg_dsn`,
 `registry_roles` (the machine row's canonical roles), `nova_os` and
 `nova_arch` (from its beat) and `nova_loops`,
 and `all.vars` `nova_store`. The rest are defaults in
@@ -284,6 +284,7 @@ runs the normal migration and apply steps.
 | `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
 | `nova_disk_guard`, `nova_disk_guard_every`, `nova_disk_guard_args` | `true`, `900`, `--scan ~/nova-bench/run --cache ~/runner-*/_cache/go-build` | the disk guard `loops.yml` adds to every machine (below): on or off, its period in seconds, and its arguments after the `--root` of each record |
 | `nova_redis_port`, `nova_redis_addr` | the explicit applied fleet row (no port default) | the store |
+| `nova_bus_addr` | the applied fleet row's `bus`, omitted when that bus is empty | `NOVA_BUS_REDIS` in the loop units, rendered only when this variable is defined and not empty |
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
 | `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |

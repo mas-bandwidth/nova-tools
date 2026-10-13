@@ -98,9 +98,14 @@ func (e bareEnv) Getenv(k string) string {
 	}
 	return ""
 }
-func (bareEnv) Now() time.Time                             { return time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC) }
-func (bareEnv) ReadFile(string) ([]byte, error)            { return nil, fs.ErrNotExist }
-func (bareEnv) ReadDir(string) ([]fs.DirEntry, error)      { return nil, fs.ErrNotExist }
+func (bareEnv) Now() time.Time                  { return time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC) }
+func (bareEnv) ReadFile(string) ([]byte, error) { return nil, fs.ErrNotExist }
+func (bareEnv) ReadDir(name string) ([]fs.DirEntry, error) {
+	if name == "." {
+		return []fs.DirEntry{}, nil
+	}
+	return nil, fs.ErrNotExist
+}
 func (bareEnv) Dial(context.Context, string, string) error { return errors.New("no network here") }
 func (bareEnv) Exec(context.Context, string, ...string) (string, error) {
 	return "", errors.New("no program here")
