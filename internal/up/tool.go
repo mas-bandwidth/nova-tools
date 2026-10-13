@@ -3,6 +3,7 @@ package up
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -13,6 +14,14 @@ import (
 // (Local on a real machine, a fake in a test). The one verb, up, is the
 // default, so `nova-up --local` is `nova-up up --local` (docs/SPEC-UP.md).
 func Tool(stamp string, machine func() (Machine, error)) *tool.Tool {
+	return ToolWithEnv(stamp, machine, os.Getenv)
+}
+
+// ToolWithEnv is Tool with an explicit environment reader, for isolated callers and tests.
+func ToolWithEnv(stamp string, machine func() (Machine, error), getenv func(string) string) *tool.Tool {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
 	return &tool.Tool{
 		Name:  "nova-up",
 		What:  "sets up nova on one machine, from nothing to a first sprint",
@@ -59,15 +68,17 @@ applied machine prints ok on every line and UP UNCHANGED.`,
 					}
 				})
 			},
-			Run: func(c *tool.Call) *tool.Out { return run(c, machine) },
+			Run: func(c *tool.Call) *tool.Out {
+				if c.Bool("seat") {
+					return writeSeatEnvironment(c, getenv)
+				}
+				return run(c, machine)
+			},
 		}},
 	}
 }
 
 func run(c *tool.Call, machine func() (Machine, error)) *tool.Out {
-	if c.Bool("seat") {
-		return writeSeatEnvironment(c)
-	}
 	dry := c.DryRun()
 	m, err := machine()
 	if err != nil {

@@ -25,8 +25,7 @@ var seatEnvironmentEndpoints = []struct {
 	{flag: "bus-redis", env: "NOVA_BUS_REDIS"},
 }
 
-func writeSeatEnvironment(c *tool.Call) *tool.Out {
-	getenv := os.Getenv
+func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 	environment := make(map[string]string, len(seatEnvironmentEndpoints))
 	var missing, invalid []string
 	for _, endpoint := range seatEnvironmentEndpoints {
