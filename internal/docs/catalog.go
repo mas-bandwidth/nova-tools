@@ -144,6 +144,7 @@ var DefaultCatalog = []Entry{
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/ratings", "cold ratings of the tools, one file per rater and tool", "go test ./internal/docs", "go test ./internal/docs"),
+	E("docs/spec", "release specs in layers, one directory per release: each layer's owner fills its file, and every friend ratifies the whole at one sha before work starts", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/stranger", "cold stranger runs of the tools, one file per run, every stumble with its proposed card", "go test ./internal/docs", "go test ./internal/docs"),
 
 	// tools/

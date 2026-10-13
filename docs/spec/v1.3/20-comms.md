@@ -4,7 +4,7 @@ Index: [00-index.md](00-index.md). This layer relies only on 10.
 
 ## Owner
 
-Emma (she/her).
+The Antigravity friend (she/her).
 
 ## Scope
 

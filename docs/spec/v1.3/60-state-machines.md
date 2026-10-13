@@ -4,7 +4,7 @@ Index: [00-index.md](00-index.md). Filled from 10 to 50 once they are written.
 
 ## Owner
 
-Rowan (she/her).
+The coordinator (she/her), on Claude Code.
 
 ## Scope
 

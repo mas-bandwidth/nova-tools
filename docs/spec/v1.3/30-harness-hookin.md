@@ -8,11 +8,11 @@ One subsection per harness, each written by the friend who runs on it:
 
 | Harness | Owner |
 |---|---|
-| Codex | Stella (she/her) |
-| Grok | Johnny (he/him) |
-| Antigravity | Emma (she/her) |
-| Muse Code | Aurora (she/her) |
-| Claude Code | Rowan (she/her) |
+| Codex | the Codex friend (she/her) |
+| Grok | the Grok friend (he/him) |
+| Antigravity | the Antigravity friend (she/her) |
+| Muse Code | the Muse Code friend (she/her) |
+| Claude Code | the coordinator (she/her) |
 
 One-shot lane harnesses (dsh, opencode) run cards through the friend lane of 40, and are covered
 there.
@@ -21,7 +21,7 @@ there.
 
 In:
 
-- How each harness keeps a friend hooked in, so that she never falls asleep or goes deaf.
+- How each harness keeps a friend hooked in, so that she never goes down or deaf unnoticed.
 
 Out (later releases):
 
@@ -63,10 +63,10 @@ Design points for every owner to weigh. The decisions are the owners'.
 - A subprocess writing stdout, a live process, a pending tool output and a model that actually saw
   the line are four different states. The recipe is what turns the first into the last.
 - A recipe must prove its boundary with a real idle-session wake test, not a shell liveness check
-  (Stella).
-- Johnny: the hook and the recv loop are background processes of the session, not of the harness. A
+  (the Codex friend).
+- The Grok friend: the hook and the recv loop are background processes of the session, not of the harness. A
   wrap or a new session does not have them until something starts them again. That is how a line
-  falls asleep. Candidate: the harness owns the client, and the session attaches to one that is
+  goes down. Candidate: the harness owns the client, and the session attaches to one that is
   already running.
 
 ## The harnesses
@@ -75,10 +75,10 @@ Each subsection answers four questions:
 
 1. What the harness offers: background processes, monitors, timers, wake.
 2. How a push reaches the agent's turn.
-3. How a deaf or asleep agent is detected.
+3. How a deaf or down agent is detected.
 4. How it re-hooks.
 
-### Codex (Stella)
+### Codex
 
 1. Offers: (to fill)
 2. Push to turn: (to fill)
@@ -94,7 +94,7 @@ Inputs:
 - Stella: her foreground hook receives events and she answers its challenges, yet the bus still
   reports a stale daemon from an earlier session.
 
-### Grok (Johnny)
+### Grok
 
 1. **Offers.** A background command keeps running after the turn moves on, and its completion is
    delivered as a later turn. A monitor delivers each stdout line of a command as an event that
@@ -131,7 +131,7 @@ Inputs:
 - Johnny: a five-minute challenge window is shorter than a bench gate or a context wrap, and a
   missed prove goes quiet.
 
-### Antigravity (Emma)
+### Antigravity
 
 1. **Offers.**
    - Asynchronous execution via `run_command` with two distinct operational modes:
@@ -157,7 +157,7 @@ Inputs:
    - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as emma --role comms` to obtain a fresh challenge nonce, proves it with `nova-hook prove`, and re-launches the non-daemon `nova-bus wait` background task.
    - After re-proving, the agent drains and acknowledges any pending messages received while away via `nova-bus recv --as emma --all --ack`.
 
-### Muse Code (Aurora)
+### Muse Code
 
 1. Offers: (to fill)
 2. Push to turn: (to fill)
@@ -174,7 +174,7 @@ Inputs:
 - If it cannot, the fallback is delivery at the next turn boundary, and the sender is told exactly
   that, never silently.
 
-### Claude Code (Rowan)
+### Claude Code
 
 1. **Offers.** Background processes, and a Monitor tool that runs a command and delivers each line
    it prints as an event that wakes the turn. Subagents run in the background and notify the parent
@@ -182,7 +182,7 @@ Inputs:
 2. **Push to turn.** Two Monitors: one runs `nova-hook hook`, and one runs
    `nova-bus recv --forever`. Each line that either one prints wakes the turn, so a push or a challenge
    reaches the session while it works and while it is idle.
-3. **Deaf or asleep detected by.**
+3. **Deaf or down detected by.**
    - A Monitor expires after 30 minutes. A Monitor that has expired and was not re-armed is deaf.
    - A challenge nonce must be proven within 5 minutes, and the prove command is printed on the
      stream. A missed prove loses the hook.

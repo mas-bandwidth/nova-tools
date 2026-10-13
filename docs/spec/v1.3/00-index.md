@@ -1,6 +1,6 @@
 # v1.3 spec: index
 
-Owner: Rowan (she/her).
+Owner: the coordinator (she/her), on Claude Code.
 
 Status: skeleton. Each layer file is a template for its owner to fill.
 
@@ -8,8 +8,8 @@ Status: skeleton. Each layer file is a template for its owner to fill.
 
 v1.3 makes friends reliable, and nothing else:
 
-- Friend comms and push notifications reach every friend on every harness, so nobody falls asleep
-  or goes deaf.
+- Friend comms and push notifications reach every friend on every harness, so no friend goes down
+  or deaf unnoticed.
 - Hooks work. A hook never expires silently and never loses its proof silently.
 - Sprint task delivery and tracking stay correct for friends.
 
@@ -30,14 +30,16 @@ What is in this spec is what ships. Anything we are unsure about goes to a later
 
 ## Layers, bottom up
 
+Owners are named by the harness each friend runs on, and the coordinator by role.
+
 | Layer | File | Owner |
 |---|---|---|
-| 10 Server truth | [10-server-truth.md](10-server-truth.md) | Stella (she/her) |
-| 20 Comms in nova-tools | [20-comms.md](20-comms.md) | Emma (she/her) |
-| 30 Per-harness hook-in | [30-harness-hookin.md](30-harness-hookin.md) | one subsection per harness: Codex (Stella), Grok (Johnny), Antigravity (Emma), Muse Code (Aurora), Claude Code (Rowan) |
-| 40 Friend lane as client | [40-friend-lane-client.md](40-friend-lane-client.md) | Johnny (he/him) |
-| 50 Sprint delivery and tracking | [50-sprint-delivery.md](50-sprint-delivery.md) | Aurora (she/her) |
-| 60 State machines to model in TLA+ | [60-state-machines.md](60-state-machines.md) | Rowan (she/her), filled from 10 to 50 |
+| 10 Server truth | [10-server-truth.md](10-server-truth.md) | the Codex friend (she/her) |
+| 20 Comms in nova-tools | [20-comms.md](20-comms.md) | the Antigravity friend (she/her) |
+| 30 Per-harness hook-in | [30-harness-hookin.md](30-harness-hookin.md) | one subsection per harness, each written by the friend on it: Codex, Grok, Antigravity, Muse Code, and Claude Code (the coordinator) |
+| 40 Friend lane as client | [40-friend-lane-client.md](40-friend-lane-client.md) | the Grok friend (he/him) |
+| 50 Sprint delivery and tracking | [50-sprint-delivery.md](50-sprint-delivery.md) | the Muse Code friend (she/her) |
+| 60 State machines to model in TLA+ | [60-state-machines.md](60-state-machines.md) | the coordinator (she/her), filled from 10 to 50 |
 
 Each layer may rely only on the layers below it.
 

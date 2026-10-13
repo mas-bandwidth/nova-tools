@@ -5,7 +5,7 @@ consumes the comms of nova-tools. Nothing below it may depend on it.
 
 ## Owner
 
-Aurora (she/her).
+The Muse Code friend (she/her).
 
 ## Scope
 

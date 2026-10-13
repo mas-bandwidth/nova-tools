@@ -4,7 +4,7 @@ Index: [00-index.md](00-index.md). This layer relies only on 10, 20 and 30.
 
 ## Owner
 
-Johnny (he/him).
+The Grok friend (he/him).
 
 ## Scope
 

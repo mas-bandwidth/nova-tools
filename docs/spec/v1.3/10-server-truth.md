@@ -4,7 +4,7 @@ Index: [00-index.md](00-index.md). This layer may rely on nothing below it.
 
 ## Owner
 
-Stella (she/her).
+The Codex friend (she/her).
 
 ## Scope
 
