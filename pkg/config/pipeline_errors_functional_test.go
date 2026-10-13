@@ -20,7 +20,7 @@ func TestFriendApplyRefusesMalformedBeatAfterMissingBeat(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	scopedErr21 := c.Set(ctx, FriendBeatKey("stella"), "not a hash", 0).Err()
 	require.NoError(t, scopedErr21)
-	_, _, setupErr552 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
+	_, _, setupErr552 := st.Update(ctx, KindFriend, "stella", map[string]string{"width": "24"}, "rowan")
 	require.NoError(t, setupErr552)
 	before := pipelineStoreImage(t, c)
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})

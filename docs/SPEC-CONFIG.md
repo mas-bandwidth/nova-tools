@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `pronouns` |
+| friend (decided for her) | `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `pronouns` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -135,7 +135,7 @@ nothing invented.
 | --- | --- | --- | --- | --- |
 | `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
 | `seat` | text | yes | nova-secrets: the seat on that machine (a seat, another seat, ...) | `machine:<m>` |
-| `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
+| `slots` | int | yes | apply: the machine ceiling a bench's share on it fits under (`ns_capacity_machine`, `ns_capacity_desired` for a bench); never a cap on a friend, whose width is her own (2026-10-13); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
@@ -219,10 +219,9 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `slots` | int | yes | apply: her desired slots, under the ceiling of the machine she is charged to; no machine's width | `friend:<f>:desired` slots (`ns_capacity_desired`) |
 | `tiers` | list: flash, frontier, heavy, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
-| `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
+| `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?"); and apply: her one capacity number, written as her desired slots. A friend row has no `slots` and no machine caps her width (the owner, 2026-10-13: "there is only width in nova-config."); `friend set <f> --width <n>` takes any n >= 1. the old `slots` column stays in `config.friends` (NOT NULL DEFAULT 0) and nova-tools neither reads nor writes it: nova-sprint's own copy of the friend kind still selects it, so the migration that drops it comes after nova-sprint's twin of this change is deployed | `friend:<f>:desired` width, and slots (`ns_capacity_desired`) |
 | `mode` | enum: one-shot; one-shot by default | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Batch, one session taking many cards in one turn, is retired: nova-config refuses it and every row reads as one-shot, so Migration 0030's rows too | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
@@ -508,7 +507,8 @@ config.fleet             (name PK = 'fleet', store -> machines.name,
                           added by 0033, text NOT NULL DEFAULT '~/nova-bench/loops')
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
-                          CHECK (width >= 1))
+                          CHECK (width >= 1); slots no longer read or written, dropped by a later
+                          migration once nova-sprint stops selecting it)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration; reader_tier added by 0010, dropped
@@ -571,12 +571,13 @@ global ids, so they rise across kinds and never repeat.
 
 `nova-config apply [--kind <k>] [--check]` runs per kind, in kind order
 (`KindNames`): machines (the ceilings), the fleet row (a friend with no beat
-is charged to its coordinator machine), friends, the sprint row, loops (each
+is recorded with its coordinator machine), friends, the sprint row, loops (each
 names a machine), routes, tiers. **A refusal never stops a later kind**
 (tla/ConfigApply.tla, `EveryPlannedKindIsAttemptedUnlessCrashed`): every
-kind is attempted, whatever an earlier kind refused, so a friend refused
-`CEILING` never leaves the sprint row unapplied (the v1.2.16 incident,
-2026-10-13). There is no whole-run pre-check: each kind's own check (the
+kind is attempted, whatever an earlier kind refused, so a refused friend
+never leaves the sprint row unapplied (the v1.2.16 incident, 2026-10-13,
+was a friend refused by the per-machine ceiling, since removed: a friend
+row has only width). There is no whole-run pre-check: each kind's own check (the
 fleet's endpoints, the routes' prices) refuses that kind only:
 
 **An enabled route with no price refuses the route kind before any write.**
@@ -622,8 +623,9 @@ the tool never sets, guesses or defaults one.
    (`fn.LoadMissing`; a deployed one is never replaced);
 7. write every op in order through the runtime's own functions, each write
    carrying `--as` and the idempotency marker `config:<kind>:<rev>` into
-   `cap:log`. A refusal (`*RefusedError`: `CEILING`, an actor without the
-   coordinator role, a row still in use, an invalid row) is named on one line,
+   `cap:log`. A refusal (`*RefusedError`: an actor without the coordinator
+   role, a friend name that is a login, a row still in use, an invalid row;
+   never a friend's capacity) is named on one line,
    `CONFIG REFUSED kind=<k> name=<row> why=<one line> run: <remedy>`, and the
    kind's remaining ops are still written (`DoOps`). **The ref rule:** a row
    whose ref or seq field names a row refused earlier in this run (the sprint
@@ -667,9 +669,8 @@ each machine running its ceiling check before its write transaction).
 
 ### What apply writes, per kind
 
-**machine:** `ns_capacity_machine(m, slots)` for the ceiling (refused
-`CEILING` when the friends and benches on it already desire more than
-`slots`; cores and memory are never declared, so the call carries none and
+**machine:** `ns_capacity_machine(m, slots)` for the ceiling (never
+refused because of friends: no machine caps a friend; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
 width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
@@ -680,13 +681,15 @@ deleted and the name leaves `machines`.
 **fleet:** one plain `SET fleet:<field> <value>` per declared field, `DEL` for
 a field the row leaves empty. Never removed.
 
-**friend:** `ns_capacity_desired(friend, f, slots, machine, ..., tiers)`
-(registers in `friends`, writes `friend:<f>:desired`, refuses `CEILING`).
-The machine is the one her slots are charged to: the `host` her own beat
-(`friend:<f>:beat`) reports when she has one (friends may run on any bench),
-else the fleet's coordinator machine (`fleet:coordinator`, written a moment
-before) as the default charge; neither is a refusal naming `nova-config
-fleet set --coordinator <machine>`. Her width, when it differs, is a plain
+**friend:** `ns_capacity_desired(friend, f, width, machine, ..., tiers)`
+(registers in `friends`, writes `friend:<f>:desired` with her width as its
+`slots`, so every reader of the desired slots reads her width). Nothing caps
+a friend: the function has no ceiling for kind friend and never answers
+`CEILING` or `NOCEILING` for her (tla/ConfigApply.tla,
+`FriendWidthNeverRefused`). The machine is recorded, never charged: the
+`host` her own beat (`friend:<f>:beat`) reports when she has one (friends
+may run on any bench), else the fleet's coordinator machine
+(`fleet:coordinator`, written a moment before), else `-`; none is a refusal. Her width, when it differs, is a plain
 `HSET friend:<f>:desired width <n>`, a field no function reads or writes, and
 her mode and config_dir the same way, `HSET friend:<f>:desired mode <m>` and
 `HSET friend:<f>:desired config_dir <dir>` (`""` when unset).
@@ -780,7 +783,7 @@ CONFIG KINDS count=<n>
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
 missing row, a ref naming no row, a row another names, a set that breaks
-the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind;
+the kind's `Check`, working copies, `CONFLICT`, a status behind;
 and `migrate --dry-run` ending `ready=no`, which prints its lines and no
 refusal line, since nothing was attempted); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is

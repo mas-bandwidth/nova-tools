@@ -101,11 +101,11 @@ func unexpected(q string) ([]string, [][]driver.Value, error) {
 
 // friendCols and friendRow are the columns(k), created_at, updated_at scanRow
 // reads for the friend kind.
-var friendCols = []string{"name", "slots", "tiers", "roles", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns", "created_at", "updated_at"}
+var friendCols = []string{"name", "tiers", "roles", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns", "created_at", "updated_at"}
 
 func friendRow(name string) []driver.Value {
 	at := time.Unix(0, 0).UTC()
-	return []driver.Value{name, int64(9), "flash", "", int64(9), "batch", nil, int64(6000000), "", "", "they/them", at, at}
+	return []driver.Value{name, "flash", "", int64(9), "batch", nil, int64(6000000), "", "", "they/them", at, at}
 }
 
 // TestPgCoverRedact: Redact names the user, host, port and database, and
@@ -178,12 +178,12 @@ func TestPgCoverValues(t *testing.T) {
 	t.Parallel()
 	k, ok := Lookup(KindFriend)
 	require.True(t, ok)
-	row := Row{Name: "f1", Fields: map[string]string{"slots": "8", "tiers": "flash", "roles": "", "width": "8", "mode": "one-shot"}}
-	assert.Equal(t, []any{"f1", int64(8), "flash", "", int64(8), "one-shot", nil, int64(0), "", "", ""}, values(k, row), "an unset config_dir is NULL, and an unset token_cap binds as 0")
+	row := Row{Name: "f1", Fields: map[string]string{"tiers": "flash", "roles": "", "width": "8", "mode": "one-shot"}}
+	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", nil, int64(0), "", "", ""}, values(k, row), "an unset config_dir is NULL, and an unset token_cap binds as 0")
 	row.Fields["config_dir"] = "/accounts/heavy-a"
-	assert.Equal(t, []any{"f1", int64(8), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(0), "", "", ""}, values(k, row))
+	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(0), "", "", ""}, values(k, row))
 	row.Fields["token_cap"] = "6000000"
-	assert.Equal(t, []any{"f1", int64(8), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(6000000), "", "", ""}, values(k, row))
+	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(6000000), "", "", ""}, values(k, row))
 }
 
 // TestPgCoverKindOf: a known kind is returned, an unknown one refused.
@@ -450,7 +450,6 @@ func TestPgCoverGet(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, "f1", row.Name)
-		assert.Equal(t, "9", row.Fields["slots"])
 		assert.Equal(t, "9", row.Fields["width"])
 	}
 	{
@@ -546,7 +545,7 @@ func TestPgCoverRecord(t *testing.T) {
 func TestPgCoverInsert(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	row := Row{Name: "f1", Fields: map[string]string{"slots": "8", "tiers": "flash", "roles": "", "width": "8"}}
+	row := Row{Name: "f1", Fields: map[string]string{"tiers": "flash", "roles": "", "width": "8"}}
 	okHandler := func(q string, _ []driver.NamedValue) ([]string, [][]driver.Value, error) {
 		if strings.Contains(q, "INSERT INTO config.history") {
 			return reply([]string{"id"}, []driver.Value{int64(9)})

@@ -26,7 +26,7 @@ type Applier interface {
 	// Function library when the store has none (fn.LoadMissing).
 	Prepare(ctx context.Context) error
 	// Write adds (prev nil) or updates one row through the runtime's own
-	// functions. A refusal (CEILING, an actor without the role) is a
+	// functions. A refusal (an actor without the role, a login name) is a
 	// *RefusedError.
 	Write(ctx context.Context, kind string, row Row, prev View, actor, idem string) error
 	// Remove removes one row's keys. A row the runtime still holds (a
@@ -56,7 +56,7 @@ const OpHeld = "held"
 // Plan diffs the kind's rows against Redis's views: an add for a row Redis
 // lacks, a set for one that differs in any field, a remove for a name in
 // Redis that Postgres has not. Adds and sets come in the kind's apply order,
-// then removes by name, so a machine's ceiling is written before a friend
+// then removes by name, so a machine row is written before a friend
 // on it is, and a friend is unregistered after everything else.
 func Plan(k *Kind, rows []Row, views map[string]View) []Op {
 	var ops []Op
@@ -416,7 +416,7 @@ func knownRefusal(k *Kind, op Op, row Row, earlier Earlier) error {
 }
 
 // firstRefusal is the error a refused kind returns: its first refusal, so a
-// one-kind caller still sees ErrCeiling, ErrActor and the rest.
+// one-kind caller still sees ErrActor, ErrInUse and the rest.
 func firstRefusal(res Result) error {
 	if len(res.Refused) == 0 {
 		return nil

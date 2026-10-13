@@ -12,10 +12,13 @@
 \* carried on every write of that apply.
 \*
 \* This instance keeps two kinds, machine and friend, because those are the
-\* kinds the order rule names: a machine ceiling is written before a friend
+\* kinds the order rule names: a machine row is written before a friend
 \* placed on it, and a friend's removal follows the other ops. A machine row
-\* is its ceiling (absent, or a small positive value). A friend row is
-\* absent or the machine it is placed on. Other kinds, field checks beyond
+\* is its slots (absent, or a small positive value). A friend row is
+\* absent or the machine it is placed on; her width is the constant Width,
+\* and nothing caps it against the machine's slots: the per-machine ceiling
+\* on friends (6aa7e9445c, 2026-09-26) was removed on 2026-10-13 and lives on
+\* only as the "friendceiling" witness. Other kinds, field checks beyond
 \* the ref and the referenced-row refusal, the function library, and a
 \* second store writer are outside this instance. One writer changes the
 \* store, and only while no apply is in progress.
@@ -44,8 +47,8 @@
 \*   seen             a Read has run
 \*
 \*   refusedRows      the rows this apply did not write: a write the runtime
-\*                    refused (CEILING, an actor without the role, a row
-\*                    in use), a row whose ref names one of those, and the
+\*                    refused (an actor without the role, a row in use;
+\*                    never a friend's capacity), a row whose ref names one of those, and the
 \*                    pending rows of a kind stopped by CONFLICT
 \*   refusals         how many runtime refusals so far (bounded)
 \*   planned          the kinds this apply has stages for
@@ -62,6 +65,8 @@
 \*   seatMoved        the seat verb has moved the live coordinator (once)
 \*   sOutcome, sDue   what this apply did with the sprint row, and whether
 \*                    the ref rule on the row actually written refuses it
+\*   capRefused       a friend write was refused for capacity (only the
+\*                    "friendceiling" witness can)
 \*
 \* Actions: InsertMachine, UpdateMachine, DeleteMachine, InsertFriend,
 \* UpdateFriend, DeleteFriend (each refused on a name taken or missing, on
@@ -89,6 +94,8 @@
 \*                            error is never classed as a refusal
 \*   StampedKindHasNoRefusal  apply.go apply, no stamp when an op was
 \*                            refused
+\*   FriendWidthNeverRefused  redis.go writeFriend, capacity.lua
+\*                            capacity_desired: no friend ceiling
 \*   CrashedApplyCompletes    a crashed apply is finished by the next apply
 \*                            of its kind once crashes are exhausted and
 \*                            no earlier kind's stamp is ahead
@@ -113,11 +120,14 @@
 \*                  in the same kind is classed as a
 \*                  refusal and the run goes on (the
 \*                  first cut of PR 5662)
+\*   "friendceiling" the old ceiling refuses a        FriendWidthNeverRefused
+\*                  friend whose width exceeds the
+\*                  slots of her machine
 
 EXTENDS Naturals, Sequences
 
 CONSTANTS m1, m2, f1, f2, MaxRev, MaxFaults, MaxCrashes, MaxRefusals, Broken,
-          WithSprint
+          WithSprint, Width
 
 MachineList == <<m1, m2>>
 FriendList == <<f1, f2>>
@@ -130,7 +140,8 @@ ASSUME Len(FriendList) = 2 /\ FriendList[1] # FriendList[2]
 ASSUME MaxRev \in Nat /\ MaxFaults \in Nat /\ MaxCrashes \in Nat /\ MaxRefusals \in Nat
 ASSUME Broken \in {"none", "stampfirst", "friendfirst", "nohistory", "overahead",
                     "stopatrefusal", "stamprefused", "swallowerr",
-                    "heldjudgedonrow"}
+                    "heldjudgedonrow", "friendceiling"}
+ASSUME Width \in Nat /\ Width >= 1
 ASSUME WithSprint \in BOOLEAN
 
 \* Idem is the marker apply.go builds: config:<kind>:<rev>.
@@ -142,19 +153,19 @@ VARIABLES
   stampMoved, opsDone, clean, idemApplied, wroteAhead, owed,
   crashes, faults, checked, seen,
   refusedRows, refusals, planned, attempted, crashedRun, storeErred,
-  sRow, sGit, sView, seatMoved, sOutcome, sDue
+  sRow, sGit, sView, seatMoved, sOutcome, sDue, capRefused
 
 vars == <<mRows, fRows, history, mViews, fViews, stamp,
           phase, stages, si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0,
           stampMoved, opsDone, clean, idemApplied, wroteAhead, owed,
           crashes, faults, checked, seen,
           refusedRows, refusals, planned, attempted, crashedRun, storeErred,
-          sRow, sGit, sView, seatMoved, sOutcome, sDue>>
+          sRow, sGit, sView, seatMoved, sOutcome, sDue, capRefused>>
 
 \* The variables the refusal rule adds; a step that does not touch them
 \* leaves them as they are.
 rvars == <<refusedRows, refusals, planned, attempted, crashedRun, storeErred,
-           sRow, sGit, sView, seatMoved, sOutcome, sDue>>
+           sRow, sGit, sView, seatMoved, sOutcome, sDue, capRefused>>
 
 TypeOK ==
   /\ mRows \in [Machines -> 0..2]
@@ -202,6 +213,7 @@ TypeOK ==
   /\ seatMoved \in BOOLEAN
   /\ sOutcome \in {"none", "written", "refused"}
   /\ sDue \in BOOLEAN
+  /\ capRefused \in BOOLEAN
 
 Rev(k) ==
   LET ids == {i \in 1..Len(history) : history[i].kind = k}
@@ -348,6 +360,7 @@ Init ==
   /\ seatMoved = FALSE
   /\ sOutcome = "none"
   /\ sDue = FALSE
+  /\ capRefused = FALSE
 
 \* A store write appends one history row, unless the witness removes that
 \* append. The guards are the refusals PlanWrite names.
@@ -458,7 +471,7 @@ SetSprint(f) ==
                  mPlan, fPlan, prefix, ceilAtStart, ahead0, stampMoved, opsDone,
                  clean, idemApplied, wroteAhead, owed, crashes, faults, seen,
                  refusedRows, refusals, planned, attempted, crashedRun,
-                 storeErred, sView, seatMoved, sOutcome, sDue>>
+                 storeErred, sView, seatMoved, sOutcome, sDue, capRefused>>
 
 \* nova-sprint's seat verb moves the live coordinator in Redis, once; a
 \* publish never moves it back (apply.go reportSeatHold).
@@ -473,7 +486,7 @@ MoveSeat(f) ==
                  si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0, stampMoved,
                  opsDone, clean, idemApplied, wroteAhead, owed, crashes, faults,
                  checked, seen, refusedRows, refusals, planned, attempted,
-                 crashedRun, storeErred, sRow, sGit, sOutcome, sDue>>
+                 crashedRun, storeErred, sRow, sGit, sOutcome, sDue, capRefused>>
 
 \* ApplyCheck plans and reports, and writes nothing (apply.go, check set).
 \* A stamp that is ahead refuses the command before the plan is used.
@@ -542,7 +555,7 @@ StartApply ==
   /\ sDue' = FALSE
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, clean,
                  idemApplied, wroteAhead, owed, crashes, faults, checked, seen,
-                 refusals, sRow, sGit, sView, seatMoved>>
+                 refusals, sRow, sGit, sView, seatMoved, capRefused>>
 
 WriteM(op) ==
   /\ mViews' = [mViews EXCEPT ![op.name] = IF op.op = "remove" THEN 0 ELSE op.value]
@@ -575,6 +588,16 @@ NextOp(k, plan) ==
 \* MaxRefusals in a behaviour, or the ref rule's) writes nothing, names the
 \* row, and the apply goes on to the next op (apply.go apply, the op loop).
 \* The witness "stopatrefusal" is v1.2.16: the apply ends at the refusal.
+\* The witness "friendceiling" puts back the friend ceiling removed on
+\* 2026-10-13: a friend placed on a machine whose slots are under her width
+\* is refused for capacity (the old CEILING). The design has no such
+\* refusal: a friend's width is her one number.
+CapOver(op) ==
+  /\ Broken = "friendceiling"
+  /\ op.kind = "friend"
+  /\ op.op # "remove"
+  /\ Width > mViews[op.value]
+
 DoOps(k, plan) ==
   /\ attempted' = [attempted EXCEPT ![k] = TRUE]
   /\ UNCHANGED <<stamp, stampMoved, idemApplied, planned, crashedRun, storeErred,
@@ -582,17 +605,25 @@ DoOps(k, plan) ==
   /\ IF oi > Len(plan) THEN
        /\ LeaveOps(k)
        /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean, phase,
-                      refusedRows, refusals>>
+                      refusedRows, refusals, capRefused>>
      ELSE
        LET op == plan[oi] IN
        \/ /\ ~RefRefused(op)
+          /\ ~CapOver(op)
           /\ IF k = "machine" THEN WriteM(op) ELSE WriteF(op)
           /\ NextOp(k, plan)
-          /\ UNCHANGED <<phase, refusedRows, refusals>>
+          /\ UNCHANGED <<phase, refusedRows, refusals, capRefused>>
+       \/ /\ ~RefRefused(op)
+          /\ CapOver(op)
+          /\ refusedRows' = refusedRows \cup {op.name}
+          /\ capRefused' = TRUE
+          /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean, refusals>>
+          /\ NextOp(k, plan)
+          /\ UNCHANGED phase
        \/ /\ RefRefused(op) \/ refusals < MaxRefusals
           /\ refusedRows' = refusedRows \cup {op.name}
           /\ refusals' = IF RefRefused(op) THEN refusals ELSE refusals + 1
-          /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean>>
+          /\ UNCHANGED <<mViews, fViews, prefix, wroteAhead, clean, capRefused>>
           /\ IF Broken = "stopatrefusal"
              THEN /\ phase' = "idle"
                   /\ UNCHANGED <<si, oi, opsDone>>
@@ -636,7 +667,8 @@ DoSprint ==
   /\ oi' = 1
   /\ UNCHANGED <<stamp, stampMoved, clean, idemApplied, wroteAhead, mViews,
                  fViews, prefix, opsDone, phase, refusedRows, refusals, planned,
-                 attempted, crashedRun, storeErred, sRow, sGit, seatMoved>>
+                 attempted, crashedRun, storeErred, sRow, sGit, seatMoved,
+                 capRefused>>
 
 Step ==
   /\ phase = "applying"
@@ -679,7 +711,7 @@ ApplyCrash ==
   /\ phase' = "idle"
   /\ crashedRun' = TRUE
   /\ UNCHANGED <<refusedRows, refusals, planned, attempted, storeErred,
-                 sRow, sGit, sView, seatMoved, sOutcome, sDue>>
+                 sRow, sGit, sView, seatMoved, sOutcome, sDue, capRefused>>
   /\ stampMoved' = [k \in Kinds |-> FALSE]
   /\ prefix' = <<>>
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, stages, si, oi,
@@ -714,7 +746,8 @@ StoreError ==
   /\ UNCHANGED <<mRows, fRows, history, mViews, fViews, stamp, stages, mPlan,
                  fPlan, prefix, ceilAtStart, ahead0, stampMoved, idemApplied,
                  wroteAhead, faults, checked, seen, refusals, planned,
-                 attempted, sRow, sGit, sView, seatMoved, sOutcome, sDue>>
+                 attempted, sRow, sGit, sView, seatMoved, sOutcome, sDue,
+                 capRefused>>
 
 Next ==
   \/ \E m \in Machines : InsertMachine(m) \/ UpdateMachine(m) \/ DeleteMachine(m)
@@ -747,9 +780,9 @@ RedisIsACopy == \A k \in Kinds : clean[k] => ViewEq(k)
 \* sets wroteAhead.
 ConflictRefusesAhead == ~wroteAhead
 
-\* In any prefix of an apply's writes, a machine ceiling precedes a friend
-\* placed on it (a ceiling already in Redis counts: an earlier apply wrote
-\* it), and a friend's removal is followed only by removals.
+\* In any prefix of an apply's writes, a machine row precedes a friend
+\* placed on it (a row already in Redis counts: an earlier apply wrote it;
+\* the order only, never a cap on the friend), and a friend's removal is followed only by removals.
 IsPlace(op) == op.kind = "friend" /\ op.op \in {"add", "set"}
 IsFrRem(op) == op.kind = "friend" /\ op.op = "remove"
 ApplyOrder ==
@@ -762,6 +795,16 @@ ApplyOrder ==
               /\ prefix[j].op \in {"add", "set"}
     /\ IsFrRem(prefix[i]) =>
          \A j \in (i + 1)..Len(prefix) : prefix[j].op = "remove"
+
+\* A friend's capacity is her width and nothing else (2026-10-13): a friend
+\* write with width >= 1 is never refused for capacity, whatever the slots of
+\* the machine she is charged to (redis.go writeFriend; capacity.lua
+\* capacity_desired, which has no ceiling for kind friend). Other refusals
+\* of a friend (an actor without the role) stay, and the apply goes on past
+\* them. In the design (Broken # "friendceiling") the invariant holds by
+\* construction: no step sets capRefused, so it is a marker, and the check is
+\* its reversed witness MCConfigApplyBrokenFriendCeiling, which must be red.
+FriendWidthNeverRefused == ~capRefused
 
 \* The revision stamp is written only after that kind's ops (apply.go).
 StampOnlyWhenComplete == \A k \in Kinds : stampMoved[k] => opsDone[k]

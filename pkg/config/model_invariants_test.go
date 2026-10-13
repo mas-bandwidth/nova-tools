@@ -114,7 +114,7 @@ func TestApplyOrder(t *testing.T) {
 	_, err = st.Insert(ctx, KindMachine, mrow, "actor")
 	require.NoError(t, err)
 	for _, name := range []string{"f1", "f2"} {
-		frow, err := friend.NewRow(name, map[string]string{"slots": "8", "tiers": "flash"})
+		frow, err := friend.NewRow(name, map[string]string{"tiers": "flash"})
 		require.NoError(t, err)
 		_, err = st.Insert(ctx, KindFriend, frow, "actor")
 		require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestApplyOrder(t *testing.T) {
 	// (a set) and delete the other (a remove), then apply again. The plan
 	// writes adds and sets before removes (pkg/config/apply.go Plan),
 	// so the set precedes the remove and only removes follow it.
-	_, _, err = st.Update(ctx, KindFriend, "f1", map[string]string{"slots": "9"}, "actor")
+	_, _, err = st.Update(ctx, KindFriend, "f1", map[string]string{"width": "9"}, "actor")
 	require.NoError(t, err)
 	_, err = st.Delete(ctx, KindFriend, "f2", "actor")
 	require.NoError(t, err)
