@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 func gitFixtureCommit(t *testing.T, root string, args ...string) {
