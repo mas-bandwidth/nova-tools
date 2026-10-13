@@ -41,12 +41,13 @@ const (
 // The billing kinds: metered is paid per token; plan is paid by subscription, so
 // the predicted cost is the metered price of the same tokens, not a charge.
 const (
-	BillingMetered = "metered"
-	BillingPlan    = "plan"
+	BillingMetered      = "metered"
+	BillingPlan         = "plan"
+	BillingSubscription = "subscription"
 )
 
 // Billings are the billing kinds, the route's enum.
-var Billings = []string{BillingMetered, BillingPlan}
+var Billings = []string{BillingMetered, BillingPlan, BillingSubscription}
 
 // decimalPattern is a price as add and set take it: digits, and a fraction after
 // one point; no sign, no exponent, no thousands separator.

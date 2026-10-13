@@ -84,6 +84,9 @@ var million = big.NewRat(1_000_000, 1)
 // class with tokens and no price, or a fee with no request count gives no
 // prediction, never a zero.
 func Predict(t Tokens, p Prices) Prediction {
+	if p.Billing == BillingSubscription {
+		return Prediction{USD: "0"}
+	}
 	if !p.Priced() {
 		return Prediction{Why: WhyNoSheet}
 	}

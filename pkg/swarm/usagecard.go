@@ -10,16 +10,20 @@ package swarm
 // usage file: a field the provider did not report is the literal "-", never 0.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 )
 
@@ -44,6 +48,7 @@ import (
 var CardUsageColumns = []string{
 	"job", "attempt", "started", "ended", "end", "rc", "provider", "model",
 	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
+	"receipt_version", "billing", "raw_usage", "actual_usd",
 }
 
 // cardMessagesSQL is the one statement this reader runs against the harness's own store: the
@@ -258,14 +263,46 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 // launch, and a reader folds them. A field the provider did not report stays a dash, never a
 // zero, and a tab or a newline in a value is scrubbed so the row is always one row.
 func AppendCardUsage(path string, row UsageRow) error {
+	return appendCardUsage(path, row, func(path string, data []byte, mode os.FileMode) error {
+		return atomicfile.Write(path, data, mode, atomicfile.ExactMode())
+	})
+}
+
+// appendCardUsage serializes replacement and append on one stable lock inode.
+func appendCardUsage(path string, row UsageRow, replace func(string, []byte, os.FileMode) error) error {
+	unlock, err := takeFileLock(path+".lock", 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	_, statErr := os.Stat(path)
 	var b strings.Builder
+	var expanded []byte
+	var mode os.FileMode
+	columns := CardUsageColumns
+	if statErr == nil {
+		var err error
+		columns, err = cardUsageHeader(path)
+		if err != nil {
+			return err
+		}
+		if !knownCardUsageHeader(columns) {
+			return fmt.Errorf("unknown usage header; preserve the original file and start a fresh attempt")
+		}
+		if row["receipt_version"] != "" && !slices.Contains(columns, "raw_usage") {
+			expanded, mode, err = expandCardUsage(path, columns)
+			if err != nil {
+				return err
+			}
+			columns = CardUsageColumns
+		}
+	}
 	if statErr != nil {
 		b.WriteString(strings.Join(CardUsageColumns, "\t"))
 		b.WriteByte('\n')
 	}
 	values := make([]string, 0, len(CardUsageColumns))
-	for _, c := range CardUsageColumns {
+	for _, c := range columns {
 		v := strings.TrimSpace(row[c])
 		if v == "" {
 			v = Dash
@@ -275,6 +312,9 @@ func AppendCardUsage(path string, row UsageRow) error {
 	}
 	b.WriteString(strings.Join(values, "\t"))
 	b.WriteByte('\n')
+	if expanded != nil {
+		return replace(path, append(expanded, []byte(b.String())...), mode)
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -284,4 +324,65 @@ func AppendCardUsage(path string, row UsageRow) error {
 		return err
 	}
 	return f.Close()
+}
+
+// cardUsageHeader reads only the bounded header, independent of the receipt's rows.
+func cardUsageHeader(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	header, readErr := bufio.NewReader(io.LimitReader(f, 4096)).ReadString('\n')
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("usage file has no complete header: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return strings.Split(strings.TrimSuffix(header, "\n"), "\t"), nil
+}
+
+// knownCardUsageHeader accepts the current header and the two released legacy shapes.
+func knownCardUsageHeader(columns []string) bool {
+	legacy := CardUsageColumns[:14]
+	old := slices.DeleteFunc(slices.Clone(legacy), func(s string) bool { return s == "end" })
+	return slices.Equal(columns, CardUsageColumns) || slices.Equal(columns, legacy) || slices.Equal(columns, old)
+}
+
+// expandCardUsage prepares one atomic replacement; no original value is rewritten.
+func expandCardUsage(path string, columns []string) ([]byte, os.FileMode, error) {
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	lines := strings.Split(string(original), "\n")
+	if len(lines) < 2 || lines[len(lines)-1] != "" {
+		return nil, 0, fmt.Errorf("incomplete usage row; preserve original file")
+	}
+	indexes := map[string]int{}
+	for i, name := range columns {
+		indexes[name] = i
+	}
+	var output strings.Builder
+	output.WriteString(strings.Join(CardUsageColumns, "\t") + "\n")
+	for _, line := range lines[1 : len(lines)-1] {
+		values := strings.Split(line, "\t")
+		if len(values) != len(columns) {
+			return nil, 0, fmt.Errorf("malformed historical usage row; preserve original file")
+		}
+		expanded := make([]string, len(CardUsageColumns))
+		for i, name := range CardUsageColumns {
+			expanded[i] = Dash
+			if old, ok := indexes[name]; ok {
+				expanded[i] = values[old]
+			}
+		}
+		output.WriteString(strings.Join(expanded, "\t") + "\n")
+	}
+	return []byte(output.String()), info.Mode().Perm(), nil
 }

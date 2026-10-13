@@ -427,3 +427,12 @@ func TestAMuseRouteIsAddedListedAndReadBack(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, row.Fields, got.Fields)
 }
+
+func TestSubscriptionRouteAppliesWithoutNumericPrices(t *testing.T) {
+	t.Parallel()
+	kind, _ := Lookup(KindRoute)
+	row, err := kind.NewRow("muse-fixture", map[string]string{"tier": "pro", "provider": "meta", "model": "fixture", "deadline": "60", "billing": "subscription"})
+	require.NoError(t, err)
+	assert.NoError(t, CheckRoutesPriced([]Row{row}))
+	assert.Equal(t, "subscription", row.Fields["billing"])
+}

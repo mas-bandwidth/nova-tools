@@ -588,7 +588,7 @@ var Kinds = []*Kind{
 		Table: "providers",
 		Doc:   "a model provider's declared funding and billing: every route names one; migration seeds unfunded rows until the owner declares the facts",
 		Fields: []Field{
-			{Name: "billing", Type: TypeEnum, Enum: []string{"metered", "plan", "both"}, Required: true, Help: "how it is paid: metered (usage), plan (subscription), or both"},
+			{Name: "billing", Type: TypeEnum, Enum: []string{"metered", "plan", "both", "subscription"}, Required: true, Help: "how it is paid: metered (usage), plan (metered reference value), both, or subscription (zero marginal card cost)"},
 			{Name: "funded", Type: TypeBool, Required: true, Help: "whether it is funded, explicitly true or false; migration's false means the owner has not declared funding yet (see note)"},
 			{Name: "balance_usd", Type: TypeDecimal, Help: "the last known USD balance, a non-negative decimal; empty when unknown, with --balance_as_of when set"},
 			{Name: "balance_as_of", Type: TypeText, Help: "the balance's observation date, YYYY-MM-DD; required when --balance_usd is set"},
@@ -627,7 +627,7 @@ var Kinds = []*Kind{
 			{Name: cardcost.FieldInputLong, Type: TypeDecimal, Help: "USD per million input tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldOutputLong, Type: TypeDecimal, Help: "USD per million output tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldRequest, Type: TypeDecimal, Help: "USD per request, on top of the tokens; empty when there is no fee"},
-			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) or plan (a subscription, so the predicted cost is the metered price of the same tokens)"},
+			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) plan (metered reference value), or subscription (zero marginal card cost)"},
 			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
 			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
 			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},

@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -602,6 +603,7 @@ func cmdProfile(args []string, stdout, stderr io.Writer) int {
 }
 
 type nativeFlags struct {
+	billing         *string
 	outputTokenMax  *int
 	harness         *string
 	model           *string
@@ -646,6 +648,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	// directory after that publish, so a bench sweep never deletes the results with the
 	// working directory.
 	nf := &nativeFlags{
+		billing:         f.fs.String("billing", "", "declared route billing; activates receipt contract 2"),
 		outputTokenMax:  f.fs.Int("output-token-max", opencodeOutputTokenMax, "the positive per-turn output `tokens` limit, reasoning included; the harness sets it itself on every opencode child (default 128000)"),
 		harness:         f.fs.String("harness", "", "required: the harness binary `path` the child runs under, checked for existence and execution"),
 		model:           f.fs.String("model", "", "required without --worker: the `provider/model` to run, one slash, both sides nonempty"),
@@ -746,6 +749,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 				f.add("--config is the legacy shape's and this worker description names a secret; the description's own provider declaration is written instead")
 			}
 		}
+	}
+	if *nf.billing != "" && !slices.Contains(cardcost.Billings, *nf.billing) {
+		f.add("--billing wants metered, plan or subscription; use the declared route billing")
 	}
 	if *nf.outputTokenMax <= 0 {
 		f.add("--output-token-max wants positive tokens, reasoning included")
@@ -878,6 +884,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		frame = &fr
 	}
 	cfg := nativeRunConfig{
+		billing:        *nf.billing,
 		outputTokenMax: *nf.outputTokenMax,
 		frame:          frame,
 		binary:         *harnessBin,
