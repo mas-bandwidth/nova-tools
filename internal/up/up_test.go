@@ -3,6 +3,7 @@ package up_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -183,6 +184,114 @@ func tree(t *testing.T, dir string) map[string]string {
 
 var stepNames = []string{"platform", "dirs", "binaries", "sprint", "secrets", "ssh", "redis", "seat", "smoke"}
 
+func TestUpSeatWritesFleetEndpointsAndPreservesReferences(t *testing.T) {
+	config := t.TempDir()
+	gh := filepath.Join(t.TempDir(), "gh")
+	require.NoError(t, os.Mkdir(gh, 0o700))
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("NOVA_SPRINT_REDIS", "store.example:6380")
+	t.Setenv("NOVA_SPRINT_SERVER", "sprint.example:6390")
+	t.Setenv("NOVA_BUS_REDIS", "bus.example:6381")
+	profileDir := filepath.Join(config, "nova-sprint")
+	legacyPath := filepath.Join(profileDir, "seat.json")
+	legacy := []byte(`{"server":"legacy-server","config_seat":"legacy-seat"}`)
+	path := filepath.Join(profileDir, "seat-environment.json")
+	code, out, errs := newFake(t).nova("linux", "--seat")
+	require.Equal(t, 0, code, out+errs)
+	assert.NotContains(t, out+errs, "store.example")
+	assert.NotContains(t, out+errs, "sprint.example")
+	assert.NotContains(t, out+errs, "bus.example")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, float64(1), got["version"])
+	assert.Equal(t, map[string]any{
+		"NOVA_SPRINT_REDIS":  "store.example:6380",
+		"NOVA_SPRINT_SERVER": "sprint.example:6390",
+		"NOVA_BUS_REDIS":     "bus.example:6381",
+	}, got["environment"])
+	assert.Equal(t, os.FileMode(0o600), mustStat(t, path).Mode().Perm())
+	assert.Equal(t, os.FileMode(0o700), mustStat(t, filepath.Dir(path)).Mode().Perm())
+	require.NoError(t, os.WriteFile(legacyPath, legacy, 0o600))
+
+	// A subsequent writer update must carry forward secret references and the
+	// selected forge config without reading the forge directory's contents.
+	profile := map[string]any{
+		"version": 1,
+		"environment": map[string]string{
+			"NOVA_SPRINT_REDIS": "store.example:6380", "NOVA_SPRINT_SERVER": "sprint.example:6390", "NOVA_BUS_REDIS": "bus.example:6381",
+		},
+		"login": map[string]string{
+			"redis": "store.example:6380", "user": "coordinator", "store": "/secrets", "as": "seat",
+			"key": "/key", "sops": "sops", "secret": "NOVA_REDIS_COORDINATOR_PASSWORD",
+		},
+		"forge_identity": gh,
+	}
+	old, err := json.Marshal(profile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, old, 0o600))
+	t.Setenv("NOVA_SPRINT_REDIS", "ignored.example:6380")
+	code, out, errs = newFake(t).nova("linux", "--seat", "--sprint-redis", "store.example:6380")
+	require.Equal(t, 0, code, out+errs)
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	got = nil
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.IsType(t, map[string]any{}, got["login"])
+	login := got["login"].(map[string]any)
+	assert.Equal(t, "coordinator", login["user"])
+	assert.Equal(t, "NOVA_REDIS_COORDINATOR_PASSWORD", login["secret"])
+	assert.Equal(t, gh, got["forge_identity"])
+	assert.Equal(t, "store.example:6380", got["environment"].(map[string]any)["NOVA_SPRINT_REDIS"])
+	legacyAfter, err := os.ReadFile(legacyPath)
+	require.NoError(t, err)
+	assert.Equal(t, legacy, legacyAfter, "legacy seat.json remains unchanged")
+}
+
+func TestUpSeatRefusesMissingOrCredentialBearingEndpoint(t *testing.T) {
+	config := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("NOVA_SPRINT_REDIS", "")
+	t.Setenv("NOVA_SPRINT_SERVER", "sprint.example:6390")
+	t.Setenv("NOVA_BUS_REDIS", "bus.example:6381")
+	code, out, errs := newFake(t).nova("linux", "--seat")
+	assert.Equal(t, 2, code, out+errs)
+	assert.Contains(t, errs, "missing fleet endpoints NOVA_SPRINT_REDIS")
+	assert.NoFileExists(t, filepath.Join(config, "nova-sprint", "seat-environment.json"))
+
+	code, out, errs = newFake(t).nova("linux", "--seat", "--sprint-redis", "redis://user:password@example:6380")
+	assert.Equal(t, 2, code, out+errs)
+	assert.Contains(t, errs, "invalid password-free host:port endpoints NOVA_SPRINT_REDIS")
+	assert.NotContains(t, out+errs, "user:password@example")
+	assert.NoFileExists(t, filepath.Join(config, "nova-sprint", "seat-environment.json"))
+	code, out, errs = newFake(t).nova("linux", "--seat", "--sprint-redis", "mem:/tmp/local.twin")
+	assert.Equal(t, 2, code, out+errs)
+	assert.Contains(t, errs, "invalid password-free host:port endpoints NOVA_SPRINT_REDIS")
+	assert.NoFileExists(t, filepath.Join(config, "nova-sprint", "seat-environment.json"))
+
+	code, out, errs = newFake(t).nova("linux", "--seat", "--dry-run", "--sprint-redis", "store.example:6380")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "dry run: seat environment validated; nothing written")
+	assert.NoFileExists(t, filepath.Join(config, "nova-sprint", "seat-environment.json"))
+
+	unsafeDir := filepath.Join(config, "nova-sprint")
+	require.NoError(t, os.MkdirAll(unsafeDir, 0o700))
+	require.NoError(t, os.Chmod(unsafeDir, 0o777))
+	t.Setenv("NOVA_SPRINT_REDIS", "store.example:6380")
+	code, out, errs = newFake(t).nova("linux", "--seat")
+	assert.Equal(t, 2, code, out+errs)
+	assert.Contains(t, errs, "directory is not safe to write")
+	assert.NoFileExists(t, filepath.Join(unsafeDir, "seat-environment.json"))
+}
+
+func mustStat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	st, err := os.Stat(path)
+	require.NoError(t, err)
+	return st
+}
+
 // upLines is the UP <step> lines of an output, the step and state of each.
 func upLines(out string) [][2]string {
 	var got [][2]string
@@ -325,7 +434,7 @@ func TestUpRefusesWhatItCannotRun(t *testing.T) {
 		want string
 	}{
 		{"bare", nil, "UP REFUSED: no verb and no file given"},
-		{"no mode", []string{"up"}, "UP REFUSED: --local is required"},
+		{"no mode", []string{"up"}, "UP REFUSED: choose exactly one mode"},
 		{"a positional", []string{"up", "--local", "extra"}, "takes no positional arguments"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
