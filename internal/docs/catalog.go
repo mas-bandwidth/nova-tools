@@ -135,6 +135,8 @@ var DefaultCatalog = []Entry{
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/up", "nova-up's steps: the registry, the plan and apply of each step over a fake-able machine", "go test ./internal/up", "go test ./internal/up"),
 	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
+	Page("internal/testkit", "test helper packages: one-line asserts for repeated multi-line check shapes", "go test ./internal/testkit/...", "go test ./internal/testkit/..."),
+	E("internal/testkit/must", "one-line asserts for repeated multi-line check shapes: ContainsAll and FileReads", "go test ./internal/testkit/must", "go test ./internal/testkit/must"),
 
 	// docs/
 	E("docs/acceptance", "release acceptance records: one measured requirement per file, with the raw numbers", "go test ./internal/ci", "go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed"),
