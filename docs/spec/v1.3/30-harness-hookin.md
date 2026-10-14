@@ -273,8 +273,8 @@ release decision must either prove that path or explicitly narrow its advertised
    session starts. A wrap or a new session does not have them until something starts them again.
 2. **Push to turn.** The harness, not the session, runs one monitor whose command is layer 20's
    `nova-bus recv --as <name> --forever --exec <deliver>`. Each line it prints is an event that
-   wakes the turn, while the session works (including during a bench gate) and while it is idle,
-   and the line is the turn's input. The first action of the waking turn is the prove when the
+   wakes the turn while the session works (including during a bench gate), and the line is the
+   turn's input; idle wake stays unmeasured (guarantee 5). The first action of the waking turn is the prove when the
    line is a challenge; otherwise the turn acts on the note the line carries. The monitor stays
    up: it is not restarted per message. A long bench gate does not remove the monitor: the
    monitor is the harness's process, and the gate is the session's.
