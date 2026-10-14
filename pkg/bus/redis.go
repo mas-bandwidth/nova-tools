@@ -127,6 +127,8 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 				pipe.HDel(ctx, m.Key, m.Field)
 			case m.Forward:
 				forward.Eval(ctx, pipe, []string{m.Key}, m.Value, m.Field) // the script's text: a pipeline cannot fall back from EVALSHA
+			case m.Once:
+				pipe.HSetNX(ctx, m.Key, m.Field, m.Value)
 			default:
 				pipe.HSet(ctx, m.Key, m.Field, m.Value)
 			}
@@ -139,7 +141,7 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 // other send under the key comes between its GET and its writes. KEYS are the
 // record's key, the streams, then each mark's hash; ARGV are the record, its
 // expiry in ms, the count of streams, the count of field pairs, the pairs,
-// then each mark as "set" field value, "del" field or "fwd" field state.
+// then each mark as "set" field value, "del" field, "fwd" field state or "nx" field value.
 var addOnce = redis.NewScript(forwardLua + `
 local prior = redis.call('GET', KEYS[1])
 if prior then return {1, prior} end
@@ -156,6 +158,9 @@ while j <= #ARGV do
     j = j + 2
   elseif ARGV[j] == 'fwd' then
     forward(KEYS[k], ARGV[j + 2], ARGV[j + 1], now)
+    j = j + 3
+  elseif ARGV[j] == 'nx' then
+    redis.call('HSETNX', KEYS[k], ARGV[j + 1], ARGV[j + 2])
     j = j + 3
   else
     redis.call('HSET', KEYS[k], ARGV[j + 1], ARGV[j + 2])
@@ -181,6 +186,8 @@ func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Durati
 				args = append(args, "del", m.Field)
 			case m.Forward:
 				args = append(args, "fwd", m.Field, m.Value)
+			case m.Once:
+				args = append(args, "nx", m.Field, m.Value)
 			default:
 				args = append(args, "set", m.Field, m.Value)
 			}

@@ -230,8 +230,8 @@ of their own; until then the module is the spec and is not run by the gate.
 ### bus-message-kinds.w1: the kind of a message
 
 A message carries a kind, one of `report`, `ack`, `status`, `request`,
-`blocker`: the bus's own vocabulary, which it stores and filters on and gives
-no meaning. `send --kind <k>` sets it (default `status`; another word is
+`blocker`, `ask`, `timeout`: the bus's own vocabulary, which it stores and
+filters on, giving a meaning only to `ask` and `timeout` (asks, below). `send --kind <k>` sets it (default `status`; another word is
 refused with the list), the entry holds it as the field `kind`, and `recv`,
 `peek` and `log` print `kind=<k>` (left off the line of a status, so an absent
 `kind=` is a status and the common line is unchanged). A message with no `kind` field (sent
@@ -242,6 +242,43 @@ it is claimed with the filter's read and handed back at once (`XCLAIM ...
 IDLE` of `ClaimAfter`, `JUSTID`), so the next `recv` without the filter, or
 with another, gets it in its order; a skip costs a round trip, and a run of
 skipped claimed messages one more to hand them back.
+
+### asks: an ask has a server deadline; a timeout wakes the sender
+
+Never wait for ever. A message of kind `ask` wants an answer by a deadline:
+`send --kind ask --deadline <d>` is refused without `--deadline`, and
+`--deadline` without `--kind ask`. The store stamps the deadline from its own
+clock, the send's `at` plus `<d>`, never the sender's; the entry holds it as
+the field `deadline` and `send` prints `deadline=<RFC3339>`. The kind
+`timeout` is the bus's own and no sender sends one.
+
+An ask is answered only by a message from one of its recipients (to or cc)
+whose `re` is its id. Every message with a `re` marks the first reply of its
+sender to that id on `bus2:answers:<sender>` (`HSETNX`, the reply's `at`) in
+its own transaction, so a send stays two trips; whether the id is an ask, and
+the sender one asked, is decided when the ask is read. The ask's record is
+`bus2:ask:<id>` (from, to, subject, at, due), indexed per sender on
+`bus2:asks:<from>`, written in the ask's transaction. By the store's clock an
+ask is `answered` when a recipient replied by its deadline, `timedout` once
+the deadline passed without one (a reply after it is kept, and does not undo
+the timeout), else `open`.
+
+The expiry (`Bus.ExpireAsks`) delivers each `timedout` ask's timeout exactly
+once: one message to the ask's sender, from `nova-bus` (a wait skips the
+waiter's own messages), kind `timeout`, `re` the ask's id, subject `ASK
+TIMEOUT <id> <recipients> after <age>: <subject>`, written with the ask's
+`timedout` and `timeout` fields under the once-key `bus2:asktimeout:<id>`
+(`AddOnce`), so two loops running it deliver one between them. `nova-bus
+overdue`, the alarm the coordinator's loop runs, runs the expiry first; any
+loop holding a `Bus` may call it, and it reads only the store's time.
+
+`nova-bus asks` lists the sender's asks and their states; `asks --liveness`
+is each friend's word from the asks to it (`LivenessOf`, a pure function):
+the newest ask to it within the window whose outcome is known decides, `up`
+when it answered by the deadline, `deaf` when delivered (a receipt) and not
+answered, `unreached` when never delivered, and `down` with no such ask. The
+records are never deleted; their retention is owed, with the TLA+ module of
+the ask's states.
 
 ### bus-requires-inbox-push-proof: the push proof is the seat's liveness rule and a sender's advice, never a gate
 
@@ -513,6 +550,9 @@ five (the roster, the group, the claim, the read, the delivered stamp). wait: tw
 roster, the stream's tail), then one `XREAD` per block (one parked read when
 nothing else is watched). ack: five (group, pending,
 the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+asks: three (the roster and `TIME`, the senders' indexes, the asks' records)
+and one more for the answers of the names asked; `--liveness` one more for the
+friends' receipts. The expiry: the same reads, then one script per ask it times out.
 
 ## The deadlines
 
