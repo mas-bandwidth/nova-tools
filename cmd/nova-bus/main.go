@@ -218,20 +218,23 @@ example: nova-bus wait --as bob --timeout 1s`,
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
-				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> [kind=<k>] at=<RFC3339> bytes=<n> sha256=<hex>: the id is the
+				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> [kind=<k>] at=<RFC3339> bytes=<n> sha256=<hex> landed=<yes|no>: the id is the
 message's for ever, and the byte count and digest are the body's as the store holds it, so a sender
 can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
+landed=yes when the write succeeded (the message is on the stream); --dry-run carries landed=no.
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none. The message lands whoever is listening: for the sender and each
-recipient whose friend daemon has not proved its inbox push (a SESSION CHECK carried in by its
-harness's deliver adapter and answered by the session, or a per-card harness's daemon up) under ten
-minutes ago, one SEND NOTE push=<none|down|stale> for <name> line follows, saying the message waits
-on its stream and what would prove the push; nothing is refused on it (nova-bus names shows each
-name's push). With --require-push (or ` + RequirePushEnv + `=1) any such name is refused instead,
+recipient with no proven push, one bounded SEND NOTE push=<none|down|stale>: run: nova-hook status --as
+<name> line follows (at most 160 characters, the name in the command), the state, the name and the one
+command that fixes it; nothing is refused on it (nova-bus names shows each name's push). The long
+explanation stays here: a name with no proven push since never has no daemon recorded one; a message to
+it waits on their stream until something reads it (nova-bus recv --as <name>); the proof is that the
+name runs their friend daemon (nova-friend install --as <name> --harness <h> --dir <d>) and their
+session answers the daemon's SESSION CHECK. With --require-push (or ` + RequirePushEnv + `=1) any such name is refused instead,
 deaf: <name> has no proven push since <age> and the remedy, and nothing is written. --dry-run checks
-the message as send does (every problem named) and prints the line with no id and the same NOTE
-lines (or the same refusal), writing nothing.
+the message as send does (every problem named) and prints the line with no id, landed=no and the same
+NOTE lines (or the same refusal), writing nothing.
 --token <t> makes the send safe to retry: the same token and the same arguments within --token-life
 (default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
 whose answer was lost after the store took it is retried without a second message; the same token with
@@ -562,6 +565,45 @@ func names(csv string) []string {
 	return out
 }
 
+// pushNoteMax bounds one SEND NOTE line (docs/SPEC-BUS.md, the send NOTE): a
+// reader sees the state, the name and the one command that fixes it in one
+// glance, never the long explanation, which stays in send's help. A name is at
+// most bus.MaxName bytes and appears once, inside the command, so the line
+// cannot overflow it.
+const pushNoteMax = 160
+
+func shortPushNote(line string) string {
+	state, name := parsePush(line)
+	if name == "" {
+		name = "unknown"
+	}
+	if state == "" {
+		state = "none"
+	}
+	note := fmt.Sprintf("push=%s: run: nova-hook status --as %s", state, name)
+	if len(note) > pushNoteMax {
+		note = note[:pushNoteMax]
+	}
+	return note
+}
+
+func parsePush(line string) (state, name string) {
+	if !strings.HasPrefix(line, "push=") {
+		return "", ""
+	}
+	s := strings.TrimPrefix(line, "push=")
+	if i := strings.Index(s, " for "); i >= 0 {
+		state = s[:i]
+		rest := s[i+5:]
+		if j := strings.IndexAny(rest, ": "); j >= 0 {
+			name = strings.TrimSpace(rest[:j])
+		} else {
+			name = strings.TrimSpace(rest)
+		}
+	}
+	return
+}
+
 func (w world) send(c *tool.Call) *tool.Out {
 	// Read the dry-run before setup can refuse so its early exits are handled
 	// simulations too (STANDARD.md, a verb that writes has a dry run).
@@ -578,8 +620,21 @@ func (w world) send(c *tool.Call) *tool.Out {
 		body = string(raw)
 	}
 	gated := w.requirePush(c)
+	dryAddr := ""
+	if dry {
+		ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+		dryAddr, _ = w.address(ctx, c)
+		cancel()
+	}
 	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
+		if dry && dryAddr != "" {
+			why := "the store did not answer"
+			if len(refused.Why) > 0 {
+				why = refused.Why[0]
+			}
+			return tool.Refuse(fmt.Sprintf("%s did not answer: %s; nothing was written", dryAddr, why))
+		}
 		return refused
 	}
 	defer closeStore()
@@ -642,8 +697,13 @@ func (w world) send(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
 	o = loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
+	landed := "yes"
+	if dry {
+		landed = "no"
+	}
+	o = o.Fact("landed", landed)
 	for _, line := range unheard {
-		o.Note(line)
+		o.Note(shortPushNote(line))
 	}
 	return o
 }
