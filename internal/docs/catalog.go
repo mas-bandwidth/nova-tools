@@ -67,6 +67,7 @@ var DefaultCatalog = []Entry{
 	E("internal/ci", "class tests and CI budget invariants", "go test ./internal/ci", "go test ./internal/ci"),
 	E("pkg/ci", "class tests and CI budget invariants", "go test ./pkg/ci/...", "go test ./pkg/ci/..."),
 	E("internal/cireceipt", "ci-ok's run receipt: one ev:github row of the workflow_run shape", "go test ./internal/cireceipt", "go test -tags functional ./internal/cireceipt"),
+	E("pkg/codexdesktop", "bounded native IPC delivery to an existing Codex desktop chat, with fixed external-event notices and inherited thread settings", "go test ./pkg/codexdesktop", "go test ./pkg/codexdesktop"),
 	E("pkg/config", "nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state", "go test ./pkg/config", "go test ./pkg/config"),
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
 	E("pkg/decide", "nova-decide's decision system: schemas (read, attempt, grade), backends (Jev, fixed), the record and calibration", "go test ./pkg/decide", "go test ./pkg/decide"),
