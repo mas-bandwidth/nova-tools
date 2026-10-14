@@ -55,8 +55,8 @@ func ProfilePath(tool string, getenv func(string) string) (string, error) {
 
 var secretEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
-// ErrNoProfileRow is wrapped by LoadProfile's refusal when the file has no
-// row for the seat (or there is no file).
+// ErrNoProfileRow is wrapped by LoadProfile's and LoadConfigProfile's refusal
+// when the file has no row for the seat (or there is no file).
 var ErrNoProfileRow = errors.New("no row")
 
 // LoadProfile reads path and returns the row named seat. A missing file or
