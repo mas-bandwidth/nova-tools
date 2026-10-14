@@ -448,13 +448,16 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Refuse(err.Error())
 		}
-	default:
+	case "", "deepseek", "dsh":
 		var err error
 		dsh, err = w.dshConfig(c)
 		if err != nil {
 			return tool.Refuse(err.Error())
 		}
+	default:
+		return tool.Refuse("--harness wants muse, grok, deepseek, or dsh; the Codex desktop route uses --codex-* flags")
 	}
+
 	if (muse != nil || grokR != nil) && (c.Str("dsh-events-dir") != "" || c.Str("dsh-hooks-file") != "" || c.Str("dsh-since") != "" || c.Str("dsh-session") != "") {
 		return tool.Refuse("harness delivery routes are exclusive; configure one harness route")
 	}
