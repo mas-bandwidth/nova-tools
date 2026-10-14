@@ -28,7 +28,37 @@
 (* Begin, Progress, Finish and Return carry the card and the epoch the    *)
 (* server gave; the server applies them only when its record for this    *)
 (* (friend, lane) holds that card at that epoch and the epoch is current. *)
-(* Any refusal: the lane drops the job and asks again.                    *)
+(* Any refusal: the lane drops the job and asks again, save one: an answer *)
+(* the lane cannot read (below, the parked lane).                          *)
+(*                                                                         *)
+(* The parked lane (nova-tools#5724, v1.2.26; docs/SPEC-FRIEND.md, the    *)
+(* LANE line). An answer naming a card in Garbled is a LANE line for the  *)
+(* asking lane that it cannot read (a field it needs, gen, kind or job,   *)
+(* missing or malformed: ParseLaneHold's Unparseable, a refusal). Asking  *)
+(* again gets the same line from the same server, so the lane says the    *)
+(* refusal once, runs nothing, and parks: it asks no more until its       *)
+(* daemon restarts (laneAsk: askAt = now + neverAgain; only a new lane    *)
+(* struct, a daemon start, clears it: a width change appends lanes and a  *)
+(* clear's freshLanes keeps askAt). Restart unparks. The server's record  *)
+(* still holds the card the parked lane refused: the lane is silent, so   *)
+(* the gone bound bounces it (fair for a parked lane as for a dead one).  *)
+(*   ParkedRunsNothing    a parked lane holds no card.                    *)
+(*   RefusedOnceNotALoop  an unparseable line is refused once per daemon  *)
+(*               life (refusals <= 1); a parked lane was refused once.    *)
+(*   ParkedNeverAsks      a lane refused an unparseable line sends no     *)
+(*               ask until its daemon restarts.                           *)
+(*   ParkedRecordIsGone   the record a parked lane refused is dropped     *)
+(*               (liveness: gone, a clear, or the lane restarted).        *)
+(*   ResumesAfterRestart  a restarted lane asks again (liveness).         *)
+(* Reversed witnesses (MCFriendLaneParkedBroken*.cfg):                    *)
+(*   AskAgain    the code before #5724: the refusal set askAt = TakeRetry *)
+(*               and the lane asked again every 5s, refused the same line *)
+(*               every time (a reader-only friend's lanes, all night from *)
+(*               2026-10-14 03:51Z; laneSay logged the line once, the     *)
+(*               asks went on): RefusedOnceNotALoop, ParkedNeverAsks      *)
+(*               fail, and, the asking lane never gone, WorkingResolves.  *)
+(*   StickyPark  a park that outlives the restart (askAt persisted):      *)
+(*               ResumesAfterRestart fails.                                *)
 (*                                                                         *)
 (* The server on its own: Gone(l), a lane that has not asked within the   *)
 (* bound is gone, its card bounced back ready (the record dropped);       *)
@@ -88,7 +118,8 @@ EXTENDS Naturals, FiniteSets
 
 CONSTANTS Cards, Lanes, Reads, Steady, MaxClears, MaxCrashes, MaxGones, MaxReturns,
           RunOnNone, LocalEpoch, KeepOnRefusal, CardOnly, NoGone, KeepOnMismatch,
-          Widths, Member, SlotGate, FloorOne, KillOnLower, NoFollow
+          Widths, Member, SlotGate, FloorOne, KillOnLower, NoFollow,
+          Garbled, AskAgain, StickyPark
 
 None == "none"
 Nobody == [card |-> None, ep |-> 0]
@@ -106,10 +137,15 @@ VARIABLES
     W,         \* the server: the width nova-config gives (the one definition of a width)
     cw,        \* the client: the width its last answer gave it (0: none yet, or 0)
     pastWidth, \* ghost: a lane started while |Live| >= cw
-    unanswered \* ghost: a lane started while cw = 0
+    unanswered, \* ghost: a lane started while cw = 0
+    parked,    \* the lane: refused an unparseable LANE line, it asks no more until restarted
+    refusals,  \* ghost: lane -> asks answered with a line it cannot read, since its daemon started (capped at 2)
+    askedAfter \* ghost: a lane sent an ask after it was refused an unparseable line, same daemon life
 
 wvars == <<W, cw, pastWidth, unanswered>>
-vars == <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+pvars == <<parked, refusals, askedAfter>>
+vars == <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered,
+          parked, refusals, askedAfter>>
 
 Idle == [st |-> "idle", card |-> None, ep |-> 0]
 
@@ -127,6 +163,9 @@ Init ==
     /\ granted = [l \in Lanes |-> {}]
     /\ staleStep = FALSE
     /\ clears = 0 /\ crashes = 0 /\ gones = 0 /\ returns = 0
+    /\ parked = [l \in Lanes |-> FALSE]
+    /\ refusals = [l \in Lanes |-> 0]
+    /\ askedAfter = FALSE
 
 Holding(l) == lc[l].st \in {"taken", "running"}
 LaneSays(l) == IF Holding(l) THEN <<lc[l].card, lc[l].ep>> ELSE <<None, 0>>
@@ -172,30 +211,53 @@ Exchanged(l) == stale' = [stale EXCEPT ![l] = FALSE]
 -----------------------------------------------------------------------------
 \* take --lane l: the lane names itself only; the server picks.
 \* The width gate stands before the ask (laneStep: the live check, then laneAsk).
-TakeAsk(l) == alive[l] /\ lc[l].st = "idle" /\ WidthGate(l)
+\* A parked lane does not ask (laneAsk: now.Before(ln.askAt), askAt = now + neverAgain).
+TakeAsk(l) == alive[l] /\ lc[l].st = "idle" /\ ~parked[l] /\ WidthGate(l)
 TakeRest == UNCHANGED <<epoch, alive, staleStep, clears, crashes, gones, returns>>
+
+\* The ghost of an ask: a lane that was refused an unparseable line since its daemon started.
+Asked(l) == askedAfter' = (askedAfter \/ refusals[l] >= 1)
+
+\* The answer names card c on a LANE line the lane cannot read: ParseLaneHold's Unparseable.
+Unreadable(c) == c \in Garbled
+
+\* An Unparseable answer, a refusal (counted): the lane runs nothing and holds nothing. The fix
+\* (#5724): it says so once and parks, asking no more until its daemon restarts. AskAgain, the
+\* code before: it asks again in TakeRetry, and is answered the same line.
+Refuse(l) ==
+    /\ lc' = [lc EXCEPT ![l] = Idle]
+    /\ refusals' = [refusals EXCEPT ![l] = IF @ < 2 THEN @ + 1 ELSE 2]
+    /\ parked' = [parked EXCEPT ![l] = ~AskAgain]
+    /\ UNCHANGED <<granted, wvars>>
 
 \* HOLDS: the server's record holds a card: the lane is told it holds it.
 TakeHolds(l) ==
     /\ TakeAsk(l)
     /\ srv[l].card # None
-    /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> srv[l].card, ep |-> srv[l].ep]]
-    /\ granted' = [granted EXCEPT ![l] = @ \cup {ServerSays(l)}]
+    /\ IF Unreadable(srv[l].card)
+       THEN Refuse(l)
+       ELSE /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> srv[l].card, ep |-> srv[l].ep]]
+            /\ granted' = [granted EXCEPT ![l] = @ \cup {ServerSays(l)}]
+            /\ Started
+            /\ UNCHANGED <<parked, refusals>>
     /\ UNCHANGED <<col, srv>>
-    /\ Started
-    /\ Exchanged(l) /\ TakeRest
+    /\ Asked(l) /\ Exchanged(l) /\ TakeRest
 
-\* TAKEN: the server picks a card ready on her row, at its epoch.
+\* TAKEN: the server picks a card ready on her row, at its epoch. Its record holds the card
+\* whether or not the lane can read the line that says so.
 TakeGrant(l, c) ==
     /\ TakeAsk(l)
     /\ srv[l].card = None
     /\ col[c] = "ready"
     /\ col' = [col EXCEPT ![c] = "working"]
     /\ srv' = [srv EXCEPT ![l] = [card |-> c, ep |-> epoch]]
-    /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> c, ep |-> epoch]]
-    /\ granted' = [granted EXCEPT ![l] = @ \cup {<<c, epoch>>}]
-    /\ Started
-    /\ Exchanged(l) /\ TakeRest
+    /\ IF Unreadable(c)
+       THEN Refuse(l)
+       ELSE /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> c, ep |-> epoch]]
+            /\ granted' = [granted EXCEPT ![l] = @ \cup {<<c, epoch>>}]
+            /\ Started
+            /\ UNCHANGED <<parked, refusals>>
+    /\ Asked(l) /\ Exchanged(l) /\ TakeRest
 
 \* NONE (nothing ready for her) or a refusal (STOPPED, her width full): nothing moves, and
 \* the lane runs nothing (RunOnNone: it runs a card still ready, "took" on an OK that moved
@@ -209,19 +271,24 @@ TakeNone(l) ==
                  lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> c, ep |-> epoch]]
             /\ Started
        ELSE UNCHANGED <<lc, wvars>>
-    /\ Exchanged(l) /\ TakeRest
+    /\ UNCHANGED <<parked, refusals>>
+    /\ Asked(l) /\ Exchanged(l) /\ TakeRest
 
 Take(l) == TakeHolds(l) \/ (\E c \in Cards : TakeGrant(l, c)) \/ TakeNone(l)
 
-\* what do I hold: the lane after a crash, a restart or a clear asks before anything else.
+\* what do I hold: the lane after a crash, a restart or a clear asks before anything else (the
+\* code's first laneAsk after a start, never held back). A line it cannot read parks it again.
 Held(l) ==
-    /\ alive[l] /\ lc[l].st = "restart"
+    /\ alive[l] /\ lc[l].st = "restart" /\ ~parked[l]
     /\ IF srv[l].card # None /\ srv[l].ep = epoch
-       THEN /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> srv[l].card, ep |-> srv[l].ep]]
-            /\ granted' = [granted EXCEPT ![l] = @ \cup {ServerSays(l)}]
+       THEN IF Unreadable(srv[l].card)
+            THEN Refuse(l)
+            ELSE /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> srv[l].card, ep |-> srv[l].ep]]
+                 /\ granted' = [granted EXCEPT ![l] = @ \cup {ServerSays(l)}]
+                 /\ UNCHANGED <<parked, refusals>>
        ELSE /\ lc' = [lc EXCEPT ![l] = Idle]
-            /\ UNCHANGED granted
-    /\ Exchanged(l)
+            /\ UNCHANGED <<granted, parked, refusals>>
+    /\ Asked(l) /\ Exchanged(l)
     /\ UNCHANGED <<epoch, col, srv, alive, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 \* A refused verb: the lane drops the job (KeepOnRefusal: it runs on regardless).
@@ -240,14 +307,14 @@ Begin(l) ==
             /\ UNCHANGED staleStep
        ELSE /\ Drop(l) /\ UNCHANGED staleStep
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, col, srv, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 \* A work card's start: taken to running with no request (lane_take.go laneAsk runs exactly
 \* what the take's answer named; no begin is sent).
 Run(l) ==
     /\ alive[l] /\ lc[l].st = "taken" /\ lc[l].card \notin Reads
     /\ lc' = [lc EXCEPT ![l].st = "running"]
-    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 Progress(l) ==
     /\ alive[l] /\ lc[l].st = "running"
@@ -255,7 +322,7 @@ Progress(l) ==
        THEN UNCHANGED lc
        ELSE Drop(l)
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, col, srv, alive, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 Finish(l) ==
     /\ alive[l] /\ lc[l].st = "running"
@@ -267,7 +334,7 @@ Finish(l) ==
             /\ Applied(l, lc[l].ep)
        ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep>>
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 \* The lane finishes, failed, a card it was told it holds and cannot run: its outbox holds
 \* the report of a run before that no step finished (lane_take.go finishStale).
@@ -281,7 +348,7 @@ TakenFinish(l) ==
             /\ Applied(l, lc[l].ep)
        ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep>>
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 \* The lane gives its card back: it was told it holds a card it will not run (after a
 \* restart, the job's tree gone), or its run was cut (the machine's stop, a cap).
@@ -296,7 +363,7 @@ Return(l) ==
        ELSE UNCHANGED <<col, srv, staleStep>>
     /\ lc' = [lc EXCEPT ![l] = Idle]
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 \* A row read that disagrees with the lane (the card left her row, is not working there, or
 \* another lane holds it: lane_take.go laneCheck) revokes the grant and the lane drops the
@@ -309,7 +376,7 @@ RowDrop(l) ==
     /\ IF KeepOnMismatch
        THEN UNCHANGED lc
        ELSE lc' = [lc EXCEPT ![l] = Idle]
-    /\ UNCHANGED <<epoch, col, srv, alive, stale, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 -----------------------------------------------------------------------------
 \* The lane's process dies (a crash, the daemon stopped); what it held is the server's.
@@ -320,27 +387,35 @@ Crash(l) ==
     /\ lc' = [lc EXCEPT ![l] = [st |-> "down", card |-> None, ep |-> 0]]
     /\ stale' = [stale EXCEPT ![l] = TRUE]
     /\ crashes' = crashes + 1
-    /\ UNCHANGED <<epoch, col, srv, granted, staleStep, clears, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, col, srv, granted, staleStep, clears, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
-\* It comes back with nothing: its first word is Held.
+\* It comes back with nothing: its first word is Held. A daemon start makes each lane anew
+\* (lanes.go: &lane{n, session}, askAt zero): a parked lane is unparked, its count of refusals 0.
+\* StickyPark: the park outlives the restart (an askAt carried across it).
 Restart(l) ==
     /\ ~alive[l]
     /\ alive' = [alive EXCEPT ![l] = TRUE]
     /\ lc' = [lc EXCEPT ![l] = [st |-> "restart", card |-> None, ep |-> 0]]
-    /\ UNCHANGED <<epoch, col, srv, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ IF StickyPark
+       THEN UNCHANGED <<parked, refusals>>
+       ELSE /\ parked' = [parked EXCEPT ![l] = FALSE]
+            /\ refusals' = [refusals EXCEPT ![l] = 0]
+    /\ UNCHANGED <<epoch, col, srv, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, askedAfter>>
 
 \* The server: a lane that has not asked within the bound is gone; its card bounces back.
-\* A dead lane never asks; a live one may be slow past the bound too (bounded).
+\* A dead lane never asks, nor does a parked one; a live one may be slow past the bound too
+\* (bounded).
 Gone(l) ==
     /\ ~NoGone
     /\ srv[l].card # None
     /\ \/ ~alive[l]
+       \/ parked[l]
        \/ gones < MaxGones
     /\ col' = [col EXCEPT ![srv[l].card] = "ready"]
     /\ srv' = [srv EXCEPT ![l] = Nobody]
     /\ stale' = [stale EXCEPT ![l] = TRUE]
-    /\ gones' = IF alive[l] THEN gones + 1 ELSE gones
-    /\ UNCHANGED <<epoch, alive, lc, granted, staleStep, clears, crashes, returns, W, cw, pastWidth, unanswered>>
+    /\ gones' = IF alive[l] /\ ~parked[l] THEN gones + 1 ELSE gones
+    /\ UNCHANGED <<epoch, alive, lc, granted, staleStep, clears, crashes, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 \* clear: tabula rasa, a new epoch and a new deal; every record of the old epoch dropped.
 Clear ==
@@ -350,7 +425,7 @@ Clear ==
     /\ srv' = [l \in Lanes |-> Nobody]
     /\ stale' = [l \in Lanes |-> TRUE]
     /\ clears' = clears + 1
-    /\ UNCHANGED <<alive, lc, granted, staleStep, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<alive, lc, granted, staleStep, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 -----------------------------------------------------------------------------
 \* The width. The server's changes on its own (nova-config friend/machine set --width, an
@@ -358,7 +433,7 @@ Clear ==
 ChangeWidth ==
     /\ \E w \in Widths \ {W} : W' = w
     /\ UNCHANGED <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns,
-                   cw, pastWidth, unanswered>>
+                   cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 \* The client's read (RowWidth): the beat answer's row_width every daemon step (row), the
 \* queue answer's Width every member pass (Tick); no answer naming one is 0 (max(w, 0)).
@@ -371,7 +446,7 @@ RowWidth ==
        THEN lc' = [l \in Lanes |-> IF Holding(l) /\ l > W THEN Idle ELSE lc[l]]
        ELSE UNCHANGED lc
     /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns,
-                   W, pastWidth, unanswered>>
+                   W, pastWidth, unanswered, parked, refusals, askedAfter>>
 
 Next ==
     \/ \E l \in Lanes :
@@ -384,8 +459,8 @@ Next ==
 Fairness ==
     /\ \A l \in Lanes : WF_vars(TakeHolds(l)) /\ WF_vars(\E c \in Cards : TakeGrant(l, c))
     /\ \A l \in Lanes : WF_vars(Held(l)) /\ WF_vars(Begin(l)) /\ WF_vars(Run(l)) /\ WF_vars(Finish(l))
-    \* the bound passes for a lane that is down: its card bounces back
-    /\ \A l \in Lanes : WF_vars(~alive[l] /\ Gone(l))
+    \* the bound passes for a lane that is down or parked (silent): its card bounces back
+    /\ \A l \in Lanes : WF_vars((~alive[l] \/ parked[l]) /\ Gone(l))
     \* the client reads its width again on its next step
     /\ WF_vars(RowWidth)
 
@@ -401,6 +476,9 @@ TypeOK ==
     /\ W \in Widths
     /\ cw \in Widths \cup {0}
     /\ pastWidth \in BOOLEAN /\ unanswered \in BOOLEAN
+    /\ parked \in [Lanes -> BOOLEAN]
+    /\ refusals \in [Lanes -> 0..2]
+    /\ askedAfter \in BOOLEAN
 
 \* A card is working only on the server's say-so: a lane holds only what an answer gave
 \* it, and every working card is held by one lane's record.
@@ -411,9 +489,11 @@ WorkingOnlyOnTheServersSay ==
 
 \* The lane and the server never disagree on what a lane holds beyond one request: they
 \* differ only when the server changed the record (gone, clear) or the lane lost its own
-\* (crash) since its last exchange, and its next exchange makes them agree.
+\* (crash) since its last exchange, and its next exchange makes them agree. A parked lane is
+\* the one exception: it refused the card its record holds and sends no next exchange; the
+\* record goes by the gone bound (ParkedRecordIsGone).
 OneRequestApart ==
-    \A l \in Lanes : (alive[l] /\ lc[l].st # "restart" /\ ~stale[l]) => LaneSays(l) = ServerSays(l)
+    \A l \in Lanes : (alive[l] /\ lc[l].st # "restart" /\ ~stale[l] /\ ~parked[l]) => LaneSays(l) = ServerSays(l)
 
 \* No step naming a stale epoch changes state.
 NoStaleStep == ~staleStep
@@ -442,4 +522,23 @@ WidthIsFilled ==
     \A k \in Ks :
         (W >= k /\ ReadyN > 0 /\ Cardinality(Live) < k)
             ~> (Cardinality(Live) >= k \/ ReadyN = 0 \/ W < k)
+\* The parked lane (#5724). A parked lane holds no card: it runs nothing.
+ParkedRunsNothing == \A l \in Lanes : parked[l] => ~Holding(l)
+
+\* An unparseable line is refused once per daemon life, never in a loop; a parked lane has
+\* been refused once.
+RefusedOnceNotALoop == \A l \in Lanes : refusals[l] <= 1 /\ (parked[l] => refusals[l] = 1)
+
+\* A lane refused an unparseable line sends no ask (take, held) until its daemon restarts.
+ParkedNeverAsks == ~askedAfter
+
+\* The record a parked lane refused is dropped: the lane is silent, so the gone bound passes
+\* (or a clear drops it, or the lane is restarted and asks again).
+ParkedRecordIsGone ==
+    \A l \in Lanes : (parked[l] /\ srv[l].card # None) ~> (srv[l].card = None \/ ~parked[l])
+
+\* A parked lane resumes after a restart: a restarted lane asks again (Held, its first word),
+\* unless it goes down again first.
+ResumesAfterRestart ==
+    \A l \in Lanes : (alive[l] /\ lc[l].st = "restart") ~> (~alive[l] \/ lc[l].st # "restart")
 =============================================================================
