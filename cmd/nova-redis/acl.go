@@ -181,7 +181,6 @@ func aclRenderVerb(d deps) tool.Verb {
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 		},
 		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "render") },
 	}
@@ -195,7 +194,6 @@ func aclCheckVerb(d deps) tool.Verb {
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			loginFlags(f)
 		},
 		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "check") },
@@ -211,7 +209,6 @@ func aclApplyVerb(d deps) tool.Verb {
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			loginFlags(f)
 			f.Var(passwordSources{}, "password-env-for", "<user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one")
 			f.String("rotate", "", "comma-separated ACL users whose password this run rotates: the variable --password-env-for names for the user holds the password to add beside the old one, or with --drop-old the old one to remove (neither value is printed)")
@@ -234,15 +231,31 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("this build's roles do not render: %s; fix pkg/redisacl and rebuild", err))
 	}
 	if sub == "render" {
+		fns := 0
+		for _, u := range users {
+			fns = max(fns, u.Functions)
+		}
+		if c.Bool("json") {
+			// --json is the other rendering of the same value: the families and
+			// the user commands as items, the totals as facts, one object; the
+			// text form below is unchanged (STANDARD §2, one output structure,
+			// two renderings).
+			o := tool.Done().Fact("users", len(users)).Fact("functions", fns).Fact("library", digest)
+			for _, f := range redisacl.Families {
+				o.Item("family", "name", f.Name, "keys", strings.Join(f.Patterns, ","))
+			}
+			for _, u := range users {
+				o.Item("setuser", "user", u.Name, "rules", strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "))
+			}
+			return jsonResult(c, "acl render", o)
+		}
 		// A family is what an operator reads: its name and its key patterns.
 		for _, f := range redisacl.Families {
 			line(c.Stdout, "ACL FAMILY", "name", f.Name, "keys", free(strings.Join(f.Patterns, ",")))
 		}
-		fns := 0
 		for _, u := range users {
 			// The user's pasteable command (redisacl.User.Line): its rules follow its name.
 			line(c.Stdout, "ACL SETUSER", "user", bare{u.Name, u.Name}, "rules", bare{strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "), u.Rules})
-			fns = max(fns, u.Functions)
 		}
 		line(c.Stdout, "ACL RENDER OK", "users", len(users), "functions", fns, "library", digest)
 		return tool.Exit(0)
@@ -287,6 +300,16 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	}
 	failed := func(err error) *tool.Out {
 		cause, _, _ := strings.Cut(oneline.Err(err), "; next: ")
+		if c.Bool("json") {
+			// --json is the other rendering of the same value: the cause is the
+			// reason, the store and remedy the facts, one object (STANDARD §2,
+			// one output structure, two renderings).
+			o := tool.Fail(cause).Fact("store", at).Fact("remedy", tool.Text("log in as a user that may run ACL GETUSER, ACL CAT and ACL SETUSER: check --user ("+UserEnv+") and the password in "+*store.passwordEnv+", then nova-redis acl "+sub+" "+store.flags()))
+			if !answered(err) {
+				o.Status, o.Exit = tool.Refused, 2
+			}
+			return jsonResult(c, "acl "+sub, o)
+		}
 		line(c.Stderr, "ACL "+strings.ToUpper(sub)+" FAILED", "store", at, "err", free(cause), "remedy",
 			quoted("log in as a user that may run ACL GETUSER, ACL CAT and ACL SETUSER: check --user ("+UserEnv+") and the password in "+*store.passwordEnv+", then nova-redis acl "+sub+" "+store.flags()))
 		if answered(err) {
@@ -323,6 +346,9 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	for _, n := range names {
 		rendered[n] = true
 	}
+	asJSON := c.Bool("json")
+	var items []tool.Item
+	var notes []string
 	var differ []redisacl.User
 	for _, u := range users {
 		dr := redisacl.Compare(u, live[u.Name], cat)
@@ -336,13 +362,25 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		}
 		switch {
 		case dr.None() && !nopass:
-			line(c.Stdout, "ACL OK", "user", u.Name, "role", u.Role)
+			if asJSON {
+				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}, {K: "status", V: "ok"}}})
+			} else {
+				line(c.Stdout, "ACL OK", "user", u.Name, "role", u.Role)
+			}
 		case dr.Missing:
-			line(c.Stdout, "ACL MISSING", "user", u.Name, "role", u.Role)
+			if asJSON {
+				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}, {K: "status", V: "missing"}}})
+			} else {
+				line(c.Stdout, "ACL MISSING", "user", u.Name, "role", u.Role)
+			}
 			differ = append(differ, u)
 		default:
 			// Fields is the drift as the line spells it; --json carries every name.
-			line(c.Stdout, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{fields, dr})
+			if asJSON {
+				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}, {K: "status", V: "drift"}, {K: "drift", V: fields}}})
+			} else {
+				line(c.Stdout, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{fields, dr})
+			}
 			differ = append(differ, u)
 		}
 	}
@@ -350,13 +388,37 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	sort.Strings(everyone)
 	for _, n := range everyone {
 		if !rendered[n] {
-			note(c.Stdout, fmt.Sprintf("ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is", oneline.Field(n)))
+			if asJSON {
+				notes = append(notes, fmt.Sprintf("ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is", oneline.Field(n)))
+			} else {
+				note(c.Stdout, fmt.Sprintf("ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is", oneline.Field(n)))
+			}
 		}
 	}
 	if def := live["default"]; def.Exists {
-		note(c.Stdout, fmt.Sprintf("ACL DEFAULT on=%t nopass=%t", def.On, def.NoPass))
+		if asJSON {
+			notes = append(notes, fmt.Sprintf("ACL DEFAULT on=%t nopass=%t", def.On, def.NoPass))
+		} else {
+			note(c.Stdout, fmt.Sprintf("ACL DEFAULT on=%t nopass=%t", def.On, def.NoPass))
+		}
 	}
 	if sub == "check" {
+		if asJSON {
+			// --json is the other rendering of the same value: the per-user
+			// results as items, the totals as facts, one object (STANDARD §2,
+			// one output structure, two renderings).
+			o := tool.Done().Fact("users", len(users)).Fact("library", digest).Fact("store", at)
+			o.Items = items
+			o.Notes = notes
+			if alias != "" {
+				o.Note(alias)
+			}
+			if len(differ) > 0 {
+				o.Status, o.Exit = tool.Failed, 1
+				o.Fact("differ", len(differ)).Fact("remedy", tool.Text("nova-redis acl apply "+store.flags()+" sets the users that differ"))
+			}
+			return jsonResult(c, "acl check", o)
+		}
 		if len(differ) == 0 {
 			line(c.Stdout, "ACL CHECK OK", "users", len(users), "library", digest, "store", at)
 			after()
@@ -388,12 +450,26 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		}
 	}
 	if len(unsourced) > 0 {
+		if asJSON {
+			o := tool.Fail("a user the store lacks is created only with a password").
+				Fact("users", len(users)).Fact("missing", strings.Join(unsourced, ",")).
+				Fact("remedy", tool.Text("nova-redis acl apply "+store.flags()+passwordFlags(unsourced)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			o.Items, o.Notes = items, notes
+			return jsonResult(c, "acl apply", o)
+		}
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
 			"", why("a user the store lacks is created only with a password"),
 			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourced)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return tool.Exit(1)
 	}
 	if len(unsourcedNoPass) > 0 {
+		if asJSON {
+			o := tool.Fail("a live user that carries nopass is mended only with a password from the variable --password-env-for names").
+				Fact("users", len(users)).Fact("nopass", strings.Join(unsourcedNoPass, ",")).
+				Fact("remedy", tool.Text("nova-redis acl apply "+store.flags()+passwordFlags(unsourcedNoPass)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			o.Items, o.Notes = items, notes
+			return jsonResult(c, "acl apply", o)
+		}
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "nopass", free(strings.Join(unsourcedNoPass, ",")),
 			"", why("a live user that carries nopass is mended only with a password from the variable --password-env-for names"),
 			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourcedNoPass)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
@@ -410,10 +486,19 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			rules = append([]string{"resetpass", ">" + d.getenv(sources[u.Name])}, rules...)
 		}
 		if err := srv.SetUser(ctx, u.Name, rules); err != nil {
+			if asJSON {
+				o := tool.Fail(err.Error()).Fact("users", len(users)).Fact("set", i).Fact("user", u.Name)
+				o.Items, o.Notes = items, notes
+				return jsonResult(c, "acl apply", o)
+			}
 			line(c.Stdout, "ACL APPLY FAILED", "users", len(users), "set", i, "user", u.Name)
 			return failed(err)
 		}
-		line(c.Stdout, "ACL SET", "user", u.Name, "role", u.Role)
+		if asJSON {
+			items = append(items, tool.Item{Kind: "set", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}}})
+		} else {
+			line(c.Stdout, "ACL SET", "user", u.Name, "role", u.Role)
+		}
 	}
 	// --rotate adds one password beside a user's own (or, with --drop-old,
 	// removes the one the variable names): the value reaches the store as a
@@ -434,12 +519,26 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		}
 	}
 	if len(missingRotate) > 0 {
+		if asJSON {
+			o := tool.Fail("a password is rotated only on a user the store already has").
+				Fact("users", len(users)).Fact("rotate", strings.Join(missingRotate, ",")).
+				Fact("remedy", tool.Text("nova-redis acl apply "+store.flags()+" creates a missing user with --password-env-for <user>=<VARIABLE>"))
+			o.Items, o.Notes = items, notes
+			return jsonResult(c, "acl apply", o)
+		}
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "rotate", free(strings.Join(missingRotate, ",")),
 			"", why("a password is rotated only on a user the store already has"),
 			"", next("nova-redis acl apply "+store.flags()+" creates a missing user with --password-env-for <user>=<VARIABLE>"))
 		return tool.Exit(1)
 	}
 	if len(unsourcedRotate) > 0 {
+		if asJSON {
+			o := tool.Fail("a rotated password is read from the variable --password-env-for names").
+				Fact("users", len(users)).Fact("rotate", strings.Join(unsourcedRotate, ",")).
+				Fact("remedy", tool.Text("nova-redis acl apply "+store.flags()+passwordFlags(unsourcedRotate)+" --rotate "+strings.Join(unsourcedRotate, ",")+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			o.Items, o.Notes = items, notes
+			return jsonResult(c, "acl apply", o)
+		}
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "rotate", free(strings.Join(unsourcedRotate, ",")),
 			"", why("a rotated password is read from the variable --password-env-for names"),
 			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourcedRotate)+" --rotate "+strings.Join(unsourcedRotate, ",")+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
@@ -452,10 +551,19 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			rule = "<" + d.getenv(sources[u])
 		}
 		if err := srv.SetUser(ctx, u, []string{rule}); err != nil {
+			if asJSON {
+				o := tool.Fail(err.Error()).Fact("users", len(users)).Fact("rotate", u)
+				o.Items, o.Notes = items, notes
+				return jsonResult(c, "acl apply", o)
+			}
 			line(c.Stdout, "ACL APPLY FAILED", "users", len(users), "rotate", u)
 			return failed(err)
 		}
-		line(c.Stdout, "ACL ROTATE", "user", u, "drop-old", dropOld)
+		if asJSON {
+			items = append(items, tool.Item{Kind: "rotate", Fields: tool.Fields{{K: "user", V: u}, {K: "drop-old", V: dropOld}}})
+		} else {
+			line(c.Stdout, "ACL ROTATE", "user", u, "drop-old", dropOld)
+		}
 		rotated++
 	}
 	saved := "none"
@@ -468,8 +576,23 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		if ok {
 			saved = "acl-file"
 		} else {
-			note(c.Stdout, "ACL NOT SAVED: the store keeps no ACL file, so the users set here last until it restarts; run the store with nova-redis serve, which keeps them in <store-dir>/"+aclFileName)
+			if asJSON {
+				notes = append(notes, "ACL NOT SAVED: the store keeps no ACL file, so the users set here last until it restarts; run the store with nova-redis serve, which keeps them in <store-dir>/"+aclFileName)
+			} else {
+				note(c.Stdout, "ACL NOT SAVED: the store keeps no ACL file, so the users set here last until it restarts; run the store with nova-redis serve, which keeps them in <store-dir>/"+aclFileName)
+			}
 		}
+	}
+	if asJSON {
+		// --json is the other rendering of the same value: the per-user set and
+		// rotate results as items, the totals as facts, one object (STANDARD §2,
+		// one output structure, two renderings).
+		o := tool.Done().Fact("users", len(users)).Fact("set", len(differ)).Fact("saved", saved).Fact("library", digest).Fact("store", at).Fact("rotated", rotated)
+		o.Items, o.Notes = items, notes
+		if alias != "" {
+			o.Note(alias)
+		}
+		return jsonResult(c, "acl apply", o)
 	}
 	line(c.Stdout, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at, "rotated", rotated)
 	after()

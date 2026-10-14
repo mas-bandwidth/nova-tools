@@ -1,5 +1,11 @@
 package main
 
+import (
+	"bytes"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
+)
+
 // The value types the Prints verbs' line printer (line, in fn.go) renders:
 // a quoted Go string, free text already escaped, a bare value printed with no
 // key, a reason a line closes with, and the command a line closes with.
@@ -16,4 +22,20 @@ type (
 type bare struct {
 	text string
 	v    any
+}
+
+// jsonResult renders o as one JSON object to c.Stdout and returns the exit that
+// stands, so a Prints verb's --json branch prints one object (STANDARD §2,
+// one output structure, two renderings) and the skeleton does not render it
+// again. The verb's name is set here, as the skeleton's emit would, because
+// the verb renders its own object. A write that does not land, and an exit
+// that was 0, becomes 1: the result did not reach its reader (pkg/tool emit).
+func jsonResult(c *tool.Call, verb string, o *tool.Out) *tool.Out {
+	o.Verb = verb
+	var b bytes.Buffer
+	o.Render(&b, true)
+	if _, err := c.Stdout.Write(b.Bytes()); err != nil && o.Exit == 0 {
+		return tool.Exit(1)
+	}
+	return tool.Exit(o.Exit)
 }

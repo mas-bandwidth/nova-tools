@@ -67,6 +67,12 @@ nova-redis help
   store with no ACL file gets `saved=no-acl-file` and a NOTE that they will
   not.
 - `version` and `help`, the two every binary in this family carries.
+- Every verb takes `--json` (docs/STANDARD.md §2, one output structure, two
+  renderings). A refusal is one object. `spill`, `recall`, `fn load`,
+  `fn check`, `acl render`, `acl check` and `acl apply` print that same object
+  for a success and a failure; text without `--json` is unchanged, and
+  `recall --json` carries the value exactly. `serve`, `install` and
+  `uninstall` take the flag; a run that writes its own lines keeps them.
 
 ## Bind, auth and persistence
 

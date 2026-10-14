@@ -108,7 +108,6 @@ the persistence, auth and eviction rules it would use. It defers every effect: i
 creates no directory, writes no file, reads no password or environment, looks up no
 redis-server and launches nothing.`,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			f.String("bind", "", "comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only")
 			f.String("port", "", "the TCP port to listen on, 1 to 65535 (6379 is Redis's own)")
 			f.String("dir", "", "the absolute path of the store directory (AOF, RDB and ACL files), created 0700 when missing")

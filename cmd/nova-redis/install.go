@@ -62,7 +62,6 @@ The unit carries no password: serve reads it in its own process from --secret in
 --as of the secrets store --secrets. --dry-run prints the unit and writes and loads nothing.
 example: nova-redis install ` + kind + ` --dry-run --secrets ~/nova-bench/secrets --as <seat> --key <file> --sops <path> --secret <NAME>`,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			f.String("bind", "127.0.0.1", "comma-separated IP addresses the server listens on, loopback or tailnet only (serve --bind)")
 			f.String("port", strconv.Itoa(port), "the TCP port the server listens on (serve --port)")
 			f.String("dir", "", "the absolute path of the store directory (serve --dir; default: ~/nova-bench/redis/"+kind+")")
@@ -85,7 +84,6 @@ func uninstallVerb(d deps, kind string) tool.Verb {
 are kept. --dry-run names the unit and unloads and removes nothing.
 example: nova-redis uninstall ` + kind + ` --dry-run`,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			f.String("units", "", "the directory the unit was written into (default: as install's)")
 		},
 		Run: func(c *tool.Call) *tool.Out { return uninstallRun(c, d, kind) },
