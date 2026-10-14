@@ -44,7 +44,7 @@ import (
 const functionNotFound = "ERR Function not found"
 
 // deployRemedy is the deployer's load of this build's library.
-const deployRemedy = "run: nova-redis fn load --addr <host:port> (the deployer's load of this build's library)"
+const deployRemedy = "run: nova-redis fn load --redis <host:port> (the deployer's load of this build's library)"
 
 // libraryLoad puts the library on the store the hook's client talks to when
 // the store holds none (redisfn.Library.LoadMissing).
@@ -157,11 +157,25 @@ func (h libraryHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 // only when every command in it is an FCALL the store answered "Function not
 // found", so none of them ran anything; a pipeline with any other command, or
 // a transaction (its MULTI and EXEC), is never sent again, and its missing
-// FCALLs carry the remedy.
+// FCALLs carry the remedy. A pipeline whose missing commands are all reads
+// (FCALL_RO) is refused without a load, as ProcessHook refuses one read: watch
+// reads every table through such a pipeline (tableSnapshots), so it never
+// loads the library either (SPEC-NOVA-TABLE, read-only execution).
 func (h libraryHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		err := next(ctx, cmds)
 		if !anyMissing(cmds) {
+			return err
+		}
+		// A read never loads, so a pipeline of reads refuses on the spot with
+		// the deployer's remedy, neither loading nor sending again
+		// (SPEC-NOVA-TABLE, read-only execution).
+		if anyMissingRead(cmds) {
+			if first := pipelineErrors(cmds, func(cmd redis.Cmder) *libraryError {
+				return &libraryError{cmd: cmd, err: cmd.Err(), read: true}
+			}); first != nil {
+				return first
+			}
 			return err
 		}
 		again, receipt, lerr := h.state.ensure(ctx, h.load)
@@ -171,24 +185,50 @@ func (h libraryHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 				return err
 			}
 		}
-		var first error
-		for _, cmd := range cmds {
-			if missing(cmd, cmd.Err()) {
-				cmd.SetErr(&libraryError{cmd: cmd, err: cmd.Err(), receipt: receipt, load: lerr})
-			}
-			if first == nil && cmd.Err() != nil {
-				first = cmd.Err()
-			}
-		}
-		if first != nil {
+		if first := pipelineErrors(cmds, func(cmd redis.Cmder) *libraryError {
+			return &libraryError{cmd: cmd, err: cmd.Err(), receipt: receipt, load: lerr}
+		}); first != nil {
 			return first
 		}
 		return err
 	}
 }
 
+// pipelineErrors replaces each missing command's error with a libraryError
+// built by build, and returns the first error in the pipeline's order, so a
+// caller surfaces the same refusal a single command would.
+func pipelineErrors(cmds []redis.Cmder, build func(redis.Cmder) *libraryError) error {
+	var first error
+	for _, cmd := range cmds {
+		if missing(cmd, cmd.Err()) {
+			cmd.SetErr(build(cmd))
+		}
+		if first == nil && cmd.Err() != nil {
+			first = cmd.Err()
+		}
+	}
+	return first
+}
+
 func anyMissing(cmds []redis.Cmder) bool {
 	return slices.ContainsFunc(cmds, func(cmd redis.Cmder) bool { return missing(cmd, cmd.Err()) })
+}
+
+// anyMissingRead reports whether the pipeline's missing commands (the FCALLs
+// the store answered "Function not found") are all reads (FCALL_RO) and there
+// is at least one: a pipeline of reads, which never loads.
+func anyMissingRead(cmds []redis.Cmder) bool {
+	found := false
+	for _, cmd := range cmds {
+		if !missing(cmd, cmd.Err()) {
+			continue
+		}
+		if cmd.Name() != "fcall_ro" {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 func allMissing(cmds []redis.Cmder) bool {

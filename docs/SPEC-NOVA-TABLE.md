@@ -193,10 +193,11 @@ are no separate `col hide/show` subverbs and `create` does not take `--hidden`.
 4. **Epoch fencing**: Mutations verify the caller's observed epoch against the
    active table epoch. Writes against a stale epoch refuse with `ErrStale` and
    leave the store unchanged.
- 5. **Read-only execution**: Queries (`show`, `render`, `list`, and default
-    `watch`) perform zero mutations, writes, or deletions. They never load
-    the function library: a store that holds none is refused with the
-    deployer's remedy (`nova-redis fn load`) instead of being written to.
+5. **Read-only execution**: Queries (`show`, `render`, `list`, `check`, `cell
+   members`, `member find`, `member read`, `view show`, `view list`, and
+   `watch`) perform zero mutations, writes, or deletions. They never load the
+   function library: a store that holds none is refused with the deployer's
+   remedy (`nova-redis fn load`) instead of being written to.
 
 ---
 

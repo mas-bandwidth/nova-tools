@@ -3830,9 +3830,9 @@ typed lines a program reads, and the text a person reads. These commands assume
 a configured store that holds this build's function library. On a store that
 holds none, the first verb that writes loads it (first contact, never replacing
 a library the store holds) and its `trips=` counts the load; a read (`show`,
-`list`, `render`, `cell members`, `member read`, `check`, `view show`, `view
-list`) never loads and is refused with the deployer's remedy, `nova-redis fn
-load`; for a fresh local Redis,
+`list`, `render`, `check`, `cell members`, `member find`, `member read`, `view
+show`, `view list`, `watch`) never loads and is refused with the deployer's
+remedy, `nova-redis fn load`; for a fresh local Redis,
 follow [Start locally](nova-table/README.md#start-locally), or the `first run:`
 lines of `nova-table help`, which start a throwaway one. With no store at all,
 every verb that writes runs under `--dry-run`: it makes every check the real
