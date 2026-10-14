@@ -1,12 +1,12 @@
 package tokens
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -260,7 +260,7 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 		isDeclared[l] = true
 	}
 	folded := append([]string(nil), declared...)
-	sort.Strings(folded)
+	slices.Sort(folded)
 
 	rows = append(rows, fresh...)
 	computed := map[string]bool{}
@@ -295,9 +295,8 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 			retained++
 		}
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		return keyLess(Key{Model: rows[i].Model, Repo: rows[i].Repo},
-			Key{Model: rows[j].Model, Repo: rows[j].Repo})
+	slices.SortStableFunc(rows, func(a, b DayRow) int {
+		return cmp.Or(cmp.Compare(a.Model, b.Model), cmp.Compare(a.Repo, b.Repo))
 	})
 	return rows, retained, partials
 }
@@ -310,18 +309,12 @@ func partialOf(r DayRow, folded []string, why string) Partial {
 // SourcesOf is the union of every row's sources, sorted: what the version line's `sources=`
 // says about the file that was actually written, retained rows included.
 func SourcesOf(rows []DayRow) []string {
-	seen := map[string]bool{}
 	var out []string
 	for _, r := range rows {
-		for _, l := range r.Sources {
-			if !seen[l] {
-				seen[l] = true
-				out = append(out, l)
-			}
-		}
+		out = append(out, r.Sources...)
 	}
-	sort.Strings(out)
-	return out
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // ParseDayFile reads a day file and returns everything wrong with it rather than the first
@@ -485,7 +478,7 @@ func MissingDays(days []string) []string {
 		return nil
 	}
 	sorted := append([]string(nil), days...)
-	sort.Strings(sorted)
+	slices.Sort(sorted)
 	have := map[string]bool{}
 	for _, d := range sorted {
 		have[d] = true

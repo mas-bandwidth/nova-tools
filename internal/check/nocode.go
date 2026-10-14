@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 )
@@ -141,7 +140,7 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 			return nil, nil, fmt.Errorf("floor name list: %q has no name: or path: prefix", line)
 		}
 	}
-	sort.Strings(prefixes)
+	slices.Sort(prefixes)
 	return names, prefixes, nil
 }
 

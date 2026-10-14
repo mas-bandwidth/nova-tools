@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -137,11 +138,8 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 		}
 	}
 
-	sort.SliceStable(messages, func(i, j int) bool {
-		if messages[i]["stamp"] != messages[j]["stamp"] {
-			return messages[i]["stamp"] < messages[j]["stamp"]
-		}
-		return messages[i]["id"] < messages[j]["id"]
+	slices.SortStableFunc(messages, func(a, b map[string]string) int {
+		return cmp.Or(cmp.Compare(a["stamp"], b["stamp"]), cmp.Compare(a["id"], b["id"]))
 	})
 
 	prev := map[string]string{}

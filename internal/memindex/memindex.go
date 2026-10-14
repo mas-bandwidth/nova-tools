@@ -42,12 +42,13 @@ judgment is reachable by a test with no tempdir.
 package memindex
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"io/fs"
 	"path"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -346,7 +347,7 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("walking corpus: %w", err)
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no markdown files found — wrong root, or everything excluded")
 	}
@@ -416,7 +417,7 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 	// is needed — but the determinism of every result rests on that invariant,
 	// so assert it cheaply rather than trusting the construction forever.
 	for t, ids := range c.Post {
-		if !sort.SliceIsSorted(ids, func(i, j int) bool { return ids[i] < ids[j] }) {
+		if !slices.IsSortedFunc(ids, func(a, b int32) int { return cmp.Compare(a, b) }) {
 			return nil, fmt.Errorf("internal: postings for %q not sorted", t)
 		}
 	}
@@ -460,7 +461,7 @@ func Merge(parts []*Corpus, roots []string) *Corpus {
 	// within each), so the determinism invariant holds without a sort — but the
 	// guarantee is stated here the same way Build states it.
 	for t, ids := range out.Post {
-		if !sort.SliceIsSorted(ids, func(i, j int) bool { return ids[i] < ids[j] }) {
+		if !slices.IsSortedFunc(ids, func(a, b int32) int { return cmp.Compare(a, b) }) {
 			panic(fmt.Sprintf("internal: merged postings for %q not sorted", t))
 		}
 	}

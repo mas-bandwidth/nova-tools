@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"io/fs"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -56,7 +56,7 @@ func ReadSwarm(label, pool string, fsys fs.FS, rules *Rules) *Source {
 		files = append(files, filepath.Join("usage", e.Name()))
 		have[strings.TrimSuffix(e.Name(), FileSuffix)] = true
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 
 	seen := map[string]bool{}
 	for _, name := range files {

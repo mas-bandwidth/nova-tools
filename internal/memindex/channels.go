@@ -1,9 +1,10 @@
 package memindex
 
 import (
+	"cmp"
 	"container/heap"
 	"math"
-	"sort"
+	"slices"
 )
 
 // Scored is one channel's opinion of one chunk. Rank is 0-based within the
@@ -191,11 +192,8 @@ func topK(scores map[int32]float64, k int) []Scored {
 		}
 		out = []Scored(h)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		return out[i].Chunk < out[j].Chunk
+	slices.SortFunc(out, func(a, b Scored) int {
+		return cmp.Or(cmp.Compare(b.Score, a.Score), cmp.Compare(a.Chunk, b.Chunk))
 	})
 	for i := range out {
 		out[i].Rank = i
@@ -333,17 +331,13 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 	for _, h := range best {
 		hits = append(hits, h)
 	}
-	sort.Slice(hits, func(i, j int) bool {
-		if hits[i].Fused != hits[j].Fused {
-			return hits[i].Fused > hits[j].Fused
-		}
-		if hits[i].Root != hits[j].Root {
-			return hits[i].Root < hits[j].Root
-		}
-		if hits[i].File != hits[j].File {
-			return hits[i].File < hits[j].File
-		}
-		return hits[i].Para < hits[j].Para
+	slices.SortFunc(hits, func(a, b FileHit) int {
+		return cmp.Or(
+			cmp.Compare(b.Fused, a.Fused),
+			cmp.Compare(a.Root, b.Root),
+			cmp.Compare(a.File, b.File),
+			cmp.Compare(a.Para, b.Para),
+		)
 	})
 	if len(hits) > k {
 		hits = hits[:k]

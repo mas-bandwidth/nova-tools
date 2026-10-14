@@ -2,10 +2,11 @@ package tokens
 
 import (
 	"bufio"
+	"cmp"
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -115,11 +116,8 @@ func (r *Rules) Unattributed() []UnattributedStem {
 	for stem, n := range r.stems {
 		out = append(out, UnattributedStem{Stem: stem, Count: n})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
-		}
-		return out[i].Stem < out[j].Stem
+	slices.SortFunc(out, func(a, b UnattributedStem) int {
+		return cmp.Or(cmp.Compare(b.Count, a.Count), cmp.Compare(a.Stem, b.Stem))
 	})
 	return out
 }

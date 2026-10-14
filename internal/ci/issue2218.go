@@ -10,7 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -297,7 +297,7 @@ func helpBannerExamplesWith(root string, seams SourceSeams) (map[string]string, 
 		if err != nil {
 			return nil, err
 		}
-		sort.Strings(files)
+		slices.Sort(files)
 		for _, f := range files {
 			if strings.HasSuffix(f, "_test.go") {
 				continue
