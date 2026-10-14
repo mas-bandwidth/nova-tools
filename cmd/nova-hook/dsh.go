@@ -8,7 +8,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-const maxDshEvent = 64 << 10
 
 type dshRoute struct {
 	route dshdesktop.Route
