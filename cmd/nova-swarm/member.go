@@ -1142,19 +1142,12 @@ func nativeEnd(log []byte) string {
 	case nativeIdleReap.Match(log):
 		return member.EndIdleReap
 	case nativeNoStart.Match(log):
-		return EndNoStart
+		return member.EndNoStart
 	case nativeKilled.Match(log) && !nativeTermed.Match(log):
 		return member.EndDeadline
 	}
 	return ""
 }
-
-// EndNoStart is native's mark for a card its start phase ended: the launch produced none of
-// the three signs of life within the start window (`reason=no-start` on the native log). It
-// is a harness fault -- the harness never started -- so the existing harness-fault rules
-// apply, the lane is free at the start window rather than at the idle one, and the member
-// says it apart from the idle reaping (which is a card that started and then went quiet).
-const EndNoStart = "no-start"
 
 // nativeProviderWhy is the reason of a run the provider failed (nativeprovider.go's
 // PROVIDER-FAIL line, and the 5xx hand-back's, swarm.Handback, PROVIDER-5XX): the rest of
@@ -1267,7 +1260,7 @@ func (c *nativeChild) Result() member.Result {
 				// window. It is a harness fault like staging -- no work of the card's was
 				// spent -- so the member reads it before the staging line and spends no
 				// card attempt or cost on it
-				c.result = member.Result{End: EndNoStart, Report: "harness fault: the card produced no sign of starting (see " + c.logPath + ")"}
+				c.result = member.Result{End: member.EndNoStart, Report: "harness fault: the card produced no sign of starting (see " + c.logPath + ")"}
 				return
 			}
 			if m := nativeHarnessFault.FindSubmatch(b); m != nil {
