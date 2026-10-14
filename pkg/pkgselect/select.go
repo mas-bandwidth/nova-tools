@@ -165,7 +165,24 @@ func (s *selector) dotted(importPaths []string) []string {
 	return out
 }
 
-var treeRoots = []string{"./cmd/...", "./internal/...", "./pkg/...", "./tools/..."}
+// Roots are the top-level directories whose packages make the CL tree: every
+// selection, the whole-tree fallback, the dependents listing, the testdata
+// owners and the non-Go-file mapping read this one list. hook/ joined when it
+// stopped being a nested module (it was tested only by a removed make
+// test-hook target before). internal/ci's TestEveryTopLevelPackageDirIsSelected
+// fails when a top-level directory holding Go packages is neither here nor in
+// its named exclusions, so the next folded directory cannot drop out of CI in
+// silence.
+var Roots = []string{"cmd", "hook", "internal", "pkg", "tools"}
+
+// treeRoots is Roots as `go list` patterns: ./<root>/... each.
+var treeRoots = func() []string {
+	out := make([]string, len(Roots))
+	for i, r := range Roots {
+		out[i] = "./" + r + "/..."
+	}
+	return out
+}()
 
 func (s *selector) listAll() (Outcome, error) {
 	pkgs, why, err := s.goList(treeRoots...)
@@ -185,11 +202,15 @@ func (s *selector) listAll() (Outcome, error) {
 var treeExcludedDir = regexp.MustCompile(`(^|/)(testdata|vendor|[_.][^/]*)/`)
 
 // treeFromFiles is the whole tree without `go list`: every directory under
-// cmd/, internal/ and tools/ holding a tracked .go file with no //go:build
-// line, less testdata, vendor and _ or . directories. It equals
-// `go list ./cmd/... ./internal/... ./pkg/... ./tools/...` package for package.
+// Roots holding a tracked .go file with no //go:build line, less testdata,
+// vendor and _ or . directories. It equals `go list` over treeRoots package
+// for package.
 func (s *selector) treeFromFiles() ([]string, error) {
-	res, err := s.run(s.o.Root, nil, "git", "ls-files", "-z", "--", "cmd/*.go", "internal/*.go", "pkg/*.go", "tools/*.go")
+	argv := []string{"git", "ls-files", "-z", "--"}
+	for _, r := range Roots {
+		argv = append(argv, r+"/*.go")
+	}
+	res, err := s.run(s.o.Root, nil, argv...)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +318,7 @@ func (s *selector) selectChange() (Outcome, error) {
 	}
 
 	// dependents: every package in the tree that imports a changed one.
-	depsOut, why, err := s.goList("-f", "{{.ImportPath}}{{range .Deps}} {{.}}{{end}}", "./cmd/...", "./internal/...", "./pkg/...", "./tools/...")
+	depsOut, why, err := s.goList(append([]string{"-f", "{{.ImportPath}}{{range .Deps}} {{.}}{{end}}"}, treeRoots...)...)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -359,7 +380,7 @@ func (s *selector) selectChange() (Outcome, error) {
 	selected = s.dep.Live(selected)
 
 	// ZERO PACKAGES FROM A GO DIFF IS AN ERROR, not "nothing to test": a change
-	// that moved a .go file under cmd/, internal/ or tools/ and selected nothing
+	// that moved a .go file under one of Roots and selected nothing
 	// means the selection broke.
 	if len(selected) == 0 && len(goChanged) > 0 {
 		return s.failed(fmt.Sprintf("select-packages: the diff touches Go files (%s) but selected zero packages\n", goChanged[0]))
@@ -374,9 +395,9 @@ func (s *selector) selectChange() (Outcome, error) {
 // holds the two equal.
 var EveryRun = []string{"./internal/ci", "./internal/docs"}
 
-// hasRootDir reports whether the file is under cmd/, internal/ or tools/.
+// hasRootDir reports whether the file is under one of Roots.
 func hasRootDir(f string) bool {
-	return slices.ContainsFunc([]string{"cmd/", "internal/", "pkg/", "tools/"}, func(r string) bool { return strings.HasPrefix(f, r) })
+	return slices.ContainsFunc(Roots, func(r string) bool { return strings.HasPrefix(f, r+"/") })
 }
 
 // modulePrefix is the module path of root with its trailing slash, or "" when

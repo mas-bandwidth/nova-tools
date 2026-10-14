@@ -52,7 +52,7 @@ func (s *selector) keyedPackages(changed []string) (map[string]bool, error) {
 	if len(names) == 0 {
 		return owned, nil
 	}
-	for _, root := range []string{"cmd", "internal", "pkg", "tools"} {
+	for _, root := range Roots {
 		top := filepath.Join(s.o.Root, root)
 		err := filepath.WalkDir(top, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {

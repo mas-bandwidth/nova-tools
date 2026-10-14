@@ -41,7 +41,7 @@ func fakeGoList(mode string) pkgselect.Runner {
 			return pkgselect.Result{}, nil
 		case "git diff --name-only base HEAD":
 			return pkgselect.Result{Stdout: "cmd/foo/foo.go\n"}, nil
-		case "git ls-files -z -- cmd/*.go internal/*.go pkg/*.go tools/*.go":
+		case "git ls-files -z -- cmd/*.go hook/*.go internal/*.go pkg/*.go tools/*.go":
 			return pkgselect.Result{Stdout: "cmd/foo/foo.go\x00internal/bar/bar.go\x00internal/ci/ci.go\x00internal/docs/docs.go\x00internal/tagged/tagged.go\x00internal/bar/testdata/x/x.go\x00"}, nil
 		}
 		switch mode {
