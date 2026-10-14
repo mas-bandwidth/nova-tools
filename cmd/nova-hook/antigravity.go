@@ -219,7 +219,7 @@ func discoverAntigravityServer(ctx context.Context, ag *antigravityRoute) (int, 
 		return 0, "", nil, "", fmt.Errorf("no Antigravity language_server running for %s", target)
 	}
 	if token == "" {
-		return 0, "", nil, "", fmt.Errorf("Antigravity language_server pid %d has no --csrf_token", pid)
+		return 0, "", nil, "", fmt.Errorf("antigravity language_server pid %d has no --csrf_token", pid)
 	}
 	lsofOut, err := ag.exec(ctx, "", nil, "lsof", "-nP", "-a", "-p", strconv.Itoa(pid), "-iTCP", "-sTCP:LISTEN")
 	if err != nil {
@@ -230,7 +230,7 @@ func discoverAntigravityServer(ctx context.Context, ag *antigravityRoute) (int, 
 		ports = append([]int{ag.preferredPort}, ports...)
 	}
 	if len(ports) == 0 {
-		return 0, "", nil, "", fmt.Errorf("Antigravity language_server pid %d has no listening TCP ports", pid)
+		return 0, "", nil, "", fmt.Errorf("antigravity language_server pid %d has no listening TCP ports", pid)
 	}
 	return pid, token, ports, serverBin, nil
 }
@@ -409,7 +409,7 @@ func ensureAntigravityAgentAPI(home, serverBin string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("Antigravity agentapi helper not found or not executable at %s", wrapper)
+	return "", fmt.Errorf("antigravity agentapi helper not found or not executable at %s", wrapper)
 }
 
 func resolveAntigravityConversation(ctx context.Context, ag *antigravityRoute) (string, error) {
@@ -606,7 +606,7 @@ func probeAntigravityPort(ctx context.Context, ag *antigravityRoute, token strin
 	if lastErr == nil {
 		lastErr = errors.New("no candidate ports")
 	}
-	return 0, fmt.Errorf("Antigravity conversation %s did not answer get-conversation-metadata: %w", ag.conversation, lastErr)
+	return 0, fmt.Errorf("antigravity conversation %s did not answer get-conversation-metadata: %w", ag.conversation, lastErr)
 }
 
 func antigravityEnv(token string, port int) []string {
