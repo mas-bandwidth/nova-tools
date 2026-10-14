@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func nightlyEnv() (env, *bytes.Buffer, *bytes.Buffer) {
@@ -67,7 +69,7 @@ func TestNightlyReportCreatesTheIssueWhenNoneIsOpenForToday(t *testing.T) {
 		}
 	}
 	if r.ran("gh issue comment") {
-		t.Fatal("commented when there was no issue for today")
+		require.Fail(t, "commented when there was no issue for today")
 	}
 }
 

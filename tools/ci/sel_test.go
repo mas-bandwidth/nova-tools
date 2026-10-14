@@ -107,12 +107,8 @@ func selRepo(t *testing.T) string {
 		pkgselect.DeprecatedFile: "cmd/gone\n",
 	} {
 		p := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 	}
 	return dir
 }
@@ -128,9 +124,7 @@ func selImports(pkgs ...string) string {
 func selRead(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -161,12 +155,8 @@ func TestSelectPackagesVerbFailsOnAGoListFailureByDefault(t *testing.T) {
 func TestSelectPackagesVerbFallsBackToTheTreeWithAWarning(t *testing.T) {
 	t.Parallel()
 	repo := selRepo(t)
-	if err := os.MkdirAll(filepath.Join(repo, "cmd", "a"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "cmd", "a", "a.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "a"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "cmd", "a", "a.go"), []byte("package main\n"), 0o644))
 	f := newSelFake(map[string]selReply{
 		selListTree: {err: "go: cannot find main module\n"},
 		"git ls-files -z -- cmd/*.go internal/*.go pkg/*.go tools/*.go": {out: "cmd/a/a.go\x00"},
@@ -245,7 +235,7 @@ func TestTestMatrixPushDealsTheWholeTree(t *testing.T) {
 		t.Errorf("stdout =\n%s", out)
 	}
 	if f.called("git") {
-		t.Error("a whole-tree run read a diff")
+		assert.Fail(t, "a whole-tree run read a diff")
 	}
 }
 
@@ -279,7 +269,7 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 		}
 	}
 	if f.called("git cat-file -e ignored") {
-		t.Error("a pull request read the merge group's base")
+		assert.Fail(t, "a pull request read the merge group's base")
 	}
 }
 
@@ -367,12 +357,8 @@ func TestTestMatrixSelectionFailureFailsTheStepOnAPullRequestOnly(t *testing.T) 
 
 	// merge_group falls back to the whole tree read from the tracked files
 	repo := selRepo(t)
-	if err := os.MkdirAll(filepath.Join(repo, "cmd", "a"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "cmd", "a", "a.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "a"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "cmd", "a", "a.go"), []byte("package main\n"), 0o644))
 	a := answers()
 	a["git ls-files -z -- cmd/*.go internal/*.go pkg/*.go tools/*.go"] = selReply{out: "cmd/a/a.go\x00"}
 	code, out, errb = selRun(func(e env, args []string) int { return testMatrixVerb(e, args, newSelFake(a).host()) }, repo,
@@ -478,12 +464,8 @@ func TestPerfTestsVerbWritesTheRunsAndThePackages(t *testing.T) {
 	repo := selRepo(t)
 	tmp := t.TempDir()
 	dir := filepath.Join(repo, "internal", "perfy")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "p_test.go"), []byte("//go:build perf\n\npackage perfy\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "p_test.go"), []byte("//go:build perf\n\npackage perfy\n"), 0o644))
 	f := newSelFake(map[string]selReply{
 		"go list -tags perf -f {{.ImportPath}} {{.Dir}} ./...":     {out: selMod + "/internal/perfy " + dir + "\n" + selMod + "/internal/other " + dir + "\n"},
 		"go test -list . " + selMod + "/internal/perfy":            {out: "TestA\n"},
@@ -655,7 +637,7 @@ func TestProvedByMergeGroupAsksForASuccessfulRunOfThisSha(t *testing.T) {
 	selRun(func(e env, a []string) int { return provedVerb(e, a, f.host()) }, "",
 		map[string]string{"GH_TOKEN": "tok", "GITHUB_OUTPUT": filepath.Join(t.TempDir(), "o")}, "--repo", "owner/name", "--sha", "abc123")
 	if got == nil {
-		t.Fatal("no request was made")
+		require.Fail(t, "no request was made")
 	}
 	if got.Method != http.MethodGet || got.URL.String() != "https://api.github.com/repos/owner/name/actions/runs?event=merge_group&head_sha=abc123&per_page=1&status=success" {
 		t.Errorf("request = %s %s", got.Method, got.URL)
@@ -664,7 +646,7 @@ func TestProvedByMergeGroupAsksForASuccessfulRunOfThisSha(t *testing.T) {
 		t.Errorf("headers = %v", got.Header)
 	}
 	if _, ok := got.Context().Deadline(); !ok {
-		t.Error("the ask has no deadline: it could hang the step")
+		assert.Fail(t, "the ask has no deadline: it could hang the step")
 	}
 }
 
@@ -948,7 +930,7 @@ func TestSandboxProbeFailsWhenTheBuildFails(t *testing.T) {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errb)
 	}
 	if f.called("./nova-sandbox") {
-		t.Error("the probe ran after a failed build")
+		assert.Fail(t, "the probe ran after a failed build")
 	}
 }
 
