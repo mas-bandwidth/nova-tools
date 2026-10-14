@@ -2325,3 +2325,9 @@ pkg/testkit/waits_test.go testkit.Waits had no caller outside its own test (go t
 pkg/testkit/script_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/script_failure_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/contract_test.go testkit.Contract had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with contract.go
+internal/ci/novapulse_deleted_test.go an "X is deleted" test checking cmd/nova-pulse (d0c07f774, #3801) and internal/pulse (#3969) stay absent; retired per 2026-10-14 stale-test ruling
+internal/ci/split_plan_test.go checked headings of docs/SPLIT-NOVA-SPRINT.md; the nova-sprint split completed at v1.2.3 and cmd/nova-sprint is guarded by sprint_only_test.go
+internal/ci/transcript_drift_test.go tested isVersionLine and outputAfterCommand helpers whose only caller (transcript_drift_functional_test.go) was already deleted
+internal/ci/textbody_dependencies_test.go checked webhook comment decoder imports in internal/ghevent and internal/textbody; the webhook decoder was deleted and internal/merge moved to nova-sprint
+internal/ci/ghevent_dependencies_test.go checked internal/ghevent/wire did not import the webhook decoder in internal/ghevent; the webhook decoder was deleted and wire/stream.go has zero imports
+internal/ci/docs_cards_test.go checked docs/security2.md and docs/coverage2.md for three card filenames held back until PR #5293 merged; PR #5293 merged

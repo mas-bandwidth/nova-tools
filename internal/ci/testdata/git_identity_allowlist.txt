@@ -36,7 +36,6 @@ cmd/nova-tokens/boundary_test.go 1 predates the rule; route its commits through 
 pkg/cardcontract/shims_functional_test.go 2 predates the rule; route its commits through testgit.Environ
 pkg/cardcontract/shims_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/ci/classtests_class_test.go 8 predates the rule; route its commits through testgit.Environ
-internal/ci/deprecated_imports_ratchet_test.go 5 predates the rule; route its commits through testgit.Environ
 internal/ci/unitwaits_git_functional_test.go 7 predates the rule; route its commits through testgit.Environ
 pkg/dogfood/authors_test.go 4 predates the rule; route its commits through testgit.Environ
 pkg/hygiene/hygiene_test.go 19 predates the rule; route its commits through testgit.Environ
