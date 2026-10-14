@@ -26,7 +26,7 @@ checks exact; a shorter chain is not a reason to weaken `Equal` to `Contains`.
 Keep setup and prerequisites fatal with `require`; keep independent table-row
 checks nonfatal with `assert`.
 
-Use `WriteFile`, `ReadFile`, `ReadJSON`, `JSON` and `Tree` for common file
+Use `WriteFile`, `ReadFile`, `ReadJSON` and `Tree` for common file
 mechanics. `Tree` writes named fixture files under an `os.Root`; it rejects
 paths outside that root. Use `SkipOn` when a test's property cannot be
 observed on a named operating system. Domain fixtures such as a sandbox job,
