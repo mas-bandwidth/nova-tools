@@ -27,7 +27,7 @@ func TestLoopThroughTheGrammarOnARealStore(t *testing.T) {
 	_, errs := r.run(t, 1, "loop", "set", "member-m1", "--every", "30")
 	assert.Equal(t, "nova-config loop set REFUSED: loop member-m1 has --every 30 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show member-m1\n", errs)
 	out, _ = r.run(t, 0, "loop", "show", "member-m1")
-	assert.True(t, strings.HasPrefix(out, `LOOP name=member-m1 machine=m1 argv=["/bin/member","--as","m1"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true created=`), out)
+	assert.True(t, strings.HasPrefix(out, `LOOP OK name=member-m1 machine=m1 argv=["/bin/member","--as","m1"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true created=`), out)
 	out, _ = r.run(t, 0, "machine", "show", "m1")
 	assert.Contains(t, out, " loops=member-m1 ")
 

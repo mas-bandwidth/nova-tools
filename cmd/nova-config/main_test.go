@@ -443,9 +443,9 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	_, errs = step(1, "friend", "set", "nobody", "--width", "1")
 	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=builder,reader width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated)\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND OK name=rowan tiers=frontier,pro roles=builder,reader width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated)\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan tiers=frontier,pro roles=builder,reader width=16 mode=one-shot config_dir=- "), "friend show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND OK name=rowan tiers=frontier,pro roles=builder,reader width=16 mode=one-shot config_dir=- "), "friend show: %q", out)
 	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
 	_, errs = step(1, "friend", "show", "nobody")
 	require.Equal(t, "nova-config friend show REFUSED: friend nobody not found; run: nova-config friend list\n", errs, "show nobody: %q", errs)
@@ -477,22 +477,22 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
 	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=hulk rev=7\nNOTE machine=hulk width=default: "), "machine add hulk: %q", out)
 	out, _ = step(0, "machine", "list")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 roles=bench width=- tla=false note=-\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=-\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
+	require.Equal(t, "MACHINE OK name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 roles=bench width=- tla=false note=-\nMACHINE OK name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=-\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
 	require.Equal(t, 0, h.redis.opens, "a list with no --redis opened Redis")
 	h.redis.beats["hulk"] = &config.Beat{Cores: "64", At: "2026-09-27T03:00:00Z"}
 	out, _ = step(0, "machine", "list", "--redis", "127.0.0.1:6379")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 roles=bench width=- tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
+	require.Equal(t, "MACHINE OK name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 roles=bench width=- tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE OK name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "machine", "show", "hulk")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 roles=bench width=- tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE OK name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 roles=bench width=- tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
 	delete(h.env, "NOVA_SPRINT_REDIS")
 	out, _ = step(0, "machine", "show", "studio")
-	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
+	require.Equal(t, "MACHINE OK name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
 
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.
 	out, _ = step(0, "fleet", "show")
-	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- loops_dir=~/nova-bench/loops created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
+	require.Equal(t, "FLEET OK name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- loops_dir=~/nova-bench/loops created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
 	out, _ = step(0, "fleet", "history")
 	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
 	_, errs = step(1, "fleet", "set", "--store", "space")
@@ -500,7 +500,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
 	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,store\n", out, "fleet set: %q", out)
 	out, _ = step(0, "fleet", "show")
-	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- bus=- loops_dir=~/nova-bench/loops created="), "fleet show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FLEET OK name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- bus=- loops_dir=~/nova-bench/loops created="), "fleet show: %q", out)
 	_, errs = step(1, "machine", "remove", "hulk")
 	require.Equal(t, "nova-config machine remove REFUSED: machine hulk is the --store of the fleet; run: nova-config machine list\n", errs, "remove the store machine: %q", errs)
 	out, _ = step(0, "fleet", "set", "--store", "")
@@ -537,17 +537,17 @@ func TestAFriendsWidthRoundTripsThroughSet(t *testing.T) {
 	}
 	step(0, "friend", "add", "amy", "--tiers", "flash")
 	out, _ := step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=flash roles=- width=8 "), "the default width: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=flash roles=- width=8 "), "the default width: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--width", "3")
 	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=width\n", out)
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=flash roles=- width=3 "), "the width set: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=flash roles=- width=3 "), "the width set: %q", out)
 	_, errs := step(1, "friend", "set", "amy", "--width", "0")
 	assert.Equal(t, 1, strings.Count(strings.TrimSpace(errs), "\n")+1, "one refusal line: %q", errs)
 	assert.Contains(t, errs, "nova-config friend set REFUSED: ")
 	assert.Contains(t, errs, "at least 1")
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=flash roles=- width=3 "), "the refusal changed nothing: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=flash roles=- width=3 "), "the refusal changed nothing: %q", out)
 }
 
 func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
@@ -565,7 +565,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	}
 	h.store.version = 0
 	out, errs := step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=0 pg-from=env redis=-\n", out, "status before migrate: %q %q", out, errs)
+	require.Equal(t, "CONFIG STATUS FAILED pg=nova_config@127.0.0.1:5432/nova schema=0 pg-from=env redis=-\n", out, "status before migrate: %q %q", out, errs)
 	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = step(0, "migrate")
 	n := currentSchema()
@@ -579,7 +579,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn)
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(tip)+" pg-from=env machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 redis-from=env machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n"+noFundedTierWarnings, out, "status behind: %q %q", out, errs)
+	require.Equal(t, "CONFIG STATUS FAILED pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(tip)+" pg-from=env machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 provider=0 provider_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 redis-from=env machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n"+noFundedTierWarnings, out, "status behind: %q %q", out, errs)
 	require.Contains(t, errs, "status REFUSED: Redis is not at the store's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	// The dry run takes the real run's checks: without an actor both refuse.
@@ -609,7 +609,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
 	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan tiers=frontier roles=builder width=8 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated) created="), "rowan's stored row: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND OK name=rowan tiers=frontier roles=builder width=8 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated) created="), "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 provider_applied=0 route_applied=0 tier_applied=0\n"+noFundedTierWarnings), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
@@ -810,16 +810,16 @@ func TestAFriendsModeRoundTripsThroughSet(t *testing.T) {
 	}
 	step(0, "friend", "add", "amy", "--tiers", "flash")
 	out, _ := step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=flash roles=- width=8 mode=one-shot "), "the default mode: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=flash roles=- width=8 mode=one-shot "), "the default mode: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--mode", "one-shot", "--width", "1")
 	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=mode,width\n", out)
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=flash roles=- width=1 mode=one-shot "), "the mode set: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=flash roles=- width=1 mode=one-shot "), "the mode set: %q", out)
 	_, errs := step(2, "friend", "set", "amy", "--mode", "lanes")
 	assert.Equal(t, 1, strings.Count(strings.TrimSpace(errs), "\n")+1, "one refusal line: %q", errs)
 	assert.Contains(t, errs, "want one of one-shot")
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=flash roles=- width=1 mode=one-shot "), "the refusal changed nothing: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=flash roles=- width=1 mode=one-shot "), "the refusal changed nothing: %q", out)
 }
 
 // A friend's config_dir, the directory her claude one-shot lanes run with as
@@ -840,11 +840,11 @@ func TestAFriendsConfigDirRoundTripsThroughSet(t *testing.T) {
 	}
 	step(0, "friend", "add", "amy", "--tiers", "heavy", "--mode", "one-shot")
 	out, _ := step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=heavy roles=- width=8 mode=one-shot config_dir=- "), "unset: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=heavy roles=- width=8 mode=one-shot config_dir=- "), "unset: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--config_dir", "/accounts/heavy-a")
 	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=config_dir\n", out)
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy tiers=heavy roles=- width=8 mode=one-shot config_dir=/accounts/heavy-a "), "set: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND OK name=amy tiers=heavy roles=- width=8 mode=one-shot config_dir=/accounts/heavy-a "), "set: %q", out)
 	_, errs := step(1, "friend", "set", "amy", "--config_dir", "accounts/heavy-a")
 	assert.Contains(t, errs, "want --config_dir <an absolute path>")
 	out, _ = step(0, "friend", "show", "amy")

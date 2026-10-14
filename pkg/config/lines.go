@@ -13,6 +13,8 @@ import (
 // line is one event, first token the record, then key=value fields whose
 // values go through oneline.Field, so a whitespace-splitting scanner sees
 // exactly the fields the tool wrote; an empty value prints as "-".
+// User-visible row lines for list/show carry the OK word (see cmd layer
+// leadOK citing docs/STANDARD.md section 2, "The status word leads every line").
 
 // Value renders one field value.
 func Value(s string) string {
@@ -27,12 +29,15 @@ func Value(s string) string {
 const ListNoteRunes = 60
 
 // RowLine is a row: `FRIEND name=<n> <field>=<v> ...`, every field of the
-// kind in declaration order, every value whole.
+// kind in declaration order, every value whole. (Printed form for list/show
+// is `<KIND> OK name=...` via kindRowLine + leadOK in cmd/nova-config/kindverbs.go,
+// per docs/STANDARD.md section 2, "The status word leads every line".)
 func RowLine(k *Kind, row Row) string { return rowLine(k, row, false) }
 
 // ListLine is RowLine for a list: a Cut field longer than ListNoteRunes
 // characters is cut there and ends in "...", so a row is one short line; show
-// and --json print it whole.
+// and --json print it whole. (See also quoteNote for free-text notes using
+// oneline.Quote.)
 func ListLine(k *Kind, row Row) string { return rowLine(k, row, true) }
 
 func rowLine(k *Kind, row Row, cut bool) string {

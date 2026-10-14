@@ -817,6 +817,8 @@ an environment or an output) is pinned over a private Redis by
 in-process password) and `status`'s `redis-from=<flag|env|seat|seat-login>`
 source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 (`TestSeatLoginSprintCredsAndStatusSource`).
+The output grammar (OK word on status/list/show rows, notes via oneline.Quote)
+is pinned by `cmd/nova-config/output_grammar_test.go` (`TestOutputCarriesTheOKWordAndQuotesFreeText`).
 
 ### First run
 
@@ -831,7 +833,7 @@ $ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 roles=bench width=6 tla=false note=-
+MACHINE OK name=m1 user=nova seat=s1 slots=8 runners=0 roles=bench width=6 tla=false note=-
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json

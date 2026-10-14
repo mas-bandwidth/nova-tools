@@ -31,8 +31,8 @@ func TestConfigListMaxFlag(t *testing.T) {
 
 	code, limited, stderr := h.run(t, "machine", "list", "--file", "try.json", "--max", "1")
 	require.Equal(t, 0, code, "--max 1: %q", stderr)
-	assert.Contains(t, limited, "MACHINE name=a ")
-	assert.NotContains(t, limited, "MACHINE name=b ")
+	assert.Contains(t, limited, "MACHINE OK name=a ")
+	assert.NotContains(t, limited, "MACHINE OK name=b ")
 	assert.Contains(t, limited, "CONFIG MORE kind=machine shown=1 total=3")
 	assert.Contains(t, limited, "CONFIG LIST kind=machine rows=3")
 

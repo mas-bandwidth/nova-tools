@@ -43,7 +43,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	o := tool.Done().Fact(key, value).Fact("schema", schema)
 	o.Verb = verb
 	var providerLines, providerWarnings []string
-	line := "CONFIG STATUS " + key + "=" + config.Value(value) + " schema=" + strconv.Itoa(schema)
+	line := "CONFIG STATUS " + key + "=" + config.Value(value) + " schema=" + strconv.Itoa(schema) // see statusLine for OK per STANDARD section 2
 	if pgFrom != "" {
 		line += " pg-from=" + pgFrom
 		o.Fact("pg-from", pgFrom)
@@ -56,7 +56,8 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 			}
 			emit(stdout, o)
 		} else {
-			fmt.Fprintln(stdout, line)
+			// The word is part of the line (docs/STANDARD.md section 2, "The status word leads every line").
+			fmt.Fprintln(stdout, statusLine(line, code))
 			for _, providerLine := range providerLines {
 				fmt.Fprintln(stdout, providerLine)
 			}
@@ -163,4 +164,20 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		return finish(1, fmt.Sprintf("Redis is not at the store's revision for %d kind(s)", behind), toolName+" apply"+c.again())
 	}
 	return finish(0, "", "")
+}
+
+// statusLine leads the status line with its status word (docs/STANDARD.md
+// section 2, "The status word leads every line"): CONFIG STATUS OK on exit
+// 0, CONFIG STATUS FAILED otherwise, so a non-zero exit never carries OK.
+// (Paired with output grammar test and kind row changes.)
+func statusLine(line string, code int) string {
+	word := "OK"
+	if code != 0 {
+		word = "FAILED"
+	}
+	const head = "CONFIG STATUS "
+	if strings.HasPrefix(line, head) {
+		return head + word + " " + strings.TrimPrefix(line, head)
+	}
+	return line
 }

@@ -31,10 +31,10 @@ func TestTheNoteIsSetShownCutListedClearedAndRecordedForARoute(t *testing.T) {
 	}{
 		{name: "add with a note", args: []string{"route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--note", "the cheap one"},
 			out: "CONFIG ADD kind=route name=r1 rev=2\n"},
-		{name: "show carries the note", args: []string{"route", "show", "r1"}, out: " note=the\\x20cheap\\x20one created="},
+		{name: "show carries the note", args: []string{"route", "show", "r1"}, out: " note=\"the cheap one\" created="},
 		{name: "set a long note", args: []string{"route", "set", "r1", "--note", long}, out: "CONFIG SET kind=route name=r1 rev=3 changed=note\n"},
-		{name: "show keeps it whole", args: []string{"route", "show", "r1"}, out: "END created="},
-		{name: "list cuts it to one line", args: []string{"route", "list"}, out: "...\n", not: "END"},
+		{name: "show keeps it whole", args: []string{"route", "show", "r1"}, out: "END\" created="},
+		{name: "list cuts it to one line", args: []string{"route", "list"}, out: "...\"", not: "END"},
 		{name: "json list keeps it whole", args: []string{"route", "list", "--json"}, out: "END"},
 		{name: "disabling with no note is refused before the store opens", args: []string{"route", "set", "r1", "--enabled", "false"}, code: 2, errs: sayWhy},
 		{name: "disabling with a note", args: []string{"route", "set", "r1", "--enabled", "false", "--note", "4 of 52 ok"}, out: "CONFIG SET kind=route name=r1 rev=4 changed=enabled,note\n"},
@@ -83,7 +83,7 @@ func TestTheNoteOfAMachineIsSetShownCutListedAndClearedAsTheRoutesIs(t *testing.
 	code, out, _ = h.run(t, "machine", "show", "superman")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "END", "show is whole")
-	assert.Contains(t, out, " note=held\\x201:46\\x20PM:")
+	assert.Contains(t, out, " note=\"held 1:46 PM:")
 	code, out, _ = h.run(t, "machine", "list")
 	require.Equal(t, 0, code)
 	assert.NotContains(t, out, "END", "list is one cut line")

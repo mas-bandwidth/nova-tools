@@ -53,23 +53,23 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "list prints every field in declaration order",
 			args: []string{"loop", "list"},
-			out:  "LOOP name=member-m1 machine=m1 argv=[\"/bin/member\",\"--as\",\"m1\"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true\nLOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false enabled=true\nCONFIG LIST kind=loop rows=2\n",
+			out:  "LOOP OK name=member-m1 machine=m1 argv=[\"/bin/member\",\"--as\",\"m1\"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true\nLOOP OK name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false enabled=true\nCONFIG LIST kind=loop rows=2\n",
 		},
 		{
 			name: "show carries the stamps",
 			args: []string{"loop", "show", "refresh"},
-			out:  "LOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false enabled=true created=",
+			out:  "LOOP OK name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false enabled=true created=",
 			pre:  true,
 		},
 		{
 			name: "machine show lists the machine's loops",
 			args: []string{"machine", "show", "m1"},
-			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 roles=bench width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
+			out:  "MACHINE OK name=m1 user=u seat=s slots=160 runners=0 roles=bench width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
 		},
 		{
 			name: "a machine with no loop says so",
 			args: []string{"machine", "show", "m2"},
-			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 roles=bench width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
+			out:  "MACHINE OK name=m2 user=u seat=s slots=160 runners=0 roles=bench width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
 		},
 		{
 			name: "set that leaves a loop both periodic and kept alive is refused",
