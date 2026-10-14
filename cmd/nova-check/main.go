@@ -39,8 +39,11 @@ const exitCodes = "0 pass, 1 check failed, 2 could not run (bad invocation)"
 
 // novaCheck is the tool: its verbs and their flags, run by pkg/tool, which
 // holds the dispatch, the banner, -h, --json, --max with its MORE line, the
-// refusal grammar and the exit table.
+// refusal grammar and the exit table. The dogfood verbs are one group in the
+// usage block (docs/SPEC.md §dogfood).
 func novaCheck(s seams) *tool.Tool {
+	ledger, record, gate := dogfoodVerb("ledger", s), dogfoodVerb("record", s), dogfoodVerb("gate", s)
+	groupDogfoodUsage(&ledger, &record, &gate)
 	return &tool.Tool{
 		Name:      "nova-check",
 		What:      "checks over markdown records and repositories, each finding named by file and line",
@@ -54,7 +57,6 @@ func novaCheck(s seams) *tool.Tool {
 		NoJSON: "the same result as one JSON object on stdout; spelling and convergence take it too, through their own " +
 			"printers (convergence prints its reading object), quickstart and dogfood gate support it too; dogfood ledger and record print typed lines",
 		UsageNote: "  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes\n" +
-			"dogfood gate exits 1 with the verbs no non-author has run and the edges nobody has cleared.\n" +
 			"An edge is what the run found; a receipt records it: --not-ok, or an Edge: or Edges: in the notes.\n" +
 			"The remedy is one nova-check dogfood record --ok per verb named, and per edge --closes <id> or\n" +
 			"the finder running it again.\n" +
@@ -72,9 +74,9 @@ func novaCheck(s seams) *tool.Tool {
 			floorsVerb(),
 			corpusVerb(),
 			hygieneVerb(),
-			dogfoodVerb("ledger", s),
-			dogfoodVerb("record", s),
-			dogfoodVerb("gate", s),
+			ledger,
+			record,
+			gate,
 			convergenceVerb(),
 			spellingVerb(),
 		},
