@@ -250,10 +250,10 @@ var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "
 // writer find out at accept. The names stay as written: `tier` is lower case, as the
 // contract line writes it.
 var cardHeaderKeys = map[string]bool{
-	"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true,
+	cardhdr.KeyKind: true, cardhdr.KeyPaths: true, "TEST": true, "LEGS": true, "SOURCE": true,
 	"START": true, "STOP": true,
 	"DEPENDS-ON": true, "PRIORITY": true, "NEW": true, "SHARED": true,
-	"REPO": true, "BASE": true, "tier": true, "RESULT": true,
+	cardhdr.KeyRepo: true, "BASE": true, "tier": true, "RESULT": true,
 	"CONSUMERS": true, "WHO": true,
 }
 
