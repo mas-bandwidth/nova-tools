@@ -1179,7 +1179,7 @@ func TestDryRunPreservesPreRunRefusalWithoutStartingVerb(t *testing.T) {
 	t.Parallel()
 	tool := &Tool{Name: "nova-write", Verbs: []Verb{{Name: "save", Usage: "save", Effect: LocalWrite, DryRun: true,
 		Flags: func(f *Flags) { f.Required("file", "target file") },
-		Run:   func(*Call) *Out { t.Fatal("refused invocation started its verb"); return nil }}}}
+		Run:   func(*Call) *Out { require.FailNow(t, "refused invocation started its verb"); return nil }}}}
 	r := NewRig(t, tool).Run(2, "save", "--dry-run")
 	assert.Contains(t, r.Stdout+r.Stderr, "--file is required")
 	assert.NotContains(t, r.Stdout+r.Stderr, "never read it")

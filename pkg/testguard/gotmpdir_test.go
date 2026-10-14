@@ -140,6 +140,6 @@ func TestGuardChildProcess(t *testing.T) {
 		}()
 		RefuseHosts("/usr/bin/ssh", "hulk", "uptime")
 	default:
-		t.Fatalf("unknown %s=%q", childMode, mode)
+		require.Failf(t, "unknown child mode", "unknown %s=%q", childMode, mode)
 	}
 }

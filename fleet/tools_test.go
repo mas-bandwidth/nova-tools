@@ -335,7 +335,7 @@ func findTaskNamed(t *testing.T, tasks []map[string]any, name string) map[string
 			return task
 		}
 	}
-	t.Fatalf("task %q not found", name)
+	require.Failf(t, "task not found", "task %q not found", name)
 	return nil
 }
 

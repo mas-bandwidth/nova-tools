@@ -134,7 +134,7 @@ func TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints(t *testing.T) {
 		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
-		t.Error(p)
+		assert.NoError(t, p)
 	}
 }
 

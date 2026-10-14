@@ -141,7 +141,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		got = append(got, res)
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
-		t.Error(p)
+		assert.NoError(t, p)
 	}
 }
 

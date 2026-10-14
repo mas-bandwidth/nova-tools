@@ -162,7 +162,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	testkit.CopyTree(t, examplePages, filepath.Join(dir, "pages"))
 
 	for _, p := range onboarding.Execute(steps, runDocumentedIn(dir)) {
-		t.Error(p)
+		assert.NoError(t, p)
 	}
 }
 
@@ -199,7 +199,7 @@ func TestHelpExamplesAreTheFirstRunThroughTheComparator(t *testing.T) {
 		}
 	}
 	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Path("./pages", pages)) {
-		t.Error(p)
+		assert.NoError(t, p)
 	}
 }
 
@@ -357,7 +357,7 @@ func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
 	case errors.As(err, &exitErr):
 		return exitErr.ExitCode(), out.String()
 	default:
-		t.Fatalf("running %q: %v", line, err)
+		require.Failf(t, "documented command failed", "running %q: %v", line, err)
 		return 0, ""
 	}
 }

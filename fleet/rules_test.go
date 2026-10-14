@@ -5,6 +5,9 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // childRulesSHA256 is the sha256 of child-rules.txt. nova-sprint embeds the same file as
@@ -13,35 +16,25 @@ import (
 // two copies change together, in one pull request per repository, or not at all.
 const childRulesSHA256 = "28fd38b11be263e28c7fc9167f3a24c8cfc4428c676b06c913fd69450aafbdaf"
 
-// TestChildRulesMatchTheSprintCopy pins child-rules.txt to the digest nova-sprint's copy pins.
-func TestChildRulesMatchTheSprintCopy(t *testing.T) {
+// TestChildRules reads child-rules.txt once and pins both promises it makes: its
+// bytes match the digest nova-sprint's embedded copy pins (so the two change
+// together, in one pull request per repository, or not at all), and the worker
+// brief's history rule stands exactly once — a child that amends, rebases or
+// resets onto origin rewrites the staged commit, and the finish refuses its head
+// as one that does not descend from it.
+func TestChildRules(t *testing.T) {
 	t.Parallel()
 	raw, err := Rules.ReadFile("child-rules.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	sum := sha256.Sum256(raw)
-	if got := hex.EncodeToString(sum[:]); got != childRulesSHA256 {
-		t.Fatalf("child-rules.txt sha256 %s, want %s: change nova-sprint's internal/fleetrules/child-rules.txt byte for byte with it and update the digest in both repositories", got, childRulesSHA256)
-	}
-}
+	assert.Equal(t, childRulesSHA256, hex.EncodeToString(sum[:]),
+		"child-rules.txt sha256 must match nova-sprint's internal/fleetrules/child-rules.txt byte for byte; update the digest in both repositories")
 
-// TestChildRulesNeverRewriteHistory pins the worker brief's history rule: a child that
-// amends, rebases or resets onto origin rewrites the staged commit, and the finish refuses
-// its head as one that does not descend from it.
-func TestChildRulesNeverRewriteHistory(t *testing.T) {
-	t.Parallel()
-	raw, err := Rules.ReadFile("child-rules.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	n := 0
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.HasPrefix(line, "[no-rewrite-history] Never amend, rebase or reset onto origin") {
 			n++
 		}
 	}
-	if n != 1 {
-		t.Fatalf("want the history rule exactly once in child-rules.txt, got %d", n)
-	}
+	assert.Equal(t, 1, n, "want the history rule exactly once in child-rules.txt")
 }
