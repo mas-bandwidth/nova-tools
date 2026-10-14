@@ -37,7 +37,7 @@ anything is written, naming the install command. State lives under one root (~/n
 		Verbs: []tool.Verb{{
 			Name:    "up",
 			Usage:   "--local [--root <dir>] [--dry-run] [--json] | --seat [--sprint-redis <addr>] [--server <addr>] [--bus-redis <addr>] [--dry-run]",
-			Example: "--local --dry-run --root ./nova-try\n--seat --sprint-redis 127.0.0.1:6380 --server 127.0.0.1:6390 --bus-redis 127.0.0.1:6380\nup -h\nversion",
+			Example: "--local --dry-run --root ./nova-try\n--seat --sprint-redis 127.0.0.1:6380 --server 127.0.0.1:6390 --bus-redis 127.0.0.1:6381\nup -h\nversion",
 			Effect:  tool.LocalWrite + "; --local writes under --root, one unit file in the service manager's directory, and starts that unit; --seat atomically writes the per-user seat environment; --dry-run writes nothing",
 			Detail: `--local is one mode: one machine, zero config. --seat is a separate mode that writes a fleet seat profile from explicit endpoint flags or matching endpoint environment variables; it never borrows the local twin's mem: address. Steps for --local, in order:
 platform (darwin or linux), dirs (the root), binaries (each tool on PATH answering its version),
