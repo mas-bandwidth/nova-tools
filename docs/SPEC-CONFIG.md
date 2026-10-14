@@ -643,6 +643,10 @@ For each row that differs:
 - the history in the window holds an entry by an operator (a person's set, a
   seat's set, a friend's): the difference is **OPERATOR**, printed with the
   actor, the time and the reason of the last such entry, and never a failure;
+- a row the after snapshot has and the before does not is an operator's add
+  when its creation entry in the window is by an operator: **OPERATOR-ADD**,
+  printed with the actor, the time and the reason of that entry, and never a
+  failure;
 - the history holds only entries by an `--ignore-actor` (default `migrate`,
   the actor the tool itself records when it applies a migration) or no entry
   at all (the store was edited out of band): the difference is **CRIT**, the

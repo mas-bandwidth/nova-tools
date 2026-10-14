@@ -3537,13 +3537,15 @@ instants and names the act behind the change — the judgment `snapcmp.sh` could
 not make, because it read only the snapshots and reverts on the first
 difference. A row whose change the history's operator entries (a person's set,
 a seat's set, a friend's) explain is `OPERATOR-DIFF <kind> <name> by <actor>
-at <time>: <reason>` and never a failure; a row changed only by an
+at <time>: <reason>` and never a failure; a row the after snapshot has and the
+before does not, added by an operator, is `OPERATOR-ADD <kind> <name> by
+<actor> at <time>: <reason>` and never a failure; a row changed only by an
 `--ignore-actor` (default `migrate`, the actor the tool records when it
 applies a migration) or with no history at all is `CRIT-DIFF`, the unexplained
 fields named (`unexplained: <field,...>`). The live fields `balance_usd`,
 `balance_as_of` and `beat` are never compared, and a field the after build
-added is listed apart (`ADDED ...`). One `COMPARE <kind> <class>` line per
-kind and a last `COMPARE SAME|OPERATOR-DIFF|CRIT-DIFF` names the worst class;
+added is listed apart (`ADDED ...`). One `COMPARE <kind> <verdict>` line per
+kind and a last `COMPARE SAME|OPERATOR|CRIT` names the worst verdict;
 `--json` prints the same lines as typed items. The verb writes nothing and
 reverts nothing: exit 0 for SAME and OPERATOR, 1 for CRIT (2 for usage or a
 snapshot that cannot be read), so the caller decides what CRIT means — the
