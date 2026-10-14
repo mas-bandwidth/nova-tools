@@ -1231,25 +1231,6 @@ func (o *runOut) shut() {
 	o.done = true
 }
 
-// joined schedules f through sched, counting the delivery in bg so run joins
-// it before it returns. A nil sched runs f in a goroutine, as the session
-// check's own default does; a fake-clock sched runs it in place, so its
-// semantics are unchanged.
-func joined(bg *sync.WaitGroup, sched func(func())) func(func()) {
-	return func(f func()) {
-		bg.Add(1)
-		run := func() {
-			defer bg.Done()
-			f()
-		}
-		if sched == nil {
-			go run()
-			return
-		}
-		sched(run)
-	}
-}
-
 func (w world) run(c *tool.Call) *tool.Out {
 	if c.Bool("notifications-only") {
 		return w.runNotifications(c)
