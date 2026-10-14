@@ -62,7 +62,6 @@ func fnLoadVerb(d deps) tool.Verb {
 		Example: "",
 		Effect:  tool.LocalWrite,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			loginFlags(f)
 		},
 		Run: func(c *tool.Call) *tool.Out { return fnRun(c, d, "load") },
@@ -77,7 +76,6 @@ func fnCheckVerb(d deps) tool.Verb {
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			loginFlags(f)
 		},
 		Run: func(c *tool.Call) *tool.Out { return fnRun(c, d, "check") },
