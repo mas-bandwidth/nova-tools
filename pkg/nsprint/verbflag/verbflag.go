@@ -197,9 +197,12 @@ func wants(f *flag.Flag) string {
 // ListMax bounds a list of names in a refusal to one readable line; help lists the rest.
 const ListMax = 16
 
-// List is names joined, at most ListMax of them, with how many more there are.
+// List is names joined, at most ListMax of them, with how many more there are;
+// when only one more would be cut, it is printed instead, since hiding the last
+// name can hide the flag the reader wanted (docs/STANDARD.md §3 point 2: one
+// run reports every problem it can find).
 func List(names []string) string {
-	if len(names) <= ListMax {
+	if len(names) <= ListMax+1 {
 		return strings.Join(names, ", ")
 	}
 	return fmt.Sprintf("%s and %d more", strings.Join(names[:ListMax], ", "), len(names)-ListMax)
