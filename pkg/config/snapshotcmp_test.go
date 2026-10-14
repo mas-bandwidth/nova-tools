@@ -69,7 +69,7 @@ func TestSnapshotFilesRequireCompleteMetadata(t *testing.T) {
 		{name: "missing rows", file: "provider.json", content: `{"kind":"provider"}`, want: "rows"},
 		{name: "wrong kind", file: "provider.json", content: `{"kind":"route","rows":[]}`, want: "kind"},
 		{name: "nameless row", file: "provider.json", content: `{"kind":"provider","rows":[{}]}`, want: "row names"},
-		{name: "duplicate row", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p"},{"name":"p"}]}`, want: "row names"},
+		{name: "duplicate row", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p","fields":{}},{"name":"p","fields":{}}]}`, want: "row names"},
 		{name: "missing fields", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p"}]}`, want: "fields"},
 		{name: "null fields", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p","fields":null}]}`, want: "fields"},
 	} {
