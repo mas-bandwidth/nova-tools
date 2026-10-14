@@ -90,7 +90,7 @@ passes client to client, and nothing in a module is decided by agreement between
 
 - Attach and challenge issued (10-server-truth.md guarantee 4; 20-comms.md guarantee 4).
 - Session answers the challenge (10 guarantee 4; 30-harness-hookin.md guarantee 2).
-- Any authenticated activity: a bus message, a take, a finish, a push, a pull request, a beat, or a hook proof (10 guarantee 13).
+- Any authenticated activity: a bus message, a push or pull request (through 20's `HEARD`), or a hook proof, stamped with the server clock as an atomic max on the friend row (10 guarantee 13). A daemon's beat or session-check reply is not activity.
 - Lapse, Silence and ReProve over the internal states (20 guarantee 17).
 - Lease deadline passes; explicit detach; binding replaced (10 guarantee 3; 20 guarantee 3).
 
@@ -152,7 +152,6 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 - Send, Recv, Peek and Ack by a name happen only while it is hooked (20 guarantee 12); before proof the link reader carries control events only, never a message (20 guarantee 12).
 - A message to a name is admitted only while that name is hooked; otherwise the sender holds a refusal and the inbox is unchanged (20 guarantee 16).
 - `link` = hooked only if the last proof answered a nonce in `delivered` (20 guarantee 14).
-- New work opens to the name only with `selfTest` passed (30 guarantee 6).
 - A hook never expires silently: expiry carries a recorded reason (20 guarantee 3).
 - Proof is never inherited across a session replacement (10 guarantee 3).
 - An unmeasured capability is never reported as supported (30 guarantee 5).
@@ -170,7 +169,6 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 - A recv or ack by an unhooked name succeeding (20 guarantee 12).
 - A prove with a nonce taken from `nova-hook hook` output or a refusal, never delivered through the link, accepted (20 guarantee 14).
 - A reader alive with no session behind it keeping the name hooked (30 guarantee 8; 30 failure mode 3).
-- A take by a friend that never passed the self-test (30 guarantee 6).
 - A monitor-harness link reader refused `not_hooked` before the first prove, so the first challenge is never delivered and the name can never hook (20 guarantee 12).
 - A renewal challenge demoting a proven lease to challenged, so a healthy friend is unhooked at renewal (20 guarantee 4).
 - A proven hook decays to live with nothing on the stream and a send is refused (observed failure named in 30, Claude Code subsection; now no "live" state exists).
@@ -274,14 +272,14 @@ layer 20's lease states (its `EXPIRED` entry), so it is not repeated here.
 What the layers say: layer 10 (guarantees 4 and 5) holds that only a session's explicit answer
 to the server's challenge is proof, and that traffic, a heartbeat, or a wake request is not;
 the lease expires on the proof clock alone. The standing rule for the friends table is wider:
-any valid, authenticated activity from a friend (a bus message of any kind, a take, a finish,
-a push to a card branch, a pull request opened or updated, a beat, a hook proof) resets her
-timeout, as any valid packet from a client resets its timeout accumulator.
+any valid, authenticated activity from a friend (a bus message of any kind, a push to a card
+branch, a pull request opened or updated, a hook proof) resets her timeout, as any valid packet from a client resets its timeout accumulator.
 
 The choice for the models: M1 carries two clocks. `lastHeard` is set by any valid authenticated
+activity, on the server clock as an atomic max; a daemon's beat or session-check reply is not
 activity; `lastProof` is set only by a challenge answer. The displayed status reads `lastHeard`
-through the internal states: up and deaf (active but not receiving: no recv or ack and no answer
-to a wake ping, held up to 10 minutes before down) display as up;
+through the internal states of layer 20 guarantee 17: up (hooked) and deaf (unhooked but heard
+within $T_{deaf}$, default 10 minutes, of the lapse) display as up;
 down displays as down. Down includes the case where her daemon answers and her session does not. What deaf and down
 mean for her cards and claims (the deal's gate, needs-reconciliation) moved to v1.5 with layers 40 and 50. Delivery of a note is gated
 on hooked for the push: the push is offered only to a hooked binding, and a new note to an
@@ -295,7 +293,7 @@ the presence paragraph, proposal 1); and the internal and displayed states in la
 home in a layer and not only here.
 
 Whether a change is proposed to an owner: yes, proposal 1 below to the owner of layer 10 (its
-"convenience up" paragraph and guarantee 5) and proposal 2 to the owner of layer 20 (its lease
+presence paragraph and guarantee 5) and proposal 2 to the owner of layer 20 (its lease
 states carry no deaf state and do not name the daemon-answers case of down).
 
 ### (c) The wait verb
@@ -336,8 +334,9 @@ lease states, which now carry the one-to-one name map themselves. Proposal 5 (la
 needs-reconciliation) moved to v1.5 with that layer. Proposal 2 is restated below as applied,
 without its layer 40 consequence.
 
-1. File: docs/spec/v1.3/10-server-truth.md. Sentence: in the paragraph beginning "If a
-   convenience `up` field exists", state that the displayed up or down reads the last-heard
+1. File: docs/spec/v1.3/10-server-truth.md. Sentence: in the presence paragraph after the
+   state table (round 2 replaced the paragraph that began "If a convenience `up` field exists";
+   it now begins "A binding can have a live transport"), state that the displayed up or down reads the last-heard
    clock through the internal states of layer 60 Reconciled (a) (up and deaf display up; down
    displays down, including the case where her daemon answers and her session does not), while
    proof and the push gate on the challenge-answer
@@ -345,7 +344,7 @@ without its layer 40 consequence.
    contradicts the standing friends-table rule that any authenticated activity resets the
    timeout; M1 models both clocks and needs layer 10 to name both.
 2. File: docs/spec/v1.3/20-comms.md. Sentence: in the lease state machine, add the internal
-   states deaf (active, not receiving, held up to 10 minutes, displays up) and the
+   states deaf (unhooked but heard within $T_{deaf}$, default 10 minutes; displays up) and the
    daemon-answers case of down (her daemon answers, her session does not; displays down).
    Applied as layer 20 guarantee 17 and its Displayed presence states. Reason: the display
    reads them, and layer 20's four lease states could not express them.

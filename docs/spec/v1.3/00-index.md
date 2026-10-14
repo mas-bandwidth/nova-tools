@@ -62,11 +62,11 @@ The twelve v1.3 cards, each mapped to the sections it implements. A card not lis
 | a-friend-daemons-session-check-is-bounded | 10 guarantee 12 (unavailable means unknown); 20 guarantee 17 (down from evidence); 30 guarantee 3; model M1 |
 | a-friend-row-is-a-bus-name-on-the-next-sync | 10 State and transitions, Friend row (enrolled identity is a known bus name); 20 guarantee 6; model M4 |
 | a-friend-who-speaks-on-the-bus-is-up | 10 guarantee 13 (`last_heard`); 20 guarantee 17; 60 Reconciled (a); model M1 |
-| a-friends-heard-time-is-an-atomic-max | 10 guarantee 13 (`last_heard` is an atomic max); 10 guarantee 1; model M1 |
+| a-friends-heard-time-is-an-atomic-max | 10 guarantee 13 (`last_heard` is an atomic max on the server clock, on the friend row); 10 guarantee 1; model M1 |
 | a-grok-friend-hears-the-bus-while-working | 30 guarantee 7 and the Grok subsection; 20 guarantee 13; model M2 |
 | a-muse-code-friend-hears-the-bus-while-working | 30 guarantee 7 and the Muse Code subsection; 20 guarantee 13; model M2 |
 | a-one-shot-wait-wakes-a-harness-that-wakes-on-exit | 20 guarantee 5 and interface 4 (`nova-hook wait`); 30 Antigravity subsection; 60 Reconciled (c); models M2, M3 |
-| a-push-or-pr-of-a-friends-is-heard | 10 guarantee 13 (a push or pull request advances `last_heard`); 60 Reconciled (a); model M1 |
+| a-push-or-pr-of-a-friends-is-heard | 10 guarantee 13 (a push or pull request advances `last_heard`); 20 Interfaces Below, `HEARD`; 60 Reconciled (a); model M1. Until it lands, a friend who only pushes commits reads down after 10 minutes. |
 | nova-bus-refuses-until-the-psychic-link-is-hooked | 20 guarantees 12, 14 and 16; 30 guarantee 6; model M2 |
 | nova-friend-drives-a-muse-code-session | 30 guarantees 2 and 6 and the Muse Code subsection; 20 guarantee 13; models M1, M2 |
 | presence-batch-turn-is-modelled-before-5540-lands | 60 M1 Presence and lease (modelled before nova-tools#5540 lands) |
@@ -147,5 +147,9 @@ a new ratification round.
   the link with the `one_shot` refusal.
 - 60 Reconciled (a) consequences for cards and claims (deaf keeps taken cards; down moves them
   to needs-reconciliation) and proposal 5.
+- 20 guarantee 7, failure mode 6 and open question 2: verbatim quote anchor validation on send.
+- 30 guarantee 6's work gate (take refused until the self-test), and the M2 invariant and
+  witness that new work opens only with the self-test passed.
+- 10 guarantee 13's "a take, a finish" as activity (sprint verbs).
 - 20 retirements that belong to the sprint: the tick's take-back of taken cards, friend lane
   files, and the one-shot friend daemon path.

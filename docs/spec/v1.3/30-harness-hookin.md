@@ -58,17 +58,15 @@ Numbered, each one testable, and each one shown on a real session of that harnes
 Guarantees 6 to 9 carry the psychic link of layer 20 (guarantees 12 to 18) into every harness,
 from the project owner's rulings of 2026-10-14 (layer 20, Rationale).
 
-6. **The link comes first; no work without it.** A session's first act is arming its link and
-   answering the challenge that arrives through it. Until that proof lands, every bus verb for
-   its name refuses `not_hooked` (layer 20 guarantee 12), and the friend takes no new work and
-   is dealt none. The bus gate opens when
-   the session proves the fresh challenge delivered through its link; the work gate opens only
-   after a send-to-self arrives in-turn and is answered from that turn, recording a passed
-   self-test for the current generation. A helper alive, a
-   nonce printed, or a message queued records an offer only and opens no gate. Observation:
-   before proof, send, recv and take are refused; after proof, send-to-self and recv succeed but
-   take remains refused until that self-test is answered from the turn; after the self-test,
-   take succeeds.
+6. **The link comes first.** A session's first act is arming its link and answering the
+   challenge that arrives through it. Until that proof lands, every bus verb for its name
+   refuses `not_hooked` (layer 20 guarantee 12). The bus gate opens when the session proves the
+   fresh challenge delivered through its link. After proof, a send-to-self that arrives in-turn
+   and is answered from that turn records a passed self-test for the current generation. A
+   helper alive, a nonce printed, or a message queued records an offer only and opens no gate.
+   What the self-test gates for work (deals and takes) is v1.5. Observation: before proof, send
+   and recv are refused; after proof, send-to-self and recv succeed, and the self-test is
+   recorded once the send-to-self is answered from the turn.
 7. **One link recipe per harness, measured pushed-in-turn.** `nova-hook hook --as <name>
    --harness <h>` prints the one link recipe for each harness below (Codex, Grok, Antigravity,
    Muse Code, Claude Code), and that recipe is the remedy every `not_hooked` refusal names. Each
@@ -322,7 +320,7 @@ Inputs:
    - The process blocks synchronously in the background on the server notification channel. When a push message arrives or a challenge is issued, the process unblocks, writes arrival JSON and the next nonce to stdout, and exits with code 0 immediately.
    - The process exit triggers an instant turn wakeup. Output is delivered directly to the agent context.
    - Token efficiency: Zero tokens spent on idle waiting; zero polling loops.
-   - Defense-in-depth: While executing long multi-step child tasks or bench test gates, a background timer is set via `schedule` (`DurationSeconds=120`, `Prompt="Comms lease heartbeat check"`, `TimerCondition="any"`), guaranteeing the turn wakes before any $T_{lease}$ expiration even if a command is killed or cancelled.
+   - Defense-in-depth: While executing long multi-step child tasks or bench test gates, a background timer is set via `schedule` (`DurationSeconds=45`, `Prompt="Comms lease heartbeat check"`, `TimerCondition="any"`). 45 s is shorter than the 60 s renewal window (renewal issued at 60 s remaining of $T_{lease}$ = 120 s, and $T_{challenge}$ = 60 s), so the turn wakes at least once inside each renewal window even if a command is killed or cancelled; it guarantees a turn, not that the turn answers.
 3. **Deaf or down detected by.**
    - Running `nova-hook hook` as a daemon task (`IsDaemon: true`) without an accompanying blocking wait process results in a deaf agent: challenges accumulate silently in task log files on disk without waking the turn.
    - If a challenge window ($T_{challenge}$) expires without a `prove` call, the server transitions the lease to `AWAY` (`reason: challenge_timeout`).
@@ -330,7 +328,7 @@ Inputs:
    - On the client side, if `nova-hook wait` exits with code 2 (`refusal: not_hooked`), the agent immediately detects that its session lease has lapsed.
 4. **Re-hook.**
    - When awakened with a challenge line or after a lease expiration, the agent runs `nova-hook prove --as <name> --nonce <nonce>` immediately in the foreground.
-   - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as <name> --role comms`, re-launches the non-daemon `nova-hook wait` background task, and proves the fresh challenge that wait delivers (layer 20 guarantee 14) with `nova-hook prove`.
+   - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as <name> --harness antigravity --role comms`, re-launches the non-daemon `nova-hook wait` background task, and proves the fresh challenge that wait delivers (layer 20 guarantee 14) with `nova-hook prove`.
    - After re-proving, the agent drains and acknowledges any pending messages received while away via `nova-bus recv --as <name> --all --ack`.
 
 ### Muse Code
@@ -347,7 +345,7 @@ installation, idle wake is `unproven` and no sender is told otherwise.
    process, a line written to a stream, and a line the model actually saw are three different
    states; only the third is delivery.
 2. **Push to turn.** Delivery is active-session delivery through layer 20, in this order; the foreground link is the measured active-session path, while idle wake is unmeasured, no end-to-end idle-wake transcript is recorded, and the sender is told delivery waits for the next turn boundary until that test passes. The
-   session hooks in with `nova-hook hook --as <name> --role comms`, which arms the link; the
+   session hooks in with `nova-hook hook --as <name> --harness muse-code --role comms`, which arms the link; the
    current challenge nonce arrives through the link (layer 20 guarantee 14). The session proves it at once with `nova-hook prove --as <name> --nonce <n>`;
    only that answer moves the server lease to `PROVEN` (layer 20). While proven, the session
    drains its stream with `nova-bus recv --as <name>` and acknowledges what it has acted on.
@@ -367,7 +365,7 @@ installation, idle wake is `unproven` and no sender is told otherwise.
    therefore checked by unacknowledged depth and lease state, never inferred from the session
    looking busy. A helper still running is not evidence the session can hear.
 4. **Re-hook.** On a `not_hooked` refusal, or on any new session, the session runs
-   `nova-hook hook --as <name> --role comms` to re-arm the link, proves the fresh nonce the link
+   `nova-hook hook --as <name> --harness muse-code --role comms` to re-arm the link, proves the fresh nonce the link
    delivers with `nova-hook prove`, then runs `nova-bus recv --as <name> --all` to drain every unacknowledged
    message in order before taking new work. A resumed session reconciles what the replay shows
    against work already claimed, so a message missed while deaf is acted on once, not twice and

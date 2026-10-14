@@ -98,21 +98,27 @@ ready. Larger payloads do not justify another writer; their durable bodies remai
 12. **Unavailable means unknown.** A client unable to read this authority reports unavailable or
     unknown with its last observed revision. It never promotes cached presence to current, claims
     a send committed, or writes a comms record on a local fallback.
-13. **Two clocks, one proof.** Every binding records `last_heard`, advanced by any valid
-    authenticated activity of that identity (a bus message, a take, a finish, a push, a pull
-    request, a beat, a proof), and `last_proof`, advanced only by a session's answer to the
-    current challenge (guarantee 4). Activity never advances `last_proof` or extends a lease.
-    `last_heard` only ever moves forward: each advance is an atomic max on the server, so a late
-    or concurrent write of an older time never moves it back.
+13. **Two clocks, one proof.** Every friend row records `last_heard`, advanced by any valid
+    authenticated activity of that identity (a bus message, a push, a pull request, a proof),
+    and every binding records `last_proof`, advanced only by a session's answer to the current
+    challenge (guarantee 4). `last_heard` lives on the friend row, not the binding, because a
+    push or pull request can arrive while she has no binding. A daemon's beat or session-check
+    reply, a ping and a wake file are not activity and never advance it. Activity never advances
+    `last_proof` or extends a lease. `last_heard` is stamped with the server clock (guarantee 14),
+    never a time a client supplies, and only ever moves forward: each advance is an atomic max on
+    the server, so a late or concurrent write of an older time never moves it back. A push or pull
+    request reaches the server through layer 20's `HEARD` primitive. Until that path is built, a
+    friend who only pushes commits, with no bus traffic, reads down after $T_{deaf}$ (10 minutes).
     Proof reads `last_proof` and the lease deadline alone; push delivery also reads the name's
     hooked state (guarantee 14), and a displayed up or down is a projection
-    of both clocks that the layers above define and never feeds back into proof. Observation: with a fake clock, a stream of sends and takes with
+    of both clocks that the layers above define and never feeds back into proof. Observation: with a fake clock, a stream of sends with
     no challenge answer leaves `last_proof` unchanged and the lease expires on time, while
     `last_heard` advances with each.
 14. **Client/server, never distributed: Redis is the server.** Redis is the one server and the
     only truth for everything in this layer and for the psychic link of layer 20: streams,
-    challenges, nonces, leases, hooked and unhooked state, inbox entries, delivery evidence,
-    acknowledgments and receipts. Every party (each friend, the coordinator, the sprint)
+    challenges, nonces, leases, `last_heard`, inbox entries, delivery evidence, acknowledgments
+    and receipts. Hooked is never stored: it is derived on read from a `PROVEN` binding whose
+    deadline is in the future on the server clock (layer 20). Every party (each friend, the coordinator, the sprint)
     is a client that asks Redis. There is no peer-to-peer messaging, no gossip, no agreement
     between clients, no client-side lease, wake file or nonce file, and no client state read as
     truth. Lease and challenge expiry is decided by Redis (server time, key TTL), never by a
@@ -139,8 +145,8 @@ never guesses how to merge the caller's intent.
 | Record | States / fields | Events and effect |
 |---|---|---|
 | Server | recovering, serving, unavailable; epoch; increasing revision | Start recovers committed rows and receipts before serving. A persistence failure stops admission. Restart conservatively invalidates live proofs and emits their recovery reasons; pending messages remain. |
-| Friend | enrolled, disabled; stable identity | Enroll publishes one identity, and from that commit the identity is a known bus name: a send naming it is never refused as unknown. Disable fences its binding against new progress without deleting evidence. Re-enable requires a fresh binding/proof. |
-| Binding | absent, challenged, proven, away, closed; session; generation; deadline; reason; `last_heard`; `last_proof` | Attach creates a challenge. A matching timely session answer makes it proven. A fresh challenge renews only when answered. Timeout makes it away. Explicit detach closes it. Replacement increments generation and starts challenged; it cannot inherit proof. |
+| Friend | enrolled, disabled; stable identity; `last_heard` (server clock, atomic max) | Enroll publishes one identity, and from that commit the identity is a known bus name: a send naming it is never refused as unknown. Disable fences its binding against new progress without deleting evidence. Re-enable requires a fresh binding/proof. |
+| Binding | absent, challenged, proven, away, closed; session; generation; deadline; reason; `last_proof` | Attach creates a challenge. A matching timely session answer makes it proven. A fresh challenge renews only when answered. Timeout makes it away. Explicit detach closes it. Replacement increments generation and starts challenged; it cannot inherit proof. |
 | Challenge | issued, answered, expired, superseded; nonce; binding generation; deadline | A fresh challenge supersedes the preceding unanswered challenge. Its issue does not extend an existing proof deadline. A consumed, stale or wrong-session nonce cannot create proof. |
 | Subscription | active, closed; identity; binding generation; filter; last offered revision | Subscribe binds the authenticated session to bounded replay. Disconnect closes only the transport subscription, not pending delivery. Reconnect resumes from a valid cursor or an explicit fresh snapshot. User filters cannot suppress binding/proof control events. |
 | Delivery | immutable message/recipient; pending or acknowledged; append-only attempts | Send atomically admits recipient entries. Offer records an attempt. Observe records a session answer for that attempt. Acknowledge records consumption and removes only that recipient from pending. Retry or reconnect reoffers pending IDs. |
@@ -148,7 +154,8 @@ never guesses how to merge the caller's intent.
 
 A binding can have a live transport and still be challenged or away. Presence reads return the
 binding state, proof deadline, reason, generation and the measured delivery mode separately.
-Presence reads also return both clocks of guarantee 13. A displayed up or down reads the
+Presence reads also return both clocks of guarantee 13 (`last_heard` from the friend row,
+`last_proof` from the binding). A displayed up or down reads the
 last-heard clock through the internal states that layer 20 defines over this record (round 2
 applies proposal 1 of layer 60: up and deaf display up; down displays down, including the case
 where her daemon answers and her session does not), while proof gates on the challenge-answer
