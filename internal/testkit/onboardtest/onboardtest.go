@@ -9,11 +9,13 @@
 // shipped command over the built binaries; this module serves the
 // per-command copies, in process, and the walker stays as it is.
 //
-// The tool is handed in as a pkg/testkit.Main, the repo's existing harness
-// (internal/testkit/verb is not at this card's base), and the banner is read
-// through pkg/onboarding, the shared parsing. Nothing here opens a socket,
-// reads the clock or starts a process: it is a unit-tier check, and testify
-// holds every check (require for the spec, assert inside the rows).
+// The tool is handed in as a verb.Main, internal/testkit/verb's name for the
+// repo's harness pkg/testkit.Main, and every run a testing.TB owns goes
+// through verb.Run, the checks reading the captured testkit.Result its Ran
+// carries; the banner is read through pkg/onboarding, the shared parsing.
+// Nothing here opens a socket, reads the clock or starts a process: it is a
+// unit-tier check, and testify holds every check (require for the spec,
+// assert inside the rows).
 package onboardtest
 
 import (
@@ -22,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/verb"
 	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -38,7 +41,7 @@ type Spec struct {
 // own subtest, Hold and Problems run them all in one pass.
 type leg struct {
 	name     string
-	problems func(m testkit.Main, spec Spec) []string
+	problems func(t testing.TB, m verb.Main, spec Spec) []string
 }
 
 // legs is the onboarding standard's checks, in the order a stranger meets
@@ -49,23 +52,33 @@ func legs(dir string) []leg {
 		{"bare", bareProblems},
 		{"help", helpProblems},
 		{"banner", bannerProblems},
-		{"verbs -h", func(m testkit.Main, spec Spec) []string { return verbProblems(m, spec, dir) }},
+		{"verbs -h", func(t testing.TB, m verb.Main, spec Spec) []string { return verbProblems(t, m, spec, dir) }},
 		{"example", exampleProblems},
 	}
+}
+
+// run is one run of the tool: through verb.Run where a testing.TB owns the
+// check, and through the Main itself where none does (Problems gathers the
+// reports without a test to fail).
+func run(t testing.TB, m verb.Main, args ...string) testkit.Result {
+	if t == nil {
+		return m.Run(args...)
+	}
+	return verb.Run(t, m, args...).Result
 }
 
 // Check runs every onboarding check for one command, each as its own t.Run
 // subtest, in parallel: one broken check does not hide the rest.
 //
 //	onboardtest.Check(t, main, onboardtest.Spec{Name: "nova-x", Verbs: []string{"list", "show"}})
-func Check(t *testing.T, m testkit.Main, spec Spec) {
+func Check(t *testing.T, m verb.Main, spec Spec) {
 	t.Helper()
 	requireSpec(t, spec)
 	for _, l := range legs(t.TempDir()) {
 		l := l
 		t.Run(l.name, func(t *testing.T) {
 			t.Parallel()
-			report(t, l.name, l.problems(m, spec))
+			report(t, l.name, l.problems(t, m, spec))
 		})
 	}
 }
@@ -73,30 +86,31 @@ func Check(t *testing.T, m testkit.Main, spec Spec) {
 // Hold runs every onboarding check for one command and hands each problem to
 // t as it is found. It is Check without the subtests, for a testing.TB a test
 // owns: a recording fake reads every broken check back.
-func Hold(t testing.TB, m testkit.Main, spec Spec) {
+func Hold(t testing.TB, m verb.Main, spec Spec) {
 	t.Helper()
 	requireSpec(t, spec)
 	for _, l := range legs(t.TempDir()) {
-		report(t, l.name, l.problems(m, spec))
+		report(t, l.name, l.problems(t, m, spec))
 	}
 }
 
 // VerbHelp is the verb-help check alone (ONBOARDING point 1): every verb
 // answers -h and --help with its usage on stdout at exit 0, nothing on stderr,
 // and writes nothing under the check's temp dir.
-func VerbHelp(t testing.TB, m testkit.Main, spec Spec) {
+func VerbHelp(t testing.TB, m verb.Main, spec Spec) {
 	t.Helper()
 	require.NotEmpty(t, spec.Verbs, "no verbs named: a check over no verbs would pass by checking nothing")
-	report(t, "verbs -h", verbProblems(m, spec, t.TempDir()))
+	report(t, "verbs -h", verbProblems(t, m, spec, t.TempDir()))
 }
 
 // Problems runs every onboarding check and returns each way the command broke
-// the standard, in the legs' order; an empty return is a pass. The verb-help
-// write-nothing check is omitted (no dir supplied).
-func Problems(m testkit.Main, spec Spec) []string {
+// the standard, in the legs' order; an empty return is a pass. It has no
+// testing.TB to hand verb.Run, so it runs the Main itself and gathers; the
+// verb-help write-nothing check is omitted (no dir supplied).
+func Problems(m verb.Main, spec Spec) []string {
 	var problems []string
 	for _, l := range legs("") {
-		problems = append(problems, l.problems(m, spec)...)
+		problems = append(problems, l.problems(nil, m, spec)...)
 	}
 	return problems
 }
@@ -120,10 +134,10 @@ func report(t testing.TB, check string, problems []string) {
 // bareProblems holds ONBOARDING point 1's first half: a command with no verb
 // is not an invocation; it refuses at exit 2, on stderr, in one line (two with
 // an indented hint) that names the door, `run: <tool> help`.
-func bareProblems(m testkit.Main, spec Spec) []string {
+func bareProblems(t testing.TB, m verb.Main, spec Spec) []string {
 	var problems []string
 	fail := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	r := m.Run()
+	r := run(t, m)
 	if r.Code != 2 {
 		fail("a bare `%s` exits %d, want 2 (could not run -- no arguments is not an invocation); stdout %q stderr %q", spec.Name, r.Code, r.Stdout, r.Stderr)
 	}
@@ -142,10 +156,10 @@ func bareProblems(m testkit.Main, spec Spec) []string {
 
 // helpProblems holds the door: `<tool> help` prints the banner on stdout and
 // exits 0, nothing on stderr.
-func helpProblems(m testkit.Main, spec Spec) []string {
+func helpProblems(t testing.TB, m verb.Main, spec Spec) []string {
 	var problems []string
 	fail := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	r := m.Run("help")
+	r := run(t, m, "help")
 	if r.Code != 0 {
 		fail("`%s help` exits %d, want 0; stderr: %q", spec.Name, r.Code, r.Stderr)
 	}
@@ -161,9 +175,9 @@ func helpProblems(m testkit.Main, spec Spec) []string {
 // bannerProblems holds ONBOARDING point 6's first question: the banner's
 // first line is `<tool>: ` and one sentence saying what the tool does, the
 // README's own sentence.
-func bannerProblems(m testkit.Main, spec Spec) []string {
+func bannerProblems(t testing.TB, m verb.Main, spec Spec) []string {
 	var problems []string
-	banner := m.Run("help").Stdout
+	banner := run(t, m, "help").Stdout
 	if _, err := onboarding.OpeningSentence(banner, spec.Name); err != nil {
 		problems = append(problems, fmt.Sprintf("%v", err))
 	}
@@ -174,25 +188,25 @@ func bannerProblems(m testkit.Main, spec Spec) []string {
 // (b)): `<tool> <verb> -h` and `--help` print that verb's usage on stdout and
 // exit 0, before anything is read, dialled or written, so nothing lands under
 // dir either.
-func verbProblems(m testkit.Main, spec Spec, dir string) []string {
+func verbProblems(t testing.TB, m verb.Main, spec Spec, dir string) []string {
 	var problems []string
 	fail := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	for _, verb := range spec.Verbs {
+	for _, v := range spec.Verbs {
 		for _, spelling := range []string{"-h", "--help"} {
-			args := append(strings.Fields(verb), spelling)
-			r := m.Run(args...)
+			args := append(strings.Fields(v), spelling)
+			r := run(t, m, args...)
 			if r.Code != 0 {
 				fail("`%s %s` exits %d, want 0; stderr: %q", strings.Join(args, " "), spec.Name, r.Code, r.Stderr)
 			}
 			if !strings.HasPrefix(r.Stdout, "usage:") {
-				fail("`%s %s` prints no usage line: %q", spec.Name, verb, firstLine(r.Stdout))
+				fail("`%s %s` prints no usage line: %q", spec.Name, v, firstLine(r.Stdout))
 			}
 			if r.Stderr != "" {
-				fail("`%s %s` wrote to stderr: %q; help is not a refusal", spec.Name, verb, r.Stderr)
+				fail("`%s %s` wrote to stderr: %q; help is not a refusal", spec.Name, v, r.Stderr)
 			}
 			if dir != "" {
 				if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
-					fail("`%s %s` left entries under the check's temp dir (err %v); help writes nothing", spec.Name, verb, err)
+					fail("`%s %s` left entries under the check's temp dir (err %v); help writes nothing", spec.Name, v, err)
 				}
 			}
 		}
@@ -203,10 +217,10 @@ func verbProblems(m testkit.Main, spec Spec, dir string) []string {
 // exampleProblems holds the banner's `example:` block (ONBOARDING points 1
 // and 6): the block is present, carries no placeholder, and its lines run and
 // answer 0 (done) or 1 (the verb ran and said no) -- never 2.
-func exampleProblems(m testkit.Main, spec Spec) []string {
+func exampleProblems(t testing.TB, m verb.Main, spec Spec) []string {
 	var problems []string
 	fail := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	banner := m.Run("help").Stdout
+	banner := run(t, m, "help").Stdout
 	lines, err := onboarding.ExampleLines(banner, spec.Name)
 	if err != nil {
 		fail("%v", err)
@@ -216,7 +230,7 @@ func exampleProblems(m testkit.Main, spec Spec) []string {
 		if strings.ContainsAny(line, "<>") {
 			fail("the example %q still carries a placeholder; the `example:` block is for lines a stranger can paste", line)
 		}
-		r := m.Run(strings.Fields(line)[1:]...)
+		r := run(t, m, strings.Fields(line)[1:]...)
 		if r.Code != 0 && r.Code != 1 {
 			fail("`%s` (an example line) exits %d, want 0 or 1; exit 2 is could-not-run, a broken example; stderr: %q", line, r.Code, r.Stderr)
 		}
