@@ -14,10 +14,10 @@ import (
 // stuckPSFixture stands for ps: a nova-sandbox wrapper (5207) and its walled
 // child (5210), the bench host case; a child too young (6000) and one too busy
 // (6001) that the bounds must drop; and a process outside every wall (9999).
-const stuckPSFixture = ` 5207     1 01-22:27:51 10:39.62 SN /Users/glenn/.local/bin/nova-sandbox --write /private/tmp/m5repro-v/data --write /private/tmp/m5repro-v/tmp --tmp /private/tmp/m5repro-v/tmp --cwd /private/tmp/m5repro-v/data --read /Users/glenn/nova-bench/harness-v1.18.20 -- /Users/glenn/nova-bench/harness-v1.18.20/opencode --version
- 5210  5207 01-22:27:51  0:00.01 SN /Users/glenn/nova-bench/harness-v1.18.20/opencode.bin --version
- 6000  5207 00:00:10  0:00.01 S  /Users/glenn/nova-bench/harness-v1.18.20/opencode.bin --too-young
- 6001  5207 01-22:27:51  2:00.00 S  /Users/glenn/nova-bench/harness-v1.18.20/opencode.bin --too-busy
+const stuckPSFixture = ` 5207     1 01-22:27:51 10:39.62 SN /Users/me/.local/bin/nova-sandbox --write /private/tmp/m5repro-v/data --write /private/tmp/m5repro-v/tmp --tmp /private/tmp/m5repro-v/tmp --cwd /private/tmp/m5repro-v/data --read /Users/me/nova-bench/harness-v1.18.20 -- /Users/me/nova-bench/harness-v1.18.20/opencode --version
+ 5210  5207 01-22:27:51  0:00.01 SN /Users/me/nova-bench/harness-v1.18.20/opencode.bin --version
+ 6000  5207 00:00:10  0:00.01 S  /Users/me/nova-bench/harness-v1.18.20/opencode.bin --too-young
+ 6001  5207 01-22:27:51  2:00.00 S  /Users/me/nova-bench/harness-v1.18.20/opencode.bin --too-busy
  9999     1 00:10:00  0:00.01 S  /usr/bin/other --outside
 `
 
