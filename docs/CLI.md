@@ -3191,7 +3191,11 @@ remove a lock file to break a live lock.
 
 Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
-contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
+contract is [SPEC-SECRETS.md](SPEC-SECRETS.md). Every verb but `version` takes
+`--json`: one JSON object on stdout with the same facts the lines print, a refusal
+included (its reason and exit code), and no secret value. `exec --json` of a call
+that returns before execve is that result; a call that would replace this process
+is refused in the object, and the child's own output is never a field.
 
 ### Gate a seat pull request
 

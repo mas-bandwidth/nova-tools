@@ -178,6 +178,15 @@ the specific guess an attacker who can write one directory gets to make for you.
 `--age-keygen <path>` is the same law. **`--max <n>` is the one default**, `20`; `0` prints
 all; a negative ceiling is refused.
 
+**`--json` is on every verb but `version` and `help`.** It prints one JSON object on
+stdout with the same facts that verb's lines print. A refusal is that object too: the
+reason and the exit code, and nothing on stderr. A secret value is never a field, the
+same law as the lines. `exec --json` of a call that returns before `execve` is that
+result as one object. A call that would replace this process is itself a refusal:
+the child's exit is not described from inside the process `execve` replaces, and the
+child's own output is never a field. The object is the one `pkg/tool` renders;
+`names` was the first verb on it.
+
 **`--only <NAME,...>` narrows what the command receives, and it has no default.** A list,
 or the literal `all`; a missing `--only` is a refusal naming both, because a launcher knows
 which secrets its harness needs and SPEC.md says the same of every scope: no default. Wide
@@ -238,7 +247,10 @@ and: **read the line, not the number**. Its one event line is printed **before**
 SECRETS EXEC OK as=<name> keys=<n> only=<all|n> required=<n> file=<path> head=<sha> cmd=<argv0>
 ```
 
-`keys=<n>` is a count and never a listing.
+`keys=<n>` is a count and never a listing. `--json` on a call that returns before
+`execve` prints that result as one object, and never the child's own output. A call
+that would reach `execve` is refused in that object instead: this process would be
+gone before it could record the child's exit.
 
 ### `names`
 

@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time
@@ -33,22 +34,24 @@ and sops on PATH); first value: seals one with --stdin, the path a harness takes
 usage:
   nova-secrets version  print this build identity (--version also accepted)
   nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
-                      --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+                      --only <NAME,...|all> [--require <NAME>]... [--json] -- <cmd> [args...]
   nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
-  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>] [--json]
   nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
-  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+                      [--json]
+  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>] [--json]
   nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
                       --machine <name> --secret <name> [--path <remote path>]
-                      [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
-  nova-secrets placed --machine <name> [--receipts <dir>]
+                      [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run] [--json]
+  nova-secrets placed --machine <name> [--receipts <dir>] [--json]
   nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
                       --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+                      [--json]
   nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
-                      --from <source seat> --only <NAME,...> --key <path> --sops <path>
+                      --from <source seat> --only <NAME,...> --key <path> --sops <path> [--json]
   nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
                       --only <NAME,...> --key <path> --sops <path> [--no-pr]
-                      [--dry-run] [--gh <path>] [--git <path>]
+                      [--dry-run] [--gh <path>] [--git <path>] [--json]
   nova-secrets help
 
 flags:
@@ -61,7 +64,7 @@ flags:
   --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
-  --json               names only: the result as one JSON object on stdout, a refusal included
+  --json               one JSON object on stdout for every verb but version; a refusal included
   --machine <name>     fleet machine to place a secret on (its target comes from --machines)
   --secret <name>      the key in <store>/<as>.yaml to copy to the machine
   --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
@@ -125,6 +128,7 @@ example:
   nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
   nova-secrets placed --machine bench-a
   nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
+  nova-secrets keygen --as bo --key ~/.config/nova-secrets/bo.key --age-keygen /opt/homebrew/bin/age-keygen && BO_PUB=$(sed -n 's/^# public key: //p' ~/.config/nova-secrets/bo.key) # public half of that key file
   nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
   nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
   nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
@@ -321,23 +325,23 @@ func dispatch(args []string, s streams) int {
 		fmt.Fprintf(s.stdout, "%s", usage)
 		return 0
 	case "exec":
-		return runExecCLI(args[1:], s)
+		return runExecMaybeJSON(args[1:], s) // SPEC-SECRETS exec, --json
 	case "names":
-		return runNamesCLI(args[1:], s)
+		return runNamesCLI(args[1:], s) // SPEC-SECRETS names: names renders its own --json
 	case "check":
-		return runCheckCLI(args[1:], s)
+		return runWithJSON("check", args[1:], s, checkValueFlags, runCheckCLI)
 	case "gate":
-		return runGateCLI(args[1:], s)
+		return runWithJSON("gate", args[1:], s, gateValueFlags, runGateCLI)
 	case "keygen":
-		return runKeygenCLI(args[1:], s)
+		return runWithJSON("keygen", args[1:], s, keygenValueFlags, runKeygenCLI)
 	case "place":
-		return runPlaceCLI(args[1:], s)
+		return runWithJSON("place", args[1:], s, placeValueFlags, runPlaceCLI)
 	case "placed":
-		return runPlacedCLI(args[1:], s)
+		return runWithJSON("placed", args[1:], s, placedValueFlags, runPlacedCLI)
 	case "seal":
-		return runSealCLI(args[1:], s)
+		return runWithJSON("seal", args[1:], s, sealValueFlags, runSealCLI)
 	case "seat":
-		return runSeatCLI(args[1:], s)
+		return runSeatMaybeJSON(args[1:], s)
 	default:
 		fmt.Fprintf(s.stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs)
 		return 2
@@ -396,4 +400,481 @@ func runPlacedCLI(args []string, s streams) int {
 		fmt.Fprintln(s.stdout, l)
 	}
 	return 0
+}
+
+// Value-taking flags. A bool flag (dry-run, stdin, no-pr, json) does not consume the
+// next word, so `--store --json` is the store's value and not --json (docs/SPEC-SECRETS.md
+// `--json`). --sops and --age-keygen stay the absolute paths the flag was given.
+var (
+	execValueFlags       = map[string]bool{"store": true, "as": true, "key": true, "sops": true, "only": true, "require": true}
+	checkValueFlags      = map[string]bool{"store": true, "as": true, "key": true, "sops": true, "max": true}
+	gateValueFlags       = map[string]bool{"store": true, "base": true, "head": true, "machines": true}
+	keygenValueFlags     = map[string]bool{"as": true, "key": true, "age-keygen": true, "store": true}
+	placeValueFlags      = map[string]bool{"store": true, "as": true, "key": true, "sops": true, "machine": true, "secret": true, "path": true, "machines": true, "receipts": true, "ssh": true}
+	placedValueFlags     = map[string]bool{"machine": true, "receipts": true}
+	sealValueFlags       = map[string]bool{"store": true, "as": true, "key": true, "sops": true, "name": true, "gh": true, "git": true}
+	seatAddValueFlags    = map[string]bool{"store": true, "as": true, "pub": true, "from": true, "only": true, "key": true, "sops": true}
+	seatInjectValueFlags = map[string]bool{"store": true, "as": true, "from": true, "only": true, "key": true, "sops": true, "gh": true, "git": true}
+)
+
+// jsonAsked reports whether --json was named as its own flag (docs/SPEC-SECRETS.md `--json`).
+// A value-taking flag's argument is skipped, and words after `--` belong to the command.
+func jsonAsked(args []string, takesValue map[string]bool) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			return false
+		}
+		name, val, hasVal := splitFlag(a)
+		if name == "json" {
+			if !hasVal {
+				return true
+			}
+			return jsonOn(val)
+		}
+		if takesValue[name] && !hasVal {
+			i++
+		}
+	}
+	return false
+}
+
+// stripJSONFlag removes a --json flag and keeps every other word (docs/SPEC-SECRETS.md
+// `--json`). The verb's own parser then sees the call it already knew.
+func stripJSONFlag(args []string, takesValue map[string]bool) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			out = append(out, args[i:]...)
+			return out
+		}
+		name, _, hasVal := splitFlag(a)
+		if name == "json" {
+			continue
+		}
+		out = append(out, a)
+		if takesValue[name] && !hasVal && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
+	}
+	return out
+}
+
+// splitFlag splits `--name` or `--name=value`. A short `-json` is the same name.
+func splitFlag(a string) (name, val string, hasVal bool) {
+	a = strings.TrimLeft(a, "-")
+	name, val, hasVal = strings.Cut(a, "=")
+	return name, val, hasVal
+}
+
+// runWithJSON runs a verb, and when --json was asked renders its lines as one JSON
+// object on stdout (docs/SPEC-SECRETS.md `--json`). A help panic is left for run's
+// recover: this function does not catch it.
+func runWithJSON(verb string, args []string, s streams, takesValue map[string]bool, runCLI func([]string, streams) int) int {
+	if !jsonAsked(args, takesValue) {
+		return runCLI(args, s)
+	}
+	code, stdout, stderr, err := captureLines(stripJSONFlag(args, takesValue), s, runCLI)
+	if err != nil {
+		return refuseJSON(verb, 2, "could not capture "+verb+": "+err.Error(), s.stdout)
+	}
+	return renderLinesJSON(verb, code, stdout, stderr, s.stdout)
+}
+
+// runSeatMaybeJSON dispatches seat's subverbs onto --json (docs/SPEC-SECRETS.md `--json`).
+func runSeatMaybeJSON(args []string, s streams) int {
+	if len(args) > 0 && args[0] == "add" {
+		return runWithJSON("seat add", args[1:], s, seatAddValueFlags, runSeatAddCLI)
+	}
+	if len(args) > 0 && args[0] == "inject" {
+		return runWithJSON("seat inject", args[1:], s, seatInjectValueFlags, runSeatInjectCLI)
+	}
+	if jsonAsked(args, nil) {
+		return runWithJSON("seat", args, s, nil, runSeatCLI)
+	}
+	return runSeatCLI(args, s)
+}
+
+// runExecMaybeJSON is exec under --json (docs/SPEC-SECRETS.md `exec` and `--json`).
+// A refusal returns before execve and is rendered in process. A call that might
+// replace this process is refused: describing the child's exit needs a child, and
+// this file does not start one (the spawn door is outside this package's import fence).
+func runExecMaybeJSON(args []string, s streams) int {
+	if !jsonAsked(args, execValueFlags) {
+		return runExecCLI(args, s)
+	}
+	stripped := stripJSONFlag(args, execValueFlags)
+	if execMightLaunch(stripped) {
+		return refuseJSON("exec", 125, "exec --json of a launch replaces this process; the child's exit is not described from inside it", s.stdout)
+	}
+	return runWithJSON("exec", args, s, execValueFlags, runExecCLI)
+}
+
+// execMightLaunch reports whether RunExec might reach execve (docs/SPEC-SECRETS.md
+// `exec`). It is false only when the call is known to return first: help, a missing
+// flag, an unknown flag, no command, or the width hand-write. It does not look up
+// --sops or --age-keygen, and it does not look up the command.
+func execMightLaunch(args []string) bool {
+	flagArgs, cmdArgs := args, []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		flagArgs, cmdArgs = args[:i], args[i+1:]
+	}
+	if len(cmdArgs) == 0 || cmdArgs[0] == "" {
+		return false
+	}
+	got := map[string]string{}
+	for i := 0; i < len(flagArgs); i++ {
+		a := flagArgs[i]
+		if a == "help" || a == "-h" || a == "--help" || !strings.HasPrefix(a, "-") {
+			return false
+		}
+		name, val, hasVal := splitFlag(a)
+		if name == "json" {
+			continue
+		}
+		if !execValueFlags[name] {
+			return false
+		}
+		if !hasVal {
+			if i+1 >= len(flagArgs) {
+				return false
+			}
+			i++
+			val = flagArgs[i]
+		}
+		got[name] = val
+	}
+	for _, name := range []string{"store", "as", "key", "sops", "only"} {
+		if got[name] == "" {
+			return false
+		}
+	}
+	if err := refusedWidthHandWrite(cmdArgs); err != nil {
+		return false
+	}
+	return true
+}
+
+// captureLines runs a verb with its stdout and stderr on pipes and returns both
+// texts (docs/SPEC-SECRETS.md `--json`). The reads run beside the verb so a full
+// pipe cannot stall it. No byte is written from this function.
+func captureLines(args []string, s streams, runCLI func([]string, streams) int) (code int, stdout, stderr string, err error) {
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return 0, "", "", err
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		rerr := outR.Close()
+		werr := outW.Close()
+		if rerr != nil {
+			return 0, "", "", rerr
+		}
+		if werr != nil {
+			return 0, "", "", werr
+		}
+		return 0, "", "", err
+	}
+	outC := make(chan string, 1)
+	errC := make(chan string, 1)
+	go drain(outR, outC)
+	go drain(errR, errC)
+	var werr, eerr error
+	closed := false
+	closeWrites := func() {
+		if closed {
+			return
+		}
+		closed = true
+		werr = outW.Close()
+		eerr = errW.Close()
+	}
+	defer closeWrites()
+	code = runCLI(args, streams{stdin: s.stdin, stdout: outW, stderr: errW})
+	closeWrites()
+	stdout = <-outC
+	stderr = <-errC
+	if werr != nil {
+		return code, stdout, stderr, werr
+	}
+	if eerr != nil {
+		return code, stdout, stderr, eerr
+	}
+	return code, stdout, stderr, nil
+}
+
+// drain reads one pipe to the end (docs/SPEC-SECRETS.md `--json`). A read or
+// close error still sends the bytes already taken: those are the verb's lines.
+func drain(r *os.File, c chan<- string) {
+	b, err := io.ReadAll(r)
+	cerr := r.Close()
+	// ignored: a short read of the verb's own pipe; the bytes already taken are the lines
+	if err != nil {
+		c <- string(b)
+		return
+	}
+	// ignored: a close after that read; the bytes already taken are the lines
+	if cerr != nil {
+		c <- string(b)
+		return
+	}
+	c <- string(b)
+}
+
+// jsonOn is --json's boolean form without a second parser (docs/SPEC-SECRETS.md `--json`).
+// Bare --json is handled by the caller. The accepted spellings are ParseBool's true set.
+func jsonOn(v string) bool {
+	switch v {
+	case "1", "t", "T", "true", "TRUE", "True":
+		return true
+	default:
+		return false
+	}
+}
+
+// refuseJSON is a --json refusal that never reached the verb (docs/SPEC-SECRETS.md `--json`).
+func refuseJSON(verb string, code int, why string, w io.Writer) int {
+	o := tool.Refuse(why)
+	o.Verb = verb
+	o.Exit = code
+	o.Remedy = "nova-secrets " + verb + " -h"
+	o.Render(w, true)
+	return o.Exit
+}
+
+// renderLinesJSON turns the verb's tool lines into one JSON object (docs/SPEC-SECRETS.md
+// `--json`). Lines that are not tool lines are dropped, so a secret on stderr
+// is not a field.
+func renderLinesJSON(verb string, code int, stdout, stderr string, w io.Writer) int {
+	var o *tool.Out
+	switch {
+	case code == 0:
+		o = tool.Done()
+	case code == 1:
+		o = tool.Fail()
+	default:
+		o = tool.Refuse()
+		o.Exit = code
+	}
+	o.Verb = verb
+	for _, line := range strings.Split(stdout+"\n"+stderr, "\n") {
+		absorbToolLine(o, line)
+	}
+	if o.Status == tool.Refused && o.Remedy == "" {
+		joined := strings.Join(o.Why, " ")
+		if !oneline.HasRemedy(joined) {
+			o.Remedy = "nova-secrets " + verb + " -h"
+		}
+	}
+	o.Render(w, true)
+	return o.Exit
+}
+
+// absorbToolLine copies one tool line's facts into o (docs/SPEC-SECRETS.md `--json`).
+// A line that is not a SECRETS or GATE line is ignored.
+func absorbToolLine(o *tool.Out, line string) {
+	line = strings.TrimSpace(line)
+	if line == "" || (!strings.Contains(line, "SECRETS ") && !strings.HasPrefix(line, "GATE ")) {
+		return
+	}
+	if i := strings.Index(line, " REFUSED:"); i >= 0 {
+		reason := strings.TrimSpace(line[i+len(" REFUSED:"):])
+		if j := strings.Index(reason, "; run: "); j >= 0 {
+			o.Remedy = strings.TrimSpace(reason[j+len("; run: "):])
+			reason = strings.TrimSpace(reason[:j])
+		}
+		o.Status = tool.Refused
+		if o.Exit == 0 {
+			o.Exit = 2
+		}
+		if reason != "" {
+			o.Why = append(o.Why, reason)
+		}
+		return
+	}
+	if strings.Contains(line, " MORE ") {
+		addMore(o, line)
+		return
+	}
+	body, kind, prose := splitToolBody(line)
+	if prose != "" && (kind == "FAIL" || kind == "FAILED") {
+		o.ItemText("fail", prose, fieldsAsKV(body)...)
+		return
+	}
+	fields := parseKV(body)
+	if prose == "" && len(fields) == 0 && body != "" && kind != "" && kind != "OK" && kind != "APPROVE" && kind != "DRY-RUN OK" {
+		// A rule block, a note or a next step has no key=value. The line's text is the fact.
+		o.ItemText(strings.ToLower(kind), body)
+		return
+	}
+	for _, f := range fields {
+		o.Fact(f.k, factValue(f.v))
+	}
+	if prose != "" {
+		o.ItemText(strings.ToLower(kind), prose)
+	}
+}
+
+// splitToolBody drops the SECRETS or GATE token and the verb, and returns the status
+// word, the field text before a prose tail, and that tail.
+func splitToolBody(line string) (body, kind, prose string) {
+	rest := line
+	switch {
+	case strings.HasPrefix(rest, "SECRETS "):
+		rest = strings.TrimPrefix(rest, "SECRETS ")
+	case strings.HasPrefix(rest, "GATE "):
+		rest = strings.TrimPrefix(rest, "GATE ")
+	}
+	// The verb may be several words (SEAT ADD, SEAT INJECT, DRY-RUN). The status word
+	// is the first of these, longest first so DRY-RUN OK is not read as OK alone.
+	for _, word := range []string{"DRY-RUN OK", "DRY-RUN", "APPROVE", "REFUSED", "FAILED", "FAIL", "OK", "PLAN", "NOTE", "NEXT", "RULE", "NAMES", "NAME", "ITEM"} {
+		i := strings.Index(rest, word)
+		if i < 0 {
+			continue
+		}
+		before := strings.TrimSpace(rest[:i])
+		if strings.Contains(before, "=") {
+			continue
+		}
+		kind = word
+		rest = strings.TrimSpace(rest[i+len(word):])
+		break
+	}
+	if j := strings.Index(rest, ": "); j >= 0 {
+		return strings.TrimSpace(rest[:j]), kind, strings.TrimSpace(rest[j+2:])
+	}
+	return rest, kind, ""
+}
+
+func addMore(o *tool.Out, line string) {
+	remedy := ""
+	if j := strings.Index(line, " run: "); j >= 0 {
+		remedy = strings.TrimSpace(line[j+len(" run: "):])
+		line = line[:j]
+	}
+	kind := ""
+	shown, total := 0, 0
+	for _, f := range parseKV(line) {
+		switch f.k {
+		case "kind":
+			kind = f.v
+		case "shown":
+			shown = atoiField(f.v)
+		case "total":
+			total = atoiField(f.v)
+		}
+	}
+	if kind == "" {
+		return
+	}
+	o.More = append(o.More, tool.More{Kind: kind, Shown: shown, Total: total, Remedy: remedy})
+}
+
+type kv struct{ k, v string }
+
+func parseKV(line string) []kv {
+	var out []kv
+	for _, tok := range strings.Fields(line) {
+		k, v, ok := strings.Cut(tok, "=")
+		if !ok || k == "" {
+			continue
+		}
+		out = append(out, kv{k, v})
+	}
+	return out
+}
+
+func fieldsAsKV(body string) []any {
+	var kvOut []any
+	for _, f := range parseKV(body) {
+		kvOut = append(kvOut, f.k, factValue(f.v))
+	}
+	return kvOut
+}
+
+// factValue keeps a token a number only when the decimal spelling round-trips, so
+// mode=0600 stays the text the line printed (docs/SPEC-SECRETS.md `--json`).
+func factValue(v string) any {
+	switch v {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	n, ok := decimalInt(v)
+	if !ok {
+		return v
+	}
+	return n
+}
+
+func atoiField(v string) int {
+	n, ok := decimalInt(v)
+	if !ok {
+		return 0
+	}
+	return n
+}
+
+// decimalInt accepts a decimal token whose spelling round-trips (docs/SPEC-SECRETS.md
+// `--json`). A leading zero, an empty sign, or a value that does not fit in an int
+// stays text at the caller.
+func decimalInt(v string) (int, bool) {
+	if v == "" {
+		return 0, false
+	}
+	neg := false
+	i := 0
+	if v[0] == '-' {
+		neg = true
+		i = 1
+	}
+	if i == len(v) || (len(v)-i > 1 && v[i] == '0') {
+		return 0, false
+	}
+	const lim = int(^uint(0) >> 1)
+	n := 0
+	for ; i < len(v); i++ {
+		d := v[i]
+		if d < '0' || d > '9' {
+			return 0, false
+		}
+		digit := int(d - '0')
+		if n > (lim-digit)/10 {
+			return 0, false
+		}
+		n = n*10 + digit
+	}
+	if neg {
+		n = -n
+	}
+	if spellInt(n) != v {
+		return 0, false
+	}
+	return n, true
+}
+
+func spellInt(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
