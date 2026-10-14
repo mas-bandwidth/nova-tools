@@ -5,9 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeRunner answers the programs a verb runs without starting one.
@@ -107,15 +109,9 @@ func (h *harness) all() string { return h.out.String() + h.errb.String() }
 func (h *harness) write(rel, content string, mode os.FileMode) string {
 	h.t.Helper()
 	p := filepath.Join(h.dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		h.t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(content), mode); err != nil {
-		h.t.Fatal(err)
-	}
-	if err := os.Chmod(p, mode); err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, os.MkdirAll(filepath.Dir(p), 0o755), rel)
+	require.NoError(h.t, os.WriteFile(p, []byte(content), mode), rel)
+	require.NoError(h.t, os.Chmod(p, mode), rel)
 	return p
 }
 
@@ -129,23 +125,17 @@ func (h *harness) tools(names ...string) {
 
 func (h *harness) mustContain(s string) {
 	h.t.Helper()
-	if !strings.Contains(h.all(), s) {
-		h.t.Fatalf("output does not contain %q:\n%s", s, h.all())
-	}
+	require.Contains(h.t, h.all(), s)
 }
 
 func (h *harness) mustNotContain(s string) {
 	h.t.Helper()
-	if strings.Contains(h.all(), s) {
-		h.t.Fatalf("output contains %q:\n%s", s, h.all())
-	}
+	require.NotContains(h.t, h.all(), s)
 }
 
 func (h *harness) wantRC(got, want int) {
 	h.t.Helper()
-	if got != want {
-		h.t.Fatalf("exit %d, want %d; output:\n%s", got, want, h.all())
-	}
+	require.Equal(h.t, want, got, "output:\n"+h.all())
 }
 
 // wantRun runs a verb, pins its exit code and one phrase it prints.
@@ -159,25 +149,20 @@ func (h *harness) wantRun(want int, phrase string, args ...string) {
 // was reached past the named refusal.
 func (h *harness) wantNothingPast(past string) {
 	h.t.Helper()
-	if len(h.gh.apis) != 0 || len(h.runner.called()) != 0 {
-		h.t.Fatalf("something ran past %s", past)
-	}
+	assert.Empty(h.t, h.gh.apis, "something ran past "+past)
+	assert.Empty(h.t, h.runner.called(), "something ran past "+past)
 }
 
 // remove deletes a file of the harness's tree by the path write takes.
 func (h *harness) remove(rel string) {
 	h.t.Helper()
-	if err := os.Remove(filepath.Join(h.dir, filepath.FromSlash(rel))); err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, os.Remove(filepath.Join(h.dir, filepath.FromSlash(rel))), rel)
 }
 
 func fixture(t *testing.T, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.FromSlash(rel))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, rel)
 	return string(b)
 }
 

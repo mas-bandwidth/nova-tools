@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The certified verb, pinned by the three outcomes the release-checks job drove
@@ -61,12 +64,9 @@ func TestCertifiedAsksOnceWithTheStatusLineAndNoStatusFilter(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/single-green.json")), 0)
 	h.wantRC(h.do("certified"), 0)
-	if len(h.gh.apis) != 1 || strings.Join(h.gh.apis[0], " ") != "-i "+certAPI {
-		t.Fatalf("asked %v, want one `gh api -i %s`", h.gh.apis, certAPI)
-	}
-	if len(h.gh.releases) != 0 {
-		t.Fatalf("the gate ran gh release: %v", h.gh.releases)
-	}
+	require.Len(t, h.gh.apis, 1, "want one `gh api -i %s`", certAPI)
+	assert.Equal(t, "-i "+certAPI, strings.Join(h.gh.apis[0], " "))
+	assert.Empty(t, h.gh.releases, "the gate ran gh release")
 }
 
 func TestCertifiedAnAnswerThatIsNot200IsRefusedWithTheWholeResponse(t *testing.T) {
@@ -167,9 +167,7 @@ func TestCertifiedNeedsTheWholeEnvironment(t *testing.T) {
 		h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/single-green.json")), 0)
 		delete(h.vars, missing)
 		h.wantRun(2, missing+" is not set", "certified")
-		if len(h.gh.apis) != 0 {
-			t.Errorf("%s unset: GitHub was asked anyway", missing)
-		}
+		assert.Empty(t, h.gh.apis, "%s unset: GitHub was asked anyway", missing)
 	}
 }
 

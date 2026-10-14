@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The ldflags verb, pinned by what the release-checks job asserted of the shell
@@ -15,9 +18,7 @@ func TestLdflagsRefusesAnEmptyStamp(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.wantRun(1, "refusing: the release stamp is empty", "ldflags", "")
-	if h.out.Len() != 0 {
-		t.Fatalf("a refusal printed a flag on stdout: %q", h.out.String())
-	}
+	require.Zero(t, h.out.Len(), "a refusal printed a flag on stdout: %q", h.out.String())
 }
 
 func TestLdflagsComposesTheStamp(t *testing.T) {
@@ -25,9 +26,7 @@ func TestLdflagsComposesTheStamp(t *testing.T) {
 	for _, stamp := range []string{"v0.13.0", "v0.13.0-rc1", "v0.0.0-dry-run"} {
 		h := newHarness(t)
 		h.wantRC(h.do("ldflags", stamp), 0)
-		if got, want := h.out.String(), "-s -w -X main.version="+stamp+"\n"; got != want {
-			t.Errorf("<%s> composed %q, want %q", stamp, got, want)
-		}
+		assert.Equal(t, "-s -w -X main.version="+stamp+"\n", h.out.String(), "<%s> composed flag", stamp)
 	}
 }
 
@@ -43,12 +42,8 @@ func TestLdflagsRefusesTheTagAlphabetEachByItsOwnReason(t *testing.T) {
 	} {
 		h := newHarness(t)
 		h.wantRC(h.do("ldflags", c.stamp), 1)
-		if !strings.Contains(h.errb.String(), c.phrase) {
-			t.Errorf("<%q> was refused, but not for %s:\n%s", c.stamp, c.phrase, h.errb.String())
-		}
-		if h.out.Len() != 0 {
-			t.Errorf("<%q> printed a flag on stdout: %q", c.stamp, h.out.String())
-		}
+		assert.Contains(t, h.errb.String(), c.phrase, "<%q> was refused, but not for %s", c.stamp, c.phrase)
+		assert.Zero(t, h.out.Len(), "<%q> printed a flag on stdout", c.stamp)
 	}
 }
 
@@ -65,7 +60,6 @@ func TestComposedLdflagsAreCheckedNotJustTheirInput(t *testing.T) {
 	// empty, so it is exercised through the function. A composed flag always
 	// carries a non-empty -X main.version.
 	flags, refusal := composeLdflags("v1")
-	if refusal != nil || !strings.HasSuffix(flags, "-X main.version=v1") {
-		t.Fatalf("composeLdflags(v1) = %q, %v", flags, refusal)
-	}
+	require.Empty(t, refusal)
+	assert.True(t, strings.HasSuffix(flags, "-X main.version=v1"), "composeLdflags(v1) = %q", flags)
 }

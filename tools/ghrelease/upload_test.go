@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The upload verb, pinned by every case the release-checks job drove through a
@@ -53,16 +56,13 @@ func upList(t *testing.T, name string) uploadCase {
 
 func wantRelease(t *testing.T, h *harness, want ...string) {
 	t.Helper()
-	if len(h.gh.releases) != 1 || strings.Join(h.gh.releases[0], " ") != strings.Join(want, " ") {
-		t.Fatalf("gh release calls %v, want one %v\n%s", h.gh.releases, want, h.all())
-	}
+	require.Len(t, h.gh.releases, 1, "gh release calls %v, want one %v\n%s", h.gh.releases, want, h.all())
+	require.Equal(t, strings.Join(want, " "), strings.Join(h.gh.releases[0], " "), h.all())
 }
 
 func wantNoRelease(t *testing.T, h *harness) {
 	t.Helper()
-	if len(h.gh.releases) != 0 {
-		t.Fatalf("the verb reached gh release after a refusal: %v\n%s", h.gh.releases, h.all())
-	}
+	require.Empty(t, h.gh.releases, "the verb reached gh release after a refusal\n%s", h.all())
 }
 
 func TestUploadTag404WithADraftInTheListUploadsWithClobber(t *testing.T) {
@@ -77,11 +77,7 @@ func TestUploadTag404WithNoDraftCreatesADraftWithTheCanonicalNotesFile(t *testin
 	h := uploadWorld(t, upList(t, "empty-list"))
 	h.wantRC(h.do("upload"), 0)
 	wantRelease(t, h, "create", "v0.14.0", "--draft", "--verify-tag", "--title", "v0.14.0", "--notes-file", uploadNotes, "dist/nova-bus_v0.14.0_linux_amd64")
-	for _, a := range h.gh.releases[0] {
-		if a == "--generate-notes" {
-			t.Fatal("the release was created with --generate-notes instead of --notes-file")
-		}
-	}
+	assert.NotContains(t, h.gh.releases[0], "--generate-notes", "the release was created with --generate-notes instead of --notes-file")
 }
 
 func TestUploadAPublishedReleaseOnTheTagLookupIsRefusedInOneLine(t *testing.T) {
@@ -96,9 +92,7 @@ func TestUploadADraftOnTheTagLookupIsUploadedTo(t *testing.T) {
 	h := uploadWorld(t, uploadCase{status: "200", body: `{"id": 7, "tag_name": "v0.14.0", "draft": true}`})
 	h.wantRC(h.do("upload"), 0)
 	wantRelease(t, h, "upload", "v0.14.0", "--clobber", "dist/nova-bus_v0.14.0_linux_amd64")
-	if len(h.gh.apis) != 1 {
-		t.Fatalf("%d API calls; a 200 answers the question and the listing is not asked", len(h.gh.apis))
-	}
+	require.Len(t, h.gh.apis, 1, "a 200 answers the question and the listing is not asked")
 }
 
 func TestUploadAPublishedReleaseInTheListingIsRefusedNamingItsId(t *testing.T) {
@@ -113,12 +107,8 @@ func TestUploadAListingThatIsNotAListOfReleasesIsRefusedFailClosed(t *testing.T)
 	for _, name := range []string{"not-an-array", "string-draft", "null-draft", "null-id", "string-id", "null-tag"} {
 		h := uploadWorld(t, upList(t, name))
 		h.wantRC(h.do("upload"), 1)
-		if !strings.Contains(h.errb.String(), "is invalid or non-array") {
-			t.Errorf("%s: not refused fail-closed:\n%s", name, h.all())
-		}
-		if len(h.gh.releases) != 0 {
-			t.Errorf("%s: reached gh release on an invalid listing: %v", name, h.gh.releases)
-		}
+		assert.Contains(t, h.errb.String(), "is invalid or non-array", "%s: not refused fail-closed:\n%s", name, h.all())
+		assert.Empty(t, h.gh.releases, "%s: reached gh release on an invalid listing", name)
 	}
 }
 
@@ -134,9 +124,7 @@ func TestUploadAnAbsentNotesFileIsRefusedBeforeAnyAPICall(t *testing.T) {
 	h := uploadWorld(t, upList(t, "empty-list"))
 	h.write(uploadNotes, "", 0o644) // present but empty is absent: the check is -s
 	h.wantRun(1, "refusing: "+uploadNotes+" does not exist in the tagged tree; write it, land it, and tag the commit that carries it", "upload")
-	if len(h.gh.apis) != 0 {
-		t.Fatalf("an API call was made when the notes file was absent: %v", h.gh.apis)
-	}
+	require.Empty(t, h.gh.apis, "an API call was made when the notes file was absent")
 	wantNoRelease(t, h)
 
 	h = uploadWorld(t, upList(t, "empty-list"))
@@ -150,9 +138,7 @@ func TestUploadANonAnswerIsRefusedNotReadAsAbsence(t *testing.T) {
 	h.wantRun(1, "asking GitHub about repos/example/repo/releases/tags/v0.14.0 answered neither 200 nor 404 (gh exit 1):", "upload")
 	h.mustContain("HTTP/2 403 Forbidden")
 	wantNoRelease(t, h)
-	if len(h.gh.apis) != 1 {
-		t.Fatalf("%d API calls after a 403; the create path must not be walked", len(h.gh.apis))
-	}
+	require.Len(t, h.gh.apis, 1, "the create path must not be walked after a 403")
 }
 
 func TestUploadAFailedListingCallIsRefusedNotReadAsNoDrafts(t *testing.T) {
@@ -236,13 +222,13 @@ func TestSummarizeReleasesCountsOnlyTheTagAskedFor(t *testing.T) {
 	  {"id": 3, "tag_name": "v0.14.0", "draft": true},
 	  {"id": 4, "tag_name": "v0.15.0", "draft": true}]`
 	pub, drafts, err := summarizeReleases(listing, "v0.14.0")
-	if err != nil || pub != "" || drafts != 1 {
-		t.Fatalf("published %q drafts %d err %v, want none published and one draft", pub, drafts, err)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, pub)
+	assert.Equal(t, 1, drafts)
 	pub, drafts, err = summarizeReleases(`[{"id": 9, "tag_name": "v0.14.0", "draft": false}, {"id": 10, "tag_name": "v0.14.0", "draft": false}]`, "v0.14.0")
-	if err != nil || pub != "9" || drafts != 0 {
-		t.Fatalf("published %q drafts %d err %v, want the first published id", pub, drafts, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "9", pub)
+	assert.Zero(t, drafts)
 }
 
 func TestSummarizeReleasesRefusesWhatIsNotAListOfReleases(t *testing.T) {
@@ -260,12 +246,6 @@ func TestSummarizeReleasesRefusesWhatIsNotAListOfReleases(t *testing.T) {
 		{"missing draft", `[{"id": 5, "tag_name": "t"}]`, "missing required metadata"},
 	} {
 		_, _, err := summarizeReleases(c.in, "t")
-		if err == nil {
-			t.Errorf("%s: accepted", c.name)
-			continue
-		}
-		if !strings.Contains(err.Error(), c.phrase) {
-			t.Errorf("%s: error %q lacks %q", c.name, err, c.phrase)
-		}
+		assert.ErrorContains(t, err, c.phrase, "%s: %v", c.name, err)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestVerifySumsRefusesUnreadChecksumTail pins the verifySums contract (sums.go:
@@ -39,14 +41,10 @@ func TestVerifySumsRefusesUnreadChecksumTail(t *testing.T) {
 		h := newHarness(t)
 		dist := fillDist(t, h, "v1.0.0")
 		h.write("dist/SHA256SUMS", c.sums, 0o644)
-		if got := verifySums(h.out, h.errb, dist, filepath.Join(dist, "SHA256SUMS")); got != c.want {
-			t.Errorf("%s: verifySums returned %v, want %v; output:\n%s", c.name, got, c.want, h.all())
-		}
-		if strings.Contains(h.all(), ": FAILED") {
-			t.Errorf("%s: a FAILED artifact line was invented for a scanner error:\n%s", c.name, h.all())
-		}
-		if c.must != "" && !strings.Contains(h.all(), c.must) {
-			t.Errorf("%s: the diagnostic does not name the checksum-read error %q:\n%s", c.name, c.must, h.all())
+		assert.Equal(t, c.want, verifySums(h.out, h.errb, dist, filepath.Join(dist, "SHA256SUMS")), "%s: verifySums; output:\n%s", c.name, h.all())
+		assert.NotContains(t, h.all(), ": FAILED", "%s: a FAILED artifact line was invented for a scanner error", c.name)
+		if c.must != "" {
+			assert.Contains(t, h.all(), c.must, "%s: the diagnostic does not name the checksum-read error", c.name)
 		}
 	}
 }

@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The stamp verb, pinned by every assertion the release-checks job made of the
@@ -34,13 +37,9 @@ func newStampWorld(t *testing.T, stamp string, tools ...string) *stampWorld {
 		w.answers[n] = answer{out: fmt.Sprintf("%s %s linux/amd64 go1.27\n", n, stamp)}
 	}
 	w.runner.output = func(c command) (string, int) {
-		if len(c.args) != 1 || c.args[0] != "version" {
-			t.Errorf("the assertion ran %v, want `version`", c.args)
-		}
+		assert.Equal(t, []string{"version"}, c.args, "the assertion runs `version`")
 		a, ok := w.answers[filepath.Base(c.name)]
-		if !ok {
-			t.Errorf("no answer for %s", c.name)
-		}
+		assert.True(t, ok, "no answer for %s", c.name)
 		return a.out, a.rc
 	}
 	return w
@@ -94,9 +93,7 @@ func TestStampMatchesTheTagAsAWholeToken(t *testing.T) {
 		w := newStampWorld(t, "v0.1", "nova-bus")
 		w.answers["nova-bus"] = answer{out: c.printed + "\n"}
 		rc := w.do("stamp", "v0.1", "bin/%s")
-		if (rc == 0) != c.pass {
-			t.Errorf("%q: exit %d, pass want %v\n%s", c.printed, rc, c.pass, w.all())
-		}
+		assert.Equal(t, c.pass, rc == 0, "%q: exit %d\n%s", c.printed, rc, w.all())
 	}
 }
 
@@ -122,9 +119,7 @@ func TestStampFailsWhenThereIsNoRunnableBinary(t *testing.T) {
 	w.wantRun(1, "FAIL: nova-tokens is built by the release loop but there is no runnable binary at bin/nova-tokens", "stamp", "v1", "bin/%s")
 
 	w = newStampWorld(t, "v1", "nova-bus")
-	if err := os.Chmod(filepath.Join(w.dir, "bin", "nova-bus"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(filepath.Join(w.dir, "bin", "nova-bus"), 0o644))
 	w.wantRun(1, "there is no runnable binary at bin/nova-bus", "stamp", "v1", "bin/%s")
 }
 
@@ -158,15 +153,10 @@ func TestStampRefusesACallItCannotCheckBeforeRunningAnyBinary(t *testing.T) {
 	} {
 		w := newStampWorld(t, "v1", "nova-bus")
 		w.wantRC(w.do(append([]string{"stamp"}, c.args...)...), 2)
-		if !strings.Contains(w.errb.String(), c.phrase) {
-			t.Errorf("%s: refused, but not for %q:\n%s", c.name, c.phrase, w.all())
-		}
-		if strings.Contains(w.all(), "ok: ") || strings.Contains(w.all(), "FAIL: ") {
-			t.Errorf("%s: the assertion ran the tools before refusing; the refusal must precede them:\n%s", c.name, w.all())
-		}
-		if n := len(w.runner.called()); n != 0 {
-			t.Errorf("%s: %d binaries run before the refusal", c.name, n)
-		}
+		assert.Contains(t, w.errb.String(), c.phrase, "%s: refused, but not for %q", c.name, c.phrase)
+		assert.NotContains(t, w.all(), "ok: ", "%s: the assertion ran the tools before refusing", c.name)
+		assert.NotContains(t, w.all(), "FAIL: ", "%s: the assertion ran the tools before refusing", c.name)
+		assert.Zero(t, len(w.runner.called()), "%s: binaries run before the refusal", c.name)
 	}
 }
 
@@ -175,9 +165,7 @@ func TestStampWrongArgumentCountIsAUsageError(t *testing.T) {
 	for _, args := range [][]string{{"stamp"}, {"stamp", "v1"}, {"stamp", "v1", "bin/%s", "cmd", "extra"}} {
 		w := newStampWorld(t, "v1", "nova-bus")
 		w.wantRun(2, "usage:", args...)
-		if n := len(w.runner.called()); n != 0 {
-			t.Errorf("%v: %d binaries run", args, n)
-		}
+		assert.Zero(t, len(w.runner.called()), "%v: binaries run", args)
 	}
 }
 
@@ -218,9 +206,7 @@ func TestStampFailsWhenTheCmdDirectoryHoldsNoTool(t *testing.T) {
 
 func TestTheShippedExemptionListIsEmpty(t *testing.T) {
 	t.Parallel()
-	if len(legacyNoVersionVerb) != 0 {
-		t.Fatalf("legacyNoVersionVerb = %v; every shipped tool is required to report the tag", legacyNoVersionVerb)
-	}
+	assert.Empty(t, legacyNoVersionVerb, "every shipped tool is required to report the tag")
 }
 
 func TestStampAnExemptToolIsNamedAndNotedNeverSkippedInSilence(t *testing.T) {
@@ -241,9 +227,7 @@ func TestStampAStaleExemptionIsRefusedByNameBeforeAnythingRuns(t *testing.T) {
 	w := newStampWorld(t, "v1", "nova-bus")
 	w.e.legacy = []string{"nova-departed"}
 	w.wantRun(1, "FAIL: nova-departed is exempted from the stamp assertion but cmd/nova-departed does not exist", "stamp", "v1", "bin/%s")
-	if n := len(w.runner.called()); n != 0 {
-		t.Fatalf("%d binaries run before a stale exemption was refused", n)
-	}
+	require.Zero(t, len(w.runner.called()), "binaries run before a stale exemption was refused")
 }
 
 func TestStampFailsWhenEveryShippedToolIsExempt(t *testing.T) {

@@ -4,6 +4,9 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The attach verb is the release job's last step, which was a run block of
@@ -53,18 +56,11 @@ func TestAttachFetchesTheTagChecksItIsThisTreesSumsAndUploads(t *testing.T) {
 	h.wantRC(h.do("attach"), 0)
 
 	calls := h.runner.called()
-	if len(calls) != 2 {
-		t.Fatalf("%d programs run, want git fetch and git rev-parse: %v", len(calls), calls)
-	}
-	if got := strings.Join(calls[0].args, " "); calls[0].name != "git" || got != "fetch --depth=1 origin +refs/tags/v0.14.0:refs/tags/v0.14.0" {
-		t.Errorf("fetched with %s %s", calls[0].name, got)
-	}
-	if got := strings.Join(calls[1].args, " "); got != "rev-parse refs/tags/v0.14.0^{commit}" {
-		t.Errorf("resolved with git %s", got)
-	}
-	if got := strings.Join(h.gh.apis[0], " "); got != "-i repos/example/repo/git/ref/tags/v0.14.0" {
-		t.Errorf("asked %s", got)
-	}
+	require.Len(t, calls, 2, "want git fetch and git rev-parse")
+	assert.Equal(t, "git", calls[0].name)
+	assert.Equal(t, "fetch --depth=1 origin +refs/tags/v0.14.0:refs/tags/v0.14.0", strings.Join(calls[0].args, " "))
+	assert.Equal(t, "rev-parse refs/tags/v0.14.0^{commit}", strings.Join(calls[1].args, " "))
+	assert.Equal(t, "-i repos/example/repo/git/ref/tags/v0.14.0", strings.Join(h.gh.apis[0], " "))
 	h.mustContain("SHA256SUMS over 1 artifacts:")
 	wantRelease(t, h, "create", "v0.14.0", "--draft", "--verify-tag", "--title", "v0.14.0", "--notes-file", uploadNotes,
 		"dist/SHA256SUMS", "dist/nova-bus_v0.14.0_linux_amd64")
@@ -90,9 +86,7 @@ func TestAttachRefusesATagThatIsNotInTheRepository(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "404", attachSHA)
 	h.wantRun(1, "refusing: v0.14.0 is not a tag in this repository", "attach")
-	if len(h.runner.called()) != 0 {
-		t.Fatal("git ran after the tag was refused")
-	}
+	require.Empty(t, h.runner.called(), "git ran after the tag was refused")
 	wantNoRelease(t, h)
 }
 
