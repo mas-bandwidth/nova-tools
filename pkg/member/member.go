@@ -2775,21 +2775,44 @@ func CarryOf(brief string) (c Carry, ok bool) {
 	return Carry{}, false
 }
 
-// parseCarry reads a CARRY: line's fields, the widen shape first.
+// parseCarry reads a CARRY: line's fields, the inverse of CarryLine: a leading word that
+// is no key=value is the card, `attempt <n>` (or attempt=<n>) the attempt, and head= and
+// branch= their own. ok needs a full sha, and an attempt only with a card (a widen); a
+// finish-PR card names no attempt.
 func parseCarry(rest string) (c Carry, ok bool) {
-	if n, err := fmt.Sscanf(rest, "%s attempt %d head=%s", &c.Card, &c.Attempt, &c.Head); err == nil && n == 3 {
-		return c, c.Attempt > 0 && typedrec.IsFullSha(c.Head)
-	}
+	fields := strings.Fields(rest)
 	var gotHead bool
-	for _, field := range strings.Fields(rest) {
+	for i := 0; i < len(fields); i++ {
+		f := fields[i]
 		switch {
-		case strings.HasPrefix(field, "head="):
-			c.Head, gotHead = strings.TrimPrefix(field, "head="), true
-		case strings.HasPrefix(field, "branch="):
-			c.Branch = strings.TrimPrefix(field, "branch=")
-		case strings.HasPrefix(field, "attempt="):
-			c.Attempt, _ = strconv.Atoi(strings.TrimPrefix(field, "attempt="))
+		case strings.HasPrefix(f, "head="):
+			c.Head, gotHead = strings.TrimPrefix(f, "head="), true
+		case strings.HasPrefix(f, "branch="):
+			c.Branch = strings.TrimPrefix(f, "branch=")
+		case strings.HasPrefix(f, "attempt="):
+			n, err := strconv.Atoi(strings.TrimPrefix(f, "attempt="))
+			if err != nil || n < 1 {
+				return Carry{}, false
+			}
+			c.Attempt = n
+		case f == "attempt":
+			if i+1 >= len(fields) {
+				return Carry{}, false
+			}
+			n, err := strconv.Atoi(fields[i+1])
+			if err != nil || n < 1 {
+				return Carry{}, false
+			}
+			c.Attempt = n
+			i++
+		case i == 0 && !strings.Contains(f, "="):
+			c.Card = f
+		default:
+			return Carry{}, false
 		}
+	}
+	if c.Attempt > 0 && c.Card == "" {
+		return Carry{}, false
 	}
 	return c, gotHead && typedrec.IsFullSha(c.Head)
 }
