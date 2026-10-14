@@ -148,13 +148,16 @@ then run spill or recall with --redis "$d/redis.sock" (or a store you may write 
 	}
 }
 
-// spillVerb is the spill verb: a store write of one key with its TTL.
+// spillVerb is the spill verb: a store write of one key with its TTL. Its
+// examples spell the store flag --redis (docs/STANDARD.md section 2, "One shape
+// across the set"), and the write goes over the network to the store, so its
+// effect is the delivery class (pkg/tool Effect).
 func spillVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "spill",
 		Usage:   "spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]",
-		Example: "spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi\nspill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
-		Effect:  tool.LocalWrite,
+		Example: "spill --dry-run --redis 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi\nspill --redis 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
+		Effect:  tool.Delivery + ": writes one key with its TTL to the store at --redis; --dry-run dials nothing and writes nothing",
 		DryRun:  true,
 		Flags: func(f *tool.Flags) {
 			loginFlags(f)
@@ -184,12 +187,14 @@ func spillVerb(d deps) tool.Verb {
 	}
 }
 
-// recallVerb is the recall verb: an inspection that reads one key.
+// recallVerb is the recall verb: an inspection that reads one key. Its example
+// spells the store flag --redis (docs/STANDARD.md section 2, "One shape across
+// the set").
 func recallVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "recall",
 		Usage:   "recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>",
-		Example: "recall --addr 127.0.0.1:6379 --owner ada --name note",
+		Example: "recall --redis 127.0.0.1:6379 --owner ada --name note",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
 			loginFlags(f)
