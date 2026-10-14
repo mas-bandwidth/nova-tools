@@ -1447,7 +1447,10 @@ on the daemon's side noticed, because nothing on it knew what was on her row: it
 counted her `QUEUE.json`, which nothing prunes (292 tasks, none of them the held cards).
 
 The daemon now reconciles her inbox with her row on every loop (`InboxEvery`, the beat's
-second), both ways:
+second) while the server answers; each ask the server does not answer in a row doubles the wait
+before the next, up to `InboxBackoffMax` (thirty seconds), and an answer, a refusal included, ends
+it (`inboxWait`, `tla/InboxBackoff.tla`): the server runs one verb at a time and still runs an ask
+the daemon gave up on at its deadline, so asking again at once only queued more. Both ways:
 
 - It asks the sprint server which cards are on her row (`Held`: the worker verb `friend
   cards <friend> --json`, also served at `GET /api/friend/<friend>/cards`, answered
