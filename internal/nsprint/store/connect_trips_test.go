@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -75,9 +74,8 @@ func TestConnectIsHelloAlone(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if want := []string{"hello", "get"}; !reflect.DeepEqual(seen, want) {
-		require.Equal(t, want, seen, "the store received %q; want the connect to be HELLO alone, %q", seen, want)
-	}
+	want := []string{"hello", "get"}
+	require.Equal(t, want, seen, "the store received %q; want the connect to be HELLO alone, %q", seen, want)
 }
 
 // readCommand reads one RESP array of bulk strings.

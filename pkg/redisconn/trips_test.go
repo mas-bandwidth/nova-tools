@@ -3,7 +3,6 @@ package redisconn
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"sync"
 	"testing"
 
@@ -89,9 +88,8 @@ func TestTripsCountWhatTheCallerSends(t *testing.T) {
 		if got := trips.N() - before; got != c.want {
 			assert.EqualValues(t, c.want, got, "%s took %d trips; want %d", c.name, got, c.want)
 		}
-		if got := store.commands(); !reflect.DeepEqual(got, c.sent) {
-			assert.Equal(t, c.sent, got, "%s: the store received %q; want %q", c.name, got, c.sent)
-		}
+		got := store.commands()
+		assert.Equal(t, c.sent, got, "%s: the store received %q; want %q", c.name, got, c.sent)
 	}
 	if got := trips.ByLabel(); len(got) != 0 {
 		assert.Len(t, got, 0, "trips made under no label were counted under %v", got)
@@ -160,9 +158,8 @@ func TestTripsDoNotCountTheSetupOfAConnectionDialedLater(t *testing.T) {
 		assert.EqualValues(t, 2, trips.N(), "after the pipeline that dialed again: %d trips; want 2", trips.N())
 	}
 	want := []string{"1: incr n", "2: hello 3", "2: get a", "2: get b"}
-	if got := store.commands(); !reflect.DeepEqual(got, want) {
-		assert.Equal(t, want, got, "the store received %q; want %q", got, want)
-	}
+	got := store.commands()
+	assert.Equal(t, want, got, "the store received %q; want %q", got, want)
 }
 
 // TestTripsOfNothing: a nil counter has counted nothing.

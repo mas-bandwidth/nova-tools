@@ -39,9 +39,7 @@ func TestBare(t *testing.T) {
 	if !strings.Contains(s, "x") {
 		t.Errorf("no x")
 	}
-	if !reflect.DeepEqual(a, b) {
-		t.Fatalf("differ")
-	}
+	require.Equal(t, b, a)
 	if len(xs) != 3 {
 		t.Fatalf("len")
 	}

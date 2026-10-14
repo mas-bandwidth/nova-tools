@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,9 +48,8 @@ func TestOpenCostsTheHandshakeAlone(t *testing.T) {
 		if err != nil {
 			require.NoError(t, err, "%s: %v", c.name, err)
 		}
-		if got := store.commands(); !reflect.DeepEqual(got, []string{c.hello}) {
-			assert.Equal(t, []string{c.hello}, got, "%s: Open sent %q; want the handshake alone, %q", c.name, got, c.hello)
-		}
+		got := store.commands()
+		assert.Equal(t, []string{c.hello}, got, "%s: Open sent %q; want the handshake alone, %q", c.name, got, c.hello)
 		if n := store.dialed(); n != 1 {
 			assert.EqualValues(t, 1, n, "%s: Open dialed %d times; want once", c.name, n)
 		}
@@ -68,9 +66,8 @@ func TestOpenCostsTheHandshakeAlone(t *testing.T) {
 		if got, err := conn.Client().Get(ctx, "key").Result(); err != nil || got != "value" {
 			assert.Failf(t, "", "%s: GET = %q, %v", c.name, got, err)
 		}
-		if got := store.commands(); !reflect.DeepEqual(got, []string{"1: ping", "1: PING", "1: get key"}) {
-			assert.Equal(t, []string{"1: ping", "1: PING", "1: get key"}, got, "%s: after Open the store received %q; want the caller's three commands, its own PING among them", c.name, got)
-		}
+		got = store.commands()
+		assert.Equal(t, []string{"1: ping", "1: PING", "1: get key"}, got, "%s: after Open the store received %q; want the caller's three commands, its own PING among them", c.name, got)
 		if n := store.dialed(); n != 1 {
 			assert.EqualValues(t, 1, n, "%s: %d dials after three commands; want the one connection", c.name, n)
 		}
@@ -158,9 +155,8 @@ func TestOpenReturnsWhatTheStoreSaid(t *testing.T) {
 		if got := Classify(err); got != c.class {
 			assert.EqualValues(t, c.class, got, "%s: class %v; want %v", c.name, got, c.class)
 		}
-		if got := store.commands(); !reflect.DeepEqual(got, c.sent) {
-			assert.Equal(t, c.sent, got, "%s: the store received %q; want %q", c.name, got, c.sent)
-		}
+		got := store.commands()
+		assert.Equal(t, c.sent, got, "%s: the store received %q; want %q", c.name, got, c.sent)
 		if n := store.dialed(); n != 1 {
 			assert.EqualValues(t, 1, n, "%s: %d dials; want one", c.name, n)
 		}
@@ -195,9 +191,8 @@ func TestOpenReachesAStoreOlderThanHello(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	want := []string{"1: hello 3 auth bench s3cret", "1: auth bench s3cret", "1: PING"}
-	if got := store.commands(); !reflect.DeepEqual(got, want) {
-		assert.Equal(t, want, got, "the store received %q; want %q", got, want)
-	}
+	got := store.commands()
+	assert.Equal(t, want, got, "the store received %q; want %q", got, want)
 	if err := conn.Client().Set(context.Background(), "k", "v", 0).Err(); err != nil {
 		assert.NoError(t, err, err)
 	}
@@ -248,9 +243,7 @@ func TestOpenDialsTheNetworkOfTheAddress(t *testing.T) {
 		if err != nil {
 			require.NoError(t, err, "%s: %v", addr, err)
 		}
-		if !reflect.DeepEqual(dialed, []string{want}) {
-			assert.Equal(t, []string{want}, dialed, "%s: dialed %q; want %q", addr, dialed, want)
-		}
+		assert.Equal(t, []string{want}, dialed, "%s: dialed %q; want %q", addr, dialed, want)
 		if err := conn.Close(); err != nil {
 			assert.NoError(t, err, err)
 		}
@@ -422,9 +415,8 @@ func TestCommandsAreBounded(t *testing.T) {
 			if got := Classify(err); got != Unreachable {
 				assert.EqualValues(t, Unreachable, got, "%s: %v is %v; want %v", c.name, err, got, Unreachable)
 			}
-			if got := store.commands(); !reflect.DeepEqual(got, []string{"1: get key"}) {
-				assert.Equal(t, []string{"1: get key"}, got, "%s: the store received %q; want the command once", c.name, got)
-			}
+			got := store.commands()
+			assert.Equal(t, []string{"1: get key"}, got, "%s: the store received %q; want the command once", c.name, got)
 			if faults := store.faults(); len(faults) != 0 {
 				assert.Len(t, faults, 0, "%s: %q", c.name, faults)
 			}
@@ -520,16 +512,14 @@ func TestACommandIsSentOnceAndABrokenConnectionIsDialedOnce(t *testing.T) {
 	if got := Classify(err); got != Unreachable {
 		assert.EqualValues(t, Unreachable, got, "the command the drop met = %v, %v; want %v", err, got, Unreachable)
 	}
-	if got := store.commands(); !reflect.DeepEqual(got, []string{"1: incr n"}) {
-		assert.Equal(t, []string{"1: incr n"}, got, "the store received %q; want the command once", got)
-	}
+	got := store.commands()
+	assert.Equal(t, []string{"1: incr n"}, got, "the store received %q; want the command once", got)
 	if got, err := conn.Client().Do(ctx, "PING").Text(); err != nil || got != "PONG" {
 		assert.Failf(t, "", "PING on the connection dialed next = %q, %v", got, err)
 	}
 	want := []string{"2: hello 3 auth bench s3cret", "2: PING"}
-	if got := store.commands(); !reflect.DeepEqual(got, want) {
-		assert.Equal(t, want, got, "the store received %q; want %q", got, want)
-	}
+	got = store.commands()
+	assert.Equal(t, want, got, "the store received %q; want %q", got, want)
 	if n := store.dialed(); n != 2 {
 		assert.EqualValues(t, 2, n, "%d dials; want two", n)
 	}

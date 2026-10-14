@@ -360,9 +360,7 @@ func TestHarnessCanaryDetectsSandboxWallDenial(t *testing.T) {
 		t.Fatalf("no canary ran: %v", b.h.ran)
 	}
 	wantArgs := []string{"--read", filepath.Join(b.home, "nova-bench"), "--write", b.h.made[0], "--cwd", b.h.made[0], "--", opencode, "--help"}
-	if !reflect.DeepEqual(canary.args, wantArgs) {
-		t.Errorf("canary args %v, want %v", canary.args, wantArgs)
-	}
+	assert.Equal(t, wantArgs, canary.args, "canary args %v, want %v", canary.args, wantArgs)
 	if lookupEnv(canary.env, "HOME") != filepath.Join(b.h.made[0], "home") {
 		t.Errorf("canary HOME = %q", lookupEnv(canary.env, "HOME"))
 	}
@@ -460,9 +458,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 		}
 		tail := args[len(args)-7:]
 		want := []string{filepath.Join(b.bin, "curl"), "-s", "-o", "/dev/null", "-w", "%{http_code}", "https://probe.invalid/api.json"}
-		if !reflect.DeepEqual(tail, want) {
-			t.Errorf("probe command %v, want %v", tail, want)
-		}
+		assert.Equal(t, want, tail, "probe command %v, want %v", tail, want)
 	})
 
 	t.Run("the default URL", func(t *testing.T) {

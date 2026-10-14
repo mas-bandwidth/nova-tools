@@ -3,7 +3,6 @@ package testverbhelp
 import (
 	"io"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -78,7 +77,7 @@ func TestTheCompleteLedgerOnlyShrinks(t *testing.T) {
 	_, err = Ledger("tool go example\ntool go usage\n")
 	assert.Error(t, err, "a verb twice")
 	got, _ := Ledger("tool go b,a\n")
-	assert.True(t, reflect.DeepEqual(got["tool go"], []string{"a", "b"}))
+	assert.Equal(t, []string{"a", "b"}, got["tool go"])
 }
 
 // The shipped ledger parses and is sorted, so a diff of it shows only what shrank.

@@ -3,7 +3,6 @@ package dogfood
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,7 +34,7 @@ func TestReadShippedIsEveryNovaDirectoryUnderCmd(t *testing.T) {
 	require.Equal(t, want, s.Tools(), "shipped = %v, want %v", s.Tools(), want)
 	got, err := CmdTools(cmd)
 	require.NoError(t, err, "CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
-	require.True(t, reflect.DeepEqual(got, want), "CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
+	require.Equal(t, want, got, "CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
 }
 
 // AN I/O ERROR IS NOT A PARKED TOOL. A second tool directory that cannot be
