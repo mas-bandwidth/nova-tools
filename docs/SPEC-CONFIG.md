@@ -622,6 +622,41 @@ global ids, so they rise across kinds and never repeat.
 `nova-config <kind> history <name>` prints the rows oldest first, one
 `HISTORY` line each, with what changed.
 
+### Snapshot and compare
+
+**`nova-config snapshot --out <dir>`** reads every kind's rows into
+`<dir>/{kind}.json` for the eight kinds and `<dir>/when.json`
+(`{"at": an RFC 3339 UTC instant, "tool": the nova-config version}`), the
+same files the release executor's `snap.sh` wrote, and writes nothing else.
+It reads only: it is the tool's own replay of that hand script.
+
+**`nova-config compare --before <dir> --after <dir>`** judges the after
+snapshot against the before, and when a row differs asks the store's history
+for that row between the two `when.json` instants to name the act behind the
+change. This is the judgment `snapcmp.sh` could not make: it read only the two
+snapshots, so a deliberate operator set and the adopt corrupting working state
+were the same `CRIT-DIFF` and the readback reverted on both (the release
+executor's first adopt reverted on the owner's own top-up, 2026-10-13).
+
+For each row that differs:
+
+- the history in the window holds an entry by an operator (a person's set, a
+  seat's set, a friend's): the difference is **OPERATOR**, printed with the
+  actor, the time and the reason of the last such entry, and never a failure;
+- the history holds only entries by an `--ignore-actor` (default `migrate`,
+  the actor the tool itself records when it applies a migration) or no entry
+  at all (the store was edited out of band): the difference is **CRIT**, the
+  unexplained fields named;
+- a row differing in two fields, one explained and one not, is CRIT naming the
+  unexplained field.
+
+The live fields `balance_usd`, `balance_as_of` and `beat` are never compared;
+a field the after build added is listed apart. The verb writes nothing and
+reverts nothing: a `COMPARE SAME` or `COMPARE OPERATOR` line exits 0, a
+`COMPARE CRIT` exits 1, and the caller decides what CRIT means (the release
+readback reverts at once on CRIT, reports an OPERATOR to the coordinator and
+never reverts).
+
 ## Apply
 
 `nova-config apply [--kind <k>] [--check]` runs per kind, in kind order

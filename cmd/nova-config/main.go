@@ -86,6 +86,8 @@ usage:
                     [--kind <kind>] [--dry-run] [--json]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
                         [--timeout <duration>] [--example]
+  nova-config snapshot --out <dir> [--pg <dsn> | --file <path>] [--json]
+  nova-config compare --before <dir> --after <dir> [--ignore-actor <name>...] [--json]
   nova-config <kind> add <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> remove <name> --actor <name> [--dry-run] [--json]
@@ -435,6 +437,10 @@ func dispatch(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return runApply(ctx, args[1:], stdout, stderr, d)
 	case "inventory":
 		return runInventory(ctx, args[1:], stdout, stderr, d)
+	case "snapshot":
+		return runSnapshot(ctx, args[1:], stdout, stderr, d)
+	case "compare":
+		return runCompare(ctx, args[1:], stdout, stderr, d)
 	case "login", "logout":
 		return runLoginTool(ctx, args, stdout, stderr, d)
 	}
