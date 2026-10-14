@@ -189,6 +189,10 @@ revokes route proof and stops renewal; unknown native outcomes are reported with
 Do not blindly restart after accepted or unknown delivery: inspect the saved event and model answer first.
 An explicit --codex-since UTC timestamp (or NOVA_HOOK_CODEX_SINCE) declares earlier ordinary messages archived history: work still needed must be resent. Persist that fixed timestamp in launch configuration; never reset it on restart. Current server challenge proof is independent of this boundary.
 Codex clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
+Muse clients use --harness Muse: before arming it installs the nova-hook plugin bundle (--muse-bundle, or
+NOVA_HOOK_MUSE_BUNDLE, or muse-bundle beside the binary) with muse plugins install and approves its one hook
+capability (pending-challenges, PostToolUse) with muse plugins approve. The hook only reads nova-bus peek and
+prints pending lines; the model proves. --dry-run installs nothing.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
 --dry-run reads the record and prints the plan the real run would take (the role, the epoch, the pushes held and
@@ -197,6 +201,9 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
+					f.String("harness", "", "install a harness adapter before arming: muse (the Muse plugin bundle); the Codex desktop route uses the --codex-* flags")
+					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
+					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
 					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket; requires thread and private event directory")
 					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
 					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
@@ -294,6 +301,24 @@ example: nova-hook serve --as ada --once`,
 				},
 				Run: w.serve,
 			},
+			{
+				Name:    "pending",
+				Usage:   "pending [--as <name>] [--redis <addr>] [--bus <path>]",
+				Example: "", // the bundle's hook runs it; no hand run can carry its bus
+				Effect:  tool.Inspection,
+				Hidden:  true,
+				Detail: `The Muse bundle's PostToolUse hook: discards stdin, runs nova-bus peek for the name and
+prints only its PEEK MESSAGE lines (a HOOK CHALLENGE among them), one per line, so the challenge reaches
+the model inside its turn. It only reads: it never proves, sends, acks or writes, and it always exits 0;
+a missing or failing bus prints nothing.`,
+				Flags: func(f *tool.Flags) {
+					f.Prints()
+					f.String("as", w.getenv("NOVA_HOOK_AS"), "the name whose pending bus lines to print (default: NOVA_HOOK_AS, else aurora)")
+					f.String("redis", w.getenv("NOVA_BUS_REDIS"), "the bus Redis address, host:port (default: NOVA_BUS_REDIS, else 127.0.0.1:6381)")
+					f.String("bus", w.getenv("NOVA_BUS_BIN"), "the nova-bus binary to run (default: NOVA_BUS_BIN, else nova-bus on PATH, else ~/.local/bin/nova-bus)")
+				},
+				Run: w.pending,
+			},
 		},
 	}
 }
@@ -385,6 +410,18 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	native, nativeErr := w.codexConfig(c)
 	if nativeErr != nil {
 		return tool.Refuse(nativeErr.Error())
+	}
+	muse, museErr := w.museConfig(c)
+	if museErr != nil {
+		return tool.Refuse(museErr.Error())
+	}
+	if muse != nil && native != nil {
+		return tool.Refuse("one harness at a time: --harness Muse or the Codex desktop route, not both")
+	}
+	if muse != nil && !c.DryRun() {
+		if out := w.museInstall(c, muse); out != nil {
+			return out
+		}
 	}
 	s, refused := w.openSession(c, true)
 	if refused != nil {
