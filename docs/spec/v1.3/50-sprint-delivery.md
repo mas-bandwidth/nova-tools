@@ -21,7 +21,14 @@ In:
 
 Out (later releases):
 
-- (to fill)
+- The verdict carry across a base merge beyond the clean case. v1.3 carries a recorded MERGE
+  only when the base merge is clean and the card's own diff digest is unchanged (guarantee 1
+  and machine M7 in layer 60). A carry where the base merge touches the card's own files, or
+  where the diff digest changes, is not tested by this layer in v1.3 and goes to a later release.
+- Automatic merging. The coordinator merges by hand in v1.3; no merge automation is specified.
+- Verdicts on non-sprint branches, and candidates registered for unclaimed cards beyond the
+  refusal in the Inputs below, until the server record for claims (layer 10) is ratified with
+  that refusal as a guarantee.
 
 ## Guarantees
 
@@ -87,7 +94,22 @@ For each: how it is detected, and how it is recovered.
 
 ## Open questions
 
-1. (to fill)
+Each question carries its default for v1.3; the default holds unless a ratification objection
+changes it.
+
+1. Does a recorded MERGE carry across a clean base merge when the card's own diff digest is
+   unchanged? Default for v1.3: yes, only in that clean case, and the fence re-checks the
+   digest at merge time (machine M7 in layer 60). Every other carry is out, above.
+2. Who may register a candidate for a card? Default for v1.3: only the friend the server shows
+   holding the claim for that card; a registration for an unclaimed or another friend's card is
+   refused at registration, which also prevents duplicate candidates.
+3. What binds a verdict: prose naming a sha, or a structured record? Default for v1.3: a
+   structured record bound to repo, head, base and diff digest, with at least one verbatim
+   quoted hunk checked at the fence (guarantees 2 and 5). Prose alone merges nothing.
+4. Is the behind-base refusal checked before a MERGE is recorded, at the fence, or both?
+   Default for v1.3: both. The verdict verb refuses a head behind its base (not counting the
+   merge commit whose parent is that head), and the fence checks again, naming both shas
+   (guarantee 4).
 
 ## Inputs
 

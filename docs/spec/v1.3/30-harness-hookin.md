@@ -25,25 +25,64 @@ In:
 
 Out (later releases):
 
-- (to fill)
+- Native idle wake on any harness whose subsection has not measured it end to end. An
+  unmeasured or unproven wake stays out, and the sender is told delivery waits for the next
+  turn boundary.
 
 ## Guarantees
 
 Numbered, each one testable, and each one shown on a real session of that harness.
 
-1. (to fill)
+1. **A push reaches the turn by a measured path, or waits honestly.** Each subsection names
+   how a push reaches the agent's turn on its harness. Where that path is measured, the push
+   reaches the turn while the session works; where it is not, the message waits on the server
+   and the sender is told delivery waits for the next turn boundary, never that an idle wake
+   occurred.
+2. **Only the session's own answer proves.** A challenge is proven only when the session itself
+   answers the current nonce (layers 10 and 20). A helper process staying alive, a line written
+   to a stream, or an adapter printing a nonce records an offer only.
+3. **Deaf or down is detected on the server lease, never inferred locally.** No prove inside
+   the challenge window, or no renewal inside the lease, and the lease goes away with its
+   reason recorded; senders see away and the pending count. A session looking busy is not
+   evidence it can hear, and a helper still running is not evidence it is up.
+4. **Re-hook replays before new work.** A session that re-hooks, resumes, or replaces a binding
+   proves the fresh challenge, then drains every unacknowledged message in order and reconciles
+   it against work already claimed, so a missed message is acted on once. No local nonce file,
+   inbox, or cached state is kept to re-hook from.
+5. **Capability is a measured record, per installation.** Link and wake are each recorded as
+   measured or unmeasured for one installation (harness, build, host kind, session kind, date).
+   Unmeasured is the default, foreground proof never sets idle wake to supported, and a changed
+   installation fingerprint needs new measurements.
 
 ## State and transitions
 
-- States: (to fill)
-- Events: (to fill)
-- Who owns each record: (to fill)
+- States: the per-installation capability record (link and wake, each measured or unmeasured),
+  over the binding states of layer 10 (absent, challenged, proven, away, closed) as presented
+  by the lease of layer 20. A session is foreground-proven only while its own answer stands
+  inside its deadline; idle wake is a separate capability field and is never implied by it.
+- Events: hook-in, challenge issued, session answer (prove), lease expiry, session end or wrap,
+  session attach or replacement, replay drained, re-hook.
+- Who owns each record: the server owns the binding, the lease, the pending messages, and the
+  capability record. The harness-side helper owns only its own process. The session owns only
+  its answer. No subsection keeps a local inbox, nonce file, or epoch as authority.
 
 ## Failure modes
 
 For each: how it is detected, and how it is recovered.
 
-1. (to fill)
+1. **Challenge window expires unanswered.** Detected by the server lease going away with its
+   reason. Recovered by re-hook (guarantee 4): a fresh challenge, a prove, and a replay.
+2. **Session ends or wraps and its processes go with it.** Detected by the lease expiring with
+   no prove. Recovered when the next session attaches, re-hooks, and replays; nothing local is
+   needed and no second client is started where the harness already owns one.
+3. **Helper alive, session deaf.** Work continues while messages sit unacknowledged on the
+   server. Detected by unacknowledged depth and lease state, never by the helper's liveness.
+   Recovered by proving the current challenge at the next step and draining the replay.
+4. **A stale generation answers.** An old session or helper answers a superseded challenge.
+   Detected and refused by the server (layer 10); pending messages are kept. Recovered by the
+   current session proving the current challenge.
+5. **A wake or monitor mechanism expires un-re-armed.** Detected by the lease going away, not
+   by the mechanism's own silence. Recovered by re-arming and re-hooking before new work.
 
 ## Interfaces
 
@@ -52,7 +91,12 @@ For each: how it is detected, and how it is recovered.
 
 ## Open questions
 
-1. (to fill)
+1. What challenge and lease lengths survive long local work (a bench gate, a context wrap) on
+   every harness without spurious away transitions? Default for v1.3: layer 20's lengths hold
+   for every harness, and the prove is the first action of the waking turn, until a subsection
+   measures a need for its own lengths and brings that measurement to ratification.
+2. Which harnesses can ever claim native idle wake? Default for v1.3: none claims it; each
+   subsection's capability record says unmeasured or none until its own ended-turn test passes.
 
 ## Inputs
 
