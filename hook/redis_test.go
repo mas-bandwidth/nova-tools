@@ -96,6 +96,7 @@ func TestALeaseExpiresOnItsOwn(t *testing.T) {
 	h := &hook.Holder{Store: r.s, Name: "m1", Role: hook.Member, Pushes: []hook.Push{hook.Work}, By: "loop"}
 	require.NoError(t, h.Start(ctx))
 	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Work: true}))
+	r.Evidence(t, "m1") // a heartbeat server passing (hook.Served.Down)
 	require.NoError(t, h.Gate(ctx, hook.Work))
 
 	r.pass(hook.RenewEvery)
@@ -211,6 +212,7 @@ func TestAHolderRespectsAnUnhook(t *testing.T) {
 	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
 	assert.Equal(t, e, h.Epoch())
 	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
+	r.Evidence(t, "bob") // a heartbeat server passing and her answer (hook.Served.Down)
 	assert.NoError(t, h.Gate(ctx, hook.Bus, hook.Work))
 }
 

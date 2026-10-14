@@ -105,7 +105,11 @@ func (b *Bus) sendOnce(ctx context.Context, m Message, now time.Time, streams []
 	if err != nil {
 		return Message{}, err
 	}
-	prior, found, err := b.Store.AddOnce(ctx, SentOf(m.From, m.Token), string(raw), b.tokenCleanup(), streams, m.Fields(), marks...)
+	key := m.Once
+	if key == "" {
+		key = SentOf(m.From, m.Token)
+	}
+	prior, found, err := b.Store.AddOnce(ctx, key, string(raw), b.tokenCleanup(), streams, m.Fields(), marks...)
 	if err != nil {
 		return Message{}, err
 	}

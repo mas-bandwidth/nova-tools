@@ -27,13 +27,13 @@ func (w world) serve(c *tool.Call) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("--every %s is under a second; it wants the interval between passes, such as %s", every, hook.BeatEvery))
 	}
 	within := c.Dur("judge-within")
-	// the server's own gate, with the staleness it exists to end set aside: a
-	// stale server row refuses every name, and a server must still be able to start
+	// the server's own gate, with the evidence it exists to give set aside: no
+	// server row, or a stale one, refuses every name, and a server must still be able to start
 	ctx, cancel := call()
 	st, _, err := s.hooks.Read(ctx, s.as)
 	cancel()
 	if err == nil {
-		st[0].Stale = false
+		st[0].Down = ""
 		if r := st[0].Gate(hook.Want{Name: s.as, Need: []hook.Push{hook.Bus}, Roles: []hook.Role{hook.Coordinator, hook.Comms}, Role: hook.Comms}); r != nil {
 			err = r
 		}
@@ -130,9 +130,10 @@ func fault(c *tool.Call, what string, err error) {
 // message each (tla/HookBeat.tla, Tell): the coordinator one judgment naming
 // every friend down or back; every other live name that did not itself change
 // one message with all of it and the coordinator, a judgment when the
-// coordinator itself went down (who takes over). An audience is marked told
-// only once its message went out, so a failed send is told by the next pass,
-// and never twice.
+// coordinator itself went down (who takes over). Each message and its told
+// mark are one atomic write under the audience's once-key (hook.Passed.Telling),
+// so a crash or a failed send leaves it untold for the next pass, and a send
+// that went is never repeated (NeverToldTwice, EveryTransitionToldAtLeastOnce).
 func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within time.Duration) {
 	if !p.Changed(hook.ToCoordinator) && !p.Changed(hook.ToRest) {
 		return
@@ -158,7 +159,7 @@ func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within 
 		}
 		return out
 	}
-	mark := func(audience string) {
+	nobody := func(audience string) { // no one to tell: the mark alone, under the generation read
 		ctx, cancel := call()
 		defer cancel()
 		if err := s.hooks.Told(ctx, p, audience); err != nil {
@@ -167,8 +168,10 @@ func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within 
 	}
 	if down, back, _ := p.Diff(hook.ToCoordinator); p.Changed(hook.ToCoordinator) {
 		ls := lines(down, back)
-		if p.Coord == "" || len(ls) == 0 || w.judge(c, s, b, []string{p.Coord}, strings.Join(ls, "; "), "Answer with nova-bus send --re <this message's id> and one of: wait | reassign <name>'s work | tell the owner.", within) {
-			mark(hook.ToCoordinator) // nothing to say to the coordinator, or said
+		if p.Coord == "" || len(ls) == 0 {
+			nobody(hook.ToCoordinator)
+		} else {
+			w.judge(c, s, b, p, hook.ToCoordinator, []string{p.Coord}, strings.Join(ls, "; "), "Answer with nova-bus send --re <this message's id> and one of: wait | reassign <name>'s work | tell the owner.", within)
 		}
 	}
 	if !p.Changed(hook.ToRest) {
@@ -186,42 +189,65 @@ func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within 
 		}
 	}
 	if len(rest) == 0 || len(ls) == 0 {
-		mark(hook.ToRest)
+		nobody(hook.ToRest)
 		return
 	}
 	subject := strings.Join(ls, "; ")
 	if was != "" && p.Coord == "" && slices.Contains(down, was) {
-		if w.judge(c, s, b, rest, "COORDINATOR DOWN "+was+": who takes over? "+subject, "Answer with nova-bus send --re <this message's id> and one of: I take over (nova-hook hook --as <me> --role coordinator) | wait | tell the owner.", within) {
-			mark(hook.ToRest)
-		}
+		w.judge(c, s, b, p, hook.ToRest, rest, "COORDINATOR DOWN "+was+": who takes over? "+subject, "Answer with nova-bus send --re <this message's id> and one of: I take over (nova-hook hook --as <me> --role coordinator) | wait | tell the owner.", within)
 		return
 	}
-	if err := w.send(b, bus.Message{From: s.as, To: rest, Subject: subject, Body: subject + "\nnova-hook friends shows every name's state.\n"}); err != nil {
-		fault(c, "tell", err)
-		return
+	once, marks := telling(p, hook.ToRest)
+	if _, ok := w.sendOnce(c, s, b, bus.Message{From: s.as, To: rest, Subject: subject, Body: subject + "\nnova-hook friends shows every name's state.\n", Once: once, Marks: marks}); ok {
+		serveLine(c, "told", subject, "to", strings.Join(rest, ","))
 	}
-	mark(hook.ToRest)
-	serveLine(c, "told", subject, "to", strings.Join(rest, ","))
 }
 
-// judge raises one judgment: a bus message of kind judgment, open in
-// hook:judgments until a recipient answers it. It reports whether the message
-// went out.
-func (w world) judge(c *tool.Call, s *session, b *bus.Bus, to []string, subject, answers string, within time.Duration) bool {
-	m, err := w.deliver(b, bus.Message{From: s.as, To: to, Kind: bus.KindJudgment, Subject: subject, Body: subject + "\n" + answers + "\n"})
-	if err != nil {
-		fault(c, "judgment", err)
-		return false
+// telling is an audience's once-key and its told marks as bus marks on the server row.
+func telling(p hook.Passed, audience string) (string, []bus.Mark) {
+	once, tm := p.Telling(audience)
+	marks := make([]bus.Mark, len(tm))
+	for i, m := range tm {
+		marks[i] = bus.Mark{Key: hook.ServeKey, Field: m.Field, Value: m.Value}
+	}
+	return once, marks
+}
+
+// sendOnce sends m under its once-key: the message (zero when an earlier
+// send under the key already went) and whether it is sent. A send whose
+// answer was lost is sent if its once-key stands.
+func (w world) sendOnce(c *tool.Call, s *session, b *bus.Bus, m bus.Message) (bus.Message, bool) {
+	sent, err := w.deliver(b, m)
+	if err == nil {
+		return sent, true
 	}
 	ctx, cancel := call()
-	err = s.hooks.OpenJudgment(ctx, hook.Judgment{ID: m.ID, To: to, Subject: subject}, within)
+	went, serr := s.hooks.Sent(ctx, m.Once)
+	cancel()
+	if serr == nil && went {
+		return bus.Message{}, true
+	}
+	fault(c, "send "+m.Once, err)
+	return bus.Message{}, false
+}
+
+// judge raises one judgment for an audience: a bus message of kind judgment,
+// sent with its told mark in one write, then open in hook:judgments until a
+// recipient answers it.
+func (w world) judge(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, audience string, to []string, subject, answers string, within time.Duration) {
+	once, marks := telling(p, audience)
+	m, ok := w.sendOnce(c, s, b, bus.Message{From: s.as, To: to, Kind: bus.KindJudgment, Subject: subject, Body: subject + "\n" + answers + "\n", Once: once, Marks: marks})
+	if !ok || m.ID == "" {
+		return // not sent, or sent by an earlier try
+	}
+	ctx, cancel := call()
+	err := s.hooks.OpenJudgment(ctx, hook.Judgment{ID: m.ID, To: to, Subject: subject}, within)
 	cancel()
 	if err != nil {
-		fault(c, "judgment record", err) // delivered all the same: it is told, unopened
-		return true
+		fault(c, "judgment record", err)
+		return
 	}
 	serveLine(c, "judgment", subject, "id", m.ID, "to", strings.Join(to, ","))
-	return true
 }
 
 // judgments looks after the open judgments: an answered one is closed, and
@@ -251,17 +277,16 @@ func (w world) judgments(c *tool.Call, s *session, b *bus.Bus) {
 			}
 			serveLine(c, "answered", j.Subject, "id", j.ID)
 		case !j.Overdue && !now.Before(j.Due):
-			// no --re on the re-push: a reply is the bus's answer record, and the server may be the coordinator itself
+			// no --re on the re-push: a reply is the bus's answers record, and the server may be the coordinator
+			// itself; the re-push and its overdue mark are one write under the judgment's overdue once-key
 			subject := "OVERDUE " + j.Subject
-			if err := w.send(b, bus.Message{From: s.as, To: j.To, Kind: bus.KindJudgment, Subject: subject, Body: subject + "\nStill open: answer the judgment " + j.ID + " with nova-bus send --re " + j.ID + ".\n"}); err != nil {
-				fault(c, "overdue", err)
-				continue
-			}
-			ctx, cancel := call()
-			err := s.hooks.Overdue(ctx, j)
-			cancel()
+			once, field, value, err := j.OverdueMark()
 			if err != nil {
 				fault(c, "overdue record", err)
+				continue
+			}
+			if _, ok := w.sendOnce(c, s, b, bus.Message{From: s.as, To: j.To, Kind: bus.KindJudgment, Subject: subject, Body: subject + "\nStill open: answer the judgment " + j.ID + " with nova-bus send --re " + j.ID + ".\n",
+				Once: once, Marks: []bus.Mark{{Key: hook.JudgmentsKey, Field: field, Value: value}}}); !ok {
 				continue
 			}
 			serveLine(c, "overdue", j.Subject, "id", j.ID)

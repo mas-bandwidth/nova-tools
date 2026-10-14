@@ -200,7 +200,7 @@ func TestFriendsJSONIsTheRecord(t *testing.T) {
 		"last_challenge_at": stamp(st.BeatAt), "last_answer_at": stamp(st.AnswerAt), "misses": float64(0)}, ada)
 	sb := r.h.State(t, "bob")
 	assert.Equal(t, map[string]any{"name": "bob", "role": "comms", "state": "down", "since": stamp(sb.Unhooked), "reason": "missed 2 challenges",
-		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": "", "misses": float64(2)}, bob)
+		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": stamp(sb.AnswerAt), "misses": float64(2)}, bob)
 }
 
 // TestStatusSaysNoChallengeWhenTheServerIsGone pins the client's timeout on
@@ -335,8 +335,27 @@ func TestAStaleServerReadsEveryoneDown(t *testing.T) {
 	assert.Contains(t, res.Stdout, `name=ada role=coordinator state=down`)
 	assert.Contains(t, res.Stdout, `reason="hook server stale"`)
 	res = r.cli().Run("status")
-	assert.Contains(t, res.Stdout, "state=stale", res.Stdout)
+	assert.Contains(t, res.Stdout, "state=down", res.Stdout)
 	res = r.cli().Run("status", "--as", "ada")
 	assert.Equal(t, 1, res.Code)
 	assert.Contains(t, res.Stdout+res.Stderr, "hook server stale")
+}
+
+// TestALostAnswerIsNeverToldTwice pins the message and its told mark as one
+// write (tla/HookBeat.tla, NeverToldTwice; the model's BadMarkAfterSend): a
+// send whose reply is lost after the store took it is found sent by its
+// once-key, and no later pass tells it again; the OVERDUE re-push the same.
+func TestALostAnswerIsNeverToldTwice(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	r.loseAnswers.Store(true)
+	for range 8 { // bob down at the third; the judgment overdue past two minutes
+		r.step(t, []string{"ada"}, "ada", "carl")
+	}
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"))
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob"))
 }

@@ -195,11 +195,16 @@ A proof says a push reached a session once; the heartbeat says the model is stil
   session, `HOOK STATE state=not-connected since=<local time>` with the judgment NOT CONNECTED TO THE SERVER and its
   answers (re-hook, check the network, tell the coordinator when reachable); the next move is one
   `state=connected` line, and the episode is reported to `hook:events` once (event `not-connected`).
-- **A stale server is no server.** While `hook:serve` is more than two intervals old by the store's TIME at the
-  read, no reader trusts a record's last written state: `nova-hook friends` reads every name down with reason
-  "hook server stale", `nova-hook status` lists every name stale, and the gate in every tool (Status.Stale, set
-  by Store.Read from the same rule, Served.Stale) refuses every name with that reason. Only `nova-hook serve`'s
-  own check sets it aside, so a server can always start.
+- **Up needs evidence.** A record's last written state is not trusted on its own. A name reads down, in the
+  gate in every tool and in `friends` and `status` (one rule: `Served.Down`, which `Store.Read` sets as
+  `Status.Down`), when no server row exists ("hook server never ran"), when the row is more than two intervals old
+  by the store's TIME at the read ("hook server stale"), or, for a name a session answers for, when its last
+  answer is more than two intervals old ("no answer to a heartbeat challenge within the window"). Only
+  `nova-hook serve`'s own check sets this aside, so a server can always start.
+- **One write per telling.** Each told message carries its audience's once-key (`hook:told:<audience>:<gen>`)
+  and the told marks (`told:`, `coord:` and the next `gen:` on `hook:serve`), written with the message in one
+  atomic step (the bus's once-key send): a crash or a failed send leaves it untold for the next pass, and a send
+  that went is never repeated. The OVERDUE re-push and its mark are one write the same way (`hook:overdue:<id>`).
 - **Everyone can ask.** `nova-hook friends [--json]` lists every name's state from the hook record alone: up
   (hooked and proven) or down, since, reason, the last challenge and answer, misses; and the coordinator and the
   server's age.

@@ -403,7 +403,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 			prs = append(prs, PushRead{Live: r.live[j].Val(), Proof: r.proof[j].Val(), LiveLeft: max(r.liveLeft[j].Val(), 0), ProofLeft: max(r.proofLeft[j].Val(), 0)})
 		}
 		out[i] = Judge(n, rec, prs)
-		out[i].Stale = servedOf(served.Val(), now.UTC()).Stale()
+		out[i].Down = servedOf(served.Val(), now.UTC()).Down(out[i])
 	}
 	return out, now.UTC(), nil
 }
@@ -462,7 +462,7 @@ var beatLua = redis.NewScript(nowMS + `
 local now = tonumber(ms)
 local every, limit, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5]
 local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
-if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', ''} end
+if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
 redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'by', by)
 local nroles = tonumber(ARGV[6])
 local bus = {}
@@ -503,8 +503,8 @@ while k <= #KEYS do
   k, a = k + 8, a + 2
 end
 local set = table.concat(gone, ',')
-local f = redis.call('HMGET', KEYS[2], 'told:coordinator', 'coord:coordinator', 'told:rest', 'coord:rest')
-return {1, out, set, coord, table.concat(live, ','), f[1] or '', f[2] or '', f[3] or '', f[4] or ''}
+local f = redis.call('HMGET', KEYS[2], 'told:coordinator', 'coord:coordinator', 'gen:coordinator', 'told:rest', 'coord:rest', 'gen:rest')
+return {1, out, set, coord, table.concat(live, ','), f[1] or '', f[2] or '', f[3] or '0', f[4] or '', f[5] or '', f[6] or '0'}
 `)
 
 // What one heartbeat pass did to one name.
@@ -546,10 +546,30 @@ type Passed struct {
 	Was      map[string]Told
 }
 
-// Told is what an audience was last told: the unhooked set and the coordinator.
+// Told is what an audience was last told: the unhooked set and the
+// coordinator, and the generation of that telling.
 type Told struct {
 	Unhooked []string
 	Coord    string
+	Gen      int64
+}
+
+// ToldMark is one field of the server row (ServeKey) an audience's message
+// writes in its own atomic step.
+type ToldMark struct{ Field, Value string }
+
+// Telling is what an audience's message for p carries so that the message and
+// its told mark are one write (tla/HookBeat.tla, NeverToldTwice and
+// EveryTransitionToldAtLeastOnce): the once-key of this telling, the
+// audience's generation, which a later send under it finds and writes
+// nothing; and the marks: what it was told, and the next generation.
+func (p Passed) Telling(audience string) (once string, marks []ToldMark) {
+	w := p.Was[audience]
+	return fmt.Sprintf("%stold:%s:%d", prefix, audience, w.Gen), []ToldMark{
+		{"told:" + audience, strings.Join(p.Unhooked, ",")},
+		{"coord:" + audience, p.Coord},
+		{"gen:" + audience, strconv.FormatInt(w.Gen+1, 10)},
+	}
 }
 
 // Diff is what an audience has not been told: the names down and back since,
@@ -575,23 +595,33 @@ func (p Passed) Changed(audience string) bool {
 	return len(down)+len(back) > 0 || was != p.Coord
 }
 
-// toldLua marks an audience told p's set and coordinator, only while it still
-// holds what the pass read (another server's mark since is kept).
-// KEYS: serve. ARGV: audience, the set read, the coordinator read, the set, the coordinator.
+// toldLua marks an audience told with no message, for an audience with no
+// one to tell: only while its generation is still the one the pass read.
+// KEYS: serve. ARGV: audience, the generation read, then field, value pairs.
 var toldLua = redis.NewScript(`
-local f = redis.call('HMGET', KEYS[1], 'told:' .. ARGV[1], 'coord:' .. ARGV[1])
-if (f[1] or '') ~= ARGV[2] or (f[2] or '') ~= ARGV[3] then return 0 end
-redis.call('HSET', KEYS[1], 'told:' .. ARGV[1], ARGV[4], 'coord:' .. ARGV[1], ARGV[5])
+if (redis.call('HGET', KEYS[1], 'gen:' .. ARGV[1]) or '0') ~= ARGV[2] then return 0 end
+for i = 3, #ARGV, 2 do redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1]) end
 return 1
 `)
 
-// Told marks audience told what p found, after its message went out
-// (tla/HookBeat.tla, Tell: delivered at least once, never twice).
+// Told marks an audience told what p found when there is no one to send to.
 func (s Store) Told(ctx context.Context, p Passed, audience string) error {
+	_, marks := p.Telling(audience)
+	args := []any{audience, strconv.FormatInt(p.Was[audience].Gen, 10)}
+	for _, m := range marks {
+		args = append(args, m.Field, m.Value)
+	}
 	ctx, cancel := s.call(ctx)
 	defer cancel()
-	w := p.Was[audience]
-	return toldLua.Run(ctx, s.C, []string{ServeKey}, audience, strings.Join(w.Unhooked, ","), w.Coord, strings.Join(p.Unhooked, ","), p.Coord).Err()
+	return toldLua.Run(ctx, s.C, []string{ServeKey}, args...).Err()
+}
+
+// Sent says whether a once-key's send went: the key stands.
+func (s Store) Sent(ctx context.Context, once string) (bool, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	n, err := s.C.Exists(ctx, once).Result()
+	return n == 1, err
 }
 
 // Challenged is the pushes a heartbeat challenge names for each role a session
@@ -632,8 +662,8 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 	if err != nil {
 		return Passed{}, err
 	}
-	if len(got) != 9 {
-		return Passed{}, fmt.Errorf("the beat script answered %v, not a taken word, the names and seven sets", got)
+	if len(got) != 11 {
+		return Passed{}, fmt.Errorf("the beat script answered %v, not a taken word, the names and nine values", got)
 	}
 	if t, _ := got[0].(int64); t != 1 { // ignored: a word that is no number reads as not taken
 		return Passed{}, nil
@@ -667,7 +697,8 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 	out.Unhooked, out.Coord, out.Live = list(str(2)), str(3), list(str(4))
 	out.Was = map[string]Told{}
 	for i, a := range Audiences {
-		out.Was[a] = Told{Unhooked: list(str(5 + 2*i)), Coord: str(6 + 2*i)}
+		gen, _ := strconv.ParseInt(str(7+3*i), 10, 64) // ignored: no generation is the first
+		out.Was[a] = Told{Unhooked: list(str(5 + 3*i)), Coord: str(6 + 3*i), Gen: gen}
 	}
 	return out, nil
 }
@@ -680,14 +711,37 @@ type Served struct {
 	OK      bool
 }
 
-// Stale is whether the heartbeat server is gone: it passed once, and not for
-// more than two of its intervals by the store's TIME at this read. No reader
-// trusts a record's last written state then (tla/HookBeat.tla, the finding of
-// the model run): every name reads down, "hook server stale".
-func (sv Served) Stale() bool { return sv.OK && sv.Now.Sub(sv.At) > 2*sv.Every }
+// Why a hooked record reads down although its state says otherwise: up needs
+// evidence, a heartbeat server passing and the name's own answer.
+const (
+	NeverRanReason = "hook server never ran"
+	StaleReason    = "hook server stale"
+	NoAnswerReason = "no answer to a heartbeat challenge within the window"
+)
 
-// StaleReason is the reason every name reads down while the server is stale.
-const StaleReason = "hook server stale"
+// Stale is whether the heartbeat server gives no evidence at this read: it
+// never passed, or not for more than two of its intervals by the store's TIME.
+func (sv Served) Stale() bool { return !sv.OK || sv.Now.Sub(sv.At) > 2*sv.Every }
+
+// Down is why st reads down at this read whatever its state says, "" when the
+// evidence stands (tla/HookBeat.tla, the findings of the model run): no server
+// row, or one older than two intervals, puts every name down; and a name of a
+// challenged role is up only when it answered a challenge within the last two
+// intervals, by the store's TIME, however fresh the server row is. A role the heartbeat never challenges (a member's
+// or reader's loop: no session) needs only the server. The one rule every
+// reader uses: Store.Read sets Status.Down from it, and the gate refuses on it.
+func (sv Served) Down(st Status) string {
+	switch {
+	case !sv.OK:
+		return NeverRanReason
+	case sv.Stale():
+		return StaleReason
+	}
+	if _, ok := Challenged[st.Role]; ok && (st.AnswerAt.IsZero() || sv.Now.Sub(st.AnswerAt) > 2*sv.Every) {
+		return NoAnswerReason
+	}
+	return ""
+}
 
 // Serve reads the heartbeat server's stamp and the store's TIME, in one round trip.
 func (s Store) Serve(ctx context.Context) (Served, error) {
@@ -779,15 +833,12 @@ func (s Store) Judgments(ctx context.Context) ([]Judgment, time.Time, error) {
 	return out, clock.Val().UTC(), nil
 }
 
-// Overdue marks j re-pushed, so it is never re-pushed again.
-func (s Store) Overdue(ctx context.Context, j Judgment) error {
+// OverdueMark is j's re-push's once-key and the mark that records it
+// re-pushed (a field of JudgmentsKey), written with the re-push in one step,
+// so it is re-pushed at most once.
+func (j Judgment) OverdueMark() (once, field, value string, err error) {
 	raw, err := json.Marshal(stored{ID: j.ID, To: j.To, Subject: j.Subject, DueMS: j.Due.UnixMilli(), Overdue: true})
-	if err != nil {
-		return err
-	}
-	ctx, cancel := s.call(ctx)
-	defer cancel()
-	return s.C.HSet(ctx, JudgmentsKey, j.ID, raw).Err()
+	return prefix + "overdue:" + j.ID, j.ID, string(raw), err
 }
 
 // Answered says whether any of j's recipients replied to it: the bus's

@@ -189,9 +189,10 @@ type Status struct {
 	Reason   string    // why it was unhooked, when the heartbeat did it ("missed 2 challenges")
 	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
 	AnswerAt time.Time // when the session last answered a challenge, zero when never
-	// Stale is the heartbeat server gone at this read (Served.Stale): no
-	// reader trusts the record's last written state, and the gate refuses.
-	Stale  bool
+	// Down is why the record reads down at this read whatever its state says
+	// (Served.Down: no server, a stale one, or no answer), "" when the evidence
+	// stands. No reader trusts the last written state then, and the gate refuses.
+	Down   string
 	Misses int // challenges in a row left unanswered
 	Pushes []PushStatus
 }
@@ -305,7 +306,7 @@ func (st Status) Gate(w Want) *Refusal {
 		}
 	}
 	otherRole := hooked && len(w.Roles) > 0 && !slices.Contains(w.Roles, st.Role)
-	if st.State == StateProven && len(missing) == 0 && !otherRole && !st.Stale {
+	if st.State == StateProven && len(missing) == 0 && !otherRole && st.Down == "" {
 		return nil
 	}
 	role := st.Role
@@ -314,8 +315,8 @@ func (st Status) Gate(w Want) *Refusal {
 	}
 	r := &Refusal{Status: st}
 	switch {
-	case st.Stale && hooked:
-		r.Why = fmt.Sprintf("%s is not hooked in: %s: the heartbeat server has not passed for two of its intervals, so no record is current; nothing on the bus, friend comms or the sprint works until a server runs (nova-hook serve)", w.Name, StaleReason)
+	case st.Down != "" && st.State == StateProven: // proven, without the heartbeat's evidence; any other state says its own why
+		r.Why = fmt.Sprintf("%s is not hooked in: %s: up needs a heartbeat server passing (nova-hook serve) and, for a session, its answer to the latest challenge (nova-hook prove); nothing on the bus, friend comms or the sprint works until then", w.Name, st.Down)
 	case st.State == StateNone:
 		r.Why = fmt.Sprintf("%s is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is", w.Name)
 	case st.State == StateUnhooked:

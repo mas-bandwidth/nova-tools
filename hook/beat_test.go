@@ -290,17 +290,71 @@ func TestTheGateRefusesEveryoneWhileTheServerIsStale(t *testing.T) {
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
 	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
-	require.NoError(t, r.s.Gate(ctx, want), "no server ever passed: the records stand")
-	r.beat(t, "srv", nonces())
+	b := r.beat(t, "srv", nonces())["ada"]
+	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+	require.NoError(t, err)
 	r.pass(2 * hook.BeatEvery)
 	r.Hook(t, "ada", hook.Comms) // its holder's renewal: the record itself is fresh
 	require.NoError(t, r.s.Gate(ctx, want), "two intervals exactly: fresh")
 	r.pass(time.Second)
 	r.Hook(t, "ada", hook.Comms)
-	err := r.s.Gate(ctx, want)
+	err = r.s.Gate(ctx, want)
 	var refusal *hook.Refusal
 	require.ErrorAs(t, err, &refusal)
 	assert.Contains(t, refusal.Why, "hook server stale")
-	r.beat(t, "srv", nonces())
-	assert.NoError(t, r.s.Gate(ctx, want), "the server passing again: fresh")
+	b = r.beat(t, "srv", nonces())["ada"]
+	_, err = r.s.Answer(ctx, "ada", b.Nonce, "session")
+	require.NoError(t, err)
+	assert.NoError(t, r.s.Gate(ctx, want), "the server passing again, and answered: up")
+}
+
+// TestNoServerOrNoAnswerIsNoEvidence pins "up only with evidence": a hooked,
+// proven record with no server row at all is refused, "hook server never
+// ran"; with a server that challenged it and no answer yet, refused; once it
+// answered, it passes.
+func TestNoServerOrNoAnswerIsNoEvidence(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	require.NoError(t, r.Client.Del(ctx, hook.ServeKey).Err()) // the rig's evidence taken away: no server ever ran
+	require.NoError(t, r.Client.HDel(ctx, hook.RecordKey("ada"), "answered_at").Err())
+	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
+	var refusal *hook.Refusal
+	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
+	assert.Contains(t, refusal.Why, "hook server never ran")
+	b := r.beat(t, "srv", nonces())["ada"]
+	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
+	assert.Contains(t, refusal.Why, "no answer to a heartbeat challenge")
+	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+	require.NoError(t, err)
+	assert.NoError(t, r.s.Gate(ctx, want))
+}
+
+// TestAStaleAnswerIsDownWithAFreshServer pins the answer's own window
+// (tla/HookBeat.tla; the model's BadUpAfterOutage): with the server passing
+// every interval, a name whose last answer is older than two intervals by the
+// store's TIME reads down, though it is still hooked.
+func TestAStaleAnswerIsDownWithAFreshServer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
+	next := nonces()
+	b := r.beat(t, "srv", next)["ada"]
+	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+	require.NoError(t, err)
+	r.pass(hook.BeatEvery)
+	r.beat(t, "srv", next) // answered nothing since
+	r.pass(hook.BeatEvery)
+	r.beat(t, "srv", next)
+	r.Hook(t, "ada", hook.Comms) // its holder's renewal only
+	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", r.state(t, "ada").BeatAt.Add(-2*hook.BeatEvery).UnixMilli()).Err())
+	require.NoError(t, r.s.Gate(ctx, want), "two intervals exactly: up")
+	r.pass(time.Second)
+	var refusal *hook.Refusal
+	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
+	assert.Contains(t, refusal.Why, hook.NoAnswerReason)
+	assert.Equal(t, hook.StateProven, r.state(t, "ada").State, "hooked and proven all the same: only the evidence is old")
 }

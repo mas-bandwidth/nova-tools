@@ -31,6 +31,9 @@ type rig struct {
 	// failTells makes every judgment and told message fail to send, as a bus
 	// that does not answer would; challenges still go out.
 	failTells atomic.Bool
+	// loseAnswers sends every judgment and told message and then answers an
+	// error, as a send whose reply was lost after the store took it.
+	loseAnswers atomic.Bool
 }
 
 func newRig(t *testing.T) *rig {
@@ -112,7 +115,11 @@ func (r *rig) world() world {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), bus.CallTimeout)
 			defer cancel()
-			return b.Send(ctx, m)
+			sent, err := b.Send(ctx, m)
+			if err == nil && r.loseAnswers.Load() && !strings.HasPrefix(m.Subject, "HOOK CHALLENGE") {
+				return bus.Message{}, context.DeadlineExceeded
+			}
+			return sent, err
 		},
 	}
 }
@@ -156,6 +163,7 @@ func TestHookProveStatusUnhook(t *testing.T) {
 	res = cli.Run("prove", "--as", "ada", "--nonce", m[1])
 	assert.Equal(t, 1, res.Code)
 	assert.Contains(t, res.Stdout+res.Stderr, "no challenge stands")
+	r.h.Evidence(t, "ada") // a heartbeat server passing and its answer (hook.Served.Down)
 	cli.Do(t, "status", "--as", "ada").Exit(0).Out("STATUS OK name=ada state=proven role=comms epoch=1 bus=proven")
 	cli.Do(t, "status").Exit(0).Out("STATUS OK count=1 proven=1", "STATUS NAME name=ada state=proven")
 

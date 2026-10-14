@@ -146,7 +146,8 @@ the record is in bus Redis; serve challenges each hooked name every minute, two 
 live and the command that hooks it in (exit 1). Without it, every name that ever hooked in: STATUS OK count=<n>
 proven=<n>, then one STATUS NAME name= state= role= epoch= <push>=<down|armed|proven> line each, at exit 0.
 The states: none, unhooked, expired (no push live), partial, live (every push live, not every one proven), proven;
-and stale for every name while the heartbeat server has not passed for two of its intervals (hook server stale).
+and down for a proven name with no evidence: no heartbeat server ever ran, none passed for two of its intervals
+(hook server stale), or the name has not answered a challenge within the window.
 Once a heartbeat server (nova-hook serve) has passed, --as is also the client's timeout: a hooked name the server
 challenges that has had no challenge for two of the server's intervals is STATUS FAILED NO CHALLENGE FOR <age>
 (exit 1): the server is down, so nothing is checking the link. Without --as the first line carries serve_age=.
@@ -740,7 +741,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Refuse("the heartbeat server's stamp could not be read: " + err.Error())
 		}
-		if age, lost := noChallenge(st[0], sv); lost { // the gate refuses a stale server first (Status.Stale)
+		if age, lost := noChallenge(st[0], sv); lost { // the gate refuses a record with no evidence first (Status.Down)
 			o = tool.Fail(fmt.Sprintf("NO CHALLENGE FOR %s: the heartbeat server last passed %s ago (every %s), so nothing checks this link", age, sv.Now.Sub(sv.At).Round(time.Second), sv.Every))
 			o.Remedy = "nova-hook serve --as <a coordinator or comms name>"
 			o.Facts = statusFacts(st[0])
@@ -762,8 +763,8 @@ func (w world) status(c *tool.Call) *tool.Out {
 	proven := 0
 	o := tool.Done()
 	for _, st := range sts {
-		if sv.Stale() {
-			st.State = "stale" // the server is gone: the last written state is not trusted
+		if st.Down != "" && st.State == hook.StateProven {
+			st.State = "down" // no evidence (Served.Down): the last written state is not trusted
 		}
 		if st.State == hook.StateProven {
 			proven++
