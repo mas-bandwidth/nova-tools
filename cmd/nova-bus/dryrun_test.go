@@ -22,7 +22,7 @@ func TestTheWritingVerbsDryRunWritesNothing(t *testing.T) {
 	cli := r.cli()
 
 	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x", "--dry-run").Exit(0).
-		Out("SEND OK", "to=bob", "bytes=1", "dry_run=true")
+		Out("SEND OK", "to=bob", "bytes=1", "dry_run=true", "landed=no")
 	assert.Equal(t, 0, r.store.Len(bus.LogKey), "a dry send adds no entry to the log")
 	assert.Equal(t, 0, r.store.Len(bus.StreamOf("bob")), "nor to the recipient's stream")
 	cli.Do(t, "send", "--as", "ada", "--to", "zed", "--subject", "s", "--body", "x", "--dry-run").Exit(2).Err("zed is no known name")
@@ -58,6 +58,7 @@ func TestSendDryRunHandlesCall(t *testing.T) {
 	assert.Equal(t, true, receipt.Facts["dry_run"])
 	assert.Equal(t, "bob", receipt.Facts["to"])
 	assert.Equal(t, float64(len("preview")), receipt.Facts["bytes"])
+	assert.Equal(t, "no", receipt.Facts["landed"])
 	assert.Equal(t, 0, r.store.Len(bus.LogKey), "the simulated send adds no log entry")
 	assert.Equal(t, 0, r.store.Len(bus.StreamOf("bob")), "the simulated send adds no recipient entry")
 	_, recorded, err := r.store.Sent(context.Background(), bus.SentOf("ada", "dry-token"))
