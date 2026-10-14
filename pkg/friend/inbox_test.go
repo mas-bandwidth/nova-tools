@@ -138,7 +138,7 @@ func TestAHeldAnswerThatFailsTouchesNothing(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, n, "said once until it changes: %v", r.records)
-	assert.Equal(t, 3, row.asked, "asked every loop")
+	assert.Equal(t, 2, row.asked, "asked at the first loop and a loop later; the third loop is inside the doubled wait (inboxWait)")
 	assert.False(t, r.last().HeldKnown)
 	assert.Contains(t, r.last().InboxError, "friend cards refused")
 }
