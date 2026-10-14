@@ -2,12 +2,158 @@ package config
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestSnapshotComparisonRejectsUnexplainedHistory pins field-level history
+// attribution (docs/SPEC-CONFIG.md, "Snapshot and compare"): the recorded
+// transitions must account for the actual snapshot delta, including its final
+// value; an unrelated operator write or a later ignored write cannot explain it.
+func TestSnapshotComparisonRejectsUnexplainedHistory(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		field    string
+		before   string
+		after    string
+		operator map[string]string
+		ignored  map[string]string
+	}{
+		{name: "field absent in both history maps", field: "external", before: "old", after: "new", operator: map[string]string{"funded": "true"}},
+		{name: "out of band overwrite after operator", field: "billing", before: "metered", after: "plan", operator: map[string]string{"billing": "both"}},
+		{name: "ignored overwrite after operator", field: "billing", before: "metered", after: "plan", operator: map[string]string{"billing": "both"}, ignored: map[string]string{"billing": "plan"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			m := NewMem()
+			m.Now = func() time.Time { return time.Date(2026, 10, 13, 19, 0, 0, 0, time.UTC) }
+			_, err := m.Insert(ctx, KindProvider, Row{Name: "p", Fields: map[string]string{"billing": "metered", "funded": "false"}}, MigrationActor)
+			require.NoError(t, err)
+			before := CmpSnap{At: "2026-10-13T20:00:00Z", Kinds: map[string]CmpKind{KindProvider: {Kind: KindProvider, Rows: []CmpRow{{Name: "p", Fields: map[string]string{tc.field: tc.before}}}}}}
+			m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 0, 0, 0, time.UTC) }
+			_, _, err = m.Update(ctx, KindProvider, "p", tc.operator, "operator")
+			require.NoError(t, err)
+			if tc.ignored != nil {
+				m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 30, 0, 0, time.UTC) }
+				_, _, err = m.Update(ctx, KindProvider, "p", tc.ignored, MigrationActor)
+				require.NoError(t, err)
+			}
+			after := CmpSnap{At: "2026-10-13T22:00:00Z", Kinds: map[string]CmpKind{KindProvider: {Kind: KindProvider, Rows: []CmpRow{{Name: "p", Fields: map[string]string{tc.field: tc.after}}}}}}
+			res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, CompareCrit, res.Class)
+			assert.Equal(t, 1, res.Exit())
+			assert.Equal(t, []string{tc.field}, findRow(t, res, KindProvider, "p").Unexplained)
+		})
+	}
+}
+
+// TestSnapshotFilesRequireCompleteMetadata pins the eight kind files and the
+// finite, ordered capture window (docs/SPEC-CONFIG.md, "Snapshot and compare").
+func TestSnapshotFilesRequireCompleteMetadata(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, file, content, want string }{
+		{name: "missing provider", file: "provider.json", want: "provider.json"},
+		{name: "missing timestamp", file: "when.json", content: `{}`, want: "at"},
+		{name: "blank timestamp", file: "when.json", content: `{"at":""}`, want: "at"},
+		{name: "invalid timestamp", file: "when.json", content: `{"at":"invalid"}`, want: "RFC 3339"},
+		{name: "missing tool", file: "when.json", content: `{"at":"2026-10-13T20:00:00Z"}`, want: "tool"},
+		{name: "empty kind", file: "provider.json", content: `{}`, want: "kind"},
+		{name: "missing rows", file: "provider.json", content: `{"kind":"provider"}`, want: "rows"},
+		{name: "wrong kind", file: "provider.json", content: `{"kind":"route","rows":[]}`, want: "kind"},
+		{name: "nameless row", file: "provider.json", content: `{"kind":"provider","rows":[{}]}`, want: "row names"},
+		{name: "duplicate row", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p"},{"name":"p"}]}`, want: "row names"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			snap, err := TakeSnapshot(context.Background(), NewMem(), "2026-10-13T20:00:00Z", "test")
+			require.NoError(t, err)
+			dir := t.TempDir()
+			require.NoError(t, WriteSnapshot(dir, snap))
+			if tc.content == "" {
+				require.NoError(t, os.Remove(filepath.Join(dir, tc.file)))
+			} else {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, tc.file), []byte(tc.content), 0o600))
+			}
+			_, err = LoadSnapshot(dir)
+			assert.ErrorContains(t, err, tc.want)
+		})
+	}
+	t.Run("reversed window", func(t *testing.T) {
+		t.Parallel()
+		_, err := CompareSnapshots(context.Background(), NewMem(), CmpSnap{At: "2026-10-13T22:00:00Z"}, CmpSnap{At: "2026-10-13T20:00:00Z"}, CompareOptions{})
+		assert.ErrorContains(t, err, "before")
+	})
+}
+
+// TestSnapshotComparisonReportsRemovedRows pins removals as row differences,
+// rather than allowing a before-only row to disappear from the comparison.
+func TestSnapshotComparisonReportsRemovedRows(t *testing.T) {
+	t.Parallel()
+	for _, actor := range []string{"operator", MigrationActor, ""} {
+		t.Run(actor, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			m := NewMem()
+			m.Now = func() time.Time { return time.Date(2026, 10, 13, 19, 0, 0, 0, time.UTC) }
+			_, err := m.Insert(ctx, KindProvider, Row{Name: "p", Fields: map[string]string{"billing": "metered", "funded": "false"}}, MigrationActor)
+			require.NoError(t, err)
+			before, err := TakeSnapshot(ctx, m, "2026-10-13T20:00:00Z", "test")
+			require.NoError(t, err)
+			m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 0, 0, 0, time.UTC) }
+			if actor != "" {
+				_, err = m.Delete(ctx, KindProvider, "p", actor)
+				require.NoError(t, err)
+			} else {
+				delete(m.rows[KindProvider], "p")
+			}
+			after, err := TakeSnapshot(ctx, m, "2026-10-13T22:00:00Z", "test")
+			require.NoError(t, err)
+			res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
+			require.NoError(t, err)
+			if actor == "operator" {
+				assert.Equal(t, CompareOperator, res.Class)
+				assert.Equal(t, "operator", findRow(t, res, KindProvider, "p").Actor)
+			} else {
+				assert.Equal(t, CompareCrit, res.Class)
+			}
+			assert.True(t, findRow(t, res, KindProvider, "p").Removed)
+			assert.Equal(t, len(Kinds), len(res.Kinds))
+		})
+	}
+}
+
+// TestSnapshotComparisonDoesNotCreditAnIgnoredPartOfAnAddedRow keeps a later
+// unrelated operator write from masking an ignored change to the new row.
+func TestSnapshotComparisonDoesNotCreditAnIgnoredPartOfAnAddedRow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	before, err := TakeSnapshot(ctx, m, "2026-10-13T20:00:00Z", "test")
+	require.NoError(t, err)
+	m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 0, 0, 0, time.UTC) }
+	_, err = m.Insert(ctx, KindProvider, Row{Name: "p", Fields: map[string]string{"billing": "metered", "funded": "false"}}, "operator")
+	require.NoError(t, err)
+	m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 10, 0, 0, time.UTC) }
+	_, _, err = m.Update(ctx, KindProvider, "p", map[string]string{"funded": "true"}, MigrationActor)
+	require.NoError(t, err)
+	m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 20, 0, 0, time.UTC) }
+	_, _, err = m.Update(ctx, KindProvider, "p", map[string]string{"billing": "both"}, "operator")
+	require.NoError(t, err)
+	after, err := TakeSnapshot(ctx, m, "2026-10-13T22:00:00Z", "test")
+	require.NoError(t, err)
+	res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, CompareCrit, res.Class)
+	assert.Equal(t, CompareCrit, findRow(t, res, KindProvider, "p").Class)
+}
 
 // TestSnapshotCompareNamesTheActBehindAChangedRow pins compare's rule: a row
 // that changed and whose change an operator's recorded history explains is

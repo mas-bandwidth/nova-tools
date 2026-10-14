@@ -135,6 +135,12 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 			o.Item("kind", "kind", kd.Kind, "class", kd.Class)
 			for _, rd := range kd.Rows {
 				item := []any{"kind", kd.Kind, "name", rd.Name, "class", rd.Class}
+				if len(rd.Fields) > 0 {
+					item = append(item, "fields", rd.Fields)
+				}
+				if rd.Removed {
+					item = append(item, "removed", true)
+				}
 				if rd.Actor != "" {
 					item = append(item, "actor", rd.Actor, "at", rd.At, "reason", tool.Text(rd.Reason))
 				}
@@ -171,18 +177,22 @@ func compareLines(stdout io.Writer, res config.CompareResult) {
 			continue
 		}
 		for _, rd := range kd.Rows {
+			removed := ""
+			if rd.Removed {
+				removed = " removed"
+			}
 			switch rd.Class {
 			case config.CompareOperator:
-				fmt.Fprintf(stdout, "OPERATOR-DIFF %s %s by %s at %s: %s (%s)\n",
-					rd.Kind, rd.Name, rd.Actor, rd.At, rd.Reason, diffSummary(rd.Fields))
+				fmt.Fprintf(stdout, "OPERATOR-DIFF %s %s%s by %s at %s: %s (%s)\n",
+					rd.Kind, rd.Name, removed, rd.Actor, rd.At, rd.Reason, diffSummary(rd.Fields))
 			case config.CompareAdded:
 				fmt.Fprintf(stdout, "OPERATOR-ADD %s %s by %s at %s: %s\n",
 					rd.Kind, rd.Name, rd.Actor, rd.At, rd.Reason)
 			case config.CompareCrit:
 				if len(rd.Unexplained) > 0 {
-					fmt.Fprintf(stdout, "CRIT-DIFF %s %s unexplained: %s\n", rd.Kind, rd.Name, strings.Join(rd.Unexplained, ", "))
+					fmt.Fprintf(stdout, "CRIT-DIFF %s %s%s unexplained: %s\n", rd.Kind, rd.Name, removed, strings.Join(rd.Unexplained, ", "))
 				} else {
-					fmt.Fprintf(stdout, "CRIT-DIFF %s %s\n", rd.Kind, rd.Name)
+					fmt.Fprintf(stdout, "CRIT-DIFF %s %s%s\n", rd.Kind, rd.Name, removed)
 				}
 			default:
 				fmt.Fprintf(stdout, "SAME %s %s\n", rd.Kind, rd.Name)

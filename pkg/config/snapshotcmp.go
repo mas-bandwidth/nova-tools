@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -73,9 +72,9 @@ type whenFile struct {
 
 // FieldDiff is one compared field's before and after.
 type FieldDiff struct {
-	Field  string
-	Before string
-	After  string
+	Field  string `json:"field"`
+	Before string `json:"before"`
+	After  string `json:"after"`
 }
 
 // RowDiff is one row that differs: its class, the compared fields that differ
@@ -88,6 +87,8 @@ type RowDiff struct {
 	Actor  string
 	At     string
 	Reason string
+	// Removed retains a before-only row in both renderings of the comparison.
+	Removed bool
 	// Added names the fields the after row has and the before row did not:
 	// the new build added them, so they are listed apart, never compared.
 	Added []string
@@ -105,7 +106,7 @@ type KindDiff struct {
 	Added []string
 }
 
-// CompareResult is the whole comparison: one KindDiff per kind in the after
+// CompareResult is the whole comparison: one KindDiff per kind in either
 // snapshot, and the worst class of them all.
 type CompareResult struct {
 	Kinds []KindDiff
@@ -141,8 +142,18 @@ func CompareSnapshots(ctx context.Context, st Store, before, after CmpSnap, opts
 	if err != nil {
 		return CompareResult{}, fmt.Errorf("after snapshot: %w", err)
 	}
+	if to.Before(from) {
+		return CompareResult{}, fmt.Errorf("after snapshot is before the before snapshot")
+	}
 	res := CompareResult{Class: CompareSame}
-	for _, kind := range sortedKinds(after.Kinds) {
+	kinds := map[string]CmpKind{}
+	for kind, rows := range before.Kinds {
+		kinds[kind] = rows
+	}
+	for kind, rows := range after.Kinds {
+		kinds[kind] = rows
+	}
+	for _, kind := range sortedKinds(kinds) {
 		kd := KindDiff{Kind: kind, Class: CompareSame}
 		bKind := before.Kinds[kind]
 		bRows := map[string]CmpRow{}
@@ -150,15 +161,17 @@ func CompareSnapshots(ctx context.Context, st Store, before, after CmpSnap, opts
 			bRows[r.Name] = r
 		}
 		aRows := append([]CmpRow(nil), after.Kinds[kind].Rows...)
+		aNames := map[string]bool{}
 		sort.Slice(aRows, func(i, j int) bool { return aRows[i].Name < aRows[j].Name })
 		for _, a := range aRows {
+			aNames[a.Name] = true
 			b, ok := bRows[a.Name]
 			if !ok {
 				// a row the after snapshot has and the before did not: ask the
 				// history for its creation entry in the window, so an
 				// operator's add is named, and only a row with no entry, or
 				// one only the migration actor made, is an unexplained change.
-				rd, err := classifyAddedRow(ctx, st, kind, a.Name, ignoreSet, from, to)
+				rd, err := classifyAddedRow(ctx, st, kind, a, ignoreSet, from, to)
 				if err != nil {
 					return CompareResult{}, err
 				}
@@ -200,6 +213,25 @@ func CompareSnapshots(ctx context.Context, st Store, before, after CmpSnap, opts
 			kd.Rows = append(kd.Rows, rd)
 			kd.Class = worse(kd.Class, rd.Class)
 		}
+		for _, b := range bKind.Rows {
+			if aNames[b.Name] {
+				continue
+			}
+			var diffs []FieldDiff
+			for _, f := range sortedFields(b.Fields) {
+				if !liveFields[f] {
+					diffs = append(diffs, FieldDiff{Field: f, Before: b.Fields[f]})
+				}
+			}
+			rd, err := classifyRow(ctx, st, kind, b.Name, diffs, nil, ignoreSet, from, to)
+			if err != nil {
+				return CompareResult{}, err
+			}
+			rd.Removed = true
+			kd.Rows = append(kd.Rows, rd)
+			kd.Class = worse(kd.Class, rd.Class)
+		}
+		sort.Slice(kd.Rows, func(i, j int) bool { return kd.Rows[i].Name < kd.Rows[j].Name })
 		res.Kinds = append(res.Kinds, kd)
 		res.Class = worse(res.Class, kd.Class)
 	}
@@ -213,42 +245,22 @@ func CompareSnapshots(ctx context.Context, st Store, before, after CmpSnap, opts
 // explained and one not, is CRIT naming the unexplained field.
 func classifyRow(ctx context.Context, st Store, kind, name string, diffs []FieldDiff, added []string, ignoreSet map[string]bool, from, to time.Time) (RowDiff, error) {
 	rd := RowDiff{Kind: kind, Name: name, Class: CompareCrit, Fields: diffs, Added: added}
-	var history []Change
-	if st != nil {
-		h, err := st.History(ctx, kind, name)
-		if err != nil {
-			return RowDiff{}, err
-		}
-		history = h
+	history, err := snapshotHistory(ctx, st, kind, name, from, to)
+	if err != nil {
+		return RowDiff{}, err
 	}
-	var operators []Change
-	for _, c := range history {
-		at, err := parseInstant(c.At)
-		if err != nil {
-			continue
-		}
-		if at.Before(from) || at.After(to) {
-			continue
-		}
-		if !ignoreSet[c.Actor] {
-			operators = append(operators, c)
-		}
-	}
-	if len(operators) == 0 {
-		for _, d := range diffs {
-			rd.Unexplained = append(rd.Unexplained, d.Field)
-		}
-		return rd, nil
-	}
+	var last Change
 	for _, d := range diffs {
-		if !explainedBy(d.Field, operators) {
+		c, ok := explainedBy(d, history, ignoreSet)
+		if !ok {
 			rd.Unexplained = append(rd.Unexplained, d.Field)
+		} else if c.ID > last.ID {
+			last = c
 		}
 	}
-	if len(rd.Unexplained) > 0 {
+	if len(rd.Unexplained) > 0 || last.Op == "" {
 		return rd, nil
 	}
-	last := operators[len(operators)-1]
 	rd.Class = CompareOperator
 	rd.Actor = last.Actor
 	rd.At = last.At
@@ -256,67 +268,93 @@ func classifyRow(ctx context.Context, st Store, kind, name string, diffs []Field
 	return rd, nil
 }
 
-// classifyAddedRow is the rule for a row the after snapshot has and the before
-// did not: it asks the store's history for the row's creation entry (OpAdd) in
-// the window. An add by an operator (a person's add, a seat's add, a friend's)
-// is OPERATOR-ADD, named with the actor, the time and the reason of that entry;
-// a row with no creation entry in the window, or one only the migration actor
-// made, is CRIT.
-func classifyAddedRow(ctx context.Context, st Store, kind, name string, ignoreSet map[string]bool, from, to time.Time) (RowDiff, error) {
-	rd := RowDiff{Kind: kind, Name: name, Class: CompareCrit}
-	var history []Change
-	if st != nil {
-		h, err := st.History(ctx, kind, name)
-		if err != nil {
-			return RowDiff{}, err
-		}
-		history = h
+// classifyAddedRow requires an operator creation in the window and checks
+// that the final recorded operator write accounts for the observed row
+// (docs/SPEC-CONFIG.md, "Snapshot and compare").
+func classifyAddedRow(ctx context.Context, st Store, kind string, row CmpRow, ignoreSet map[string]bool, from, to time.Time) (RowDiff, error) {
+	rd := RowDiff{Kind: kind, Name: row.Name, Class: CompareCrit}
+	history, err := snapshotHistory(ctx, st, kind, row.Name, from, to)
+	if err != nil {
+		return RowDiff{}, err
 	}
-	for i := range history {
-		c := history[i]
-		if c.Op != OpAdd {
-			continue
+	var created, last Change
+	for _, c := range history {
+		if c.Op == OpAdd {
+			created = c
 		}
-		at, err := parseInstant(c.At)
-		if err != nil {
-			continue
-		}
-		if at.Before(from) || at.After(to) {
-			continue
-		}
-		if ignoreSet[c.Actor] {
-			continue
-		}
-		rd.Class = CompareAdded
-		rd.Actor = c.Actor
-		rd.At = c.At
-		rd.Reason = c.Reason
+		last = c
 	}
+	if created.Op != OpAdd || ignoreSet[created.Actor] || last.Op == OpRemove || ignoreSet[last.Actor] {
+		return rd, nil
+	}
+	for field, value := range row.Fields {
+		if !liveFields[field] {
+			got, ok := last.After[field]
+			if !ok || got != value {
+				return rd, nil
+			}
+			if _, explained := explainedBy(FieldDiff{Field: field, After: value}, history, ignoreSet); !explained {
+				return rd, nil
+			}
+		}
+	}
+	for field := range last.After {
+		if !liveFields[field] {
+			if _, ok := row.Fields[field]; !ok {
+				return rd, nil
+			}
+		}
+	}
+	rd.Class = CompareAdded
+	rd.Actor = last.Actor
+	rd.At = last.At
+	rd.Reason = last.Reason
 	return rd, nil
 }
 
-// explainedBy reports whether any operator entry changed field, by its own
-// before and after maps: an add has no before and a remove no after.
-func explainedBy(field string, operators []Change) bool {
-	for _, c := range operators {
-		switch c.Op {
-		case OpAdd:
-			if _, ok := c.After[field]; ok {
-				return true
-			}
-		case OpRemove:
-			if _, ok := c.Before[field]; ok {
-				return true
-			}
-		default:
-			bv, bok := c.Before[field]
-			av, aok := c.After[field]
-			if !bok || !aok || bv != av {
-				return true
-			}
+// explainedBy walks recorded field transitions from the observed before value
+// to the observed after value (docs/SPEC-CONFIG.md, "Snapshot and compare").
+// The final transition must be an operator's; an absent field, a gap, an
+// out-of-band final value or an ignored final write remains unexplained.
+func explainedBy(diff FieldDiff, history []Change, ignoreSet map[string]bool) (Change, bool) {
+	value := diff.Before
+	var last Change
+	for _, c := range history {
+		bv, bok := c.Before[diff.Field]
+		av, aok := c.After[diff.Field]
+		if c.Op != OpAdd && c.Op != OpSet && c.Op != OpRemove {
+			continue
+		}
+		if !bok && !aok || bok && aok && bv == av {
+			continue
+		}
+		if !bok && value != "" || bok && bv != value {
+			return Change{}, false
+		}
+		value, last = av, c
+	}
+	return last, last.Op != "" && !ignoreSet[last.Actor] && value == diff.After
+}
+
+// snapshotHistory returns the row's history within the finite snapshot window
+// in store order (docs/SPEC-CONFIG.md, "History": oldest first). It retains
+// ignored actors so a later ignored overwrite cannot masquerade as an operator.
+func snapshotHistory(ctx context.Context, st Store, kind, name string, from, to time.Time) ([]Change, error) {
+	if st == nil {
+		return nil, nil
+	}
+	history, err := st.History(ctx, kind, name)
+	if err != nil {
+		return nil, err
+	}
+	var window []Change
+	for _, c := range history {
+		at, err := parseInstant(c.At)
+		if err == nil && at.After(from) && !at.After(to) {
+			window = append(window, c)
 		}
 	}
-	return false
+	return window, nil
 }
 
 // worse returns the more serious of two classes.
@@ -379,10 +417,11 @@ func sortedFields(m map[string]string) []string {
 	return out
 }
 
-// parseInstant reads an RFC 3339 UTC instant, "" as the zero time.
+// parseInstant requires an RFC 3339 capture instant: a missing time must not
+// widen the history window (docs/SPEC-CONFIG.md, "Snapshot and compare").
 func parseInstant(s string) (time.Time, error) {
 	if s == "" {
-		return time.Time{}, nil
+		return time.Time{}, fmt.Errorf("at is required: an RFC 3339 capture instant")
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
@@ -431,30 +470,43 @@ func LoadSnapshot(dir string) (CmpSnap, error) {
 	if err := json.Unmarshal(raw, &when); err != nil {
 		return CmpSnap{}, fmt.Errorf("snapshot: when.json: %w", err)
 	}
-	snap.At, snap.Tool = when.At, when.Tool
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return CmpSnap{}, fmt.Errorf("snapshot: read %s: %w", dir, err)
+	if _, err := parseInstant(when.At); err != nil {
+		return CmpSnap{}, fmt.Errorf("snapshot: when.json: %w", err)
 	}
-	for _, e := range entries {
-		name := e.Name()
-		kind, ok := strings.CutSuffix(name, ".json")
-		if !ok || kind == "when" {
-			continue
-		}
-		if _, known := Lookup(kind); !known {
-			continue
-		}
+	if when.Tool == "" {
+		return CmpSnap{}, fmt.Errorf("snapshot: when.json: tool is required")
+	}
+	snap.At, snap.Tool = when.At, when.Tool
+	for _, k := range Kinds {
+		kind := k.Name
+		name := kind + ".json"
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			return CmpSnap{}, fmt.Errorf("snapshot: read %s: %w", name, err)
+		}
+		var shape map[string]json.RawMessage
+		if err := json.Unmarshal(data, &shape); err != nil {
+			return CmpSnap{}, fmt.Errorf("snapshot: %s: %w", name, err)
+		}
+		if _, ok := shape["kind"]; !ok {
+			return CmpSnap{}, fmt.Errorf("snapshot: %s: kind is required", name)
+		}
+		if _, ok := shape["rows"]; !ok {
+			return CmpSnap{}, fmt.Errorf("snapshot: %s: rows is required", name)
 		}
 		var ks CmpKind
 		if err := json.Unmarshal(data, &ks); err != nil {
 			return CmpSnap{}, fmt.Errorf("snapshot: %s: %w", name, err)
 		}
-		if ks.Kind == "" {
-			ks.Kind = kind
+		if ks.Kind != kind {
+			return CmpSnap{}, fmt.Errorf("snapshot: %s: kind must be %s", name, kind)
+		}
+		seen := map[string]bool{}
+		for _, row := range ks.Rows {
+			if row.Name == "" || seen[row.Name] {
+				return CmpSnap{}, fmt.Errorf("snapshot: %s: row names must be nonempty and unique", name)
+			}
+			seen[row.Name] = true
 		}
 		snap.Kinds[kind] = ks
 	}
