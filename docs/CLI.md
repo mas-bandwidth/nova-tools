@@ -2307,7 +2307,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    [--output-token-max <tokens>] --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--server-host]
                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                         Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
                         A reader uses its machine's width; --width overrides it. This machine opens no store.
@@ -2318,6 +2318,13 @@ usage:
                         from the reader's environment; children do not receive that key (docs/SPEC-SPRINT.md section 6).
                         A work member with JEV_API_KEY asks the attempt decision in its own process
                         when a take ends and carries it in its finish (docs/SPEC-SPRINT.md section 2).
+                        --server-host puts each card on the server host behind the server: on darwin
+                        its process group runs at the background QoS and GOMAXPROCS bounds each
+                        process (docs/SPEC-SWARM.md, the server host reserve). No read of the
+                        fleet row's coordinator exists in the member's path to decide this with
+                        (it opens no store, and its queue verb carries no coordinator field), so
+                        the loop row's argv names the flag on the server's machine, and a member
+                        that is not told runs unreserved: it never guesses it is the server.
                         Native classifies a work card's red gate with the gate decision and the same key
                         before reporting the take; failing tests run once at the base, within a bound.
                         Decisions are recorded and routed on the sprint row's gate bars, empty by default.

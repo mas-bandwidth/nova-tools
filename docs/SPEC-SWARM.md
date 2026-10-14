@@ -786,6 +786,34 @@ scanned as before:
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`pkg/swarm`).
 
+## The server host reserve
+
+A member that runs on the same host as the sprint server must not take the server
+down. On 2026-10-13 a card ran `go test` at 600% CPU beside the server, the bus,
+Redis and Postgres, the host load reached 74 and every seat verb slowed. A card's
+children already run at nice 19, which was not enough, so a member on the server
+host bounds each card's parallelism and puts its process group behind the server.
+
+The policy is one pure function of the host, the OS and the core count
+(`hostReserve`, `cmd/nova-swarm/hostreserve.go`): on the server host on darwin the
+card runs at the background QoS and each process is bounded to
+`max(2, cores/8)` threads; every other host, and Linux, where the same reserved
+CPU needs cgroups, keeps the zero policy, which is today's behaviour. The member
+decides the policy once at start, from `--server-host` alone: no read of the
+fleet row's coordinator exists in its path (it opens no store, and its one
+config read, the queue verb, carries the width and the machine's state word and
+no coordinator field), so the loop row's argv names the flag on the server's
+machine, and a member that is not told runs unreserved — it never guesses it is
+the server. It prints one
+`MEMBER RESERVE server-host=... background=... gomaxprocs=... cores=...` line, and
+each launch adds `GOMAXPROCS` to the card's environment when the card does not set
+it and calls the platform's background hook once for the leader right after it
+starts. The card's whole process group inherits the QoS, and a hook that fails
+is said on one NOTE line naming the pid, so the reserve never fails silently;
+the class the hook sets has no readback in the tree (darwin's `taskpolicy`
+readback, its functional test and the ledger row it needs are the change's
+proposed diff, named in its report).
+
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
