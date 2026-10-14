@@ -100,6 +100,34 @@ ready. Larger payloads do not justify another writer; their durable bodies remai
 12. **Unavailable means unknown.** A client unable to read this authority reports unavailable or
     unknown with its last observed revision. It never promotes cached presence to current, claims
     a send committed, or executes an assignment mutation on a local fallback.
+13. **Two clocks, one proof.** Every binding records `last_heard`, advanced by any valid
+    authenticated activity of that identity (a bus message, a take, a finish, a push, a pull
+    request, a beat, a proof), and `last_proof`, advanced only by a session's answer to the
+    current challenge (guarantee 4). Activity never advances `last_proof` or extends a lease.
+    Proof, push delivery and claim acquisition read `last_proof` and the lease deadline alone;
+    a displayed up or down is a projection of both clocks that the layers above define, and it
+    never feeds back into proof. Observation: with a fake clock, a stream of sends and takes with
+    no challenge answer leaves `last_proof` unchanged and the lease expires on time, while
+    `last_heard` advances with each.
+14. **Client/server, never distributed: Redis is the server.** Redis is the one server and the
+    only truth for everything in this layer and for the psychic link of layer 20: streams,
+    challenges, nonces, leases, hooked and unhooked state, inbox entries, delivery evidence,
+    acknowledgments, claims and receipts. Every party (each friend, the coordinator, the sprint)
+    is a client that asks Redis. There is no peer-to-peer messaging, no gossip, no agreement
+    between clients, no client-side lease, wake file or nonce file, and no client state read as
+    truth. Lease and challenge expiry is decided by Redis (server time, key TTL), never by a
+    client clock. Observation: kill every client, delete its runtime directory, start a fresh
+    one; it recovers every binding, lease, pending entry and claim by asking Redis alone, and a
+    client whose clock is skewed by an hour neither extends nor shortens any lease.
+15. **All state lives on the server; clients cache it.** A client fetches the server state it
+    needs and may cache it. A cache is derived only from the server, refreshed from it about once
+    per second ($T_{refresh}$ = 1 s) and at once on a push over the link, invalidated on any
+    refusal or revision conflict, never written back as truth, and never used to decide what the
+    server decides (proof, expiry, admission, ownership, capacity). Observation: while the server
+    is reachable, a client's view of any record it displays is never more than about
+    $T_{refresh}$ behind the server's committed revision (measured with a fake clock as the
+    revision gap at each refresh), and a mutation proposed from a stale cache is refused with
+    the current revision, never applied.
 
 ## State and transitions
 
@@ -112,7 +140,7 @@ never guesses how to merge the caller's intent.
 |---|---|---|
 | Server | recovering, serving, unavailable; epoch; increasing revision | Start recovers committed rows and receipts before serving. A persistence failure stops admission. Restart conservatively invalidates live proofs and execution leases and emits their recovery reasons; durable claims and pending messages remain. |
 | Friend | enrolled, disabled; stable identity | Enroll publishes one identity. Disable fences its binding and claims against new progress without deleting evidence. Re-enable requires a fresh binding/proof. |
-| Binding | absent, challenged, proven, away, closed; session; generation; deadline; reason | Attach creates a challenge. A matching timely session answer makes it proven. A fresh challenge renews only when answered. Timeout makes it away. Explicit detach closes it. Replacement increments generation and starts challenged; it cannot inherit proof. |
+| Binding | absent, challenged, proven, away, closed; session; generation; deadline; reason; `last_heard`; `last_proof` | Attach creates a challenge. A matching timely session answer makes it proven. A fresh challenge renews only when answered. Timeout makes it away. Explicit detach closes it. Replacement increments generation and starts challenged; it cannot inherit proof. |
 | Challenge | issued, answered, expired, superseded; nonce; binding generation; deadline | A fresh challenge supersedes the preceding unanswered challenge. Its issue does not extend an existing proof deadline. A consumed, stale or wrong-session nonce cannot create proof. |
 | Subscription | active, closed; identity; binding generation; filter; last offered revision | Subscribe binds the authenticated session to bounded replay. Disconnect closes only the transport subscription, not pending delivery. Reconnect resumes from a valid cursor or an explicit fresh snapshot. User filters cannot suppress binding/proof control events. |
 | Delivery | immutable message/recipient; pending or acknowledged; append-only attempts | Send atomically admits recipient entries. Offer records an attempt. Observe records a session answer for that attempt. Acknowledge records consumption and removes only that recipient from pending. Retry or reconnect reoffers pending IDs. |
@@ -121,8 +149,12 @@ never guesses how to merge the caller's intent.
 
 A binding can have a live transport and still be challenged or away. Presence reads return the
 binding state, proof deadline, reason, generation and the measured delivery mode separately.
-If a convenience `up` field exists, it means only a current proven session lease; it does not mean
-native idle wake. Poll completion is not session closure. A known binding loss or expiry cannot be
+Presence reads also return both clocks of guarantee 13. A displayed up or down reads the
+last-heard clock through the internal states that layer 20 defines over this record (round 2
+applies proposal 1 of layer 60: up and deaf display up; down displays down, including the case
+where her daemon answers and her session does not), while proof, the deal and the push gate on
+the challenge-answer clock alone. This layer stores the clocks; it does not depend on how they
+are displayed. No displayed status means native idle wake. Poll completion is not session closure. A known binding loss or expiry cannot be
 hidden by keeping a socket or a helper process alive.
 
 A valid acknowledgment includes observation of that same attempt, or atomically records that
@@ -164,8 +196,9 @@ claims a session can answer a challenge while it has no execution opportunity.
 
 ## Interfaces
 
-- Below: one durable transactional store and an authoritative server clock. Their implementation
-  does not introduce a second writer or a second caller-maintained truth.
+- Below: Redis, the one durable transactional store, and its server clock as the only clock that
+  decides expiry (guarantee 14). Its implementation does not introduce a second writer or a
+  second caller-maintained truth.
 - Above: identity/binding inspection; attach/challenge/answer/detach; bounded snapshot/replay;
   atomic message admission and receipts; observation/acknowledgment; conditional assignment and
   capacity mutation. Every result carries epoch, revision, status and a next action on refusal.

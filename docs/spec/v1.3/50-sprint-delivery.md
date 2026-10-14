@@ -11,13 +11,12 @@ The Muse Code friend (she/her).
 
 In:
 
-- One card, one delivery branch: `sprint/<card>.aurora`, cut from the current sprint base.
-  Sprint bases are the `sprint/v1.2.x` lines; a card branch names its base at cut time and is
-  judged against that base.
+- One card, one delivery branch: the branch the deal names, `sprint/<card>.g<generation>.e<epoch>`, cut from the base the deal names.
+  A card branch names that base at cut time and is judged against it.
 - The merge gate, in order: the Linux bench gate on the exact head, then a cold reader's
   verdict, then the coordinator's merge. No step substitutes for another.
-- Merge candidates are sprint branches only. A card is a candidate when its `sprint/<card>.aurora`
-  branch is pushed and its head is the sha that was gated and read.
+- Merge candidates are sprint branches only. A card is a candidate when the delivery branch its deal
+  names is pushed and its head is the sha that was gated and read.
 
 Out (later releases):
 
@@ -25,6 +24,9 @@ Out (later releases):
   only when the base merge is clean and the card's own diff digest is unchanged (guarantee 1
   and machine M7 in layer 60). A carry where the base merge touches the card's own files, or
   where the diff digest changes, is not tested by this layer in v1.3 and goes to a later release.
+- Any sprint comms path beside the psychic link. The tick's take-back of taken cards to redeal
+  them, daemon polls of the sprint, ping/pong session checks, wake files and the per-minute
+  goal nudge as a delivery path are retired (layer 20, Layers 40 and 50 sit on the link).
 - Automatic merging. The coordinator merges by hand in v1.3; no merge automation is specified.
 - Verdicts on non-sprint branches, and candidates registered for unclaimed cards beyond the
   refusal in the Inputs below, until the server record for claims (layer 10) is ratified with
@@ -48,7 +50,7 @@ Numbered, each one testable.
    green build of any other sha, and a correct sha copied into prose, are not proof of a read
    or of a build.
 4. **Race is checked, not assumed.** Before the merge, the head is checked against its base
-   once, at the fence: a head that is behind its `sprint/v1.2.x` base, or whose race with the
+   once, at the fence: a head that is behind the base its deal names, or whose race with the
    base changed the card's own files, returns to the author instead of merging. The check names
    both shas it compared.
 5. **Only the coordinator merges.** Authors push candidates; the cold reader records MERGE,
@@ -56,14 +58,42 @@ Numbered, each one testable.
    candidate sprint branch whose gate and verdict both name the current head. No later note
    restates a recorded verdict as a different word; a moved tip is one note naming the new sha,
    and the gate and read run again under guarantee 1.
+6. **One claim per card; no take-back.** One card holds at most one active or
+   needs-reconciliation claim. The server refuses a second deal of a card under such a claim,
+   and the card returns to the deal only on a finish, a release, or a completed reconciliation
+   (layer 40 guarantees 4, 9 and 11), with every release and its reason recorded on the claim
+   and replayed to its holder on attach. No tick moves a taken card back to ready. Observation:
+   with a fake clock, run the tick a thousand times over a taken card whose holder is deaf, then
+   down: the card is dealt once, its claim reads active then needs-reconciliation, and the count
+   of working-to-ready moves is zero.
+7. **Deal only to a hooked friend.** A card is dealt only to a friend who is hooked into her
+   psychic link and has passed the self-test of layer 30 guarantee 6, whose binding is proven
+   and unexpired, and whose displayed status is up; never to a deaf or down friend (layer 20
+   guarantees 12 and 17). Observation: unit test: with one friend hooked, one deaf and one
+   down, a deal of three cards lands only on the hooked friend, and the rest stay with the
+   server.
+8. **Every sprint message rides the link.** Every deal, take, finish, read, judgment and push
+   between the sprint, a friend and the coordinator is a message on the psychic link of layer 20,
+   admitted only to hooked recipients (guarantee 16 there); the sprint is a client of Redis,
+   the one server, and keeps no lease, roster or delivery copy of its own (layer 10 guarantees
+   14 and 15). A sprint message to an unhooked friend is refused to the sprint at once and
+   raised as a judgment to the coordinator, never queued. Observation: with nova-sprint
+   running against a fake store, every judgment and deal it emits appears as a bus message to a
+   hooked recipient, and one addressed to an unhooked friend produces a `friend_not_hooked`
+   refusal and a coordinator judgment.
+
+Rationale (round 2): in the three hours before 14:24Z on 2026-10-14 the sprint moved friend
+cards from working back to ready by the tick deal 12,709 times, and finished friend reports
+were refused as no longer the friend's (the Grok friend 92, the Antigravity friend 21, a
+one-shot dsh friend 8). Guarantees 6 to 8 make the take-back and the unheard deal impossible.
 
 ## State and transitions
 
-- States: card dealt → taken → candidate pushed (`sprint/<card>.aurora` at a named head) →
+- States: card dealt → taken (one claim; needs-reconciliation keeps it) → candidate pushed (the deal's branch at a named head) →
   bench-gated (exact sha, green) → cold-read (MERGE, FIX or HOLD on that sha) → merged by the
   coordinator. FIX and HOLD return the card to its author; a moved head returns the candidate
   to bench-gated.
-- Events: branch cut from a `sprint/v1.2.x` base, push, head move, bench gate result, cold
+- Events: branch cut from the base the deal names, push, head move, bench gate result, cold
   reader verdict, base race check, coordinator merge.
 - Who owns each record: the server record owns card state and the recorded verdict on its sha;
   the bench owns the gate result for the sha it ran; the coordinator owns the merge. The
@@ -80,16 +110,18 @@ For each: how it is detected, and how it is recovered.
    diff at the gated sha. Detected by the merge step's quote check (guarantee 2). Recovered by
    returning the candidate for a fresh cold read of the actual diff; the merge does not proceed
    on the strength of the author's summary.
-3. **Base race.** The `sprint/v1.2.x` base moved and the head is behind, or the catch-up changed
+3. **Base race.** The base the deal names moved and the head is behind, or the catch-up changed
    the card's own files. Detected by the race check at the fence, naming both shas. Recovered by
    the author merging or rebasing the base, then re-gating and re-reading the new head.
-4. **Non-candidate branch.** Work arrives on a branch that is not the card's `sprint/<card>.aurora`
-   branch. Detected at registration: only sprint branches are candidates. Recovered by moving
+4. **Non-candidate branch.** Work arrives on a branch that is not the delivery branch the
+   card's deal names. Detected at registration: only sprint branches are candidates. Recovered by moving
    the work onto the card's sprint branch and gating that head; the other branch merges nothing.
 
 ## Interfaces
 
-- Below: the friend lane (40), comms (20) and server records (10).
+- Below: the friend lane (40), comms and the psychic link (20), and server records on Redis,
+  the one server (10). Every sprint message to or from a friend or the coordinator rides the
+  link (guarantee 8); this layer has no delivery path of its own.
 - Above: the coordinator, the dashboard and the friends' own view of their cards.
 
 ## Open questions
@@ -139,4 +171,4 @@ Design points for the owner to weigh. The decisions are the owner's.
   ownership or assignment to a friend who is not reachable raises a judgment to the coordinator.
 - Fix priority is transient. It means a card was worked and broke in this sprint, and it ends with
   the sprint.
-- Dealt is not taken: a dealt card belongs to the machine until a lane takes it.
+- Dealt is not taken: a dealt card belongs to the machine until a lane takes it. One card holds at most one active or needs-reconciliation claim; the server refuses a second deal of a card under such a claim, and the card returns to the deal only on a finish, a release, or a completed reconciliation, with every release and its reason recorded on the claim and replayed to its holder on attach.

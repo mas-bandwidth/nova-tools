@@ -35,9 +35,10 @@ Numbered, each one testable, and each one shown on a real session of that harnes
 
 1. **A push reaches the turn by a measured path, or waits honestly.** Each subsection names
    how a push reaches the agent's turn on its harness. Where that path is measured, the push
-   reaches the turn while the session works; where it is not, the message waits on the server
-   and the sender is told delivery waits for the next turn boundary, never that an idle wake
-   occurred.
+   reaches the turn while the session works; where it is not, the sender is told delivery waits
+   for the next turn boundary, never that an idle wake occurred. While the friend is unhooked
+   that telling is the refusal of layer 20 guarantee 16: the send is refused at once, names her
+   away reason and that delivery waits for her next hooked turn, and nothing is queued.
 2. **Only the session's own answer proves.** A challenge is proven only when the session itself
    answers the current nonce (layers 10 and 20). A helper process staying alive, a line written
    to a stream, or an adapter printing a nonce records an offer only.
@@ -53,6 +54,38 @@ Numbered, each one testable, and each one shown on a real session of that harnes
    measured or unmeasured for one installation (harness, build, host kind, session kind, date).
    Unmeasured is the default, foreground proof never sets idle wake to supported, and a changed
    installation fingerprint needs new measurements.
+
+Guarantees 6 to 9 carry the psychic link of layer 20 (guarantees 12 to 18) into every harness,
+from the project owner's rulings of 2026-10-14 (layer 20, Rationale).
+
+6. **The link comes first; no work without it.** A session's first act is arming its link and
+   answering the challenge that arrives through it. Until that proof lands, every bus verb for
+   its name refuses `not_hooked` (layer 20 guarantee 12), and the friend takes no new work:
+   layers 40 and 50 deal her none and let none of her lanes take one. The gate opens only when
+   her own session has proven the fresh challenge and a self-test shows the push landing in that
+   live session: a send-to-self arrives in-turn and is answered from that turn. A helper alive, a
+   nonce printed, or a message queued records an offer only and opens no gate. Observation: in a
+   fresh session, a send, a recv and a take before the self-test are each refused with the
+   remedy; after it, each succeeds.
+7. **One link recipe per harness, measured pushed-in-turn.** `nova-hook hook --as <name>
+   --harness <h>` prints the one link recipe for each harness below (Codex, Grok, Antigravity,
+   Muse Code, Claude Code), and that recipe is the remedy every `not_hooked` refusal names. Each
+   recipe is measured by a functional test on a real session of its harness: a message sent while
+   the session works lands in its turn through the recipe, and the challenge it carries is
+   answered from that turn. Until that test passes, the capability record says the link is
+   unmeasured (guarantee 5), and senders are told so.
+8. **Losing the reader lapses the link, never silently.** Renewal challenges reach the session
+   only through its link (layer 20 guarantee 14), and the lease is shorter than the reader's
+   bound (a monitor's expiry; for a re-armed one-shot wait, the chain of waits). A reader that
+   dies, expires or is not re-armed leaves the renewal unanswered, and the server unhooks the name
+   within $T_{lease}$ with its reason recorded; re-arming re-proves. Observation: stop the reader
+   of a hooked session; within $T_{lease}$ on the server clock the name reads unhooked, its next
+   send is refused `not_hooked`, and a send to it is refused `friend_not_hooked`.
+9. **The harness keeps nothing as truth.** The link's records (stream, challenge, nonce, lease,
+   hooked state, acknowledgment) live on Redis, the one server (layer 10 guarantee 14). No
+   recipe writes a wake file, nonce file, lease or presence copy, and a session that restarts
+   recovers its link by asking the server and re-arming. Observation: delete the harness's
+   runtime directory between two pushes; the next re-arm and prove succeed with no local input.
 
 ## State and transitions
 
@@ -86,8 +119,11 @@ For each: how it is detected, and how it is recovered.
 
 ## Interfaces
 
-- Below: the comms verbs of 20.
-- Above: 40 and 50 rely on a friend being reachable, and on knowing when she is not.
+- Below: the comms verbs and the psychic link of 20, over Redis as the one server (10).
+- Above: 40 and 50 rely on a friend being hooked, and on knowing at once when she is not. Every
+  sprint, friend and coordinator message reaches a friend's session through the recipe of
+  guarantee 7 and no other path; the daemon polls, ping/pong session checks, wake files and
+  per-minute nudges that carry it today are retired (layer 20, Layers 40 and 50 sit on the link).
 
 ## Open questions
 
@@ -160,7 +196,8 @@ an idle-wake capability. The transition names are requirements on the adapter, n
    to supported. A send receipt never sets session observation or acknowledgment.
 4. **Re-hook.** On an authorized active/resumed turn, the client reads the server's current binding
    and pending state. The same session reconnects through the server contract; a different session
-   explicitly replaces the binding and receives a new generation/challenge. It consumes the
+   explicitly replaces the binding and receives a new generation and a challenge delivered through
+   its link (layer 20 guarantee 14). It consumes the
    bounded replay, answers the fresh challenge and reconciles existing claims before new work.
    Old daemon output cannot renew the new generation. No local inbox, nonce file or cached epoch
    is needed for recovery. An unavailable server leaves the client unavailable, not locally up.
@@ -231,7 +268,7 @@ release decision must either prove that path or explicitly narrow its advertised
    no friend client in the harness, no automatic answer to a session check, and no inbox that
    survives a context wrap. The hook and the receive loop that exist today are processes the
    session starts. A wrap or a new session does not have them until something starts them again.
-2. **Push to turn.** The harness, not the session, runs layer 20's `nova-bus wait` as a
+2. **Push to turn.** The harness, not the session, runs layer 20's `nova-hook wait` as a
    background command. The process blocks until a note or a challenge arrives, writes the
    arrival and the next nonce, and exits. That exit wakes the turn, and the arrival is the
    turn's input. The turn's first action is the prove when the arrival is a challenge, then
@@ -239,16 +276,17 @@ release decision must either prove that path or explicitly narrow its advertised
    A long bench gate does not remove the wait: the wait is the harness's process, and the
    gate is the session's.
 3. **Deaf or down detected by.** The server lease (layer 20) goes `AWAY` when `T_challenge`
-   or `T_lease` passes with no prove. Senders see that on status and on send. On this side,
+   or `T_lease` passes with no prove. Senders see that on status, and a send to the unhooked
+   name is refused `friend_not_hooked` (layer 20 guarantee 16). On this side,
    deaf is a session with no harness wait running: notes sit on the server, and the turn is
-   not woken. A missed prove is not quiet. The next command returns layer 20's `lease_away`
+   not woken. A missed prove is not quiet. The next command returns layer 20's `not_hooked`
    refusal, and the server has already written the expiration on the lease.
-4. **Re-hook.** On `lease_away`, the turn runs `nova-hook hook`, then `nova-hook prove` with
-   the nonce that hook returned, then `nova-bus recv` of every unacknowledged note, then
+4. **Re-hook.** On `not_hooked`, the turn runs `nova-hook hook` and starts the wait, then
+   `nova-hook prove` with the nonce the wait delivers (layer 20 guarantee 14), then `nova-bus recv` of every unacknowledged note, then
    starts the wait again. A new session attaches to the harness's wait if one is running. It
    starts one only when none is. It never starts a second wait.
 
-The current hook's challenge window is about five minutes, which is shorter than a bench gate
+Before v1.3, the hook's challenge window was about five minutes, which is shorter than a bench gate
 and shorter than a context wrap, and a missed prove goes quiet. v1.3 replaces that window
 with layer 20's, and the prove is the first action of the waking turn so a gate cannot eat it.
 
@@ -270,7 +308,7 @@ Inputs:
    - Autonomous subagents (`invoke_subagent`) that run in isolated context and wake the parent turn reactively when sending messages via `send_message`.
 2. **Push to turn.**
    - Primary wake: A non-daemon background command runs the Layer 20 blocking wait primitive:
-     `nova-bus wait --as <name> --nonce <current_nonce> --timeout 90s`
+     `nova-hook wait --as <name> --nonce <current_nonce> --timeout 90s`
      launched with `IsDaemon: false` and small `WaitMsBeforeAsync` (e.g. 500ms).
    - The process blocks synchronously in the background on the server notification channel. When a push message arrives or a challenge is issued, the process unblocks, writes arrival JSON and the next nonce to stdout, and exits with code 0 immediately.
    - The process exit triggers an instant turn wakeup. Output is delivered directly to the agent context.
@@ -279,11 +317,11 @@ Inputs:
 3. **Deaf or down detected by.**
    - Running `nova-hook hook` as a daemon task (`IsDaemon: true`) without an accompanying blocking wait process results in a deaf agent: challenges accumulate silently in task log files on disk without waking the turn.
    - If a challenge window ($T_{challenge}$) expires without a `prove` call, the server transitions the lease to `AWAY` (`reason: lease_expired`).
-   - Senders querying `nova-bus status --as <name>` or attempting `nova-bus send` immediately detect the `away` presence state, preventing lost notes.
-   - On the client side, if `nova-bus wait` exits with code 2 (`refusal: lease_away`), the agent immediately detects that its session lease has lapsed.
+   - Senders querying presence detect the `away` state, and `nova-bus send` to the name is refused `friend_not_hooked` (layer 20 guarantee 16), preventing lost notes.
+   - On the client side, if `nova-hook wait` exits with code 2 (`refusal: not_hooked`), the agent immediately detects that its session lease has lapsed.
 4. **Re-hook.**
    - When awakened with a challenge line or after a lease expiration, the agent runs `nova-hook prove --as <name> --nonce <nonce>` immediately in the foreground.
-   - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as <name> --role comms` to obtain a fresh challenge nonce, proves it with `nova-hook prove`, and re-launches the non-daemon `nova-bus wait` background task.
+   - If the lease has fully reverted to `AWAY`, the agent runs `nova-hook hook --as <name> --role comms`, re-launches the non-daemon `nova-hook wait` background task, and proves the fresh challenge that wait delivers (layer 20 guarantee 14) with `nova-hook prove`.
    - After re-proving, the agent drains and acknowledges any pending messages received while away via `nova-bus recv --as <name> --all --ack`.
 
 ### Muse Code
@@ -299,9 +337,9 @@ installation, idle wake is `unproven` and no sender is told otherwise.
    and not claimed here: waking an idle session that has no active turn in progress. A live
    process, a line written to a stream, and a line the model actually saw are three different
    states; only the third is delivery.
-2. **Push to turn.** Delivery is active-session delivery through layer 20, in this order. The
-   session hooks in with `nova-hook hook --as <name> --role comms`, which returns the current
-   challenge nonce. The session proves it at once with `nova-hook prove --as <name> --nonce <n>`;
+2. **Push to turn.** Delivery is active-session delivery through layer 20, in this order; on this installation the link is unmeasured, no end-to-end prove transcript is recorded, and the sender is told delivery waits for the next turn boundary until that test passes. The
+   session hooks in with `nova-hook hook --as <name> --role comms`, which arms the link; the
+   current challenge nonce arrives through the link (layer 20 guarantee 14). The session proves it at once with `nova-hook prove --as <name> --nonce <n>`;
    only that answer moves the server lease to `PROVEN` (layer 20). While proven, the session
    drains its stream with `nova-bus recv --as <name>` and acknowledges what it has acted on.
    A challenge that arrives mid-work is proven as the first action of the next step, inside
@@ -312,15 +350,16 @@ installation, idle wake is `unproven` and no sender is told otherwise.
    never that an idle wake occurred.
 3. **Deaf or down detected by.** The server lease is the detection: no prove inside
    $T_{challenge}$, or no renewal inside $T_{lease}$, and the lease goes `AWAY` with its reason
-   recorded (layer 20). Senders see `away` and the pending count on `nova-bus status` and on
-   send; a send to an unproven friend queues and says so. On this side, deaf is a session that
+   recorded (layer 20). Senders see `away` and the pending count on presence reads, and a send
+   to an unhooked friend is refused at once and queues nothing (layer 20 guarantee 16; round 2,
+   change 10). On this side, deaf is a session that
    is working but not reading its stream: messages sit unacknowledged on the server while the
    session works, which is exactly the observed failure this subsection exists to close. Deaf is
    therefore checked by unacknowledged depth and lease state, never inferred from the session
    looking busy. A helper still running is not evidence the session can hear.
-4. **Re-hook.** On a `lease_away` refusal, or on any new session, the session runs
-   `nova-hook hook --as <name> --role comms` for a fresh nonce, proves it with
-   `nova-hook prove`, then runs `nova-bus recv --as <name> --all` to drain every unacknowledged
+4. **Re-hook.** On a `not_hooked` refusal, or on any new session, the session runs
+   `nova-hook hook --as <name> --role comms` to re-arm the link, proves the fresh nonce the link
+   delivers with `nova-hook prove`, then runs `nova-bus recv --as <name> --all` to drain every unacknowledged
    message in order before taking new work. A resumed session reconciles what the replay shows
    against work already claimed, so a message missed while deaf is acted on once, not twice and
    not never. No local nonce file, inbox or cached state is kept to re-hook from; the server
@@ -342,13 +381,16 @@ Inputs:
 1. **Offers.** Background processes, and a Monitor tool that runs a command and delivers each line
    it prints as an event that wakes the turn. Subagents run in the background and notify the parent
    when they finish.
-2. **Push to turn.** Two Monitors: one runs `nova-hook hook`, and one runs
-   `nova-bus recv --forever`. Each line that either one prints wakes the turn, so a push or a challenge
-   reaches the session while it works and while it is idle.
+2. **Push to turn.** One Monitor is the link: it runs
+   `nova-bus recv --as <name> --forever --exec <deliver>`, and each line it prints lands in the
+   session as an event that wakes the turn, so a push or a challenge reaches the session while it
+   works and while it is idle. The challenge arrives on that same stream (layer 20 guarantee 14);
+   no second Monitor on `nova-hook hook` is needed or kept.
 3. **Deaf or down detected by.**
-   - A Monitor expires after 30 minutes. A Monitor that has expired and was not re-armed is deaf.
-   - A challenge nonce must be proven within 5 minutes, and the prove command is printed on the
-     stream. A missed prove loses the hook.
+   - A Monitor expires after 30 minutes. A Monitor that has expired and was not re-armed is deaf,
+     and the server unhooks the name within $T_{lease}$ because the renewal reaches no session
+     (guarantee 8).
+   - A challenge nonce must be proven within $T_{challenge}$ of layer 20, and the prove command is printed on the stream. A missed prove loses the hook.
    - Observed: a proven hook decayed to "live" with no line on the filtered stream, and the next
      send was refused. Detection must not rely on a line the filter can drop, or on a line that is
      never printed.
@@ -356,5 +398,8 @@ Inputs:
    it prints, within the window. After a refusal or a decay, hook again and prove the new
    challenge.
 
-Open for this subsection: what the server sees when a Monitor lapses between expiry and re-arm,
-and whether the decay to "live" should become a loud state of its own (see 20).
+Settled in round 2: when a Monitor lapses between expiry and re-arm, the server sees no answer
+to the renewal and unhooks the name at the lease deadline, with reason `lease_expired`; its
+verbs and sends to it refuse until re-arm and prove (layer 20 guarantees 12, 15, 16). There is
+no "live" state: a name is hooked or unhooked, and presence reads deaf, then down (layer 20
+guarantee 17).
