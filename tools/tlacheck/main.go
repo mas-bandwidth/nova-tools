@@ -8,6 +8,12 @@
 // a working machine. The reading of TLC's results and the suites live in
 // pkg/tlc and internal/tablemodel; this file is the command line.
 //
+// It is the one tlacheck. nova-sprint had its own copy (four verbs over its own
+// pkg/tlc); it runs this command instead (go run on this module's
+// tools/tlacheck, at the version its go.mod names), so the case verbs (run, groups, merge, inputs) take any checkout with a tla/CASES.tsv
+// under --root. The table, member, replay and witnesses verbs check this
+// repository's table model.
+//
 //	example:
 //	  tlacheck groups --root .
 //	  tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact

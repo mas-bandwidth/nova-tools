@@ -44,7 +44,7 @@ func TestFixesRefusesEveryShapeProblem(t *testing.T) {
 	cases := map[string]struct{ from, to, want string }{
 		"unknown key":     {`:origin "PR #1"`, `:origin "PR #1" :colour "red"`, "unknown key :colour"},
 		"missing key":     {`:origin "PR #1" `, ``, "missing key :origin"},
-		"bad status":      {`:status "in-progress"`, `:status "done"`, `:status "done" wants shipped, in-progress or planned`},
+		"bad status":      {`:status "in-progress"`, `:status "landed"`, `:status "landed" wants planned, in-progress, done or shipped`},
 		"unknown release": {`(fix "f2" :release "v1.2.5"`, `(fix "f2" :release "v9"`, `:release "v9" names no (release ...) record`},
 		"empty release":   {`(fix "f2" :release "v1.2.5"`, `(fix "f2" :release "v1.2.3"`, `release "v1.2.5" holds no fix`},
 		"duplicate id":    {`(fix "f2"`, `(fix "f1"`, `id "f1" is used twice`},

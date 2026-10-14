@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,7 +45,7 @@ func checkRunner(e env, verb, root string) (int, bool) {
 func loadCases(e env, verb, root string) ([]tlc.Case, int, bool) {
 	cases, err := tlc.LoadCases(root)
 	if err != nil {
-		return nil, refuse(e, verb, "the case plan is refused: "+err.Error(), tool+" "+verb+" --root <a nova-tools checkout> ..."), true
+		return nil, refuse(e, verb, "the case plan is refused: "+err.Error(), tool+" "+verb+" --root <a checkout with tla/CASES.tsv> ..."), true
 	}
 	return cases, 0, false
 }
@@ -69,7 +70,7 @@ func cmdGroups(e env, args []string) int {
 		if err != nil {
 			return refuse(e, "groups", err.Error(), tool+" groups -h")
 		}
-		records, err := tlc.ReadRecordsFile(filepath.Join(*root, "tla", tlc.RunsFile))
+		records, err := readRuns(*root)
 		if err != nil {
 			return refuse(e, "groups", "cannot read the records: "+err.Error()+layoutHint(err), tool+" groups -h")
 		}
@@ -226,7 +227,7 @@ func cmdMerge(e env, args []string) int {
 	}
 	src, err := tlc.SourceAt(*root)
 	if err != nil {
-		return refuse(e, "merge", err.Error(), tool+" merge --root <a nova-tools checkout> ...")
+		return refuse(e, "merge", err.Error(), tool+" merge --root <a checkout with tla/CASES.tsv> ...")
 	}
 	var runs [][]tlc.Record
 	for _, p := range fs.Args() {
@@ -277,6 +278,18 @@ func cmdMerge(e env, args []string) int {
 	}
 	event(e.stdout, "MERGE", "OK", "runs", fmt.Sprint(measured), "records", fmt.Sprint(len(merged)), "out", abs)
 	return 0
+}
+
+// readRuns reads root/tla/RUNS.tsv. A tree with no records file has measured
+// nothing yet, so it reads as no records and every required group is stale (a
+// repository that has just adopted tlacheck, nova-sprint's form of it); a file
+// that cannot be read is an error.
+func readRuns(root string) ([]tlc.Record, error) {
+	path := filepath.Join(root, "tla", tlc.RunsFile)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return tlc.ReadRecordsFile(path)
 }
 
 // layoutHint is what to do about records in another layout than this tool's.
@@ -333,11 +346,15 @@ func cmdInputs(e env, args []string) int {
 	if done, code := parse(e, "inputs", fs, args, helpInputs); done {
 		return code
 	}
+	// The case is --case or one positional name (nova-sprint's form of the verb,
+	// tlacheck inputs <config>), never both.
+	if *name == "" && fs.NArg() == 1 {
+		*name = fs.Arg(0)
+	} else if fs.NArg() != 0 {
+		return refuse(e, "inputs", "unexpected argument "+oneline.Quote(fs.Arg(0)), tool+" inputs -h")
+	}
 	if code, stop := missing(e, "inputs", "case", *name); stop {
 		return code
-	}
-	if fs.NArg() != 0 {
-		return refuse(e, "inputs", "unexpected argument "+oneline.Quote(fs.Arg(0)), tool+" inputs -h")
 	}
 	cases, code, stop := loadCases(e, "inputs", *root)
 	if stop {
