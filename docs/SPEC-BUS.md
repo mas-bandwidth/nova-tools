@@ -256,21 +256,26 @@ that's totally a bug"): v1.1.0 refused `send` and `recv` for every name
 without a proof, a claude friend's daemon then wrote none (no session to
 push into), and a new machine with no daemon could neither read the keeper's
 notes nor answer them. So the proof advises and never refuses: a message to
-an unheard name lands and waits on its stream, a recv by an unheard name
+an unheard name lands and waits on their stream, a recv by an unheard name
 reads, and the state is one line each, after the result:
 
 ```
 SEND NOTE push=<none|down|stale> for <x>: no proven push since <age|never>: <why>; a message to <x> waits on
-its stream until something reads it (nova-bus recv --as <x>); the proof: <x> runs its friend daemon
-(nova-friend install --as <x> --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK;
+their stream until something reads it (nova-bus recv --as <x>); the proof: <x> runs their friend daemon
+(nova-friend install --as <x> --harness <h> --dir <d>) and their session answers the daemon's SESSION CHECK;
 nova-bus names shows every name's push
 ```
 
 (`RECV NOTE` the same, once per recv run, on its first result; `--dry-run`
 prints the same lines.) `Bus.Unheard` is the lines for a list of names,
-deduplicated, in order, at the store's now (a roster trip and one `HGETALL`);
-`Bus.UnheardAt` is the same judged at a given instant with no roster trip,
-send's, judged at the `at` its message was stamped with. Nothing in the bus
+deduplicated, in order, at the store's now (a roster trip, then one
+`HGETALL` of `bus2:push`, then a `GET` of `hook:live:<name>:bus` and
+`hook:proof:<name>:bus` per name). A live proven lease, both keys standing
+where nova-hook records them (docs/SPEC-HOOK.md, the key layout and the
+states), is push proven even when `bus2:push` holds none or says down, and
+then there is no NOTE. `Bus.UnheardAt` is the same judged at a given instant
+with no roster trip, send's, judged at the `at` its message was stamped with
+(the same hash, then each name's hook keys, after the write). Nothing in the bus
 refuses on a proof: `peek`, `ack`, `log`, `wait` and the rest never read it.
 
 The one exception is asked for by flag (the owner, 2026-10-07: adopt wide ASAP;
@@ -297,11 +302,12 @@ presence it saves (`friend.PushProver`, set as the SessionCheck's `Save`):
 
 Its `at` is the store's time (`TIME`), and freshness is read against the
 store's time too. `names` reads each name's state: `proven` (up, under ten
-minutes, `bus.PushFresh`), `stale` (its daemon stopped renewing: a dead
-daemon reads stale within ten minutes), `down`, `none` (no daemon ever wrote
-one). The friend daemon's own sends (its SESSION CHECK on a passive stream,
-its `daemon-pong`, its pong verb) go through the same store as everyone's:
-nothing gates them either.
+minutes, `bus.PushFresh`, or a live proven hook lease of the name's bus
+push, both `hook:live:<name>:bus` and `hook:proof:<name>:bus`), `stale`
+(their daemon stopped renewing: a dead daemon reads stale within ten
+minutes), `down`, `none` (no daemon ever wrote one). The friend daemon's own
+sends (its SESSION CHECK on a passive stream, its `daemon-pong`, its pong
+verb) go through the same store as everyone's: nothing gates them either.
 
 What the proof does not say, plainly: between two checks (ten minutes quiet,
 then the five-minute bound) a session that stopped hearing still reads up, so
@@ -430,7 +436,7 @@ is `FAILED reason=unhooked` at exit 1, nothing read or written, the command
 that hooks it in the remedy and the rest of the breadcrumb (who holds each
 push, how to see and end the hook) its `NOTE` lines; a hook record that cannot
 be read is a refusal at exit 2. The gate is the actor's: a message to a
-recipient that is not hooked in lands and waits on its stream, the push proof
+recipient that is not hooked in lands and waits on their stream, the push proof
 below saying so as advice.
 
 ## The ACL per friend
@@ -442,13 +448,13 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` (the NOTE); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
-| recv | `SMEMBERS`, `TIME`, `HGETALL` (the NOTE, once per run), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
+| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` and `GET` of each name's `hook:live:<name>:bus` and `hook:proof:<name>:bus` (the NOTE); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `hook:live:<name>:bus`, `hook:proof:<name>:bus` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
+| recv | `SMEMBERS`, `TIME`, `HGETALL` and `GET` of `hook:live:<f>:bus` and `hook:proof:<f>:bus` (the NOTE, once per run), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `hook:live:<f>:bus`, `hook:proof:<f>:bus` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
-| names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
+| names | `SMEMBERS`, `TIME`, `HGETALL`, `GET` of each name's `hook:live:<name>:bus` and `hook:proof:<name>:bus` | `friends`, `machines`, `bus2:push`, `hook:live:<name>:bus`, `hook:proof:<name>:bus` |
 | the friend daemon's push proof | `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` | `friends`, `machines`; `bus2:push` |
 
 The wrinkle, said plainly: a sender writes other friends' streams. `send` fans

@@ -30,7 +30,7 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	first := id(t, cli.Do(t, send...).Exit(0).Out("SEND OK id=",
 		"SEND NOTE push=none for ada: no proven push since never: no daemon has recorded one",
 		"SEND NOTE push=none for bob: no proven push since never",
-		"waits on its stream until something reads it (nova-bus recv --as bob)",
+		"waits on their stream until something reads it (nova-bus recv --as bob)",
 		"nova-friend install --as bob --harness <h> --dir <d>").Stdout)
 	assert.Equal(t, 1, r.store.Len(bus.LogKey), "a send to an unheard name lands")
 	cli.Do(t, append(send, "--dry-run")...).Exit(0).Out("SEND OK ", "SEND NOTE push=none for ada").NotOut("id=0")

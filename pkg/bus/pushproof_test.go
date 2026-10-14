@@ -11,7 +11,7 @@ import (
 )
 
 // A proof's state at the store's now: none with no proof, down whatever its
-// age when its daemon says the session did not answer, stale at PushFresh,
+// age when their daemon says the session did not answer, stale at PushFresh,
 // proven below; the unheard line names the state, the name, its age and what
 // would prove one, and is empty for a proven one (SPEC-BUS.md,
 // bus-requires-inbox-push-proof).
@@ -42,11 +42,11 @@ func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 			continue
 		}
 		assert.Contains(t, c.p.Unheard(now), "push="+c.state+" for bob: no proven push since "+c.age+": ")
-		assert.Contains(t, c.p.Unheard(now), "waits on its stream until something reads it (nova-bus recv --as bob)")
+		assert.Contains(t, c.p.Unheard(now), "waits on their stream until something reads it (nova-bus recv --as bob)")
 		assert.Contains(t, c.p.Unheard(now), "nova-friend install --as bob --harness <h> --dir <d>")
 	}
 	assert.Contains(t, down.Unheard(at), "(no session answer)")
-	assert.Contains(t, up.Unheard(at.Add(time.Hour)), "its daemon (claude) last renewed it 1h0m0s ago")
+	assert.Contains(t, up.Unheard(at.Add(time.Hour)), "their daemon (claude) last renewed it 1h0m0s ago")
 	assert.Contains(t, none.Unheard(at), "no daemon has recorded one")
 }
 
