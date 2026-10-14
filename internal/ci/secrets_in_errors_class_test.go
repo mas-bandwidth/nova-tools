@@ -102,6 +102,7 @@ var secretOpeners = map[string]any{
 	"internal/ci/allowlist.Parse":                 ciallowlist.Parse,
 	"pkg/config.OpenFile":                         config.OpenFile,
 	"pkg/config.OpenPG":                           config.OpenPG,
+	"pkg/config.ParseGitIdentity":                 config.ParseGitIdentity,
 	"internal/converge.ParseCerts":                converge.ParseCerts,
 	"internal/converge.ParseRetired":              converge.ParseRetired,
 	"internal/converge.ParseSince":                converge.ParseSince,
