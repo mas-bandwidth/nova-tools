@@ -2325,3 +2325,4 @@ pkg/testkit/waits_test.go testkit.Waits had no caller outside its own test (go t
 pkg/testkit/script_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/script_failure_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/contract_test.go testkit.Contract had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with contract.go
+cmd/nova-bus/pushproof_test.go nova-bus send, recv and names read the hook record and no longer emit bus2:push notes or take --require-push; TestNamesReadsTheHookRecord in cmd/nova-bus/hook_test.go covers names

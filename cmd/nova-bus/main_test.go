@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/netip"
 	"strings"
@@ -33,53 +32,23 @@ type rig struct {
 	login   string // the user the store logs in as; "" is a store with no users
 	fleet   string // the applied fleet row's bus, read when nothing names the store
 	fleetAt []string
-	names   []string  // the names newRig keeps heard
 	clock   time.Time // the store's clock as advance moved it (each trip adds a second more)
 	now     time.Time // the wait verbs' clock; the fake store's block moves it, never real time
 	wake    []string  // the wake-file reader's answers, one per look: "" is nothing new
 	// gate is the hook gate the verbs meet; nil lets every name act, as a name
 	// hooked in with its pushes proven (hook_test.go runs the real one).
-	gate func(ctx context.Context, st bus.Store, want hook.Want) error
+	gate  func(ctx context.Context, st bus.Store, want hook.Want) error
+	hooks func(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error)
 }
 
-// newRig is the rig with every name heard: each has a proven inbox push,
-// as its friend daemon writes it (bus.PushKey). deafRig is the rig before
-// any daemon has proven one.
 func newRig(names ...string) *rig {
-	r := deafRig(names...)
-	r.names = names
-	r.prove(start, true, names...)
-	return r
-}
-
-func deafRig(names ...string) *rig {
 	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start}
 }
 
-// prove writes each name's push proof at the instant at, up or down, as the
-// friend daemon does, without a trip that moves the fake's clock.
-func (r *rig) prove(at time.Time, up bool, names ...string) {
-	for _, n := range names {
-		p := bus.PushProof{Name: n, Harness: "claude", Nonce: "n-" + n, Proven: at, Up: up, At: at}
-		if !up {
-			p.Reason = "no session answer"
-		}
-		raw, err := json.Marshal(p)
-		if err != nil {
-			panic(err)
-		}
-		if err := r.store.AddAll(context.Background(), nil, nil, bus.Mark{Key: bus.PushKey, Field: n, Value: string(raw)}); err != nil {
-			panic(err)
-		}
-	}
-}
-
-// advance moves the store's clock by d while every daemon of newRig keeps
-// renewing its proof, so only the idle time of the messages grows.
+// advance moves the store's clock by d so the idle time of the messages grows.
 func (r *rig) advance(d time.Duration) {
 	r.store.Advance(d)
 	r.clock = r.clock.Add(d)
-	r.prove(r.clock, true, r.names...)
 }
 
 // wireClock wires the fake store's block to the rig's wait clock: a block
@@ -131,6 +100,16 @@ func (r *rig) world() world {
 				return nil
 			}
 			return r.gate(ctx, st, want)
+		},
+		hooks: func(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error) {
+			if r.hooks != nil {
+				return r.hooks(ctx, st, names...)
+			}
+			out := make([]hook.Status, len(names))
+			for i, n := range names {
+				out[i] = hook.Status{Name: n, Role: hook.Friend, State: hook.StateProven}
+			}
+			return out, r.clock, nil
 		},
 		wakeArm: func(_ string, token string) (wakeCursor, error) {
 			if token != "" {

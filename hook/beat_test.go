@@ -260,24 +260,25 @@ func TestEachChangeIsToldOncePerTransition(t *testing.T) {
 	}, got)
 }
 
-// TestAFriendsAnswerProvesItsWorkPush pins Challenged: a friend's challenge
-// names its work push as well as its bus push, so the session's answer
-// proves both, with no daemon's proof.
+// TestAFriendsAnswerProvesItsWorkPush pins that a friend-role name needs only
+// its bus push and an answered challenge to read proven (up), with no daemon
+// work push required.
 func TestAFriendsAnswerProvesItsWorkPush(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newRig(t)
-	r.Hook(t, "ada", hook.Friend)
-	st := r.state(t, "ada")
-	for _, p := range []hook.Push{hook.Bus, hook.Work} {
-		require.NoError(t, r.s.Unprove(ctx, "ada", hook.Friend, p, st.Epoch))
-	}
+	e, _, err := r.s.HookAs(ctx, "ada", hook.Friend, "session")
+	require.NoError(t, err)
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Friend, hook.Bus, e, "session"))
 	require.Equal(t, hook.StateLive, r.state(t, "ada").State)
 	b := r.beat(t, "srv", nonces())["ada"]
 	n, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
 	require.NoError(t, err)
-	assert.Equal(t, 2, n)
-	assert.Equal(t, hook.StateProven, r.state(t, "ada").State)
+	assert.Equal(t, 1, n)
+	st := r.state(t, "ada")
+	assert.Equal(t, hook.StateProven, st.State)
+	assert.Empty(t, st.Down)
+	assert.NoError(t, r.s.Gate(ctx, hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}))
 }
 
 // TestTheGateRefusesEveryoneWhileTheServerIsStale pins the one staleness
