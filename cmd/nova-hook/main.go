@@ -48,9 +48,9 @@ type world struct {
 	codexValidate func(string, string, string) error
 	codexSave     func(string, string, []byte) error
 	codexDeliver  func(context.Context, string, string, string, string) (string, error)
-	dshValidate   func(dshdesktop.Route, string) error
+	dshValidate   func(dshdesktop.Route) error
 	dshSave       func(string, string, []byte) error
-	dshDeliver    func(context.Context, dshdesktop.Route, string, string) (string, error)
+	dshDeliver    func(dshdesktop.Route, string, string) (string, error)
 	getenv        func(string) string
 	open          func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
 	fleetBus      func(ctx context.Context, addr string) (string, error)
@@ -62,6 +62,12 @@ type world struct {
 	deliver       func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
 	holder        string                                           // who holds the pushes this process holds, as the lease shows it
 	tick          time.Duration                                    // one blocking read of the loop
+}
+
+// nativeRoute is one harness delivery route the hook loop pushes bus events
+// through: the Codex desktop socket or the DeepSeek Harness hook bridge.
+type nativeRoute interface {
+	push(w world, c *tool.Call, s *session, role hook.Role, epoch int64, id string, m *bus.Message) *tool.Out
 }
 
 func realWorld() world {
@@ -205,10 +211,9 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
 					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
 					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
-					f.String("dsh-gateway", w.getenv("NOVA_HOOK_DSH_GATEWAY"), "DeepSeek Harness loopback gateway URL; requires session, cookie and private event directory")
-					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "DeepSeek Harness desktop session ID")
-					f.String("dsh-cookie", w.getenv("NOVA_HOOK_DSH_COOKIE"), "the browser-session cookie for /api requests")
-					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "existing private directory for bounded external event JSON")
+					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "the harness the hook delivers into, deepseek (alias dsh)")
+					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "existing private directory for bounded external event JSON and the pending notice")
+					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "path the harness-side hook config is written to (a hooks.json)")
 					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
@@ -423,6 +428,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if dsh != nil && !slices.Contains(held, hook.Bus) {
 		return tool.Refuse("dsh delivery wants a role with the bus push")
 	}
+	if dsh != nil {
+		if err := dshdesktop.Install(dsh.route); err != nil {
+			return tool.Refuse("dsh harness-side setup failed: " + err.Error())
+		}
+	}
 	var recovery codexRecovery
 	if native != nil {
 		release, err := w.codexLock(native.directory)
@@ -541,7 +551,14 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if ch != nil {
 		line(c, ch)
 	}
-	return w.loop(c, s, role, held, epoch, cursor, challenge, native, dsh)
+	var nr nativeRoute
+	if native != nil {
+		nr = native
+	}
+	if dsh != nil {
+		nr = dsh
+	}
+	return w.loop(c, s, role, held, epoch, cursor, challenge, nr)
 }
 
 // cursor is the bus stream's last entry id when this process holds the bus
@@ -612,7 +629,7 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 // floods the Monitor. A record lost under the loop (none: deleted, or the
 // store flushed) is armed again, the session's hook being the identity's word;
 // an unhook ends the loop.
-func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, native *codexRoute, dsh *dshRoute) *tool.Out {
+func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, native nativeRoute) *tool.Out {
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stream := bus.StreamOf(s.as)
@@ -649,12 +666,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
 					line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))
 					if native != nil {
-						if out := w.codexPush(c, s, native, role, epoch, m.ID, "", &m); out != nil {
-							return out
-						}
-					}
-					if dsh != nil {
-						if out := w.dshPush(c, s, dsh, role, epoch, m.ID, &m); out != nil {
+						if out := native.push(w, c, s, role, epoch, m.ID, &m); out != nil {
 							return out
 						}
 					}
@@ -676,7 +688,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 					epoch, err = e, nil
 					line(c, tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", false).Fact("hold", pushList(held)).Note("the hook record was lost under this hook (no record: deleted, or the store flushed); armed again"))
 					nextChallenge = w.now()
-					if native != nil || dsh != nil {
+					if native != nil {
 						if ch := challenge(epoch); ch != nil {
 							if ch.Status != tool.OK {
 								return ch
@@ -695,7 +707,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				line(c, tool.Done().As("STATE").Fact("state", "unrenewed").Note("the lease could not be renewed: "+err.Error()+"; it is tried again at the next renewal, inside the lease"))
 			}
 		}
-		if native == nil && dsh == nil && !w.now().Before(nextChallenge) {
+		if native == nil && !w.now().Before(nextChallenge) {
 			nextChallenge = w.now().Add(hook.ChallengeEvery)
 			if ch := challenge(epoch); ch != nil {
 				line(c, ch)

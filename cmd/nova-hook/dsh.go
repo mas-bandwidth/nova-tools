@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,20 +20,22 @@ import (
 const maxDshEvent = 64 << 10
 
 type dshRoute struct {
-	route     dshdesktop.Route
-	directory string
-	since     time.Time
+	route dshdesktop.Route
+	since time.Time
 }
 
 // dshConfig refuses partial routes before any hook record or lease is written.
+// --harness deepseek (or its alias dsh) selects the route; the --dsh-* flags
+// carry the harness-side setup (the private event directory and the hook
+// config path). No gateway and no cookie: delivery rides the harness's own
+// hook bridge.
 func (w world) dshConfig(c *tool.Call) (*dshRoute, error) {
+	harness := c.Str("harness")
 	r := &dshRoute{
 		route: dshdesktop.Route{
-			Gateway:   c.Str("dsh-gateway"),
-			SessionID: c.Str("dsh-session"),
-			Cookie:    c.Str("dsh-cookie"),
+			EventsDir: c.Str("dsh-events-dir"),
+			HooksFile: c.Str("dsh-hooks-file"),
 		},
-		directory: c.Str("dsh-events-dir"),
 	}
 	rawSince := c.Str("dsh-since")
 	if rawSince != "" {
@@ -44,11 +45,14 @@ func (w world) dshConfig(c *tool.Call) (*dshRoute, error) {
 			return nil, errors.New("dsh cutover wants --dsh-since as a fixed UTC timestamp, for example 2026-10-14T20:00:00Z; retain it in launch configuration across restarts")
 		}
 	}
-	if r.route.Gateway == "" && r.route.SessionID == "" && r.route.Cookie == "" && r.directory == "" && rawSince == "" {
+	if harness == "" && r.route.EventsDir == "" && r.route.HooksFile == "" && rawSince == "" {
 		return nil, nil
 	}
-	if r.route.Gateway == "" || r.route.SessionID == "" || r.route.Cookie == "" || r.directory == "" {
-		return nil, errors.New("dsh delivery wants --dsh-gateway, --dsh-session, --dsh-cookie and --dsh-events-dir together")
+	if harness != "" && harness != "deepseek" && harness != "dsh" {
+		return nil, errors.New("--harness wants deepseek (or dsh); other harnesses keep their own route")
+	}
+	if r.route.EventsDir == "" || r.route.HooksFile == "" {
+		return nil, errors.New("dsh delivery wants --dsh-events-dir and --dsh-hooks-file together")
 	}
 	if c.Bool("once") {
 		return nil, errors.New("dsh delivery wants a running hook client; omit --once")
@@ -57,15 +61,20 @@ func (w world) dshConfig(c *tool.Call) (*dshRoute, error) {
 		return nil, errors.New("dsh delivery wants a configured local native receiver")
 	}
 	if c.DryRun() {
-		if _, err := dshdesktop.SavedPath(r.directory, "route"); err != nil {
+		if _, err := dshdesktop.PendingPath(r.route.EventsDir); err != nil {
 			return nil, err
 		}
 		return r, nil
 	}
-	if err := w.dshValidate(r.route, r.directory); err != nil {
+	if err := w.dshValidate(r.route); err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// push delivers one bus event through the route; it satisfies nativeRoute.
+func (r *dshRoute) push(w world, c *tool.Call, s *session, role hook.Role, epoch int64, id string, m *bus.Message) *tool.Out {
+	return w.dshPush(c, s, r, role, epoch, id, m)
 }
 
 // savedDshEvent is a bounded external-data envelope, not liveness state. The
@@ -82,11 +91,11 @@ type savedDshEvent struct {
 	HookRole  hook.Role    `json:"hook_role"`
 	EventID   string       `json:"event_id"`
 	Message   *bus.Message `json:"external_message,omitempty"`
-	Steer     bool         `json:"steer,omitempty"`
 }
 
-// dshPush delivers one bus event into the desktop session: a challenge is
-// steered into the running turn, an ordinary message is queued as a followup.
+// dshPush records one bus event and surfaces its notice through the harness's
+// hook bridge: a challenge uses the ChallengeNotice, an ordinary message the
+// BusNotice. The hook delivers it; the model reads the saved event and answers.
 func (w world) dshPush(c *tool.Call, s *session, r *dshRoute, role hook.Role, epoch int64, id string, m *bus.Message) *tool.Out {
 	if m != nil {
 		answered, err := dshAnswered(s, id)
@@ -98,15 +107,19 @@ func (w world) dshPush(c *tool.Call, s *session, r *dshRoute, role hook.Role, ep
 			return nil
 		}
 	}
-	e := savedDshEvent{EventID: id, Message: m, HookEpoch: epoch, HookRole: role, Steer: isChallenge(m)}
-	return w.dshSend(c, s, r, role, epoch, e)
+	notice := dshdesktop.BusNotice
+	if isChallenge(m) {
+		notice = dshdesktop.ChallengeNotice
+	}
+	e := savedDshEvent{EventID: id, Message: m, HookEpoch: epoch, HookRole: role}
+	return w.dshSend(c, s, r, role, epoch, e, notice)
 }
 
 func isChallenge(m *bus.Message) bool {
 	return m != nil && strings.HasPrefix(m.Subject, "HOOK CHALLENGE ")
 }
 
-func (w world) dshSend(c *tool.Call, s *session, r *dshRoute, role hook.Role, epoch int64, e savedDshEvent) *tool.Out {
+func (w world) dshSend(c *tool.Call, s *session, r *dshRoute, role hook.Role, epoch int64, e savedDshEvent, notice string) *tool.Out {
 	id := e.EventID
 	ctx, clockCancel := call()
 	savedAt, clockErr := s.hooks.C.Time(ctx).Result()
@@ -118,27 +131,21 @@ func (w world) dshSend(c *tool.Call, s *session, r *dshRoute, role hook.Role, ep
 	e.LocalReceiver.Identity = s.as
 	e.LocalReceiver.Redis = s.addr
 	e.LocalReceiver.Proof = "For a current hook challenge only, run nova-hook prove --as <identity> --redis <redis> --nonce <nonce>. Only the model may prove."
-	e.LocalReceiver.Acknowledge = "For an ordinary bus message, send a model answer with nova-bus send --as <identity> --redis <redis> --to <sender> --re <message ID> --subject ACK --body <answer>. A native accepted turn is not this answer."
+	e.LocalReceiver.Acknowledge = "For an ordinary bus message, send a model answer with nova-bus send --as <identity> --redis <redis> --to <sender> --re <message ID> --subject ACK --body <answer>."
 
 	data, err := json.Marshal(e)
 	if err == nil && len(data) > maxDshEvent {
 		err = fmt.Errorf("external event wants at most %d bytes", maxDshEvent)
 	}
 	if err == nil {
-		err = w.dshSave(r.directory, id, data)
+		err = w.dshSave(r.route.EventsDir, id, data)
 	}
-	notice := dshdesktop.BusNotice
-	if e.Steer {
-		notice = dshdesktop.ChallengeNotice
-	}
-	var turn string
+	text := ""
 	if err == nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		turn, err = w.dshDeliver(ctx, r.route, id, notice)
-		cancel()
+		text, err = w.dshDeliver(r.route, id, notice)
 	}
 	if err == nil {
-		line(c, tool.Done().As("PUSH").Fact("push", "dsh").Fact("id", id).Fact("native", "accepted").Fact("turn", turn).Note("native acceptance only; awaiting model proof or bus answer"))
+		line(c, tool.Done().As("PUSH").Fact("push", "dsh").Fact("id", id).Fact("native", "pending").Fact("notice", tool.Text(text)).Note("the harness hook surfaces this notice; awaiting model proof or bus answer"))
 		return nil
 	}
 	return dshDeliveryFailure(s, role, epoch, id, err)
@@ -149,18 +156,18 @@ func dshDeliveryFailure(s *session, role hook.Role, epoch int64, id string, err 
 	dropErr := s.hooks.Unprove(ctx, s.as, role, hook.Bus, epoch)
 	cancel()
 	o := tool.Fail("dsh local delivery failed: "+err.Error()).Fact("id", id)
-	o.Remedy = "inspect the saved event and model bus answer before restarting the native route; never blindly retry an accepted or unknown delivery"
+	o.Remedy = "inspect the saved event and model bus answer before restarting the native route; never blindly retry"
 	if dropErr != nil {
 		o.Note("the route proof could not be revoked: " + dropErr.Error() + "; this client stops renewing its lease")
 	}
 	return o
 }
 
-func validateDshRoute(r dshdesktop.Route, directory string) error {
-	if err := dshdesktop.ValidateRoute(r, directory); err != nil {
+func validateDshRoute(r dshdesktop.Route) error {
+	if err := dshdesktop.ValidateRoute(r); err != nil {
 		return err
 	}
-	return privateDshDirectory(directory)
+	return privateDshDirectory(r.EventsDir)
 }
 
 func privateDshDirectory(directory string) error {

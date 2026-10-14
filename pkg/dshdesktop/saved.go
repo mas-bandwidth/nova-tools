@@ -1,9 +1,10 @@
 package dshdesktop
 
 import (
-	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -35,25 +36,81 @@ func SavedPath(directory, eventID string) (string, error) {
 	return filepath.Join(directory, eventID+".json"), nil
 }
 
-// DeliverSaved attempts a single native delivery of a closed local notice. The
-// saved JSON is external data; it is never copied into the native turn prompt.
-func DeliverSaved(ctx context.Context, r Route, eventID, directory string) (string, error) {
-	if _, err := SavedPath(directory, eventID); err != nil {
-		return "", fmt.Errorf("%w: validate route: %v", ErrPreSend, err)
-	}
-	return Deliver(ctx, r, eventID, BusNotice)
+// hookConfig is the Claude Code hook shape the harness's bridge reads. The
+// PostToolUse hook surfaces the pending notice after every tool call; the Stop
+// hook forces another step when a notice is still pending at the turn boundary.
+type hookConfig struct {
+	Hooks struct {
+		PostToolUse []struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"PostToolUse"`
+		Stop []struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"Stop"`
+	} `json:"hooks"`
 }
 
-// ValidateRoute checks configuration before a hook advertises its lease.
-func ValidateRoute(r Route, directory string) error {
-	if err := validateInputs(r, "route"); err != nil {
+// Install writes the harness-side hook config that points the PostToolUse and
+// Stop command hooks at the pending notice. It writes nothing else.
+func Install(r Route) error {
+	if err := ValidateRoute(r); err != nil {
 		return err
 	}
-	if err := ValidateDirectory(directory); err != nil {
+	pendingPath, err := PendingPath(r.EventsDir)
+	if err != nil {
 		return err
 	}
-	if r.Cookie == "" {
-		return errors.New("cookie is empty")
+	cfg := hookConfig{}
+	cfg.Hooks.PostToolUse = []struct {
+		Matcher string `json:"matcher"`
+		Hooks   []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}{
+		{Matcher: "*", Hooks: []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		}{{Type: "command", Command: "cat " + pendingPath}}},
+	}
+	stopCmd := "test -s " + pendingPath + " && printf '{\"continue\":false,\"stopReason\":\"pending bus messages\"}'"
+	cfg.Hooks.Stop = []struct {
+		Matcher string `json:"matcher"`
+		Hooks   []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}{
+		{Matcher: "", Hooks: []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		}{{Type: "command", Command: stopCmd}}},
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(r.HooksFile, data, 0600); err != nil {
+		return fmt.Errorf("write hook config: %w", err)
 	}
 	return nil
 }
+
+// ErrPreSend means no pending notice was written.
+var ErrPreSend = errors.New("dsh desktop delivery failed before notice write")
+
+// ErrRejected is kept so the hook route and the Codex route share the one
+// delivery error taxonomy; a file write has no matched rejection.
+var ErrRejected = errors.New("dsh desktop delivery rejected")
+
+// ErrOutcomeUnknown is kept so the hook route and the Codex route share the one
+// delivery error taxonomy; a file write has no ambiguous outcome.
+var ErrOutcomeUnknown = errors.New("dsh desktop delivery outcome unknown")

@@ -1,62 +1,55 @@
 # DeepSeek Harness desktop wake adapter
 
-`pkg/dshdesktop` makes one bounded HTTP attempt to deliver a notice into a
-running DeepSeek Harness desktop session, or to start a turn in one when idle.
-It does not resume a CLI process, start another app server, retry an ambiguous
-write, keep a delivery ledger, or claim that the model answered.
+`pkg/dshdesktop` delivers a closed notice into a DeepSeek Harness desktop
+session through the harness's own hook bridge, not through the gateway. It does
+not call the HTTP gateway, hold a cookie, resume a CLI process, retry an
+ambiguous write, keep a delivery ledger, or claim that the model answered.
 
-The caller supplies the loopback gateway URL, a session ID, the browser-session
-cookie, an event ID, and one of the package's two closed local notifications:
+The caller supplies a private event directory, the path of the harness-side hook
+config, an event ID, and one of the package's two closed local notifications:
 `BusNotice` or `ChallengeNotice`. Arbitrary notification text is refused before
-the request is built, so the external event body cannot become native turn text
-through this API. `ChallengeNotice` is delivered with `mode: "steer"`, which
-interrupts the running turn; `BusNotice` is delivered as a followup, which
-queues and starts a turn when the session is idle. The adapter appends only the
-separately validated event ID to the notice.
+any write, so the external event body cannot become native turn text through
+this API. The adapter appends only the separately validated event ID to the
+notice, and the notice is coalesced: at most one pending notice exists, and
+messages arriving while one is pending fold into "N messages available; read the
+bus".
 
-The delivery is one `session.prompt` Typert Remote call on the desktop's loopback
-gateway: an HTTP POST to `/api/session/prompt` with a client-request envelope.
-A successful result is accepted only when the response is a `server-response`
-whose `result.ok` is true and `result.value.accepted` is true. A non-200 status
-is a certain rejection; a response that is not the exact shape is malformed and
-therefore uncertain after the request was sent.
+## The route
 
-The concrete exchange is capped at 15 seconds. The gateway must be an HTTP
-loopback URL, the session ID and event ID are bounded and restricted to letters,
-digits, hyphen and underscore, and the cookie must carry no control characters.
-The event body itself is never placed in the prompt: the saving client writes it
-as JSON to a private event directory, and the notice names only the event ID.
-
-`ErrPreSend` means the request was definitely not sent. `ErrOutcomeUnknown` means
-a send began but a matched response was not obtained; the caller must not
-blindly retry. A matched rejection is certain and is returned separately from
-both classes. Durable delivery and model-level acknowledgment remain the
-caller's responsibility. The bus is event truth; the desktop's acceptance of the
-prompt is native turn truth.
+Install writes a hook config in the Claude Code hook shape. Its `PostToolUse`
+command hook surfaces the pending notice after every tool call, so a notice
+reaches a running turn; its `Stop` command hook forces another step when a
+notice is still pending at the turn boundary, so an idle session keeps working
+until the queue drains. The pending notice is one JSON file in the event
+directory; the hook reads it and the harness attaches its text as context. The
+external event body is never in that file: it is saved as separate event JSON,
+named only by its validated event ID.
 
 ## Recipient-owned nova-hook client
 
-Run the recipient client with `--dsh-gateway`, `--dsh-session`, `--dsh-cookie`
-and `--dsh-events-dir` together, or use `NOVA_HOOK_DSH_GATEWAY`,
-`NOVA_HOOK_DSH_SESSION`, `NOVA_HOOK_DSH_COOKIE` and `NOVA_HOOK_DSH_EVENTS_DIR`.
-The event directory must exist, be canonical without symlink ancestors, and be
-private to its owner. Before arming, the client validates configuration and
-holds the same exclusive process lock the Codex route uses. `--once` is refused;
-`--dry-run` does not contact the gateway, lock the receiver or write saved
-events. Codex delivery and dsh delivery are exclusive: configure one route.
+Run the recipient client with `--harness deepseek` (alias `dsh`),
+`--dsh-events-dir` and `--dsh-hooks-file` together, or use `NOVA_HOOK_HARNESS`,
+`NOVA_HOOK_DSH_EVENTS_DIR` and `NOVA_HOOK_DSH_HOOKS_FILE`. The event directory
+must exist, be canonical without symlink ancestors, and be private to its owner.
+Before arming, the client validates configuration and writes the hook config;
+`--once` is refused; `--dry-run` does not write the hook config or saved events.
+Codex delivery and dsh delivery are exclusive: configure one route.
 
-A challenge is steered into the running turn; an ordinary bus message is queued
-as a followup. The saved envelope names the identity, the Redis address, and the
-two model instructions: prove a current challenge with
-`nova-hook prove --as <identity> --nonce <nonce>`, and answer an ordinary
-message with `nova-bus send --re <id>`. A native accepted turn is neither proof
-nor acknowledgment; only the model proves or answers on the bus.
+A challenge uses the `ChallengeNotice`; an ordinary bus message the `BusNotice`.
+The saved event envelope names the identity, the Redis address, and the two model
+instructions: prove a current challenge with `nova-hook prove --as <identity>
+--nonce <nonce>`, and answer an ordinary message with `nova-bus send --re <id>`.
+A surfaced notice is neither proof nor acknowledgment; only the model proves or
+answers on the bus.
+
+`ErrPreSend` means the pending notice was not written. The route shares the one
+delivery error taxonomy with the Codex route (`ErrRejected`, `ErrOutcomeUnknown`)
+but a file write has no matched rejection and no ambiguous outcome.
 
 ## Install its own harness-side setup
 
-The route is installed by the same verb, with no new tool: the `--dsh-*` flags on
-`nova-hook hook` carry the harness-side setup (gateway, session, cookie and
-event directory) into the running client. The cookie is the desktop's
-browser-session credential, obtained through the launch-token exchange described
-in the harness's connection service; it is supplied to the client at launch and
-never written by the client.
+The route is installed by the same verb, with no new tool: `--harness deepseek`
+on `nova-hook hook` carries the harness-side setup (the event directory and the
+hook config path) into the running client, which writes the hook config before
+arming. No gateway and no cookie: the harness's own bridge reads the pending
+notice.

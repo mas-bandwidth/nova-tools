@@ -18,13 +18,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var dshArgs = []string{"hook", "--as", "ada", "--role", "comms", "--dsh-gateway", "http://127.0.0.1:19387", "--dsh-session", "session-abc", "--dsh-cookie", "c=v", "--dsh-events-dir", "/private/events"}
+var dshArgs = []string{"hook", "--as", "ada", "--role", "comms", "--harness", "deepseek", "--dsh-events-dir", "/private/events", "--dsh-hooks-file", "/private/hooks.json"}
+
+func dshRouteFor(t *testing.T) *dshRoute {
+	t.Helper()
+	dir := t.TempDir()
+	return &dshRoute{route: dshdesktop.Route{EventsDir: dir, HooksFile: dir + "/hooks.json"}}
+}
 
 func fakeDshWorld(r *rig) world {
 	w := r.world()
-	w.dshValidate = func(dshdesktop.Route, string) error { return nil }
+	w.dshValidate = func(dshdesktop.Route) error { return nil }
 	w.dshSave = func(string, string, []byte) error { return nil }
-	w.dshDeliver = func(context.Context, dshdesktop.Route, string, string) (string, error) { return "session-abc", nil }
+	w.dshDeliver = func(dshdesktop.Route, string, string) (string, error) { return "notice", nil }
 	return w
 }
 
@@ -34,9 +40,9 @@ func TestDshRouteRefusesBeforeArming(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"partial gateway only", []string{"hook", "--as", "ada", "--role", "comms", "--dsh-gateway", "http://127.0.0.1:19387"}},
+		{"partial events-dir only", []string{"hook", "--as", "ada", "--role", "comms", "--harness", "deepseek", "--dsh-events-dir", "/d"}},
 		{"once", append(append([]string{}, dshArgs...), "--once")},
-		{"both codex and dsh", append(append([]string{}, dshArgs...), "--codex-socket", "/s", "--codex-thread", "t", "--codex-events-dir", "/d")},
+		{"unknown harness", []string{"hook", "--as", "ada", "--role", "comms", "--harness", "muse", "--dsh-events-dir", "/d", "--dsh-hooks-file", "/d/hooks.json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t)
@@ -49,7 +55,7 @@ func TestDshRouteRefusesBeforeArming(t *testing.T) {
 	}
 }
 
-func TestDshLoopDeliversChallengeAsSteerAndMessageAsFollowup(t *testing.T) {
+func TestDshLoopDeliversChallengeAndMessageThroughTheRoute(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	w := fakeDshWorld(r)
@@ -72,25 +78,25 @@ func TestDshLoopDeliversChallengeAsSteerAndMessageAsFollowup(t *testing.T) {
 		return []bus.Entry{{Entry: "1-1", Fields: m.Fields()}}
 	}}
 	s := &session{bus: st, hooks: r.h.Store, as: "ada", addr: "127.0.0.1:6379"}
-	w.dshDeliver = func(_ context.Context, _ dshdesktop.Route, _ string, notice string) (string, error) {
+	w.dshDeliver = func(_ dshdesktop.Route, _ string, notice string) (string, error) {
 		notices = append(notices, notice)
 		if len(notices) == len(messages) {
 			cancel()
 		}
-		return "session-abc", nil
+		return "notice", nil
 	}
 	var out bytes.Buffer
 	c := &tool.Call{Stdout: &out}
 	challengeCalls := 0
-	result := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { challengeCalls++; return nil }, nil, &dshRoute{route: dshdesktop.Route{Gateway: "http://127.0.0.1:19387", SessionID: "session-abc", Cookie: "c=v"}, directory: "/private/events"})
+	result := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { challengeCalls++; return nil }, dshRouteFor(t))
 	assert.Equal(t, tool.OK, result.Status, out.String())
 	require.Len(t, notices, 2)
-	assert.Equal(t, dshdesktop.ChallengeNotice, notices[0], "a challenge is steered into the running turn")
-	assert.Equal(t, dshdesktop.BusNotice, notices[1], "an ordinary message is a followup")
+	assert.Equal(t, dshdesktop.ChallengeNotice, notices[0], "a challenge uses the challenge notice")
+	assert.Equal(t, dshdesktop.BusNotice, notices[1], "an ordinary message uses the bus notice")
 	assert.Zero(t, challengeCalls)
 }
 
-func TestDshPushSavesEnvelopeAndSteersChallenge(t *testing.T) {
+func TestDshPushSavesEnvelopeAndPicksTheChallengeNotice(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	w := fakeDshWorld(r)
@@ -101,15 +107,10 @@ func TestDshPushSavesEnvelopeAndSteersChallenge(t *testing.T) {
 		return nil
 	}
 	notice := ""
-	w.dshDeliver = func(_ context.Context, _ dshdesktop.Route, _ string, n string) (string, error) {
-		notice = n
-		return "session-abc", nil
-	}
-	route := &dshRoute{route: dshdesktop.Route{Gateway: "http://127.0.0.1:19387", SessionID: "session-abc", Cookie: "c=v"}, directory: "/private/events"}
+	w.dshDeliver = func(_ dshdesktop.Route, _ string, n string) (string, error) { notice = n; return "notice", nil }
 	var out bytes.Buffer
-	got := w.dshPush(&tool.Call{Stdout: &out}, s, route, hook.Comms, 1, "event-1", &bus.Message{ID: "event-1", Subject: "HOOK CHALLENGE nonce=abc", Body: "external body"})
+	got := w.dshPush(&tool.Call{Stdout: &out}, s, dshRouteFor(t), hook.Comms, 1, "event-1", &bus.Message{ID: "event-1", Subject: "HOOK CHALLENGE nonce=abc", Body: "external body"})
 	assert.Nil(t, got, out.String())
-	assert.True(t, saved.Steer)
 	assert.Equal(t, "external body", saved.Message.Body)
 	assert.Equal(t, dshdesktop.ChallengeNotice, notice)
 }
@@ -123,12 +124,12 @@ func TestDshPushFailureRevokesRouteProof(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, r.h.Store.Renew(ctx, "ada", hook.Comms, hook.Bus, epoch, "test"))
 	require.NoError(t, r.h.Store.Prove(ctx, "ada", hook.Comms, hook.Bus, epoch, "test"))
-	w.dshDeliver = func(context.Context, dshdesktop.Route, string, string) (string, error) {
-		return "", errors.New("gateway down")
+	w.dshDeliver = func(dshdesktop.Route, string, string) (string, error) {
+		return "", errors.New("write failed")
 	}
 	s := &session{hooks: r.h.Store, as: "ada", addr: "127.0.0.1:6379"}
 	var out bytes.Buffer
-	got := w.dshPush(&tool.Call{Stdout: &out}, s, &dshRoute{route: dshdesktop.Route{Gateway: "http://127.0.0.1:19387", SessionID: "session-abc", Cookie: "c=v"}, directory: "/private/events"}, hook.Comms, epoch, "event-1", &bus.Message{ID: "event-1"})
+	got := w.dshPush(&tool.Call{Stdout: &out}, s, dshRouteFor(t), hook.Comms, epoch, "event-1", &bus.Message{ID: "event-1"})
 	require.NotNil(t, got)
 	assert.Equal(t, tool.Failed, got.Status)
 	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State, "route failure drops the proof, not the hook")
