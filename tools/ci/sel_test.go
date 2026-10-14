@@ -135,8 +135,8 @@ func selRead(t *testing.T, path string) string {
 }
 
 const (
-	selListTree = "go list ./cmd/... ./internal/... ./pkg/... ./tools/..."
-	selListDeps = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./pkg/... ./tools/..."
+	selListTree = "go list ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
+	selListDeps = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
 	selFiles    = "{{.ImportPath}} {{.GoFiles}} {{.CgoFiles}} {{.TestGoFiles}} {{.XTestGoFiles}}"
 )
 
@@ -169,7 +169,7 @@ func TestSelectPackagesVerbFallsBackToTheTreeWithAWarning(t *testing.T) {
 	}
 	f := newSelFake(map[string]selReply{
 		selListTree: {err: "go: cannot find main module\n"},
-		"git ls-files -z -- cmd/*.go internal/*.go pkg/*.go tools/*.go": {out: "cmd/a/a.go\x00"},
+		"git ls-files -z -- cmd/*.go hook/*.go internal/*.go pkg/*.go tools/*.go": {out: "cmd/a/a.go\x00"},
 	})
 	code, out, errb := selRun(func(e env, a []string) int { return selectPackagesVerb(e, a, f.host()) }, repo, nil, "--on-go-list-error=whole-tree", "--all")
 	if code != 0 || out != "./cmd/a\n" || errb != "WARN select-packages: go list failed (go: cannot find main module); testing the whole tree\n" {
@@ -374,7 +374,7 @@ func TestTestMatrixSelectionFailureFailsTheStepOnAPullRequestOnly(t *testing.T) 
 		t.Fatal(err)
 	}
 	a := answers()
-	a["git ls-files -z -- cmd/*.go internal/*.go pkg/*.go tools/*.go"] = selReply{out: "cmd/a/a.go\x00"}
+	a["git ls-files -z -- cmd/*.go hook/*.go internal/*.go pkg/*.go tools/*.go"] = selReply{out: "cmd/a/a.go\x00"}
 	code, out, errb = selRun(func(e env, args []string) int { return testMatrixVerb(e, args, newSelFake(a).host()) }, repo,
 		map[string]string{"GITHUB_OUTPUT": filepath.Join(t.TempDir(), "o")}, "--event", "merge_group", "--merge-group-base", "basesha", "--linux-group", "lin", "--macos-group", "mac")
 	if code != 0 || !strings.Contains(errb, "WARN select-packages: go list failed (open /c/go-build/x: no such file or directory); testing the whole tree") || !strings.Contains(out, "merge_group: 1 package(s) touched: ./cmd/a\n") {

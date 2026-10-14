@@ -21,8 +21,8 @@ own `hook:*:<name>*` and `bus2:*` keys, and the tools logging in as that user (S
 ACL line, not built). That is the owner's decision; until it is made, the hook is a liveness gate and
 nothing more.
 
-The record and its rules are the hook module, `github.com/mas-bandwidth/nova-tools/hook` (the `hook/`
-directory, its own `go.mod`, the Redis client its one dependency), so every repository that gates
+The record and its rules are the hook package, `github.com/mas-bandwidth/nova-tools/hook` (the `hook/`
+directory, a package of the nova-tools module, the Redis client its one dependency), so every repository that gates
 reads the same record the same way. The machine is `tla/Hook.tla`. The command line is `nova-hook`.
 
 ## Roles and pushes
@@ -229,16 +229,16 @@ A proof says a push reached a session once; the heartbeat says the model is stil
 - `nova-hook status [--as <name>]`: one record as a check (0 proven, 1 not, with the breadcrumb), or
   every record.
 
-## Using the module from another repository
+## Using the package from another repository
 
 ```sh
-go get github.com/mas-bandwidth/nova-tools/hook@v0.1.0
+go get github.com/mas-bandwidth/nova-tools@<version>
 ```
 
 `hook.Store{C: <redis client>}` is the record; `Gate(ctx, hook.Want{Name, Need, Role})` is the gate;
 `hook.Holder` holds pushes for a long-running process (`Start`, then `Beat` every `RenewEvery` with the
 pushes its own round trip proved); `hooktest` is the test rig, a miniredis reached through `net.Pipe`.
-The module is tagged `hook/vX.Y.Z` in this repository.
+It is versioned with nova-tools; there is no separate `hook/vX.Y.Z` tag.
 
 ## Adoption: the callers that need hooking
 

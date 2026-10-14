@@ -11,26 +11,19 @@
 GO ?= go
 PKGS ?= ./...
 export PKGS
-# MODULES is every nested Go module in this repository: the directories with
-# their own go.mod beside the root (hook/ and pkg/oneline/), named in go.work.
-# A directory with a go.mod of its own is NOT reached by `go list ./...`,
-# `go test ./...` or `go vet ./...` run at the root, with or without go.work
-# (measured with go 1.26.6). So every target that tests or vets the whole tree
-# loops over MODULES and runs each module's own `./...` inside it, and the
-# package set carries their packages too. A new nested module joins this list:
-# internal/ci's TestEveryNestedModuleIsTested reads go.work and fails when a
-# used module is missing from MODULES.
-MODULES ?= ./hook ./pkg/oneline
+# nova-tools is ONE Go module: hook/ and pkg/oneline/ are packages of it, not
+# modules of their own, so `go list ./...` at the root reaches every package and
+# an outside module can require nova-tools and import any of them.
+# internal/ci's TestOneModule fails on a go.mod or go.work beside the root.
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
 # `go run ./tools/ci select-packages --all` lists every package under cmd/,
 # internal/ and tools/ and drops the ones pkg/pkgselect/DEPRECATED names (a
 # deprecated package is never tested), or fails loudly when `go list` fails; it
-# never selects nothing in silence. The nested modules' packages are appended
-# (each listed from inside its own directory), so the unit tier tests them too.
+# never selects nothing in silence.
 # Recursive (`=`), and the `test` and `test-functional` lines that take it are
 # recursive too, so the go list runs when one of those targets runs and not on
 # every make call; `make test PKGS=<shard>` never runs it.
-CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all) $(shell for m in $(MODULES); do (cd $$m && $(GO) list ./...); done)
+CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all)
 
 # THE HOST GUARD, on for every target. pkg/testguard makes every ssh, scp
 # and rsync seam in this tree panic with its command line when this is 1, so a
@@ -94,8 +87,6 @@ help:
 	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
 	@echo "make tlc-groups  JSON list of required model groups"
 	@echo "make tlc-test    the runner and checker tests: no Java, no Redis, no network"
-	@echo "make test-hook   the hook module's own tests (hook/ is a nested module: ./... from the root never names it)"
-	@echo "make test-oneline the oneline module's own tests (pkg/oneline/ is a nested module: ./... from the root never names it)"
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
@@ -153,22 +144,6 @@ tlc-test:
 tlc-groups:
 	@$(GO) run ./tools/tlacheck groups --root .
 
-# The hook module (hook/, docs/SPEC-HOOK.md) is a nested module of its own, so
-# `go list ./...` from the root never names it and no PKGS shard carries its
-# tests; ci.yml's test legs that test a package importing it run this target.
-.PHONY: test-hook
-test-hook:
-	cd hook && $(GO) test -count=1 -timeout 100s ./...
-
-# pkg/oneline is a nested module of its own (pkg/oneline/go.mod): `go list
-# ./...` from the root never names it and no PKGS shard carries its tests.
-# ci.yml's test legs run this target, sub-second, on the legs whose package
-# list imports it.
-.PHONY: test-oneline
-test-oneline:
-	cd pkg/oneline && $(GO) test -count=1 -timeout 100s ./...
-
-
 new-rule:
 	$(GO) run ./tools/newrule $(ARGS)
 
@@ -195,7 +170,6 @@ fmt:
 
 vet:
 	$(GO) vet $(PKGS)
-	@if [ "$(PKGS)" = "./..." ]; then for m in $(MODULES); do (cd $$m && $(GO) vet ./...); done; fi
 
 # THE FUNCTIONAL TIER is the redis-backed tests. Every test that starts a
 # redis-server is behind `//go:build functional`, so `vet` and `test` above do
@@ -384,7 +358,6 @@ test-functional-container:
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
-	@if [ "$(PKGS)" = "./..." ]; then for m in $(MODULES); do (cd $$m && $(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) ./...); done; fi
 
 # SHORT_TIMEOUT is test-short's `go test -timeout`, per test binary. The hosted
 # legs spend 55-75 s on setup before their test step (run 36367639661), and the
@@ -423,7 +396,6 @@ darwin-timeout:
 
 test-race:
 	$(GO) test -race $(PKGS)
-	@if [ "$(PKGS)" = "./..." ]; then for m in $(MODULES); do (cd $$m && $(GO) test -race ./...); done; fi
 
 test-e2e:
 	$(GO) test -count=1 -run TestFriendSequence ./cmd/...

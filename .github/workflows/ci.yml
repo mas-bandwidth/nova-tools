@@ -810,26 +810,6 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
 
-      - name: test the hook module
-        # hook/ is a nested module of its own (docs/SPEC-HOOK.md): `go list ./...` from
-        # the root never names it, so no leg's package list carries its tests. A leg that
-        # tests a package importing it (nova-bus, nova-hook, nova-friend, pkg/hookgate)
-        # runs the module's own tests too, sub-second, with the same refusing
-        # redis-server first on PATH (its tests run on miniredis through net.Pipe).
-        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true' && (contains(format(' {0} ', matrix.entry.packages), ' ./cmd/nova-bus ') || contains(format(' {0} ', matrix.entry.packages), ' ./cmd/nova-hook ') || contains(format(' {0} ', matrix.entry.packages), ' ./cmd/nova-friend ') || contains(format(' {0} ', matrix.entry.packages), ' ./pkg/hookgate '))
-        shell: bash
-        run: make test-hook
-
-      - name: test the oneline module
-        # pkg/oneline/ is a nested module of its own (pkg/oneline/go.mod): `go list
-        # ./...` from the root never names it, so no leg's package list carries its
-        # tests. Nearly every cmd tool renders through it (45 packages import it), so a
-        # leg that tests any of them runs the module's own tests too, sub-second, with
-        # the same refusing redis-server first on PATH.
-        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
-        shell: bash
-        run: make test-oneline
-
   functional:
     # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,
     # and are built to be frugal and avoid wasting resources.
