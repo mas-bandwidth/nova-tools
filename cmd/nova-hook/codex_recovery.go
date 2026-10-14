@@ -80,15 +80,6 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 		}
 		plan.coverageUnknown = millis >= start.UnixMilli()
 	}
-	entries, err := s.bus.Range(ctx, bus.StreamOf(s.as), floor, tail, maxCodexHistory+1)
-	if err != nil {
-		return codexRecovery{}, err
-	}
-	if len(entries) > maxCodexHistory {
-		plan.archived += len(entries) - maxCodexHistory
-		entries = entries[len(entries)-maxCodexHistory:]
-		plan.cutover = now.UTC().Truncate(time.Second)
-	}
 	// Matching requires the actual bus message. Raw nonce is never reconstructed.
 	challenge, err := s.hooks.C.HMGet(ctx, hook.ChallengeKey(s.as), "sum", "epoch").Result()
 	if err != nil {
@@ -108,35 +99,13 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 	isCurrentChallenge := func(m bus.Message) bool {
 		return activeSum != "" && strings.HasPrefix(m.Subject, "HOOK CHALLENGE nonce=") && hook.Sum(strings.TrimPrefix(m.Subject, "HOOK CHALLENGE nonce=")) == activeSum
 	}
-	// The explicit ordinary-history boundary never authorizes dropping a current
-	// server challenge. Recover only its actual hash-matching event before it.
-	if activeSum != "" && since.After(window) {
-		found := false
-		for _, entry := range entries {
-			if isCurrentChallenge(entry.Message()) {
-				found = true
-			}
+	trimHistory := func(in []bus.Entry) []bus.Entry {
+		if len(in) <= maxCodexHistory {
+			return in
 		}
-		if !found {
-			earlier, err := s.bus.Range(ctx, bus.StreamOf(s.as), bus.IDAt(window), "("+floor, maxCodexHistory+1)
-			if err != nil {
-				return codexRecovery{}, err
-			}
-			selected := make([]bus.Entry, 0)
-			for _, entry := range earlier {
-				if isCurrentChallenge(entry.Message()) {
-					selected = append(selected, entry)
-				}
-			}
-			entries = append(selected, entries...)
-		}
-	}
-	// If scanned history exceeds entry or byte budgets, cut over and archive the
-	// oldest ordinary entries while preserving any current challenge.
-	if len(entries) > maxCodexHistory {
 		trimmed := make([]bus.Entry, 0, maxCodexHistory)
-		drop := len(entries) - maxCodexHistory
-		for _, entry := range entries {
+		drop := len(in) - maxCodexHistory
+		for _, entry := range in {
 			if drop > 0 && !isCurrentChallenge(entry.Message()) {
 				drop--
 				plan.archived++
@@ -144,8 +113,70 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 			}
 			trimmed = append(trimmed, entry)
 		}
-		entries = trimmed
 		plan.cutover = now.UTC().Truncate(time.Second)
+		return trimmed
+	}
+	var entries []bus.Entry
+	curFrom := floor
+	lastCursor := ""
+	for {
+		page, err := s.bus.Range(ctx, bus.StreamOf(s.as), curFrom, tail, maxCodexHistory+1)
+		if err != nil {
+			return codexRecovery{}, err
+		}
+		entries = trimHistory(append(entries, page...))
+		if len(page) <= maxCodexHistory {
+			break
+		}
+		nextCursor := page[len(page)-1].Entry
+		if nextCursor == "" || nextCursor == lastCursor || nextCursor == tail {
+			break
+		}
+		lastCursor = nextCursor
+		curFrom = "(" + nextCursor
+	}
+	// The explicit ordinary-history boundary never authorizes dropping a current
+	// server challenge. Recover only its actual hash-matching event before floor.
+	if activeSum != "" {
+		found := false
+		for _, entry := range entries {
+			if isCurrentChallenge(entry.Message()) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			searchFrom := bus.IDAt(window)
+			if !since.After(window) {
+				searchFrom = "-"
+			}
+			searchTo := "(" + floor
+			selected := make([]bus.Entry, 0)
+			lastEarly := ""
+			for {
+				earlier, err := s.bus.Range(ctx, bus.StreamOf(s.as), searchFrom, searchTo, maxCodexHistory+1)
+				if err != nil {
+					return codexRecovery{}, err
+				}
+				for _, entry := range earlier {
+					if isCurrentChallenge(entry.Message()) {
+						selected = append(selected, entry)
+					}
+				}
+				if len(earlier) <= maxCodexHistory {
+					break
+				}
+				nextCursor := earlier[len(earlier)-1].Entry
+				if nextCursor == "" || nextCursor == lastEarly {
+					break
+				}
+				lastEarly = nextCursor
+				searchFrom = "(" + nextCursor
+			}
+			if len(selected) > 0 {
+				entries = trimHistory(append(selected, entries...))
+			}
+		}
 	}
 	totalHistoryBytes := 0
 	for _, entry := range entries {
@@ -300,6 +331,9 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 				break
 			}
 		}
+	}
+	if !matched {
+		return codexRecovery{}, errors.New("native startup recovery incomplete: active challenge has no matching actual bus message through captured tail; wait for the server to publish its next challenge")
 	}
 	plan.messages = out
 	return plan, nil

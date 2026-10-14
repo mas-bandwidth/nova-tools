@@ -572,6 +572,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		recErr := w.recordService(sctx, s, svc)
 		scancel()
 		if recErr != nil {
+			if rmErr := w.service.Remove(s.as); rmErr != nil {
+				return tool.Refuse("the hook record could not be written: " + recErr.Error() + " (and service rollback failed: " + rmErr.Error() + ")")
+			}
 			return tool.Refuse("the hook record could not be written: " + recErr.Error())
 		}
 		o := tool.Done().Fact("as", s.as).Fact("role", string(role)).Fact("service", svc)

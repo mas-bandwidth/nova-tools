@@ -365,3 +365,77 @@ func TestOSServiceManagerWritesLaunchdPlistAndSystemdUnit(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordServiceFailureRemovesInstalledService(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	home := t.TempDir()
+	svc := newFakeServiceManager("darwin", r, r.world)
+	t.Cleanup(func() {
+		// ignored: test cleanup after test finishes
+		_ = svc.Remove("ada")
+	})
+
+	svc.makeRun = func(_ string, _ []string, procCtx context.Context, onArmed func()) {
+		r.h.MR.SetError("ERR store write failed")
+		onArmed()
+		<-procCtx.Done()
+	}
+
+	w := r.world()
+	w.service = svc
+	var out, errb bytes.Buffer
+	code := run([]string{"hook", "--as", "ada", "--role", "comms", "--harness", "grok", "--grok-home", home}, strings.NewReader(""), &out, &errb, w)
+	r.h.MR.SetError("")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, out.String()+errb.String(), "the hook record could not be written")
+	_, held := svc.Held("ada")
+	assert.False(t, held, "compensating Remove must clean up installed service on recordService failure")
+}
+
+func TestMidLoopLeaseRenewalErrorRetriesWithBackoff(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := r.world()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+
+	unrenewedLines := 0
+	waitsAfterSecond := 0
+	w.wait = func(_ context.Context, d time.Duration) {
+		r.advance(d)
+		if unrenewedLines >= 2 {
+			waitsAfterSecond++
+			if waitsAfterSecond >= 2 {
+				r.h.MR.SetError("")
+			}
+		}
+	}
+
+	out := &streamOut{
+		each: func(l string) {
+			if strings.HasPrefix(l, "HOOK CHALLENGE") {
+				r.advance(hook.RenewEvery)
+				r.h.MR.SetError("ERR transient redis renewal fault")
+			}
+			if strings.Contains(l, "state=unrenewed") {
+				unrenewedLines++
+			}
+			if strings.Contains(l, "state=read") {
+				cancel()
+			}
+		},
+	}
+
+	code := run([]string{"hook", "--as", "ada", "--role", "comms"}, strings.NewReader(""), out, io.Discard, w)
+	r.h.MR.SetError("")
+	require.Zero(t, code, out.all.String())
+	assert.Equal(t, 2, unrenewedLines)
+	assert.Equal(t, 2, waitsAfterSecond, "second retry waited 2 ticks (exponential backoff)")
+	assert.Contains(t, out.all.String(), "state=unrenewed")
+	assert.Contains(t, out.all.String(), "state=read")
+	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
+}
+
