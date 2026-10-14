@@ -92,20 +92,51 @@ func TestASendUnhookedWritesNothing(t *testing.T) {
 	assert.Contains(t, res.Stdout, "SEND OK id=")
 }
 
-// TestAHalfHookedCoordinatorIsRefused pins the role's pushes: a coordinator
-// whose sprint push is down is refused, the breadcrumb naming its holder.
-func TestAHalfHookedCoordinatorIsRefused(t *testing.T) {
+// TestAHalfHookedIdentityIsJudgedOnItsBusPush pins the gate on the act's own
+// need (docs/SPEC-HOOK.md; tla/Hook.tla, GateOK, NeedIsEnough): every nova-bus
+// verb needs the bus push, so an identity whose bus push is live and proven
+// acts whatever its role's other pushes do (a coordinator whose sprint push is
+// down, a friend working by hand whose work push is down: the record reads
+// partial in nova-hook status all the while); one whose bus push is only armed
+// is refused, the breadcrumb naming the bus push's holder and not the push that
+// is not what blocks it.
+func TestAHalfHookedIdentityIsJudgedOnItsBusPush(t *testing.T) {
 	t.Parallel()
-	r, h := hookedRig(t)
-	ctx := context.Background()
-	hd := &hook.Holder{Store: h.Store, Name: "ada", Role: hook.Coordinator, Pushes: []hook.Push{hook.Bus}, By: "session"}
-	require.NoError(t, hd.Start(ctx))
-	require.NoError(t, hd.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
-	res := r.cli().Run("peek", "--as", "ada")
-	assert.Equal(t, 1, res.Code)
-	out := res.Stdout + res.Stderr
-	assert.Contains(t, out, "partial as coordinator (bus=proven sprint=down)")
-	assert.Contains(t, out, "the sprint push of a coordinator is held by: nova-sprint hook --as ada")
+	for _, role := range []hook.Role{hook.Coordinator, hook.Friend} {
+		t.Run(string(role)+" with its bus push proven", func(t *testing.T) {
+			t.Parallel()
+			r, h := hookedRig(t)
+			r.wireClock()
+			ctx := context.Background()
+			hd := &hook.Holder{Store: h.Store, Name: "ada", Role: role, Pushes: []hook.Push{hook.Bus}, By: "session"}
+			require.NoError(t, hd.Start(ctx))
+			require.NoError(t, hd.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
+			require.Equal(t, hook.StatePartial, h.State(t, "ada").State, "the record still reads partial")
+			for _, c := range verbCalls {
+				res := r.cli().Run(c.args...)
+				assert.NotEqual(t, 2, res.Code, c.verb+": "+res.Stdout+res.Stderr) // exit 1 is also a verb's own none (WAIT NONE, RECV NONE); the gate's no is reason=unhooked
+				assert.NotContains(t, res.Stdout+res.Stderr, "unhooked", c.verb)
+			}
+			res := r.cli().Run("send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "b")
+			assert.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+			assert.Contains(t, res.Stdout, "SEND OK id=")
+		})
+	}
+
+	t.Run("a coordinator with its bus push only armed is refused", func(t *testing.T) {
+		t.Parallel()
+		r, h := hookedRig(t)
+		ctx := context.Background()
+		hd := &hook.Holder{Store: h.Store, Name: "ada", Role: hook.Coordinator, Pushes: []hook.Push{hook.Bus, hook.Sprint}, By: "session"}
+		require.NoError(t, hd.Start(ctx))
+		require.NoError(t, hd.Beat(ctx, map[hook.Push]bool{hook.Sprint: true}))
+		res := r.cli().Run("peek", "--as", "ada")
+		assert.Equal(t, 1, res.Code)
+		out := res.Stdout + res.Stderr
+		assert.Contains(t, out, "live as coordinator (bus=armed sprint=proven); the bus push this act needs must be live and proven")
+		assert.Contains(t, out, "the bus push of a coordinator is held by")
+		assert.NotContains(t, out, "the sprint push of a coordinator is held by")
+	})
 }
 
 // TestTheGateFailsClosed pins that a hook record that cannot be read refuses

@@ -268,10 +268,17 @@ func (r *Refusal) Error() string { return r.Why + "; run: " + r.Hook }
 // not hooked under the holder's epoch: unhooked, or hooked again since.
 var ErrNotHooked = errors.New("the record is not hooked under this epoch: it was unhooked, or hooked again since")
 
-// Gate is nil when st lets w act: the record is hooked, every push of its role
-// is live and proven, its role carries every push w needs, and it is one of
-// w.Roles when w names any. Otherwise it is the Refusal with its breadcrumb
-// (tla/Hook.tla, Gate and GateMeansHooked).
+// Gate is nil when st lets w act: the record is hooked, its role carries every
+// push w needs, it is one of w.Roles when w names any, and the pushes the act
+// needs are live and proven. The act's own Need is what is judged: an act that
+// needs the bus push opens when that push is live and proven, whatever the
+// role's other pushes do (a friend working by hand, with no daemon holding her
+// work push, still sends on the bus; the record still reads partial in nova-hook
+// status). An act that names no Need (nova-hook status) is judged on every push
+// of the role, the gate's old rule. Otherwise it is the Refusal with its
+// breadcrumb (tla/Hook.tla, GateOK: Gate for the empty Need, "allpushes" the
+// reversed witness that judges every push for an act that needs one; and
+// GateMeansHooked, GateOKMeansHooked, NeedIsEnough).
 func (st Status) Gate(w Want) *Refusal {
 	hooked := st.State != StateNone && st.State != StateUnhooked
 	var missing []string
@@ -281,7 +288,8 @@ func (st Status) Gate(w Want) *Refusal {
 		}
 	}
 	otherRole := hooked && len(w.Roles) > 0 && !slices.Contains(w.Roles, st.Role)
-	if st.State == StateProven && len(missing) == 0 && !otherRole {
+	unproven := st.unproven(w.Need)
+	if hooked && len(missing) == 0 && !otherRole && len(unproven) == 0 {
 		return nil
 	}
 	role := st.Role
@@ -298,11 +306,41 @@ func (st Status) Gate(w Want) *Refusal {
 		r.Why = fmt.Sprintf("%s is hooked in as %s, and this act is only for %s; hook in as one of them", w.Name, st.Role, roleWords(w.Roles))
 	case len(missing) > 0:
 		r.Why = fmt.Sprintf("%s is hooked in as %s, which carries no %s push; this act needs it, so hook in under a role that does", w.Name, st.Role, strings.Join(missing, ","))
+	case len(w.Need) > 0:
+		r.Why = fmt.Sprintf("%s is not hooked in: %s as %s (%s); the %s push this act needs must be live and proven", w.Name, st.State, st.Role, st.pushWords(), pushList(unproven))
 	default:
 		r.Why = fmt.Sprintf("%s is not hooked in: %s as %s (%s); every push of the role must be live and proven", w.Name, st.State, st.Role, st.pushWords())
 	}
 	r.Hook, r.Lines = Breadcrumb(w.Name, role, w.Need, st)
 	return r
+}
+
+// unproven is the pushes the act needs that are not live and proven in st:
+// need's own when need names any, every push of the role's when it names none.
+// A hooked record of a role that does not carry a needed push has it down.
+func (st Status) unproven(need []Push) []Push {
+	if len(need) == 0 {
+		need = needs[st.Role]
+		if len(need) == 0 {
+			return []Push{Bus} // a role this package does not know holds nothing: the gate stays shut
+		}
+	}
+	var out []Push
+	for _, p := range need {
+		if st.pushState(p) != PushProven {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// pushList is ps as words: "bus", "bus,work".
+func pushList(ps []Push) string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, string(p))
+	}
+	return strings.Join(out, ",")
 }
 
 // pushWords is each push's state: "bus=proven sprint=down".
@@ -340,8 +378,9 @@ var roleUse = map[Role]string{
 	Reader:      "a machine's reader loop",
 }
 
-// Breadcrumb is the remedy and the lines that say who holds each push and how
-// to see and end the hook, each runnable as printed (docs/SPEC-HOOK.md, the
+// Breadcrumb is the remedy and the lines that say who holds each push the act
+// needs (every push of the role when need names none) and how to see and end
+// the hook, each runnable as printed (docs/SPEC-HOOK.md, the
 // breadcrumb). With a role, the remedy is the command that hooks name in as
 // it. With no role known the breadcrumb never guesses one: the remedy is to
 // look (nova-hook status), and the lines offer every role that carries need,
@@ -358,8 +397,8 @@ func Breadcrumb(name string, role Role, need []Push, st Status) (string, []strin
 		return "nova-hook status --as " + name, lines
 	}
 	for _, p := range needs[role] {
-		if st.pushState(p) == PushProven {
-			continue
+		if st.pushState(p) == PushProven || role == st.Role && len(need) > 0 && !slices.Contains(need, p) {
+			continue // proven already, or (the record's own role) a push this act does not need: the role's other pushes are not what blocks it
 		}
 		lines = append(lines, fmt.Sprintf("the %s push of a %s is held by: %s", p, role, HeldBy(name, role, p)))
 	}

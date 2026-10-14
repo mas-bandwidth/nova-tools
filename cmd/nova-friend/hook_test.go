@@ -340,8 +340,11 @@ func TestAFriendHookOpensNoCoordinatorVerb(t *testing.T) {
 	assert.Equal(t, 0, code, out)
 }
 
-// TestTheBeatCanaryIsGated pins the hand beat on --as: not hooked in as a
-// friend, no beat is sent; hooked in, it is.
+// TestTheBeatCanaryIsGated pins the hand beat on --as, a friend's own act on
+// the bus (docs/SPEC-HOOK.md; tla/Hook.tla, GateOK): not hooked in, no beat is
+// sent; hooked in as a friend or as comms with the bus push proven, it is, the
+// role's other pushes whatever they are; a role the beat is not for opens none
+// of it, however much is proven.
 func TestTheBeatCanaryIsGated(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "bob")
@@ -358,17 +361,78 @@ func TestTheBeatCanaryIsGated(t *testing.T) {
 		code := run(args, strings.NewReader(""), &out, &errb, w)
 		return code, out.String() + errb.String()
 	}
-	code, out := run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
+	beat := func() (int, string) { return run1("beat", "--as", "bob", "--server", "127.0.0.1:6390") }
+
+	code, out := beat()
 	assert.Equal(t, 1, code, out)
 	assert.Contains(t, out, "BEAT FAILED reason=unhooked: bob is not hooked in")
 	assert.Contains(t, out, "; run: nova-hook hook --as bob --role friend")
 	assert.Empty(t, beats, "no beat was sent")
 
 	h.Hook(t, "bob", hook.Comms)
-	code, _ = run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
-	assert.Equal(t, 1, code, "comms takes no sprint work: its beat is not a friend's")
-	h.Hook(t, "bob", hook.Friend)
-	code, out = run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
-	assert.Equal(t, 0, code, out)
+	code, out = beat()
+	assert.Equal(t, 0, code, "comms is on the bus and takes no sprint work: its beat says only that she is here: "+out)
 	assert.Equal(t, []string{"127.0.0.1:6390 bob"}, beats)
+
+	h.Hook(t, "bob", hook.Friend)
+	code, out = beat()
+	assert.Equal(t, 0, code, out)
+	assert.Len(t, beats, 2)
+
+	for _, role := range []hook.Role{hook.Coordinator, hook.Member, hook.Reader} {
+		h.Hook(t, "bob", role)
+		code, out = beat()
+		assert.Equal(t, 1, code, string(role)+": "+out)
+		assert.Contains(t, out, "bob is hooked in as "+string(role)+", and this act is only for friend or comms", string(role))
+	}
+	assert.Len(t, beats, 2, "a role the beat is not for sent no beat")
+}
+
+// TestAFriendByHandProvesHerselfOnTheBus pins the finding of the friend
+// harness audit: Emma, hooked in by hand with no daemon holding her work push,
+// has her bus push proven and her work push down (partial). Her beat, the
+// verb that proves her presence, needs only the bus push; her bus verbs need
+// only it; a daemon-held act that needs the work push (the lanes') still does
+// not open for her.
+func TestAFriendByHandProvesHerselfOnTheBus(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t, "bob")
+	h := hooktest.New(t)
+	w := r.world()
+	w.gate = func(ctx context.Context, _ bus.Store, want hook.Want) error { return h.Store.Gate(ctx, want) }
+	var beats []string
+	w.beat = func(_ context.Context, server, name string, _ time.Time, _ friend.BeatWords) (string, error) {
+		beats = append(beats, name)
+		return "FRIEND-BEAT " + name, nil
+	}
+	run1 := func(args ...string) (int, string) {
+		var out, errb strings.Builder
+		code := run(args, strings.NewReader(""), &out, &errb, w)
+		return code, out.String() + errb.String()
+	}
+
+	// a friend, her bus push proven by her session's hook, her work push down
+	hd := &hook.Holder{Store: h.Store, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus}, By: "session"}
+	require.NoError(t, hd.Start(ctx))
+	require.NoError(t, hd.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
+	require.Equal(t, hook.StatePartial, h.State(t, "bob").State)
+
+	code, out := run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
+	assert.Equal(t, 0, code, out)
+	assert.Equal(t, []string{"bob"}, beats)
+
+	// the act that needs her work push is still refused, naming the work push
+	err := h.Store.Gate(ctx, hook.Want{Name: "bob", Need: []hook.Push{hook.Work}, Roles: []hook.Role{hook.Friend}, Role: hook.Friend})
+	var refused *hook.Refusal
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Why, "the work push this act needs")
+	assert.Contains(t, strings.Join(refused.Lines, "\n"), "the work push of a friend is held by")
+
+	// her bus push only armed (her session's check unanswered): no beat
+	require.NoError(t, hd.Beat(ctx, map[hook.Push]bool{}))
+	code, out = run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "the bus push this act needs must be live and proven")
+	assert.Equal(t, []string{"bob"}, beats, "no second beat")
 }

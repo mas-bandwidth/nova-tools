@@ -30,7 +30,8 @@ func Store(st bus.Store) (hook.Store, error) {
 }
 
 // Gate is the gate for w over the bus store st: nil when w.Name is hooked
-// in, every push of its role live and proven; else the hook's Refusal, or
+// in as a role that carries the pushes w.Need names, each live and proven (every
+// push of the role when w names none); else the hook's Refusal, or
 // the store's error (fail closed: only nil lets a verb act).
 func Gate(ctx context.Context, st bus.Store, w hook.Want) error {
 	hs, err := Store(st)

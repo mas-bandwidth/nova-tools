@@ -34,6 +34,13 @@
 \* lease never lapses; a stopped holder's lease lapses (Expire) at any time,
 \* and under fairness surely. A proof lapses at any time (its TTL).
 \*
+\* The gate judges the act's own Need (GateOK): an act that needs the bus push
+\* opens when that push is live and proven, whatever the role's other pushes do
+\* (a friend working by hand, with no daemon holding her work push, still
+\* sends on the bus), and an act that needs no push in particular (nova-hook
+\* status) is judged on every push of the role, as the gate did for every act
+\* before.
+\*
 \* What it leaves out: the window between a holder's death and its lease's
 \* expiry (bounded by LeaseTTL in the code), the store's clock, and the gate's
 \* Want.Roles (a verb's own list of the roles it is for, a filter on the
@@ -59,6 +66,14 @@
 \*                 undoes an unhook (HookedByItsWord)
 \*   "noexpire"    a lease has no TTL: a dead holder keeps the gate open for
 \*                 ever (DeadHolderLosesGate)
+\*   "allpushes"   the gate judges every push of the role for an act that needs
+\*                 one (the old rule): a bus-only act is refused for a friend
+\*                 whose work push is down though the bus push it needs is
+\*                 proven (NeedIsEnough)
+\*   "anyproven"   the gate opens for an act once any push of the role is
+\*                 proven, not the pushes the act needs: an act that needs the
+\*                 work push opens on a record whose work push is down
+\*                 (GateOKMeansHooked)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Pushes, Roles, NeedOf, Holders, RoleOf, HeldOf, SessionHolders, WordRoles, MaxEpoch, MaxNonce, Broken
@@ -108,6 +123,20 @@ Init ==
 Gate ==
     /\ state = "hooked"
     /\ \A p \in NeedOf[role] : live[p] = epoch /\ proof[p] = epoch
+
+\* GateOK(need) (hook.Status.Gate): the gate for an act that needs the pushes
+\* need: hooked, the role carries every push the act needs, and the pushes the
+\* act needs are live and proven under the record's epoch. An act that needs
+\* none in particular (need = {}) is judged on every push of the role: that is
+\* Gate. Gate stays the all-pushes rule: nova-hook status, and a daemon's own
+\* gate over every push of its role.
+GateOK(need) ==
+    /\ state = "hooked"
+    /\ need \subseteq NeedOf[role]
+    /\ IF "anyproven" \in Broken
+          THEN \E p \in NeedOf[role] : live[p] = epoch /\ proof[p] = epoch
+          ELSE \A p \in (IF need = {} \/ "allpushes" \in Broken THEN NeedOf[role] ELSE need) :
+                  live[p] = epoch /\ proof[p] = epoch
 
 \* ArmNew(r, h): the record is armed as role r at a new epoch (armLua's arm):
 \* every lease, proof and challenge of the old one is cleared, and the holder
@@ -337,6 +366,29 @@ ProofMeansRead ==
 GateMeansHooked ==
     Gate => /\ state = "hooked"
             /\ \A p \in NeedOf[role] : \E h \in HoldersOf(p, role) : joined[h] = epoch
+
+\* GateOKMeansHooked: an act's yes is a hooked record whose role carries every
+\* push the act needs, each live and proven under the record's epoch (every push
+\* of the role when the act names none), each lease from a holder of that role
+\* that joined it. No act opens on a push that is down or unproven.
+GateOKMeansHooked ==
+    \A need \in SUBSET Pushes :
+        GateOK(need) =>
+            /\ state = "hooked"
+            /\ need \subseteq NeedOf[role]
+            /\ \A p \in (IF need = {} THEN NeedOf[role] ELSE need) :
+                  /\ live[p] = epoch /\ proof[p] = epoch
+                  /\ \E h \in HoldersOf(p, role) : joined[h] = epoch
+
+\* NeedIsEnough: an act that needs some pushes of the role opens once those are
+\* live and proven, whatever the role's other pushes do: a friend with her bus
+\* push proven and her work push down can send on the bus.
+NeedIsEnough ==
+    \A need \in SUBSET Pushes :
+        (/\ need # {}
+         /\ state = "hooked"
+         /\ need \subseteq NeedOf[role]
+         /\ \A p \in need : live[p] = epoch /\ proof[p] = epoch) => GateOK(need)
 
 \* DeadHolderLosesGate: a holder of the record's role that stops and stays
 \* stopped shuts the gate.

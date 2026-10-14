@@ -57,3 +57,22 @@ func TestGateReadsTheRecordOfTheBusStore(t *testing.T) {
 
 	assert.ErrorIs(t, Gate(ctx, bustest.NewFake(time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC), "ada"), want), ErrNoRecord)
 }
+
+// TestGatePassesAnActOnItsOwnNeed pins the gate over the bus store the verbs
+// meet: a friend with her bus push proven and her work push down opens a bus
+// act and is refused a work act, as Out words it.
+func TestGatePassesAnActOnItsOwnNeed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	h := hooktest.New(t)
+	st := bus.Redis{C: h.Client}
+	hd := &hook.Holder{Store: h.Store, Name: "emma", Role: hook.Friend, Pushes: []hook.Push{hook.Bus}, By: "session"}
+	require.NoError(t, hd.Start(ctx))
+	require.NoError(t, hd.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
+
+	assert.NoError(t, Gate(ctx, st, hook.Want{Name: "emma", Need: []hook.Push{hook.Bus}}))
+	o := Out(Gate(ctx, st, hook.Want{Name: "emma", Need: []hook.Push{hook.Work}}))
+	require.NotNil(t, o)
+	assert.Equal(t, 1, o.Exit)
+	assert.Equal(t, []string{Reason}, o.Reasons)
+}

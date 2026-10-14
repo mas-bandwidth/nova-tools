@@ -601,8 +601,10 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 the sprint server, what keeps the friend up in the sprint's friends table. The agent install writes
 runs the daemon, and the daemon beats already while its session is alive, so the beat needs no
 agent of its own and no hand plist: this verb is the canary, run by hand. Like every verb that acts
-as a friend it is gated (docs/SPEC-HOOK.md): unless --as is hooked in as a friend it sends nothing and
-is FAILED at exit 1 with the breadcrumb. A server that does not answer is exit 2. --dry-run says the
+as a friend it is gated (docs/SPEC-HOOK.md): unless --as is hooked in as a friend or as comms, its bus
+push live and proven, it sends nothing and is FAILED at exit 1 with the breadcrumb. A friend working by
+hand, with no daemon holding her work push, is hooked in as comms (or a friend with the bus push proven)
+and proves her presence with this verb. A server that does not answer is exit 2. --dry-run says the
 beat it would send, and to which server, and opens nothing.
 example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 				DryRun: true,
@@ -2014,7 +2016,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 // time round (docs/SPEC-FRIEND.md, the loop). The agent install writes
 // runs the daemon, and the daemon beats already while its session is alive,
 // so no agent of the beat's own is written (the hand plists are retired);
-// the verb is the canary, gated on --as as a friend (docs/SPEC-HOOK.md), and a
+// the verb is the canary, gated on --as as a friend or comms on its bus push (docs/SPEC-HOOK.md), and a
 // server that does not answer is exit 2.
 func (w world) beatVerb(c *tool.Call) *tool.Out {
 	name, server := c.Str("as"), c.Str("server")
@@ -2026,8 +2028,8 @@ func (w world) beatVerb(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	if o := w.gateVerb(b.Store, name, hook.Friend, hook.Work); o != nil {
-		return o // not hooked in as a friend: no beat is sent (docs/SPEC-HOOK.md)
+	if o := w.gateVerbFor(b.Store, name, hook.Friend, beatRoles, hook.Bus); o != nil {
+		return o // not hooked in as a friend or comms, her bus push proven: no beat is sent (docs/SPEC-HOOK.md)
 	}
 	if _, err := w.beat(context.Background(), server, name, time.Time{}, friend.BeatWords{}); err != nil {
 		return tool.Refuse("the beat was not taken: " + err.Error())

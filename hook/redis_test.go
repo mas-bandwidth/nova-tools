@@ -352,3 +352,24 @@ func TestEachRoundTripHasItsOwnTimeout(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Less(t, time.Since(start), 5*time.Second, "the call's own bound, not the caller's")
 }
+
+// TestAHolderGatesOnEveryPushItNames pins that a daemon's own gate is the pushes
+// it names (Holder.Gate, a friend's lanes name both of hers): with her bus push
+// proven and her work push only armed it refuses the gate over both, passes the
+// gate over the bus push alone, and the record reads live throughout
+// (tla/Hook.tla, GateOK).
+func TestAHolderGatesOnEveryPushItNames(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	h := &hook.Holder{Store: r.s, Name: "emma", Role: hook.Friend, Pushes: []hook.Push{hook.Bus, hook.Work}, By: "daemon"}
+	require.NoError(t, h.Start(ctx))
+	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
+	assert.Equal(t, hook.StateLive, r.state(t, "emma").State, "both leases stand, only the bus push is proven")
+	var refused *hook.Refusal
+	require.ErrorAs(t, h.Gate(ctx, hook.Bus, hook.Work), &refused)
+	assert.Contains(t, refused.Why, "the work push this act needs must be live and proven")
+	assert.NoError(t, h.Gate(ctx, hook.Bus), "the bus act opens on the bus push")
+	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
+	assert.NoError(t, h.Gate(ctx, hook.Bus, hook.Work))
+}

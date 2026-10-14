@@ -250,13 +250,24 @@ func gated[T any](h *daemonHook, verb func(ctx context.Context, argv []string) (
 // breadcrumb (FAILED at exit 1, or REFUSED at exit 2 when the record cannot be
 // read).
 func (w world) gateVerb(st bus.Store, name string, role hook.Role, need ...hook.Push) *tool.Out {
+	return w.gateVerbFor(st, name, role, actsFor(role), need...)
+}
+
+// gateVerbFor is gateVerb for a verb that names the roles it is for itself.
+func (w world) gateVerbFor(st bus.Store, name string, role hook.Role, roles []hook.Role, need ...hook.Push) *tool.Out {
 	if w.gate == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bus.CallTimeout)
 	defer cancel()
-	return hookgate.Out(w.gate(ctx, st, hook.Want{Name: name, Need: need, Roles: actsFor(role), Role: role}))
+	return hookgate.Out(w.gate(ctx, st, hook.Want{Name: name, Need: need, Roles: roles, Role: role}))
 }
+
+// beatRoles is the roles the hand beat is for: a friend, and comms, the friend
+// on the bus who takes no sprint work, whose beat says only that she is here. A
+// name hooked in as the coordinator, a member or a reader opens none of it (the
+// beat is a friend's own, and --as is her own name).
+var beatRoles = []hook.Role{hook.Friend, hook.Comms}
 
 // actsFor is the roles a verb meant for role accepts: its own, and for the
 // coordinator's verbs comms too until nova-sprint hook ships

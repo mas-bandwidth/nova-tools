@@ -93,8 +93,9 @@ func (h *Holder) beat(ctx context.Context, proven map[Push]bool) error {
 	return nil
 }
 
-// Gate is the gate for the holder's identity: nil when every push of its role
-// is live and proven, else the refusal or the store's error (fail closed).
+// Gate is the gate for the holder's identity: nil when the pushes named are
+// live and proven (a daemon names every push it holds), else the refusal or
+// the store's error (fail closed).
 func (h *Holder) Gate(ctx context.Context, need ...Push) error {
 	return h.Store.Gate(ctx, Want{Name: h.Name, Need: need, Roles: []Role{h.Role}, Role: h.Role})
 }

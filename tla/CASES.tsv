@@ -213,6 +213,8 @@ MCHookBrokenNoRole.cfg	MCHook.tla	invariant	LiveIsJoined	ignore-terminal	hook	re
 MCHookBrokenTakeover.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
 MCHookBrokenReArm.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
 MCHookBrokenNoExpire.cfg	MCHook.tla	temporal	DeadHolderLosesGate	ignore-terminal	hook	required	-
+MCHookBrokenAllPushes.cfg	MCHook.tla	invariant	NeedIsEnough	ignore-terminal	hook	required	-
+MCHookBrokenAnyProven.cfg	MCHook.tla	invariant	GateOKMeansHooked	ignore-terminal	hook	required	-
 MCBusSendOnce.cfg	MCBusSendOnce.tla	pass	-	ignore-terminal	bussendonce	required	-
 MCBusSendOnceBrokenCheckApart.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
 MCBusSendOnceBrokenNewId.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-

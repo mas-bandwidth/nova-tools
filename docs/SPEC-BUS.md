@@ -423,8 +423,10 @@ the friend is; creating users is the owner's, never the tool's.
 
 Every verb (`wait`, `send`, `peek`, `recv`, `ack`, `receipts`, `overdue`,
 `log`, `names`) acts only while the identity acting is hooked in: its hook
-record in this store (`hook:rec:<f>`, docs/SPEC-HOOK.md) is hooked, every push
-of its role is live and proven, and its role carries the bus push. `log`,
+record in this store (`hook:rec:<f>`, docs/SPEC-HOOK.md) is hooked, its role
+carries the bus push, and that push is live and proven (the role's other pushes
+are not asked: a friend working by hand, whose work push is down, acts on the
+bus). `log`,
 `names` and `overdue` therefore take `--as` too. A name that is not hooked in
 is `FAILED reason=unhooked` at exit 1, nothing read or written, the command
 that hooks it in the remedy and the rest of the breadcrumb (who holds each

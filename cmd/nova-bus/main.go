@@ -510,8 +510,9 @@ func identity(c *tool.Call, login string) (string, *tool.Out) {
 
 // hooked is the gate every verb meets once it knows who acts, before it reads
 // or writes anything of the bus (docs/SPEC-HOOK.md; tla/Hook.tla,
-// GateMeansHooked): as must be hooked in, every push of its role live and
-// proven, its role carrying the bus push. A no is the verb's result, FAILED at
+// GateOK, GateMeansHooked): as must be hooked in, its role carrying the bus push
+// and that push live and proven (the act's own need; the role's other pushes
+// are not asked). A no is the verb's result, FAILED at
 // exit 1 with the breadcrumb (the hook command and who holds each push); a
 // record that cannot be read is REFUSED at exit 2: fail closed.
 func (w world) hooked(b *bus.Bus, as string) *tool.Out {

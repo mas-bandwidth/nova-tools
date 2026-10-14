@@ -78,8 +78,15 @@ A holder that dies stops renewing, and its lease expires on its own: the gate re
 A push is `down` (no lease of the record's epoch), `armed` (a lease and no proof) or `proven` (both).
 The record is `none` (never hooked), `unhooked`, `expired` (hooked, no push of its role live), `partial`
 (some live), `live` (every push live, not every one proven) or `proven` (every push live and proven).
-The gate's one yes is `proven`, with a role that carries every push the act needs (`hook.Status.Gate`;
-`tla/Hook.tla`, `GateMeansHooked`).
+The gate judges the act's own need (`hook.Status.Gate`; `tla/Hook.tla`, `GateOK`, `GateOKMeansHooked`,
+`NeedIsEnough`): a hooked record, a role that carries every push the act needs, and those pushes each
+`proven`. An act that needs the bus push opens when the bus push is live and proven, whatever the role's
+other pushes do: a friend working by hand, with her bus push held by her session's hook and no daemon
+holding her work push, is `partial` in `nova-hook status` and still sends on the bus and beats. An act
+that names no push (`nova-hook status`) is judged on every push of the role, so `proven` is still the
+record's one all-clear, and a daemon's own gate names every push it holds (`hook.Holder.Gate`). An act
+that takes work needs the `work` push and is not opened by the bus push. A refusal names only the
+pushes the act needs, and the breadcrumb only their holders.
 
 ## The epoch and the clear rule
 
@@ -123,8 +130,11 @@ A sprint's clear does not touch the hook keys: a hook is the bus's, not the spri
   PR #93 (until then a coordinator cannot be proven). A role that merely carries the bus push is not
   enough: a name hooked in as `friend` (the seat's own friend daemon arming it) opens none of them
   (`hook.Want.Roles`).
-- `nova-friend beat`, the hand canary, gates `--as` as a `friend` on the `work` push: it sends no beat
-  for a name not hooked in as a friend.
+- `nova-friend beat`, the hand canary, gates `--as` as a `friend` or as `comms` on the `bus` push: it
+  sends no beat for a name not hooked in as one of them with its bus push live and proven. A beat is a
+  friend's own act on the bus (`--as` is her own name) and takes no work, so a friend working by hand
+  proves her presence herself; a name hooked in as the coordinator, a member or a reader opens none of
+  it (`hook.Want.Roles`).
 - `pkg/hookgate` is the one place a nova-tools verb meets the gate: `Gate` over the bus store it opened,
   and `Out`, the gate's no as the verb's result.
 

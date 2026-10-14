@@ -94,8 +94,9 @@ func TestTheGatePassesOnlyProven(t *testing.T) {
 			"nova-hook hook --as bob --role friend", "never hooked", "the work push of a friend is held by: the friend daemon's lanes"},
 		{"unhooked", Judge("ada", map[string]string{"role": "comms", "state": "unhooked", "epoch": "2", "unhooked": "1791000000000"}, nil), Want{Name: "ada", Need: []Push{Bus}, Role: Comms}, false,
 			"nova-hook hook --as ada --role comms", "unhooked at", "unhook: nova-hook unhook --as ada"},
-		{"partial names the push that is down", Judge("ada", hooked(Coordinator, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}}, false,
+		{"partial names the push the act needs that is down", Judge("ada", hooked(Coordinator, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Sprint}}, false,
 			"nova-hook hook --as ada --role coordinator", "bus=proven sprint=down", "the sprint push of a coordinator is held by: nova-sprint hook --as ada"},
+		{"partial passes an act that needs only the push that is proven", Judge("ada", hooked(Coordinator, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}}, true, "", "", ""},
 		{"live and unproven", Judge("ada", hooked(Comms, 1), reads(1, []Push{Bus}, nil)), Want{Name: "ada", Need: []Push{Bus}}, false,
 			"nova-hook hook --as ada --role comms", "live as comms (bus=armed)", "the bus push of a comms is held by: the friend daemon"},
 		{"a coordinator's bus is the session's hook", Judge("ada", hooked(Coordinator, 1), reads(1, []Push{Bus, Sprint}, []Push{Sprint})), Want{Name: "ada", Need: []Push{Bus}}, false,
@@ -204,4 +205,98 @@ func TestStatusWordsAndTimes(t *testing.T) {
 	assert.Equal(t, time.UnixMilli(1791000000000).UTC(), st.Armed)
 	assert.Equal(t, "state=none", Judge("ada", nil, nil).Words())
 	assert.True(t, msTime("x").IsZero())
+}
+
+// TestTheGateJudgesTheActsOwnNeed pins the gate over (state, role, need, roles)
+// (tla/Hook.tla, GateOK, NeedIsEnough, GateOKMeansHooked): an act opens on the
+// pushes it needs being live and proven, whatever the role's other pushes do;
+// an act that names no push is judged on every push of the role; a role that
+// does not carry a needed push, or is not one of the act's roles, is refused
+// whatever is proven.
+func TestTheGateJudgesTheActsOwnNeed(t *testing.T) {
+	t.Parallel()
+	bus, work, sprint := []Push{Bus}, []Push{Work}, []Push{Sprint}
+	both := []Push{Bus, Work}
+	cases := []struct {
+		name  string
+		role  Role
+		live  []Push
+		prov  []Push
+		need  []Push
+		roles []Role
+		pass  bool
+		why   string
+	}{
+		// a friend by hand: the bus push held by her session, no daemon for work
+		{"friend, bus proven, work down: a bus act passes", Friend, bus, bus, bus, nil, true, ""},
+		{"friend, bus proven, work down: a work act is refused", Friend, bus, bus, work, nil, false, "the work push this act needs must be live and proven"},
+		{"friend, bus proven, work down: an act of both is refused", Friend, bus, bus, both, nil, false, "the work push this act needs"},
+		{"friend, bus proven, work down: an act naming none is refused (the old rule)", Friend, bus, bus, nil, nil, false, "every push of the role must be live and proven"},
+		{"friend, bus armed only: a bus act is refused", Friend, both, work, bus, nil, false, "the bus push this act needs must be live and proven"},
+		{"friend, work proven, bus down: a bus act is refused", Friend, work, work, bus, nil, false, "the bus push this act needs"},
+		{"friend, work proven, bus down: a work act passes", Friend, work, work, work, nil, true, ""},
+		{"friend, both proven: every act passes", Friend, both, both, both, nil, true, ""},
+		{"friend, both proven: an act naming none passes", Friend, both, both, nil, nil, true, ""},
+		{"friend, nothing live: a bus act is refused", Friend, nil, nil, bus, nil, false, "expired as friend"},
+		{"comms, bus proven: a bus act passes", Comms, bus, bus, bus, nil, true, ""},
+		{"comms, bus armed: a bus act is refused", Comms, bus, nil, bus, nil, false, "live as comms (bus=armed)"},
+		{"comms carries no work push: a work act is refused whatever is proven", Comms, both, both, work, nil, false, "carries no work push"},
+		{"coordinator, bus proven, sprint down: a bus act passes", Coordinator, bus, bus, bus, nil, true, ""},
+		{"coordinator, bus proven, sprint down: a sprint act is refused", Coordinator, bus, bus, sprint, nil, false, "the sprint push this act needs"},
+		{"member, work proven: a bus act is refused, no bus push", Member, work, work, bus, nil, false, "carries no bus push"},
+		{"reader, work proven: a work act passes", Reader, work, work, work, nil, true, ""},
+		// the act's roles
+		{"friend is not an act's coordinator or comms", Friend, both, both, bus, []Role{Coordinator, Comms}, false, "is hooked in as friend, and this act is only for coordinator or comms"},
+		{"a beat is for friend or comms: friend passes", Friend, bus, bus, bus, []Role{Friend, Comms}, true, ""},
+		{"a beat is for friend or comms: comms passes", Comms, bus, bus, bus, []Role{Friend, Comms}, true, ""},
+		{"a beat is for friend or comms: the coordinator is refused though its bus push is proven", Coordinator, bus, bus, bus, []Role{Friend, Comms}, false, "is hooked in as coordinator, and this act is only for friend or comms"},
+		{"a beat is for friend or comms: a member is refused", Member, work, work, bus, []Role{Friend, Comms}, false, "only for friend or comms"},
+		{"a beat is for friend or comms: a reader is refused", Reader, work, work, bus, []Role{Friend, Comms}, false, "only for friend or comms"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			st := Judge("ada", hooked(c.role, 1), reads(1, c.live, c.prov))
+			r := st.Gate(Want{Name: "ada", Need: c.need, Roles: c.roles, Role: c.role})
+			if c.pass {
+				assert.Nil(t, r)
+				return
+			}
+			if assert.NotNil(t, r) {
+				assert.Contains(t, r.Why, c.why)
+			}
+		})
+	}
+}
+
+// TestAPartialRecordStillReadsPartial pins that the gate judging the act's own
+// need changes nothing the status says: a friend with her bus push proven and
+// her work push down is partial, an act naming no push (nova-hook status) is
+// refused for it with both pushes' words, and the breadcrumb of an act that
+// needs the work push names the work push's holder and not the bus push's.
+func TestAPartialRecordStillReadsPartial(t *testing.T) {
+	t.Parallel()
+	st := Judge("emma", hooked(Friend, 1), reads(1, []Push{Bus}, []Push{Bus}))
+	assert.Equal(t, StatePartial, st.State)
+	assert.Equal(t, "state=partial role=friend epoch=1 bus=proven work=down", st.Words())
+	r := st.Gate(Want{Name: "emma", Role: Friend})
+	if assert.NotNil(t, r) {
+		assert.Contains(t, r.Why, "partial as friend (bus=proven work=down)")
+		assert.Contains(t, strings.Join(r.Lines, "\n"), "the work push of a friend is held by")
+	}
+	r = st.Gate(Want{Name: "emma", Need: []Push{Work}, Role: Friend})
+	if assert.NotNil(t, r) {
+		lines := strings.Join(r.Lines, "\n")
+		assert.Contains(t, lines, "the work push of a friend is held by")
+		assert.NotContains(t, lines, "the bus push", "the proven bus push is not what blocks the act")
+	}
+
+	// bus unproven: the refusal names the bus push's holder, not the work push's
+	st = Judge("emma", hooked(Friend, 1), reads(1, []Push{Bus, Work}, []Push{Work}))
+	r = st.Gate(Want{Name: "emma", Need: []Push{Bus}, Role: Friend})
+	if assert.NotNil(t, r) {
+		lines := strings.Join(r.Lines, "\n")
+		assert.Contains(t, lines, "the bus push of a friend is held by")
+		assert.NotContains(t, lines, "the work push")
+	}
 }
