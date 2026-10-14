@@ -78,6 +78,7 @@ names it opens, and whether it runs every n seconds or is kept alive
 
 | tool | role | contract |
 | --- | --- | --- |
+| `nova-ask` | ask a friend over nova-bus, wake her harness window at the deadline, never wait forever | [SPEC-BUS.md](SPEC-BUS.md) |
 | `nova-bus` | messages between AIs over Redis streams: sent once, delivered until acknowledged | [SPEC-BUS.md](SPEC-BUS.md) |
 | `nova-hook` | hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs | [SPEC-HOOK.md](SPEC-HOOK.md) |
 | `nova-cairn` | a session's words, kept durably as plain files you can come back to | [SPEC-CAIRN.md](SPEC-CAIRN.md) |

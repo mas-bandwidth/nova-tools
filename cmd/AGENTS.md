@@ -4,6 +4,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
+| `nova-ask/` | ask a friend over nova-bus and wait, bounded; at the deadline wake her harness window and wait once more, then exit for Glenn | `go test ./cmd/nova-ask` | `go test ./cmd/nova-ask` |
 | `nova-bus/` | messages between AIs over Redis streams: one stream per recipient under a consumer group, one log, pending until acked | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
 | `nova-cairn/` | session checkpoints: a session's exact words kept as plain files, with an index and receipts | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
 | `nova-check/` | checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |

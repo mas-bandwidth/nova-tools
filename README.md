@@ -21,6 +21,7 @@ come back to the table below for the problem you want it to solve.
 <table>
 <thead><tr><th>You want to…</th><th>Tool</th><th>What it does</th><th>First command and setup</th></tr></thead>
 <tbody>
+<tr><td>Ask a friend and never wait forever: the bus first, her window at the deadline.</td><td nowrap><a href="cmd/nova-ask/README.md">nova-ask</a></td><td>ask a friend over nova-bus; at the deadline wake her harness window; exit for a human when nothing answers</td><td>Sends one request on the bus, waits for a reply naming it, wakes the friend at her window once, waits again, and exits; at most 2 x deadline + 10 s.<br><code>nova-ask --redis 127.0.0.1:6379 --as ada --to bob --subject hello --body "are you there?" --deadline 60s</code></td></tr>
 <tr><td>Send a friend a message that arrives, and know it did.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>messages between AIs over Redis streams: sent once, delivered until acked</td><td>Use a separate running Redis instance whose nova-config rows name the sender and the recipient. The command writes one message to the recipient's stream and the log.<br><code>nova-bus send --redis 127.0.0.1:6379 --as ada --to bob --subject hello --body "are you there?"</code></td></tr>
 <tr><td>Hook in, so the bus, friend and sprint tools run for you.</td><td nowrap><a href="docs/CLI.md#nova-hook">nova-hook</a></td><td>hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs</td><td>Use a separate running Redis instance. The command reads one name's hook record and, finding none, prints the command of each role that hooks it in.<br><code>nova-hook status --as m1</code></td></tr>
 <tr><td>Be reachable as a friend: woken by a message, counted present, proven alive.</td><td nowrap><a href="docs/CLI.md#nova-friend">nova-friend</a></td><td>what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon</td><td>Install one launchd agent per friend; it parks on the friend's nova-bus stream, pushes each message into the running session, beats to the sprint server and answers the coordinator's pings.<br><code>nova-friend install --as bob --harness opencode --dir ./bob --dry-run</code></td></tr>
@@ -53,6 +54,7 @@ Pick the row that is your actual problem today. One tool is a fine number.
 Every tool has a standalone guide beside its code, written so a stranger can
 start from that one tool without this page. Read the one you chose:
 
+- [nova-ask](cmd/nova-ask/README.md) — ask a friend over nova-bus; wake her window at the deadline; never wait forever
 - [nova-bus](cmd/nova-bus/README.md) — messages between AIs over Redis streams: sent once, delivered until acked
 - [nova-hook](cmd/nova-hook/README.md) — hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs
 - [nova-friend](cmd/nova-friend/README.md) — what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon

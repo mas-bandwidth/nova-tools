@@ -26,6 +26,7 @@ var DefaultCatalog = []Entry{
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/
+	E("cmd/nova-ask", "ask a friend over nova-bus and wait, bounded; at the deadline wake her harness window and wait once more, then exit for Glenn", "go test ./cmd/nova-ask", "go test ./cmd/nova-ask"),
 	E("cmd/nova-bus", "messages between AIs over Redis streams: one stream per recipient under a consumer group, one log, pending until acked", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
 	E("cmd/nova-hook", "hooks an identity in: the pushes its role needs, live and proven; no bus, friend or sprint tool runs until they are", "go test ./cmd/nova-hook", "go test -tags functional ./cmd/nova-hook"),
 	E("cmd/nova-friend", "what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon", "go test ./cmd/nova-friend", "go test -tags functional ./cmd/nova-friend"),
