@@ -210,3 +210,27 @@ func TestRunAnswerTellsARefusalFromAnUnknownOutcome(t *testing.T) {
 		}
 	}
 }
+
+// A result that names its own outcome is read by it, whatever its words say; one that
+// names none is classified by its code and words, as a server that sends no outcome is.
+func TestAResultsOwnOutcomeDecidesItsAnswer(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		r    Result
+		want Answer
+	}{
+		{"accepted", Result{Code: 0, Outcome: "accepted"}, Accepted},
+		{"refused despite unknown words", Result{Code: 2, Stderr: "changed=unknown", Outcome: "refused"}, Refused},
+		{"unknown despite plain refusal words", Result{Code: 1, Stderr: "REFUSED s1-1.w1: not working", Outcome: "unknown"}, Unknown},
+		{"no outcome, exit 0", Result{Code: 0}, Accepted},
+		{"no outcome, refusal words", Result{Code: 1, Stderr: "REFUSED s1-1.w1: not working"}, Refused},
+		{"no outcome, unknown words", Result{Code: 1, Stderr: "the store did not confirm the write"}, Unknown},
+		{"an outcome it does not know", Result{Code: 1, Stderr: "changed=unknown", Outcome: "maybe"}, Unknown},
+	} {
+		assert.Equal(t, c.want, c.r.Answer(), c.name)
+	}
+	r := &recorder{answer: Result{Code: 2, Stderr: "nova-sprint finish REFUSED: changed=unknown", Outcome: "refused"}}
+	_, _, answer := (&Worker{Send: r.send}).RunAnswer("finish", "--as", "m1")
+	assert.Equal(t, Refused, answer, "RunAnswer reads the server's own outcome")
+}
