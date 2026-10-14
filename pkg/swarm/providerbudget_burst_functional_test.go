@@ -121,7 +121,7 @@ func TestABurstOverTheBudgetStallsAndNeverFails(t *testing.T) {
 	select {
 	case <-m.stalled:
 	case <-time.After(20 * time.Second):
-		t.Fatal("no request stalled on the spent budget")
+		require.FailNow(t, "no request stalled on the spent budget")
 	}
 	first := []answer{<-answers, <-answers}
 	assert.Equal(t, []answer{{code: 200}, {code: 200}}, first, "two requests go at once, inside the budget")
@@ -129,7 +129,7 @@ func TestABurstOverTheBudgetStallsAndNeverFails(t *testing.T) {
 	assert.True(t, p.Stalling(), "the third request is stalled inside the proxy, the card waiting, not idle")
 	select {
 	case a := <-answers:
-		t.Fatalf("the third request answered before its budget turned: %+v", a)
+		require.FailNowf(t, "the third request answered before its budget turned", "%+v", a)
 	default:
 	}
 
@@ -138,7 +138,7 @@ func TestABurstOverTheBudgetStallsAndNeverFails(t *testing.T) {
 	case third := <-answers:
 		assert.Equal(t, answer{code: 200}, third, "the third request waits and then passes, no error")
 	case <-time.After(20 * time.Second):
-		t.Fatal("the stalled request never went after the window turned")
+		require.FailNow(t, "the stalled request never went after the window turned")
 	}
 	assert.Equal(t, int64(3), hits.Load(), "the endpoint saw three requests in all")
 	assert.Zero(t, badAuth.Load(), "every request reached the endpoint's path with the harness's own key")

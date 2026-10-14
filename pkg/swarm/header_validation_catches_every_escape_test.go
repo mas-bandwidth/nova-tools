@@ -75,9 +75,7 @@ func TestIssue1853(t *testing.T) {
 			raw := headerCard(t, tc.header...)
 			fs := findingsOn(raw)
 			if tc.clean {
-				for _, f := range fs {
-					t.Errorf("unexpected %s: %s", f.Check, f.Excerpt)
-				}
+				require.Empty(t, fs, "a clean header draws no findings")
 				return
 			}
 			require.True(t, hasCheck(fs, tc.drift), "expected %s drift, got:\n%s", tc.drift, dumpFindings(fs))

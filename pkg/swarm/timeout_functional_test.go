@@ -83,7 +83,7 @@ func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
 	case err := <-ready:
 		require.NoError(t, err, "uncooperative process never became ready: %v", err)
 	case <-time.After(10 * time.Second):
-		t.Fatalf("uncooperative process not ready after 10s")
+		require.FailNow(t, "uncooperative process not ready after 10s")
 	}
 	exited := waitSignal(cmd)
 	pid := cmd.Process.Pid

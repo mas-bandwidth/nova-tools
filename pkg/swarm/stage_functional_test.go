@@ -205,7 +205,8 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	case out := <-done:
 		res, err = out.res, out.err
 	case <-time.After(testWait()):
-		t.Fatalf("staging did not return within %s on a clone that hung past a 1s timeout; the timeout is not hard", testWait())
+		require.FailNowf(t, "staging did not return within its hard timeout",
+			"staging did not return within %s on a clone that hung past a 1s timeout; the timeout is not hard", testWait())
 	}
 	require.ErrorIs(t, err, ErrStageTimeout, "a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)
 	require.True(t, res.TimedOut, "a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)

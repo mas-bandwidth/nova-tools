@@ -166,12 +166,12 @@ func TestChildNonGoCardIsAdmittedUnderTheDefaultRules(t *testing.T) {
 	goCard := card + "STEP 3. go test ./...\nSTEP 4. go clean -cache\n"
 	got = LintCardChild([]byte(goCard))
 	assert.Empty(t, got, "the default set scans Go commands it has no rule for: %v", got)
+	scanned := map[string]bool{}
 	for _, f := range LintCardChildWith([]byte(goCard), ourRules(t)) {
-		if f.Check == "step-go-test-timeout" || f.Check == "step-go-clean" {
-			return
-		}
+		scanned[f.Check] = true
 	}
-	t.Errorf("this repository's rules do not scan a go test without its timeout or a go clean")
+	assert.True(t, scanned["step-go-test-timeout"], "this repository's rules do not scan a go test without its timeout")
+	assert.True(t, scanned["step-go-clean"], "this repository's rules do not scan a go clean")
 }
 
 // A card missing one rule of a file's own set is refused naming exactly that rule.

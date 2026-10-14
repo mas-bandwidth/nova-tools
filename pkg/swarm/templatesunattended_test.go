@@ -37,13 +37,7 @@ func TestEveryPulseTemplateSaysUnattended(t *testing.T) {
 			continue
 		}
 		checked++
-		switch n := strings.Count(body, unattendedSentence); n {
-		case 1:
-		case 0:
-			t.Errorf("pulse template %q does not contain the sentence %q", name, unattendedSentence)
-		default:
-			t.Errorf("pulse template %q says the unattended sentence %d times; the card preamble states it once", name, n)
-		}
+		assert.Equal(t, 1, strings.Count(body, unattendedSentence), "pulse template %q must state the sentence %q exactly once", name, unattendedSentence)
 	}
 	require.NotZero(t, checked, "no pulse template was checked: IsPulseTemplate accepted none of the %d names Template answers to; an empty set is not a pass", len(TemplateNames()))
 }

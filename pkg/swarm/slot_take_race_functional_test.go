@@ -69,9 +69,11 @@ func TestConcurrentTakesKeepEveryTake(t *testing.T) {
 	wg.Wait()
 	close(problems)
 
+	var failures []string
 	for p := range problems {
-		t.Errorf("a concurrent take lost its lease directory mid-take: %s", p)
+		failures = append(failures, p)
 	}
+	assert.Empty(t, failures, "a concurrent take lost its lease directory mid-take: %v", failures)
 	leases, err := ListSlotLeases(store, now)
 	require.NoError(t, err)
 	assert.Empty(t, leases, "every take was released, so no lease may remain: %d left", len(leases))
