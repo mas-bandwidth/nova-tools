@@ -1,6 +1,0 @@
---- FAIL: TestCommittedMapMatchesTree (0.01s)
-    agents_map_guard_test.go:26: uncatalogued directory internal/testkit; add a row to internal/docs/catalog.go and run: make map
-    agents_map_guard_test.go:26: internal/AGENTS.md is stale; run: make map
-FAIL
-FAIL	github.com/mas-bandwidth/nova-tools/internal/docs	0.012s
-FAIL
