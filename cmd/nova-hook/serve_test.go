@@ -359,3 +359,74 @@ func TestALostAnswerIsNeverToldTwice(t *testing.T) {
 	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"))
 	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob"))
 }
+
+// TestADailyWakeMissIsOneJudgmentAndTheFriendStaysHooked pins the server's
+// half of a miss (tla/WakeDrill.tla, MissEmitsOne and NoSecondSameDay): one
+// judgment to the coordinator, on the heartbeat's judgment path, and not a
+// second one the same day. The friend stays hooked and still receives the
+// minute challenge.
+func TestADailyWakeMissIsOneJudgmentAndTheFriendStaysHooked(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Friend)
+	st := r.h.State(t, "bob")
+	require.False(t, st.Armed.IsZero())
+	require.NoError(t, r.h.Client.HSet(ctx, hook.RecordKey("bob"), "armed", st.Armed.Add(-48*time.Hour).UnixMilli()).Err())
+	require.NoError(t, r.h.Client.HDel(ctx, hook.RecordKey("bob"), "answered_at").Err())
+
+	res := r.cli().Run("serve", "--as", "ada", "--once")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Equal(t, 1, r.count(t, "bob", "HOOK CHALLENGE"), "the minute challenge is unchanged")
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND WAKE bob: missed the daily drill"))
+	var judgment msg
+	for _, m := range r.stream(t, "ada") {
+		if strings.HasPrefix(m.subject, "FRIEND WAKE bob") {
+			judgment = m
+		}
+	}
+	assert.Equal(t, bus.KindJudgment, judgment.kind)
+	state, err := r.h.Client.HGet(ctx, hook.RecordKey("bob"), "state").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "hooked", state)
+	assert.Zero(t, r.h.State(t, "bob").Misses, "a drill miss is not a heartbeat miss")
+
+	r.h.Pass(hook.BeatEvery)
+	res = r.cli().Run("serve", "--as", "ada", "--once")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND WAKE bob: missed the daily drill"), "the same day emits one")
+	state, err = r.h.Client.HGet(ctx, hook.RecordKey("bob"), "state").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "hooked", state, "answering the minute challenges is not required for the drill to leave the friend hooked")
+}
+
+// TestADailyWakePassEmitsNoJudgment pins the server's half of a pass
+// (tla/WakeDrill.tla, PassEmitsNone): a friend who has answered is not judged
+// and is not unhooked, that day or the next, and the minute challenge still arrives.
+func TestADailyWakePassEmitsNoJudgment(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Friend)
+
+	res := r.cli().Run("serve", "--as", "ada", "--once")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Equal(t, 1, r.count(t, "bob", "HOOK CHALLENGE"))
+	assert.Zero(t, r.count(t, "ada", "FRIEND WAKE"))
+	state, err := r.h.Client.HGet(ctx, hook.RecordKey("bob"), "state").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "hooked", state)
+
+	r.h.Pass(25 * time.Hour)
+	r.h.Hook(t, "ada", hook.Coordinator) // the leases lapsed with the day; joining renews them and keeps the epoch
+	r.h.Hook(t, "bob", hook.Friend)      // and stamps bob's answer at the new store time
+	res = r.cli().Run("serve", "--as", "ada", "--once")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Equal(t, 2, r.count(t, "bob", "HOOK CHALLENGE"), "the next day still challenges")
+	assert.Zero(t, r.count(t, "ada", "FRIEND WAKE"), "an answer the next day is a pass")
+	state, err = r.h.Client.HGet(ctx, hook.RecordKey("bob"), "state").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "hooked", state)
+}

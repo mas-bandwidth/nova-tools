@@ -104,6 +104,10 @@ const (
 	// MissLimit is how many challenges in a row a name may leave unanswered:
 	// at the MissLimit-th, serve unhooks it.
 	MissLimit = 2
+	// WakeEvery is the daily drill's window (tla/WakeDrill.tla): a hooked friend
+	// who has not answered within this, and whose epoch is at least this old,
+	// is a miss. It is not a second heartbeat.
+	WakeEvery = 24 * time.Hour
 )
 
 // The keys (docs/SPEC-HOOK.md, the key layout), all in the bus Redis.
@@ -130,6 +134,11 @@ func ProofKey(name string, p Push) string { return prefix + "proof:" + name + ":
 
 // ChallengeKey is name's outstanding challenge: a hash of epoch, sum, pushes, with a TTL.
 func ChallengeKey(name string) string { return prefix + "chal:" + name }
+
+// DrillKey is name's daily wake drill: a hash of day and judged. It is not a
+// challenge, and unhook does not clear it, so a second miss the same day is
+// still the same day after a rehook (tla/WakeDrill.tla, NoSecondSameDay).
+func DrillKey(name string) string { return prefix + "drill:" + name }
 
 // The record's states and a push's (docs/SPEC-HOOK.md, the states).
 const (

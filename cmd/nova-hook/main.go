@@ -271,12 +271,16 @@ sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE 
 				Name:    "serve",
 				Usage:   "serve --as <me> [--every <d>] [--judge-within <d>] [--once] [--redis <addr>]",
 				Example: "", // a server needs a hooked name and a live bus store: no example line can carry it
-				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks after misses, and expires overdue asks",
+				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks after misses, drills each hooked friend once a day, and expires overdue asks",
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
 in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
 comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
 interval: the push it already has (its hook's HOOK PUSH line, or its friend daemon's adapter). A challenge left
 unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges").
+Once a day, on that same pass, each hooked friend is drilled (docs/SPEC-HOOK.md, the daily wake drill; tla/WakeDrill.tla):
+an answer within the last day, or an epoch younger than a day, emits nothing; a miss emits one judgment to the
+coordinator (FRIEND WAKE <name>: missed the daily drill) and a second miss the same day emits none. The drill
+does not unhook and does not change the minute challenge.
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE
 once past --judge-within; every other live name gets one message with the changes and COORDINATOR IS <name>,

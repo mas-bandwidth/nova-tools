@@ -46,6 +46,7 @@ All keys live in the bus Redis (`--redis`, else `NOVA_BUS_REDIS`, else the fleet
 | `hook:live:<name>:<push>` | string, TTL `LeaseTTL` | the lease: `{"epoch":<n>,"at":<ms>,"by":"<holder>"}` |
 | `hook:proof:<name>:<push>` | string, TTL `ProofTTL` | the proof, the same shape |
 | `hook:chal:<name>` | hash, TTL `AnswerBound` | `epoch`, `sum` (SHA-256 of the nonce, never the nonce), `pushes`, `until` |
+| `hook:drill:<name>` | hash | the daily drill: `day` (UTC date) and `judged` (`0` or `1`); unhook does not clear it |
 | `hook:names` | set | every name that ever hooked in |
 | `hook:serve` | hash | the heartbeat server's row (`at`, `every`, `by`, `told:*`, `coord:*`, `gen:*`) |
 | `hook:judgments` | hash | open presence judgments awaiting `nova-bus send --re <id>` |
@@ -62,6 +63,7 @@ the record's state, role, and epoch in the same step.
 | `RenewEvery` | 30 s | a holder renews three times inside one lease |
 | `BeatEvery` | 1 min | `nova-hook serve` challenges every hooked session-backed name |
 | `MissLimit` | 2 | consecutive unanswered heartbeat challenges before the name is unhooked |
+| `WakeEvery` | 24 h | a hooked friend's answer is fresh for the daily drill this long; a younger epoch is not due |
 | `ChallengeEvery` | 30 min | a standalone `nova-hook hook` loop's own challenge cadence |
 | `AnswerBound` | 5 min | a standalone challenge's answer window |
 | `ProofTTL` | 40 min | a standalone proof's TTL |
@@ -142,6 +144,28 @@ Every line runs as printed:
   loop emits `HOOK STATE state=not-connected` when `hook:serve` has not moved for two intervals on the
   client's clock, and `state=connected` when it resumes. `nova-hook status --as <name>` fails with
   `NO CHALLENGE FOR <age>` (exit 1) when no challenge arrived for two intervals.
+
+## The daily wake drill
+
+Once a day, on a pass the heartbeat server already took, each hooked friend is drilled
+(`tla/WakeDrill.tla`, `hook/wake.go`). The drill is not a challenge and not a second
+heartbeat: it does not write `hook:chal`, it does not change `misses`, and it does not unhook.
+The day is the UTC date of the `now` the server passes in, read from the store's `TIME`.
+A friend is drilled or not for that day.
+
+- **A pass emits nothing.** The friend has answered a heartbeat challenge within `WakeEvery`,
+  and that answer is not older than this epoch's `armed`, or the epoch is younger than
+  `WakeEvery` (not due yet). The drill records the day and `judged` `0`.
+- **A miss emits one judgment.** Otherwise the pass raises one judgment to the coordinator,
+  on the heartbeat's judgment path (a bus message of kind `judgment`, then `hook:judgments`):
+  subject `FRIEND WAKE <name>: missed the daily drill`. The day and `judged` `1` are written
+  in the same atomic step as that send, under the once-key `hook:wake:<name>:<day>`. A send
+  that fails marks nothing, and the next taken pass tries again.
+- **A second miss the same day emits nothing.** A later pass that finds the day already
+  recorded does not raise another judgment, including after an unhook and a rehook. The next
+  UTC day is a new drill.
+
+A friend who is answering the minute challenges stays hooked. The drill never unhooks anyone.
 
 ## The verbs
 

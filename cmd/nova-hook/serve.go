@@ -108,6 +108,7 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Dur
 		}
 		serveLine(c, "challenge", "", "name", bt.Name, "misses", bt.Misses)
 	}
+	w.wake(c, s, b, names, p.Coord, within)
 	w.tell(c, s, b, p, within)
 	w.judgments(c, s, b)
 	ctx, cancel = call()
@@ -119,6 +120,67 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Dur
 	if err != nil {
 		fault(c, "asks", err)
 	}
+}
+
+// wake is the daily drill (tla/WakeDrill.tla), run from the pass already taken
+// so two servers drill once. It is not a second heartbeat: it sends no
+// challenge, it does not change a miss count, and it does not unhook. now is
+// the store's clock, the clock the answers are stamped with. A miss raises one
+// judgment to the coordinator on the heartbeat's judgment path; a pass raises
+// none; a day already drilled raises none.
+func (w world) wake(c *tool.Call, s *session, b *bus.Bus, names []string, coord string, within time.Duration) {
+	ctx, cancel := call()
+	now, err := s.hooks.Clock(ctx)
+	cancel()
+	if err != nil {
+		fault(c, "wake clock", err)
+		return
+	}
+	ctx, cancel = call()
+	got, err := s.hooks.Wake(ctx, names, now)
+	cancel()
+	if err != nil {
+		fault(c, "wake", err)
+		return
+	}
+	for _, row := range got {
+		if row.Did != hook.WakeMissed {
+			continue
+		}
+		if coord == "" {
+			continue // unmarked: the next taken pass tries again, once there is a coordinator
+		}
+		w.wakeJudge(c, s, b, row, coord, within)
+	}
+}
+
+// wakeJudge raises one drill miss on the heartbeat's judgment path (serve.go
+// judge): a bus message of kind judgment under the day's once-key, the drill
+// mark in that same write, then open in hook:judgments until a recipient
+// answers it (tla/WakeDrill.tla, MissEmitsOne and NoSecondSameDay).
+func (w world) wakeJudge(c *tool.Call, s *session, b *bus.Bus, row hook.Wake, coord string, within time.Duration) {
+	once, marks, ok := row.Miss()
+	if !ok {
+		return
+	}
+	bm := make([]bus.Mark, len(marks))
+	for i, m := range marks {
+		bm[i] = bus.Mark{Key: hook.DrillKey(row.Name), Field: m.Field, Value: m.Value}
+	}
+	subject := "FRIEND WAKE " + row.Name + ": missed the daily drill"
+	body := subject + "\nAnswer with nova-bus send --re <this message's id> and one of: wait | tell the owner. The friend stays hooked.\n"
+	m, sent := w.sendOnce(c, s, b, bus.Message{From: s.as, To: []string{coord}, Kind: bus.KindJudgment, Subject: subject, Body: body, Once: once, Marks: bm})
+	if !sent || m.ID == "" {
+		return // not sent, or sent by an earlier try
+	}
+	ctx, cancel := call()
+	err := s.hooks.OpenJudgment(ctx, hook.Judgment{ID: m.ID, To: []string{coord}, Subject: subject}, within)
+	cancel()
+	if err != nil {
+		fault(c, "wake judgment", err)
+		return
+	}
+	serveLine(c, "judgment", subject, "id", m.ID, "to", coord)
 }
 
 // fault is one store or bus fault, said and passed over.

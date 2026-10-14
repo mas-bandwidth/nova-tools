@@ -744,6 +744,18 @@ func (sv Served) Down(st Status) string {
 	return ""
 }
 
+// Clock is the store's TIME. nova-hook serve passes it into Wake, so the drill
+// and the answer stamps share one clock (tla/WakeDrill.tla).
+func (s Store) Clock(ctx context.Context) (time.Time, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	t, err := s.C.Time(ctx).Result()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t.UTC(), nil
+}
+
 // Serve reads the heartbeat server's stamp and the store's TIME, in one round trip.
 func (s Store) Serve(ctx context.Context) (Served, error) {
 	ctx, cancel := s.call(ctx)

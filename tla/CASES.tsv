@@ -236,3 +236,8 @@ MCCodexHookRecovery.cfg	MCCodexHookRecovery.tla	pass	-	ignore-terminal	codexhook
 MCCodexHookRecoveryBrokenCursor.cfg	MCCodexHookRecovery.tla	invariant	NoUnansweredGap	ignore-terminal	codexhookrecovery	required	-
 MCCodexHookRecoveryBrokenCutoff.cfg	MCCodexHookRecovery.tla	invariant	NoUnansweredGap	ignore-terminal	codexhookrecovery	required	-
 MCCodexHookRecoveryBrokenRetry.cfg	MCCodexHookRecovery.tla	invariant	OneAttemptPerProcess	ignore-terminal	codexhookrecovery	required	-
+MCWakeDrill.cfg	MCWakeDrill.tla	pass	-	ignore-terminal	wakedrill	required	-
+MCWakeDrillBrokenAgain.cfg	MCWakeDrill.tla	action	NoSecondSameDay	ignore-terminal	wakedrill	required	-
+MCWakeDrillBrokenPassjudge.cfg	MCWakeDrill.tla	action	PassEmitsNone	ignore-terminal	wakedrill	required	-
+MCWakeDrillBrokenNojudge.cfg	MCWakeDrill.tla	action	MissEmitsOne	ignore-terminal	wakedrill	required	-
+MCWakeDrillBrokenUnhook.cfg	MCWakeDrill.tla	action	AnsweringStaysHooked	ignore-terminal	wakedrill	required	-
