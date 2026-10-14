@@ -199,6 +199,9 @@ func (f *Fake) add(streams []string, fields map[string]string, marks []Mark) {
 		if f.hashes[m.Key] == nil {
 			f.hashes[m.Key] = map[string]string{}
 		}
+		if _, there := f.hashes[m.Key][m.Field]; m.Once && there {
+			continue // HSETNX: the first write stands
+		}
 		f.hashes[m.Key][m.Field] = m.Value
 	}
 }

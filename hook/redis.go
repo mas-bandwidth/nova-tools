@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ if st and ARGV[4] ~= '` + armFresh + `' then
 end
 local e = redis.call('HINCRBY', KEYS[1], 'epoch', 1)
 redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3])
-redis.call('HDEL', KEYS[1], 'unhooked')
+redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at')
 for i = 3, #KEYS do redis.call('DEL', KEYS[i]) end
 redis.call('SADD', KEYS[2], ARGV[1])
 return {e, 0}
@@ -122,14 +123,18 @@ return 1
 
 // answerLua answers name's challenge (tla/Hook.tla, Answer): with the nonce's
 // sum, under the record's epoch, it proves every push the challenge named whose
-// lease is live, and clears the challenge. It answers {proven} or {code}: -1 no
-// challenge stands, -2 another nonce, -3 the record moved since.
+// lease is live, clears the challenge and the heartbeat's count of misses
+// (tla/HookBeat.tla, Answer). It answers {proven} or {code}: -1 no challenge
+// stands, -2 another nonce, -3 the record moved since, -4 a heartbeat
+// challenge past its interval (its until).
 // KEYS: record, challenge, then per push of Pushes its lease and proof.
 // ARGV: sum, ttl ms, by (JSON), then the names of Pushes.
 var answerLua = redis.NewScript(nowMS + `
 local c = redis.call('HMGET', KEYS[2], 'epoch', 'sum', 'pushes')
 if not c[1] then return {-1} end
 if c[2] ~= ARGV[1] then return {-2} end
+local u = redis.call('HGET', KEYS[2], 'until')
+if u and tonumber(ms) > tonumber(u) then return {-4} end
 if redis.call('HGET', KEYS[1], 'state') ~= 'hooked' or redis.call('HGET', KEYS[1], 'epoch') ~= c[1] then return {-3} end
 local n = 0
 for p in string.gmatch(c[3], '[^,]+') do
@@ -141,6 +146,7 @@ for p in string.gmatch(c[3], '[^,]+') do
   end
 end
 redis.call('DEL', KEYS[2])
+redis.call('HSET', KEYS[1], 'misses', 0, 'answered_at', ms)
 return {n}
 `)
 
@@ -301,6 +307,7 @@ func (s Store) Challenge(ctx context.Context, name string, role Role, epoch int6
 var (
 	ErrNoChallenge = errors.New("no challenge stands for this name: its hook has not asked one, or it lapsed past its bound; read the hook's stream for the next HOOK CHALLENGE")
 	ErrWrongNonce  = errors.New("the nonce is not the one the challenge asked; copy it from the newest HOOK CHALLENGE line of the hook's stream")
+	ErrExpired     = errors.New("the heartbeat challenge is past its interval: it counts as missed; answer the next one, which the heartbeat server sends within the interval")
 )
 
 // Answer answers name's challenge with nonce: every push it named whose lease
@@ -328,6 +335,8 @@ func (s Store) Answer(ctx context.Context, name, nonce, by string) (int, error) 
 		return 0, ErrWrongNonce
 	case -3:
 		return 0, ErrNotHooked
+	case -4:
+		return 0, ErrExpired
 	}
 	return int(got[0]), nil
 }
@@ -358,6 +367,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 	}
 	all := make([]reads, len(names))
 	var clock *redis.TimeCmd
+	var served *redis.MapStringStringCmd
 	ctx, cancel := s.call(ctx)
 	defer cancel()
 	_, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
@@ -371,7 +381,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 				r.proofLeft = append(r.proofLeft, p.PTTL(ctx, ProofKey(n, push)))
 			}
 		}
-		clock = p.Time(ctx)
+		clock, served = p.Time(ctx), p.HGetAll(ctx, ServeKey)
 		return nil
 	})
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -393,6 +403,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 			prs = append(prs, PushRead{Live: r.live[j].Val(), Proof: r.proof[j].Val(), LiveLeft: max(r.liveLeft[j].Val(), 0), ProofLeft: max(r.proofLeft[j].Val(), 0)})
 		}
 		out[i] = Judge(n, rec, prs)
+		out[i].Down = servedOf(served.Val(), now.UTC()).Down(out[i])
 	}
 	return out, now.UTC(), nil
 }
@@ -424,4 +435,451 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 		return r
 	}
 	return nil
+}
+
+// beatLua is one heartbeat pass over every name, in one atomic step
+// (tla/HookBeat.tla, Pass). The pass is taken once an interval: a pass less
+// than nine tenths of an interval after the last one (another server's) does
+// nothing and answers {0} (the once-key is the server row's at). Otherwise,
+// for each name: a record that is not hooked, or hooked as a role with no bus
+// push, is left as it is (code 0); a challenge still standing from the last
+// pass is a miss; at the limit the name is unhooked as unhookLua does, with
+// the reason, and the event logged once (code 2); else a fresh challenge is
+// set, due within the interval, naming the pushes of the role a session
+// receives (code 1). The server's row is stamped. Last, the pass reads the
+// unhooked set, the coordinator (the first hooked name of that role) and the
+// live names (hooked, of a challenged role), and what each audience was last
+// told: the answer is {1, {code, misses, epoch} per name, the set, the
+// coordinator, the live names, then per audience in Audiences the set and the
+// coordinator it was told}. Nothing is marked told here: the server marks an
+// audience told only after its message went out (Store.Told), so a send that
+// fails is told again by the next pass.
+// KEYS: events, serve, then per name its record and allKeys (8 keys; the challenge last).
+// ARGV: every ms, limit, ttl ms, by, events cap, the count of roles, a role and
+// the pushes its challenge names (comma) per role, then per name its name and
+// its nonce's sum.
+var beatLua = redis.NewScript(nowMS + `
+local now = tonumber(ms)
+local every, limit, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5]
+local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
+if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
+redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'by', by)
+local nroles = tonumber(ARGV[6])
+local bus = {}
+for i = 1, nroles do bus[ARGV[5 + 2 * i]] = ARGV[6 + 2 * i] end
+local out, gone, live, coord = {}, {}, {}, ''
+local k, a = 3, 7 + 2 * nroles
+while k <= #KEYS do
+  local rec, chal, name, sum = KEYS[k], KEYS[k + 7], ARGV[a], ARGV[a + 1]
+  local did, misses, e = 0, 0, 0
+  local role = redis.call('HGET', rec, 'role')
+  if redis.call('HGET', rec, 'state') == 'hooked' and bus[role] then
+    local last = tonumber(redis.call('HGET', rec, 'beat_at') or '0')
+    misses = tonumber(redis.call('HGET', rec, 'misses') or '0')
+    if last > 0 and redis.call('EXISTS', chal) == 1 then misses = misses + 1 end
+    if misses >= limit then
+      e = redis.call('HINCRBY', rec, 'epoch', 1)
+      local why = 'missed ' .. misses .. ' challenges'
+      redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
+      for i = k + 1, k + 7 do redis.call('DEL', KEYS[i]) end
+      redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
+      did = 2
+    else
+      e = tonumber(redis.call('HGET', rec, 'epoch'))
+      redis.call('HSET', rec, 'misses', misses, 'beat_at', ms)
+      redis.call('DEL', chal)
+      redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', now + every))
+      redis.call('PEXPIRE', chal, ttl)
+      did = 1
+    end
+  end
+  table.insert(out, {did, misses, e})
+  local st = redis.call('HGET', rec, 'state')
+  if st == 'unhooked' then table.insert(gone, name) end
+  if st == 'hooked' and bus[role] then
+    table.insert(live, name)
+    if role == 'coordinator' and coord == '' then coord = name end
+  end
+  k, a = k + 8, a + 2
+end
+local set = table.concat(gone, ',')
+local f = redis.call('HMGET', KEYS[2], 'told:coordinator', 'coord:coordinator', 'gen:coordinator', 'told:rest', 'coord:rest', 'gen:rest')
+return {1, out, set, coord, table.concat(live, ','), f[1] or '', f[2] or '', f[3] or '0', f[4] or '', f[5] or '', f[6] or '0'}
+`)
+
+// What one heartbeat pass did to one name.
+const (
+	BeatLeft       = 0 // not hooked, no bus push, or challenged already this interval
+	BeatChallenged = 1 // a fresh challenge is set: deliver its nonce
+	BeatUnhooked   = 2 // missed the limit in a row: unhooked
+)
+
+// Beat is one name's outcome of a heartbeat pass.
+type Beat struct {
+	Name   string
+	Did    int    // BeatLeft, BeatChallenged or BeatUnhooked
+	Nonce  string // the challenge's nonce, when challenged: the store keeps only its sum
+	Misses int
+	Epoch  int64
+}
+
+// Reason is why an unhooked beat unhooked its name, as the record and the event say it.
+func (b Beat) Reason() string { return fmt.Sprintf("missed %d challenges", b.Misses) }
+
+// The audiences a pass tells, each marked told on its own (Store.Told): the
+// coordinator, who gets the judgment, and the rest of the live names.
+const (
+	ToCoordinator = "coordinator"
+	ToRest        = "rest"
+)
+
+// Audiences is every audience, in the order the pass reply carries them.
+var Audiences = []string{ToCoordinator, ToRest}
+
+// Passed is what one heartbeat pass did and found.
+type Passed struct {
+	Taken    bool     // false: another pass (another server's) was taken inside nine tenths of the interval; nothing was done
+	Beats    []Beat   // one per name, in the order asked
+	Unhooked []string // every name unhooked now, sorted
+	Coord    string   // the coordinator now: the first hooked name of that role, "" for none
+	Live     []string // every hooked name of a challenged role: who hears a broadcast
+	Was      map[string]Told
+}
+
+// Told is what an audience was last told: the unhooked set and the
+// coordinator, and the generation of that telling.
+type Told struct {
+	Unhooked []string
+	Coord    string
+	Gen      int64
+}
+
+// ToldMark is one field of the server row (ServeKey) an audience's message
+// writes in its own atomic step.
+type ToldMark struct{ Field, Value string }
+
+// Telling is what an audience's message for p carries so that the message and
+// its told mark are one write (tla/HookBeat.tla, NeverToldTwice and
+// EveryTransitionToldAtLeastOnce): the once-key of this telling, the
+// audience's generation, which a later send under it finds and writes
+// nothing; and the marks: what it was told, and the next generation.
+func (p Passed) Telling(audience string) (once string, marks []ToldMark) {
+	w := p.Was[audience]
+	return fmt.Sprintf("%stold:%s:%d", prefix, audience, w.Gen), []ToldMark{
+		{"told:" + audience, strings.Join(p.Unhooked, ",")},
+		{"coord:" + audience, p.Coord},
+		{"gen:" + audience, strconv.FormatInt(w.Gen+1, 10)},
+	}
+}
+
+// Diff is what an audience has not been told: the names down and back since,
+// and the coordinator it was told.
+func (p Passed) Diff(audience string) (down, back []string, was string) {
+	t := p.Was[audience]
+	for _, n := range p.Unhooked {
+		if !slices.Contains(t.Unhooked, n) {
+			down = append(down, n)
+		}
+	}
+	for _, n := range t.Unhooked {
+		if !slices.Contains(p.Unhooked, n) {
+			back = append(back, n)
+		}
+	}
+	return down, back, t.Coord
+}
+
+// Changed is whether an audience has anything to be told.
+func (p Passed) Changed(audience string) bool {
+	down, back, was := p.Diff(audience)
+	return len(down)+len(back) > 0 || was != p.Coord
+}
+
+// toldLua marks an audience told with no message, for an audience with no
+// one to tell: only while its generation is still the one the pass read.
+// KEYS: serve. ARGV: audience, the generation read, then field, value pairs.
+var toldLua = redis.NewScript(`
+if (redis.call('HGET', KEYS[1], 'gen:' .. ARGV[1]) or '0') ~= ARGV[2] then return 0 end
+for i = 3, #ARGV, 2 do redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1]) end
+return 1
+`)
+
+// Told marks an audience told what p found when there is no one to send to.
+func (s Store) Told(ctx context.Context, p Passed, audience string) error {
+	_, marks := p.Telling(audience)
+	args := []any{audience, strconv.FormatInt(p.Was[audience].Gen, 10)}
+	for _, m := range marks {
+		args = append(args, m.Field, m.Value)
+	}
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	return toldLua.Run(ctx, s.C, []string{ServeKey}, args...).Err()
+}
+
+// Sent says whether a once-key's send went: the key stands.
+func (s Store) Sent(ctx context.Context, once string) (bool, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	n, err := s.C.Exists(ctx, once).Result()
+	return n == 1, err
+}
+
+// Challenged is the pushes a heartbeat challenge names for each role a session
+// answers in: the bus push, and a friend's work push, which reaches the
+// session through the same deliver path as its bus push (the friend daemon's
+// adapter), so the session's answer proves both. The sprint push is the seat
+// hook's own (nova-sprint hook), and a member's or reader's loop has no
+// session: neither is challenged.
+var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus, Work}, Comms: {Bus}}
+
+// Pass is one heartbeat pass over names (sorted), in one round trip and one
+// atomic step (beatLua): taken once an interval however many servers pass; in
+// it each hooked name of a role in Challenged is challenged, a challenge left
+// standing a whole interval is a miss, and at limit misses in a row the name
+// is unhooked, once; and the set of unhooked names is told once per change
+// (tla/HookBeat.tla).
+func (s Store) Pass(ctx context.Context, names []string, every time.Duration, limit int, nonce func() string, by string) (Passed, error) {
+	keys := []string{EventsKey, ServeKey}
+	args := []any{every.Milliseconds(), limit, (2*every + AnswerBound).Milliseconds(), by, EventsMax, len(Challenged)}
+	for _, r := range Roles {
+		if ps, ok := Challenged[r]; ok {
+			var w []string
+			for _, p := range ps {
+				w = append(w, string(p))
+			}
+			args = append(args, string(r), strings.Join(w, ","))
+		}
+	}
+	out := Passed{Beats: make([]Beat, len(names))}
+	for i, n := range names {
+		out.Beats[i] = Beat{Name: n, Nonce: nonce()}
+		keys = append(append(keys, RecordKey(n)), allKeys(n)...)
+		args = append(args, n, Sum(out.Beats[i].Nonce))
+	}
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	got, err := beatLua.Run(ctx, s.C, keys, args...).Slice()
+	if err != nil {
+		return Passed{}, err
+	}
+	if len(got) != 11 {
+		return Passed{}, fmt.Errorf("the beat script answered %v, not a taken word, the names and nine values", got)
+	}
+	if t, _ := got[0].(int64); t != 1 { // ignored: a word that is no number reads as not taken
+		return Passed{}, nil
+	}
+	rows, _ := got[1].([]any) // ignored: checked by the count below
+	if len(rows) != len(names) {
+		return Passed{}, fmt.Errorf("the beat script answered %d names, not %d", len(rows), len(names))
+	}
+	for i, row := range rows {
+		v, ok := row.([]any)
+		if !ok || len(v) != 3 {
+			return Passed{}, fmt.Errorf("the beat script answered %v for %s, not a code, a count and an epoch", row, names[i])
+		}
+		b := &out.Beats[i]
+		did, _ := v[0].(int64)    // ignored: a code that is no number reads as left alone
+		misses, _ := v[1].(int64) // ignored: as above
+		b.Did, b.Misses = int(did), int(misses)
+		b.Epoch, _ = v[2].(int64) // ignored: as above
+		if b.Did != BeatChallenged {
+			b.Nonce = ""
+		}
+	}
+	out.Taken = true
+	str := func(i int) string { v, _ := got[i].(string); return v } // ignored: no string is an empty set
+	list := func(v string) []string {
+		if v == "" {
+			return nil
+		}
+		return strings.Split(v, ",")
+	}
+	out.Unhooked, out.Coord, out.Live = list(str(2)), str(3), list(str(4))
+	out.Was = map[string]Told{}
+	for i, a := range Audiences {
+		gen, _ := strconv.ParseInt(str(7+3*i), 10, 64) // ignored: no generation is the first
+		out.Was[a] = Told{Unhooked: list(str(5 + 3*i)), Coord: str(6 + 3*i), Gen: gen}
+	}
+	return out, nil
+}
+
+// Served is the heartbeat server's stamp as the store holds it: when it last
+// passed and its interval, with the store's now; ok false when no server ever passed.
+type Served struct {
+	At, Now time.Time
+	Every   time.Duration
+	OK      bool
+}
+
+// Why a hooked record reads down although its state says otherwise: up needs
+// evidence, a heartbeat server passing and the name's own answer.
+const (
+	NeverRanReason = "hook server never ran"
+	StaleReason    = "hook server stale"
+	NoAnswerReason = "no answer to a heartbeat challenge within the window"
+)
+
+// Stale is whether the heartbeat server gives no evidence at this read: it
+// never passed, or not for more than two of its intervals by the store's TIME.
+func (sv Served) Stale() bool { return !sv.OK || sv.Now.Sub(sv.At) > 2*sv.Every }
+
+// Down is why st reads down at this read whatever its state says, "" when the
+// evidence stands (tla/HookBeat.tla, the findings of the model run): no server
+// row, or one older than two intervals, puts every name down; and a name of a
+// challenged role is up only when it answered a challenge within the last two
+// intervals, by the store's TIME, however fresh the server row is. A role the heartbeat never challenges (a member's
+// or reader's loop: no session) needs only the server. The one rule every
+// reader uses: Store.Read sets Status.Down from it, and the gate refuses on it.
+func (sv Served) Down(st Status) string {
+	switch {
+	case !sv.OK:
+		return NeverRanReason
+	case sv.Stale():
+		return StaleReason
+	}
+	if _, ok := Challenged[st.Role]; ok && (st.AnswerAt.IsZero() || sv.Now.Sub(st.AnswerAt) > 2*sv.Every) {
+		return NoAnswerReason
+	}
+	return ""
+}
+
+// Serve reads the heartbeat server's stamp and the store's TIME, in one round trip.
+func (s Store) Serve(ctx context.Context) (Served, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	var rec *redis.MapStringStringCmd
+	var clock *redis.TimeCmd
+	if _, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
+		rec, clock = p.HGetAll(ctx, ServeKey), p.Time(ctx)
+		return nil
+	}); err != nil {
+		return Served{}, err
+	}
+	return servedOf(rec.Val(), clock.Val().UTC()), nil
+}
+
+// servedOf is the server row m as read at the store's now.
+func servedOf(m map[string]string, now time.Time) Served {
+	every, err := strconv.ParseInt(m["every"], 10, 64)
+	if err != nil || every <= 0 {
+		return Served{Now: now} // ignored: no stamp, or one with no interval, is no server
+	}
+	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}
+}
+
+// JudgmentsKey holds the heartbeat's open judgments: a hash of message id to
+// the judgment (JSON), each open until one of its recipients answers it (the
+// bus's answers record, nova-bus send --re <id>), re-pushed as OVERDUE at most
+// once past its due (tla/HookBeat.tla, Judge).
+const JudgmentsKey = prefix + "judgments"
+
+// Judgment is one open judgment: the bus message that raised it.
+type Judgment struct {
+	ID      string    `json:"id"`
+	To      []string  `json:"to"`
+	Subject string    `json:"subject"`
+	Due     time.Time `json:"due"`
+	Overdue bool      `json:"overdue"` // re-pushed once already: never again
+}
+
+// openLua stores a judgment with its due at the store's TIME plus ARGV[2] ms,
+// and logs it. KEYS: judgments, events. ARGV: id, within ms, to (comma), subject, events cap.
+var openLua = redis.NewScript(nowMS + `
+local due = string.format('%d', tonumber(ms) + tonumber(ARGV[2]))
+local to = {}
+for n in string.gmatch(ARGV[3], '[^,]+') do table.insert(to, n) end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode({id = ARGV[1], to = to, subject = ARGV[4], due_ms = tonumber(due), overdue = false}))
+redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[5], '*', 'event', 'judgment', 'id', ARGV[1], 'to', ARGV[3], 'subject', ARGV[4], 'at', ms)
+return 1
+`)
+
+// stored is a judgment as the hash holds it.
+type stored struct {
+	ID      string   `json:"id"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	DueMS   int64    `json:"due_ms"`
+	Overdue bool     `json:"overdue"`
+}
+
+// OpenJudgment records j (its ID the message's) as open, due within of the store's now.
+func (s Store) OpenJudgment(ctx context.Context, j Judgment, within time.Duration) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	return openLua.Run(ctx, s.C, []string{JudgmentsKey, EventsKey}, j.ID, within.Milliseconds(), strings.Join(j.To, ","), j.Subject, EventsMax).Err()
+}
+
+// Judgments is every open judgment and the store's now, in one round trip.
+func (s Store) Judgments(ctx context.Context) ([]Judgment, time.Time, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	var all *redis.MapStringStringCmd
+	var clock *redis.TimeCmd
+	if _, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
+		all, clock = p.HGetAll(ctx, JudgmentsKey), p.Time(ctx)
+		return nil
+	}); err != nil {
+		return nil, time.Time{}, err
+	}
+	var out []Judgment
+	for _, raw := range all.Val() {
+		var v stored
+		if json.Unmarshal([]byte(raw), &v) != nil {
+			continue // ignored: a value that is no judgment is nothing to answer
+		}
+		out = append(out, Judgment{ID: v.ID, To: v.To, Subject: v.Subject, Due: time.UnixMilli(v.DueMS).UTC(), Overdue: v.Overdue})
+	}
+	slices.SortFunc(out, func(a, b Judgment) int { return strings.Compare(a.ID, b.ID) })
+	return out, clock.Val().UTC(), nil
+}
+
+// OverdueMark is j's re-push's once-key and the mark that records it
+// re-pushed (a field of JudgmentsKey), written with the re-push in one step,
+// so it is re-pushed at most once.
+func (j Judgment) OverdueMark() (once, field, value string, err error) {
+	raw, err := json.Marshal(stored{ID: j.ID, To: j.To, Subject: j.Subject, DueMS: j.Due.UnixMilli(), Overdue: true})
+	return prefix + "overdue:" + j.ID, j.ID, string(raw), err
+}
+
+// Answered says whether any of j's recipients replied to it: the bus's
+// answers record (bus2:answers:<name>, field the id replied to), in one round trip.
+func (s Store) Answered(ctx context.Context, j Judgment) (bool, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	cmds := make([]*redis.BoolCmd, len(j.To))
+	if _, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, n := range j.To {
+			cmds[i] = p.HExists(ctx, "bus2:answers:"+n, j.ID)
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	for _, c := range cmds {
+		if c.Val() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Close ends an answered judgment, and logs it.
+func (s Store) Close(ctx context.Context, j Judgment) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	_, err := s.C.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HDel(ctx, JudgmentsKey, j.ID)
+		p.XAdd(ctx, &redis.XAddArgs{Stream: EventsKey, MaxLen: EventsMax, Approx: true, Values: map[string]any{"event": "answered", "id": j.ID, "subject": j.Subject}})
+		return nil
+	})
+	return err
+}
+
+// Lost is a client's report of an episode it could not reach the server: from
+// and until by its own clock, logged once on hook:events when it reaches the server again.
+func (s Store) Lost(ctx context.Context, name string, from, until time.Time) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	return s.C.XAdd(ctx, &redis.XAddArgs{Stream: EventsKey, MaxLen: EventsMax, Approx: true, Values: map[string]any{
+		"event": "not-connected", "name": name, "from": from.Format(time.RFC3339), "until": until.Format(time.RFC3339)}}).Err()
 }

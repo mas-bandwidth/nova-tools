@@ -1425,7 +1425,10 @@ file, so the next turn of the session is the message that arrived.
 | `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction; refused while the sender or a recipient is deaf (no proven inbox push) |
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
 | `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0; refused while the reader is deaf |
+| `send ... --kind ask --deadline <d>` | An ask: the store stamps its deadline from its own clock (`deadline=` on the line); an ask wants a deadline and only an ask takes one. A recipient's reply with `--re <ask id>` answers it |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
+| `overdue [--older <d>]` | The alarm the coordinator's loop runs: messages short of delivered past `--older`, at exit 1; first, every ask past its deadline unanswered gets its one timeout, a message of kind `timeout`, `re=<ask id>`, to its sender (`OVERDUE TIMEOUT` lines) |
+| `asks [--as <me>] [--open \| --timedout \| --all] [--liveness [--window <d>]] [--max <n>]` | Your asks, newest first, each open, answered or timedout by the store's clock, with its deadline, age and who answered; `--liveness` is each friend up, deaf, unreached or down from the asks to it |
 | `log [--bodies] [--max <n>]` | The log, oldest first |
 | `names` | The known names (nova-config's friend and machine rows), each with its inbox push: proven, stale, down or none, and its age |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |

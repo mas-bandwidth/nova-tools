@@ -17,6 +17,7 @@ pkg/friend/adapter_tmux.go Tmux.Deliver friend delivery
 cmd/nova-friend/serve.go world.serve coordinator ping
 cmd/nova-friend/hook.go daemonHook.loop hook lease
 cmd/nova-hook/main.go world.loop hook lease
+cmd/nova-hook/serve.go world.serve hook heartbeat
 cmd/nova-friend/wakeping.go world.wakeFriends wake ping
 cmd/nova-friend/wakeping.go world.wakePass wake ping
 cmd/nova-friend/main.go world.waitPong wake ping pong wait
