@@ -1,12 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"maps"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -724,11 +724,8 @@ func (w *witness) largest(n int) string {
 			all = append(all, sized{kb, strings.TrimLeft(path, " \t")})
 		}
 	}
-	sort.Slice(all, func(a, b int) bool {
-		if all[a].kb != all[b].kb {
-			return all[a].kb > all[b].kb
-		}
-		return all[a].path > all[b].path
+	slices.SortFunc(all, func(a, b sized) int {
+		return cmp.Or(cmp.Compare(b.kb, a.kb), cmp.Compare(b.path, a.path))
 	})
 	if len(all) > n {
 		all = all[:n]

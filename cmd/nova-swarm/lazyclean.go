@@ -1,12 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -219,7 +220,7 @@ func (r *nativeRunner) cleanOld(now time.Time) (c lazyCount) {
 			old = append(old, e)
 		}
 	}
-	sort.SliceStable(old, func(i, j int) bool { return old[i].epoch < old[j].epoch })
+	slices.SortStableFunc(old, func(a, b oldEntry) int { return cmp.Compare(a.epoch, b.epoch) })
 	for _, e := range old {
 		if c.removed+c.failed >= lazyRound || r.urgent() {
 			c.left++

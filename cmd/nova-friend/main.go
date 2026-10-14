@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -1334,22 +1335,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// the lane's go and gofmt refuse: this binary by symlink first on the lane's PATH (friend.GoShims)
 	shimDir := filepath.Join(state, friend.ShimDirName)
-	var shimOnce sync.Once
-	var shimErr error
 	shimmed := friend.ShimExec(walledRaw, shimDir, w.getenv("PATH"))
+	shimErr := sync.OnceValue(func() error {
+		bin, err := w.binary()
+		if err == nil {
+			err = friend.GoShims(shimDir, bin)
+		}
+		return err
+	})
 	walled := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if !rules().RefuseGo {
 			return walledRaw(ctx, d, prog, args, stdin)
 		}
-		shimOnce.Do(func() {
-			bin, err := w.binary()
-			if err == nil {
-				err = friend.GoShims(shimDir, bin)
-			}
-			shimErr = err
-		})
-		if shimErr != nil {
-			return "", 0, fmt.Errorf("the go refusal shims cannot be made, so no lane runs: %w", shimErr)
+		if err := shimErr(); err != nil {
+			return "", 0, fmt.Errorf("the go refusal shims cannot be made, so no lane runs: %w", err)
 		}
 		return shimmed(ctx, d, prog, args, stdin)
 	}
@@ -2507,11 +2506,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Note("the inbox: " + s.InboxError)
 	}
 	if len(s.Refused) > 0 {
-		verbs := make([]string, 0, len(s.Refused))
-		for v := range s.Refused {
-			verbs = append(verbs, v)
-		}
-		slices.Sort(verbs)
+		verbs := slices.Sorted(maps.Keys(s.Refused))
 		var parts []string
 		for _, v := range verbs {
 			parts = append(parts, fmt.Sprintf("%s=%d", v, s.Refused[v]))
@@ -2844,12 +2839,7 @@ func dirThere(path string) error {
 
 // hostHarnesses are the harnesses host knows an idle prompt for, sorted.
 func hostHarnesses() []string {
-	names := make([]string, 0, len(friend.HostPrompts))
-	for h := range friend.HostPrompts {
-		names = append(names, h)
-	}
-	slices.Sort(names)
-	return names
+	return slices.Sorted(maps.Keys(friend.HostPrompts))
 }
 
 // host starts the launch command in a tmux session (friend.Host) and saves

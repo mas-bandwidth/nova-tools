@@ -15,7 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
@@ -163,7 +163,7 @@ func check(r io.Reader, tests []string, statusOK bool) error {
 		}
 	}
 	if len(problems) > 0 {
-		sort.Strings(problems)
+		slices.Sort(problems)
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil

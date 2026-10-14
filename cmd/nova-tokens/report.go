@@ -3,13 +3,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"maps"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -311,13 +311,8 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		a.priced = a.priced || row.Priced
 	}
 	sortedAvg := slices.Collect(maps.Values(avgs))
-	sort.Slice(sortedAvg, func(i, j int) bool {
-		pi := avgRate(sortedAvg[i].usd, sortedAvg[i].pricedTokens, sortedAvg[i].priced)
-		pj := avgRate(sortedAvg[j].usd, sortedAvg[j].pricedTokens, sortedAvg[j].priced)
-		if pi != pj {
-			return pi > pj
-		}
-		return sortedAvg[i].name < sortedAvg[j].name
+	slices.SortFunc(sortedAvg, func(a, b *modelAvg) int {
+		return cmp.Or(cmp.Compare(avgRate(b.usd, b.pricedTokens, b.priced), avgRate(a.usd, a.pricedTokens, a.priced)), cmp.Compare(a.name, b.name))
 	})
 	avgList := s.list(true, *max, "TOKENS", "avg", maxRemedy("report"))
 	var allTokens, allPricedTokens, allUsd int64

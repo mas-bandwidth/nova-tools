@@ -30,7 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -544,7 +544,7 @@ func parseErr(fs *stdflag.FlagSet, err error) string {
 	name = strings.TrimLeft(name, "-")
 	var names []string
 	fs.VisitAll(func(f *stdflag.Flag) { names = append(names, f.Name) })
-	sort.Strings(names)
+	slices.Sort(names)
 	near, best := "", 0
 	for _, n := range names {
 		if s := commonPrefix(n, name); s > best {

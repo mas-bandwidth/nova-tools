@@ -48,8 +48,9 @@ var tokensAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
 		// maps and slices hold no writer: they return keys, sorted copies and membership,
-		// which this package renders through oneline at its own print sites.
-		`"maps"`, `"slices"`,
+		// which this package renders through oneline at its own print sites. cmp.Or
+		// picks between two values the caller already holds; it holds no writer.
+		`"maps"`, `"slices"`, `"cmp"`,
 		// syscall is read for one constant, ENOTDIR, the error os.MkdirAll gives a path
 		// that exists and is no directory (session's dry run names it as the write would);
 		// it writes nothing.

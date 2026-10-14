@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -81,7 +81,7 @@ func (e env) distFiles() ([]string, error) {
 			out = append(out, "dist/"+ent.Name())
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

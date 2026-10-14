@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -71,7 +71,7 @@ func toolNames(root, cmdDir string) ([]string, error) {
 		}
 		out = append(out, ent.Name())
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

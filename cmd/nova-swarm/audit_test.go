@@ -338,7 +338,8 @@ var swarmAudit = audit.Config{
 		// slices and maps (the standard library's) only sort, search and collect values in
 		// memory -- the lint's rule names, the cache's hours, PATHEXT's suffixes -- and return
 		// them; neither holds a writer or writes a stream, so neither can write past the escape.
-		`"slices"`, `"maps"`,
+		// cmp.Or picks between two values the caller already holds; it holds no writer.
+		`"slices"`, `"maps"`, `"cmp"`,
 		`"github.com/mas-bandwidth/nova-tools/pkg/decide"`,
 		// testguard (bench.go) is the host guard: one atomic load on the way to an ssh
 		// child, and nothing at all when NOVA_TEST_NO_HOST is unset, which is every

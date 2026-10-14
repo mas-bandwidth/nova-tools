@@ -1,12 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"maps"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,7 +76,7 @@ func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
 		r.add("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
 		return r.print(stderr)
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 
 	models := map[string]*profileModel{}
 	for _, p := range paths {
@@ -117,7 +117,7 @@ func medianOut(outs []int64) string {
 	if len(outs) == 0 {
 		return "-"
 	}
-	sort.Slice(outs, func(i, j int) bool { return outs[i] < outs[j] })
+	slices.SortFunc(outs, cmp.Compare)
 	n := len(outs)
 	if n%2 == 1 {
 		return strconv.FormatInt(outs[n/2], 10)

@@ -33,7 +33,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -384,7 +383,7 @@ func normalizeStagedAllow(allow []string) []string {
 			out = append(out, a)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

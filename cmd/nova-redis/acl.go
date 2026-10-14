@@ -31,7 +31,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -347,7 +347,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		}
 	}
 	// Users the rendering does not name are left as they are, and named.
-	sort.Strings(everyone)
+	slices.Sort(everyone)
 	for _, n := range everyone {
 		if !rendered[n] {
 			note(c.Stdout, fmt.Sprintf("ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is", oneline.Field(n)))
