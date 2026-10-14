@@ -1,0 +1,8 @@
+Timestamp               Ty Process[PID:TID]
+2026-10-13 22:30:01.101  Df opencode.bin[5210:0x1] (Sandbox) Sandbox: opencode.bin(5210) deny(1) mach-lookup com.apple.logd
+2026-10-13 22:30:01.103  Df opencode.bin[5210:0x1] (Sandbox) 5 duplicate reports for Sandbox: opencode.bin(5210) deny(1) mach-lookup com.apple.logd
+2026-10-13 22:30:02.201  Df opencode.bin[5210:0x1] (Sandbox) Sandbox: opencode.bin(5210) deny(1) mach-lookup com.apple.system.notification_center
+2026-10-13 22:30:02.202  Df opencode.bin[5210:0x1] (Sandbox) Sandbox: opencode.bin(5210) deny(1) mach-lookup com.apple.system.notification_center
+2026-10-13 22:30:03.301  Df opencode[5207:0x1] (Sandbox) Sandbox: opencode(5207) deny(1) mach-lookup com.apple.system.notification_center
+2026-10-13 22:30:04.401  Df parsecd[5300:0x1] (Sandbox) Sandbox: parsecd(5300) deny(1) mach-lookup com.apple.apsd
+2026-10-13 22:30:05.501  Df opencode.bin[5210:0x1] (Sandbox) Sandbox: opencode.bin(5210) deny(1) mach-lookup com.apple.system.logger
