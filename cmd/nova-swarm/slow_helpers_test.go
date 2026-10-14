@@ -242,7 +242,7 @@ func nativeOKLine(t *testing.T, out string) string {
 			return line
 		}
 	}
-	t.Fatalf("no NATIVE verdict line in:\n%s", out)
+	require.FailNowf(t, "no NATIVE verdict line", "in:\n%s", out)
 	return ""
 }
 
@@ -508,9 +508,7 @@ func launchHome(t *testing.T) string {
 func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	b.t.Helper()
 	exit, stdout, stderr, err := b.swarmTry(args...)
-	if err != nil {
-		b.t.Fatalf("running nova-swarm %s: %v", strings.Join(args, " "), err)
-	}
+	require.NoError(b.t, err, "running nova-swarm %s", strings.Join(args, " "))
 	return exit, stdout, stderr
 }
 
