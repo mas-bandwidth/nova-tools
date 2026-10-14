@@ -507,3 +507,20 @@ func corpus(c *tool.Call) *tool.Out {
 	}
 	return o
 }
+
+// groupDogfoodUsage puts ledger, record and gate under one dogfood heading in
+// the usage block, each with its one-line effect (docs/SPEC.md §dogfood). The
+// heading is a label, not a command: a line that is only dogfood would be read
+// as a verb the ledger then gates on. The parentheses keep it a heading.
+func groupDogfoodUsage(ledger, record, gate *tool.Verb) {
+	ledger.Usage = "(dogfood)  the receipt group\n" + usageEffect(ledger.Usage, "reads the verb list against the receipts, one row per verb")
+	record.Usage = usageEffect(record.Usage, "appends one receipt")
+	gate.Usage = usageEffect(gate.Usage, "exits 1 with the verbs no non-author has run and the edges nobody has cleared")
+}
+
+// usageEffect appends a one-line effect after the synopsis. Two spaces are the
+// column the reference parser and the help excerpt already cut on
+// (docs/SPEC.md §dogfood).
+func usageEffect(usage, effect string) string {
+	return usage + "  " + effect
+}

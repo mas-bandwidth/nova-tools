@@ -34,16 +34,16 @@ usage:
   nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n> [--max <n>]
   nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
-  nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]
-  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
+  nova-check (dogfood)  the receipt group
+  nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]  reads the verb list against the receipts, one row per verb
+  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]  appends one receipt
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]  exits 1 with the verbs no non-author has run and the edges nobody has cleared
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]
   nova-check version
   nova-check help [<verb>]
 
-  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes
-dogfood gate exits 1 with the verbs no non-author has run and the edges nobody has cleared.
+  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes.
 An edge is what the run found; a receipt records it: --not-ok, or an Edge: or Edges: in the notes.
 The remedy is one nova-check dogfood record --ok per verb named, and per edge --closes <id> or
 the finder running it again.
@@ -214,7 +214,7 @@ effect: inspection: reads the repository through git, writes nothing
 ```
 usage: nova-check dogfood ledger [flags]
 from `nova-check help`:
-  nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]
+  nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--max <n>]  reads the verb list against the receipts, one row per verb
   a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`
 flags:
   --authors <<tool> <verb> = <who wrote it>>  file mapping <tool> <verb> = <who wrote it>, one per line
@@ -235,7 +235,7 @@ effect: inspection: reads the verb list and the receipts (--repo reads git, --to
 ```
 usage: nova-check dogfood record [flags]
 from `nova-check help`:
-  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]
+  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]  appends one receipt
   a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`
 flags:
   --by <string>  --by <name> is who ran it; the ledger's whole question is whether that is somebody other than the author, so a receipt with no name is not a receipt (required)
@@ -262,7 +262,7 @@ effect: local write: appends one receipt file to --receipts (--dry-run writes no
 ```
 usage: nova-check dogfood gate [flags]
 from `nova-check help`:
-  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--shipped <cmd dir>] [--require-all] [--allow-empty] [--max <n>] [--json]  exits 1 with the verbs no non-author has run and the edges nobody has cleared
   a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`
 flags:
   --allow-empty  pass on an empty receipt set; without it, no receipts is a refusal and not a green line
