@@ -19,12 +19,23 @@ import (
 
 const maxCodexEvent = 64 << 10
 
-type codexRoute struct{ socket, thread, directory string }
+type codexRoute struct {
+	socket, thread, directory string
+	since                     time.Time
+}
 
 // codexConfig refuses partial routes before any hook record or lease is written.
 func (w world) codexConfig(c *tool.Call) (*codexRoute, error) {
-	r := &codexRoute{c.Str("codex-socket"), c.Str("codex-thread"), c.Str("codex-events-dir")}
-	if r.socket == "" && r.thread == "" && r.directory == "" {
+	r := &codexRoute{socket: c.Str("codex-socket"), thread: c.Str("codex-thread"), directory: c.Str("codex-events-dir")}
+	rawSince := c.Str("codex-since")
+	if rawSince != "" {
+		var err error
+		r.since, err = time.Parse(time.RFC3339, rawSince)
+		if err != nil || rawSince != r.since.UTC().Format(time.RFC3339) {
+			return nil, errors.New("codex cutover wants --codex-since as a fixed UTC timestamp, for example 2026-10-14T20:00:00Z; retain it in launch configuration across restarts")
+		}
+	}
+	if r.socket == "" && r.thread == "" && r.directory == "" && rawSince == "" {
 		return nil, nil
 	}
 	if r.socket == "" || r.thread == "" || r.directory == "" {
@@ -60,6 +71,7 @@ type savedCodexEvent struct {
 	SavedAt            time.Time     `json:"saved_at"`
 	HookEpoch          int64         `json:"hook_epoch"`
 	HookRole           hook.Role     `json:"hook_role"`
+	RecoverySince      string        `json:"recovery_since,omitempty"`
 	RecoveryCoverage   string        `json:"recovery_coverage,omitempty"`
 	Recovery           []bus.Message `json:"recovery_messages,omitempty"`
 	PossibleDuplicates bool          `json:"possible_duplicates,omitempty"`

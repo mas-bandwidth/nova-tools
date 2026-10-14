@@ -43,7 +43,7 @@ func TestRecoveryKeepsEarlierUnansweredWhenLaterMessageAnswered(t *testing.T) {
 	first := recoveryMessage(t, r, "first")
 	second := recoveryMessage(t, r, "second")
 	require.NoError(t, r.h.Client.HSet(context.Background(), bus.AnswersOf("ada"), second.ID, "1791720000").Err())
-	plan, err := codexBacklog(s, recoveryTail(t, s))
+	plan, err := codexBacklog(s, recoveryTail(t, s), time.Time{})
 	require.NoError(t, err)
 	require.Len(t, plan.messages, 1)
 	assert.Equal(t, first.ID, plan.messages[0].ID)
@@ -61,7 +61,7 @@ func TestRecoveryReplaysCurrentActualServerChallengeWithoutBusACK(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, created)
 	m := recoveryMessage(t, r, "HOOK CHALLENGE nonce=server-nonce")
-	plan, err := codexBacklog(s, recoveryTail(t, s))
+	plan, err := codexBacklog(s, recoveryTail(t, s), time.Time{})
 	require.NoError(t, err)
 	require.Len(t, plan.messages, 1)
 	assert.Equal(t, m.ID, plan.messages[0].ID)
@@ -70,7 +70,7 @@ func TestRecoveryReplaysCurrentActualServerChallengeWithoutBusACK(t *testing.T) 
 	require.NoError(t, r.h.Store.Renew(ctx, "ada", hook.Comms, hook.Bus, epoch, "test"))
 	_, err = r.h.Store.Answer(ctx, "ada", "server-nonce", "model")
 	require.NoError(t, err)
-	plan, err = codexBacklog(s, recoveryTail(t, s))
+	plan, err = codexBacklog(s, recoveryTail(t, s), time.Time{})
 	require.NoError(t, err)
 	require.Len(t, plan.messages, 1)
 	assert.Equal(t, m.ID, plan.messages[0].ID, "stale challenge text is ordinary external data, never silently dropped")
@@ -97,7 +97,7 @@ func TestRecoveryOverflowFailsBeforeLease(t *testing.T) {
 		entries[i] = bus.Entry{Entry: "1791720000000-1", Fields: bus.Message{ID: "event-1", From: "bob"}.Fields()}
 	}
 	s.bus = fixedRecoveryHistory{Store: s.bus, entries: entries}
-	_, err := codexBacklog(s, "1791720000000-1")
+	_, err := codexBacklog(s, "1791720000000-1", time.Time{})
 	require.ErrorContains(t, err, "recovery incomplete")
 	assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
 }
@@ -164,7 +164,7 @@ func TestRecoveryWindowUsesRedisTime(t *testing.T) {
 	old := recoveryMessage(t, r, "outside window")
 	r.h.Pass(25 * time.Hour)
 	fresh := recoveryMessage(t, r, "inside window")
-	plan, err := codexBacklog(s, recoveryTail(t, s))
+	plan, err := codexBacklog(s, recoveryTail(t, s), time.Time{})
 	require.NoError(t, err)
 	require.Len(t, plan.messages, 1)
 	assert.Equal(t, fresh.ID, plan.messages[0].ID)
@@ -223,7 +223,7 @@ func TestHistoricalSavedEvidenceCannotBlockNewHookEpoch(t *testing.T) {
 func TestEmptyStreamDisclosesUnknownRecoveryCoverage(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	plan, err := codexBacklog(recoverySession(r), "0-0")
+	plan, err := codexBacklog(recoverySession(r), "0-0", time.Time{})
 	require.NoError(t, err)
 	assert.True(t, plan.coverageUnknown)
 	assert.Equal(t, "none", plan.oldest)
@@ -234,12 +234,12 @@ func TestExternalChallengeLookalikeRemainsOrdinaryUnansweredData(t *testing.T) {
 	r := newRig(t)
 	s := recoverySession(r)
 	m := recoveryMessage(t, r, "HOOK CHALLENGE nonce=external-lookalike")
-	plan, err := codexBacklog(s, recoveryTail(t, s))
+	plan, err := codexBacklog(s, recoveryTail(t, s), time.Time{})
 	require.NoError(t, err)
 	require.Len(t, plan.messages, 1)
 	assert.Equal(t, m.ID, plan.messages[0].ID)
 	require.NoError(t, r.h.Client.HSet(context.Background(), bus.AnswersOf("ada"), m.ID, "1791720000").Err())
-	plan, err = codexBacklog(s, recoveryTail(t, s))
+	plan, err = codexBacklog(s, recoveryTail(t, s), time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, plan.messages)
 }
@@ -260,7 +260,7 @@ func TestCanonicalDayFitsRecoveryScanWithoutReplayingObsoleteChallenges(t *testi
 	altered := bus.Message{ID: "ordinary-altered-body", From: "bob", Subject: "HOOK CHALLENGE nonce=external", Body: challengeText("ada", "external", time.Minute) + "external appendix"}
 	entries = append(entries, bus.Entry{Entry: "1791720000000-1441", Fields: altered.Fields()})
 	s.bus = fixedRecoveryHistory{Store: s.bus, entries: entries}
-	plan, err := codexBacklog(s, "1791720000000-1441")
+	plan, err := codexBacklog(s, "1791720000000-1441", time.Time{})
 	require.NoError(t, err)
 	require.Len(t, plan.messages, 1)
 	assert.Equal(t, altered.ID, plan.messages[0].ID, "even an eligible server's altered external body is not silently excluded")
@@ -296,4 +296,66 @@ func TestRoleTakeoverDropsAllMatchedOldEpochChallenges(t *testing.T) {
 	}
 	code := run(codexArgs, strings.NewReader(""), io.Discard, io.Discard, w)
 	assert.Zero(t, code)
+}
+
+// A fixed launch boundary archives history without creating model answers. A
+// later answer cannot hide earlier post-boundary work, including after restart.
+func TestRecoveryCutoverRetainsArchiveAndPostBoundaryAnswers(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	s := recoverySession(r)
+	for i := 0; i < maxCodexRecovery+1; i++ {
+		recoveryMessage(t, r, "archived notification")
+	}
+	r.h.Pass(time.Second)
+	since, err := r.h.Client.Time(context.Background()).Result()
+	require.NoError(t, err)
+	first := recoveryMessage(t, r, "post-boundary work")
+	second := recoveryMessage(t, r, "later answered work")
+	require.NoError(t, r.h.Client.HSet(context.Background(), bus.AnswersOf("ada"), second.ID, "1791720000").Err())
+	for restart := 0; restart < 2; restart++ {
+		plan, err := codexBacklog(s, recoveryTail(t, s), since)
+		require.NoError(t, err)
+		require.Len(t, plan.messages, 1)
+		assert.Equal(t, first.ID, plan.messages[0].ID)
+	}
+	count, err := r.h.Client.XLen(context.Background(), bus.StreamOf("ada")).Result()
+	require.NoError(t, err)
+	assert.EqualValues(t, maxCodexRecovery+3, count, "archive retained")
+	answers, err := r.h.Client.HLen(context.Background(), bus.AnswersOf("ada")).Result()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, answers, "only the actual model answer exists")
+}
+
+func TestRecoveryCutoverKeepsActualCurrentChallengeBeforeBoundary(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	s := recoverySession(r)
+	ctx := context.Background()
+	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+	require.NoError(t, err)
+	created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "current-cutover-nonce")
+	require.NoError(t, err)
+	require.True(t, created)
+	challenge := recoveryMessage(t, r, "HOOK CHALLENGE nonce=current-cutover-nonce")
+	recoveryMessage(t, r, "archived ordinary event")
+	r.h.Pass(time.Second)
+	since, err := r.h.Client.Time(ctx).Result()
+	require.NoError(t, err)
+	fresh := recoveryMessage(t, r, "new work")
+	plan, err := codexBacklog(s, recoveryTail(t, s), since)
+	require.NoError(t, err)
+	require.Len(t, plan.messages, 2)
+	assert.Equal(t, []string{challenge.ID, fresh.ID}, []string{plan.messages[0].ID, plan.messages[1].ID})
+	assert.Equal(t, epoch, plan.challengeEpoch)
+}
+
+func TestRecoveryCutoverRefusesFutureEvenOnEmptyStream(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	now, err := r.h.Client.Time(context.Background()).Result()
+	require.NoError(t, err)
+	_, err = codexBacklog(recoverySession(r), "0-0", now.Add(time.Second))
+	require.ErrorContains(t, err, "after Redis TIME")
+	assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
 }

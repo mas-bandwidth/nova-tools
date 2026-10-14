@@ -36,6 +36,8 @@ func TestCodexRouteRefusesBeforeArming(t *testing.T) {
 		args     []string
 		validate error
 	}{
+		{"bad cutover", append(append([]string{}, codexArgs...), "--codex-since", "now"), nil},
+		{"offset cutover", append(append([]string{}, codexArgs...), "--codex-since", "2026-10-11T12:00:00+01:00"), nil},
 		{"partial", []string{"hook", "--as", "ada", "--role", "comms", "--codex-thread", "thread-1"}, nil},
 		{"owner unavailable", codexArgs, errors.New("owner is unavailable")},
 		{"once", append(append([]string{}, codexArgs...), "--once"), nil},
@@ -70,6 +72,7 @@ func TestCodexBootstrapAcceptedDoesNotProve(t *testing.T) {
 		assert.Equal(t, "ada", e.LocalReceiver.Identity)
 		assert.Equal(t, "127.0.0.1:6379", e.LocalReceiver.Redis)
 		assert.NotEmpty(t, e.BootstrapNonce)
+		assert.Equal(t, "2026-10-11T12:00:00Z", e.RecoverySince)
 		assert.Nil(t, e.Message)
 		assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
 		return "accepted-turn", nil
@@ -80,10 +83,12 @@ func TestCodexBootstrapAcceptedDoesNotProve(t *testing.T) {
 		return ctx, cancel
 	}
 	var out bytes.Buffer
-	code := run(codexArgs, strings.NewReader(""), &out, io.Discard, w)
+	code := run(append(append([]string{}, codexArgs...), "--codex-since", "2026-10-11T12:00:00Z"), strings.NewReader(""), &out, io.Discard, w)
 	assert.Zero(t, code, out.String())
 	assert.Equal(t, 1, calls)
 	assert.Contains(t, out.String(), "native=accepted")
+	assert.Contains(t, out.String(), "recovery-cutover")
+	assert.Contains(t, out.String(), "archived history")
 	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
 }
 
@@ -137,7 +142,7 @@ func TestCodexLoopDeliversServerChallengesAndOrdinaryEventsWithoutClientChalleng
 	var out bytes.Buffer
 	c := &tool.Call{Stdout: &out}
 	challengeCalls := 0
-	result := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { challengeCalls++; return nil }, &codexRoute{"/private/socket", "thread-1", "/private/events"})
+	result := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { challengeCalls++; return nil }, &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"})
 	assert.Equal(t, tool.OK, result.Status, out.String())
 	assert.Equal(t, 2, delivered)
 	assert.Zero(t, challengeCalls)
@@ -158,7 +163,7 @@ func TestCodexUnknownStopsAndRevokesRouteProofWithoutUnhook(t *testing.T) {
 		w.codexDeliver = func(context.Context, string, string, string, string) (string, error) { attempts++; return "", outcome }
 		var out bytes.Buffer
 		s := &session{hooks: r.h.Store, as: "ada", addr: "127.0.0.1:6379"}
-		got := w.codexPush(&tool.Call{Stdout: &out}, s, &codexRoute{"/private/socket", "thread-1", "/private/events"}, hook.Comms, epoch, "event-1", "", &bus.Message{ID: "event-1"})
+		got := w.codexPush(&tool.Call{Stdout: &out}, s, &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"}, hook.Comms, epoch, "event-1", "", &bus.Message{ID: "event-1"})
 		require.NotNil(t, got)
 		assert.Equal(t, tool.Failed, got.Status)
 		assert.Equal(t, 1, attempts)
@@ -198,7 +203,7 @@ func TestCodexExistingModelAnswerSuppressesNativeMutation(t *testing.T) {
 			return "", codexdesktop.ErrOutcomeUnknown
 		}
 		var out bytes.Buffer
-		result := w.codexPush(&tool.Call{Stdout: &out}, s, &codexRoute{"/private/socket", "thread-1", "/private/events"}, hook.Comms, 1, "event-1", "", &bus.Message{ID: "event-1"})
+		result := w.codexPush(&tool.Call{Stdout: &out}, s, &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"}, hook.Comms, 1, "event-1", "", &bus.Message{ID: "event-1"})
 		assert.Nil(t, result)
 		if afterUnknown {
 			assert.Equal(t, 1, attempts)

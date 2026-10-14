@@ -187,6 +187,7 @@ and one fixed native notice names that file; message body and subject never ente
 is not proof or acknowledgment: only the model runs nova-hook prove or answers with nova-bus send --re. A local failure
 revokes route proof and stops renewal; unknown native outcomes are reported without declaring the model absent.
 Do not blindly restart after accepted or unknown delivery: inspect the saved event and model answer first.
+An explicit --codex-since UTC timestamp (or NOVA_HOOK_CODEX_SINCE) declares earlier ordinary messages archived history: work still needed must be resent. Persist that fixed timestamp in launch configuration; never reset it on restart. Current server challenge proof is independent of this boundary.
 Codex clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
@@ -199,6 +200,7 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket; requires thread and private event directory")
 					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
 					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
+					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
 					f.Check(func(c *tool.Call) {
@@ -422,7 +424,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	if native != nil {
 		var err error
-		recovery, err = codexBacklog(s, cursor)
+		recovery, err = codexBacklog(s, cursor, native.since)
 		if err != nil {
 			return tool.Refuse(err.Error())
 		}
@@ -456,6 +458,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 			armed.Note(fmt.Sprintf("the %s push is held by: %s", p, hook.HeldBy(s.as, role, p)))
 		}
 	}
+	if native != nil && !native.since.IsZero() {
+		line(c, tool.Done().As("STATE").Fact("state", "recovery-cutover").Fact("since", native.since.Format(time.RFC3339)).Note("earlier ordinary messages are archived history; work still needed must be resent; retain this fixed boundary across restarts"))
+	}
 	if native != nil && recovery.coverageUnknown {
 		line(c, tool.Done().As("STATE").Fact("state", "recovery-coverage-unknown").Fact("oldest", recovery.oldest).Note("24h coverage before oldest retained entry is unverified; coordinator must inspect retention before cutover"))
 	}
@@ -481,6 +486,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 			}
 			if created || len(recovery.messages) > 0 || recovery.coverageUnknown {
 				e := savedCodexEvent{EventID: "recovery-" + w.nonce(), BootstrapNonce: nonceForEvent, HookEpoch: epoch, HookRole: role, Recovery: recovery.messages, PossibleDuplicates: true}
+				if !native.since.IsZero() {
+					e.RecoverySince = native.since.Format(time.RFC3339)
+				}
 				if recovery.coverageUnknown {
 					e.RecoveryCoverage = "24h history before oldest retained entry " + recovery.oldest + " is unverified; stream creation and trimming are indistinguishable"
 				}
