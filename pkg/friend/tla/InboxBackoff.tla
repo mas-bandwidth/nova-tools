@@ -11,7 +11,7 @@
    NoCap = TRUE is the reversed witness of a wait that doubles for ever (WaitBounded fails);
    NoReset = TRUE the witness of an answer that leaves the back-off standing (AnswerEndsBackoff
    fails); WitnessBackedOff is a reversed witness that the back-off is reached. *)
-EXTENDS Naturals
+EXTENDS Integers
 
 CONSTANTS Max,       \* InboxBackoffMax in loops
           Horizon,   \* loops the run spans
