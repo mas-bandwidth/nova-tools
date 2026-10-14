@@ -369,8 +369,13 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD. Without
 	// this the card is neither: no header line sits inside the block, so no typed check
 	// runs, and the card reads clean all the way to `accept`.
-	if len(stranded) > 0 {
-		typed = true
+	// Only a typed key makes it typed: stranded also collects the brief's other header keys
+	// (cardHeaderKeys) for LintHeaderStranded, and a stray `RESULT:` or `DEPENDS-ON:` below
+	// the prose of an untyped card does not make it a typed one.
+	for k := range stranded {
+		if cardTypedKeys[k] {
+			typed = true
+		}
 	}
 	if !typed {
 		return nil

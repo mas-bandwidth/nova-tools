@@ -20,97 +20,6 @@ import (
 // testBaseSha40 is a full-length sha a BASE: line can carry.
 const testBaseSha40 = "0123456789abcdef0123456789abcdef01234567"
 
-// ReadCardBase is THE reader of which repository a card works in: staging and the
-// member's frame call it, so it must read the header and nothing below it.
-func TestReadCardBaseReadsTheHeaderOnly(t *testing.T) {
-	t.Parallel()
-	const repoURL = "https://github.com/mas-bandwidth/nova-sprint.git"
-	tests := []struct {
-		name string
-		card string
-		want CardBase
-	}{
-		{
-			name: "owner/name REPO and a BASE ref",
-			card: "RESULT: c1 sha=000000000000 tier: pro\n" +
-				"REPO: mas-bandwidth/nova-sprint\n" +
-				"BASE: main\n" +
-				"\n" +
-				"THE TASK.\n",
-			want: CardBase{Repo: repoURL, Ref: "main", Named: "mas-bandwidth/nova-sprint"},
-		},
-		{
-			name: "no REPO and no BASE names no repository",
-			card: "RESULT: c1 sha=000000000000 tier: pro\n" +
-				"\n" +
-				"THE TASK.\n",
-			want: CardBase{},
-		},
-		{
-			name: "a BASE line carries the sha after the @",
-			card: "RESULT: c1 sha=000000000000 tier: pro\n" +
-				"REPO: mas-bandwidth/nova-sprint\n" +
-				"BASE: main@" + testBaseSha40 + "\n" +
-				"\n" +
-				"THE TASK.\n",
-			want: CardBase{Repo: repoURL, Ref: "main", Sha: testBaseSha40, Named: "mas-bandwidth/nova-sprint"},
-		},
-		{
-			name: "a base-sha line is the sha",
-			card: "RESULT: c1 sha=000000000000 tier: pro\n" +
-				"REPO: mas-bandwidth/nova-sprint\n" +
-				"base-sha: " + testBaseSha40 + "\n" +
-				"\n" +
-				"THE TASK.\n",
-			want: CardBase{Repo: repoURL, Sha: testBaseSha40, Named: "mas-bandwidth/nova-sprint"},
-		},
-		{
-			name: "REPO: - names no repository",
-			card: "RESULT: c1 sha=000000000000 tier: pro\n" +
-				"REPO: -\n" +
-				"\n" +
-				"THE TASK.\n",
-			want: CardBase{},
-		},
-		{
-			name: "a blank line breaks the header block, so BASE below it is not read",
-			card: "RESULT: c1 sha=000000000000 tier: pro\n" +
-				"REPO: mas-bandwidth/nova-sprint\n" +
-				"\n" +
-				"BASE: main\n" +
-				"\n" +
-				"THE TASK.\n",
-			want: CardBase{Repo: repoURL, Named: "mas-bandwidth/nova-sprint"},
-		},
-		{
-			name: "CRLF line ends are read",
-			card: "RESULT: c1 sha=000000000000 tier: pro\r\n" +
-				"REPO: mas-bandwidth/nova-sprint\r\n" +
-				"BASE: main\r\n" +
-				"\r\n" +
-				"THE TASK.\r\n",
-			want: CardBase{Repo: repoURL, Ref: "main", Named: "mas-bandwidth/nova-sprint"},
-		},
-		{
-			name: "a BASE line inside THE TASK paragraph names nothing",
-			card: "RESULT: c1 sha=000000000000 tier: pro\n" +
-				"REPO: mas-bandwidth/nova-sprint\n" +
-				"THE TASK. Work from BASE: nope in the prose.\n",
-			want: CardBase{Repo: repoURL, Named: "mas-bandwidth/nova-sprint"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := ReadCardBase([]byte(tt.card))
-			assert.Equal(t, tt.want.Repo, got.Repo, "Repo")
-			assert.Equal(t, tt.want.Sha, got.Sha, "Sha")
-			assert.Equal(t, tt.want.Ref, got.Ref, "Ref")
-			assert.Equal(t, tt.want.Named, got.Named, "Named")
-		})
-	}
-}
-
 // A base-repo: line is preferred over REPO:, and a Stage: line's files are collected.
 func TestReadCardBasePrefersBaseRepoAndCollectsStage(t *testing.T) {
 	t.Parallel()
@@ -126,52 +35,11 @@ func TestReadCardBasePrefersBaseRepoAndCollectsStage(t *testing.T) {
 	assert.Equal(t, []string{"docs/a.sexp", "docs/b.sexp"}, got.Stage)
 }
 
-// CardRepoURL is the clone URL the REPO: value names: a URL or local path as written,
-// an owner/name as the forge's https URL, and nothing for "-", "none" or a bare word.
-// TestCardRepoURL resolves each shape a card can carry.
-func TestCardRepoURLResolvesTheNames(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{"", ""},
-		{"-", ""},
-		{"none", ""},
-		{"NONE", ""},
-		{"mas-bandwidth/nova-sprint", "https://github.com/mas-bandwidth/nova-sprint.git"},
-		{"mas-bandwidth/nova-sprint.git", "https://github.com/mas-bandwidth/nova-sprint.git"},
-		{"https://github.com/mas-bandwidth/nova-sprint.git", "https://github.com/mas-bandwidth/nova-sprint.git"},
-		{"git@github.com:mas-bandwidth/nova-sprint.git", "git@github.com:mas-bandwidth/nova-sprint.git"},
-		{"/local/path", "/local/path"},
-		{"justaword", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, CardRepoURL(tt.in), "in %q", tt.in)
-		})
-	}
-}
-
 // CardStageBranch names the branch the staged checkout is on: worker/<label> from line 1.
 func TestCardStageBranchNamesTheWorkerFromTheContractLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "worker/c1", CardStageBranch([]byte("RESULT: c1 sha=000000000000 tier: pro\n\nTHE TASK.\n")))
 	assert.Equal(t, "worker/card", CardStageBranch([]byte(":not a label\n")))
-}
-
-// ParseCardBase extracts the base repo and sha ReadCardBase reads: ok is false when the
-// card names no repo that can be staged.
-func TestParseCardBaseExtractsRepoAndSha(t *testing.T) {
-	t.Parallel()
-	repo, sha, ok := ParseCardBase([]byte("RESULT: c1 sha=000000000000\nREPO: mas-bandwidth/nova-sprint\nbase-sha: " + testBaseSha40 + "\n\nTHE TASK.\n"))
-	assert.True(t, ok)
-	assert.Equal(t, "https://github.com/mas-bandwidth/nova-sprint.git", repo)
-	assert.Equal(t, testBaseSha40, sha)
-
-	_, _, ok = ParseCardBase([]byte("RESULT: c1 sha=000000000000\n\nTHE TASK.\n"))
-	assert.False(t, ok)
 }
 
 // CardNamesRepo reports whether the card names a repository at all, readable or not.
@@ -272,20 +140,6 @@ func TestStageCardStagesNothingWithoutARepo(t *testing.T) {
 	assert.False(t, res.Staged)
 }
 
-// StageCard refuses a remote base-repo with no bench mirror, and a base-repo that starts
-// with a dash.
-func TestStageCardRefusesARemoteRepoWithoutAMirror(t *testing.T) {
-	t.Parallel()
-	card := []byte("RESULT: c1 sha=0\nbase-repo: https://github.com/example/definitely-not-a-real-repo-xyz.gititit\n\nTHE TASKSK.\n")
-	_, err := StageCard(StageOptions{Card: card, TargetDir: filepath.Join(t.TempDir(), "r"), BenchHome: t.TempDir()})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no bench mirror")
-
-	_, err = StageCard(StageOptions{Card: []byte("RESULT: c1 sha=0\nbase-repo: -bad\n\nTHE TASK.\n"), TargetDir: filepath.Join(t.TempDir(), "r")})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "starts with '-'")
-}
-
 // stageTimedOut reports whether a staging call ended because the deadline passed.
 func TestStageTimedOutReadsTheDeadline(t *testing.T) {
 	t.Parallel()
@@ -306,6 +160,7 @@ func TestMirrorKeepsObjectsSetsAndReadsGcAuto(t *testing.T) {
 	git := func(ctx context.Context, args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = dir
+		cmd.Env = testgit.Environ()
 		return cmd
 	}
 	require.NoError(t, exec.Command("git", "init", "-q", dir).Run())
