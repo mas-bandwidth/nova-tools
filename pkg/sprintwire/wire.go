@@ -34,10 +34,19 @@ type Request struct {
 }
 
 // Result is one verb's answer: nova-sprint's exit code, and what it printed.
+// Outcome tells the member what the verb did, apart from its exit code, which
+// does not separate a definite refusal from an unknown outcome: "accepted"
+// when the verb ran and its work is in the table, "refused" when it was
+// refused (usage, or before any write), "unknown" when it is not known
+// whether it happened (a cut, a store that did not confirm, or a clear that
+// closed the step as it finished). Changed says whether the verb wrote:
+// "yes", "no", or "unknown".
 type Result struct {
-	Code   int    `json:"code"`
-	Stdout string `json:"stdout"`
-	Stderr string `json:"stderr"`
+	Code    int    `json:"code"`
+	Stdout  string `json:"stdout"`
+	Stderr  string `json:"stderr"`
+	Outcome string `json:"outcome,omitempty"` // accepted | refused | unknown
+	Changed string `json:"changed,omitempty"` // yes | no | unknown
 }
 
 // Response is the answers, one a verb, in the request's order.
@@ -87,9 +96,11 @@ func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
 	// result at all, is no answer, never exit 0
 	var got struct {
 		Results []*struct {
-			Code   *int    `json:"code"`
-			Stdout *string `json:"stdout"`
-			Stderr *string `json:"stderr"`
+			Code    *int    `json:"code"`
+			Stdout  *string `json:"stdout"`
+			Stderr  *string `json:"stderr"`
+			Outcome string  `json:"outcome"`
+			Changed string  `json:"changed"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil || len(got.Results) != len(verbs) {
@@ -100,7 +111,7 @@ func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
 		if r == nil || r.Code == nil || r.Stdout == nil || r.Stderr == nil {
 			return nil, fmt.Errorf("the sprint server at %s: result %d of %d names no exit code or output: nothing is known of what ran", c.Addr, i+1, len(verbs))
 		}
-		out[i] = Result{Code: *r.Code, Stdout: *r.Stdout, Stderr: *r.Stderr}
+		out[i] = Result{Code: *r.Code, Stdout: *r.Stdout, Stderr: *r.Stderr, Outcome: r.Outcome, Changed: r.Changed}
 	}
 	return out, nil
 }

@@ -154,6 +154,56 @@ func AlwaysInPaths(paths []string, p string) bool {
 	})
 }
 
+// Covers is the one reading of what one PATHS entry covers a repo-relative file, shared by
+// the lander's E12 check (Outside), the admission check (sprint.PathsAdmission), the card
+// lint (swarm's covers) and the TLA+ hold (pathCovers) (docs/SPEC-SPRINT.md section 7, the
+// lander's checks; docs/SPEC-SPRINT.md section 11, the brief checks): a directory entry
+// (trailing /) covers every file under it, a glob (hygiene.MatchGlob) covers its matches at
+// the head, and a literal names one file that may be new. `...` is the tree spelling beside
+// `**`. The entry is cleaned first, so `./pkg/<name>/` and `pkg/<name>` read the same.
+func Covers(entry, file string) bool {
+	e := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(entry), "/"), "./")
+	if e == "" || file == "" {
+		return false
+	}
+	if e == file || strings.HasPrefix(file, e+"/") {
+		return true
+	}
+	if dir, ok := strings.CutSuffix(e, "/..."); ok && strings.HasPrefix(file, dir+"/") {
+		return true
+	}
+	return hygiene.MatchGlob(e, file)
+}
+
+// ExpectedEntry is the PATHS entry a refused file was expected to match: the entry that
+// shares the longest leading run of path segments with the file, so a refusal reads as one
+// and the author sees the line to correct instead of only the file that missed. "" when
+// paths names nothing. Covers is the one reading of an entry; this only names the nearest.
+func ExpectedEntry(paths []string, file string) string {
+	best, bestN := "", -1
+	for _, e := range paths {
+		c := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(e), "/"), "./")
+		if c == "" {
+			continue
+		}
+		n := sharedSegments(c, file)
+		if n > bestN || n == bestN && best != "" && len(c) < len(best) {
+			best, bestN = c, n
+		}
+	}
+	return best
+}
+
+// sharedSegments is how many leading path segments a and b have in common.
+func sharedSegments(a, b string) int {
+	as, bs := strings.Split(a, "/"), strings.Split(b, "/")
+	i := 0
+	for i < len(as) && i < len(bs) && as[i] == bs[i] {
+		i++
+	}
+	return i
+}
+
 // Outside is every file the diff changes that the card may not (E12); nil when paths is
 // empty (a card that names no PATHS is held to none). A file is the card's when its
 // PATHS globs name it, it is a ledger (Ledger), or it is always inside PATHS
@@ -180,7 +230,7 @@ func Outside(paths []string, diff string, trackedBefore []string) []string {
 		dirs = newPackageDirs(paths, files, trackedBefore)
 	}
 	named := func(p string) bool {
-		return slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, p) })
+		return slices.ContainsFunc(paths, func(g string) bool { return Covers(g, p) })
 	}
 	mine := func(p string) bool { return named(p) || Ledger(p) || AlwaysInPaths(paths, p) }
 	var out []string
@@ -209,11 +259,11 @@ func newPackageDirs(paths []string, files []File, tracked []string) []string {
 		}
 	}
 	named := func(p string) bool {
-		if slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, p) }) {
+		if slices.ContainsFunc(paths, func(g string) bool { return Covers(g, p) }) {
 			return true
 		}
 		for d := path.Dir(p); d != "." && d != "/"; d = path.Dir(d) {
-			if slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, d) }) {
+			if slices.ContainsFunc(paths, func(g string) bool { return Covers(g, d) }) {
 				return true
 			}
 		}

@@ -189,7 +189,13 @@ func (u Usage) String() string {
 func word(v string) string { return strings.Join(strings.Fields(v), "_") }
 
 // Priced is the record with its prediction under the sheet of the route named,
-// the sheet copied beside it: route "" (no route found) is unpriced=no-route.
+// the sheet copied beside it: route "" (no route found) is unpriced=no-route. A
+// route with no sheet prices nothing, so the harness's own cost, where it reported
+// one, is the record's only figure; a harness actual of exactly zero is not a cost
+// either: a run whose tokens were reported, whose route has no sheet and whose
+// harness actual is zero is unpriced=no-price-sheet with no figure at all, counted
+// with the runs no price covers, never as $0 (docs/SPEC-SPRINT.md, "What a card
+// cost"). A priced route, and a non-zero harness actual, are unchanged.
 func (u Usage) Priced(route string, p Prices) Usage {
 	u.Route, u.Prices, u.Predicted, u.Long, u.Unpriced = "", "", "", false, ""
 	if u.Billing == "" {
@@ -212,7 +218,20 @@ func (u Usage) Priced(route string, p Prices) Usage {
 		u.Prices = p.Copy()
 	}
 	u.Predicted, u.Long, u.Unpriced = pr.USD, pr.Long, pr.Why
+	if pr.Why == WhyNoSheet && u.Tokens.Reported() && zeroCost(u.Actual) && u.ReceiptVersion != ReceiptVersion && u.Billing != BillingSubscription {
+		u.Actual, u.ActualBy = "", ""
+	}
 	return u
+}
+
+// zeroCost says a cost the harness reported is an exact zero: a valid decimal of
+// value 0, never an empty or unreadable amount.
+func zeroCost(usd string) bool {
+	if usd == "" {
+		return false
+	}
+	r, err := amount(usd)
+	return err == nil && r.Sign() == 0
 }
 
 // Timed is the record with its waiting and running time: from the stamp it was
