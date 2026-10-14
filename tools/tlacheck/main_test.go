@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -212,22 +211,19 @@ func TestALiteralDoubleDashEndsTheFlags(t *testing.T) {
 	// After "--" a leading dash is a file name, not a flag; the verb then
 	// refuses the file for what it is.
 	r := call(t, nil, "witnesses", "--", "-table.lua")
-	if strings.Contains(r.stderr, "comes after a positional") {
-		t.Fatalf("a literal after -- was refused as a late flag: %+v", r)
-	}
+	assert.NotContains(t, r.stderr, "comes after a positional")
 }
 
 func TestGroupsPrintsTheRequiredGroupsAsOneLineOfJSON(t *testing.T) {
 	t.Parallel()
 	root, _ := checkout(t)
 	r := call(t, nil, "groups", "--root", root)
-	if r.code != 0 || r.stderr != "" {
-		t.Fatalf("%+v", r)
-	}
+	require.Equal(t, 0, r.code)
+	require.Empty(t, r.stderr)
 	var groups []string
-	if err := json.Unmarshal([]byte(r.stdout), &groups); err != nil || !reflect.DeepEqual(groups, []string{"alpha", "beta"}) || strings.Count(r.stdout, "\n") != 1 {
-		t.Fatalf("stdout = %q (%v)", r.stdout, err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(r.stdout), &groups))
+	assert.Equal(t, []string{"alpha", "beta"}, groups)
+	assert.Equal(t, 1, strings.Count(r.stdout, "\n"))
 	// The repository's own plan.
 	r = call(t, nil, "groups", "--root", filepath.Join("..", ".."))
 	if r.code != 0 || json.Unmarshal([]byte(r.stdout), &groups) != nil || len(groups) < 5 {
@@ -276,18 +272,19 @@ func TestRunRecordsTheJavaVersionAndWorkersAndRefusesWhenJavaHasNone(t *testing.
 		t.Fatalf("%+v", r)
 	}
 	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
-	if err != nil || len(recs) != 2 || recs[0].JavaVersion != "21.0.12.1" || recs[0].Workers != 1 || recs[1].Workers != 1 {
-		t.Fatalf("records %+v, %v", recs, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	assert.Equal(t, "21.0.12.1", recs[0].JavaVersion)
+	assert.Equal(t, 1, recs[0].Workers)
+	assert.Equal(t, 1, recs[1].Workers)
 	e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran without a java version"); return 0 })
 	e.javaVersion = func(string) (string, error) { return "", errors.New("java -version printed no quoted version") }
 	dir2 := filepath.Join(t.TempDir(), "run2")
 	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir2, "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, "the java version cannot be read") || !strings.Contains(r.stderr, "nothing was run") {
 		t.Fatalf("%+v", r)
 	}
-	if _, err := os.Stat(filepath.Join(dir2, tlc.RunsFile)); err == nil {
-		t.Fatal("records written for a java with no version")
-	}
+	_, err = os.Stat(filepath.Join(dir2, tlc.RunsFile))
+	assert.Error(t, err)
 }
 
 // The host column is the tool's own platform label, and there is no way to
@@ -303,13 +300,14 @@ func TestRunWritesThePlatformLabelAndNeverAHostName(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
-	if err != nil || len(recs) != 2 || recs[0].Host != "linux-arm64" || recs[0].CPUs != 64 || recs[1].Host != "linux-arm64" {
-		t.Fatalf("records %+v, %v", recs, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	assert.Equal(t, "linux-arm64", recs[0].Host)
+	assert.Equal(t, 64, recs[0].CPUs)
+	assert.Equal(t, "linux-arm64", recs[1].Host)
 	raw := fsx.Read(t, filepath.Join(dir, tlc.RunsFile))
-	if strings.Contains(raw, "HOSTNAME") || strings.Contains(raw, "bench") {
-		t.Errorf("the records name a host: %q", raw)
-	}
+	assert.NotContains(t, raw, "HOSTNAME")
+	assert.NotContains(t, raw, "bench")
 	e, out, errs = testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran on an unlisted platform"); return 0 })
 	e.goarch = "sparc"
 	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r2"), "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, `platform "linux-sparc" is not one the runner records`) {
@@ -325,19 +323,14 @@ func TestRunReportsAFailingCaseOnStderrAndExitsOne(t *testing.T) {
 	root, jar := checkout(t)
 	// The counterexample case's model passes: not what it declares.
 	r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 0}, nil), "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "o"), "--group", "alpha")
-	if r.code != 1 {
-		t.Fatalf("%+v", r)
-	}
-	if !strings.Contains(r.stdout, "CASE OK config=MCA.cfg") || strings.Contains(r.stdout, "MCABroken") || strings.Contains(r.stdout, "RUN OK") {
-		t.Errorf("stdout = %q", r.stdout)
-	}
-	if !strings.Contains(r.stderr, "CASE FAIL config=MCABroken.cfg result=FAIL") || !strings.Contains(r.stderr, "RUN FAIL cases=2") {
-		t.Errorf("stderr = %q", r.stderr)
-	}
+	require.Equal(t, 1, r.code)
+	assert.Contains(t, r.stdout, "CASE OK config=MCA.cfg")
+	assert.NotContains(t, r.stdout, "MCABroken")
+	assert.NotContains(t, r.stdout, "RUN OK")
+	assert.Contains(t, r.stderr, "CASE FAIL config=MCABroken.cfg result=FAIL")
+	assert.Contains(t, r.stderr, "RUN FAIL cases=2")
 	for _, l := range strings.Split(strings.TrimSpace(r.stderr), "\n") {
-		if !eventRE.MatchString(strings.SplitN(l, ": ", 2)[0]) {
-			t.Errorf("not an event: %q", l)
-		}
+		assert.Regexp(t, eventRE, strings.SplitN(l, ": ", 2)[0])
 	}
 }
 
@@ -374,15 +367,16 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 		}
 		args := append([]string{"run", "--root", root, "--jar", jar, "--dir", dir()}, tc.args...)
 		r := do(e, out, errs, args...)
-		if r.code != 2 || !strings.Contains(r.stderr, tc.want) || strings.Count(r.stderr, "\n") != 1 || strings.Contains(r.stdout, "CASE") {
-			t.Errorf("%s: %+v", tc.name, r)
-		}
+		require.Equal(t, 2, r.code, tc.name)
+		assert.Contains(t, r.stderr, tc.want, tc.name)
+		assert.Equal(t, 1, strings.Count(r.stderr, "\n"), tc.name)
+		assert.NotContains(t, r.stdout, "CASE", tc.name)
 	}
 	// No jar: neither the flag nor TLC_JAR.
 	r := call(t, nil, "run", "--root", root, "--dir", dir(), "--group", "alpha")
-	if r.code != 2 || !strings.Contains(r.stderr, "neither --jar nor TLC_JAR") || !strings.Contains(r.stderr, "run: tlacheck run --jar /path/to/tla2tools.jar") {
-		t.Errorf("no jar: %+v", r)
-	}
+	require.Equal(t, 2, r.code)
+	assert.Contains(t, r.stderr, "neither --jar nor TLC_JAR")
+	assert.Contains(t, r.stderr, "run: tlacheck run --jar /path/to/tla2tools.jar")
 	// The environment names the jar.
 	e, out, errs := testEnv(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil))
 	e.getenv = func(k string) string {
@@ -392,9 +386,8 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 		return ""
 	}
 	r = do(e, out, errs, "run", "--root", root, "--dir", dir(), "--group", "alpha")
-	if r.code != 0 || !strings.Contains(r.stdout, "source=env:TLC_JAR") {
-		t.Errorf("jar from the environment: %+v", r)
-	}
+	require.Equal(t, 0, r.code)
+	assert.Contains(t, r.stdout, "source=env:TLC_JAR")
 }
 
 func TestRunNeverGrowsTheCheckout(t *testing.T) {
@@ -406,12 +399,9 @@ func TestRunNeverGrowsTheCheckout(t *testing.T) {
 		return scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil)(ctx, r, log)
 	}
 	r := call(t, exec, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "o"), "--group", "alpha")
-	if r.code != 0 {
-		t.Fatalf("%+v", r)
-	}
-	if m, _ := filepath.Glob(filepath.Join(root, "tla", "*TTrace*")); len(m) != 0 {
-		t.Fatalf("the checkout gained %v", m)
-	}
+	require.Equal(t, 0, r.code)
+	m, _ := filepath.Glob(filepath.Join(root, "tla", "*TTrace*"))
+	assert.Len(t, m, 0)
 }
 
 func TestMergeJoinsTheRecordsOfEveryGroup(t *testing.T) {
@@ -420,20 +410,19 @@ func TestMergeJoinsTheRecordsOfEveryGroup(t *testing.T) {
 	var dirs []string
 	for _, group := range []string{"alpha", "beta", "gamma"} {
 		dir := filepath.Join(t.TempDir(), group)
-		if r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group); r.code != 0 {
-			t.Fatalf("%s: %+v", group, r)
-		}
+		r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group)
+		require.Equal(t, 0, r.code, group)
 		dirs = append(dirs, filepath.Join(dir, tlc.RunsFile))
 	}
 	merged := filepath.Join(t.TempDir(), "RUNS.tsv")
 	r := call(t, nil, append([]string{"merge", "--root", root, "--out", merged}, dirs...)...)
-	if r.code != 0 || !strings.Contains(r.stdout, "MERGE OK runs=3 records=4 out=") {
-		t.Fatalf("%+v", r)
-	}
+	require.Equal(t, 0, r.code)
+	assert.Contains(t, r.stdout, "MERGE OK runs=3 records=4 out=")
 	recs, err := tlc.ReadRecordsFile(merged)
-	if err != nil || len(recs) != 4 || recs[0].Config != "MCA.cfg" || recs[3].Config != "MCCard.cfg" {
-		t.Fatalf("merged = %+v, %v", recs, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, recs, 4)
+	assert.Equal(t, "MCA.cfg", recs[0].Config)
+	assert.Equal(t, "MCCard.cfg", recs[3].Config)
 	// A run that is missing is a refusal, and the output is left alone.
 	before, _ := os.ReadFile(merged)
 	r = call(t, nil, "merge", "--root", root, "--out", merged, dirs[0], dirs[1])
