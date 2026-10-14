@@ -435,6 +435,34 @@ func (k UnitKind) differs(goos string, b []byte) string {
 	if !hasPrefix(args[1:], k.Verb) {
 		return "it runs " + strings.Join(append([]string{k.Tool}, args[1:]...), " ") + ", not " + k.runs()
 	}
+	// at most one lander (start-refuses-a-non-working-setting, cold read 1): the server
+	// unit says whether it lands, never the binary's default, and no other unit lands
+	switch lands := landArg(args[1:]); {
+	case k.Kind == "server" && lands == "":
+		return "it names neither --land nor --land=false: whether the server lands would be the binary's default; run: nova-sprint install server --listen <address:port>"
+	case k.Kind != "server" && lands == "on":
+		return "it lands (--land), a second lander beside the server: only the server unit lands"
+	}
+	return ""
+}
+
+// landArg is a command line's --land: "on" for --land or --land=true (or 1, t...), "off" for
+// --land=false, "" when it names none.
+func landArg(args []string) string {
+	for _, a := range args {
+		v, ok := strings.CutPrefix(strings.TrimPrefix(a, "-"), "-land")
+		if !ok {
+			continue
+		}
+		switch v {
+		case "":
+			return "on"
+		case "=true", "=1", "=t", "=T", "=TRUE", "=True":
+			return "on"
+		case "=false", "=0", "=f", "=F", "=FALSE", "=False":
+			return "off"
+		}
+	}
 	return ""
 }
 

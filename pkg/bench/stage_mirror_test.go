@@ -111,7 +111,8 @@ func TestAMirrorStageFetchesOneShaAndChecksItOutFromTheMirror(t *testing.T) {
 	assert.Contains(t, line, `git -C 'nova-bench/mirror/nova-tools.git' fetch --quiet --no-tags --no-write-fetch-head "$src" 'refs/nova-gate/sprint-mechanical-0123456789ab'`)
 	assert.Equal(t, 1, strings.Count(line, " fetch "), "one fetch, of the one ref")
 	assert.Contains(t, line, `git clone --quiet --shared --no-checkout 'nova-bench/mirror/nova-tools.git' '`+testRun+`/repo'`)
-	assert.True(t, strings.HasSuffix(line, `git -C '`+testRun+`/repo' checkout --quiet --detach '`+testSha+`'`), line)
+	assert.Contains(t, line, `git -C '`+testRun+`/repo' checkout --quiet --detach '`+testSha+`' && `, line)
+	assert.True(t, strings.HasSuffix(line, "{ "+StandaloneLine(testRun+"/repo")+"; }"), "the stage ends with the standalone check: %s", line)
 
 	assert.Equal(t, "mirror", res.Stage.Via)
 	assert.Equal(t, "copy vision 0MB 1.0s via mirror", res.Stage.Line())
