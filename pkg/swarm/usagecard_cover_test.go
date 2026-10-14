@@ -273,7 +273,7 @@ func indexOfCoverColumn(t *testing.T, name string) int {
 			return i
 		}
 	}
-	t.Fatalf("%s is not a usage.tsv column", name)
+	require.FailNow(t, name+" is not a usage.tsv column")
 	return -1
 }
 

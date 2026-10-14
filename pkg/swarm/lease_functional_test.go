@@ -166,7 +166,7 @@ func staleRecord(t *testing.T, job, how string) {
 		old := time.Now().Add(-2 * JobLeaseStale)
 		require.NoError(t, os.Chtimes(path, old, old))
 	default:
-		t.Fatalf("no such abandoned record: %s", how)
+		require.FailNowf(t, "no such abandoned record", "how=%s", how)
 	}
 }
 

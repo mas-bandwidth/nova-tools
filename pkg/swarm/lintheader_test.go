@@ -63,7 +63,7 @@ func drew(t *testing.T, fs []CardHeaderFinding, want string) CardHeaderFinding {
 			return f
 		}
 	}
-	t.Fatalf("no %s among %v", want, checks(fs))
+	require.FailNowf(t, "no such finding", "no %s among %v", want, checks(fs))
 	return CardHeaderFinding{}
 }
 

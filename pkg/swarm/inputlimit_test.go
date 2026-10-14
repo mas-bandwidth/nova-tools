@@ -39,14 +39,12 @@ func TestAProviderPhraseHasAFloor(t *testing.T) {
 			filepath.ToSlash(filepath.Join(dir, "home")) + `","deadline":"20m","input_limit_phrases":["` + c.phrase + `"]}`
 		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 		_, problems := LoadWorker(path)
-		switch {
-		case c.ok && len(problems) > 0:
-			t.Errorf("%q is a provider's sentence and is accepted: %v", c.phrase, problems)
-		case !c.ok && len(problems) == 0:
-			t.Errorf("%q is not a sentence; a phrase this short ends healthy-looking jobs as input-limit and they are never retried", c.phrase)
-		case !c.ok:
-			// AND THE REFUSAL QUOTES THE PHRASE, so the caller reads back what they typed.
-			assert.Contains(t, problems[0].Error(), strconv.Quote(c.phrase), "%q: the refusal names the phrase it refused, got %v", c.phrase, problems[0])
+		if c.ok {
+			assert.Empty(t, problems, "%q is a provider's sentence and is accepted", c.phrase)
+			continue
 		}
+		require.NotEmpty(t, problems, "%q is not a sentence; a phrase this short ends healthy-looking jobs as input-limit and they are never retried", c.phrase)
+		// AND THE REFUSAL QUOTES THE PHRASE, so the caller reads back what they typed.
+		assert.Contains(t, problems[0].Error(), strconv.Quote(c.phrase), "%q: the refusal names the phrase it refused, got %v", c.phrase, problems[0])
 	}
 }

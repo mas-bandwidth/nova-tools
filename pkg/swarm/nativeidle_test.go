@@ -232,7 +232,7 @@ func TestWatchIdleWithNoWindowWatchesNothing(t *testing.T) {
 	// moment the watch decided there was nothing to report.
 	select {
 	case end := <-out:
-		t.Fatalf("a nil channel never answers, got %+v", end)
+		require.FailNowf(t, "a nil channel never answers", "got %+v", end)
 	default:
 	}
 }

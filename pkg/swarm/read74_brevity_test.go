@@ -66,6 +66,6 @@ func readPRSpecSection(t *testing.T, spec string) string {
 	if start >= 0 {
 		return strings.Join(lines[start:], "\n")
 	}
-	t.Fatal("SPEC-SWARM.md has no read-pr section")
+	require.FailNow(t, "SPEC-SWARM.md has no read-pr section")
 	return ""
 }
