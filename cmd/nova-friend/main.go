@@ -2031,7 +2031,7 @@ func (w world) beatVerb(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	if o := w.gateVerb(b.Store, name, hook.Friend, hook.Work); o != nil {
+	if o := w.gateVerb(b.Store, name, hook.Friend, hook.Bus); o != nil {
 		return o // not hooked in as a friend: no beat is sent (docs/SPEC-HOOK.md)
 	}
 	if _, err := w.beat(context.Background(), server, name, time.Time{}, friend.BeatWords{}); err != nil {
