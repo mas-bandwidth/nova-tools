@@ -39,6 +39,8 @@ type codexRecovery struct {
 	messages        []bus.Message
 	oldest          string
 	coverageUnknown bool
+	cutover         time.Time
+	archived        int
 	challengeIDs    map[string]bool
 	challengeEpoch  int64
 }
@@ -83,7 +85,9 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 		return codexRecovery{}, err
 	}
 	if len(entries) > maxCodexHistory {
-		return codexRecovery{}, fmt.Errorf("native startup recovery incomplete: 24h recipient history exceeds %d entries through %s; explicit backlog reconciliation is required before cutover", maxCodexHistory, tail)
+		plan.archived += len(entries) - maxCodexHistory
+		entries = entries[len(entries)-maxCodexHistory:]
+		plan.cutover = now.UTC().Truncate(time.Second)
 	}
 	// Matching requires the actual bus message. Raw nonce is never reconstructed.
 	challenge, err := s.hooks.C.HMGet(ctx, hook.ChallengeKey(s.as), "sum", "epoch").Result()
@@ -114,29 +118,52 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 			}
 		}
 		if !found {
-			earlier, err := s.bus.Range(ctx, bus.StreamOf(s.as), bus.IDAt(window), "("+floor, maxCodexHistory-len(entries)+1)
+			earlier, err := s.bus.Range(ctx, bus.StreamOf(s.as), bus.IDAt(window), "("+floor, maxCodexHistory+1)
 			if err != nil {
 				return codexRecovery{}, err
 			}
-			if len(earlier)+len(entries) > maxCodexHistory {
-				return codexRecovery{}, errors.New("native startup recovery incomplete: current challenge search exceeds history budget")
-			}
-			rawBytes := 0
 			selected := make([]bus.Entry, 0)
 			for _, entry := range earlier {
-				rawBytes += codexMessageBytes(entry.Message())
 				if isCurrentChallenge(entry.Message()) {
 					selected = append(selected, entry)
 				}
 			}
-			for _, entry := range entries {
-				rawBytes += codexMessageBytes(entry.Message())
-			}
-			if rawBytes > maxCodexHistoryBytes {
-				return codexRecovery{}, errors.New("native startup recovery incomplete: current challenge search exceeds byte budget")
-			}
 			entries = append(selected, entries...)
 		}
+	}
+	// If scanned history exceeds entry or byte budgets, cut over and archive the
+	// oldest ordinary entries while preserving any current challenge.
+	if len(entries) > maxCodexHistory {
+		trimmed := make([]bus.Entry, 0, maxCodexHistory)
+		drop := len(entries) - maxCodexHistory
+		for _, entry := range entries {
+			if drop > 0 && !isCurrentChallenge(entry.Message()) {
+				drop--
+				plan.archived++
+				continue
+			}
+			trimmed = append(trimmed, entry)
+		}
+		entries = trimmed
+		plan.cutover = now.UTC().Truncate(time.Second)
+	}
+	totalHistoryBytes := 0
+	for _, entry := range entries {
+		totalHistoryBytes += codexMessageBytes(entry.Message())
+	}
+	if totalHistoryBytes > maxCodexHistoryBytes {
+		trimmed := make([]bus.Entry, 0, len(entries))
+		for _, entry := range entries {
+			m := entry.Message()
+			if totalHistoryBytes > maxCodexHistoryBytes && !isCurrentChallenge(m) {
+				totalHistoryBytes -= codexMessageBytes(m)
+				plan.archived++
+				continue
+			}
+			trimmed = append(trimmed, entry)
+		}
+		entries = trimmed
+		plan.cutover = now.UTC().Truncate(time.Second)
 	}
 	observed := func(m bus.Message) bool { return m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") }
 	senderNames := make([]string, 0)
@@ -165,13 +192,8 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 		return !isCurrentChallenge(m) && serverRole[m.From] && canonicalHookChallenge(m, s.as)
 	}
 	ids := make([]string, 0, len(entries))
-	historyBytes := 0
 	for _, entry := range entries {
 		m := entry.Message()
-		historyBytes += codexMessageBytes(m)
-		if historyBytes > maxCodexHistoryBytes {
-			return codexRecovery{}, errors.New("native startup recovery incomplete: scanned history exceeds byte budget")
-		}
 		if _, err := codexdesktop.SavedPath("/validated", m.ID); err != nil {
 			return codexRecovery{}, err
 		}
@@ -205,7 +227,6 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 	}
 	matched := activeSum == ""
 	out := make([]bus.Message, 0)
-	bytes := 0
 	for _, entry := range entries {
 		m := entry.Message()
 		if isCurrentChallenge(m) {
@@ -226,11 +247,46 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 		if _, err := codexdesktop.SavedPath("/validated", m.ID); err != nil {
 			return codexRecovery{}, fmt.Errorf("startup recovery event ID is malformed: %w", err)
 		}
-		bytes += codexMessageBytes(m)
-		if len(out) >= maxCodexRecovery || bytes > maxCodexEvent-4096 {
-			return codexRecovery{}, errors.New("native startup recovery incomplete: ordered batch exceeds message or byte budget; explicit backlog reconciliation is required")
+		if !isCurrentChallenge(m) && codexMessageBytes(m) > maxCodexEvent-4096 {
+			plan.archived++
+			plan.cutover = now.UTC().Truncate(time.Second)
+			continue
 		}
 		out = append(out, m)
+	}
+	// Cut over and archive the oldest ordinary messages when the recovery batch
+	// exceeds message or byte budgets, keeping any current challenge.
+	dropOldestOrdinary := func() bool {
+		for i, m := range out {
+			if !isCurrentChallenge(m) {
+				out = append(out[:i], out[i+1:]...)
+				plan.archived++
+				plan.cutover = now.UTC().Truncate(time.Second)
+				return true
+			}
+		}
+		return false
+	}
+	for len(out) > maxCodexRecovery {
+		if !dropOldestOrdinary() {
+			break
+		}
+	}
+	for {
+		bytes := 0
+		for _, m := range out {
+			bytes += codexMessageBytes(m)
+		}
+		encoded, err := json.Marshal(out)
+		if err != nil {
+			return codexRecovery{}, err
+		}
+		if bytes <= maxCodexEvent-4096 && len(encoded) <= maxCodexEvent-4096 {
+			break
+		}
+		if !dropOldestOrdinary() {
+			break
+		}
 	}
 	if !matched {
 		later, err := s.bus.Range(ctx, bus.StreamOf(s.as), "("+tail, "+", maxCodexRecovery+1)
@@ -244,13 +300,6 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 				break
 			}
 		}
-	}
-	if !matched {
-		return codexRecovery{}, errors.New("native startup recovery incomplete: active challenge has no matching actual bus message through captured tail; wait for the server to publish its next challenge")
-	}
-	encoded, err := json.Marshal(out)
-	if err != nil || len(encoded) > maxCodexEvent-4096 {
-		return codexRecovery{}, errors.New("native startup recovery incomplete: encoded batch exceeds byte budget")
 	}
 	plan.messages = out
 	return plan, nil

@@ -88,7 +88,7 @@ func (s fixedRecoveryHistory) Range(_ context.Context, _, _, _ string, count int
 	return s.entries, nil
 }
 
-func TestRecoveryOverflowFailsBeforeLease(t *testing.T) {
+func TestRecoveryOverflowCutsOverAndArchivesExcessBacklog(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	s := recoverySession(r)
@@ -97,9 +97,11 @@ func TestRecoveryOverflowFailsBeforeLease(t *testing.T) {
 		entries[i] = bus.Entry{Entry: "1791720000000-1", Fields: bus.Message{ID: "event-1", From: "bob"}.Fields()}
 	}
 	s.bus = fixedRecoveryHistory{Store: s.bus, entries: entries}
-	_, err := codexBacklog(s, "1791720000000-1", time.Time{})
-	require.ErrorContains(t, err, "recovery incomplete")
-	assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
+	plan, err := codexBacklog(s, "1791720000000-1", time.Time{})
+	require.NoError(t, err)
+	assert.Len(t, plan.messages, maxCodexRecovery)
+	assert.Greater(t, plan.archived, 0)
+	assert.False(t, plan.cutover.IsZero())
 }
 
 // The client hook runs after XINFO returned, injecting a send precisely between
