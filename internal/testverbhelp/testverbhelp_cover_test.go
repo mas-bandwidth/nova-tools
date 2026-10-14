@@ -164,6 +164,7 @@ func TestTestverbhelpCoverOkClosingReadsTheLastLineOnly(t *testing.T) {
 		})
 	}
 }
+
 // TestTestverbhelpCoverOneRunsTheSeamWithNoProblems pins the seam's main path
 // through onboardtest.VerbHelp; One stays held by testverbhelp.Check above.
 func TestTestverbhelpCoverOneRunsTheSeamWithNoProblems(t *testing.T) {
