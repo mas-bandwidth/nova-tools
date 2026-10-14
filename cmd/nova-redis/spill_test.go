@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/jonboulle/clockwork"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 
 	"github.com/stretchr/testify/assert"
@@ -222,8 +223,8 @@ func TestScratchKeepsEveryKeyOwnedAndBoundedWithoutASocket(t *testing.T) {
 	ctx := context.Background()
 	mr, client := testkit.PipeStore(t)
 	trips := redisconn.CountTrips(client)
-	clock := &fakeClock{t: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)}
-	s := &scratch{rdb: client, now: clock.now}
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC))
+	s := &scratch{rdb: client, now: clock.Now}
 
 	refusals := []struct {
 		name, owner, key string
@@ -256,7 +257,7 @@ func TestScratchKeepsEveryKeyOwnedAndBoundedWithoutASocket(t *testing.T) {
 	assert.Equal(t, "hi", v)
 	assert.Equal(t, int64(2), trips.N(), "recall is one pipeline, one round trip")
 
-	clock.t = clock.t.Add(2 * time.Hour)
+	clock.Advance(2 * time.Hour)
 	_, err = s.recall(ctx, "ada", "note")
 	assert.ErrorIs(t, err, errExpired, "past the TTL by the clock, before the instance ages the key out")
 	mr.FastForward(2 * time.Hour)
