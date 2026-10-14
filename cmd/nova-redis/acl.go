@@ -28,7 +28,6 @@ package main
 // line the skeleton cannot render), so they are Prints verbs.
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -248,11 +247,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			for _, u := range users {
 				o.Item("setuser", "user", u.Name, "rules", strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "))
 			}
-			o.Verb = "acl render"
-			var b bytes.Buffer
-			o.Render(&b, true)
-			c.Stdout.Write(b.Bytes())
-			return tool.Exit(0)
+			return jsonResult(c, "acl render", o)
 		}
 		// A family is what an operator reads: its name and its key patterns.
 		for _, f := range redisacl.Families {

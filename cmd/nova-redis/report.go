@@ -28,11 +28,14 @@ type bare struct {
 // stands, so a Prints verb's --json branch prints one object (STANDARD §2,
 // one output structure, two renderings) and the skeleton does not render it
 // again. The verb's name is set here, as the skeleton's emit would, because
-// the verb renders its own object.
+// the verb renders its own object. A write that does not land, and an exit
+// that was 0, becomes 1: the result did not reach its reader (pkg/tool emit).
 func jsonResult(c *tool.Call, verb string, o *tool.Out) *tool.Out {
 	o.Verb = verb
 	var b bytes.Buffer
 	o.Render(&b, true)
-	c.Stdout.Write(b.Bytes())
+	if _, err := c.Stdout.Write(b.Bytes()); err != nil && o.Exit == 0 {
+		return tool.Exit(1)
+	}
 	return tool.Exit(o.Exit)
 }
