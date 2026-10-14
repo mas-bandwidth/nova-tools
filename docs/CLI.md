@@ -1523,6 +1523,7 @@ usage:
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
+  nova-friend presence --as <name> [--dir <d>] [--state-dir <d>] [--redis <addr>] [--since <d>] [--json] [--max <n>]
   nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
@@ -1826,6 +1827,25 @@ flags:
   --dir <string>  the friend's working directory, where the queue file lives (required)
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-friend presence -h`:
+
+```
+usage: nova-friend presence [flags]
+from `nova-friend help`:
+  nova-friend presence --as <name> [--dir <d>] [--state-dir <d>] [--redis <addr>] [--since <d>] [--json] [--max <n>]
+example: nova-friend presence --as bob --dir ./bob
+flags:
+  --as <string>  your name (required)
+  --dir <string>  the friend's working directory (default: where the daemon wrote its state, else the home directory's)
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --since <duration>  the window the bus domain judges real messages over
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing
