@@ -420,8 +420,12 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		nonce := w.nonce()
 		ctx, cancel := call()
 		defer cancel()
-		if err := s.hooks.Challenge(ctx, s.as, role, epoch, held, nonce); err != nil {
+		created, err := s.hooks.Challenge(ctx, s.as, role, epoch, held, nonce)
+		if err != nil {
 			return tool.Refuse("the challenge could not be written: " + err.Error())
+		}
+		if !created {
+			return nil
 		}
 		o := tool.Done().As("CHALLENGE").Fact("nonce", nonce).Fact("push", pushList(held)).Fact("within", hook.AnswerBound.String())
 		o.Note("run: nova-hook prove --as " + s.as + " --nonce " + nonce)
