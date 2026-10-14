@@ -19,7 +19,7 @@ import (
 func init() {
 	verbEffect["install"] = "local write: writes the kind's unit (the verb itself, never a wrapper) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run writes nothing"
 	verbEffect["uninstall"] = "local write: unloads the kind's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing"
-	verbExit["install"] = "exit codes: 0 done (the unit written or kept, and loaded); 1 the unit did not write or load; 2 usage, or mirror-refresh (no mirror verb yet)"
+	verbExit["install"] = "exit codes: 0 done (the unit written or kept, and loaded); 1 the unit did not write or load; 2 usage"
 	verbExit["uninstall"] = "exit codes: 0 done (removed, or no unit there); 1 the unit did not unload or remove; 2 usage"
 }
 

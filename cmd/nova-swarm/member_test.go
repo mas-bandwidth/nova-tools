@@ -336,11 +336,11 @@ func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 	require.Zero(t, out.Len(), "stdout %q, want empty", out.String())
 	lines := strings.Split(strings.TrimSpace(errb.String()), "\n")
 	require.Len(t, lines, 4, "%d lines, want 4 (one per missing flag):\n%s", len(lines), errb.String())
-	assert.Contains(t, errb.String(), "nova-swarm member: --server is required; it wants the sprint server's host:port, the run loop started with nova-sprint run --listen")
+	assert.Contains(t, errb.String(), "nova-swarm member REFUSED: --server is required; it wants the sprint server's host:port, the run loop started with nova-sprint run --listen")
 	for _, flag := range []string{"--as", "--server", "--harness", "--root"} {
 		n := 0
 		for _, l := range lines {
-			if strings.HasPrefix(l, "nova-swarm member: "+flag+" is required") && strings.Contains(l, "refusing to guess") {
+			if strings.HasPrefix(l, "nova-swarm member REFUSED: "+flag+" is required") && strings.Contains(l, "refusing to guess") {
 				n++
 			}
 		}
