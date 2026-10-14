@@ -180,22 +180,20 @@ func TestAProofNeedsALiveLease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "an answer proves no push whose lease is down")
 
-	h := &hook.Holder{Store: r.s, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus, hook.Work}, By: "daemon"}
+	h := &hook.Holder{Store: r.s, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus}, By: "daemon"}
 	require.NoError(t, h.Start(ctx))
-	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
-	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
 	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
+	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
+	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{}))
 	assert.Equal(t, hook.StateLive, r.state(t, "bob").State, "an owner that says unproven clears the proof")
-	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
+	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
 	for range 4 {
 		r.pass(hook.RenewEvery)
 		require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Bus, h.Epoch(), "daemon"))
-		require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Work, h.Epoch(), "daemon"))
 	}
 	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
 	r.pass(hook.ProofTTL)
 	require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Bus, h.Epoch(), "daemon"))
-	require.NoError(t, r.s.Renew(ctx, "bob", hook.Friend, hook.Work, h.Epoch(), "daemon"))
 	assert.Equal(t, hook.StateLive, r.state(t, "bob").State, "a proof lapses after hook.ProofTTL")
 }
 
@@ -206,11 +204,11 @@ func TestAHolderRespectsAnUnhook(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newRig(t)
-	h := &hook.Holder{Store: r.s, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus, hook.Work}, By: "daemon"}
+	h := &hook.Holder{Store: r.s, Name: "bob", Role: hook.Friend, Pushes: []hook.Push{hook.Bus}, By: "daemon"}
 	require.NoError(t, h.Start(ctx))
 	_, err := r.s.Unhook(ctx, "bob")
 	require.NoError(t, err)
-	assert.ErrorIs(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}), hook.ErrNotHooked)
+	assert.ErrorIs(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true}), hook.ErrNotHooked)
 	assert.Equal(t, hook.StateUnhooked, r.state(t, "bob").State, "the holder wrote nothing")
 
 	_, _, err = r.s.Arm(ctx, "bob", hook.Friend, "a holder", false)
@@ -218,11 +216,11 @@ func TestAHolderRespectsAnUnhook(t *testing.T) {
 	e, joined, err := r.s.HookAs(ctx, "bob", hook.Friend, "nova-hook")
 	require.NoError(t, err)
 	assert.False(t, joined)
-	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
+	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
 	assert.Equal(t, e, h.Epoch())
 	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
 	r.Evidence(t, "bob") // a heartbeat server passing and her answer (hook.Served.Down)
-	assert.NoError(t, h.Gate(ctx, hook.Bus, hook.Work))
+	assert.NoError(t, h.Gate(ctx, hook.Bus))
 }
 
 // TestReadIsOneRoundTripForAnyNames pins that status reads every name in one

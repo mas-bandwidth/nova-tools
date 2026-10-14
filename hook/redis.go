@@ -628,12 +628,10 @@ func (s Store) Sent(ctx context.Context, once string) (bool, error) {
 }
 
 // Challenged is the pushes a heartbeat challenge names for each role a session
-// answers in: the bus push, and a friend's work push, which reaches the
-// session through the same deliver path as its bus push (the friend daemon's
-// adapter), so the session's answer proves both. The sprint push is the seat
-// hook's own (nova-sprint hook), and a member's or reader's loop has no
-// session: neither is challenged.
-var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus, Work}, Comms: {Bus}}
+// answers in: the bus push. The sprint push is the seat hook's own
+// (nova-sprint hook), and a member's or reader's loop has no session: neither
+// is challenged.
+var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus}, Comms: {Bus}}
 
 // Pass is one heartbeat pass over names (sorted), in one round trip and one
 // atomic step (beatLua): taken once an interval however many servers pass; in

@@ -25,21 +25,15 @@ func TestChangedFieldsListsTwoLongValuesWithTheirDigests(t *testing.T) {
 	}}
 	got := changedFields(m)
 	for _, name := range []string{"same-long", "diff-long", "long-short", "changed"} {
-		{
-			_, ok := got[name]
-			assert.True(t, ok, "%s is not listed: %v", name, got)
-		}
+		_, ok := got[name]
+		assert.True(t, ok, "%s is not listed: %v", name, got)
 	}
 	for _, name := range []string{"same-short", "both-none"} {
-		{
-			_, ok := got[name]
-			assert.False(t, ok, "%s changed nothing and is listed: %v", name, got)
-		}
+		_, ok := got[name]
+		assert.False(t, ok, "%s changed nothing and is listed: %v", name, got)
 	}
-	{
-		line := fmt.Sprint(got["same-long"])
-		assert.EqualValues(t, 2, strings.Count(line, sha), "two long sides are shown with their digests side by side: %s", line)
-	}
+	line := fmt.Sprint(got["same-long"])
+	assert.EqualValues(t, 2, strings.Count(line, sha), "two long sides are shown with their digests side by side: %s", line)
 }
 
 // create past the column bound is the store's kind of no, exit 1 like col add,

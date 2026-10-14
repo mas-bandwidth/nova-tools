@@ -8,11 +8,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
+	"github.com/mas-bandwidth/nova-tools/hook/hooktest"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func checkCLIWithHook(t *testing.T, r *rig) (*hooktest.Rig, testkit.Main) {
+	t.Helper()
+	h := hooktest.New(t)
+	w := r.world()
+	w.hookStore = func(bus.Store) (hook.Store, error) { return h.Store, nil }
+	return h, cliOf(w)
+}
 
 func TestCheckSaysBrokenWhenTheTableShowsUpButNoTurnWasAnswered(t *testing.T) {
 	t.Parallel()
@@ -61,7 +72,8 @@ func TestCheckSaysDeafWhenDeliveriesSucceedAndNothingComesBack(t *testing.T) {
 func TestCheckSaysOkForALiveFriend(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
+	h, cli := checkCLIWithHook(t, r)
+	h.Hook(t, "bob", hook.Friend)
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
@@ -69,16 +81,6 @@ func TestCheckSaysOkForALiveFriend(t *testing.T) {
 		Harness:    "opencode",
 		At:         start,
 		Connection: friend.Connected,
-	}))
-	require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{
-		Friend:    "bob",
-		Presence:  friend.PresenceUp,
-		At:        start,
-		LastHeard: start,
-	}))
-	require.NoError(t, friend.WritePong(state, friend.Pong{
-		Nonce: "n0",
-		At:    start,
 	}))
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 took=3s exit=0 acked=true"))
 
@@ -134,15 +136,16 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 	t.Run("untrue exits 1", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
+		h, cli := checkCLIWithHook(t, r)
+		h.Hook(t, "bob", hook.Friend)
+		h.Unhook(t, "bob") // unhooked hook record with daemon ok reads as asleep
 		state := friend.DefaultStateDir(r.home, "bob")
 		r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", At: start}))
-		require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{Friend: "bob", Presence: "asleep", At: start}))
-		require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
 		shownFile := filepath.Join(t.TempDir(), "shown.json")
 		require.NoError(t, os.WriteFile(shownFile, []byte(`{"bob": {"state": "up", "working": 1}}`), 0o644))
-		r.cli().Do(t, "check", "--as", "ada", "--shown", shownFile, "bob").Exit(1).
+		cli.Do(t, "check", "--as", "ada", "--shown", shownFile, "bob").Exit(1).
 			Out(`verdict=untrue shown=up/1 why="shown up/1, facts say asleep"`)
 	})
 
@@ -160,16 +163,16 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 	t.Run("ok exits 0", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
+		h, cli := checkCLIWithHook(t, r)
+		h.Hook(t, "bob", hook.Friend)
 		state := friend.DefaultStateDir(r.home, "bob")
 		r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", At: start}))
-		require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{Friend: "bob", Presence: friend.PresenceUp, At: start, LastHeard: start}))
-		require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
 		b := &bus.Bus{Store: r.store}
 		_, err := b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: "reply", Body: "ok"})
 		require.NoError(t, err)
-		r.cli().Do(t, "check", "--as", "ada", "bob").Exit(0).
+		cli.Do(t, "check", "--as", "ada", "bob").Exit(0).
 			Out("verdict=ok")
 	})
 }
@@ -177,6 +180,8 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 func TestCheckJSONCarriesEveryFact(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
+	h, cli := checkCLIWithHook(t, r)
+	h.Hook(t, "bob", hook.Friend)
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
@@ -185,16 +190,6 @@ func TestCheckJSONCarriesEveryFact(t *testing.T) {
 		At:         start,
 		Connection: friend.Connected,
 		Challenge:  friend.Quiet,
-	}))
-	require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{
-		Friend:    "bob",
-		Presence:  friend.PresenceUp,
-		At:        start,
-		LastHeard: start,
-	}))
-	require.NoError(t, friend.WritePong(state, friend.Pong{
-		Nonce: "n0",
-		At:    start,
 	}))
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
 
@@ -207,7 +202,7 @@ func TestCheckJSONCarriesEveryFact(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ran := r.cli().Do(t, "check", "--as", "ada", "--json", "bob").Exit(0)
+	ran := cli.Do(t, "check", "--as", "ada", "--json", "bob").Exit(0)
 	var report friend.CheckReport
 	require.NoError(t, json.Unmarshal([]byte(ran.Stdout), &report))
 

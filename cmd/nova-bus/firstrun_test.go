@@ -4,15 +4,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
-	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 	"github.com/redis/go-redis/v9"
@@ -32,10 +30,8 @@ import (
 // the store's time) and its at, named from the one shared table.
 
 // firstRunStore is a throwaway redis-server whose roster names ada and bob,
-// each with a proven inbox push as its friend daemon writes it (bus.PushKey),
-// and each hooked in, its bus push live and proven (the hook record).
-// The proofs are stamped a minute past the store's time, so names reads
-// age=0s for the whole sitting however long the steps take.
+// each hooked in with its bus push live and proven and the heartbeat's
+// evidence fresh (the hook record).
 func firstRunStore(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
@@ -45,15 +41,15 @@ func firstRunStore(t *testing.T) string {
 	require.NoError(t, c.SAdd(ctx, "friends", "ada", "bob").Err())
 	now, err := c.Time(ctx).Result()
 	require.NoError(t, err)
+	at := strconv.FormatInt(now.UnixMilli(), 10)
+	require.NoError(t, c.HSet(ctx, hook.ServeKey, "at", at, "every", hook.BeatEvery.Milliseconds()).Err())
 	for _, n := range []string{"ada", "bob"} {
-		raw, err := json.Marshal(bus.PushProof{Name: n, Harness: "claude", Nonce: "first-run", Proven: now, Up: true, At: now.Add(time.Minute).UTC()})
-		require.NoError(t, err)
-		require.NoError(t, c.HSet(ctx, bus.PushKey, n, string(raw)).Err())
 		// hooked in (docs/SPEC-HOOK.md): every verb runs only for a name whose
 		// bus push is live and proven, as its daemon holds it
 		h := &hook.Holder{Store: hook.Store{C: c}, Name: n, Role: hook.Comms, Pushes: []hook.Push{hook.Bus}, By: "first-run"}
 		require.NoError(t, h.Start(ctx))
 		require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true}))
+		require.NoError(t, c.HSet(ctx, hook.RecordKey(n), "answered_at", at).Err())
 	}
 	return addr
 }

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,12 +21,6 @@ func TestTheStateFilesRoundTripAndTheQueueFileCounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, s, got)
-	p := Pong{Nonce: "n1", At: t0.Add(time.Second), To: "ada", Queue: 2, Working: 1, Width: 4}
-	require.NoError(t, WritePong(dir, p))
-	gp, found, err := ReadPong(dir)
-	require.NoError(t, err)
-	assert.True(t, found)
-	assert.Equal(t, p, gp)
 
 	q, w, err := ReadQueue(dir)
 	require.NoError(t, err)

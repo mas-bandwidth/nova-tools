@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -53,34 +54,38 @@ func TestReadCoverWithDrainTimerAttachesSeam(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name        string
-		deadline    time.Time
+		remaining   time.Duration
 		hasDeadline bool
 		checkDrain  func(t *testing.T, drain time.Duration)
 	}{
-		{"grace cap", time.Time{}, false, func(t *testing.T, drain time.Duration) {
+		{"grace cap", 0, false, func(t *testing.T, drain time.Duration) {
 			assert.Equal(t, killGrace, drain)
 		}},
-		{"budget cap", time.Now().Add(time.Second), true, func(t *testing.T, drain time.Duration) {
+		{"budget cap", time.Second, true, func(t *testing.T, drain time.Duration) {
 			assert.Greater(t, drain, time.Duration(0))
 			assert.Less(t, drain, killGrace, "the budget caps the drain below the grace")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			base := context.Background()
-			if tc.hasDeadline {
-				base = deadlineValue{Context: base, deadline: tc.deadline}
-			}
-			spy := &drainTimerSpy{}
-			ctx := WithDrainTimer(base, spy.seam)
-			seam := readDrainSeam(t, ctx)
-			drain := drainAllowance(ctx)
-			ticks, stop := seam(drain)
-			assert.Equal(t, drain, spy.drain, "the seam is consulted with the allowance process computes")
-			assert.Equal(t, 1, spy.called)
-			require.NotNil(t, ticks)
-			assert.True(t, stop(), "a stop before the tick must report the firing was prevented")
-			assert.True(t, spy.stopped)
+			// drainAllowance reads time.Now; the bubble's clock is fake.
+			synctest.Test(t, func(t *testing.T) {
+				base := context.Background()
+				if tc.hasDeadline {
+					base = deadlineValue{Context: base, deadline: time.Now().Add(tc.remaining)}
+				}
+				spy := &drainTimerSpy{}
+				ctx := WithDrainTimer(base, spy.seam)
+				seam := readDrainSeam(t, ctx)
+				drain := drainAllowance(ctx)
+				tc.checkDrain(t, drain)
+				ticks, stop := seam(drain)
+				assert.Equal(t, drain, spy.drain, "the seam is consulted with the allowance process computes")
+				assert.Equal(t, 1, spy.called)
+				require.NotNil(t, ticks)
+				assert.True(t, stop(), "a stop before the tick must report the firing was prevented")
+				assert.True(t, spy.stopped)
+			})
 		})
 	}
 }

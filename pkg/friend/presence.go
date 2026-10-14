@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -40,12 +39,11 @@ const (
 	NotYetAnswered  = "no session answer yet" // the daemon started; nothing has answered
 
 	SessionCheckPrefix = "SESSION CHECK "
-	PresenceFile       = "presence.json"
 
 	LogBatch = 1000 // log entries read per step; the rest the next
 )
 
-// The presence, as the presence file says it.
+// The presence, as status and check report it.
 const (
 	PresenceUp   = "up"
 	PresenceDown = "down"
@@ -159,7 +157,7 @@ func SessionCheckText(nonce, pong, to string) string {
 	return fmt.Sprintf("%s%s\nThe daemon has had no bus message from this session for a while and asks whether the session is alive; only an answer from inside this session counts, and none within %s puts you down. Answer now, before anything else, with one command, then end this turn: %s\n", SessionCheckPrefix, nonce, SessionBound, pong)
 }
 
-// PresenceStatus is the presence file: what status reads.
+// PresenceStatus is the session's presence status: what check reads from the hook record.
 type PresenceStatus struct {
 	Friend    string    `json:"friend"`
 	At        time.Time `json:"at"`
@@ -171,17 +169,6 @@ type PresenceStatus struct {
 	Checks    int       `json:"checks"`
 	Answers   int       `json:"answers"`
 	Answered  string    `json:"answered,omitempty"` // the nonce the session last answered
-}
-
-func presencePath(stateDir string) string { return filepath.Join(stateDir, PresenceFile) }
-
-// WritePresence writes the presence file, whole.
-func WritePresence(stateDir string, s PresenceStatus) error { return write(presencePath(stateDir), s) }
-
-// ReadPresence is the presence file; found is false when no daemon wrote one.
-func ReadPresence(stateDir string) (s PresenceStatus, found bool, err error) {
-	found, err = read(presencePath(stateDir), &s)
-	return s, found, err
 }
 
 // SessionCheck is the daemon's side of presence: it reads the bus log for the

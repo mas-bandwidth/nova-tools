@@ -2321,8 +2321,13 @@ cmd/nova-swarm/member_functional_test.go its one test drove the member loop agai
 cmd/nova-swarm/contract_functional_test.go both tests (the scripted child end to end, walled and not) ran the card through a built ./cmd/nova-sprint, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); owed in nova-sprint. realWallBackend moved to step_functional_test.go
 internal/ci/testdata/toolanswers/cmd/nova-sprint.txt nova-sprint's tool-answers shard; the tool left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7), so its row has no site here
 internal/ci/nested_modules_class_test.go nova-tools is one module now (hook/ and pkg/oneline/ folded in, go.work gone); its rule is replaced by TestOneModule in internal/ci/one_module_class_test.go
+internal/update/transaction_locks_test.go stale: it tested only a test helper whose callers were the git-bus join tests, deleted with the join machinery in 91398786c
 pkg/testkit/waits_test.go testkit.Waits had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with waits.go
 pkg/testkit/script_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/script_failure_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/contract_test.go testkit.Contract had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with contract.go
 internal/doctor/check_friend_live_test.go the friend-live doctor check (daemon beat age and beat/inbox refusal on status.json) is retired with the friend daemon beat in v1.3 (2026-10-14, old-presence-inventory.md A21; nova-hook's heartbeat record is the friend liveness check)
+cmd/nova-bus/pushproof_test.go nova-bus send, recv and names read the hook record and no longer emit bus2:push notes or take --require-push; TestNamesReadsTheHookRecord in cmd/nova-bus/hook_test.go covers names
+cmd/nova-friend/pong_defaults_test.go pong.json deleted as a record in v1.3 (E2c); nova-friend pong reads queue and width from QUEUE.json and status.json directly and sends on the bus
+pkg/bus/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
+pkg/friend/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record

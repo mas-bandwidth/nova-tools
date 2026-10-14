@@ -73,7 +73,17 @@ retain their monitor behavior.
 
 The startup cursor is captured **before** HookAs or lease renewal. Startup
 recovery reads the recipient stream from 24 hours before Redis TIME through
-that fixed cursor, oldest first. It reads at most 4096 entries and 1 MiB of raw
+that fixed cursor, oldest first. Optional `--codex-since` (or
+`NOVA_HOOK_CODEX_SINCE`) narrows ordinary recovery to a fixed UTC RFC3339 timestamp
+in whole seconds, inclusive, for example `2026-10-14T20:40:00Z`. The launch
+configuration persists this exact value across restarts; substituting the
+current time on restart loses work and is forbidden. A future boundary is
+refused against Redis TIME. Earlier ordinary messages are declared archived
+history, remain retained, and work still needed must be resent. The CLI and
+saved initial envelope disclose this boundary. It creates no answers or delivery
+claims. A standing current server challenge remains subject to hash/epoch
+validation and is recovered from its actual event even before this boundary;
+that exceptional search uses the existing fixed history and byte budgets. It reads at most 4096 entries and 1 MiB of raw
 message data, then uses one bounded HMGET of existing `bus.AnswersOf(identity)`
 fields. Every unanswered in-window message is selected independently; a reply
 to a newer message never hides an earlier unanswered one. An existing server

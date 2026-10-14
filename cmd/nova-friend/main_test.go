@@ -251,7 +251,6 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE daemon=false: no pong abc123 from bob within 3s")
 
 	sent := cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123").Exit(0).Out("PING OK nonce=abc123 id=", " to=bob at=2026-10-04T03:00:", "NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123")
@@ -275,13 +274,8 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	require.NoError(t, err)
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "wake01", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE daemon=true", "the daemon answered and the session did not: deaf")
 
-	// the session answers, naming the coordinator since no daemon has recorded a seat; the pong file goes under the home directory
+	// the session answers, naming the coordinator since no daemon has recorded a seat
 	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
-	p, found, err := friend.ReadPong(state)
-	require.NoError(t, err)
-	assert.True(t, found)
-	assert.Equal(t, "abc123", p.Nonce)
-	assert.Equal(t, [3]int{2, 1, 4}, [3]int{p.Queue, p.Working, p.Width})
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob at=", "queue=2 working=1 width=4 daemon=false")
 
 	// a pong in the body from another name never counts: the from is the proof
@@ -312,8 +306,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
-	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastPong: start.Add(-2 * time.Minute), LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 8, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
@@ -503,7 +496,6 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
 			assert.Equal(t, 0, code, errb.String())
 			assert.NotContains(t, out.String(), "REFUSED")
-			assert.Contains(t, out.String(), "push proof: owed by the folder: claude runs each card as a process of its own, so the session check goes in as")
 			assert.Contains(t, out.String(), "mode: one-shot, from batch (the friend row)")
 		})
 	}
@@ -813,7 +805,6 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		var runs []string
 		cardTurn := false
 		lists := 0
-		checks := 0
 		w.exec = func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -822,17 +813,6 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			}
 			if args[0] == "--version" || len(args) > 1 && args[1] == "--help" {
 				return "", 0, nil // the daemon's read of the installed opencode (OpenCode.CheckRun): it cannot tell
-			}
-			if checks < 1 { // the daemon's first check, the push proof, goes into her newest session first; her answer brings her up, and the beat with the row
-				if args[0] == "session" {
-					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
-				}
-				text := args[len(args)-1]
-				if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
-					checks++
-					r.answer(nonce)
-					return "answered\n", 0, nil
-				}
 			}
 			if args[0] == "session" {
 				lists++
@@ -893,14 +873,6 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 	})
 }
 
-// A one-shot opencode friend's presence needs no session: her check goes in as
-// a fresh turn of its own (opencode run with no --session), never into a
-// growing session, so a session that is missing (no opencode session in the
-// directory) or full (past the model's context, every turn refused) is never
-// the reason she is down; the fresh turn's answer brings her up. This drives
-// the real world.run wiring: --mode one-shot reads the row, not a closure a
-// test sets by hand (docs/SPEC-FRIEND.md, presence: a tiny fresh turn per
-// check).
 func TestRunAOneShotFriendReadsUpWithNoSessionInTheDirectory(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -914,60 +886,45 @@ func TestRunAOneShotFriendReadsUpWithNoSessionInTheDirectory(t *testing.T) {
 		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
 		dir := t.TempDir()
 		var mu sync.Mutex
-		viaSession, viaFresh := 0, 0
+		viaSession := 0
 		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if args[0] == "sysctl" {
-				return "{ 0.00 0.00 0.00 }\n", 0, nil // the daemon's load read where there is no /proc/loadavg: not a harness run
+				return "{ 0.00 0.00 0.00 }\n", 0, nil
 			}
 			if args[0] == "--version" || len(args) > 1 && args[1] == "--help" {
-				return "", 0, nil // the daemon's read of the installed opencode (CheckRun)
+				return "", 0, nil
 			}
 			if args[0] == "session" {
-				return "[]", 0, nil // no session in the directory: the check must not depend on one
+				return "[]", 0, nil
 			}
-			text := args[len(args)-1]
-			if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
-				if len(args) > 1 && args[1] == "--session" {
-					viaSession++
-					return "the context window is full", 1, nil // the full session refuses every turn
-				}
-				viaFresh++
-				r.answer(nonce)
-				return "answered\n", 0, nil
+			if len(args) > 1 && args[1] == "--session" {
+				viaSession++
 			}
-			return "", 0, nil // a lane seed or card, none queued: nothing to answer
+			return "", 0, nil
 		}
 		beats := 0
 		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 			beats++
-			if beats == 12 {
+			if beats == 3 {
 				cancel()
 			}
 			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
-		}
-		w.beatDown = func(context.Context, string, string, time.Time, time.Time, string, friend.BeatWords) error {
-			return nil
 		}
 		var out, errb strings.Builder
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada", "--mode", "one-shot"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		mu.Lock()
 		defer mu.Unlock()
-		assert.Zero(t, viaSession, "the check never went into the broken session")
-		assert.GreaterOrEqual(t, viaFresh, 1, "the check went in as a fresh turn of its own")
+		assert.Zero(t, viaSession)
+		assert.Equal(t, 3, beats)
 		st, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", st.Mode)
-		assert.Contains(t, out.String(), "presence: up: the session answered", "the fresh turn's answer brought her up")
 	})
 }
 
-// A closed app is a friend down, however well its daemon runs: the verb wires
-// the session check, beats up only while the session answers, each beat
-// carrying its proof, says down with the check's nonce once it stops, and
-// status says so (docs/SPEC-FRIEND.md, presence).
 func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
@@ -977,69 +934,31 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 		ctx, cancel = context.WithCancel(ctx)
 		return ctx, cancel
 	}
-	nonces := []string{"pr00f1"} // the first check's nonce, the push proof; every later check's is r4nd0m
-	w.random = func() string {
-		if len(nonces) == 0 {
-			return "r4nd0m"
-		}
-		n := nonces[0]
-		nonces = nonces[1:]
-		return n
-	}
-	var mu sync.Mutex
 	var checks []string
 	w.exec = func(_ context.Context, dir, _ string, args []string, _ string) (string, int, error) {
 		if args[0] == "session" {
 			return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
 		}
 		text := args[len(args)-1]
-		if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
-			mu.Lock()
+		if strings.HasPrefix(text, friend.SessionCheckPrefix) {
 			checks = append(checks, text)
-			mu.Unlock()
-			if nonce == "pr00f1" {
-				r.answer(nonce) // the session answers the first check, and never again
-			}
 		}
 		return "", 0, nil
 	}
-	var proofs []string
-	w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
-		mu.Lock()
-		if words.Pong != "" {
-			proofs = append(proofs, words.Pong)
+	beats := 0
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		beats++
+		if beats == 2 {
+			cancel()
 		}
-		mu.Unlock()
 		return "", nil
 	}
-	var downs []string
-	w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string, _ friend.BeatWords) error {
-		mu.Lock()
-		downs = append(downs, reason)
-		mu.Unlock()
-		return nil
-	}
-	stopAfter(&w, &cancel, 17*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
 	dir := t.TempDir()
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
-	assert.Contains(t, out.String(), "push proof: proved: the session answered")
-	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
-	mu.Lock()
-	assert.Equal(t, []string{"pr00f1"}, proofs, "her up beat names the check her session answered, once; the unanswered one never")
-	require.NotEmpty(t, downs)
-	assert.Contains(t, downs[0], "push unproven: session check pr00f1", "down until the first answer")
-	assert.Contains(t, downs[len(downs)-1], "no session answer to session check r4nd0m within 5m0s", "down with the check's nonce once it stops answering")
-	require.Len(t, checks, 2, "the first check, the push proof, then the next after the quiet")
-	assert.Contains(t, checks[1], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
-	assert.Contains(t, checks[1], "--to ada")
-	mu.Unlock()
-	st, _, err := friend.ReadStatus(friend.StateDirIn(dir))
-	require.NoError(t, err)
-	r.now = st.At // read as the daemon last wrote it: up
-	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("presence=down", `presence_reason="no session answer"`, "NOTE the daemon is up and the session is not (no session answer)")
+	assert.Empty(t, checks, "run does not start SessionCheck")
+	assert.Equal(t, 2, beats)
 }
 
 // A harness at its limit is down until its reset, through the verb: the turn whose
@@ -1061,7 +980,6 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
 	require.NoError(t, err)
 	dir := t.TempDir()
-	state := friend.StateDirIn(dir)
 	w := r.world()
 	checksStarted := 0
 	w.checkGo = func(f func()) {
@@ -1115,15 +1033,13 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 		return nil
 	}
 	type turn struct {
-		at       time.Time
-		kind     string
-		presence friend.PresenceStatus
+		at   time.Time
+		kind string
 	}
 	var turns []turn
 	limited := false
 	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 		text := args[len(args)-1]
-		p, _, _ := friend.ReadPresence(state) // ignored: a missing file reads as the zero presence, which the test sees
 		mu.Lock()
 		defer mu.Unlock()
 		now := clock
@@ -1133,16 +1049,16 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 			r.answer(nonce)
 			return "answered\n", 0, nil
 		case strings.HasPrefix(text, "nova-friend: your harness's usage limit has reset"):
-			turns = append(turns, turn{now, "wake", p})
+			turns = append(turns, turn{now, "wake"})
 			fields := strings.Fields(text)
 			return fields[len(fields)-1] + "\n", 0, nil
 		case strings.Contains(text, "card c9"):
 			if !limited {
 				limited = true
-				turns = append(turns, turn{now, "limit", p})
+				turns = append(turns, turn{now, "limit"})
 				return "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", 1, nil
 			}
-			turns = append(turns, turn{now, "message", p})
+			turns = append(turns, turn{now, "message"})
 			cancel()
 			return "I ran card c9.\n", 0, nil
 		}
@@ -1159,8 +1075,6 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 	assert.Contains(t, out.String(), "Insufficient AI Credits")
 	assert.Contains(t, out.String(), "the turn hit the harness's limit", "the turn is deferred, the message in hand")
 	assert.False(t, turns[1].at.Before(turns[0].at.Add(10*time.Minute)), "no wake before the reset: %s then %s", turns[0].at, turns[1].at)
-	assert.Equal(t, friend.PresenceDown, turns[1].presence.Presence, "down on the presence file until woken")
-	assert.Contains(t, turns[1].presence.Reason, "harness limit until ")
 	assert.Contains(t, out.String(), "limit: woken: the session answered r4nd0m after the reset")
 	// down from the record of it (a beat while the limited turn still ran was before anyone knew), to the wake
 	_, rest, ok := strings.Cut(out.String(), "RUN ")
@@ -1294,7 +1208,7 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 
 	r.now = st.At
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("status=up", "harness not seen", `harness_seen="not-seen"`).NotOut("the last beat failed")
+		Out("daemon=up", "harness not seen", `harness_seen="not-seen"`).NotOut("the last beat failed")
 }
 
 // The daemon's state directory is under --dir by default, where a sandboxed
@@ -1330,12 +1244,7 @@ func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
 		assert.True(t, found, "the status file is under --dir")
 		assert.NoDirExists(t, friend.DefaultStateDir(r.home, "bob"), "nothing under the home directory")
 		r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=", "harness=opencode") // status finds it there with no --state-dir
-		// the session's pong line names the same directory, so its pong lands where the daemon reads
 		r.cli().Do(t, "pong", "--as", "bob", "--nonce", "n1", "--to", "ada", "--state-dir", friend.StateDirIn(dir)).Exit(0)
-		p, found, err := friend.ReadPong(friend.StateDirIn(dir))
-		require.NoError(t, err)
-		assert.True(t, found)
-		assert.Equal(t, "n1", p.Nonce)
 	})
 
 	t.Run("--state-dir is honoured", func(t *testing.T) {
@@ -1447,11 +1356,13 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli := r.cli()
 	dir := t.TempDir()
 	state := friend.DefaultStateDir(r.home, "bob")
-	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet, Beats: 40, LastBeat: start}))
+	st := friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet, Beats: 40, LastBeat: start}
+	require.NoError(t, friend.WriteStatus(state, st))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out(`daemon=up`, `status=down why="no session answer ever" evidence="harness unknown; no session answer ever; no limit; 0 undelivered; no result yet"`)
 
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-time.Minute)}))
+	st.LastPong = start.Add(-time.Minute)
+	require.NoError(t, friend.WriteStatus(state, st))
 	b := &bus.Bus{Store: r.store}
 	for range 2 {
 		_, err := b.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "work", Body: "x"})
@@ -1461,10 +1372,12 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out(`status=up why="session answer 1m" evidence="harness unknown; session answer 1m; no limit; 2 undelivered; last result 10m exit=0"`)
 
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-12 * time.Minute)}))
+	st.LastPong = start.Add(-12 * time.Minute)
+	require.NoError(t, friend.WriteStatus(state, st))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="no session answer 12m"`)
 
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
+	st.LastPong = start
+	require.NoError(t, friend.WriteStatus(state, st))
 	limit, err := json.Marshal(friend.Limit{Reason: "weekly", Until: start.Add(34 * time.Hour)})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(state, friend.LimitFile), limit, 0o644))
