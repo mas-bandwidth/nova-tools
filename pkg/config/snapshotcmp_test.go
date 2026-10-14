@@ -156,6 +156,54 @@ func TestSnapshotCompareNamesTheActBehindAChangedRow(t *testing.T) {
 		assert.Equal(t, CompareSame, res.Class)
 		assert.Equal(t, 0, res.Exit())
 	})
+
+	// A row the operator added between the snapshots (present after, absent
+	// before) is an OPERATOR-ADD at the row level, named with the actor, time
+	// and reason of the creation entry, and never a failure; the kind and
+	// result carry OPERATOR-DIFF.
+	t.Run("an operator-added row is OPERATOR-ADD", func(t *testing.T) {
+		t.Parallel()
+		m := NewMem()
+		m.Now = func() time.Time { return at("2026-10-13T20:00:00Z") }
+		before, err := TakeSnapshot(ctx, m, "2026-10-13T20:00:00Z", "1.2.24")
+		require.NoError(t, err)
+		m.Now = func() time.Time { return at("2026-10-13T21:40:12Z") }
+		_, err = m.Insert(WithReason(ctx, "add openrouter"), KindProvider, Row{Name: "openrouter", Fields: map[string]string{"billing": "metered", "funded": "false"}}, "the-owner")
+		require.NoError(t, err)
+		after, err := TakeSnapshot(ctx, m, "2026-10-13T22:00:00Z", "1.2.24")
+		require.NoError(t, err)
+
+		res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, CompareOperator, res.Class)
+		assert.Equal(t, 0, res.Exit())
+		row := findRow(t, res, KindProvider, "openrouter")
+		assert.Equal(t, CompareAdded, row.Class)
+		assert.Equal(t, "the-owner", row.Actor)
+		assert.Equal(t, "2026-10-13T21:40:12Z", row.At)
+		assert.Equal(t, "add openrouter", row.Reason)
+	})
+
+	// A row only the migration actor added, or with no history, is CRIT.
+	t.Run("an added row with only the migration actor is CRIT", func(t *testing.T) {
+		t.Parallel()
+		m := NewMem()
+		m.Now = func() time.Time { return at("2026-10-13T20:00:00Z") }
+		before, err := TakeSnapshot(ctx, m, "2026-10-13T20:00:00Z", "1.2.24")
+		require.NoError(t, err)
+		m.Now = func() time.Time { return at("2026-10-13T21:00:00Z") }
+		_, err = m.Insert(ctx, KindProvider, Row{Name: "openrouter", Fields: map[string]string{"billing": "metered", "funded": "false"}}, MigrationActor)
+		require.NoError(t, err)
+		after, err := TakeSnapshot(ctx, m, "2026-10-13T22:00:00Z", "1.2.24")
+		require.NoError(t, err)
+
+		res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, CompareCrit, res.Class)
+		assert.Equal(t, 1, res.Exit())
+		row := findRow(t, res, KindProvider, "openrouter")
+		assert.Equal(t, CompareCrit, row.Class)
+	})
 }
 
 func findRow(t *testing.T, res CompareResult, kind, name string) RowDiff {

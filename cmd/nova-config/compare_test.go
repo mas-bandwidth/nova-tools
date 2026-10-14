@@ -59,8 +59,9 @@ func TestCompareVerbNamesTheActBehindAChangedRow(t *testing.T) {
 		code, out, errs := h.run(t, "compare", "--before", before, "--after", after)
 		require.Zero(t, code, "an operator act is not a failure\nstdout: %s\nstderr: %s", out, errs)
 		assert.Contains(t, out, "OPERATOR-DIFF provider openrouter by the-owner at 2026-10-13T21:40:12Z: top-up (funded false -> true)")
-		assert.Contains(t, out, "COMPARE provider OPERATOR-DIFF")
+		assert.Contains(t, out, "COMPARE provider OPERATOR")
 		assert.Contains(t, out, "COMPARE OPERATOR")
+		assert.Equal(t, 1, strings.Count(out, "OPERATOR-DIFF"), "each differing row's line is printed once\n%s", out)
 
 		code, out, _ = h.run(t, "compare", "--json", "--before", before, "--after", after)
 		require.Zero(t, code)
@@ -82,6 +83,51 @@ func TestCompareVerbNamesTheActBehindAChangedRow(t *testing.T) {
 		code, out, errs := h.run(t, "compare", "--before", before, "--after", after)
 		require.Equal(t, 1, code, "a migration-only change is CRIT\nstdout: %s\nstderr: %s", out, errs)
 		assert.Contains(t, out, "CRIT-DIFF provider openrouter unexplained: funded")
+		assert.Contains(t, out, "COMPARE CRIT")
+
+		// The --json form carries the same exit as the lines: a CRIT is exit 1
+		// in both renderings, on the same fixtures.
+		code, out, _ = h.run(t, "compare", "--json", "--before", before, "--after", after)
+		require.Equal(t, 1, code, "a CRIT is exit 1 in --json too\nstdout: %s", out)
+		assert.Contains(t, out, `"class":"CRIT-DIFF"`)
+		assert.Contains(t, out, `"exit":1`)
+	})
+
+	// A row the operator added between the snapshots (present after, absent
+	// before) is an OPERATOR-ADD, named with the actor, time and reason, and
+	// never a failure; a row only the migration actor added, or with no
+	// history, is CRIT.
+	t.Run("an operator-added row is OPERATOR-ADD", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness()
+		h.env["NOVA_PG_DSN"] = dsn
+		before := snap(t, "2026-10-13T20:00:00Z")
+		h.store.Now = func() time.Time { return mustTime("2026-10-13T21:40:12Z") }
+		_, err := h.store.Insert(config.WithReason(ctx, "add openrouter"), config.KindProvider, config.Row{Name: "openrouter", Fields: map[string]string{"billing": "metered", "funded": "false"}}, "the-owner")
+		require.NoError(t, err)
+		after := snap(t, "2026-10-13T22:00:00Z", provider("false"))
+
+		code, out, errs := h.run(t, "compare", "--before", before, "--after", after)
+		require.Zero(t, code, "an operator add is not a failure\nstdout: %s\nstderr: %s", out, errs)
+		assert.Contains(t, out, "OPERATOR-ADD provider openrouter by the-owner at 2026-10-13T21:40:12Z: add openrouter")
+		assert.Contains(t, out, "COMPARE provider OPERATOR")
+		assert.Contains(t, out, "COMPARE OPERATOR")
+		assert.Equal(t, 1, strings.Count(out, "OPERATOR-ADD"), "the added row's line is printed once\n%s", out)
+	})
+
+	t.Run("an added row with only the migration actor is CRIT", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness()
+		h.env["NOVA_PG_DSN"] = dsn
+		before := snap(t, "2026-10-13T20:00:00Z")
+		h.store.Now = func() time.Time { return mustTime("2026-10-13T21:00:00Z") }
+		_, err := h.store.Insert(ctx, config.KindProvider, config.Row{Name: "openrouter", Fields: map[string]string{"billing": "metered", "funded": "false"}}, config.MigrationActor)
+		require.NoError(t, err)
+		after := snap(t, "2026-10-13T22:00:00Z", provider("false"))
+
+		code, out, errs := h.run(t, "compare", "--before", before, "--after", after)
+		require.Equal(t, 1, code, "a migration-only add is CRIT\nstdout: %s\nstderr: %s", out, errs)
+		assert.Contains(t, out, "CRIT-DIFF provider openrouter")
 		assert.Contains(t, out, "COMPARE CRIT")
 	})
 

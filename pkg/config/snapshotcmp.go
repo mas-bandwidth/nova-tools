@@ -26,12 +26,16 @@ import (
 // the default --ignore-actor, read from the code and named in the report.
 const MigrationActor = "migrate"
 
-// The three verdicts, worst last: SAME is an identical snapshot, OPERATOR a
+// The verdicts, worst last: SAME is an identical snapshot, OPERATOR a
 // difference a person's, a seat's or a friend's recorded set explains (reported
 // and never a failure), CRIT a difference with no such act in the window.
+// OPERATOR-ADD is the row line's word for a row an operator added between the
+// snapshots: at the kind and result level it is an operator-explained
+// difference like any other (kindClass), so it never fails.
 const (
 	CompareSame     = "SAME"
 	CompareOperator = "OPERATOR-DIFF"
+	CompareAdded    = "OPERATOR-ADD"
 	CompareCrit     = "CRIT-DIFF"
 )
 
@@ -150,11 +154,16 @@ func CompareSnapshots(ctx context.Context, st Store, before, after CmpSnap, opts
 		for _, a := range aRows {
 			b, ok := bRows[a.Name]
 			if !ok {
-				// a row the after snapshot has and the before did not: a new
-				// row with no history in the window is an unexplained change.
-				rd := RowDiff{Kind: kind, Name: a.Name, Class: CompareCrit}
+				// a row the after snapshot has and the before did not: ask the
+				// history for its creation entry in the window, so an
+				// operator's add is named, and only a row with no entry, or
+				// one only the migration actor made, is an unexplained change.
+				rd, err := classifyAddedRow(ctx, st, kind, a.Name, ignoreSet, from, to)
+				if err != nil {
+					return CompareResult{}, err
+				}
 				kd.Rows = append(kd.Rows, rd)
-				kd.Class = worse(kd.Class, CompareCrit)
+				kd.Class = worse(kd.Class, kindClass(rd.Class))
 				continue
 			}
 			var diffs []FieldDiff
@@ -247,6 +256,45 @@ func classifyRow(ctx context.Context, st Store, kind, name string, diffs []Field
 	return rd, nil
 }
 
+// classifyAddedRow is the rule for a row the after snapshot has and the before
+// did not: it asks the store's history for the row's creation entry (OpAdd) in
+// the window. An add by an operator (a person's add, a seat's add, a friend's)
+// is OPERATOR-ADD, named with the actor, the time and the reason of that entry;
+// a row with no creation entry in the window, or one only the migration actor
+// made, is CRIT.
+func classifyAddedRow(ctx context.Context, st Store, kind, name string, ignoreSet map[string]bool, from, to time.Time) (RowDiff, error) {
+	rd := RowDiff{Kind: kind, Name: name, Class: CompareCrit}
+	var history []Change
+	if st != nil {
+		h, err := st.History(ctx, kind, name)
+		if err != nil {
+			return RowDiff{}, err
+		}
+		history = h
+	}
+	for i := range history {
+		c := history[i]
+		if c.Op != OpAdd {
+			continue
+		}
+		at, err := parseInstant(c.At)
+		if err != nil {
+			continue
+		}
+		if at.Before(from) || at.After(to) {
+			continue
+		}
+		if ignoreSet[c.Actor] {
+			continue
+		}
+		rd.Class = CompareAdded
+		rd.Actor = c.Actor
+		rd.At = c.At
+		rd.Reason = c.Reason
+	}
+	return rd, nil
+}
+
 // explainedBy reports whether any operator entry changed field, by its own
 // before and after maps: an add has no before and a remove no after.
 func explainedBy(field string, operators []Change) bool {
@@ -273,11 +321,36 @@ func explainedBy(field string, operators []Change) bool {
 
 // worse returns the more serious of two classes.
 func worse(a, b string) string {
-	rank := map[string]int{CompareSame: 0, CompareOperator: 1, CompareCrit: 2}
+	rank := map[string]int{CompareSame: 0, CompareOperator: 1, CompareAdded: 1, CompareCrit: 2}
 	if rank[b] > rank[a] {
 		return b
 	}
 	return a
+}
+
+// kindClass is the class a row's class carries up to its kind and the result:
+// an added row is an operator-explained difference like a changed one, so it is
+// OPERATOR-DIFF at the summary level, and OPERATOR-ADD stays the row line's word.
+func kindClass(class string) string {
+	if class == CompareAdded {
+		return CompareOperator
+	}
+	return class
+}
+
+// Verdict is the plain word a class carries for the summary lines: the row
+// lines carry the diff class (OPERATOR-DIFF, OPERATOR-ADD, CRIT-DIFF), while
+// the per-kind and last COMPARE lines carry the verdict (SAME, OPERATOR,
+// CRIT).
+func Verdict(class string) string {
+	switch class {
+	case CompareCrit:
+		return "CRIT"
+	case CompareOperator, CompareAdded:
+		return "OPERATOR"
+	default:
+		return "SAME"
+	}
 }
 
 // Exit is the exit code the class carries: 0 SAME or OPERATOR, 1 CRIT.

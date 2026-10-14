@@ -147,20 +147,27 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 				o.Item("row", item...)
 			}
 		}
+		// A CRIT is exit 1 in both renderings (the one value, two renderings
+		// rule): the JSON carries the same class and the same exit as the lines.
+		if res.Class == config.CompareCrit {
+			o.Status = tool.Failed
+			o.Exit = 1
+		}
 		return emit(stdout, o)
 	}
 	compareLines(stdout, res)
 	return res.Exit()
 }
 
-// compareLines renders the verdict: one line per kind, one per row that
-// differs (an OPERATOR-DIFF names the act behind it, a CRIT-DIFF the
-// unexplained fields), the added fields listed apart, and a last COMPARE line
-// naming the worst class.
+// compareLines renders the verdict: one line per row that differs (an
+// OPERATOR-DIFF or OPERATOR-ADD names the act behind it, a CRIT-DIFF the
+// unexplained fields), the added fields listed apart, then one COMPARE line per
+// kind and a last COMPARE line naming the worst verdict (SAME, OPERATOR or
+// CRIT). Each row's line is printed once.
 func compareLines(stdout io.Writer, res config.CompareResult) {
 	for _, kd := range res.Kinds {
 		if len(kd.Rows) == 0 {
-			fmt.Fprintf(stdout, "COMPARE %s %s\n", kd.Kind, kd.Class)
+			fmt.Fprintf(stdout, "COMPARE %s %s\n", kd.Kind, config.Verdict(kd.Class))
 			continue
 		}
 		for _, rd := range kd.Rows {
@@ -168,6 +175,9 @@ func compareLines(stdout io.Writer, res config.CompareResult) {
 			case config.CompareOperator:
 				fmt.Fprintf(stdout, "OPERATOR-DIFF %s %s by %s at %s: %s (%s)\n",
 					rd.Kind, rd.Name, rd.Actor, rd.At, rd.Reason, diffSummary(rd.Fields))
+			case config.CompareAdded:
+				fmt.Fprintf(stdout, "OPERATOR-ADD %s %s by %s at %s: %s\n",
+					rd.Kind, rd.Name, rd.Actor, rd.At, rd.Reason)
 			case config.CompareCrit:
 				if len(rd.Unexplained) > 0 {
 					fmt.Fprintf(stdout, "CRIT-DIFF %s %s unexplained: %s\n", rd.Kind, rd.Name, strings.Join(rd.Unexplained, ", "))
@@ -181,9 +191,9 @@ func compareLines(stdout io.Writer, res config.CompareResult) {
 				fmt.Fprintf(stdout, "ADDED %s %s: %s\n", rd.Kind, rd.Name, strings.Join(rd.Added, ", "))
 			}
 		}
-		fmt.Fprintf(stdout, "COMPARE %s %s\n", kd.Kind, kd.Class)
+		fmt.Fprintf(stdout, "COMPARE %s %s\n", kd.Kind, config.Verdict(kd.Class))
 	}
-	fmt.Fprintf(stdout, "COMPARE %s\n", res.Class)
+	fmt.Fprintf(stdout, "COMPARE %s\n", config.Verdict(res.Class))
 }
 
 // diffSummary is the differing fields of one row as `field before -> after`
