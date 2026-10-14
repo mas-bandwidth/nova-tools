@@ -88,7 +88,7 @@ A newcomer's first stumble is the spec for this section. Every binary under `cmd
 
 Check: `TestEveryCommandMeetsTheOnboardingStandard` walks every directory under `cmd/`, so a new binary joins the standard on the day it appears: the bare command refuses in one line naming its door, `help` exits 0, every verb answers `-h`, the `example:` block carries no placeholder, and `docs/TESTS.md` holds the tool's `### First run`. The same test holds point 6 for every command, and the README's sentence to its banner's line 1. Each binary's own `firstrun_test.go` does the rest, and `pkg/onboarding` holds the shared parsing. Each tool's fixture lives in `cmd/<tool>/testdata/`.
 
-**Help is never a refusal.** `<tool> <verb> -h` (or `--help`, or `<tool> help <verb>`) prints that verb's help on stdout and exits 0, before anything is read, dialled or written; so does `<tool> <group> -h` (`tool-answers`). Every verb parses its flags through the one seam, `pkg/nsprint/verbflag`; `internal/testverbhelp` is the per-tool check, and the functional walk in `internal/ci` holds every verb of every living tool to it. nova-fuse is the one exception: its exit 0 means CLEAR, so its verbs refuse `-h`. `Tool.HelpRefused` refuses `-h` at exit 2.
+**Help is never a refusal.** `<tool> <verb> -h` (or `--help`, or `<tool> help <verb>`) prints that verb's help on stdout and exits 0, before anything is read, dialled or written; so does `<tool> <group> -h` (`tool-answers`). Every verb parses its flags through the one seam, `pkg/nsprint/verbflag`; `internal/testverbhelp` is the per-tool check, and the functional walk in `internal/ci` holds every verb of every living tool to it.
 
 ### 4. General, never one fleet
 

@@ -167,15 +167,15 @@ func TestVerbHelpNamesItsEffectsFlagsAndExitMeanings(t *testing.T) {
 	})
 }
 
-func TestCheckHelpFlagStillFailsClosedAndNamesFocusedHelp(t *testing.T) {
+func TestCheckHelpFlagPrintsHelpAtExitZero(t *testing.T) {
 	t.Parallel()
 	box := freshBox(t)
 	before := testkit.ReadFile(t, box)
 	for _, flag := range []string{"-h", "--help"} {
 		code, out, errs := runFuse(t, "check", "--box", box, flag)
-		assert.Equal(t, 2, code)
-		assert.Empty(t, out)
-		assert.Contains(t, errs, "so it can never read as CLEAR; run: nova-fuse help check")
+		assert.Equal(t, 0, code)
+		assert.Empty(t, errs)
+		assert.Contains(t, out, "usage: nova-fuse check")
 	}
 	assert.Equal(t, before, testkit.ReadFile(t, box))
 	code, out, errs := runFuse(t, "help", "lift", "lockdown")

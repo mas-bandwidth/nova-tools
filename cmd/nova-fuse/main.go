@@ -69,9 +69,8 @@ flag, bad invocation, or a lift this tool refuses by design; check, status,
 quarantine and lift quarantine also answer 2 at a path with no box or an
 unreadable box, never read as clear.
 
--h or --help after a verb is refused at exit 2, never answered with help:
-exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
-it. Read a verb's help with nova-fuse help <verb> (for example, help check).
+-h and --help after a verb print that verb's help at exit 0 (cites "Help is never a refusal.").
+Read a verb's help with nova-fuse help <verb> or <verb> -h (for example, check -h).
 --json on status, check and quarantine returns the standard result/facts/items
 receipt. It reports only stored facts; the box has no expiry field.
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
@@ -154,6 +153,13 @@ func refuseCaptured(stderr io.Writer, verb string, parser io.Reader, problems []
 	return 2
 }
 
+// verbHelpRequested returns the args to pass to cmdHelp for a top-level verb's
+// help: the verb's own words. `lift -h` prints the group's help, since lift is
+// dispatched before any flag set is parsed. Cites "Help is never a refusal."
+func verbHelpRequested(cmd string) []string {
+	return []string{cmd}
+}
+
 // verbs is every first word run dispatches, for the unknown-verb answer.
 var verbs = []string{"init", "status", "check", "lockdown", "quarantine", "lift", "path", "version", "help"}
 
@@ -186,8 +192,20 @@ func run(args []string, stdout, stderr io.Writer, now time.Time, inv invocation)
 	}
 	cmd, rest := args[0], args[1:]
 
+	// <verb> -h prints that verb's help at exit 0 (docs/STANDARD.md section 3,
+	// "Help is never a refusal."). A verb that parses flags answers -h wherever
+	// it stands after the verb, inside parseBoxWith; this catches the spelling
+	// with no flag before it, and `lift -h`, whose dispatch reads no flag set.
+	if cmd != "help" && cmd != "-h" && cmd != "--help" && len(rest) > 0 && verbflag.IsHelp(rest[0]) {
+		return cmdHelp(verbHelpRequested(cmd), stdout, stderr)
+	}
+
 	switch cmd {
 	case "help", "-h", "--help":
+		if len(rest) > 0 && verbflag.IsHelp(rest[0]) {
+			// `help -h`: the tool's help, never a refusal (docs/STANDARD.md section 3).
+			return cmdHelp(nil, stdout, stderr)
+		}
 		return cmdHelp(rest, stdout, stderr)
 	case "version", "--version":
 		return cmdVersionWith(rest, stdout, stderr, inv.stamp)
@@ -231,23 +249,23 @@ func run(args []string, stdout, stderr io.Writer, now time.Time, inv invocation)
 // and no verb adds a second complaint on top. parsed=true with boxOK=false means the
 // --box refusal is already printed and the verb goes on to judge its own arguments
 // before returning 2, so that one run names every problem it can find.
-func parseBox(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed bool) {
-	box, positional, boxOK, parsed, _ = parseBoxWith(name, args, stderr, getenv, nil)
-	return box, positional, boxOK, parsed
+func parseBox(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed, helpAsked bool) {
+	box, positional, boxOK, parsed, _, helpAsked = parseBoxWith(name, args, stderr, getenv, nil)
+	return box, positional, boxOK, parsed, helpAsked
 }
 
 // parseWrite is parseBox for a verb that writes the box: it takes --dry-run too.
-func parseWrite(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed, dry bool) {
-	box, positional, boxOK, parsed, _ = parseBoxWith(name, args, stderr, getenv, func(fs *flag.FlagSet) {
+func parseWrite(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed, dry, helpAsked bool) {
+	box, positional, boxOK, parsed, _, helpAsked = parseBoxWith(name, args, stderr, getenv, func(fs *flag.FlagSet) {
 		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
 	})
-	return box, positional, boxOK, parsed, dry
+	return box, positional, boxOK, parsed, dry, helpAsked
 }
 
 // parseBoxWith is parseBox with a hook for a verb that has a flag of its own, so that a
 // second flag never means a second parser, and so never a second place where package
 // flag could be handed a stream to print an argument through.
-func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(string) string, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed, jsonRequested bool) {
+func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(string) string, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed, jsonRequested, helpAsked bool) {
 	var flagArgs, postArgs []string
 	hasDashDash := false
 	for i, a := range args {
@@ -285,25 +303,24 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 	if err := fs.Parse(flagArgs); err != nil {
 		if repeated != "" {
 			refuse(stderr, " "+name, fmt.Sprintf("--%s is given more than once; every flag takes one value, and a second is never taken over the first", oneline.Escape(repeated)))
-			return "", nil, false, false, jsonRequested
+			return "", nil, false, false, jsonRequested, false
 		}
-		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
-		// invocation: exit 2, never 0. check answers permission with 0, and a surface
-		// named "-h" must not be able to reach that answer.
+		// -h and -help land here as flag.ErrHelp. Help is never a refusal
+		// (docs/STANDARD.md section 3): answer with the verb's help at exit 0,
+		// before any box is read or written.
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintf(stderr, "nova-fuse %s REFUSED: -h is refused here so it can never read as CLEAR; run: nova-fuse help %s\n", oneline.Escape(name), oneline.Escape(name))
-			return "", nil, false, false, jsonRequested
+			return "", nil, false, false, jsonRequested, true
 		}
 		// An unknown flag, a flag with no value, a value its flag cannot take: worded
 		// once for every tool by verbflag.Explain, with the verb's flags and the nearest.
 		fmt.Fprintf(stderr, "nova-fuse %s REFUSED: %s; run: nova-fuse help %s\n", oneline.Escape(name),
 			oneline.Escape(oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes)), oneline.Escape(name))
-		return "", nil, false, false, jsonRequested
+		return "", nil, false, false, jsonRequested, false
 	}
 	for _, arg := range fs.Args() {
 		if strings.HasPrefix(arg, "-") {
 			refuse(stderr, " "+name, fmt.Sprintf("flags come before positional arguments, got %q late", arg))
-			return "", nil, false, false, jsonRequested
+			return "", nil, false, false, jsonRequested, false
 		}
 	}
 	positional = append(fs.Args(), postArgs...)
@@ -311,7 +328,7 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 		// `--box --box=./x` hands package flag "--box=./x" as the first --box's
 		// value. A box path never begins with "-"; a box in such a file is ./-name.
 		refuse(stderr, " "+name, fmt.Sprintf("--box %q begins with \"-\", the shape of a flag, not a path; name a file that begins with - as ./-name", *boxFlag))
-		return "", nil, false, false, jsonRequested
+		return "", nil, false, false, jsonRequested, false
 	}
 	// The path is the flag. NOVA_FUSE_BOX is read and never used: a missing
 	// flag stays a refusal, and a flag that was given is not replaced
@@ -319,9 +336,9 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 	chosen := boxPath(*boxFlag, getenv)
 	if chosen == "" {
 		fmt.Fprintf(stderr, "nova-fuse %s REFUSED: --box is required; refusing to guess; run: nova-fuse help\n%s", name, hintFor("box"))
-		return "", positional, false, true, jsonRequested
+		return "", positional, false, true, jsonRequested, false
 	}
-	return chosen, positional, true, true, jsonRequested
+	return chosen, positional, true, true, jsonRequested, false
 }
 
 // boxPath is the box this invocation uses. It is the --box flag. A set
@@ -400,6 +417,11 @@ func cmdLift(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	}
 	switch rest[0] {
 	case "lockdown":
+		// Help is never a refusal (docs/STANDARD.md section 3): `lift lockdown -h`
+		// prints the group member's help at exit 0, before the by-design refusal.
+		if verbflag.Asked(rest[1:]) {
+			return cmdHelp([]string{"lift", "lockdown"}, stdout, stderr)
+		}
 		// Always, and before anything is read. The refusal must not depend on a flag being
 		// parsed, the box being readable, whether a lockdown is even blown, or anything
 		// after the word "lockdown", because every one of those is a lever. There is no
@@ -410,7 +432,10 @@ func cmdLift(rest []string, stdout, stderr io.Writer, inv invocation) int {
 			"Nothing this tool is told changes that. Stop, and go talk with them now.\n")
 		return 2
 	case "quarantine":
-		box, positional, ok, parsed, dry := parseWrite("lift quarantine", rest[1:], stderr, inv.getenv)
+		box, positional, ok, parsed, dry, helpAsked := parseWrite("lift quarantine", rest[1:], stderr, inv.getenv)
+		if helpAsked {
+			return cmdHelp([]string{"lift", "quarantine"}, stdout, stderr)
+		}
 		if !parsed {
 			return 2
 		}
@@ -517,7 +542,10 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer, wd 
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
 // box is already broken: a fuse you cannot blow is not a fuse.
 func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
-	box, positional, ok, parsed, dry := parseWrite("lockdown", rest, stderr, inv.getenv)
+	box, positional, ok, parsed, dry, helpAsked := parseWrite("lockdown", rest, stderr, inv.getenv)
+	if helpAsked {
+		return cmdHelp([]string{"lockdown"}, stdout, stderr)
+	}
 	if !parsed {
 		return 2
 	}
@@ -642,10 +670,13 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 	var asJSON bool
 	var dry bool
 	var parseErr bytes.Buffer
-	box, positional, ok, parsed, jsonRequested := parseBoxWith("quarantine", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
+	box, positional, ok, parsed, jsonRequested, helpAsked := parseBoxWith("quarantine", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
 		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
 		fs.BoolVar(&asJSON, "json", false, "write the standard JSON receipt")
 	})
+	if helpAsked {
+		return cmdHelp([]string{"quarantine"}, stdout, stderr)
+	}
 	asJSON = asJSON || jsonRequested
 	if !parsed {
 		return parseFailure("quarantine", asJSON, parseErr.String(), stdout, stderr)
@@ -800,7 +831,10 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 // cmdPath echoes the box path this invocation would use. With no default paths anywhere,
 // this verb exists to verify plumbing: what one caller passes is what another sees.
 func cmdPath(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	box, positional, ok, parsed := parseBox("path", rest, stderr, inv.getenv)
+	box, positional, ok, parsed, helpAsked := parseBox("path", rest, stderr, inv.getenv)
+	if helpAsked {
+		return cmdHelp([]string{"path"}, stdout, stderr)
+	}
 	if !parsed {
 		return 2
 	}
