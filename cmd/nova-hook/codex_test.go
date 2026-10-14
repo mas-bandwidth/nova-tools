@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -119,6 +120,9 @@ func TestCodexLoopDeliversServerChallengesAndOrdinaryEventsWithoutClientChalleng
 	i := 0
 	st := codexWaiter{Store: bus.Redis{C: r.h.Client}, read: func() []bus.Entry {
 		r.advance(hook.ChallengeEvery + time.Second)
+		if i == 1 {
+			require.NoError(t, r.h.Client.HSet(ctx, bus.AnswersOf("ada"), messages[0].ID, "1791720000").Err())
+		}
 		m := messages[i]
 		i++
 		return []bus.Entry{{Entry: "1-1", Fields: m.Fields()}}
@@ -227,4 +231,94 @@ func TestCodexDryRunDoesNotContactNativeAppOrWriteEvents(t *testing.T) {
 	code := run(args, strings.NewReader(""), &out, io.Discard, w)
 	assert.Zero(t, code, out.String())
 	assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
+}
+
+func TestCodexBurstOfFiftyMessagesCoalescesIntoSingleTurnAndOneSummaryAtTurnBoundary(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := fakeCodexWorld(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+	require.NoError(t, err)
+
+	senders := []string{"rowan", "glenn", "emma"}
+	makeBurst := func(offset, count int) []bus.Entry {
+		entries := make([]bus.Entry, 0, count)
+		for i := 0; i < count; i++ {
+			idx := offset + i + 1
+			m := bus.Message{
+				ID:      fmt.Sprintf("msg-%d", idx),
+				From:    senders[i%len(senders)],
+				Subject: fmt.Sprintf("subject-%d", idx),
+				Body:    fmt.Sprintf("body-%d", idx),
+			}
+			entries = append(entries, bus.Entry{Entry: fmt.Sprintf("1-%d", idx), Fields: m.Fields()})
+		}
+		return entries
+	}
+
+	var deliveredIDs []string
+	savedEvents := map[string]savedCodexEvent{}
+	w.codexSave = func(_, id string, data []byte) error {
+		var e savedCodexEvent
+		require.NoError(t, json.Unmarshal(data, &e))
+		savedEvents[id] = e
+		return nil
+	}
+	w.codexDeliver = func(_ context.Context, _, _, id, _ string) (string, error) {
+		deliveredIDs = append(deliveredIDs, id)
+		return fmt.Sprintf("turn-%d", len(deliveredIDs)), nil
+	}
+
+	step := 0
+	st := codexWaiter{Store: bus.Redis{C: r.h.Client}, read: func() []bus.Entry {
+		step++
+		r.advance(time.Second)
+		switch step {
+		case 1:
+			// Initial burst of 50 messages when idle: starts 1 turn for msg-1 and folds 49.
+			return makeBurst(0, 50)
+		case 2:
+			// While turn 1 is still running, time advances and no new prompt is delivered.
+			assert.Equal(t, []string{"msg-1"}, deliveredIDs, "50-message burst must produce exactly one startTurn")
+			return nil
+		case 3:
+			// Turn 1 boundary: ada answers msg-1; loop delivers exactly one summary for the 49 folded messages.
+			require.NoError(t, r.h.Client.HSet(ctx, bus.AnswersOf("ada"), "msg-1", "1791720001").Err())
+			return nil
+		case 4:
+			// While the summary turn is running, another burst of 50 messages arrives: zero new turns started.
+			require.Len(t, deliveredIDs, 2, "turn boundary must deliver exactly one summary")
+			return makeBurst(50, 50)
+		case 5:
+			// Still in summary turn: deliveredIDs remains 2 despite 50 more messages arriving.
+			assert.Len(t, deliveredIDs, 2, "50 messages arriving while turn is running must fold without starting a turn")
+			// Next turn boundary: ada answers the summary event; loop delivers one 50-message summary.
+			require.NoError(t, r.h.Client.HSet(ctx, bus.AnswersOf("ada"), deliveredIDs[1], "1791720002").Err())
+			return nil
+		default:
+			cancel()
+			return nil
+		}
+	}}
+
+	s := &session{bus: st, hooks: r.h.Store, as: "ada", addr: "127.0.0.1:6379"}
+	var out bytes.Buffer
+	c := &tool.Call{Stdout: &out}
+	result := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"})
+	assert.Equal(t, tool.OK, result.Status, out.String())
+
+	require.Len(t, deliveredIDs, 3)
+	assert.Equal(t, "msg-1", deliveredIDs[0])
+	assert.True(t, strings.HasPrefix(deliveredIDs[1], "summary-"), deliveredIDs[1])
+	assert.Equal(t, "49 more messages from glenn, emma, rowan; read the bus", savedEvents[deliveredIDs[1]].Message.Subject)
+	assert.Equal(t, "49 more messages from glenn, emma, rowan; read the bus", savedEvents[deliveredIDs[1]].Message.Body)
+	assert.Contains(t, out.String(), "49 more messages from glenn, emma, rowan; read the bus")
+
+	assert.True(t, strings.HasPrefix(deliveredIDs[2], "summary-"), deliveredIDs[2])
+	assert.Equal(t, "50 more messages from rowan, glenn, emma; read the bus", savedEvents[deliveredIDs[2]].Message.Subject)
+	assert.Equal(t, "50 more messages from rowan, glenn, emma; read the bus", savedEvents[deliveredIDs[2]].Message.Body)
+	assert.Contains(t, out.String(), "50 more messages from rowan, glenn, emma; read the bus")
 }
