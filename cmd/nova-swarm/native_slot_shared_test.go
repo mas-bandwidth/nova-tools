@@ -145,5 +145,5 @@ func awaitNativeFile(t *testing.T, path string) {
 			return
 		}
 	}
-	t.Fatalf("%s never appeared: the first run's harness never started", path)
+	require.FailNowf(t, "", "%s never appeared: the first run's harness never started", path)
 }

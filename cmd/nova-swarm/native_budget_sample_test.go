@@ -47,7 +47,7 @@ func budgetOf(t *testing.T, out string) string {
 			return v
 		}
 	}
-	t.Fatalf("the NATIVE OK line carries no budget= field:\n%s", out)
+	require.FailNowf(t, "", "the NATIVE OK line carries no budget= field:\n%s", out)
 	return ""
 }
 

@@ -291,5 +291,5 @@ func waitForFile(t *testing.T, path, what string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("%s: %s never appeared", what, path)
+	require.FailNowf(t, "", "%s: %s never appeared", what, path)
 }

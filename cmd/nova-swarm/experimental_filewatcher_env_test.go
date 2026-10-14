@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestIssue2328 asserts that OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER survives
@@ -21,5 +23,5 @@ func TestIssue2328(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("%s was dropped from the child's environment", name)
+	require.FailNowf(t, "", "%s was dropped from the child's environment", name)
 }

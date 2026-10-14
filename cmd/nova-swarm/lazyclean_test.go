@@ -60,7 +60,7 @@ func (p *pool) drain(now time.Time, rounds int) {
 			return
 		}
 	}
-	p.t.Fatalf("the old epochs were not cleaned in %d rounds", rounds)
+	require.FailNowf(p.t, "", "the old epochs were not cleaned in %d rounds", rounds)
 }
 
 // TestOldEpochsGoAndTheCurrentAndPreviousStay pins the rule: with the sprint at epoch 14,

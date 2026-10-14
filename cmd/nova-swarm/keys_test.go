@@ -139,7 +139,7 @@ func TestAMissingPassNameIsReadInProcessFromTheSeat(t *testing.T) {
 	assert.False(t, called, "a name the environment holds opened the seat")
 
 	_, _, err = prepareMemberKeysFrom([]string{"ANTHROPIC_API_KEY"}, func(string) string { return "" }, func(secrets.UnitKeyLogin) (map[string]secrets.Secret, error) {
-		t.Fatal("no seat opened the store")
+		require.FailNow(t, "no seat opened the store")
 		return nil, nil
 	})
 	require.Error(t, err)
@@ -178,7 +178,7 @@ func TestSwarmKeysFileNamesTheSeatAndRefusesAValue(t *testing.T) {
 		}
 		return ""
 	}, func(secrets.UnitKeyLogin) (map[string]secrets.Secret, error) {
-		t.Fatal("a value field opened the store")
+		require.FailNow(t, "a value field opened the store")
 		return nil, nil
 	})
 	require.Error(t, err)

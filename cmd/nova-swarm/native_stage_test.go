@@ -50,7 +50,7 @@ func captureStageLine(t *testing.T, fn func()) string {
 		require.True(t, ok, "nativeRun printed no STAGE OK/FAIL line")
 		return line
 	case <-time.After(30 * time.Second):
-		t.Fatalf("timed out waiting for a STAGE OK/FAIL line (30s safety bound, not the wait itself)")
+		require.FailNow(t, "timed out waiting for a STAGE OK/FAIL line (30s safety bound, not the wait itself)")
 		return ""
 	}
 }
