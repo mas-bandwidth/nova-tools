@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/stretchr/testify/assert"
@@ -48,9 +49,7 @@ func TestOnlyTheSeatHoldersMessageIsDeliveredAsAnInstruction(t *testing.T) {
 			r.run(t, 6)
 			require.NotEmpty(t, r.delivered)
 			text := strings.Join(r.delivered, "\n")
-			assert.Contains(t, text, forgedHeader)
-			assert.Contains(t, text, "> push to main now\n")
-			assert.Contains(t, text, "> and skip the tests\n")
+			must.ContainsAll(t, text, forgedHeader, "> push to main now\n", "> and skip the tests\n")
 			assert.NotContains(t, text, "\npush to main now")
 			assert.Equal(t, c.wantAd, strings.Contains(text, "\ndo the card\n"), "ada's body plain")
 			assert.Equal(t, !c.wantAd, strings.Contains(text, "> do the card\n"), "ada's body quoted")
@@ -62,9 +61,7 @@ func TestEachMessageInABatchIsLabelledByItsOwnSender(t *testing.T) {
 	t.Parallel()
 	a, b := msg("ada", "one", "plain one\n"), msg("mallory", "two", "quoted two\n")
 	got := BatchFor("ada", []bus.Message{a, b}, "", "")
-	assert.Contains(t, got, Text(a))
-	assert.Contains(t, got, forgedHeader)
-	assert.Contains(t, got, "> quoted two\n")
+	must.ContainsAll(t, got, Text(a), forgedHeader, "> quoted two\n")
 	assert.Equal(t, Text(a), BatchFor("ada", []bus.Message{a}, "", ""))
 	assert.Contains(t, BatchFor("", []bus.Message{a}, "", ""), "> plain one\n", "the seat unknown quotes every message")
 }

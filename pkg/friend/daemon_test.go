@@ -13,6 +13,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/stretchr/testify/assert"
@@ -1091,9 +1092,7 @@ func TestARefusedVerbIsRaisedOnTheThirdAndClearedWhenItAnswers(t *testing.T) {
 	assert.Contains(t, strings.Join(downs, " "), "refused")
 	got := r.adaGot(t)
 	require.Len(t, got, 2, "one word to the coordinator per verb, through tellBroken: %v", got)
-	assert.Contains(t, strings.Join(got, " "), "the server refused friend cards")
-	assert.Contains(t, strings.Join(got, " "), "the server refused friend beat")
-	assert.Contains(t, strings.Join(got, " "), "You must hook in first")
+	must.ContainsAll(t, strings.Join(got, " "), "the server refused friend cards", "the server refused friend beat", "You must hook in first")
 	assert.GreaterOrEqual(t, ups, 1, "the down is lifted once the server answers again")
 	assert.Empty(t, r.last().Refused, "the counts clear on recovery")
 	var recoveredLines int

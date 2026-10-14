@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -166,9 +167,7 @@ func TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict(t *testing.T) {
 		assert.Contains(t, flagValue(oks[0], "--finding"), "fine")
 		assert.Contains(t, flagValue(oks[0], "--finding"), "no findings")
 		usage := flagValue(oks[0], "--usage")
-		assert.Contains(t, usage, "model=m-pro")
-		assert.Contains(t, usage, "wall=")
-		assert.Contains(t, usage, "account=bob")
+		must.ContainsAll(t, usage, "model=m-pro", "wall=", "account=bob")
 		rets := sp.verbs("--return")
 		require.Len(t, rets, 1)
 		assert.Equal(t, "b.w1", rets[0][4])
@@ -180,9 +179,7 @@ func TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict(t *testing.T) {
 		assert.Contains(t, prompt, filepath.Join(dir, "reads", "a.w1"))
 		raw, err := os.ReadFile(filepath.Join(dir, "reads", "a.w1", "READ.md"))
 		require.NoError(t, err)
-		assert.Contains(t, string(raw), "/o/r.git")
-		assert.Contains(t, string(raw), "BENCH RULE")
-		assert.Contains(t, string(raw), "merge-base")
+		must.ContainsAll(t, string(raw), "/o/r.git", "BENCH RULE", "merge-base")
 		assert.FileExists(t, filepath.Join(dir, "reads", "a.w1", "BRIEF.md"))
 		assert.FileExists(t, filepath.Join(dir, "reads", "a.w1", "WORKER-REPORT.txt"))
 	})

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,9 +49,7 @@ func TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment(t *testing.T) {
 	assert.ErrorAs(t, err, &Deferred{}, "past the cap the turn is stopped")
 	var def Deferred
 	require.ErrorAs(t, err, &def)
-	assert.Contains(t, def.Reason, "alice")
-	assert.Contains(t, def.Reason, "deepseek")
-	assert.Contains(t, def.Reason, "25")
+	must.ContainsAll(t, def.Reason, "alice", "deepseek", "25")
 	assert.Equal(t, 1, h.deliver, "past the cap no turn launches")
 	require.Len(t, judged, 1, "one judgment raised")
 
@@ -182,9 +181,7 @@ func TestSpendCapJudgmentNamesFriendProviderAndSpend(t *testing.T) {
 	_, err := g.Deliver(context.Background(), "over")
 	require.ErrorAs(t, err, &Deferred{})
 	text := s.Judged(time.Now())
-	assert.Contains(t, text, "bob")
-	assert.Contains(t, text, "deepseek")
-	assert.Contains(t, text, "25")
+	must.ContainsAll(t, text, "bob", "deepseek", "25")
 }
 
 // TestSpendCapStopsWhenTheLimitGateReadsAFundsRefusal drives the real gate

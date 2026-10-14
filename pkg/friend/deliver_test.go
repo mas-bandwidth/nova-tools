@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/stretchr/testify/assert"
@@ -76,9 +77,7 @@ func TestAnUndeliveredMessageShowsAndAnAuthFailureAlarms(t *testing.T) {
 	assert.Equal(t, "bus.tailnet:6379", a.Store)
 	assert.Equal(t, "sprint", a.User)
 	assert.Equal(t, bus.AlarmAuth, a.Class)
-	assert.Contains(t, a.Text(), "bus.tailnet:6379")
-	assert.Contains(t, a.Text(), "user sprint")
-	assert.Contains(t, a.Text(), "WRONGPASS")
+	must.ContainsAll(t, a.Text(), "bus.tailnet:6379", "user sprint", "WRONGPASS")
 	assert.NotContains(t, a.Text(), "password=", "the alarm never carries a password")
 	assert.Empty(t, cleared)
 	assert.True(t, c.Watch.Open())

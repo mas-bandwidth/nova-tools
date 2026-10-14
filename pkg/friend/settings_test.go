@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	tkmust "github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend/friendtest"
 )
@@ -270,9 +271,6 @@ func TestDSHPresetKeepsTheRestOfThePatchFile(t *testing.T) {
 	require.Len(t, wrote, 1)
 	assert.Equal(t, "agent-preset-registry.config.selectedDefault", wrote[0].Name)
 	text := readFake(t, m, file)
-	assert.Contains(t, text, "# Your patch layer for this dsh profile")
-	assert.Contains(t, text, `name: "@deepseek-ai/dsh-agent-default-model"`)
-	assert.Contains(t, text, "model: deepseek-v4-pro")
-	assert.Contains(t, text, "selectedDefault: standard")
+	tkmust.ContainsAll(t, text, "# Your patch layer for this dsh profile", `name: "@deepseek-ai/dsh-agent-default-model"`, "model: deepseek-v4-pro", "selectedDefault: standard")
 	assert.NotContains(t, text, "minimal")
 }

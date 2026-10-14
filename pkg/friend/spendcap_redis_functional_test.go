@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 	"github.com/redis/go-redis/v9"
@@ -139,8 +140,6 @@ func TestTheDaemonOnAPrivateServerStopsTurnsPastTheCapAndRaisesOneJudgment(t *te
 	require.Len(t, pending, 1, "the message stays pending")
 	mu.Lock()
 	require.Len(t, judged, 1, "one judgment raised to the seat and the owner")
-	assert.Contains(t, judged[0], "bob")
-	assert.Contains(t, judged[0], "deepseek")
-	assert.Contains(t, judged[0], "25")
+	must.ContainsAll(t, judged[0], "bob", "deepseek", "25")
 	mu.Unlock()
 }

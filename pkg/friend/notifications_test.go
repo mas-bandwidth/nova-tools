@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,9 +54,7 @@ func TestCodexNotificationsCoalesceBurstsWithoutLosingUrgentKinds(t *testing.T) 
 	text := strings.Join(r.delivered, "\n")
 	r.mu.Unlock()
 	assert.Equal(t, 1, strings.Count(text, "NOVA-FRIEND READY QUEUE"), "the burst is global, never one wake per card")
-	assert.Contains(t, text, "blocker payload")
-	assert.Contains(t, text, "request payload")
-	assert.Contains(t, text, "report payload")
+	must.ContainsAll(t, text, "blocker payload", "request payload", "report payload")
 	assert.False(t, strings.Contains(text, "transport receipt payload"))
 	assert.False(t, strings.Contains(text, "routine status payload"))
 }

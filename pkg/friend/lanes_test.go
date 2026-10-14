@@ -13,6 +13,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/fsx"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,18 +37,15 @@ func cardDirFixture(t *testing.T, tasks [][2]string, delivered, done []string) s
 	}
 	raw, err := json.Marshal(q)
 	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), raw, 0o644))
+	fsx.Write(t, filepath.Join(dir, "inbox", "QUEUE.json"), string(raw))
 	for _, id := range delivered {
-		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", id+"~15"), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", id+"~15", "BRIEF.md"), []byte("RESULT: "+id+"\n"), 0o644))
+		fsx.Write(t, filepath.Join(dir, "inbox", id+"~15", "BRIEF.md"), "RESULT: "+id+"\n")
 	}
 	for _, id := range done {
-		require.NoError(t, os.MkdirAll(filepath.Join(dir, "outbox", id+"~15"), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "outbox", id+"~15", "RESULT.md"), []byte("RESULT: "+id+"\n"), 0o644))
+		fsx.Write(t, filepath.Join(dir, "outbox", id+"~15", "RESULT.md"), "RESULT: "+id+"\n")
 	}
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "bob", "memory"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "bob", "AGENTS.md"), []byte("I am bob.\n"), 0o644))
+	fsx.Mkdir(t, filepath.Join(dir, "bob", "memory"))
+	fsx.Write(t, filepath.Join(dir, "bob", "AGENTS.md"), "I am bob.\n")
 	return dir
 }
 
@@ -251,11 +250,7 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		at := slices.IndexFunc(texts, func(s string) bool { return strings.Contains(s, "one card this turn, c1.") })
 		require.GreaterOrEqual(t, at, 0, "c1 is handed: %v", turns)
 		first := texts[at]
-		assert.Contains(t, first, "lane "+c1Lane+" of 2: one card this turn, c1.")
-		assert.Contains(t, first, "Its brief is "+filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"))
-		assert.Contains(t, first, "2. Write "+filepath.Join(dir, "outbox", "c1~15")+"/REPORT.md and "+filepath.Join(dir, "outbox", "c1~15")+"/RESULT.md")
-		assert.Contains(t, first, "3. Send one bus line: nova-bus send --as bob --to ada --subject 'card c1 done'")
-		assert.Contains(t, first, Text(hello), "the waiting message rides with the first card")
+		must.ContainsAll(t, first, "lane "+c1Lane+" of 2: one card this turn, c1.", "Its brief is "+filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), "2. Write "+filepath.Join(dir, "outbox", "c1~15")+"/REPORT.md and "+filepath.Join(dir, "outbox", "c1~15")+"/RESULT.md", "3. Send one bus line: nova-bus send --as bob --to ada --subject 'card c1 done'", Text(hello))
 		for i, text := range texts {
 			if i != at {
 				assert.NotContains(t, text, "for whichever lane is next", "and only with it")
@@ -275,9 +270,7 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		assert.Equal(t, []string{"c2~15"}, state.GivenUp)
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 2, strings.Count(records, " card=done"), records)
-		assert.Contains(t, records, "lane="+c2Lane+" session=ses_"+c2Lane+` subject="card c2" messages=0`)
-		assert.Contains(t, records, `card=again turn=1/2 reason="the harness refused a permission: Permission to read /elsewhere was auto-rejected"`)
-		assert.Contains(t, records, "card=set_aside turn=2/2")
+		must.ContainsAll(t, records, "lane="+c2Lane+" session=ses_"+c2Lane+` subject="card c2" messages=0`, `card=again turn=1/2 reason="the harness refused a permission: Permission to read /elsewhere was auto-rejected"`, "card=set_aside turn=2/2")
 		s := r.last()
 		assert.Equal(t, ModeOneShot, s.Mode)
 		assert.Equal(t, "1:ses_1:- 2:ses_2:-", s.Lanes)

@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,10 +51,7 @@ func TestARelativeBriefPathBecomesAbsoluteInTheCommandAndThePrompt(t *testing.T)
 	job.Brief = string(raw)
 
 	text := CardText(job, 1, 2, "nova-bus send ...", "", "", "", nil)
-	assert.Contains(t, text, "Its brief is "+brief+", and its whole text is below")
-	assert.Contains(t, text, "2. Write "+outbox+"/REPORT.md and "+outbox+"/RESULT.md")
-	assert.Contains(t, text, "Your working directory is the card's job directory, "+jobDir+".")
-	assert.Contains(t, text, "THE BRIEF ("+brief+"):\n\nSTATUS: nova-sprint card c1\nDo the one thing.\nEND OF THE BRIEF\n", "the brief rides inline")
+	must.ContainsAll(t, text, "Its brief is "+brief+", and its whole text is below", "2. Write "+outbox+"/REPORT.md and "+outbox+"/RESULT.md", "Your working directory is the card's job directory, "+jobDir+".", "THE BRIEF ("+brief+"):\n\nSTATUS: nova-sprint card c1\nDo the one thing.\nEND OF THE BRIEF\n")
 	assert.NotContains(t, strings.ReplaceAll(text, root, ""), " "+rel.Brief, "no path is named relative")
 
 	// the command: opencode runs in the job directory with the prompt naming every path absolute

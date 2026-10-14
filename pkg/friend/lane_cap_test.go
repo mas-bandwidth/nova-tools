@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,18 +74,13 @@ func TestALaneIsCappedByItsTier(t *testing.T) {
 		require.NoError(t, err, strings.Join(r.records, "\n"))
 		report = string(raw)
 		assert.True(t, strings.HasPrefix(report, "Verdict: HOLD\n\nnova-friend lane 1 of bob finished card c1: capped at 2m0s (tier flash, overrun "), report)
-		assert.Contains(t, report, "the card's wall reached its tier's cap and the daemon ended the lane")
-		assert.Contains(t, report, "no pushed head found.")
-		assert.Contains(t, report, "The last 40 lines of the lane's output:\n\n    line 10 of the lane\n")
-		assert.Contains(t, report, "    line 49 of the lane\n")
+		must.ContainsAll(t, report, "the card's wall reached its tier's cap and the daemon ended the lane", "no pushed head found.", "The last 40 lines of the lane's output:\n\n    line 10 of the lane\n", "    line 49 of the lane\n")
 		assert.NotContains(t, report, "line 9 of the lane", "only the last 40 lines")
 		assert.Equal(t, 1, h.got(), "the capped card is ended, not handed again")
 		assert.Empty(t, state.Started)
 		assert.Equal(t, []string{"c1~15"}, state.GivenUp)
 		records := strings.Join(r.records, "\n")
-		assert.Contains(t, records, "lane 1: card c1 capped at 2m0s (tier flash): its wall since ")
-		assert.Contains(t, records, "card=capped turn=1/2")
-		assert.Contains(t, records, "finish=failed sent=server")
+		must.ContainsAll(t, records, "lane 1: card c1 capped at 2m0s (tier flash): its wall since ", "card=capped turn=1/2", "finish=failed sent=server")
 		got := f.got()
 		require.Len(t, got, 1, "one finish")
 		sent = got[0]
