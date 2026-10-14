@@ -130,7 +130,7 @@ ARG BENCH_UID=10001
 # stub the swarm timeout test writes; sqlite3 is the usage store's reader.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates git lsof make postgresql-16 procps python3 sqlite3 \
+      ca-certificates git lsof make nodejs postgresql-16 procps python3 sqlite3 \
  && rm -rf /var/lib/apt/lists/* \
  # the package makes a cluster and a service; the fixtures make their own
  && rm -rf /var/lib/postgresql/16/main /etc/postgresql/16/main \
@@ -175,6 +175,7 @@ RUN { \
       echo "postgres: $(/usr/lib/postgresql/16/bin/postgres --version)"; \
       echo "git: $(git --version)"; \
       echo "make: $(make --version | head -n 1)"; \
+      echo "node: $(node --version)"; \
       echo "python3: $(python3 --version)"; \
       echo "sqlite3: $(sqlite3 --version | cut -d' ' -f1-2)"; \
       echo "sops: $(sops --version --disable-version-check | head -n 1)"; \

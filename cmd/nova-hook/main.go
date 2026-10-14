@@ -28,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
+	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
@@ -48,6 +49,9 @@ type world struct {
 	codexSave     func(string, string, []byte) error
 	codexRewrite  func(string, string, []byte) error
 	codexDeliver  func(context.Context, string, string, string, string) (string, error)
+	dshValidate   func(dshdesktop.Route) error
+	dshSave       func(string, string, []byte) error
+	dshDeliver    func(dshdesktop.Route, string, string) (string, error)
 	getenv        func(string) string
 	open          func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
 	fleetBus      func(ctx context.Context, addr string) (string, error)
@@ -62,12 +66,18 @@ type world struct {
 	grok          *grokRoute                                       // the grok harness, when --harness grok installed one; nil on every other route
 }
 
+// nativeRoute is one harness delivery route the hook loop pushes bus events
+// through: the Codex desktop socket or the DeepSeek Harness hook bridge.
+type nativeRoute interface {
+	push(w world, c *tool.Call, s *session, role hook.Role, epoch int64, id string, m *bus.Message) *tool.Out
+}
+
 func realWorld() world {
 	host, err := os.Hostname()
 	if err != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
-	w := world{codexLock: lockCodexRoute, codexValidate: validateCodexRoute, codexSave: saveCodexEvent, codexRewrite: rewriteCodexEvent, codexDeliver: codexdesktop.DeliverSaved, getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
+	w := world{codexLock: lockCodexRoute, codexValidate: validateCodexRoute, codexSave: saveCodexEvent, codexRewrite: rewriteCodexEvent, codexDeliver: codexdesktop.DeliverSaved, dshValidate: validateDshRoute, dshSave: saveDshEvent, dshDeliver: dshdesktop.Deliver, getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
 		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
@@ -192,7 +202,7 @@ is not proof or acknowledgment: only the model runs nova-hook prove or answers w
 revokes route proof and stops renewal; unknown native outcomes are reported without declaring the model absent.
 Do not blindly restart after accepted or unknown delivery: inspect the saved event and model answer first.
 An explicit --codex-since UTC timestamp (or NOVA_HOOK_CODEX_SINCE) declares earlier ordinary messages archived history: work still needed must be resent. Persist that fixed timestamp in launch configuration; never reset it on restart. Current server challenge proof is independent of this boundary.
-Codex clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
+Codex and DeepSeek clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
 Muse clients use --harness Muse: before arming it installs the nova-hook plugin bundle (--muse-bundle, or
 NOVA_HOOK_MUSE_BUNDLE, or muse-bundle beside the binary) with muse plugins install and approves its one hook
 capability (pending-challenges, PostToolUse) with muse plugins approve. The hook only reads nova-bus peek and
@@ -210,7 +220,7 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
-					f.String("harness", "", "install a harness adapter before arming: grok, or muse (the Muse plugin bundle); the Codex desktop route uses the --codex-* flags")
+					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse or deepseek (alias dsh); the Codex desktop route uses the --codex-* flags")
 					f.String("grok-home", w.getenv("GROK_HOME"), "absolute grok config directory the adapter installs into; empty uses GROK_HOME, else the grok directory under the user home")
 					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
 					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
@@ -218,6 +228,10 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
 					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
 					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
+					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "existing private directory for bounded external event JSON and the native notification queue")
+					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path; mount in the harness profile before use")
+					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "exact existing live harness session identity; never creates or resumes a session")
+					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
 					f.Check(func(c *tool.Call) {
@@ -421,22 +435,37 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if nativeErr != nil {
 		return tool.Refuse(nativeErr.Error())
 	}
-	// grok is its own row. museConfig refuses every harness name but muse, so a
-	// grok harness never reaches that refusal.
+	var dsh *dshRoute
 	var muse *museRoute
-	if !strings.EqualFold(c.Str("harness"), hookHarnessGrok) {
-		var museErr error
-		muse, museErr = w.museConfig(c)
-		if museErr != nil {
-			return tool.Refuse(museErr.Error())
+	var grokR *grokRoute
+	switch strings.ToLower(c.Str("harness")) {
+	case "muse":
+		var err error
+		muse, err = w.museConfig(c)
+		if err != nil {
+			return tool.Refuse(err.Error())
 		}
+	case hookHarnessGrok:
+		var err error
+		grokR, err = w.grokConfig(c)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+	case "", "deepseek", "dsh":
+		var err error
+		dsh, err = w.dshConfig(c)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+	default:
+		return tool.Refuse("--harness wants muse, grok, deepseek, or dsh; the Codex desktop route uses --codex-* flags")
 	}
-	grokR, grokErr := w.grokConfig(c)
-	if grokErr != nil {
-		return tool.Refuse(grokErr.Error())
+
+	if (muse != nil || grokR != nil) && (c.Str("dsh-events-dir") != "" || c.Str("dsh-hooks-file") != "" || c.Str("dsh-since") != "" || c.Str("dsh-session") != "") {
+		return tool.Refuse("harness delivery routes are exclusive; configure one harness route")
 	}
-	if muse != nil && native != nil {
-		return tool.Refuse("one harness at a time: --harness Muse or the Codex desktop route, not both")
+	if native != nil && (dsh != nil || muse != nil) {
+		return tool.Refuse("native harness delivery routes are exclusive; configure one harness route")
 	}
 	if grokR != nil && (native != nil || muse != nil) {
 		return tool.Refuse("one harness at a time: --harness grok, --harness muse, or the Codex desktop route")
@@ -445,6 +474,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if out := w.museInstall(c, muse); out != nil {
 			return out
 		}
+
 	}
 	s, refused := w.openSession(c, true)
 	if refused != nil {
@@ -472,6 +502,26 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	held := holds(role)
 	if native != nil && !slices.Contains(held, hook.Bus) {
 		return tool.Refuse("Codex delivery wants a role with the bus push")
+	}
+	if dsh != nil && !slices.Contains(held, hook.Bus) {
+		return tool.Refuse("dsh delivery wants a role with the bus push")
+	}
+	if dsh != nil {
+		release, err := w.codexLock(dsh.route.EventsDir)
+		if err != nil {
+			return tool.Refuse("dsh route is not exclusively held: " + err.Error())
+		}
+		defer func() {
+			if err := release(); err != nil {
+				line(c, tool.Done().As("STATE").Fact("state", "unlock-failed").Note(err.Error()))
+			}
+		}()
+	}
+	if dsh != nil {
+		if err := dshdesktop.Install(dsh.route); err != nil {
+			return tool.Refuse("dsh harness-side setup failed: " + err.Error())
+		}
+		line(c, tool.Done().As("STATE").Fact("state", "native-include-written").Fact("path", dsh.route.HooksFile).Note("mount this include in the harness profile; writing files does not mount a plugin or prove delivery"))
 	}
 	if grokR != nil {
 		grokR.as = s.as
@@ -576,6 +626,12 @@ func (w world) hook(c *tool.Call) *tool.Out {
 				native.startTurn(s, e.EventID, native.pendingTurn)
 			}
 		}
+		if dsh != nil && created {
+			m := bus.Message{ID: "dsh-bootstrap-" + w.nonce(), From: s.as, Subject: "HOOK CHALLENGE nonce=" + nonce, Body: challengeText(s.as, nonce, hook.ChallengeEvery)}
+			if out := w.dshPush(c, s, dsh, role, epoch, m.ID, &m); out != nil {
+				return out
+			}
+		}
 		if !created {
 			return nil
 		}
@@ -594,7 +650,14 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if ch != nil {
 		line(c, ch)
 	}
-	return w.loop(c, s, role, held, epoch, cursor, challenge, native)
+	var nr nativeRoute
+	if native != nil {
+		nr = native
+	}
+	if dsh != nil {
+		nr = dsh
+	}
+	return w.loop(c, s, role, held, epoch, cursor, challenge, nr)
 }
 
 // cursor is the bus stream's last entry id when this process holds the bus
@@ -665,7 +728,7 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 // floods the Monitor. A record lost under the loop (none: deleted, or the
 // store flushed) is armed again, the session's hook being the identity's word;
 // an unhook ends the loop.
-func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, native *codexRoute) *tool.Out {
+func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, native nativeRoute) *tool.Out {
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stream := bus.StreamOf(s.as)
@@ -714,7 +777,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 					}
 					line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))
 					if native != nil {
-						if out := w.codexPush(c, s, native, role, epoch, m.ID, "", &m); out != nil {
+						if out := native.push(w, c, s, role, epoch, m.ID, &m); out != nil {
 							return out
 						}
 					}
@@ -725,8 +788,8 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 					return out
 				}
 			}
-			if native != nil {
-				if out := w.codexStep(c, s, native, role, epoch); out != nil {
+			if route, ok := native.(*codexRoute); ok {
+				if out := w.codexStep(c, s, route, role, epoch); out != nil {
 					return out
 				}
 			}
