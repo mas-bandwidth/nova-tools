@@ -21,7 +21,7 @@ var DefaultCatalog = []Entry{
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "the TLA+ models and their runners", "go test ./pkg/tlc", "make tlc-test"),
 	E("profiles", "pkg/sandbox's darwin profile and its check", "go test ./pkg/sandbox", "go test ./pkg/sandbox"),
-	E("hook", "the hook module (own go.mod)", "cd hook && go test .", "cd hook && go test ."),
+	E("hook", "the hook package", "go test ./hook/...", "make test"),
 	E("testdata", "shared test fixtures", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 

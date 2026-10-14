@@ -159,7 +159,7 @@ After a site is fixed, `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` lowers it
 | [cmd/](cmd/AGENTS.md) | 17 nova command-line tools | `nova-ci local` | `make build` |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
 | `fleet/` | fleet loop units and bench templates | none | none |
-| `hook/` | the hook module (own go.mod) | `cd hook && go test .` | `cd hook && go test .` |
+| `hook/` | the hook package | `go test ./hook/...` | `make test` |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `nova-ci local` | `make test` |
 | [pkg/](pkg/AGENTS.md) | public packages | `nova-ci local` | `make test` |

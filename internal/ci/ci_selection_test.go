@@ -54,9 +54,9 @@ func classTestSelection(t *testing.T) []string {
 		switch strings.Join(argv, " ") {
 		case "git diff --name-only base HEAD":
 			return pkgselect.Result{Stdout: "docs/CLI.md\n.github/workflows/ci.yml\n"}, nil
-		case "go list ./cmd/... ./internal/... ./pkg/... ./tools/...":
+		case "go list ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/...":
 			return pkgselect.Result{Stdout: "example.com/m/cmd/a\nexample.com/m/internal/ci\nexample.com/m/internal/docs\n"}, nil
-		case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./pkg/... ./tools/...":
+		case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/...":
 			return pkgselect.Result{Stdout: "example.com/m/cmd/a fmt\nexample.com/m/internal/ci fmt\nexample.com/m/internal/docs fmt\n"}, nil
 		}
 		return pkgselect.Result{}, nil // git fetch
@@ -115,9 +115,9 @@ func TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile(t *testing.T) {
 			switch strings.Join(argv, " ") {
 			case "git diff --name-only base HEAD":
 				return pkgselect.Result{Stdout: diff}, nil
-			case "go list ./cmd/... ./internal/... ./pkg/... ./tools/...":
+			case "go list ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/...":
 				return pkgselect.Result{Stdout: "example.com/m/internal/ci\nexample.com/m/internal/docs\nexample.com/m/pkg/swarm\n"}, nil
-			case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./pkg/... ./tools/...":
+			case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/...":
 				return pkgselect.Result{Stdout: "example.com/m/internal/ci fmt\nexample.com/m/internal/docs fmt\nexample.com/m/pkg/swarm fmt\n"}, nil
 			}
 			return pkgselect.Result{}, nil // git fetch
