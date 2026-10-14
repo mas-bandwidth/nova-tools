@@ -695,7 +695,7 @@ func TestTableVerbsAgainstModel(t *testing.T) {
 	case "0":
 		candidate = false
 	default:
-		t.Fatalf("NOVA_TABLE_CONTRACT wants 0 (pinned baseline) or 1 (accepted contract), got %q", mode)
+		require.Failf(t, "NOVA_TABLE_CONTRACT", "wants 0 (pinned baseline) or 1 (accepted contract), got %q", mode)
 	}
 	_, c := live(t)
 	ctx := context.Background()
