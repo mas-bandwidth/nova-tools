@@ -26,7 +26,7 @@ checks exact; a shorter chain is not a reason to weaken `Equal` to `Contains`.
 Keep setup and prerequisites fatal with `require`; keep independent table-row
 checks nonfatal with `assert`.
 
-Use `WriteFile`, `ReadFile`, `ReadJSON`, `JSON` and `Tree` for common file
+Use `WriteFile`, `ReadFile`, `ReadJSON` and `Tree` for common file
 mechanics. `Tree` writes named fixture files under an `os.Root`; it rejects
 paths outside that root. Use `SkipOn` when a test's property cannot be
 observed on a named operating system. Domain fixtures such as a sandbox job,
@@ -49,10 +49,8 @@ Use `Head(repo)` to read the commit a clone's or the remote's HEAD names, for
 asserting where a push or commit left it; it fails the test on a repository
 with no commit.
 
-Use `testing/synctest` for time-dependent tests first. `Waits` is only for a
-wait seam around code that must perform real I/O and cannot run in a synctest
-bubble; it records requested durations and lets the test hold or release that
-wait. Do not add a general-purpose fake clock to the kit.
+Use `testing/synctest` for time-dependent tests. Do not add a general-purpose
+fake clock to the kit.
 
 Keep package-level seam swaps and their cleanup explicit next to the test or
 domain fixture that needs them. A small adapter may bind a tool's injected
@@ -64,37 +62,4 @@ The first two-file nova-sandbox pilot changes 16 lines and removes 7 across
 imports account for the added lines, so this pilot demonstrates shared
 mechanics and unchanged assertion severity; it does not claim a line-count
 saving.
-
-Use `Script` for a fake with expectations over a transport interface
-(docs/STANDARD.md section 8: "A fake is strict like the real tool: it refuses
-what the real one refuses"). Declare the calls a test expects, in order, as
-`Call{Name, Args, Result, Err}`; the package's fake holds the Script and each
-interface method passes its own name and arguments to `Called`, then returns
-the declared result and error. An unexpected call, a call out of order, or a
-declared call the run never made fails the test naming it; `NewScript` arms the
-leftover check at cleanup. Every call is declared: there is no matcher and no
-wildcard. `script_test.go`'s `fakeStore` is the example:
-
-```go
-type fakeStore struct{ *testkit.Script }
-
-func (f fakeStore) Get(key string) (string, error) {
-	got, err := f.Called("Get", key)
-	if err != nil {
-		return "", err
-	}
-	return got.(string), nil
-}
-```
-
-Script is a small ordered list rather than `testify/mock`, which cannot be
-imported at this base: `mock` imports `github.com/stretchr/objx`, and that
-module is absent from go.mod and go.sum, so `-mod=readonly` refuses it. The two
-behaviors the transport design names are kept: every call is declared, and the
-expectations are asserted at cleanup.
-
-Use `Contract` in a tool's skeleton-contract test to hold the whole shape in one
-call: `testkit.Contract(t, main, verbs)` runs the probes the skeleton contract's
-"How a port is proved" names; the paragraph above `Contract` in contract.go
-lists them.
 
