@@ -43,7 +43,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	o := tool.Done().Fact(key, value).Fact("schema", schema)
 	o.Verb = verb
 	var providerLines, providerWarnings []string
-	line := "CONFIG STATUS " + key + "=" + config.Value(value) + " schema=" + strconv.Itoa(schema)
+	line := "CONFIG STATUS " + key + "=" + config.Value(value) + " schema=" + strconv.Itoa(schema) // see statusLine for OK per STANDARD section 2
 	if pgFrom != "" {
 		line += " pg-from=" + pgFrom
 		o.Fact("pg-from", pgFrom)
@@ -169,6 +169,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 // statusLine leads the status line with its status word (docs/STANDARD.md
 // section 2, "The status word leads every line"): CONFIG STATUS OK on exit
 // 0, CONFIG STATUS FAILED otherwise, so a non-zero exit never carries OK.
+// (Paired with output grammar test and kind row changes.)
 func statusLine(line string, code int) string {
 	word := "OK"
 	if code != 0 {

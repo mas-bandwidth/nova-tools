@@ -817,6 +817,8 @@ an environment or an output) is pinned over a private Redis by
 in-process password) and `status`'s `redis-from=<flag|env|seat|seat-login>`
 source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 (`TestSeatLoginSprintCredsAndStatusSource`).
+The output grammar (OK word on status/list/show rows, notes via oneline.Quote)
+is pinned by `cmd/nova-config/output_grammar_test.go` (`TestOutputCarriesTheOKWordAndQuotesFreeText`).
 
 ### First run
 

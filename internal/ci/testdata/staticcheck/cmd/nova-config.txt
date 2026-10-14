@@ -1,2 +1,3 @@
 # The staticcheck findings in this package when the rule landed, one row per check; shrink-only (docs/SPEC-CI.md, staticcheck).
 # ceiling: 0
+# grammar consumers updated for OK word + oneline.Quote (with PATHS-listed files only)

@@ -477,8 +477,9 @@ with the row and no longer in a comment.
   `machine set`; `--note ''` clears it.
 - `route show` and `machine show` print it whole; the list verbs cut it to
   `ListNoteRunes` (60) characters and end it in `...`, so a row stays one short
-  line (`ListLine`; a field's `Cut` flag in the descriptor); `--json` prints it
-  whole in both.
+  line (`ListLine`; a field's `Cut` flag in the descriptor); printed rows lead
+  with OK word (see cmd/nova-config/kindverbs.go:kindRowLine and leadOK citing
+  docs/STANDARD.md section 2); `--json` prints it whole in both.
 - It is a field like any other, so `route history` and `machine history` show
   `note=<before>><after>` with the actor and the time of every change: who
   wrote which note when.

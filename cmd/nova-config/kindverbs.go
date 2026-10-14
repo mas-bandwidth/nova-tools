@@ -738,7 +738,8 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 // status word leads every line"): `<KIND> OK name=...`. A note, the free-text
 // field, goes through oneline.Quote so a blank inside the quotes is not
 // hex-escaped; an empty note stays "-". show is the whole note; a list cuts
-// it as ListLine does.
+// it as ListLine does. (See pkg/config/lines.go RowLine/ListLine/ShowLine and
+// quoteNote here; changed with its pkg caller per card.)
 func kindRowLine(k *config.Kind, row config.Row, show bool) string {
 	line := config.ListLine(k, row)
 	if show {
@@ -748,7 +749,7 @@ func kindRowLine(k *config.Kind, row config.Row, show bool) string {
 }
 
 // leadOK inserts OK after the line's first token (docs/STANDARD.md section 2,
-// "The status word leads every line").
+// "The status word leads every line"). Consumer of ListLine moved here.
 func leadOK(line string) string {
 	i := strings.IndexByte(line, ' ')
 	if i < 0 {
@@ -760,6 +761,7 @@ func leadOK(line string) string {
 // quoteNote replaces the note field with oneline.Quote (docs/STANDARD.md
 // section 2: free text is plain, oneline.Quote, a typed value oneline.Field).
 // cut is the list form: longer than ListNoteRunes, the note ends in "...".
+// (Updated with pkg/config/lines.go consumers of the row lines.)
 func quoteNote(line, note string, cut bool) string {
 	if cut {
 		if r := []rune(note); len(r) > config.ListNoteRunes {

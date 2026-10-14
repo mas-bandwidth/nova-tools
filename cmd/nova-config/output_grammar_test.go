@@ -11,7 +11,8 @@ import (
 // show and list lines (docs/STANDARD.md section 2, "The status word leads
 // every line"): CONFIG STATUS OK, FRIEND OK name=, and a note through
 // oneline.Quote rather than a \x20 field escape. A non-zero status carries
-// FAILED, never OK.
+// FAILED, never OK. (Covers consumers of statusLine, kindRowLine, quoteNote;
+// red at base before emit fix, green after; run with other cmd/nova-config tests.)
 func TestOutputCarriesTheOKWordAndQuotesFreeText(t *testing.T) {
 	t.Parallel()
 

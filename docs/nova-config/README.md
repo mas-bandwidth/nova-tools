@@ -54,7 +54,7 @@ to Redis) and a worked example that runs on the same file. `--dry-run` on
 and writes nothing; `--json` prints one JSON object of the same result.
 `kinds` prints one line per kind with its table, its fields and the fields
 `add` requires; `migrate --print` lists the migrations this binary carries.
-The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
+The executable transcript is in [TESTS.md](../TESTS.md#nova-config). Output grammar (OK word, free-text notes) pinned by output_grammar_test.go per STANDARD section 2.
 
 ## The schema
 

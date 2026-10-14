@@ -136,6 +136,7 @@ func firstLabel(s string) string {
 // `nova-config machine list` (docs/SPEC-CONFIG.md, "Lines"; docs/STANDARD.md
 // section 2, "The status word leads every line"): one
 // `MACHINE OK name=<n> ...` line per machine, plus a `CONFIG LIST` tally.
+// (Updated together with cmd sources that emit the OK form.)
 func inventoryNames(ctx context.Context, env Env) ([]string, error) {
 	out, err := env.Exec(ctx, "nova-config", "machine", "list")
 	if err != nil {
@@ -148,7 +149,9 @@ func inventoryNames(ctx context.Context, env Env) ([]string, error) {
 // (docs/SPEC-CONFIG.md, "Lines"; docs/STANDARD.md section 2, "The status word
 // leads every line"). A row is `MACHINE OK name=<n> ...`. The old
 // `MACHINE name=` prefix is not a row: a parser that still wants it reads
-// zero machines from the line the tool prints.
+// zero machines from the line the tool prints. (Consumer moved with the emit
+// change in cmd/nova-config/status.go kindverbs.go; test added that would fail
+// on zero from real output.)
 func MachineNames(out string) []string {
 	const prefix = "MACHINE OK name="
 	var names []string
