@@ -195,7 +195,7 @@ func benchCheckout(t *testing.T, jarBytes []byte) string {
 	root, _ := checkout(t)
 	var b bytes.Buffer
 	require.NoError(t, tlc.WriteRecords(&b, nil))
-	fsx.Write(t, filepath.Join(root, "tla", tlc.RunsFile), string(b.Bytes()))
+	fsx.Write(t, filepath.Join(root, "tla", tlc.RunsFile), b.String())
 	sum := sha256.Sum256(jarBytes)
 	fsx.Write(t, filepath.Join(root, "tla", pinnedSumFile), hex.EncodeToString(sum[:])+"  tla2tools.jar\n")
 	return root
