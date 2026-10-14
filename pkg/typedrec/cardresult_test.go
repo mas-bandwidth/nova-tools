@@ -20,12 +20,12 @@ func TestParseCardResultHoldsTheShape(t *testing.T) {
 	assert.Equal(t, "T", r.Title)
 	for name, text := range map[string]string{
 		"no report and no body": strings.Replace(strings.Replace(whole, "report: done it\n", "", 1), "line one\nhead: not a key here\n", "", 1),
-		"empty report":  strings.Replace(whole, "report: done it", "report:", 1),
-		"no gate":       strings.Replace(whole, "gate: go test ./x\n", "", 1),
-		"a bad head":    strings.Replace(whole, "0123456789abcdef0123456789abcdef01234567", "HEAD", 1),
-		"a bad verdict": strings.Replace(whole, "verdict: ok", "verdict: done", 1),
-		"the old shape": "rev: 0123456789abcdef0123456789abcdef01234567\nverdict: ok\n\n## One line\n\nx\n",
-		"nothing":       "",
+		"empty report":          strings.Replace(whole, "report: done it", "report:", 1),
+		"no gate":               strings.Replace(whole, "gate: go test ./x\n", "", 1),
+		"a bad head":            strings.Replace(whole, "0123456789abcdef0123456789abcdef01234567", "HEAD", 1),
+		"a bad verdict":         strings.Replace(whole, "verdict: ok", "verdict: done", 1),
+		"the old shape":         "rev: 0123456789abcdef0123456789abcdef01234567\nverdict: ok\n\n## One line\n\nx\n",
+		"nothing":               "",
 	} {
 		assert.False(t, typedrec.ParseCardResult([]byte(text)).Shaped, name)
 	}
@@ -81,7 +81,7 @@ func TestAResultWithNoReportLineIsStillRefusedWhenAnythingElseFails(t *testing.T
 	t.Parallel()
 	cases := map[string]string{
 		"no body to read a report from": reportlessSample[:strings.Index(reportlessSample, "\n\n## Body")],
-		"a body of a heading only":     reportlessSample[:strings.Index(reportlessSample, "The fixed")] + "## Only a heading\n",
+		"a body of a heading only":      reportlessSample[:strings.Index(reportlessSample, "The fixed")] + "## Only a heading\n",
 		"no verdict":                    strings.Replace(reportlessSample, "verdict: ok\n", "", 1),
 		"an unknown verdict":            strings.Replace(reportlessSample, "verdict: ok", "verdict: done", 1),
 		"no head":                       strings.Replace(reportlessSample, "head: 03e2ea0c4e2f1e43ab9c021efd2eed4c4d8bd6c9\n", "", 1),

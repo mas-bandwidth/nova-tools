@@ -52,3 +52,16 @@ func TestAChildWhoseResultHasNoReportLineFinishesShaped(t *testing.T) {
 	assert.Equal(t, "ok", r.Verdict)
 	assert.Equal(t, "03e2ea0c4e2f1e43ab9c021efd2eed4c4d8bd6c9", r.Head)
 }
+
+// A read's RESULT.md may still be in an older shape and its report is the reader's own words:
+// the shape fault is a work card's, and a read's report is left as the reader wrote it.
+func TestAReadsReportIsNotPrefixedWithAShapeFault(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "results", "RESULT.md"), "rev: abc\nverdict: ok\n## One line\nlooks right\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", read: true, logPath: filepath.Join(dir, "c1.native.log"), results: filepath.Join(dir, "results"), job: filepath.Join(dir, "job"), done: done}
+	r := c.Result()
+	assert.Equal(t, "looks right", r.Report)
+}
