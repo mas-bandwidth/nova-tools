@@ -36,7 +36,7 @@ var word = map[Status]string{OK: "OK", Failed: "FAILED", Refused: "REFUSED"}
 //
 // or as the JSON of the same value:
 //
-//	{"result":{"verb","status","exit","remedy","why","reasons"},"facts":{},"items":[{"kind","fields","text"}],
+//	{"result":{"verb","status","exit","remedy","why","reasons","line"},"facts":{},"items":[{"kind","fields","text"}],
 //	 "more":[{"kind","shown","total","remedy"}],"notes":[],"payload":""}
 //
 // A payload (the version line, a document a program reads) is printed as it is,
@@ -57,6 +57,7 @@ type Out struct {
 	More    []More
 	Notes   []string
 	Payload string
+	Line    string // the result's own one stdout line: the text form prints it on stdout before the rendering, the JSON carries it as result.line, so a reader of either sees the same one line; "" adds nothing (Verb.RefuseLine)
 
 	token    string   // the first word of every line: the verb, upper-case
 	printed  bool     // the verb printed its own output (Flags.Prints)
@@ -333,6 +334,7 @@ func (o *Out) MarshalJSON() ([]byte, error) {
 		Remedy  string   `json:"remedy,omitempty"`
 		Why     []string `json:"why,omitempty"`
 		Reasons []string `json:"reasons,omitempty"`
+		Line    string   `json:"line,omitempty"`
 	}
 	return marshal(struct {
 		Result  result   `json:"result"`
@@ -341,5 +343,5 @@ func (o *Out) MarshalJSON() ([]byte, error) {
 		More    []More   `json:"more,omitempty"`
 		Notes   []string `json:"notes,omitempty"`
 		Payload string   `json:"payload,omitempty"`
-	}{result{o.Verb, o.Status, o.Exit, o.Word, o.Remedy, o.Why, o.Reasons}, o.Facts, o.Items, o.More, o.Notes, o.Payload})
+	}{result{o.Verb, o.Status, o.Exit, o.Word, o.Remedy, o.Why, o.Reasons, o.Line}, o.Facts, o.Items, o.More, o.Notes, o.Payload})
 }

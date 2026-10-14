@@ -125,10 +125,11 @@ type Verb struct {
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
 	// RefuseLine, when set, is the one line a refusal the skeleton raises before
-	// the verb runs (a flag or argument problem) also writes on stdout, beside
-	// the stderr headline, so a verb that promises every outcome as one stdout
-	// line keeps it for those too. A refusal the verb's own Run returns is not
-	// passed here; the verb prints its own line. nil adds no line.
+	// the verb runs (a flag or argument problem) also carries: printed on stdout
+	// beside the stderr headline, and under --json the result.line of the one
+	// object, so a verb that promises every outcome as one stdout line keeps it
+	// for those too. A refusal the verb's own Run returns is not passed here;
+	// the verb sets Out.Line itself. nil adds no line.
 	RefuseLine func(o *Out) string
 }
 
@@ -698,9 +699,15 @@ func (v Verb) flags() *Flags {
 // for a refusal that never reached its Run (docs/SPEC-BUS.md, send's refusal
 // line).
 func (t *Tool) emitRefused(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int {
-	if v != nil && !asJSON && o.Status != OK && v.RefuseLine != nil {
+	if v != nil && o.Status != OK && v.RefuseLine != nil {
 		if l := v.RefuseLine(o); l != "" {
-			fmt.Fprintln(stdout, l)
+			// one value, two renderings (STANDARD §2): the text form prints the
+			// line on stdout beside the stderr headline, the JSON carries it as
+			// result.line of the one object emit writes.
+			o.Line = l
+			if !asJSON {
+				fmt.Fprintln(stdout, l)
+			}
 		}
 	}
 	return t.emit(v, o, asJSON, stdout, stderr)

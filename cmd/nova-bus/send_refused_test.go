@@ -154,6 +154,22 @@ func TestARefusedSendPrintsSendRefusedOnStdout(t *testing.T) {
 		assert.Equal(t, "nova-hook status --as ada", got.Result.Remedy, "the refusal keeps its remedy")
 		assert.True(t, strings.HasPrefix(got.Result.Line, "SEND REFUSED reason=unhooked: "), got.Result.Line)
 	})
+
+	t.Run("--json carries the line of a refusal the skeleton raises too", func(t *testing.T) {
+		t.Parallel()
+		r := newRig("ada", "bob")
+		res := r.cli().Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "b", "--nope", "--json")
+		assert.Equal(t, 2, res.Code, res.String())
+		var got struct {
+			Result struct {
+				Verb string `json:"verb"`
+				Line string `json:"line"`
+			} `json:"result"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(res.Stdout), &got), res.Stdout)
+		assert.Equal(t, "send", got.Result.Verb, "the refusal keeps the verb")
+		assert.True(t, strings.HasPrefix(got.Result.Line, "SEND REFUSED reason=usage: "), got.Result.Line)
+	})
 }
 
 // TestEveryRefusedSendPrintsOneStdoutLine is the table over send's refusal

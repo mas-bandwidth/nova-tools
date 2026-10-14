@@ -11,7 +11,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -605,56 +604,20 @@ func gateFailureCode(o *tool.Out) string {
 // sendRefused is every refusal of send as the verb's result: the same Out the
 // skeleton prints on stderr, plus the one SEND REFUSED reason=<code> line on
 // stdout, so a loop that reads only stdout sees every outcome of a send as
-// exactly one line, SEND OK or SEND REFUSED (docs/SPEC-BUS.md). Under --json
-// the line is result.line of the one object, and the object is printed as the
-// result.
+// exactly one line, SEND OK or SEND REFUSED (docs/SPEC-BUS.md). The line is
+// the result's Out.Line: the text form prints it on stdout here, and --json
+// carries it as result.line of the one object the skeleton writes, one value
+// in both renderings (STANDARD §2).
 func (w world) sendRefused(c *tool.Call, o *tool.Out, code string, dry bool) *tool.Out {
 	why := "refused"
 	if len(o.Why) > 0 {
 		why = o.Why[0]
 	}
-	line := sendRefusedLine(code, why, dry)
-	if c.Bool("json") {
-		// The skeleton fills the result's verb and remedy in emit; this run
-		// marshals the object itself (writeSendJSON), so fill them here to keep
-		// the one output value in both renderings (STANDARD §2).
-		o.Verb = "send"
-		if o.Status == tool.Refused && o.Remedy == "" {
-			o.Remedy = "nova-bus help"
-		}
-		if writeSendJSON(c.Stdout, o, line) {
-			return tool.Exit(o.Exit)
-		}
+	o.Line = sendRefusedLine(code, why, dry)
+	if !c.Bool("json") {
+		fmt.Fprintln(c.Stdout, o.Line)
 	}
-	fmt.Fprintln(c.Stdout, line)
 	return o
-}
-
-// writeSendJSON prints o's one JSON object with the refused send's line under
-// result.line, so --json carries the same line the text form prints. It
-// reports whether the object was written.
-func writeSendJSON(w io.Writer, o *tool.Out, line string) bool {
-	raw, err := o.MarshalJSON()
-	if err != nil {
-		return false
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return false
-	}
-	res, ok := obj["result"].(map[string]any)
-	if !ok {
-		return false
-	}
-	res["line"] = line
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(obj); err != nil {
-		return false
-	}
-	_, _ = w.Write(b.Bytes())
-	return true
 }
 
 // sendProblems is every problem of one send invocation, named at once: the
