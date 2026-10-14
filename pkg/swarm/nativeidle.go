@@ -32,9 +32,59 @@ import (
 // CARD IDLE.
 const DefaultNativeIdle = 300 * time.Second
 
+// DefaultNativeStart is how long a native run gives a card to show its first SIGN OF LIFE
+// before the watch ends it as never started. It is 60 seconds. It is not a provider read
+// deadline and not the idle window: it bounds the launch, the stretch from the child's
+// start until the harness first moves, and the idle window above only begins once a sign
+// arrives. A harness that never started looks exactly like a quiet think to the idle watch,
+// so without this phase a launch that produced neither a byte nor a CPU tick held a lane and
+// a bench slot for the whole idle window (docs/SPEC-SWARM.md, native).
+const DefaultNativeStart = 60 * time.Second
+
 // NoIdleWindow is the window `--idle 0` reaches WatchIdle as: no watch at all. It is named because a bare zero
 // beside a duration reads like an oversight, and this one is a choice a caller can type.
 const NoIdleWindow = time.Duration(0)
+
+// noStartKind is the IdleEnd.Kind the start phase gives a card that never showed a sign of
+// life: it is not a wall refusal and not the idle reaping, and the member reads it off the
+// NATIVE line's `reason=no-start` (cmd/nova-swarm/member.go, EndNoStart).
+const noStartKind = "no-start"
+
+// treeForeignReader is the optional other half of the tree reader: a snapshot that can also
+// say whether the watched tree holds a process beyond the launch chain (the wrapper,
+// nova-sandbox, the launcher script and the harness binary are the programs that bring a
+// harness up). The idle watch is handed an activitySnapshot, which reads CPU alone; the start
+// phase asks this when the snapshot implements it, so a reader that knows nothing more -- and
+// every idle test -- is unchanged.
+type treeForeignReader interface {
+	ForeignDescendant(pid int) bool
+}
+
+// ForeignDescendant reports whether pid's tree holds a process beyond the launch chain: the
+// wrapper, nova-sandbox, the launcher script and the harness binary bring a harness up as the
+// single path of single-child links from pid, and a node on that path with more than one
+// child is the card at work. It is the start phase's third sign of life, and it matches no
+// command line: it walks the kernel's own parent links (activity.go's procSnapshot).
+func (s *procSnapshot) ForeignDescendant(pid int) bool {
+	if s == nil || !s.known || pid <= 0 || !s.live[pid] {
+		return false
+	}
+	seen := map[int]bool{}
+	for cur := pid; ; {
+		if seen[cur] {
+			return false
+		}
+		seen[cur] = true
+		kids := s.children[cur]
+		if len(kids) == 0 {
+			return false
+		}
+		if len(kids) > 1 {
+			return true
+		}
+		cur = kids[0]
+	}
+}
 
 // nativeBusyShare is the divisor of the sample interval a tree must spend to count as
 // WORKING: one tenth of it, measured rather than chosen.
@@ -116,14 +166,35 @@ func CardIdleLine(task string, e IdleEnd) string {
 		oneline.Field(task), oneline.Field(dashOr(e.Step)), e.Idle.Seconds())
 }
 
+// CardNoStartLine is the typed line a card the start phase ended is reported on: the card
+// showed none of the three signs of life for the whole start window, so the harness never
+// started and the card is ended before the idle window could hide it.
+//
+//	CARD NOSTART task=<id> step=- start=<n>s
+//
+// It is not a WALL line and not the CARD IDLE line: the card did not go quiet after working
+// and it hit no wall, and the line names the window it never moved in.
+func CardNoStartLine(task string, start time.Duration) string {
+	return fmt.Sprintf("CARD NOSTART task=%s step=- start=%.0fs", oneline.Field(task), start.Seconds())
+}
+
+// NoStart reports whether this end is the start phase's: the card showed none of the three
+// signs of life for the whole start window and was ended as never started, not idle and not
+// walled.
+func (e IdleEnd) NoStart() bool { return e.Kind == noStartKind }
+
 // IdleWatch is one card's watch: the file its own output lands in, its job directory, the
 // leader of its process group, the window, and the reader already in its capture chain.
 // The last three fields are the test's seams and are nil in every real run.
 type IdleWatch struct {
-	Log    string // the card's own capture, <job>/harness-output.log
-	Job    string // the job directory: a card that published is finishing, not idle
-	Pid    int    // the child's process group leader
-	Idle   time.Duration
+	Log  string // the card's own capture, <job>/harness-output.log
+	Job  string // the job directory: a card that published is finishing, not idle
+	Pid  int    // the child's process group leader
+	Idle time.Duration
+	// Start, when positive, is the start window: the watch starts in phase "starting" and
+	// ends the card as never started when no sign of life arrives within it. Zero is no
+	// start watch, the test seam default, and leaves the watch exactly what it was.
+	Start  time.Duration
 	Reader *WallReader // may be nil: the watch then reports no refusal
 	// Stalled, when set, says the card is waiting on its global rate budget or a provider
 	// refusal's backoff (ProviderProxy.Stalling): a card that waits is not idle, and the
@@ -189,6 +260,13 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		// been seen: the base a rise is measured from, never a reset on its own.
 		var lastSpend int
 		var haveSpend bool
+		// THE START PHASE. started says the first sign of life has arrived and the idle
+		// phase (the rules below, unchanged) owns the card from then on; phaseStart is
+		// when the launch began, and startInterval is the coarse cadence the tree is read
+		// on while starting, the same shape as the idle phase's activityInterval.
+		started := w.Start <= 0
+		phaseStart := lastGrow
+		startInterval := activityInterval(w.Start)
 		for {
 			select {
 			case <-stop:
@@ -196,6 +274,47 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 			case at := <-tickC:
 				if at.IsZero() {
 					at = now()
+				}
+				if !started {
+					// SIGN 1: THE LOG GREW. One byte is enough here where the idle phase
+					// needs a page: a harness that prints at all has begun, and the dribble
+					// floor still governs the idle window it moves into.
+					sign := logSize(w.Log) > lastSize
+					// SIGN 2 and SIGN 3, read off the tree on the coarse cadence: CPU that
+					// reached the busy share in the interval, or a descendant beyond the
+					// launch chain (the wrapper, nova-sandbox, the launcher script, the
+					// harness binary). A snapshot that knows no descendants reads CPU alone.
+					if !sign && at.Sub(lastSample) >= startInterval {
+						span := at.Sub(lastSample)
+						lastSample = at
+						if s := snap(); s != nil && w.Pid > 0 {
+							if fr, ok := s.(treeForeignReader); ok && fr.ForeignDescendant(w.Pid) {
+								sign = true
+							}
+							if !sign {
+								if got, ok := s.TreeCPU(w.Pid); ok {
+									if haveCPU && got >= cpu+uint64(span)/nativeBusyShare {
+										sign = true
+									}
+									cpu, haveCPU = got, true
+								}
+							}
+						}
+					}
+					if sign {
+						started = true
+						lastGrow, lastSample, haveCPU = at, at, false
+						lastSize, growFrom = logSize(w.Log), logSize(w.Log)
+						continue
+					}
+					// NO SIGN IN THE WHOLE START WINDOW: the watch ends the card as never
+					// started, with the typed no-start end, rather than let a launch that
+					// never ran hold a lane and a bench for the idle window.
+					if at.Sub(phaseStart) >= w.Start {
+						out <- IdleEnd{Idle: at.Sub(phaseStart), Kind: noStartKind, Step: "-"}
+						return
+					}
+					continue
 				}
 				if w.Stalled != nil && w.Stalled() {
 					// waiting on its budget: the harness is blocked on a request the proxy

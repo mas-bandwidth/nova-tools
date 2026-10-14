@@ -247,6 +247,7 @@ type nativeRunResult struct {
 	defect      string
 	idleEnd     swarm.IdleEnd // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled       bool          // the idle watch ended the run, not the deadline and not the child
+	noStart     bool          // the start phase ended the run: the launch showed no sign of life in the start window
 	blockedPath string        // the report the run wrote FOR a card that published none, "" when it wrote none
 	// usage is the LAST attempt's usage row, exactly as it was appended to usage.tsv. It
 	// is carried out of the run so the card-end event carries the numbers the row carries
@@ -1272,7 +1273,7 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	// swarm-idle-reap-verdict). A sampler that reads nothing answers false, and the
 	// watch is what it was without the reading.
 	watchCfg := swarm.IdleWatch{
-		Log: s.outLog, Job: s.prep.jobDir, Pid: pgid, Idle: s.prep.cfg.idle, Reader: s.reader,
+		Log: s.outLog, Job: s.prep.jobDir, Pid: pgid, Idle: s.prep.cfg.idle, Start: swarm.DefaultNativeStart, Reader: s.reader,
 		Spend: s.sampler.Spend,
 	}
 	if s.prep.proxy != nil && s.prep.cfg.budgetServer != "" {
@@ -1328,6 +1329,11 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 		<-st.done
 		s.res.rc = -1
 		s.res.idled, s.res.idleEnd = true, end
+		if end.NoStart() {
+			// the start phase ended it: the harness never started, so this is the harness
+			// fault and never the idle reaping (docs/SPEC-SWARM.md, native)
+			s.res.idled, s.res.noStart = false, true
+		}
 	case <-s.bodyStall:
 		st.stopDeadline()
 		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
@@ -1476,6 +1482,17 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 		s.res.reason = "harness-fault"
 	}
 	s.res.fence = fenceRejected(s.prep.jobDir)
+	if s.res.noStart {
+		// THE HARNESS NEVER STARTED (nativeidle.go's start phase). The typed no-start line
+		// names the window; the harness-fault line carries `reason=no-start`, which the
+		// member reads as EndNoStart, a harness fault, so the existing redeal-and-judge
+		// rules apply and the lane is free at the start window, not the idle one.
+		fmt.Fprintln(os.Stdout, swarm.CardNoStartLine(s.prep.cfg.label, s.res.idleEnd.Idle))
+		fmt.Fprintln(errOut, oneline.Escape(harnessFaultLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model,
+			"no-start: the card produced no sign of starting in "+strconv.Itoa(int(s.res.idleEnd.Idle.Seconds()))+"s")))
+		s.res.reason = "no-start"
+		harnessFault = true
+	}
 	if rows := s.timeline.Rows(); len(rows) > 0 {
 		if err := swarm.WriteTimeline(filepath.Join(s.prep.jobDir, swarm.TimelineFileName), rows); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the timeline.tsv could not be written: %s\n", oneline.Escape(err.Error()))
