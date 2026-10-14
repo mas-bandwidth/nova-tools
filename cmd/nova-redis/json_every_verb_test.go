@@ -52,4 +52,16 @@ func TestEveryVerbTakesJSON(t *testing.T) {
 			require.Contains(t, help, "--json", "%s -h does not list --json", v.Name)
 		})
 	}
+
+	// a store-free success under --json prints exactly one object: acl render
+	// opens no store, so it is the one success every run can reach. The object
+	// carries the verb's name and the ok status (pkg/tool, one output
+	// structure, two renderings).
+	sExit, sOut, sErr := coldRun(t, "acl", "render", "--json")
+	require.Equal(t, 0, sExit, sErr)
+	require.Empty(t, sErr, "--json says everything on stdout")
+	var ok result
+	require.NoError(t, json.Unmarshal([]byte(sOut), &ok), "one JSON object: %s", sOut)
+	require.Equal(t, "acl render", ok.Result.Verb)
+	require.Equal(t, "ok", ok.Result.Status)
 }

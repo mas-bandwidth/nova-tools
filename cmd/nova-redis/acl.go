@@ -28,6 +28,7 @@ package main
 // line the skeleton cannot render), so they are Prints verbs.
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -231,15 +232,35 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("this build's roles do not render: %s; fix pkg/redisacl and rebuild", err))
 	}
 	if sub == "render" {
+		fns := 0
+		for _, u := range users {
+			fns = max(fns, u.Functions)
+		}
+		if c.Bool("json") {
+			// --json is the other rendering of the same value: the families and
+			// the user commands as items, the totals as facts, one object; the
+			// text form below is unchanged (STANDARD §2, one output structure,
+			// two renderings).
+			o := tool.Done().Fact("users", len(users)).Fact("functions", fns).Fact("library", digest)
+			for _, f := range redisacl.Families {
+				o.Item("family", "name", f.Name, "keys", strings.Join(f.Patterns, ","))
+			}
+			for _, u := range users {
+				o.Item("setuser", "user", u.Name, "rules", strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "))
+			}
+			o.Verb = "acl render"
+			var b bytes.Buffer
+			o.Render(&b, true)
+			c.Stdout.Write(b.Bytes())
+			return tool.Exit(0)
+		}
 		// A family is what an operator reads: its name and its key patterns.
 		for _, f := range redisacl.Families {
 			line(c.Stdout, "ACL FAMILY", "name", f.Name, "keys", free(strings.Join(f.Patterns, ",")))
 		}
-		fns := 0
 		for _, u := range users {
 			// The user's pasteable command (redisacl.User.Line): its rules follow its name.
 			line(c.Stdout, "ACL SETUSER", "user", bare{u.Name, u.Name}, "rules", bare{strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "), u.Rules})
-			fns = max(fns, u.Functions)
 		}
 		line(c.Stdout, "ACL RENDER OK", "users", len(users), "functions", fns, "library", digest)
 		return tool.Exit(0)
