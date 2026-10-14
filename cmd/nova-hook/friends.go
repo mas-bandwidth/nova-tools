@@ -47,15 +47,19 @@ func (w world) friends(c *tool.Call) *tool.Out {
 		} else if reason == "" {
 			reason = st.State
 		}
-		o.Item("name", "name", st.Name, "role", string(st.Role), "state", state, "since", stamp(since), "reason", tool.Text(reason),
-			"last_challenge_at", stamp(st.BeatAt), "last_answer_at", stamp(st.AnswerAt), "misses", st.Misses)
+		fields := []any{"name", st.Name, "role", string(st.Role), "state", state, "since", stamp(since), "reason", tool.Text(reason),
+			"last_challenge_at", stamp(st.BeatAt), "last_answer_at", stamp(st.AnswerAt), "misses", st.Misses}
+		if st.Version != "" {
+			fields = append(fields, "version", st.Version)
+		}
+		o.Item("name", fields...)
 	}
 	o.Fact("count", len(sts)).Fact("up", up).Fact("coordinator", coord)
 	alive, age := false, ""
 	if sv.OK {
 		alive, age = sv.Now.Sub(sv.At) <= 2*sv.Every, sv.Now.Sub(sv.At).Round(time.Second).String()
 	}
-	o.Fact("serve_alive", alive).Fact("serve_age", age)
+	o.Fact("serve_alive", alive).Fact("serve_age", age).Fact("serve_version", sv.Version)
 	if !c.Given("json") {
 		o.Cap(friendsShown)
 		for i := range o.More {

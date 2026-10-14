@@ -97,6 +97,11 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Dur
 		serveLine(c, "skip", "another server took this interval's pass")
 		return
 	}
+	ctx, cancel = call()
+	if verr := stampVersion(ctx, s.hooks.C, hook.ServeKey, hookVersion()); verr != nil {
+		fault(c, "version", verr)
+	}
+	cancel()
 	for _, bt := range p.Beats {
 		if bt.Did != hook.BeatChallenged {
 			continue

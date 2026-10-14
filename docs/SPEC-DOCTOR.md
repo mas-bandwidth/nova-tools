@@ -110,3 +110,16 @@ and `/Library/LaunchDaemons` (`systemd-analyze verify` for `nova-*.service` on
 linux) and quotes the refusing line. Fix: rewrite the agent with the tool that
 owns it (`nova-friend install`, `nova-config loop`) and remove a hand-written
 stopgap.
+
+**friends-hooked.** Dependency: each friend and nova-hook serve on the installed
+nova-hook. Runs `nova-hook version` for the installed binary and `nova-hook friends --json`
+for the hook record. A friend (role `friend` or `comms`) who is not `up` is `fail`.
+A friend who is `up` but whose record `version` is missing or is not that installed
+version is `fail`. The running serve's `serve_version` differing from the installed
+binary, including a serve that reports no version, is `fail`. A friend who is `up`
+and on the installed version passes. A serve whose version matches the installed
+binary passes. No such friend still passes when the serve matches. Not a fleet
+check. Fix: `nova-hook hook --as <name> --role <role>` when a friend is not up;
+`nova-update apply --file <manifest> nova-hook --version <installed>` when a
+version differs. The version string is the one the hook client stored
+(docs/SPEC-HOOK.md); this check does not write it.

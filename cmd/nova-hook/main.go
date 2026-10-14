@@ -182,7 +182,7 @@ example: nova-hook status --as ada`,
 				Effect:  tool.Delivery + ": writes the hook record and the lease of every push it holds, and streams the bus push until a signal",
 				DryRun:  true,
 				Detail: `Hooks you in as --role (` + roleNames() + `): a record already hooked as that role is joined at
-its epoch, otherwise a new epoch starts and every lease and proof of the old one is cleared. This process holds
+its epoch, otherwise a new epoch starts and every lease and proof of the old one is cleared. This process writes its own version string onto the record when it arms and each time it renews. This process holds
 the bus push when the role carries it: it renews the lease every ` + hook.RenewEvery.String() + ` and prints each message on your bus
 stream as it lands, HOOK PUSH push=bus id= from= subject=. A push it does not hold (the sprint push, held by
 nova-sprint hook; the work push, held by the friend daemon or the member loop) is named with its holder on the
@@ -286,8 +286,8 @@ example: nova-hook unhook --as ada`,
 				Example: "", // the listing needs a bus store with hook records: no example line can carry it
 				Effect:  tool.Inspection,
 				Detail: `Every name's state from the hook record alone, by the store's TIME: FRIENDS OK count= up= coordinator=
-serve_alive= serve_age=, then one FRIENDS NAME line each: name, role, state (up: hooked and proven; down: not),
-since, reason, last_challenge_at, last_answer_at (the heartbeat's) and misses. No sprint state (a hold is the
+serve_alive= serve_age= serve_version=, then one FRIENDS NAME line each: name, role, state (up: hooked and proven; down: not),
+since, reason, last_challenge_at, last_answer_at (the heartbeat's), misses, and version when the record stores the client's nova-hook version. serve_version on the first line is the nova-hook serve that last took a pass. No sprint state (a hold is the
 sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE line; --json carries every name.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, optional: the listing is the same for every reader")
@@ -301,7 +301,7 @@ sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE 
 				Example: "", // a server needs a hooked name and a live bus store: no example line can carry it
 				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks after misses, and expires overdue asks",
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
-in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
+in one atomic pass by the store's TIME. A pass this process takes writes this binary's version onto the server row. Each hooked name whose role a session answers in (coordinator, friend,
 comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
 interval: the push it already has (its hook's HOOK PUSH line, or its friend daemon's adapter). A challenge left
 unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges").
@@ -572,6 +572,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if err := w.renew(s, role, held, epoch); err != nil {
 		return tool.Refuse("the lease could not be written: " + err.Error())
 	}
+	if err := w.stampHookVersion(s); err != nil {
+		return tool.Refuse("the hook record could not store this nova-hook's version: " + err.Error())
+	}
 
 	armed := tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", joined).Fact("hold", pushList(held))
 	if took != "" {
@@ -822,6 +825,8 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				return o
 			} else if err != nil {
 				line(c, tool.Done().As("STATE").Fact("state", "unrenewed").Note("the lease could not be renewed: "+err.Error()+"; it is tried again at the next renewal, inside the lease"))
+			} else if verr := w.stampHookVersion(s); verr != nil {
+				line(c, tool.Done().As("STATE").Fact("state", "unversioned").Note("the hook record could not store this nova-hook's version: "+verr.Error()+"; it is tried again at the next renewal"))
 			}
 		}
 		if native == nil && !w.now().Before(nextChallenge) {

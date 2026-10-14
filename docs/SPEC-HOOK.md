@@ -42,17 +42,17 @@ All keys live in the bus Redis (`--redis`, else `NOVA_BUS_REDIS`, else the fleet
 
 | key | type | holds |
 |---|---|---|
-| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at` |
+| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at`, `version` |
 | `hook:live:<name>:<push>` | string, TTL `LeaseTTL` | the lease: `{"epoch":<n>,"at":<ms>,"by":"<holder>"}` |
 | `hook:proof:<name>:<push>` | string, TTL `ProofTTL` | the proof, the same shape |
 | `hook:chal:<name>` | hash, TTL `AnswerBound` | `epoch`, `sum` (SHA-256 of the nonce, never the nonce), `pushes`, `until` |
 | `hook:names` | set | every name that ever hooked in |
-| `hook:serve` | hash | the heartbeat server's row (`at`, `every`, `by`, `told:*`, `coord:*`, `gen:*`) |
+| `hook:serve` | hash | the heartbeat server's row (`at`, `every`, `by`, `version`, `told:*`, `coord:*`, `gen:*`) |
 | `hook:judgments` | hash | open presence judgments awaiting `nova-bus send --re <id>` |
 | `hook:events` | stream | capped audit stream of unhooks, judgments, answers, and `not-connected` episodes |
 
-Every stamp is the store's clock (`TIME`), never a holder's. Every write is one Lua script that checks
-the record's state, role, and epoch in the same step.
+Every stamp is the store's clock (`TIME`), never a holder's. Every write of the record's state is one Lua script that checks
+the record's state, role, and epoch in the same step. `version` is a label, not a state of that machine (`tla/Hook.tla` is unchanged): the hook client writes this binary's version string onto the record with one HSET after it hooks in and each time it renews, and `nova-hook serve` writes its own onto the server row after a pass it takes. The string is the binary's own stamp (`pkg/buildinfo`), never one the process invents.
 
 ## The clocks
 
@@ -146,7 +146,7 @@ Every line runs as printed:
 ## The verbs
 
 - `nova-hook hook --as <name> --role <role> [--once] [--dry-run]`: arms or joins the record, renews the
-  `bus` lease, prints stream arrivals as `HOOK PUSH`, challenges as `HOOK CHALLENGE nonce=<n>`, and
+  `bus` lease, writes this binary's version onto the record, prints stream arrivals as `HOOK PUSH`, challenges as `HOOK CHALLENGE nonce=<n>`, and
   state transitions as `HOOK STATE`.
 - `nova-hook prove --as <name> --nonce <n> [--dry-run]`: answers the current challenge from inside the
   model's turn.
@@ -154,8 +154,8 @@ Every line runs as printed:
   challenges.
 - `nova-hook status [--as <name>]`: checks one record (0 proven, 1 not with breadcrumb) or lists all.
 - `nova-hook friends [--json]`: lists every name's presence from the hook record (`up` or `down`,
-  `since`, `reason`, last challenge and answer, `misses`, coordinator, and server age).
-- `nova-hook serve --as <name> [--every <d>] [--judge-within <d>]`: runs the heartbeat pass loop.
+  `since`, `reason`, last challenge and answer, `misses`, the client's `version` when the record stores one, coordinator, server age, and `serve_version`).
+- `nova-hook serve --as <name> [--every <d>] [--judge-within <d>]`: runs the heartbeat pass loop. A pass it takes writes this binary's version onto the server row.
 
 ## Using the package from another repository
 

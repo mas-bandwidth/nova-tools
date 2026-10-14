@@ -111,7 +111,7 @@ const (
 	prefix = "hook:"
 	// NamesKey is the set of every name that ever hooked in.
 	NamesKey = prefix + "names"
-	// ServeKey is the heartbeat server's own stamp: a hash of at, every, by.
+	// ServeKey is the heartbeat server's own stamp: a hash of at, every, by, version.
 	ServeKey = prefix + "serve"
 	// EventsKey is the capped stream of the heartbeat's unhooks, one entry each.
 	EventsKey = prefix + "events"
@@ -119,7 +119,7 @@ const (
 	EventsMax = 10000
 )
 
-// RecordKey is name's record: a hash of role, state, epoch, armed, unhooked, by.
+// RecordKey is name's record: a hash of role, state, epoch, armed, unhooked, by, version.
 func RecordKey(name string) string { return prefix + "rec:" + name }
 
 // LiveKey is the lease of name's push: a string with a TTL its holder renews.
@@ -192,9 +192,10 @@ type Status struct {
 	// Down is why the record reads down at this read whatever its state says
 	// (Served.Down: no server, a stale one, or no answer), "" when the evidence
 	// stands. No reader trusts the last written state then, and the gate refuses.
-	Down   string
-	Misses int // challenges in a row left unanswered
-	Pushes []PushStatus
+	Down    string
+	Misses  int    // challenges in a row left unanswered
+	Version string // the nova-hook the client reported, "" when the record does not store one
+	Pushes  []PushStatus
 }
 
 // Judge is the status a record and its pushes' reads say: the state machine,
@@ -213,6 +214,7 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	st.AnswerAt = msTime(rec["answered_at"])
 	st.Misses, _ = strconv.Atoi(rec["misses"]) // ignored: no count reads as none missed
 	st.Reason = rec["reason"]
+	st.Version = rec["version"]
 	if rec["state"] != "hooked" {
 		st.State = StateUnhooked
 		st.Unhooked = msTime(rec["unhooked"])

@@ -709,6 +709,7 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 type Served struct {
 	At, Now time.Time
 	Every   time.Duration
+	Version string // the nova-hook serve that last took a pass, "" when it reported none
 	OK      bool
 }
 
@@ -765,7 +766,7 @@ func servedOf(m map[string]string, now time.Time) Served {
 	if err != nil || every <= 0 {
 		return Served{Now: now} // ignored: no stamp, or one with no interval, is no server
 	}
-	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}
+	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, Version: m["version"], OK: true}
 }
 
 // JudgmentsKey holds the heartbeat's open judgments: a hash of message id to
