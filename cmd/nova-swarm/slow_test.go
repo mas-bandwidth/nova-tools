@@ -1306,7 +1306,7 @@ func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
 		require.True(t, strings.HasPrefix(fields[i+1], "budget="), "budget= follows harness= on the NATIVE OK line (grammar, SPEC-SWARM.md:1946):\n%s", line)
 		return
 	}
-	t.Fatalf("the NATIVE OK line carries no harness= field:\n%s", line)
+	require.FailNowf(t, "the NATIVE OK line carries no harness= field", "\n%s", line)
 }
 
 // TestNativeDeclaresTheRouteModelInTheJobConfig: the config the harness starts with names
@@ -1652,7 +1652,7 @@ func TestTwoInvocationsPreserveResults(t *testing.T) {
 			seenSay["two"] = true
 			require.NotContains(t, string(report), "run-one-report", "run %s report mixes both invocations:\n%s", id, report)
 		default:
-			t.Fatalf("run %s report is neither invocation:\n%s", id, report)
+			require.FailNowf(t, "run report is neither invocation", "%s:\n%s", id, report)
 		}
 		switch {
 		case strings.Contains(string(result), "findings: 1\n"):
@@ -1662,7 +1662,7 @@ func TestTwoInvocationsPreserveResults(t *testing.T) {
 			seenFindings["2"] = true
 			require.NotContains(t, string(result), "findings: 1\n", "run %s RESULT mixes both invocations:\n%s", id, result)
 		default:
-			t.Fatalf("run %s RESULT lost its findings line:\n%s", id, result)
+			require.FailNowf(t, "run RESULT lost its findings line", "%s:\n%s", id, result)
 		}
 	}
 	require.True(t, seenSay["one"], "both reports and both results must survive, says=%v findings=%v", seenSay, seenFindings)

@@ -39,6 +39,6 @@ func cell(t *testing.T, head []string, row []string, name string) string {
 			return row[i]
 		}
 	}
-	t.Fatalf("usage.tsv has no column %q in %v", name, head)
+	require.FailNowf(t, "usage.tsv has no column", "%q in %v", name, head)
 	return ""
 }

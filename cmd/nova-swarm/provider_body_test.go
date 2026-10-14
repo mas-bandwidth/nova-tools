@@ -203,14 +203,14 @@ func TestProviderBodySilenceAbortsTheCardOnce(t *testing.T) {
 		got.proxy.Requests(), got.proxy.SilenceWall().Milliseconds(), runFor.Milliseconds(), verdict, why)
 }
 
-// TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown: headers, a pause
-// shorter than the gap, then the body. The card completes. No acceptance file.
-func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
+// TestProviderBodyInsideTheDeadlinesIsNotUnknown is the normal case in two
+// shapes: a body that pauses shorter than the gap then resumes, and headers
+// that come late but inside the header wait. Each completes the card; no
+// acceptance file is written and nothing is lost.
+func TestProviderBodyInsideTheDeadlinesIsNotUnknown(t *testing.T) {
 	t.Parallel()
 
-	var upstream atomic.Int32
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstream.Add(1)
+	resuming := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		discardReq(r)
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
@@ -219,27 +219,64 @@ func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 		_, _ = w.Write([]byte("ok\n"))
-	}))
-	defer up.Close()
+	})
+	delayed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		discardReq(r)
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		f, _ := w.(http.Flusher)
+		for _, chunk := range []string{"o", "k", "\n"} {
+			_, _ = w.Write([]byte(chunk))
+			if f != nil {
+				f.Flush()
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+	for _, tc := range []struct {
+		name         string
+		handler      http.Handler
+		silence      time.Duration
+		headerWait   time.Duration
+		headerWaited bool
+	}{
+		{"body resumes inside the deadline", resuming, 2 * time.Second, 0, false},
+		{"delayed headers inside the wait", delayed, 2 * time.Second, 2 * time.Second, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	got := runBodyCard(t, up.URL, 2*time.Second, nil)
-	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
-	require.Equal(t, 0, got.code, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	require.False(t, got.res.lost, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	require.Equal(t, 0, got.res.rc, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	verdict, why := nativeVerdictWhy(got.res)
-	require.Equal(t, "OK", verdict, "verdict %s why %s, want OK", verdict, why)
-	require.Equal(t, "", why, "verdict %s why %s, want OK", verdict, why)
-	n := jobLaunches(t, got.res.job)
-	require.Equal(t, 1, n, "card launches=%d, want 1", n)
-	require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	require.False(t, got.proxy.Lost(), "a body inside the deadline was marked unknown")
-	_, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance"))
-	require.True(t, os.IsNotExist(err), "provider-acceptance exists: %v", err)
-	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
-	require.NoError(t, err, "the body inside the deadline did not publish")
-	assertDialedProxy(t, got.res.job, got.proxy)
+			var upstream atomic.Int32
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstream.Add(1)
+				tc.handler.ServeHTTP(w, r)
+			}))
+			defer up.Close()
+
+			got := runProviderCard(t, up.URL, tc.silence, tc.headerWait, nil)
+			require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
+			require.Equal(t, 0, got.code, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+			require.False(t, got.res.lost, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+			require.Equal(t, 0, got.res.rc, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+			verdict, why := nativeVerdictWhy(got.res)
+			require.Equal(t, "OK", verdict, "verdict %s why %s, want OK", verdict, why)
+			require.Equal(t, "", why, "verdict %s why %s, want OK", verdict, why)
+			n := jobLaunches(t, got.res.job)
+			require.Equal(t, 1, n, "card launches=%d, want 1", n)
+			require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+			require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+			require.False(t, got.proxy.Lost(), "a body inside the deadline was marked unknown (header wall %s)", got.proxy.HeaderWall())
+			if tc.headerWaited {
+				require.Zero(t, got.proxy.HeaderWall(), "delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
+			}
+			_, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance"))
+			require.True(t, os.IsNotExist(err), "provider-acceptance exists: %v", err)
+			_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
+			require.NoError(t, err, "the card body inside the deadline did not publish")
+			assertDialedProxy(t, got.res.job, got.proxy)
+		})
+	}
 }
 
 // TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown is HOLD
@@ -283,49 +320,4 @@ func TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown(t *testing.T) {
 	require.Zero(t, got.proxy.SilenceWall(), "the body gap fired (%s) with no headers", got.proxy.SilenceWall())
 	t.Logf("CANARY requests=%d header_ms=%d run_ms=%d verdict=%s why=%s",
 		got.proxy.Requests(), got.proxy.HeaderWall().Milliseconds(), runFor.Milliseconds(), verdict, why)
-}
-
-// TestProviderDelayedHeadersInsideTheWaitAreNotUnknown is the pair's normal
-// case: headers come late but inside the wait, then the body streams. The
-// card completes. No acceptance file, nothing lost.
-func TestProviderDelayedHeadersInsideTheWaitAreNotUnknown(t *testing.T) {
-	t.Parallel()
-
-	var upstream atomic.Int32
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstream.Add(1)
-		discardReq(r)
-		time.Sleep(100 * time.Millisecond)
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		f, _ := w.(http.Flusher)
-		for _, chunk := range []string{"o", "k", "\n"} {
-			_, _ = w.Write([]byte(chunk))
-			if f != nil {
-				f.Flush()
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-	}))
-	defer up.Close()
-
-	got := runProviderCard(t, up.URL, 2*time.Second, 2*time.Second, nil)
-	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
-	require.Equal(t, 0, got.code, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	require.False(t, got.res.lost, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	require.Equal(t, 0, got.res.rc, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	verdict, why := nativeVerdictWhy(got.res)
-	require.Equal(t, "OK", verdict, "verdict %s why %s, want OK", verdict, why)
-	require.Equal(t, "", why, "verdict %s why %s, want OK", verdict, why)
-	n := jobLaunches(t, got.res.job)
-	require.Equal(t, 1, n, "card launches=%d, want 1", n)
-	require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	require.False(t, got.proxy.Lost(), "delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
-	require.Zero(t, got.proxy.HeaderWall(), "delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
-	_, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance"))
-	require.True(t, os.IsNotExist(err), "provider-acceptance exists: %v", err)
-	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
-	require.NoError(t, err, "the delayed-header card did not publish")
-	assertDialedProxy(t, got.res.job, got.proxy)
 }

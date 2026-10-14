@@ -64,7 +64,7 @@ func TestNativeDoesNotBlockOnAPlantedFIFOAtResult(t *testing.T) {
 	case got := <-done:
 		require.NotEqual(t, "ok", got.harness, "native treated a FIFO at RESULT.md as a published result")
 	case <-time.After(plantedWaitBound()):
-		t.Fatal("STILL BLOCKED after waiting on a FIFO at RESULT.md: native is wedged")
+		require.FailNow(t, "STILL BLOCKED after waiting on a FIFO at RESULT.md: native is wedged")
 	}
 }
 
@@ -81,6 +81,6 @@ func TestNativeHarnessStateDoesNotBlockOnAPlantedFIFO(t *testing.T) {
 	case got := <-done:
 		require.NotEqual(t, "ok", got, "native's result lookup treated a FIFO at RESULT.md as a published result")
 	case <-time.After(plantedWaitBound()):
-		t.Fatal("STILL BLOCKED after waiting on a FIFO at RESULT.md: native's result lookup is wedged")
+		require.FailNow(t, "STILL BLOCKED after waiting on a FIFO at RESULT.md: native's result lookup is wedged")
 	}
 }
