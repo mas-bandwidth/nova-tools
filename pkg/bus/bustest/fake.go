@@ -70,12 +70,13 @@ func (f *Fake) trip() error {
 	return f.Fail
 }
 
-// Tail is the stream's last entry id, as the wait arms at it; a stream with
-// no entries answers "0-0" and not there (SPEC-BUS.md, the verbs: wait).
+// Tail is the stream's last entry id, as the wait arms at it; a stream that is
+// not there answers no id and not there, as Redis's XINFO STREAM does, and the
+// caller arms at "0-0" (SPEC-BUS.md, the verbs: wait).
 func (f *Fake) Tail(ctx context.Context, stream string) (string, bool, error) {
 	es, err := f.Range(ctx, stream, "-", "+", 0)
 	if err != nil || len(es) == 0 {
-		return "0-0", false, err
+		return "", false, err
 	}
 	return es[len(es)-1].Entry, true, nil
 }
@@ -84,6 +85,9 @@ func (f *Fake) Tail(ctx context.Context, stream string) (string, bool, error) {
 // so what it hands out stays a later recv's; a block that finds none waits
 // its duration out on Sleep (SPEC-BUS.md, the verbs: wait).
 func (f *Fake) BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]bus.Entry, error) {
+	if after == "" {
+		return nil, fmt.Errorf("ERR Invalid stream ID specified as stream command argument")
+	}
 	es, err := f.Range(ctx, stream, "("+after, "+", count)
 	if err != nil || len(es) > 0 {
 		return es, err
