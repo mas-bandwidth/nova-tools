@@ -131,6 +131,7 @@ pkg/testgit	0.3	@local	-
 pkg/testguard	0.0	@run37411066588	self-hosted
 pkg/testkit	0.5	@local	-
 pkg/testredis	0.0	@run37411066588	self-hosted
+internal/testkit/must	0.0	@local	-
 internal/testverbhelp	0.0	@run37411066588	self-hosted
 internal/textbody	0.0	@run37411066588	self-hosted
 pkg/tlc	0.4	@run37517528825	self-hosted

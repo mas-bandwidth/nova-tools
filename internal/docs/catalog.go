@@ -123,7 +123,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/testguard", "host seam and leak interception", "go test ./pkg/testguard", "go test ./pkg/testguard"),
 	E("pkg/testkit", "test rigs shared by every package: a tool's entry point run in process with both streams captured, and the files a test writes and reads", "go test ./pkg/testkit", "go test ./pkg/testkit"),
 	E("pkg/testredis", "a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary; Far puts a store at a distance", "go test ./pkg/testredis", "go test ./pkg/testredis"),
-	E("internal/testkit", "mini-modules that help tests: must, verb, fsx, repotree, onboardtest, each its own package under it", "go test ./internal/testkit/...", "go test ./internal/testkit/..."),
+	E("internal/testkit", "small modules that help tests: must, verb, fsx, repotree, onboardtest, each its own package under it", "go test ./internal/testkit/...", "go test ./internal/testkit/..."),
 	E("internal/testverbhelp", "per-tool check that every verb answers -h at exit 0 and touches nothing", "go test ./internal/testverbhelp", "go test ./internal/testverbhelp"),
 	E("internal/tablemodel", "the table model's checks: the suites, the finding witnesses and the receipt replay against EpochMemberTable", "go test ./internal/tablemodel", "go test -tags functional ./internal/tablemodel"),
 	E("internal/textbody", "shared line-oriented message body filtering", "go test ./internal/textbody", "go test ./internal/textbody"),
