@@ -96,6 +96,7 @@ func TestALeaseExpiresOnItsOwn(t *testing.T) {
 	h := &hook.Holder{Store: r.s, Name: "m1", Role: hook.Member, Pushes: []hook.Push{hook.Work}, By: "loop"}
 	require.NoError(t, h.Start(ctx))
 	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Work: true}))
+	r.Evidence(t, "m1") // a heartbeat server passing (hook.Served.Down)
 	require.NoError(t, h.Gate(ctx, hook.Work))
 
 	r.pass(hook.RenewEvery)
@@ -211,6 +212,7 @@ func TestAHolderRespectsAnUnhook(t *testing.T) {
 	require.NoError(t, h.Beat(ctx, map[hook.Push]bool{hook.Bus: true, hook.Work: true}))
 	assert.Equal(t, e, h.Epoch())
 	assert.Equal(t, hook.StateProven, r.state(t, "bob").State)
+	r.Evidence(t, "bob") // a heartbeat server passing and her answer (hook.Served.Down)
 	assert.NoError(t, h.Gate(ctx, hook.Bus, hook.Work))
 }
 
@@ -227,7 +229,7 @@ func TestReadIsOneRoundTripForAnyNames(t *testing.T) {
 	st, now, err := r.s.Read(ctx, "ada", "bob", "carol")
 	require.NoError(t, err)
 	assert.Len(t, st, 3)
-	assert.Equal(t, 1+3*(1+4*len(hook.Pushes)), r.mr.CommandCount()-before, "one pipeline: TIME and per name a record and four reads per push")
+	assert.Equal(t, 2+3*(1+4*len(hook.Pushes)), r.mr.CommandCount()-before, "one pipeline: TIME, the heartbeat server's row, and per name a record and four reads per push")
 	assert.Equal(t, 2026, now.Year())
 	assert.Equal(t, []string{hook.StateExpired, hook.StateNone, hook.StateNone}, []string{st[0].State, st[1].State, st[2].State})
 

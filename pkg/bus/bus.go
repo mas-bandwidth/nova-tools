@@ -91,6 +91,15 @@ type Message struct {
 	// every retry of it (token.go); it is the sender's, never on the entry.
 	// Empty is a send with none: every call a new message.
 	Token string
+	// Once, when set, is a store key the caller names as this send's once-key
+	// in place of a token's record: written in the same atomic step as the
+	// entry, and a later send under it writes nothing and answers the first.
+	// Marks are the caller's own marks, written in that same step, so a
+	// caller's record of having sent (a told mark) and the message are one
+	// write: both or neither (tla/HookBeat.tla, NeverToldTwice and
+	// EveryTransitionToldAtLeastOnce).
+	Once  string
+	Marks []Mark
 }
 
 // The kinds of a message (SPEC-BUS.md, the kind of a message): the bus's own
@@ -106,10 +115,13 @@ const (
 	// sender may send.
 	KindAsk     = "ask"
 	KindTimeout = "timeout"
+	// KindJudgment is a decision raised for a reader to answer (--re its
+	// id), such as the hook heartbeat's FRIEND DOWN to the coordinator.
+	KindJudgment = "judgment"
 )
 
 // Kinds is every kind, in the order the help lists them.
-var Kinds = []string{KindReport, KindAck, KindStatus, KindRequest, KindBlocker, KindAsk, KindTimeout}
+var Kinds = []string{KindReport, KindAck, KindStatus, KindRequest, KindBlocker, KindAsk, KindTimeout, KindJudgment}
 
 // CheckKinds says why ks are no kinds, "" when each is one.
 func CheckKinds(ks ...string) string {
@@ -343,8 +355,8 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
-	marks := slices.Concat(owe(m, friends), askMarks(m), answerMark(m))
-	if m.Token != "" {
+	marks := slices.Concat(owe(m, friends), askMarks(m), answerMark(m), m.Marks)
+	if m.Token != "" || m.Once != "" {
 		return b.sendOnce(ctx, m, now, streams, marks)
 	}
 	if err := b.Store.AddAll(ctx, streams, m.Fields(), marks...); err != nil {
