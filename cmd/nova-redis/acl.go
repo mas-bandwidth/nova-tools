@@ -368,13 +368,13 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		switch {
 		case dr.None() && !nopass:
 			if asJSON {
-				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{"user", u.Name}, {"role", u.Role}, {"status", "ok"}}})
+				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}, {K: "status", V: "ok"}}})
 			} else {
 				line(c.Stdout, "ACL OK", "user", u.Name, "role", u.Role)
 			}
 		case dr.Missing:
 			if asJSON {
-				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{"user", u.Name}, {"role", u.Role}, {"status", "missing"}}})
+				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}, {K: "status", V: "missing"}}})
 			} else {
 				line(c.Stdout, "ACL MISSING", "user", u.Name, "role", u.Role)
 			}
@@ -382,7 +382,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		default:
 			// Fields is the drift as the line spells it; --json carries every name.
 			if asJSON {
-				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{"user", u.Name}, {"role", u.Role}, {"status", "drift"}, {"drift", fields}}})
+				items = append(items, tool.Item{Kind: "user", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}, {K: "status", V: "drift"}, {K: "drift", V: fields}}})
 			} else {
 				line(c.Stdout, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{fields, dr})
 			}
@@ -500,7 +500,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			return failed(err)
 		}
 		if asJSON {
-			items = append(items, tool.Item{Kind: "set", Fields: tool.Fields{{"user", u.Name}, {"role", u.Role}}})
+			items = append(items, tool.Item{Kind: "set", Fields: tool.Fields{{K: "user", V: u.Name}, {K: "role", V: u.Role}}})
 		} else {
 			line(c.Stdout, "ACL SET", "user", u.Name, "role", u.Role)
 		}
@@ -565,7 +565,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			return failed(err)
 		}
 		if asJSON {
-			items = append(items, tool.Item{Kind: "rotate", Fields: tool.Fields{{"user", u}, {"drop-old", dropOld}}})
+			items = append(items, tool.Item{Kind: "rotate", Fields: tool.Fields{{K: "user", V: u}, {K: "drop-old", V: dropOld}}})
 		} else {
 			line(c.Stdout, "ACL ROTATE", "user", u, "drop-old", dropOld)
 		}
