@@ -2,9 +2,11 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -12,6 +14,21 @@ import (
 
 // goProbeTimeout bounds one `go` or `sh` probe the gosdk check runs.
 const goProbeTimeout = 10 * time.Second
+
+// wantedCheckout is the module path of the checkout this binary was built
+// from (go.mod's module line), read from the build rather than hard-coded, so
+// a run with no checkout here is refused naming the checkout --dir wants and
+// no forge name enters the source (docs/SPEC-DOCTOR.md, "The command").
+func wantedCheckout() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Path != "" {
+		return info.Main.Path
+	}
+	return "the nova-tools checkout"
+}
+
+// errNoCheckout marks a probe that found no go.mod, so the check can tell a
+// run outside a checkout from a toolchain that is really missing.
+var errNoCheckout = errors.New("no checkout here")
 
 func init() {
 	Default.Register(Check{Name: "gosdk", Dependency: "the Go toolchain", Repository: true, Run: checkGoSDK})
@@ -50,6 +67,12 @@ func checkGoSDK(ctx context.Context, env Env) Result {
 			Fix: "reinstall the Go toolchain go.mod's toolchain line names on this bench (" + doc + ")"}
 	}
 	want, exact, err := toolchainVersion(ctx, env, goPath)
+	if errors.Is(err, errNoCheckout) {
+		want := wantedCheckout()
+		return Result{Status: Fail,
+			Evidence: "not in a checkout: gosdk reads the go.mod of the " + want + " checkout",
+			Fix:      "run: nova-doctor run --dir <a checkout of " + want + ">"}
+	}
 	if err != nil {
 		return Result{Status: Fail, Evidence: err.Error(),
 			Fix: "run nova-doctor run in a checkout of this repository, whose go.mod names the bench's toolchain (" + doc + ")"}
@@ -143,7 +166,7 @@ func goEnvValue(ctx context.Context, env Env, goPath, key string) string {
 func toolchainVersion(ctx context.Context, env Env, goPath string) (want string, exact bool, err error) {
 	gomod := goEnvValue(ctx, env, goPath, "GOMOD")
 	if gomod == "" || gomod == "/dev/null" || gomod == "NUL" {
-		return "", false, fmt.Errorf("no go.mod here: the bench's toolchain is not named")
+		return "", false, fmt.Errorf("%w: gosdk wants the go.mod of %s", errNoCheckout, wantedCheckout())
 	}
 	raw, rerr := env.ReadFile(gomod)
 	if rerr != nil {
