@@ -150,7 +150,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 	t.Parallel()
 
 	seatInjectTranscript := []string{
-		"$ nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr",
+		"$ nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\" --no-pr",
 		"! seat inject: reading ada.yaml",
 		"! seat inject: encrypting 1 value(s) to bo.yaml's own recipients",
 		"! seat inject: returning the store to its branch",
@@ -190,7 +190,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 			switch {
 			case strings.HasPrefix(a, "~/"):
 				a = filepath.Join(home, strings.TrimPrefix(a, "~/"))
-			case a == "/opt/homebrew/bin/sops":
+			case a == "/opt/homebrew/bin/sops", a == "$SOPS":
 				a = sopsPath // the sops this bench has, where the reader's is
 			}
 			args = append(args, a)

@@ -99,6 +99,9 @@ the remedy); exec ends with the command's own status, and 125 when exec itself
 refused and the command never ran.
 
 setup: needs age-keygen and sops on PATH; run these from an empty directory first
+  # set SOPS and AGE_KEYGEN to the absolute paths of this machine's own binaries
+  SOPS=/opt/homebrew/bin/sops
+  AGE_KEYGEN=/opt/homebrew/bin/age-keygen
   mkdir -m 700 -p ~/.config/nova-secrets
   nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
     --age-keygen "$(command -v age-keygen)"
@@ -121,17 +124,17 @@ first value:
     --name GH_TOKEN --stdin --no-pr
 
 example:
-  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen "$AGE_KEYGEN"
   nova-secrets names  --store ./secrets --as ada
-  nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
-  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
-  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
-  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+  nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --only GH_TOKEN --require GH_TOKEN -- gh api user
+  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
   nova-secrets placed --machine bench-a
-  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
-  nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
-  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
-  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
+  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --name API_KEY --dry-run
+  nova-secrets seat add --store ./secrets --as bo --pub "$BO_PUB" --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops "$SOPS" --dry-run
 `
 
 // storeUpstreamHelp is the store prerequisite check and exec enforce (SPEC-SECRETS
