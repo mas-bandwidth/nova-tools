@@ -32,9 +32,12 @@
 package buildinfo
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -144,6 +147,36 @@ func Line(tool, stamped string, extras ...string) string {
 		line += " " + oneline.Field(key) + "=" + oneline.Field(value)
 	}
 	return line
+}
+
+// verbSetHashLen is the length of the verb set generation, in hex digits: the same
+// twelve a short revision uses, so the two identities on a version line read alike
+// and a person holding two pastes compares them the same way (docs/SPEC-VERSION.md).
+const verbSetHashLen = 12
+
+// VerbSet is the generation of a binary's verb set: its size, and the twelve-hex
+// hash of the verb NAMES sorted. It is the fact the version line's `verbs=` and
+// `verbset=` extras carry (docs/SPEC-VERSION.md), so a reader holding two binaries
+// can tell whether they carry the same set of verbs -- the nova-tools and
+// nova-sprint binaries diverged in exactly this and neither line said so. Sorting
+// is why two binaries that list the same verbs in different orders share a
+// generation: the generation names the SET, never the order a help happens to
+// print it in. The count is redundant with the hash and is carried anyway, so a
+// reader that only needs the size never has to hash to get it.
+func VerbSet(verbs []string) (int, string) {
+	sorted := append([]string(nil), verbs...)
+	sort.Strings(sorted)
+	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	return len(sorted), hex.EncodeToString(sum[:])[:verbSetHashLen]
+}
+
+// VerbSetExtras is a binary's verb set as the version-line extras Line takes:
+// `verbs=<n>` then `verbset=<12 hex>` (docs/SPEC-VERSION.md). A tool with more to
+// say names the set as extras after the four tokens, the way nova-sandbox names
+// `backend=` and `platform=`, so the writer and the one reader of the line agree.
+func VerbSetExtras(verbs []string) []string {
+	n, hash := VerbSet(verbs)
+	return []string{"verbs=" + strconv.Itoa(n), "verbset=" + hash}
 }
 
 // Fields is one version line taken apart. It is what every READER of a version line in
