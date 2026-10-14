@@ -358,10 +358,11 @@ func dispatch(args []string, s streams) int {
 }
 
 // stripJSON removes --json (or -json) from a verb's words and reports whether it
-// stood there. With beforeDash set (exec), the words after '--' are the command
-// and are left alone, so a command's own --json is never eaten. The verbs parse
-// their own flags, so the flag is removed here and the verb runs as without it;
-// the wrapper renders the one value as JSON from what the verb wrote.
+// stood there (docs/SPEC-SECRETS.md "Output grammar"). With beforeDash set (exec),
+// the words after '--' are the command and are left alone, so a command's own
+// --json is never eaten. The verbs parse their own flags, so the flag is removed
+// here and the verb runs as without it; the wrapper renders the one value as JSON
+// from what the verb wrote.
 func stripJSON(args []string, beforeDash bool) ([]string, bool) {
 	out := make([]string, 0, len(args))
 	asked := false
@@ -421,9 +422,9 @@ func execJSONExit(o *tool.Out, code int) {
 	}
 }
 
-// jsonSeat is jsonVerb for the seat group: the subverb leads the words, so the
-// verb name is "seat add" or "seat inject" and --json is removed from the whole
-// group's words before runSeatCLI sees them.
+// jsonSeat is jsonVerb for the seat group (docs/SPEC-SECRETS.md "Output grammar"):
+// the subverb leads the words, so the verb name is "seat add" or "seat inject"
+// and --json is removed from the whole group's words before runSeatCLI sees them.
 func jsonSeat(s streams, args []string) int {
 	trimmed, asked := stripJSON(args, false)
 	verb := "seat"
@@ -480,7 +481,7 @@ func verbOut(verb string, code int, stdout, stderr string) *tool.Out {
 }
 
 // refusalLine splits a `SECRETS <VERB> REFUSED: <why>; run: <remedy>` line into
-// its reason and remedy, whether one ran.
+// its reason and remedy, whether one ran (docs/SPEC-SECRETS.md "Output grammar").
 func refusalLine(line string) (why, remedy string, ok bool) {
 	i := strings.Index(line, "REFUSED: ")
 	if i < 0 {
@@ -493,7 +494,7 @@ func refusalLine(line string) (why, remedy string, ok bool) {
 	return why, remedy, true
 }
 
-// splitLines is the non-empty lines of a stream, trimmed at the newline.
+// splitLines is the non-empty lines of a stream, trimmed at the newline (docs/SPEC-SECRETS.md "Output grammar").
 func splitLines(stream string) []string {
 	var out []string
 	for _, l := range strings.Split(stream, "\n") {
@@ -504,7 +505,7 @@ func splitLines(stream string) []string {
 	return out
 }
 
-// factFields is every key=value token of a line as the value's facts.
+// factFields is every key=value token of a line as the value's facts (docs/SPEC-SECRETS.md "Output grammar").
 func factFields(line string) tool.Fields {
 	var fields tool.Fields
 	for _, tok := range strings.Fields(line) {

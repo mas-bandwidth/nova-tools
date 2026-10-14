@@ -3191,6 +3191,335 @@ remove a lock file to break a live lock.
 
 ## nova-secrets
 
+<!-- clidoc:begin nova-secrets -->
+`nova-secrets help`:
+
+```
+nova-secrets: encrypted secrets in a git repository, handed to one command at a time
+
+how it works: the store is a git working copy holding a .sops.yaml (one rule per
+seat naming its recipients), a recovery.pub (the recovery key every file is also
+sealed to) and one sops-encrypted <seat>.yaml per seat; a seat is a named identity
+whose age key file (mode 0600) opens its file. exec decrypts only the --only names
+into one command's environment; names reads names without decrypting; no value is printed.
+first run: setup: makes a store from an empty directory (SOPS and AGE_KEYGEN
+are absolute paths); first value: seals one with --stdin, the path a harness takes.
+
+usage:
+  nova-secrets version  print this build identity (--version also accepted)
+  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+                      --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+  nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+                      --machine <name> --secret <name> [--path <remote path>]
+                      [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets placed --machine <name> [--receipts <dir>]
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+                      --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+                      --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+                      --only <NAME,...> --key <path> --sops <path> [--no-pr]
+                      [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets help
+
+flags:
+  --store <dir>        git working copy of the secrets store; check and exec also need it on a
+                       named branch with an upstream tracking ref (see: nova-secrets check --help)
+  --as <name>          seat name selecting <store>/<name>.yaml
+  --key <path>         path to age private key identity file (mode 0600)
+  --sops <path>        path to sops executable
+  --age-keygen <path>  path to age-keygen executable
+  --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
+  --require <name>     assert key must be present in the file (repeatable)
+  --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
+  --json               every verb: the result as one JSON object on stdout, a refusal included
+  --machine <name>     fleet machine to place a secret on (its target comes from --machines)
+  --secret <name>      the key in <store>/<as>.yaml to copy to the machine
+  --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
+  --machines <file>    place: fleet registry file: name, ssh target, home, tab separated
+                       gate: the fleet machines registry whose seat column vouches for a
+                       new recipient; without it that rule does not run and the APPROVE
+                       line says machines=-
+  --receipts <dir>     where placed receipts live; default ~/.config/nova-secrets/placed
+  --ssh <path>         ssh executable to use (default ssh)
+  --name NAME          key to seal (seal only)
+  --pub <age1…>        the new seat's age public key, from its own keygen receipt (seat add only)
+  --from <seat>        a seat this machine can open, whose values are re-sealed (seat add,
+                       seat inject)
+  --stdin              read the value from stdin instead of the terminal, the path a harness
+                       takes (seal only)
+  --no-pr              stop after the commit; make no gh call; return the store to its
+                       starting branch (seal, seat inject)
+  --dry-run            prints the plan and writes nothing (place, seal, seat inject): the file, the
+                       recipients, the machine and remote path, the branch and the pull request the
+                       real run would take, as PLAN lines ending in DRY-RUN OK, exit 0; no ssh, no
+                       git write or push, no gh call, no sops encrypt, no value shown. It does
+                       decrypt the seat file the real run reads first (place: --as's, to find
+                       --secret; seal: the existing <as>.yaml, to say add or replace; seat inject:
+                       --from's, to find the names), so --key must open it; seal reads no new value.
+                       seal and seat inject read the store at HEAD, so their store must be
+                       committed; a store with no commit yet is refused with the commit
+                       that starts it
+  --gh <path>          path to the gh executable (seal, seat inject; default: gh)
+  --git <path>         path to the git executable (seal, seat inject; default: git)
+
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+gate verdict, one line per failure), 2 could not run or refused (one line naming
+the remedy); exec ends with the command's own status, and 125 when exec itself
+refused and the command never ran.
+
+setup: age-keygen and sops by absolute path, set below; run these from an empty directory first
+  # put the absolute path of the local sops binary here
+  SOPS=/usr/local/bin/sops
+  # put the absolute path of the local age-keygen binary here
+  AGE_KEYGEN=/usr/local/bin/age-keygen
+  mkdir -m 700 -p ~/.config/nova-secrets
+  nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
+    --age-keygen "$AGE_KEYGEN"
+  mkdir -p ./secrets && git -C ./secrets init -q -b main
+  sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
+    --age-keygen "$AGE_KEYGEN" \
+    --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  nova-secrets keygen --as bo --key ~/.config/nova-secrets/bo.key \
+    --age-keygen "$AGE_KEYGEN"
+  BO_PUB="$(sed -n 's/^# public key: //p' ~/.config/nova-secrets/bo.key)"
+  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
+  git init -q --bare ./secrets.git
+  git -C ./secrets remote add origin ../secrets.git
+  git -C ./secrets push -qu origin main
+
+first value:
+  printf '%s\n' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
+    --key ~/.config/nova-secrets/ada.key --sops "$SOPS" \
+    --name GH_TOKEN --stdin --no-pr
+
+example:
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen "$AGE_KEYGEN"
+  nova-secrets names  --store ./secrets --as ada
+  nova-secrets check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --only GH_TOKEN --require GH_TOKEN -- gh api user
+  nova-secrets place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+  nova-secrets placed --machine bench-a
+  nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --name API_KEY --dry-run
+  nova-secrets seat add --store ./secrets --as bo --pub "$BO_PUB" --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops "$SOPS" --dry-run
+```
+
+`nova-secrets version -h`:
+
+```
+usage: nova-secrets version [flags]
+from `nova-secrets help`:
+  nova-secrets version  print this build identity (--version also accepted)
+effect: inspection. Prints this build's identity; opens no store, key or program.
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets exec -h`:
+
+```
+usage: nova-secrets exec [flags]
+from `nova-secrets help`:
+  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+  --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --only GH_TOKEN --require GH_TOKEN -- gh api user
+effect: delivery. Decrypts <store>/<as>.yaml with --key and becomes <cmd>, with only the --only values in its environment; writes nothing, prints no value.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --only <names>  the key names to put in the command's environment, comma separated (GH_TOKEN,API_KEY), or all (required)
+  --require <NAME>  a key NAME that must be in the seat's file and in --only, or exec refuses; repeatable
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets names -h`:
+
+```
+usage: nova-secrets names [flags]
+from `nova-secrets help`:
+  nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+  nova-secrets names  --store ./secrets --as ada
+effect: inspection. Reads the key names in <store>/<as>.yaml without decrypting it; writes nothing.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --json  print the result as one JSON object on stdout, a refusal included: result, facts, items, more
+  --max <n>  n names to list before a MORE line; 0 lists all (default 20)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets check -h`:
+
+```
+usage: nova-secrets check [flags]
+from `nova-secrets help`:
+  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+effect: inspection. Reads the store's files and git state and decrypts this seat's file with --key to prove it opens; writes nothing, prints no value.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --max <n>  n failures of each kind to list before a MORE line; 0 lists all (default 20)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets gate -h`:
+
+```
+usage: nova-secrets gate [flags]
+from `nova-secrets help`:
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+effect: inspection. Diffs --base..--head in the store with git and judges every seat rule change; writes nothing, calls no network.
+flags:
+  --base <ref>  the pull request's base commit, a git ref (required)
+  --head <ref>  the pull request's head commit, a git ref (required)
+  --machines <file>  the fleet machines registry file, whose seat column vouches for a new recipient; without it that rule does not run and APPROVE says machines=-
+  --store <dir>  dir of the store checkout the pull request is against (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets keygen -h`:
+
+```
+usage: nova-secrets keygen [flags]
+from `nova-secrets help`:
+  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
+  --age-keygen "$AGE_KEYGEN"
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
+  --age-keygen "$AGE_KEYGEN" \
+  --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  nova-secrets keygen --as bo --key ~/.config/nova-secrets/bo.key \
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen "$AGE_KEYGEN"
+effect: local write. Makes one age key file at --key (mode 0600) with --age-keygen, never over an existing file, and prints the .sops.yaml rule block for it.
+flags:
+  --age-keygen <path>  path of the age-keygen program, as printed by: command -v age-keygen (required)
+  --as <name>  the seat name the key is for: letters, digits, - and _ (required)
+  --key <path>  path to write the new private key to; its directory exists with mode 0700 and the file does not (required)
+  --store <dir>  dir of the store, whose recovery.pub fills the rule's recovery key; without it the rule carries <recovery key>
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets place -h`:
+
+```
+usage: nova-secrets place [flags]
+from `nova-secrets help`:
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+  --machine <name> --secret <name> [--path <remote path>]
+  [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts naming the sealed bytes it decrypted (file, blob) and the store's HEAD (head), never a hash of the value; it reads the seat file once and decrypts a private copy; --dry-run still decrypts that file to find --secret, prints no value, writes nothing and runs no ssh.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --machine <name>  the fleet machine's name, a row of --machines (required)
+  --machines <file>  the fleet registry file: one machine per line, name, ssh target, home, tab separated (default ~/.config/nova-tools/fleet.tsv)
+  --path <path>  the remote path written (default <home>/.config/nova-secrets/<NAME>.env, home from the machine's row)
+  --receipts <dir>  dir the placed receipts live in (default ~/.config/nova-secrets/placed)
+  --secret <NAME>  the key NAME in <store>/<as>.yaml whose value is copied (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --ssh <path>  path of the ssh program (default ssh)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets placed -h`:
+
+```
+usage: nova-secrets placed [flags]
+from `nova-secrets help`:
+  nova-secrets placed --machine <name> [--receipts <dir>]
+  nova-secrets placed --machine bench-a
+effect: inspection. Lists the receipts under --receipts for --machine, never a hash of a value: per secret its remote path, file (the seat file it was sealed in), blob (the git blob id of the sealed bytes place decrypted), head (the store's HEAD commit when place started, which need not hold that blob) and stamp; writes nothing.
+flags:
+  --machine <name>  the fleet machine's name whose receipts are listed (required)
+  --receipts <dir>  dir the placed receipts live in (default ~/.config/nova-secrets/placed)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seal -h`:
+
+```
+usage: nova-secrets seal [flags]
+from `nova-secrets help`:
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+  --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --name API_KEY --dry-run
+effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --gh <path>  path of the gh program (default gh)
+  --git <path>  path of the git program (default git)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --name <NAME>  the key NAME to seal: capitals, digits and _, as GH_TOKEN (required)
+  --no-pr  commit on a seal/ branch and stop: no push, no gh call; the store returns to its starting branch
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --stdin  read the value from standard input instead of a hidden terminal prompt; never put it in an argument
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seat add -h`:
+
+```
+usage: nova-secrets seat add [flags]
+from `nova-secrets help`:
+  nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+  --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat add --store ./secrets --as bo --pub "$BO_PUB" --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+effect: local write. Writes the new seat's rule into .sops.yaml and its <as>.yaml, re-sealed from --from; commits nothing.
+flags:
+  --as <name>  the new seat's name; the store holds no <name>.yaml yet (required)
+  --from <seat>  the seat whose values are re-sealed: one this machine's --key opens (required)
+  --key <path>  path of this machine's age private key, the one that opens --from (required)
+  --only <NAMES>  the key NAMES to carry, comma separated: GH_TOKEN,API_KEY (required)
+  --pub <key>  the new seat's age public key (age1…), from its own keygen receipt (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seat inject -h`:
+
+```
+usage: nova-secrets seat inject [flags]
+from `nova-secrets help`:
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+  --only <NAME,...> --key <path> --sops <path> [--no-pr]
+  [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops "$SOPS" --dry-run
+effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing.
+flags:
+  --as <seat>  the existing seat receiving the values; its <seat>.yaml is in the store (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --from <seat>  the seat whose values are re-sealed: one this machine's --key opens (required)
+  --gh <path>  path of the gh program (default gh)
+  --git <path>  path of the git program (default git)
+  --key <path>  path of this machine's age private key, the one that opens --from (required)
+  --no-pr  commit on a seal/ branch and stop: no push, no gh call; the store returns to its starting branch
+  --only <NAMES>  the key NAMES to carry, comma separated: GH_TOKEN,API_KEY (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+<!-- clidoc:end nova-secrets -->
+
 Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
 contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).

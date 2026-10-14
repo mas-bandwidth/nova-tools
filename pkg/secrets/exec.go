@@ -35,8 +35,11 @@ func ArmExecWait(stderr io.Writer) {
 	execWaitFor.Store(goroutineID(), stderr)
 }
 
+// DisarmExecWait clears a mark a refusal consumed before RunExec
+// ran, so it cannot leak onto a later call (docs/SPEC-SECRETS.md "Output grammar").
 func DisarmExecWait() { execWaitFor.Delete(goroutineID()) }
 
+// takeExecWait extracts the armed wait writer if set (docs/SPEC-SECRETS.md "Output grammar").
 func takeExecWait() (io.Writer, bool) {
 	v, ok := execWaitFor.LoadAndDelete(goroutineID())
 	if !ok {
@@ -50,7 +53,8 @@ func takeExecWait() (io.Writer, bool) {
 }
 
 // goroutineID is the id runtime.Stack prints for this goroutine. A parse that
-// fails shares id 0; Arm and take still agree, because both read the same line.
+// fails shares id 0; Arm and take still agree, because both read the same line
+// (docs/SPEC-SECRETS.md "Output grammar").
 func goroutineID() uint64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
@@ -78,6 +82,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	return runExec(stderr, wait, storeDir, asName, keyPath, sopsPath, onlyArg, required, cmdArgs)
 }
 
+// runExec is the internal implementation of RunExec (docs/SPEC-SECRETS.md "Output grammar").
 func runExec(stderr io.Writer, wait bool, storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
 	// No core file: a crash after the decrypt must not write the values to disk.
 	if err := setRlimitCoreZero(); err != nil {
