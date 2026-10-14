@@ -33,7 +33,7 @@ var (
 
 var verbDocs = map[string]verbDoc{
 	"check":   {flags: [][2]string{jsonFlag}, exits: "0 the report printed, whatever this machine can enforce; 2 could not run (a usage error)"},
-	"version": {exits: "0 the version line printed; 2 an argument was given"},
+	"version": {flags: [][2]string{jsonFlag}, exits: "0 the version line printed; 2 an argument was given"},
 	"policy": {flags: [][2]string{readFlag, readNoexecFlag, writeFlag,
 		{"cwd", "the command's working `dir`, inside a --write (default: the first --write)"},
 		{"tmp", "the child's TMPDIR, a `dir` inside a --write (default: <first --write>/.nova-sandbox-tmp)"},
@@ -51,9 +51,10 @@ var verbDocs = map[string]verbDoc{
 		{"scratch", "an existing `dir` the worktrees and their records live in; never created"},
 		{"pr", "the pull request `id` whose head the worktree is placed at"},
 		{"base", "the `branch` it is compared against (default: the pull request's base)"},
-		{"prune", "remove the worktrees under --scratch whose pull request merged or closed, or that sat unused and stale; never with --pr"}},
+		{"prune", "remove the worktrees under --scratch whose pull request merged or closed, or that sat unused and stale; never with --pr"},
+		jsonFlag},
 		exits: "0 done; 2 could not run (a usage error, or a repository or forge that did not answer)"},
-	"egress": {exits: egressExits},
+	"egress": {flags: [][2]string{jsonFlag}, exits: egressExits},
 	"egress plan": {flags: [][2]string{
 		{"run", "the run `id` this wall belongs to; the table is nova_egress_<id>"},
 		{"policy", "the reviewed allowlist `file` in git"},
@@ -62,11 +63,12 @@ var verbDocs = map[string]verbDoc{
 		{"bench-cidr", "another bench's `cidr`, denied. Repeatable"},
 		{"uid", "the container's `uid` on the host; a plan needs --uid or --veth"},
 		{"veth", "the container's `interface`; a plan needs --uid or --veth"},
-		{"out", "the `file` the ruleset is written to"}},
+		{"out", "the `file` the ruleset is written to"},
+		jsonFlag},
 		exits: egressExits},
-	"egress apply": {flags: [][2]string{{"plan", "the ruleset `file` egress plan wrote"}, {"run", "the run `id` the plan belongs to"}}, exits: egressExits},
-	"egress check": {flags: [][2]string{{"plan", "the ruleset `file` to read back and check"}}, exits: egressExits},
-	"egress drop":  {flags: [][2]string{{"run", "the run `id` whose table is taken away"}}, exits: egressExits},
+	"egress apply": {flags: [][2]string{{"plan", "the ruleset `file` egress plan wrote"}, {"run", "the run `id` the plan belongs to"}, jsonFlag}, exits: egressExits},
+	"egress check": {flags: [][2]string{{"plan", "the ruleset `file` to read back and check"}, jsonFlag}, exits: egressExits},
+	"egress drop":  {flags: [][2]string{{"run", "the run `id` whose table is taken away"}, jsonFlag}, exits: egressExits},
 }
 
 // verbExample is one worked invocation per verb, printed on the verb's -h as an `example:` line

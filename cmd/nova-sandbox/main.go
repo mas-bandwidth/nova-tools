@@ -243,10 +243,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return 0
 	case "version", "--version":
 		helpIfAsked(args[1:], "version")
-		if len(args) > 1 {
+		asJSON := slices.Contains(args[1:], "--json")
+		if len(args) > 1 && !(len(args) == 2 && asJSON) {
 			// An ignored flag is a refusal (docs/CLI-STYLE.md (g)), never a
 			// version line over an argument nobody read.
-			fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_flag: version takes no flags and no arguments, got %d; run: nova-sandbox version\n", len(args)-1)
+			n := len(args) - 1
+			if asJSON {
+				return refuseJSON("version", stdout, []sandbox.Refusal{{Reason: "unknown_flag",
+					Text: fmt.Sprintf("version takes no flags and no arguments, got %d", n)}})
+			}
+			fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_flag: version takes no flags and no arguments, got %d; run: nova-sandbox version\n", n)
 			return sandbox.ExitCannotRun
 		}
 		// The same four tokens every other binary prints, then the two facts a
@@ -254,9 +260,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		// own -- `SANDBOX VERSION tool=... version=...` -- and a shape of its own is
 		// a shape every reader has to be taught: `nova-version snapshot` could not
 		// read it at all (#1297). The backend and the platform are not lost; they
-		// are now said in the grammar the whole set shares.
-		fmt.Fprintln(stdout, buildinfo.Line("nova-sandbox", version,
-			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
+		// are now said in the grammar the whole set shares. Under --json it is the
+		// payload of one result object (docs/STANDARD.md §2).
+		line := buildinfo.Line("nova-sandbox", version,
+			"backend="+sandbox.Backend, "platform="+runtime.GOOS)
+		if asJSON {
+			o := tool.Payload(line)
+			o.Verb = "version"
+			o.Render(stdout, true)
+			return 0
+		}
+		fmt.Fprintln(stdout, line)
 		return 0
 	case "check":
 		helpIfAsked(args[1:], "check")
@@ -275,7 +289,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			}
 			helpIfAsked(args[1:2], "egress")
 		}
-		return prodEgressSeams().egressVerb(args[1:], stderr)
+		return prodEgressSeams().egressVerbOut(args[1:], stdout, stderr)
 	case "policy":
 		helpIfAsked(args[1:], "policy")
 		return policyVerb(args[1:], stdout, stderr, env)
@@ -286,17 +300,20 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeStepVerb(args[1:], stderr, env)
 	}
 	if !strings.HasPrefix(args[0], "-") {
-		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n", args[0])
+		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: %s; run: nova-sandbox help\n", args[0], strings.Join(verbNames, ", "))
 		return sandbox.ExitCannotRun
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
 }
 
 // helpVerbs are the verbs `help <verb>` answers for; egressVerbs the four egress
-// sub-verbs, the only words after `egress` a help line may name.
+// sub-verbs, the only words after `egress` a help line may name. verbNames is the verbs
+// in the usage's order, what a bare command and an unknown verb answer with, and the
+// definition TestEveryVerbTakesJSON walks: every one takes --json (docs/STANDARD.md §2).
 var (
 	helpVerbs   = map[string]bool{"version": true, "check": true, "run": true, "reap": true, "worktree": true, "egress": true, "policy": true, "probe": true}
 	egressVerbs = map[string]bool{"plan": true, "apply": true, "check": true, "drop": true}
+	verbNames   = []string{"check", "egress", "policy", "probe", "reap", "run", "version", "worktree"}
 )
 
 // flags is the argv before --, parsed by hand because every list flag is repeatable and

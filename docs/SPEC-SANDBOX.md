@@ -476,15 +476,15 @@ nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-de
 nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>] [--json]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [--json] [-- <command> <args...>]
 nova-sandbox check   [--json]
-nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
-nova-sandbox reap    [--dry-run]
-nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
-nova-sandbox worktree --repo <dir> --scratch <dir> --prune
-nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file>
-nova-sandbox egress apply --plan <file> --run <id>
-nova-sandbox egress check --plan <file>
-nova-sandbox egress drop  --run <id>
-nova-sandbox version
+nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] [--json] -- <command> <args...>
+nova-sandbox reap    [--dry-run] [--json]
+nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>] [--json]
+nova-sandbox worktree --repo <dir> --scratch <dir> --prune [--json]
+nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file> [--json]
+nova-sandbox egress apply --plan <file> --run <id> [--json]
+nova-sandbox egress check --plan <file> [--json]
+nova-sandbox egress drop  --run <id> [--json]
+nova-sandbox version [--json]
 nova-sandbox help
 ```
 
@@ -507,12 +507,15 @@ or not a sandbox is available, because it is a question, not an attempt. The
 the token is always `none` and is printed only to keep the check line's shape
 across platforms.
 
-`check`, `policy` and `probe` take `--json`: the same result as one JSON object
-on stdout, a refusal included (`{"result":{"verb","status","exit","remedy","why"},
+Every verb takes `--json`: the same result as one JSON object on stdout, a
+refusal included (`{"result":{"verb","status","exit","remedy","why"},
 "facts":{...},"items":[...],"notes":[...],"payload":"..."}`, the shape of
-`pkg/tool`'s output value). `policy`'s profile is the `payload`, `probe`'s
-steps are `items` of kind `step`, and every typed line's fields are `facts`. The
-bare form and `run` wrap a command whose output is its own, and refuse `--json`.
+`pkg/tool`'s output value). `policy`'s profile and `version`'s line are the
+`payload`, `probe`'s steps are `items` of kind `step`, and every typed line's
+fields are `facts`; `worktree`'s `path`/`head` and `egress`'s receipt are
+`facts` too. The bare form wraps a command whose output is its own, and refuses
+`--json`; `run` accepts it and passes the command's own stdout and stderr
+through, printing its receipt as the result object.
 
 A flag that belongs to another verb is never silently dropped: the bare form
 refuses `--secret`, `--max` and `--json`; `probe` refuses `--cwd`, `--tmp`,

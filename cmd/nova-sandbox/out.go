@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -80,4 +81,47 @@ func (v *verbOut) done(w io.Writer, line string, code int, kv ...any) int {
 	}
 	v.out.Render(v.stdout, true)
 	return code
+}
+
+// refuseJSON is the --json half of a verb that prints its refusal by hand in the text
+// form (run, reap, worktree, egress, version). It is one object on stdout, exit 2, the
+// refusal included (docs/STANDARD.md §2, "one output structure, two renderings"); the
+// text form is unchanged, so a verb calls this only when it saw --json and keeps its own
+// text lines for the other rendering. bad is the verb's refusals, reason and text.
+func refuseJSON(verb string, stdout io.Writer, bad []sandbox.Refusal) int {
+	o := tool.Refuse()
+	o.Verb = verb
+	for _, r := range bad {
+		o.Why = append(o.Why, r.Reason+": "+r.Text)
+	}
+	o.Remedy = "nova-sandbox help " + verb
+	o.Render(stdout, true)
+	return sandbox.ExitCannotRun
+}
+
+// okJSON is the --json half of a verb that prints its closing line by hand: one OK object
+// on stdout whose facts are the verb's fields, the exit code the verb earned. A verb calls
+// it only under --json; the text form is unchanged.
+func okJSON(verb string, stdout io.Writer, code int, kv ...any) int {
+	o := tool.Done()
+	o.Verb = verb
+	o.Exit = code
+	for i := 0; i+1 < len(kv); i += 2 {
+		o.Fact(fmt.Sprint(kv[i]), kv[i+1])
+	}
+	o.Render(stdout, true)
+	return code
+}
+
+// saysNoJSON is the --json half of a verb that ran and said NO: one object on stdout,
+// exit 1, status failed (docs/STANDARD.md §2). The text form is unchanged.
+func saysNoJSON(verb string, stdout io.Writer, bad []sandbox.Refusal) int {
+	o := tool.Fail()
+	o.Verb = verb
+	for _, r := range bad {
+		o.Why = append(o.Why, r.Reason+": "+r.Text)
+	}
+	o.Remedy = "nova-sandbox " + verb + " -h"
+	o.Render(stdout, true)
+	return sandbox.ExitProbeFailed
 }

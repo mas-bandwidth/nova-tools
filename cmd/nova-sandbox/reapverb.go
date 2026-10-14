@@ -57,6 +57,7 @@ usage:
 
   --dry-run   print what a reap would take and touch NOTHING: no signal is sent,
               no volume is deleted.
+  --json      print the result as one JSON object on stdout, a refusal included.
 
 ` + "`run`" + ` deletes its volume on every path out it can take. A SIGKILL is not one of
 them: the tool is gone before it can delete, its volume stays mounted, and the
@@ -115,6 +116,7 @@ func prodReapSeams() *reapSeams {
 type reapFlags struct {
 	dryRun bool
 	help   bool
+	json   bool
 	bad    []sandbox.Refusal
 }
 
@@ -124,6 +126,8 @@ func parseReap(args []string) reapFlags {
 		switch args[i] {
 		case "--dry-run":
 			f.dryRun = true
+		case "--json":
+			f.json = true
 		case "help", "--help", "-h":
 			f.help = true
 		default:
@@ -144,6 +148,9 @@ func reapVerb(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if len(f.bad) > 0 {
+		if f.json {
+			return refuseJSON("reap", stdout, f.bad)
+		}
 		code := refuseAll(stderr, f.bad)
 		fmt.Fprintln(stderr, reapRemedy)
 		return code
@@ -151,6 +158,9 @@ func reapVerb(args []string, stdout, stderr io.Writer) int {
 	// One gate, shared with run: a platform with no disposable volumes has none to reap,
 	// and the refusal says where the disposable place is there instead.
 	if line, remedy, refused := noDisposableBody(runtime.GOOS); refused {
+		if f.json {
+			return refuseJSON("reap", stdout, []sandbox.Refusal{{Reason: "no_sandbox", Text: line}})
+		}
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitRefused

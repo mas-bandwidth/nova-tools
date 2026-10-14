@@ -111,6 +111,7 @@ func (d dnsResolver) LookupHost(name string) ([]netip.Addr, error) {
 type egressFlags struct {
 	run, policy, modelHost, resolver, out, plan, uid, veth string
 	benchCIDRs                                             []string
+	json                                                   bool
 	bad                                                    []sandbox.Refusal
 }
 
@@ -150,6 +151,8 @@ func parseEgress(args []string) egressFlags {
 			f.out = want("--out")
 		case "--plan":
 			f.plan = want("--plan")
+		case "--json":
+			f.json = true
 		default:
 			text, took := unknownArg(args, i, "egress")
 			add("no_command", text)
@@ -161,30 +164,40 @@ func parseEgress(args []string) egressFlags {
 
 // egressVerb dispatches the four sub-verbs. They are not wrappers, so they use SPEC.md's
 // grammar unchanged: 0 the verb ran and passed, 1 the verb ran and said NO, 2 it could not
-// run.
+// run. This form is the test seam's entry: stdout is discarded, because the dispatcher the
+// binary runs (egressVerbOut) is the one that renders --json.
 func (es *egressSeams) egressVerb(args []string, stderr io.Writer) int {
+	return es.egressVerbOut(args, io.Discard, stderr)
+}
+
+// egressVerbOut is egressVerb with the caller's stdout, so that a --json result goes to
+// stdout (docs/STANDARD.md §2, "one output structure, two renderings").
+func (es *egressSeams) egressVerbOut(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return egressRefuse(stderr, []sandbox.Refusal{{Reason: "no_command",
+		return egressRefuse(stdout, stderr, false, []sandbox.Refusal{{Reason: "no_command",
 			Text: "egress wants one of plan, apply, check or drop"}})
 	}
 	f := parseEgress(args[1:])
 	switch args[0] {
 	case "plan":
-		return es.egressPlanVerb(f, stderr)
+		return es.egressPlanVerb(f, stdout, stderr)
 	case "apply":
-		return es.egressApplyVerb(f, stderr)
+		return es.egressApplyVerb(f, stdout, stderr)
 	case "check":
-		return es.egressCheckVerb(f, stderr)
+		return es.egressCheckVerb(f, stdout, stderr)
 	case "drop":
-		return es.egressDropVerb(f, stderr)
+		return es.egressDropVerb(f, stdout, stderr)
 	}
-	return egressRefuse(stderr, []sandbox.Refusal{{Reason: "no_command",
+	return egressRefuse(stdout, stderr, f.json, []sandbox.Refusal{{Reason: "no_command",
 		Text: oneline.Escape(args[0]) + " is not an egress verb; it is one of plan, apply, check or drop"}})
 }
 
 // egressRefuse prints one line per independent problem (rule 16) and then the one remedy
-// line, and costs 2: the verb could not run.
-func egressRefuse(stderr io.Writer, bad []sandbox.Refusal) int {
+// line, and costs 2: the verb could not run. Under --json it is one object on stdout.
+func egressRefuse(stdout, stderr io.Writer, asJSON bool, bad []sandbox.Refusal) int {
+	if asJSON {
+		return refuseJSON("egress", stdout, bad)
+	}
 	for _, r := range bad {
 		fmt.Fprintf(stderr, "EGRESS REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))
 	}
@@ -193,8 +206,12 @@ func egressRefuse(stderr io.Writer, bad []sandbox.Refusal) int {
 }
 
 // egressSaidNo is the other half of the grammar: the verb ran, looked, and the answer is NO.
-// It costs 1, and a caller tells the two apart by the number as well as by the line.
-func egressSaidNo(stderr io.Writer, bad []sandbox.Refusal) int {
+// It costs 1, and a caller tells the two apart by the number as well as by the line. Under
+// --json it is one failed object on stdout.
+func egressSaidNo(stdout, stderr io.Writer, asJSON bool, bad []sandbox.Refusal) int {
+	if asJSON {
+		return saysNoJSON("egress", stdout, bad)
+	}
 	for _, r := range bad {
 		fmt.Fprintf(stderr, "EGRESS REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.WithRemedy(oneline.Escape(r.Text), "nova-sandbox egress -h"))
 	}
@@ -204,7 +221,7 @@ func egressSaidNo(stderr io.Writer, bad []sandbox.Refusal) int {
 // egressPlanVerb resolves the allowed names ONCE, pins what they answered, renders the
 // ruleset and writes it to --out. It runs on every platform: a plan is text, and a reviewer
 // on a Mac has to be able to build and read the ruleset a bench will apply.
-func (es *egressSeams) egressPlanVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressPlanVerb(f egressFlags, stdout, stderr io.Writer) int {
 	bad := f.bad
 	if f.out == "" {
 		bad = append(bad, sandbox.Refusal{Reason: "no_command", Text: "--out wants the file the ruleset is written to: --out /run/nova/egress-<run>.nft"})
@@ -243,7 +260,7 @@ func (es *egressSeams) egressPlanVerb(f egressFlags, stderr io.Writer) int {
 		cidrs = append(cidrs, p.Masked())
 	}
 	if len(bad) > 0 {
-		return egressRefuse(stderr, bad)
+		return egressRefuse(stdout, stderr, f.json, bad)
 	}
 
 	in := sandbox.EgressInput{
@@ -256,7 +273,7 @@ func (es *egressSeams) egressPlanVerb(f egressFlags, stderr io.Writer) int {
 	// "no resolver was given", which is this check's own and not the caller's.
 	_, inputBad := sandbox.BuildEgress(in)
 	if inputBad = slices.DeleteFunc(inputBad, func(r sandbox.Refusal) bool { return r.Reason == "resolve_failed" }); len(inputBad) > 0 {
-		return egressRefuse(stderr, inputBad)
+		return egressRefuse(stdout, stderr, f.json, inputBad)
 	}
 	in.Lookup = es.Lookup(resolver)
 	// The resolution is the one step of this verb that takes real time, so it says so:
@@ -266,17 +283,20 @@ func (es *egressSeams) egressPlanVerb(f egressFlags, stderr io.Writer) int {
 	plan, planBad := sandbox.BuildEgress(in)
 	fmt.Fprintf(stderr, "EGRESS STEP name=resolve state=done ms=%d\n", time.Since(at).Milliseconds())
 	if len(planBad) > 0 {
-		return egressRefuse(stderr, planBad)
+		return egressRefuse(stdout, stderr, f.json, planBad)
 	}
 	// The plan this tool writes passes this tool's audit, always: a renderer and its checker
 	// that disagree would be two contracts, and the one a bench applies would be the
 	// unchecked one.
 	if _, auditBad := sandbox.CheckEgressPlan(plan.Text); len(auditBad) > 0 {
-		return egressSaidNo(stderr, auditBad)
+		return egressSaidNo(stdout, stderr, f.json, auditBad)
 	}
 	if err := os.WriteFile(f.out, []byte(plan.Text), 0o600); err != nil {
-		return egressRefuse(stderr, []sandbox.Refusal{{Reason: "bad_out",
+		return egressRefuse(stdout, stderr, f.json, []sandbox.Refusal{{Reason: "bad_out",
 			Text: fmt.Sprintf("the ruleset could not be written: %s; every path is yours and none is guessed, so the directory is not created", oneline.Err(err))}})
+	}
+	if f.json {
+		return okJSON("egress", stdout, 0, "run", plan.Run, "allow", plan.Allow, "deny", plan.Deny, "names", strings.Join(plan.Names, ","))
 	}
 	fmt.Fprintf(stderr, "EGRESS PLAN run=%s allow=%d deny=%d names=%s\n",
 		oneline.Field(plan.Run), plan.Allow, plan.Deny, oneline.Field(strings.Join(plan.Names, ",")))
@@ -285,20 +305,23 @@ func (es *egressSeams) egressPlanVerb(f egressFlags, stderr io.Writer) int {
 
 // egressCheckVerb reads a plan back and asserts the invariants. It is the verb a reviewer
 // runs on a file, and it is what apply runs before nft ever sees one.
-func (es *egressSeams) egressCheckVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressCheckVerb(f egressFlags, stdout, stderr io.Writer) int {
 	bad := f.bad
 	if f.plan == "" {
 		bad = append(bad, sandbox.Refusal{Reason: "no_command", Text: "--plan wants the ruleset to read back: --plan /run/nova/egress-<run>.nft"})
 	}
 	if len(bad) > 0 {
-		return egressRefuse(stderr, bad)
+		return egressRefuse(stdout, stderr, f.json, bad)
 	}
 	audit, readBad, auditBad := egressReadPlan(f.plan)
 	if len(readBad) > 0 {
-		return egressRefuse(stderr, readBad)
+		return egressRefuse(stdout, stderr, f.json, readBad)
 	}
 	if len(auditBad) > 0 {
-		return egressSaidNo(stderr, auditBad)
+		return egressSaidNo(stdout, stderr, f.json, auditBad)
+	}
+	if f.json {
+		return okJSON("egress", stdout, 0, "table", audit.Table, "chains", len(audit.Chains), "rules", audit.Rules, "allow", audit.Allow, "deny", audit.Deny)
 	}
 	fmt.Fprintf(stderr, "EGRESS CHECK table=%s chains=%d rules=%d allow=%d deny=%d\n",
 		oneline.Field(audit.Table), len(audit.Chains), audit.Rules, audit.Allow, audit.Deny)
@@ -320,7 +343,7 @@ func egressReadPlan(path string) (sandbox.EgressAudit, []sandbox.Refusal, []sand
 
 // egressApplyVerb hands ONE audited plan to nft. The order is the contract: read, audit,
 // check the table is this run's, look for nft, and only then run it.
-func (es *egressSeams) egressApplyVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressApplyVerb(f egressFlags, stdout, stderr io.Writer) int {
 	bad := f.bad
 	if f.plan == "" {
 		bad = append(bad, sandbox.Refusal{Reason: "no_command", Text: "--plan wants the ruleset to apply: --plan /run/nova/egress-<run>.nft"})
@@ -329,36 +352,39 @@ func (es *egressSeams) egressApplyVerb(f egressFlags, stderr io.Writer) int {
 		bad = append(bad, sandbox.Refusal{Reason: "no_name", Text: "--run wants the run id the plan was built for: --run j1"})
 	}
 	if len(bad) > 0 {
-		return egressRefuse(stderr, bad)
+		return egressRefuse(stdout, stderr, f.json, bad)
 	}
 	if line, remedy, refused := noNftBody(es.GOOS); refused {
+		if f.json {
+			return refuseJSON("egress", stdout, []sandbox.Refusal{{Reason: "not_linux", Text: line}})
+		}
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitCannotRun
 	}
 	audit, readBad, auditBad := egressReadPlan(f.plan)
 	if len(readBad) > 0 {
-		return egressRefuse(stderr, readBad)
+		return egressRefuse(stdout, stderr, f.json, readBad)
 	}
 	if len(auditBad) > 0 {
 		// Fail closed: a plan that cannot pass its own audit is never applied, whoever wrote
 		// it. The invariants are the whole promise, and a ruleset that lost one is a wall
 		// with a hole in the shape of the line that went missing.
-		return egressSaidNo(stderr, auditBad)
+		return egressSaidNo(stdout, stderr, f.json, auditBad)
 	}
 	table := sandbox.EgressTableName(f.run)
 	if audit.Table != table {
-		return egressRefuse(stderr, []sandbox.Refusal{{Reason: "plan_mismatch",
+		return egressRefuse(stdout, stderr, f.json, []sandbox.Refusal{{Reason: "plan_mismatch",
 			Text: fmt.Sprintf("the plan holds the table %s and --run %s names %s; a run applies its OWN plan, because the drop that follows deletes one table by name and would leave the other standing", oneline.Escape(audit.Table), oneline.Escape(f.run), oneline.Escape(table))}})
 	}
 	if code := es.needNft(stderr); code != 0 {
 		return code
 	}
-	return es.egressRun(stderr, "apply", f.run, table, "-f", f.plan)
+	return es.egressRun(stdout, stderr, f.json, "apply", f.run, table, "-f", f.plan)
 }
 
 // egressDropVerb takes the run's wall away. It names ONE table, the one this tool made.
-func (es *egressSeams) egressDropVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressDropVerb(f egressFlags, stdout, stderr io.Writer) int {
 	bad := f.bad
 	if !okEgressRun(f.run) {
 		bad = append(bad, sandbox.Refusal{Reason: "no_name",
@@ -368,9 +394,12 @@ func (es *egressSeams) egressDropVerb(f egressFlags, stderr io.Writer) int {
 		bad = append(bad, sandbox.Refusal{Reason: "no_command", Text: "--plan belongs to the apply and check verbs; drop deletes the table --run names"})
 	}
 	if len(bad) > 0 {
-		return egressRefuse(stderr, bad)
+		return egressRefuse(stdout, stderr, f.json, bad)
 	}
 	if line, remedy, refused := noNftBody(es.GOOS); refused {
+		if f.json {
+			return refuseJSON("egress", stdout, []sandbox.Refusal{{Reason: "not_linux", Text: line}})
+		}
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitCannotRun
@@ -379,18 +408,21 @@ func (es *egressSeams) egressDropVerb(f egressFlags, stderr io.Writer) int {
 		return code
 	}
 	table := sandbox.EgressTableName(f.run)
-	return es.egressRun(stderr, "drop", f.run, table, "delete", "table", "inet", table)
+	return es.egressRun(stdout, stderr, f.json, "drop", f.run, table, "delete", "table", "inet", table)
 }
 
 // egressRun is the one place nft is executed, and the one place these verbs print a receipt.
-func (es *egressSeams) egressRun(stderr io.Writer, verb, run, table string, args ...string) int {
+func (es *egressSeams) egressRun(stdout, stderr io.Writer, asJSON bool, verb, run, table string, args ...string) int {
 	fmt.Fprintf(stderr, "EGRESS STEP name=%s state=start\n", oneline.Field(verb))
 	at := time.Now()
 	out, err := es.Priv.Run("nft", args...)
 	fmt.Fprintf(stderr, "EGRESS STEP name=%s state=done ms=%d\n", oneline.Field(verb), time.Since(at).Milliseconds())
 	if err != nil {
-		return egressSaidNo(stderr, []sandbox.Refusal{{Reason: "nft_failed",
+		return egressSaidNo(stdout, stderr, asJSON, []sandbox.Refusal{{Reason: "nft_failed",
 			Text: fmt.Sprintf("nft %s: %s: %s", strings.Join(args, " "), oneline.Err(err), oneline.Cap(strings.TrimSpace(out), 400))}})
+	}
+	if asJSON {
+		return okJSON("egress", stdout, 0, "verb", verb, "run", run, "table", table)
 	}
 	fmt.Fprintf(stderr, "EGRESS OK verb=%s run=%s table=%s\n", oneline.Field(verb), oneline.Field(run), oneline.Field(table))
 	return 0

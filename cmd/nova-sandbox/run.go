@@ -206,6 +206,7 @@ type runFlags struct {
 	argv        []string
 	useGo       bool
 	help        bool
+	json        bool
 	sawDashDash bool
 	bad         []sandbox.Refusal
 }
@@ -276,6 +277,8 @@ usage:
                   byte is written; over it is a refusal, not a truncation.
   --container <d> the APFS container to make the volume in. Default: the container
                   the boot volume is in.
+  --json          print the run's result as one JSON object on stdout, a refusal
+                  included; the command's own stdout and stderr pass through.
 
 windows (docs/SPEC-SANDBOX.md, "Windows -- the disposable place", W1..W12):
   --scratch <d>   REQUIRED on windows, refused elsewhere: an existing absolute path
@@ -372,6 +375,8 @@ func parseRun(args []string) runFlags {
 			}
 		case "--go":
 			f.useGo = true
+		case "--json":
+			f.json = true
 		case "help", "--help", "-h":
 			f.help = true
 		default:
@@ -529,6 +534,9 @@ func (rs *runSeams) runVerb(args []string, stdin io.Reader, stdout, stderr io.Wr
 	deadline, bad := validateRun(&f, goos)
 	f.bad = append(f.bad, bad...)
 	if len(f.bad) > 0 {
+		if f.json {
+			return refuseJSON("run", stdout, f.bad)
+		}
 		code := refuseAll(stderr, f.bad)
 		fmt.Fprintln(stderr, remedyFor(goos))
 		return code

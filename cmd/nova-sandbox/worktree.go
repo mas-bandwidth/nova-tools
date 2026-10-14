@@ -126,6 +126,7 @@ type worktreeFlags struct {
 	pr                      int
 	prNumeric, prSet, prune bool
 	baseSet                 bool
+	json                    bool
 	unknown                 []string // a refusal per argument the verb has no flag for
 }
 
@@ -167,12 +168,14 @@ func parseWorktree(args []string) worktreeFlags {
 			}
 		case "--prune":
 			f.prune = true
+		case "--json":
+			f.json = true
 		}
 	}
 	return f
 }
 
-var worktreeFlagNames = map[string]bool{"--repo": true, "--scratch": true, "--base": true, "--pr": true, "--prune": true}
+var worktreeFlagNames = map[string]bool{"--repo": true, "--scratch": true, "--base": true, "--pr": true, "--prune": true, "--json": true}
 
 // worktreeRecord is what <scratch>/<id>.pr holds: the guid that names the tree,
 // the base branch compared against, and the head the tree was placed at.
@@ -205,6 +208,13 @@ func (ws *worktreeSeams) worktreeVerb(args []string, stdout, stderr io.Writer, e
 		bad = append(bad, [2]string{"bad_scratch", "--scratch wants an existing directory and is not created"})
 	}
 	if len(bad) > 0 {
+		if f.json {
+			refs := make([]sandbox.Refusal, len(bad))
+			for i, b := range bad {
+				refs[i] = sandbox.Refusal{Reason: b[0], Text: b[1]}
+			}
+			return refuseJSON("worktree", stdout, refs)
+		}
 		for _, b := range bad {
 			fmt.Fprintf(stderr, "WORKTREE REFUSED reason=%s: %s\n", oneline.Field(b[0]), oneline.WithRemedy(b[1], "nova-sandbox help worktree"))
 		}
@@ -247,6 +257,20 @@ func (ws *worktreeSeams) worktreeOne(f worktreeFlags, stdout, stderr io.Writer, 
 	forge := ws.ForgeFactory(f.repo, env)
 	head, base, err := forgeHead(forge, f.pr)
 	if err != nil {
+		if f.json {
+			reason, detail := "no_forge", "the forge could not be reached"
+			switch {
+			case errors.Is(err, errNoPR):
+				reason, detail = "no_pr", "the forge does not know this pull request"
+			case errors.Is(err, errBadOrigin):
+				reason, detail = "bad_origin", err.Error()
+			case errors.Is(err, errBadSeat):
+				reason, detail = "bad_seat", err.Error()
+			case errors.Is(err, errBadHead):
+				reason, detail = "bad_head", err.Error()
+			}
+			return refuseJSON("worktree", stdout, []sandbox.Refusal{{Reason: reason, Text: detail}})
+		}
 		return worktreeForgeRefuse(stderr, err)
 	}
 	if f.baseSet {
@@ -259,6 +283,9 @@ func (ws *worktreeSeams) worktreeOne(f worktreeFlags, stdout, stderr io.Writer, 
 		path := rec.path(f.scratch)
 		if pathIsWorktree(path) {
 			if h, herr := ws.worktreeHead(path); herr == nil && h == head && ws.treeClean(path) {
+				if f.json {
+					return okJSON("worktree", stdout, 0, "path", path, "head", head)
+				}
 				fmt.Fprintf(stdout, "WORKTREE OK path=%s head=%s\n", oneline.Escape(path), oneline.Field(head))
 				return 0
 			}
@@ -271,12 +298,21 @@ func (ws *worktreeSeams) worktreeOne(f worktreeFlags, stdout, stderr io.Writer, 
 	}
 	path := filepath.Join(f.scratch, guid)
 	if err := ws.addWorktree(f.repo, path, head); err != nil {
+		if f.json {
+			return refuseJSON("worktree", stdout, []sandbox.Refusal{{Reason: "bad_repo", Text: "git could not make the worktree: " + oneline.Err(err)}})
+		}
 		fmt.Fprintf(stderr, "WORKTREE REFUSED reason=bad_repo: git could not make the worktree: %s\n%s\n", oneline.Err(err), worktreeRemedy)
 		return sandbox.ExitCannotRun
 	}
 	if err := writeRecord(recPath, worktreeRecord{id: f.pr, guid: guid, base: base, head: head}); err != nil {
+		if f.json {
+			return refuseJSON("worktree", stdout, []sandbox.Refusal{{Reason: "bad_scratch", Text: "the record could not be written: " + oneline.Err(err)}})
+		}
 		fmt.Fprintf(stderr, "WORKTREE REFUSED reason=bad_scratch: the record could not be written: %s\n%s\n", oneline.Err(err), worktreeRemedy)
 		return sandbox.ExitCannotRun
+	}
+	if f.json {
+		return okJSON("worktree", stdout, 0, "path", path, "head", head)
 	}
 	fmt.Fprintf(stdout, "WORKTREE OK path=%s head=%s\n", oneline.Escape(path), oneline.Field(head))
 	return 0
@@ -444,6 +480,9 @@ func (ws *worktreeSeams) worktreePrune(f worktreeFlags, stdout, stderr io.Writer
 		if under(f.scratch, p) {
 			kept++
 		}
+	}
+	if f.json {
+		return okJSON("worktree", stdout, 0, "removed", removed, "kept", kept)
 	}
 	fmt.Fprintf(stdout, "WORKTREE OK removed=%d kept=%d\n", removed, kept)
 	return 0
