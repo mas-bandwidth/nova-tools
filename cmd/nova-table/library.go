@@ -2,11 +2,14 @@ package main
 
 // Every table verb is an FCALL into the nova_sprint function library
 // (pkg/nsprint/fn's lua/), so a store that holds no library answers the
-// first one with "ERR Function not found". nova-table puts the library on
+// first one with "ERR Function not found". A write verb puts the library on
 // such a store itself, on first contact, with redisfn's LoadMissing: the
 // load of every caller that is not the deployer, which never replaces a
 // library of the name, whatever its code. Upgrading a
-// store's library is the deployer's, with nova-redis fn load.
+// store's library is the deployer's, with nova-redis fn load. A read verb
+// (FCALL_RO) never loads: reading cannot put the library on the store, so
+// it refuses with the deployer's remedy instead (SPEC-NOVA-TABLE, read-only
+// execution).
 //
 // The load costs nothing on a store that holds the library: no FUNCTION
 // LIST goes ahead of a verb, which stays one round trip. Only an FCALL the
@@ -130,6 +133,12 @@ func (h libraryHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 		if !missing(cmd, err) {
 			return err
 		}
+		// A read (FCALL_RO) never loads, so it refuses on the spot with the
+		// deployer's remedy: reading a store that holds no library cannot put
+		// one there (SPEC-NOVA-TABLE, read-only execution).
+		if cmd.Name() == "fcall_ro" {
+			return &libraryError{cmd: cmd, err: err, read: true}
+		}
 		again, receipt, lerr := h.state.ensure(ctx, h.load)
 		if lerr != nil {
 			return &libraryError{cmd: cmd, err: err, load: lerr}
@@ -200,6 +209,7 @@ type libraryError struct {
 	err     error
 	receipt redisfn.Receipt
 	load    error
+	read    bool // the command was a read (FCALL_RO), which never loads
 }
 
 func (e *libraryError) Error() string {
@@ -211,6 +221,8 @@ func (e *libraryError) Error() string {
 	}
 	text := e.err.Error() + ": function " + function
 	switch {
+	case e.read:
+		text += "; the store holds no nova_sprint library, and a read does not load it"
 	case e.load != nil:
 		text += "; the store holds no nova_sprint library and loading it failed: " + e.load.Error()
 	case e.receipt.Outcome == redisfn.Skipped:
