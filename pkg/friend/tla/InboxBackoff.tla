@@ -3,7 +3,7 @@
    inboxWait, InboxBackoffMax). She asks every loop (InboxEvery) while the server answers. The
    server runs one verb at a time and an ask the client gave up on at its deadline is still run, so
    asking again at the same cadence after each unanswered ask piled abandoned asks on a server
-   already too slow to answer them (emma's log, 48,796 "did not answer" lines). Each unanswered
+   already too slow to answer them (a friend's log, 48,810 "did not answer" lines). Each unanswered
    ask in a row now doubles the wait up to Max; an answer, a refusal included, ends the back-off.
    Time is in loops (the loop runs every beat), Wait(n) is inboxWait with Max in loops, and time
    cannot pass an ask that is due.

@@ -325,9 +325,6 @@ type Daemon struct {
 	cards       []string  // the cards she held at it
 	walked      time.Time // when it was
 	inboxAt     time.Time // when the inbox was last reconciled
-	// inboxUnanswered is the asks in a row the server did not answer: the next waits longer
-	// for each (inboxWait), and one answer sets it to zero.
-	inboxUnanswered int
 	heldIDs     []string  // the cards on her row at it
 	heldCards   []HeldCard
 	heldAt      time.Time            // when the ask that answered heldCards began: a lane's card taken after it is not judged by it (laneCheck)
@@ -344,6 +341,10 @@ type Daemon struct {
 	stageDone   []stageResult // the stages that ended, for the loop
 	stageWG     sync.WaitGroup
 	pruneSaid   string // the prune failure last said, said once while it stands
+
+	// inboxUnanswered is the asks in a row the server did not answer: the next waits longer
+	// for each (inboxWait), and one answer sets it to zero.
+	inboxUnanswered int
 }
 
 // Mailbox is a harness whose session queues what is delivered: Follow reads who read

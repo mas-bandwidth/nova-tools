@@ -141,7 +141,7 @@ const InboxEvery = BeatEvery
 // answer, a refusal included, ends it. The server runs one verb at a time and an ask the client
 // gave up on (the sprint ask's ten-second deadline) is still run, so asking again at once after
 // each deadline, as the daemon did, piled the abandoned asks on the server that was already
-// too slow to answer them (emma's log of 2026-10-06 to 2026-10-14: 48,796 "did not answer" lines).
+// too slow to answer them (a friend's log of 2026-10-06 to 2026-10-14: 48,810 "did not answer" lines).
 const InboxBackoffMax = 30 * time.Second
 
 // inboxWait is how long after an ask the next may be made, given the unanswered asks in a row:
