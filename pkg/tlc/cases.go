@@ -10,7 +10,11 @@ import (
 )
 
 // LoadCases reads tla/CASES.tsv under root and checks it against the tree: it
-// must name every MC*.cfg exactly once and every module must exist.
+// must name every MC*.cfg exactly once and every module must exist. When the
+// plan and the tree disagree the error names, in name order, every MC*.cfg the
+// plan does not name, every config the plan names that has no file, and every
+// row whose module is missing; it keeps its opening words so callers that match
+// them still do.
 func LoadCases(root string) ([]Case, error) {
 	dir := filepath.Join(root, "tla")
 	f, err := os.Open(filepath.Join(dir, CasesFile))
@@ -27,8 +31,11 @@ func LoadCases(root string) ([]Case, error) {
 		return nil, err
 	}
 	var actual, named []string
+	have := map[string]bool{}
 	for _, p := range cfgs {
-		actual = append(actual, filepath.Base(p))
+		b := filepath.Base(p)
+		actual = append(actual, b)
+		have[b] = true
 	}
 	seen := map[string]bool{}
 	for _, c := range cases {
@@ -40,13 +47,37 @@ func LoadCases(root string) ([]Case, error) {
 	}
 	sort.Strings(actual)
 	sort.Strings(named)
-	if strings.Join(actual, "\n") != strings.Join(named, "\n") {
-		return nil, fmt.Errorf("%s must name every MC*.cfg exactly once", CasesFile)
+	var probs []string
+	var unnamed []string
+	for _, f := range actual {
+		if !seen[f] {
+			unnamed = append(unnamed, f)
+		}
 	}
+	if len(unnamed) > 0 {
+		probs = append(probs, "the plan does not name "+strings.Join(unnamed, ", "))
+	}
+	var absent []string
+	for _, c := range named {
+		if !have[c] {
+			absent = append(absent, c)
+		}
+	}
+	if len(absent) > 0 {
+		probs = append(probs, "the plan names "+strings.Join(absent, ", ")+", which has no file")
+	}
+	var missing []string
 	for _, c := range cases {
 		if info, err := os.Stat(filepath.Join(dir, c.Module)); err != nil || !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("missing instance module: %s", c.Module)
+			missing = append(missing, c.Module)
 		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		probs = append(probs, "missing instance module "+strings.Join(missing, ", "))
+	}
+	if len(probs) > 0 {
+		return nil, fmt.Errorf("%s must name every MC*.cfg exactly once: %s", CasesFile, strings.Join(probs, "; "))
 	}
 	return cases, nil
 }

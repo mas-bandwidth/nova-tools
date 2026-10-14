@@ -356,23 +356,6 @@ func (c *captured) tee(run Run, help bool) Run {
 	}
 }
 
-// Completeness runs one case with -h, and with an unknown flag to read the
-// set's flags, and returns the verb's tool and gaps.
-func Completeness(run Run, c Case, dir string) (tool string, gaps []string) {
-	args := strings.Fields(c.Verb)
-	for _, f := range c.Flags {
-		f = strings.ReplaceAll(f, "{dir}", dir)
-		f = strings.ReplaceAll(f, "{addr}", RefusedAddr)
-		args = append(args, f)
-	}
-	var h, r captured
-	help, refuse := h.tee(run, true), r.tee(run, false)
-	var sink bytes.Buffer
-	help(append(append([]string(nil), args...), "-h"), &sink, &sink)
-	refuse(append(append([]string(nil), args...), UnknownFlag), &sink, &sink)
-	return judged(h.help, r.refusal)
-}
-
 func judged(help, refusal string) (string, []string) {
 	tool := strings.TrimSuffix(filepath.Base(os.Args[0]), ".test")
 	if f := strings.Fields(strings.SplitN(help, "\n", 2)[0]); len(f) >= 2 && f[0] == "usage:" {

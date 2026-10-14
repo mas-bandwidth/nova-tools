@@ -64,7 +64,8 @@ func newReal(t *testing.T, withRedis bool) *real {
 	t.Helper()
 	r := &real{env: map[string]string{"NOVA_PG_DSN": server.Database(t), "NOVA_FRIEND": "rowan"}}
 	if withRedis {
-		addr := testutil.Start(t)
+		// nova-config writes the sprint row itself: its store starts holding no key
+		addr := testutil.StartRaw(t)
 		r.client = redis.NewClient(&redis.Options{Addr: addr})
 		t.Cleanup(func() { _ = r.client.Close() })
 		if err := fn.Load(context.Background(), r.client); err != nil {

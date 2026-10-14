@@ -99,6 +99,13 @@ func CopyLine(dst string) string {
 // at the top of the tree is left out unless withGit; anything else that is
 // not one of those three (a socket, a device) is refused, never skipped.
 func WriteTree(w io.Writer, src string, withGit bool) error {
+	if withGit {
+		// A linked worktree's .git is a file naming a gitdir of this machine; copied to a
+		// bench it points at a path the bench lacks and git exits 128 there.
+		if fi, err := os.Lstat(filepath.Join(src, ".git")); err == nil && !fi.IsDir() {
+			return fmt.Errorf("%s/.git is a file (a linked worktree's pointer at a gitdir of this machine); a bench tree must be a clone made on the bench, so it is not copied with its .git", src)
+		}
+	}
 	tw := tar.NewWriter(w)
 	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

@@ -350,6 +350,10 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 		pat, specs = `^func[ \t]+`+tn.name+`[ \t]*\(`, goTestPathspecs(repo, sha, tn.scope)
 	case "pytest":
 		pat, specs = `^[ \t]*(async[ \t]+)?def[ \t]+`+tn.name+`[ \t]*\(`, pytestPathspecs(repo, sha, tn.scope)
+	case "ctest":
+		// `add_test(NAME <name>` or `add_test(<name>`, in CMakeLists.txt or a
+		// `*.cmake` file at the base.
+		pat, specs = `add_test[ \t]*\([ \t]*(NAME[ \t]+)?`+regexp.QuoteMeta(tn.name)+`([ \t]|\))`, []string{":(glob)**/CMakeLists.txt", ":(glob)**/*.cmake"}
 	default:
 		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
 	}

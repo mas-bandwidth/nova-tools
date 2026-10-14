@@ -1,7 +1,6 @@
 package testkit
 
 import (
-	"encoding/json"
 	"os"
 	"path"
 	"path/filepath"
@@ -38,14 +37,4 @@ func Tree(t testing.TB, root string, files map[string]string) string {
 	}
 	require.NoError(t, r.Close(), "tree: closing %s", root)
 	return root
-}
-
-// JSON decodes raw (a tool's --json output, a stored record) into a T, the
-// three lines of a declared value, json.Unmarshal and its require as one
-// expression, failing the test with the text when it does not decode.
-func JSON[T any](t testing.TB, raw string) T {
-	t.Helper()
-	var v T
-	require.NoError(t, json.Unmarshal([]byte(raw), &v), "decode JSON %q", raw)
-	return v
 }
