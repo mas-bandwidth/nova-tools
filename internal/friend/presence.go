@@ -97,7 +97,7 @@ type Presence struct {
 }
 
 // StartPresence is the presence as the daemon comes up at now: down, not yet
-// answered, a check owed at once.
+// answered, a check owed at once. The model is tla/FriendPresence.tla, Init.
 func StartPresence() *Presence {
 	return &Presence{Quiet: SessionQuiet, Bound: SessionBound, Reason: NotYetAnswered, Owed: true}
 }
@@ -113,14 +113,15 @@ func (p *Presence) Heard(now time.Time) (rose bool) {
 }
 
 // Ask is the check with nonce going into the session at now: the bound runs
-// from here.
+// from here. The model is tla/FriendPresence.tla, Ping and Ask.
 func (p *Presence) Ask(now time.Time, nonce string) {
 	p.Nonce, p.Asked, p.Bounded, p.Open, p.Owed, p.Read, p.Behind, p.Checks = nonce, now, now, true, false, false, false, p.Checks+1
 }
 
 // Answer is the session's reply carrying nonce, at now: the latest check's
 // nonce makes the friend up, late or not; any other, or one already
-// answered, changes nothing (current false).
+// answered, changes nothing (current false). The model is
+// tla/FriendPresence.tla, Answer: only an answer clears BehindSince and Capped.
 func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 	if nonce == "" || nonce != p.Nonce {
 		return false
@@ -147,7 +148,9 @@ func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 // lasts BehindCap of wall clock from the first time the unanswered check went
 // behind a turn, never reset by a turn's start or a check asked again, only by an
 // answer: back-to-back turns never hold the bound off longer (capped: the cap
-// reached this tick; from then the bounds run through the turn).
+// reached this tick; from then the bounds run through the turn). The model is
+// tla/FriendPresence.tla, Tick with Running, HeldOffIn, Behind, BehindSince and
+// Capped.
 func (p *Presence) Tick(now, turn time.Time) (behind, restarted, capped bool) {
 	running := !turn.IsZero()
 	if running && p.Nonce != "" {
@@ -294,6 +297,7 @@ type SessionCheck struct {
 // BatchTurn is the daemon's word on its own batch turn (Daemon.BatchTurn): since
 // is when the turn under way began, zero once it ended. While it runs and holds
 // the gate (inSession) the bound of an unanswered check waits (Presence.Tick).
+// The model is tla/FriendPresence.tla, StartTurn.
 func (s *SessionCheck) BatchTurn(since time.Time) {
 	s.mu.Lock()
 	s.batchSince = since
@@ -407,7 +411,8 @@ func (g turnGated) Deliver(ctx context.Context, text string) (int, error) {
 // still waits at the gate (behind a check holding it alone) is not, so it never
 // holds a check's bound off: that check's bound runs, its down cancels it, and the
 // gate frees (the cold read of 7077ed131: told running from startTurn, a hung check
-// and the turn behind it held each other, the session up for ever).
+// and the turn behind it held each other, the session up for ever). The model is
+// tla/FriendPresence.tla, TakeGate with Running and HeldOffIn.
 func (s *SessionCheck) inSession() func() {
 	s.mu.Lock()
 	if s.holding == 0 {
@@ -424,7 +429,7 @@ func (s *SessionCheck) inSession() func() {
 
 // batchTurn is when the daemon's batch turn now in the session began, zero while
 // none is: the daemon says one runs (BatchTurn, in batch mode) and a Deliver holds
-// the gate. Called with mu held.
+// the gate. Called with mu held. The model is tla/FriendPresence.tla, Running.
 func (s *SessionCheck) batchTurn() time.Time {
 	if s.batchSince.IsZero() || s.holding == 0 {
 		return time.Time{}
@@ -730,6 +735,8 @@ func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string
 // held past StaleTurnLock while the record says no turn runs is never a turn,
 // and the check goes in as its own turn by the record. A check owed one check
 // period (SessionQuiet) that has not gone in is said once as a refusal, with why.
+// The model is tla/FriendPresence.tla, Ping: the check's delivery comes to the
+// gate as a turn of its own (checkHolds), holding it until ReadCheck or CancelCheck.
 func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 	if _, ok := s.Deliver.(interface{ Passive() }); ok || s.Deliver == nil {
 		s.mu.Lock()
@@ -812,7 +819,7 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 // held is why the owed check waits while the turn lock is held, "" when it goes
 // in all the same: no turn at the gate (from before the limit gate's wait to the
 // turn's end) and a headless adapter whose own record has said no turn runs for
-// StaleTurnLock.
+// StaleTurnLock. The model is tla/FriendPresence.tla, checkHolds and TakeGate.
 func (s *SessionCheck) held(now time.Time) string {
 	rec := headlessOf(s.Deliver)
 	s.mu.Lock()
