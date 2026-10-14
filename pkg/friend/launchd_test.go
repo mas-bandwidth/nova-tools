@@ -147,7 +147,7 @@ func TestInstallWaitsForLaunchdToReleaseTheLabelAfterTheBootout(t *testing.T) {
 	t.Run("the wait loop: gone at once waits nothing", func(t *testing.T) {
 		t.Parallel()
 		var calls []string
-		waited, err := WaitReleased(context.Background(), held(0, &calls), target, DefaultExitTimeout, ReleasePoll, func(time.Duration) { t.Fatal("slept") })
+		waited, err := WaitReleased(context.Background(), held(0, &calls), target, DefaultExitTimeout, ReleasePoll, func(time.Duration) { require.Fail(t, "slept") })
 		require.NoError(t, err)
 		assert.Zero(t, waited)
 		assert.Equal(t, []string{"print " + target}, calls)
@@ -167,7 +167,7 @@ func TestInstallWaitsForLaunchdToReleaseTheLabelAfterTheBootout(t *testing.T) {
 		a.LaunchdLog = t.TempDir() + "/launchd.log"
 		var slept time.Duration
 		a.Sleep = func(d time.Duration) { slept += d }
-		path, commands, err := Install(context.Background(), a, 501, held(20, &calls), recordWrite(map[string]string{}), func() { t.Fatal("a bootstrap was retried") })
+		path, commands, err := Install(context.Background(), a, 501, held(20, &calls), recordWrite(map[string]string{}), func() { require.Fail(t, "a bootstrap was retried") })
 		require.NoError(t, err)
 		assert.Equal(t, 5*time.Second, slept) // wall-ok: the fake sleep's sum, no clock runs
 		assert.Equal(t, "bootstrap gui/501 "+path, calls[len(calls)-1], "the bootstrap is sent once, after launchd released the label")
@@ -408,36 +408,33 @@ func TestNotificationBinaryPlanIsContentAddressedAndNativeBinaryIsSeparate(t *te
 // The lane wall denies the coordinator's self, and a wall that denies nothing is refused, so the
 // agent can carry --deny-self (v1.2.6: install had no way to set it, and every lane of a friend
 // installed without it exited 125 with bad_profile); with none the daemon denies the seat's
-// working root (DefaultDenySelf).
-func TestTheAgentCarriesDenySelfOnlyWhenSetAndTheDefaultIsTheSeatsWorkingRoot(t *testing.T) {
+// working root (DefaultDenySelf). A pinned harness whose shim lives under the home execs a
+// directory the lane wall does not read (v1.2.6: ~/.local/bin/opencode execs
+// ~/nova-bench/harness-v1.18.20/opencode, and every lane of that friend exited 126, "Operation not
+// permitted"), so the agent carries --wall-reads the same way.
+func TestTheAgentCarriesTheSeatWallsOnlyWhenSet(t *testing.T) {
 	t.Parallel()
-	a := Agent{Friend: "bob", Harness: "claude", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2", Width: 4}
-	assert.NotContains(t, a.Args(), "--deny-self")
-	a.DenySelf = "/seat/self,/vol/self"
-	args := a.Args()
-	i := slices.Index(args, "--deny-self")
-	require.GreaterOrEqual(t, i, 0)
-	assert.Equal(t, "/seat/self,/vol/self", args[i+1])
-	assert.Contains(t, a.Plist(), "<string>--deny-self</string>")
-
+	for _, tc := range []struct {
+		flag, value string
+		set         func(*Agent)
+	}{
+		{"--deny-self", "/seat/self,/vol/self", func(a *Agent) { a.DenySelf = "/seat/self,/vol/self" }},
+		{"--wall-reads", "/home/u/nova-bench/harness-v1.18.20", func(a *Agent) { a.WallReads = "/home/u/nova-bench/harness-v1.18.20" }},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			t.Parallel()
+			a := Agent{Friend: "bob", Harness: "opencode", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2", Width: 4}
+			assert.NotContains(t, a.Args(), tc.flag)
+			tc.set(&a)
+			args := a.Args()
+			i := slices.Index(args, tc.flag)
+			require.GreaterOrEqual(t, i, 0)
+			assert.Equal(t, tc.value, args[i+1])
+			assert.Contains(t, a.Plist(), "<string>"+tc.flag+"</string>")
+		})
+	}
 	assert.Equal(t, []string{"/home/u/ai/ada/working"}, DefaultDenySelf("/home/u", "ada"))
 	assert.Nil(t, DefaultDenySelf("/home/u", ""), "no seat known: the wall refuses as it did")
 	assert.Nil(t, DefaultDenySelf("/home/u", "../x"), "a seat that is no plain name names no path")
 	assert.Nil(t, DefaultDenySelf("", "ada"))
-}
-
-// A pinned harness whose shim lives under the home execs a directory the lane wall does not read
-// (v1.2.6: ~/.local/bin/opencode execs ~/nova-bench/harness-v1.18.20/opencode, and every lane of
-// that friend exited 126, "Operation not permitted"), so the agent can carry --wall-reads, as it
-// carries --deny-self, and the seat play's reinstall keeps it.
-func TestTheAgentCarriesWallReadsOnlyWhenSet(t *testing.T) {
-	t.Parallel()
-	a := Agent{Friend: "bob", Harness: "opencode", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2", Width: 4}
-	assert.NotContains(t, a.Args(), "--wall-reads")
-	a.WallReads = "/home/u/nova-bench/harness-v1.18.20"
-	args := a.Args()
-	i := slices.Index(args, "--wall-reads")
-	require.GreaterOrEqual(t, i, 0)
-	assert.Equal(t, "/home/u/nova-bench/harness-v1.18.20", args[i+1])
-	assert.Contains(t, a.Plist(), "<string>--wall-reads</string>")
 }
