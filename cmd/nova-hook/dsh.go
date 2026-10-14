@@ -8,7 +8,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-
 type dshRoute struct {
 	route dshdesktop.Route
 	since time.Time
