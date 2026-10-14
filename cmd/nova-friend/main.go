@@ -1665,7 +1665,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var laneFaultPending atomic.Pointer[string]
 	rw.Judge = func(text string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
-		tellSeat(friend.LimitAlikeText(name, pro.Get(), text))
+		subject, body := friend.LimitAlikeText(name, pro.Get(), text)
+		if tail := rw.AlikeTail(); tail != "" {
+			body += "The last output of the third lane:\n" + tail + "\n"
+		}
+		tellSeat(subject, body)
 		fault := friend.LaneFaultReport(AlikeLanes, strings.TrimPrefix(text, AlikeJudgmentPrefix))
 		laneFaultPending.Store(&fault)
 	}
