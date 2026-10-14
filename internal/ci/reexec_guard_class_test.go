@@ -206,9 +206,7 @@ func TestEveryReexecOfTheTestBinaryHasTheGuard(t *testing.T) {
 	t.Parallel()
 	found, err := checkReexecGuard(repoRoot(t))
 	require.NoError(t, err)
-	for _, f := range found {
-		t.Error(f.render())
-	}
+	assert.Empty(t, found, "a _test.go reexecs the test binary with no testbin.Enter guard")
 }
 
 // TestReexecGuardRefusesAnUnguardedFixture: the witness. A fixture that runs

@@ -76,9 +76,7 @@ func newPackageSiteLedger(t *testing.T, path string) *siteLedger {
 // ledger after a fix.
 func reportLedger(t *testing.T, ledger *siteLedger, remedy string) {
 	t.Helper()
-	for _, v := range ledger.violations(t, remedy) {
-		t.Errorf("%s; after a fix, run: %s=1 %s", v, allowlist.UpdateEnv, lintUpdateCommand)
-	}
+	assert.Empty(t, ledger.violations(t, remedy), "the ledger does not hold; after a fix, run: %s=1 %s", allowlist.UpdateEnv, lintUpdateCommand)
 }
 
 // lintTools is the one build per package run of the module linter tool that

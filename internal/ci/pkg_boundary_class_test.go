@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,9 +24,7 @@ func TestPkgNeverImportsTheSprintOrInternal(t *testing.T) {
 	tree := repoTree(t)
 	files := append(tree.GoFilesUnder(false, "pkg"), tree.GoFilesUnder(true, "pkg")...)
 	require.NotEmpty(t, files, "no Go file under pkg/; a rule that checks nothing passes")
-	for _, finding := range pkgBoundaryFindings(files) {
-		t.Error(finding)
-	}
+	assert.Empty(t, pkgBoundaryFindings(files), "a pkg/ file imports nova-sprint's code or internal/")
 }
 
 // The rule's reversed witness: a pkg/ file importing nova-sprint's code (from its test as

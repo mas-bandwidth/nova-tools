@@ -94,9 +94,7 @@ func TestNoHandPrintingInAToolPackage(t *testing.T) {
 	l, err := allowlist.LoadPackages(noHandPrintingLedgerPath, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
 	require.NoError(t, err)
 	requireReasons(t, l)
-	for _, v := range noHandPrintingViolations(t, l, byKey, allowlist.Updating()) {
-		t.Error(v)
-	}
+	assert.Empty(t, noHandPrintingViolations(t, l, byKey, allowlist.Updating()), "a tool hand-prints a result instead of the one output shape")
 }
 
 // toolPackages names the packages this rule reads (docs/SPEC-CI.md,

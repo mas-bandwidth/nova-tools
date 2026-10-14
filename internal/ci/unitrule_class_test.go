@@ -660,9 +660,7 @@ func TestNoUnitTestUsesRealTimeSocketsOrServices(t *testing.T) {
 		problems = append(problems, fmt.Sprintf("UNIT-RULE internal/ci/%s lists %s, but that file breaks the rule no more; delete the row (NOVA_CI_UPDATE=1 drops it)", unitRuleLedgerPath, row.Key))
 	}
 	sort.Strings(problems)
-	for _, p := range problems {
-		t.Error(p)
-	}
+	assert.Empty(t, problems, "the unit-rule burn-down does not hold:\n%s", strings.Join(problems, "\n"))
 }
 
 // unitRuleLedgerRows reads a burn-down's text into its counts by key.
@@ -722,9 +720,7 @@ func TestUnitRuleBurndownOnlyShrinksAgainstTheMergeParent(t *testing.T) {
 	require.NoError(t, err)
 	headRows, err := unitRuleLedgerRows(rel, readFile(t, filepath.Join(root, filepath.FromSlash(rel))))
 	require.NoError(t, err)
-	for _, g := range unitRuleGrowth(baseRows, headRows) {
-		t.Errorf("%s %s over the change's base %s; the burn-down only shrinks: fix the test (a fake, or //go:build functional) and leave the list alone", rel, g, base[:9])
-	}
+	assert.Empty(t, unitRuleGrowth(baseRows, headRows), "%s grows over the change's base %s; the burn-down only shrinks: fix the test (a fake, or //go:build functional) and leave the list alone", rel, base[:9])
 }
 
 // TestUnitRuleFindsEachShapeAndNotItsFake proves the scan on a known yes and a

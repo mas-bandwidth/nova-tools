@@ -63,7 +63,8 @@ func TestNoForcePushOrHardResetOfASharedRef(t *testing.T) {
 		if allow[f.key()] {
 			continue
 		}
-		t.Errorf("%s:%d uses %s against a shared ref: add it to internal/ci/%s with a reason, or change the pattern to not touch shared refs",
+		assert.Fail(t, "a force pattern against a shared ref is not allowlisted",
+			"%s:%d uses %s against a shared ref: add it to internal/ci/%s with a reason, or change the pattern to not touch shared refs",
 			f.Rel, f.Line, f.Pattern, neverForceAllowlistPath)
 	}
 	for _, key := range rows {
