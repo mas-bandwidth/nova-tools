@@ -33,9 +33,12 @@ func liftRemedy(box, surface string) string {
 func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	var asJSON bool
 	var parseErr bytes.Buffer
-	box, positional, ok, parsed, jsonRequested := parseBoxWith("check", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
+	box, positional, ok, parsed, help, jsonRequested := parseBoxWith("check", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
 		fs.BoolVar(&asJSON, "json", false, "write the standard JSON receipt")
 	})
+	if help {
+		return cmdHelp([]string{"check"}, stdout, stderr)
+	}
 	asJSON = asJSON || jsonRequested
 	if !parsed {
 		return parseFailure("check", asJSON, parseErr.String(), stdout, stderr)

@@ -25,10 +25,13 @@ func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	var max int
 	var asJSON bool
 	var parseErr bytes.Buffer
-	box, positional, ok, parsed, jsonRequested := parseBoxWith("status", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
+	box, positional, ok, parsed, help, jsonRequested := parseBoxWith("status", rest, &parseErr, inv.getenv, func(fs *flag.FlagSet) {
 		fs.IntVar(&max, "max", bounded.Default, "quarantine lines to list before one MORE line stands for the rest; 0 lists all")
 		fs.BoolVar(&asJSON, "json", false, "write the standard JSON receipt")
 	})
+	if help {
+		return cmdHelp([]string{"status"}, stdout, stderr)
+	}
 	asJSON = asJSON || jsonRequested
 	if !parsed {
 		return parseFailure("status", asJSON, parseErr.String(), stdout, stderr)

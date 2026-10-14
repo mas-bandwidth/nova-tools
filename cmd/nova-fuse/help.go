@@ -8,9 +8,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
-// fuseHelp is one verb's help: what `nova-fuse help <verb>` prints. A verb's
-// -h is refused rather than answered (exit 0 is this tool's CLEAR), so this
-// table is the only route to it. It never runs a verb or reads a box.
+// fuseHelp is one verb's help: what `nova-fuse help <verb>` prints and what
+// `<verb> -h` and `<verb> --help` print, all on stdout at exit 0 before any box
+// is read (docs/STANDARD.md, "Help is never a refusal"). It never runs a verb
+// or reads a box.
 type fuseHelp struct {
 	usage  string
 	effect string // "inspection: ..." or "local write: ...", the line's prefix in the skeleton's grammar
@@ -121,7 +122,22 @@ func cmdHelp(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, "  --           end flags; following words are literal surfaces or reasons\nFlags precede positional arguments; each flag is given once.")
 	}
-	fmt.Fprintf(stdout, "\nexit codes: %s\neffect: %s\nHelp: nova-fuse help %s; -h after a verb is refused at exit 2.\n",
+	fmt.Fprintf(stdout, "\nexit codes: %s\neffect: %s\nHelp: nova-fuse help %s; -h after the verb prints this same help at exit 0.\n",
 		oneline.Escape(h.exits), oneline.Escape(h.effect), oneline.Escape(name))
 	return 0
+}
+
+// isHelpWord reports whether one argument is a help flag. Package flag answers
+// all three with flag.ErrHelp, and every one of them is the standard's help
+// door: `<verb> -h`, `<verb> -help` and `<verb> --help` print that verb's help
+// on stdout at exit 0 (docs/STANDARD.md, "Help is never a refusal"). The word
+// is only a door where package flag reads a flag; after the `--` that ends
+// flags it is a surface or a reason, and as the value of a flag before it
+// (`--box -h`) it is that flag's value.
+func isHelpWord(arg string) bool {
+	switch arg {
+	case "-h", "-help", "--help":
+		return true
+	}
+	return false
 }

@@ -167,17 +167,22 @@ func TestVerbHelpNamesItsEffectsFlagsAndExitMeanings(t *testing.T) {
 	})
 }
 
-func TestCheckHelpFlagStillFailsClosedAndNamesFocusedHelp(t *testing.T) {
+// TestTheVerbHelpFlagPrintsFocusedHelp: a verb's `-h` and `--help` are that
+// verb's focused help on stdout at exit 0 and read no box, the same text as
+// `help <verb>` (docs/STANDARD.md, "Help is never a refusal"). This replaces a
+// branch that refused -h at exit 2 by design, the defect
+// tools/analyzers/cmd/vetlaw checkHelpRefused names (law #2575).
+func TestTheVerbHelpFlagPrintsFocusedHelp(t *testing.T) {
 	t.Parallel()
 	box := freshBox(t)
 	before := testkit.ReadFile(t, box)
 	for _, flag := range []string{"-h", "--help"} {
 		code, out, errs := runFuse(t, "check", "--box", box, flag)
-		assert.Equal(t, 2, code)
-		assert.Empty(t, out)
-		assert.Contains(t, errs, "so it can never read as CLEAR; run: nova-fuse help check")
+		require.Zero(t, code, errs)
+		assert.Empty(t, errs)
+		assert.Contains(t, out, "usage: nova-fuse check --box <path>")
 	}
-	assert.Equal(t, before, testkit.ReadFile(t, box))
+	assert.Equal(t, before, testkit.ReadFile(t, box), "a verb's -h reads no box")
 	code, out, errs := runFuse(t, "help", "lift", "lockdown")
 	assert.Zero(t, code)
 	assert.Empty(t, errs)

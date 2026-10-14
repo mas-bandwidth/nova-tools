@@ -23,7 +23,10 @@ import (
 // replaces a box and that a lockdown always blows (MCFuseBox*.cfg, five reversed
 // witnesses).
 func cmdInit(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	box, positional, ok, parsed, dry := parseWrite("init", rest, stderr, inv.getenv)
+	box, positional, ok, parsed, dry, help := parseWrite("init", rest, stderr, inv.getenv)
+	if help {
+		return cmdHelp([]string{"init"}, stdout, stderr)
+	}
 	if !parsed {
 		return 2
 	}
