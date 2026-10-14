@@ -47,20 +47,24 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// library is the function library the fn verbs load and check.
+// library is the function library the fn verbs load and check. Its remedy
+// spells the store flag --redis (docs/STANDARD.md section 2, "One shape across
+// the set").
 func library() redisfn.Library {
 	lib := fn.Spec()
-	lib.Remedy = "nova-redis fn load --addr <host:port>"
+	lib.Remedy = "nova-redis fn load --redis <host:port>"
 	return lib
 }
 
-// fnLoadVerb is the fn load verb: a store write of this binary's library.
+// fnLoadVerb is the fn load verb: a store write of this binary's library. The
+// write goes over the network to the store at --redis, so its effect is the
+// delivery class, not a write of files on this machine (pkg/tool Effect).
 func fnLoadVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "fn load",
 		Usage:   "fn load --redis <host:port> [--user <name>] [--password-env <NAME>]",
 		Example: "",
-		Effect:  tool.LocalWrite,
+		Effect:  tool.Delivery + ": writes this binary's function library to the store at --redis, unless the store holds exactly that code",
 		Flags: func(f *tool.Flags) {
 			f.Prints()
 			loginFlags(f)

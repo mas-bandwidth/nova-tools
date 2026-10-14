@@ -40,8 +40,10 @@ import (
 // library on it registers.
 const functionNotFound = "ERR Function not found"
 
-// deployRemedy is the deployer's load of this build's library.
-const deployRemedy = "run: nova-redis fn load --addr <host:port> (the deployer's load of this build's library)"
+// deployRemedy is the deployer's load of this build's library. It spells the
+// store flag --redis, the family's one name (docs/STANDARD.md section 2, "One
+// shape across the set"); --addr is the old spelling.
+const deployRemedy = "run: nova-redis fn load --redis <host:port> (the deployer's load of this build's library)"
 
 // libraryLoad puts the library on the store the hook's client talks to when
 // the store holds none (redisfn.Library.LoadMissing).
@@ -89,10 +91,11 @@ type libraryHook struct {
 	load  libraryLoad
 }
 
-// tableLibrary is the library nova-table's verbs call.
+// tableLibrary is the library nova-table's verbs call. Its remedy spells the
+// store flag --redis (docs/STANDARD.md section 2, "One shape across the set").
 func tableLibrary() redisfn.Library {
 	lib := fn.Spec()
-	lib.Remedy = "nova-redis fn load --addr <host:port>"
+	lib.Remedy = "nova-redis fn load --redis <host:port>"
 	return lib
 }
 
