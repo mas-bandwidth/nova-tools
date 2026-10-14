@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // The controls verb builds the tree and runs the stamp assertion over real
@@ -103,18 +105,13 @@ func TestControlsHoldOnAnHonestLinker(t *testing.T) {
 	for _, c := range h.runner.called() {
 		if c.name == "go" && c.args[0] == "build" {
 			builds++
-			if c.args[len(c.args)-1] != "./cmd/..." {
-				t.Errorf("a control built %v, not the whole tree", c.args)
-			}
+			assert.Equal(t, "./cmd/...", c.args[len(c.args)-1], "a control built %v, not the whole tree", c.args)
 		}
 	}
-	if builds != 4 {
-		t.Errorf("%d builds, want 4", builds)
-	}
+	assert.Equal(t, 4, builds)
 	// The working tree is never edited: the mutation goes through an overlay.
-	if b, _ := os.ReadFile(filepath.Join(h.dir, "cmd", "nova-tokens", "version.go")); string(b) != versionSource {
-		t.Error("the controls edited the tool's source in the working tree")
-	}
+	b, _ := os.ReadFile(filepath.Join(h.dir, "cmd", "nova-tokens", "version.go"))
+	assert.Equal(t, versionSource, string(b), "the controls edited the tool's source in the working tree")
 }
 
 func TestControlsFailWhenTheAssertionPassesBinariesNothingStamped(t *testing.T) {
@@ -160,16 +157,16 @@ func TestControlsTakeTheVictimWitnessAndStampAsFlags(t *testing.T) {
 func TestMutateVersionSourceRenamesAndRemovesTheSymbolAndSaysWhetherItLanded(t *testing.T) {
 	t.Parallel()
 	renamed, ok := mutateVersionSource(versionSource, "rename")
-	if !ok || !strings.Contains(renamed, "var Version string") || !strings.Contains(renamed, "resolveVersion(Version, info, ok)") || containsLine(renamed, "var version string") {
-		t.Errorf("rename: landed=%v\n%s", ok, renamed)
-	}
+	assert.True(t, ok, "rename: landed=%v\n%s", ok, renamed)
+	assert.Contains(t, renamed, "var Version string")
+	assert.Contains(t, renamed, "resolveVersion(Version, info, ok)")
+	assert.False(t, containsLine(renamed, "var version string"))
 	removed, ok := mutateVersionSource(versionSource, "remove")
-	if !ok || containsLine(removed, "var version string") || !strings.Contains(removed, `resolveVersion("", info, ok)`) {
-		t.Errorf("remove: landed=%v\n%s", ok, removed)
-	}
+	assert.True(t, ok, "remove: landed=%v\n%s", ok, removed)
+	assert.False(t, containsLine(removed, "var version string"))
+	assert.Contains(t, removed, `resolveVersion("", info, ok)`)
 	for _, how := range []string{"rename", "remove", "other"} {
-		if _, ok := mutateVersionSource("package main\n", how); ok {
-			t.Errorf("%s landed on a source with nothing to mutate", how)
-		}
+		_, ok := mutateVersionSource("package main\n", how)
+		assert.False(t, ok, "%s landed on a source with nothing to mutate", how)
 	}
 }

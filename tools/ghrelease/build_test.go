@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeGoBuild answers `go build -o <dir>/ <pkgs...>` the way the toolchain does:
@@ -50,26 +53,17 @@ func TestBuildCompilesOnceAndNamesEveryArtifactTheReleaseWay(t *testing.T) {
 	h.wantRC(h.do("build", "v1.2.3", "linux", "amd64", "dist"), 0)
 
 	calls := h.runner.called()
-	if len(calls) != 1 {
-		t.Fatalf("%d programs run, want one go build over every tool", len(calls))
-	}
+	require.Len(t, calls, 1, "want one go build over every tool")
 	c := calls[0]
-	if c.name != "go" || c.dir != h.dir {
-		t.Errorf("ran %s in %q", c.name, c.dir)
-	}
-	if got := strings.Join(c.env, " "); got != "GOOS=linux GOARCH=amd64 CGO_ENABLED=0" {
-		t.Errorf("env %q", got)
-	}
+	assert.Equal(t, "go", c.name)
+	assert.Equal(t, h.dir, c.dir)
+	assert.Equal(t, "GOOS=linux GOARCH=amd64 CGO_ENABLED=0", strings.Join(c.env, " "))
 	args := strings.Join(c.args, " ")
 	for _, want := range []string{"build -trimpath -ldflags -s -w -X main.version=v1.2.3 -o ", "./cmd/nova-bus ./cmd/nova-tokens"} {
-		if !strings.Contains(args, want) {
-			t.Errorf("go build args %q lack %q", args, want)
-		}
+		assert.Contains(t, args, want)
 	}
 	for _, n := range []string{"nova-bus_v1.2.3_linux_amd64", "nova-tokens_v1.2.3_linux_amd64"} {
-		if _, err := os.Stat(filepath.Join(h.dir, "dist", n)); err != nil {
-			t.Errorf("artifact %s: %v", n, err)
-		}
+		assert.FileExists(t, filepath.Join(h.dir, "dist", n))
 	}
 	h.mustContain("ldflags: -s -w -X main.version=v1.2.3\n")
 	h.mustContain("built 2 tools for linux/amd64\n")
@@ -82,9 +76,7 @@ func TestBuildNamesWindowsBinariesWithExe(t *testing.T) {
 	h.tools("nova-bus")
 	h.runner.stream = fakeGoBuild("")
 	h.wantRC(h.do("build", "v1.2.3", "windows", "amd64", "dist"), 0)
-	if _, err := os.Stat(filepath.Join(h.dir, "dist", "nova-bus_v1.2.3_windows_amd64.exe")); err != nil {
-		t.Fatal(err)
-	}
+	assert.FileExists(t, filepath.Join(h.dir, "dist", "nova-bus_v1.2.3_windows_amd64.exe"))
 }
 
 func TestBuildRefusesAPlatformThatIsNotShipped(t *testing.T) {
@@ -92,9 +84,7 @@ func TestBuildRefusesAPlatformThatIsNotShipped(t *testing.T) {
 	h := newHarness(t)
 	h.tools("nova-bus")
 	h.wantRun(1, "refusing: plan9/mips is not a shipped platform", "build", "v1.2.3", "plan9", "mips", "dist")
-	if n := len(h.runner.called()); n != 0 {
-		t.Fatalf("%d programs run before the platform was refused", n)
-	}
+	require.Zero(t, len(h.runner.called()), "programs run before the platform was refused")
 }
 
 func TestBuildRefusesABadStampBeforeAnythingIsCompiled(t *testing.T) {
@@ -103,12 +93,8 @@ func TestBuildRefusesABadStampBeforeAnythingIsCompiled(t *testing.T) {
 		h := newHarness(t)
 		h.tools("nova-bus")
 		h.wantRun(1, "refusing: the release stamp", "build", stamp, "linux", "amd64", "dist")
-		if n := len(h.runner.called()); n != 0 {
-			t.Errorf("<%q>: %d programs run after a refused stamp; the build must never start", stamp, n)
-		}
-		if _, err := os.Stat(filepath.Join(h.dir, "dist")); err == nil {
-			t.Errorf("<%q>: dist was created by a refused build", stamp)
-		}
+		assert.Zero(t, len(h.runner.called()), "<%q>: programs run after a refused stamp; the build must never start", stamp)
+		assert.NoDirExists(t, filepath.Join(h.dir, "dist"), "<%q>: dist was created by a refused build", stamp)
 	}
 }
 
@@ -117,9 +103,7 @@ func TestBuildRequireVTagRefusesAStampThatIsNotVPrefixed(t *testing.T) {
 	h := newHarness(t)
 	h.tools("nova-bus")
 	h.wantRun(1, "refusing: 1.2.3 is not a v-prefixed tag", "build", "--require-v-tag", "1.2.3", "linux", "amd64", "dist")
-	if n := len(h.runner.called()); n != 0 {
-		t.Fatalf("%d programs run", n)
-	}
+	require.Zero(t, len(h.runner.called()))
 
 	h = newHarness(t)
 	h.tools("nova-bus")

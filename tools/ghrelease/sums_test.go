@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func shipped(h *harness, stamp string) []string {
@@ -36,30 +39,20 @@ func TestSumsWritesAndVerifiesOverExactlyTheShippedSet(t *testing.T) {
 	h.wantRC(h.do("sums", "v1.0.0", "dist"), 0)
 
 	raw, err := os.ReadFile(filepath.Join(dist, "SHA256SUMS"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("SHA256SUMS has %d lines, want 4 (two tools x two platforms):\n%s", len(lines), raw)
-	}
+	require.Len(t, lines, 4, "SHA256SUMS lines, want 4 (two tools x two platforms):\n%s", raw)
 	for _, l := range lines {
 		sum, name, _ := strings.Cut(l, "  ")
 		b, _ := os.ReadFile(filepath.Join(dist, name))
 		want := sha256.Sum256(b)
-		if sum != hex.EncodeToString(want[:]) {
-			t.Errorf("%s: sum %s is not the sha256 of the bytes on disk", name, sum)
-		}
-		if name == "SHA256SUMS" {
-			t.Error("SHA256SUMS lists itself")
-		}
+		assert.Equal(t, hex.EncodeToString(want[:]), sum, "%s: sum is not the sha256 of the bytes on disk", name)
+		assert.NotEqual(t, "SHA256SUMS", name, "SHA256SUMS lists itself")
 	}
-	if !strings.Contains(string(raw), "nova-bus_v1.0.0_windows_amd64.exe") {
-		t.Errorf("the windows artifact is not listed with .exe:\n%s", raw)
-	}
-	if fi, _ := os.Stat(filepath.Join(dist, "SHA256SUMS")); fi.Mode().Perm() != 0o644 {
-		t.Errorf("SHA256SUMS mode %v, want 0644", fi.Mode().Perm())
-	}
+	assert.Contains(t, string(raw), "nova-bus_v1.0.0_windows_amd64.exe")
+	fi, err := os.Stat(filepath.Join(dist, "SHA256SUMS"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o644), fi.Mode().Perm())
 	h.mustContain("nova-bus_v1.0.0_linux_amd64: OK\n")
 	h.mustContain("SHA256SUMS over 4 artifacts:\n")
 }
@@ -73,9 +66,7 @@ func TestSumsRefusesADirectoryThatIsNotTheShippedSetNamingTheDifference(t *testi
 	h.wantRun(1, "-nova-tokens_v1.0.0_linux_amd64\n", "sums", "v1.0.0", "dist")
 	h.mustContain("+stray.log\n")
 	h.mustContain("is not the shipped set (- missing, + not shipped)")
-	if _, err := os.Stat(filepath.Join(dist, "SHA256SUMS")); err == nil {
-		t.Fatal("a checksum file was written over a set that is not the shipped set")
-	}
+	assert.NoFileExists(t, filepath.Join(dist, "SHA256SUMS"), "a checksum file was written over a set that is not the shipped set")
 }
 
 func TestSumsRefusesAStampThatDoesNotNameTheArtifacts(t *testing.T) {
@@ -96,9 +87,9 @@ func TestSumsRefusesWhatIsNotADirectoryOrAlreadyHoldsSums(t *testing.T) {
 	dist := fillDist(t, h, "v1.0.0")
 	h.write("dist/SHA256SUMS", "an earlier one\n", 0o644)
 	h.wantRun(1, "already holds a SHA256SUMS", "sums", "v1.0.0", "dist")
-	if b, _ := os.ReadFile(filepath.Join(dist, "SHA256SUMS")); string(b) != "an earlier one\n" {
-		t.Fatal("an existing SHA256SUMS was overwritten")
-	}
+	b, err := os.ReadFile(filepath.Join(dist, "SHA256SUMS"))
+	require.NoError(t, err)
+	assert.Equal(t, "an earlier one\n", string(b), "an existing SHA256SUMS was overwritten")
 }
 
 func TestSumsRefusesAnEmptyShippedSet(t *testing.T) {
@@ -120,13 +111,9 @@ func TestVerifySumsNamesAFileWhoseBytesChanged(t *testing.T) {
 	h := newHarness(t)
 	dist := fillDist(t, h, "v1.0.0")
 	h.wantRC(h.do("sums", "v1.0.0", "dist"), 0)
-	if err := os.WriteFile(filepath.Join(dist, "nova-bus_v1.0.0_linux_amd64"), []byte("tampered"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dist, "nova-bus_v1.0.0_linux_amd64"), []byte("tampered"), 0o755))
 	h2 := newHarness(t)
-	if verifySums(h2.out, h2.errb, dist, filepath.Join(dist, "SHA256SUMS")) {
-		t.Fatal("a tampered file verified")
-	}
+	assert.False(t, verifySums(h2.out, h2.errb, dist, filepath.Join(dist, "SHA256SUMS")), "a tampered file verified")
 	h2.mustContain("nova-bus_v1.0.0_linux_amd64: FAILED")
 	h2.mustContain("nova-tokens_v1.0.0_linux_amd64: OK")
 }
@@ -134,7 +121,6 @@ func TestVerifySumsNamesAFileWhoseBytesChanged(t *testing.T) {
 func TestDiffSortedFindsBothHalves(t *testing.T) {
 	t.Parallel()
 	missing, extra := diffSorted([]string{"a", "b", "d"}, []string{"b", "c", "e"})
-	if strings.Join(missing, ",") != "a,d" || strings.Join(extra, ",") != "c,e" {
-		t.Fatalf("missing %v extra %v", missing, extra)
-	}
+	assert.Equal(t, []string{"a", "d"}, missing)
+	assert.Equal(t, []string{"c", "e"}, extra)
 }
