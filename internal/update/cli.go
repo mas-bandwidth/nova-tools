@@ -88,8 +88,14 @@ func refusal(w io.Writer, token, run string, err error) int {
 	return 2
 }
 
+// updateVerbList are nova-update's verbs: the names the tool answers, in the
+// order its usage lines and a refusal list them. It is the set whose generation
+// the version line names (docs/SPEC-VERSION.md item 12), so the line and the
+// verbs the tool really answers cannot drift. `help` is not one of them.
+var updateVerbList = []string{"example", "check", "status", "apply", "report", "watch", "adoption", "release", "version"}
+
 // updateVerbNames are nova-update's verbs, as a refusal lists them.
-const updateVerbNames = "example, check, status, apply, report, watch, adoption, release, version"
+var updateVerbNames = strings.Join(updateVerbList, ", ")
 
 // flagProblem says what a flag parse error means in the words a reader acts on
 // (STANDARD §3.2): an unknown flag is named with every flag the verb takes, a
@@ -326,7 +332,11 @@ func interspersed(f *flag.FlagSet, args []string) []string {
 
 // versionVerb prints the version line, or with --json pkg/tool's Out with the
 // line as its payload: the one shape every skeleton tool's version verb answers
-// (pkg/tool's verbs), refusals worded as the skeleton words them.
+// (pkg/tool's verbs), refusals worded as the skeleton words them. The line
+// carries the generation of this binary's verb set -- `verbs=<n>` and
+// `verbset=<12 hex>` over the sorted names updateVerbList holds -- as the extras
+// buildinfo.Line takes, so a reader holding two binaries can tell whether they
+// carry the same set (docs/SPEC-VERSION.md item 12).
 func versionVerb(name, stamp string, args []string, out, errs io.Writer) int {
 	f := verbflag.New("version")
 	asJSON := f.Bool("json", false, "print the result as one JSON object instead of lines")
@@ -338,7 +348,8 @@ func versionVerb(name, stamp string, args []string, out, errs io.Writer) int {
 		// The skeleton's remedy for a problem the parse did not find is the banner.
 		return emit(refused("version", name+" help", fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0))), *asJSON, 0, out, errs)
 	}
-	o := tool.Payload(buildinfo.Line(name, stamp))
+	// cites docs/SPEC-VERSION.md item 12: the generation of the verb set
+	o := tool.Payload(buildinfo.Line(name, stamp, buildinfo.VerbSetExtras(updateVerbList)...))
 	o.Verb = "version"
 	return emit(o, *asJSON, 0, out, errs)
 }
