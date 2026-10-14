@@ -571,7 +571,28 @@ LaunchDaemons. A host whose manifest lists a member or reader and finds none sta
 reader at all, naming the manager and the directories the read named. The manifest read itself is one command per platform: on Darwin
 it passes the launchd agents directory and the system-domain LaunchDaemons directory, and on Linux it passes neither.
 
-*Test: `TestAdoptRunsThePlayAndRefusesAHalfMove`.*
+The seat play also writes the release window sentinel (the contract is stated word for word in both
+repositories; nova-tools is released first, so nothing here calls a nova-sprint verb). One JSON file at
+`nova_release_window_file` (default `$HOME/.nova/release-window.json`, mode 0644) on the coordinator host
+is written atomically (a temp name in the same directory, then a rename) just before the first agent of the
+window is stopped, and removed when the window closes (after the last agent is bootstrapped, loaded and
+fresh and the server answers on its `--listen` addresses) and first in the rollback block, so a stale
+`open` never outlives the window. The document is
+`{"open":true,"reason":"adopt <version>","opened":"<RFC3339 UTC>","until":"<RFC3339 UTC>","back_in_s":<n>}`;
+`until` is the play's own upper bound (`nova_seat_window_max`, default 1800 seconds, the open plus
+`back_in_s`) and `back_in_s` is `nova_member_stop_timeout + nova_seat_quiet + 120`. `--check` writes and
+removes nothing. The file is advice for a human or an agent; nothing's behaviour depends on it. A second
+adopt on a host with a leftover file overwrites it when its window opens and removes it when the window
+closes, and the reader's stale rule covers the gap. A removal that cannot remove the file (permission) is a
+refused step, `ADOPT REFUSED step=window-sentinel`, never a silent leave: the refusal reads the file module's
+`msg`, which is set only on failure. `failed_when: false` overwrites `failed`
+(`Task._validate_failed_when`, `lib/ansible/playbook/task.py`; `_evaluate_failed_when_result`,
+`lib/ansible/executor/task_executor.py`), so a refusal that reads `failed` cannot fire. The seat's own
+functional tests
+(the "parallel functional tests" the release check runs) read the file present while the window is open and
+absent after it closes.
+
+*Tests: `TestAdoptRunsThePlayAndRefusesAHalfMove`, `TestTheSeatPlayWritesTheReleaseWindowSentinel`.*
 
 The loops play (`fleet/loops.yml`) builds each Linux unit's state before the
 `ansible.builtin.systemd_service` call. A parenthesised ternary chained to a second `if ... else` inside the
