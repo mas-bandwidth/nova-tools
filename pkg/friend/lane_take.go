@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,7 +25,8 @@ import (
 //     holds (after a crash, a restart or a clear the lane asks the same way and continues what
 //     the server says it holds), else gives it one (a working card no lane holds, else her next
 //     ready card, taken as her start), on one line: LANE friend.<name> lane=<n> epoch=<e>
-//     holds=<card>@<gen> kind=<k> job=<job> (ParseLaneHold).
+//     holds=<card>@<gen> rank=<d> kind=<k> job=<job> (ParseLaneHold; the fields after holds=
+//     in any order, one it does not read skipped).
 //  2. Run exactly what the answer names, its brief from her inbox (written from the server's
 //     friend cards), staged when its job is.
 //  3. Report by the ids the server gave: progress and finish name the card at its generation,
@@ -48,6 +50,10 @@ const LaneIdleAsk = 15 * time.Second
 // BatchTakeEvery is how often a batch-mode daemon asks the server to take her ready cards.
 const BatchTakeEvery = 15 * time.Second
 
+// neverAgain is how long a lane that got an Unparseable LANE line waits before it asks again:
+// past any daemon's life, so it asks again only when the daemon restarts.
+const neverAgain = 100 * 365 * 24 * time.Hour
+
 // TakeWait bounds one ask to the sprint server.
 const TakeWait = 10 * time.Second
 
@@ -69,12 +75,39 @@ type LaneHold struct {
 	Job   string
 }
 
-var laneLineRE = regexp.MustCompile(`LANE (\S+) lane=(\d+) epoch=(\d+) holds=(\S+)(?: kind=(\S+) job=(\S+))?`)
+// laneLineRE is the LANE line's head; the words after holds= are key=value fields read in any
+// order (docs/SPEC-FRIEND.md, the LANE line): nova-sprint prints rank=<d> between holds= and
+// kind=, and a field the lane does not read is skipped, never a refusal.
+var laneLineRE = regexp.MustCompile(`LANE (\S+) lane=(\d+) epoch=(\d+) holds=(\S+)(.*)`)
+
+// laneLineGrammar is the LANE line a lane can run, said in an Unparseable refusal.
+const laneLineGrammar = "LANE <member> lane=<n> epoch=<e> holds=<card>@<gen> [rank=<d>] kind=<work|read> job=<job>"
+
+// Unparseable is a LANE line that names the lane that asked but that the lane cannot read: a
+// field it needs (gen, kind, job) missing or malformed. It is a Refused too. Asking again gets
+// the same line from the same server, so the lane says it once and asks no more until the
+// daemon restarts (laneAsk), rather than once a TakeRetry forever.
+type Unparseable struct {
+	Field string // the field the line is missing: gen, kind or job
+	Why   string
+}
+
+func (u *Unparseable) Error() string { return u.Why }
+
+// Unwrap makes an unparseable line a refusal for errors.As.
+func (u *Unparseable) Unwrap() error { return &Refused{Why: u.Why} }
+
+func unparseable(field string) *Unparseable {
+	return &Unparseable{Field: field, Why: "the server's LANE line names no " + field + "= the lane can read (a lane runs " + laneLineGrammar + ")"}
+}
 
 // ParseLaneHold reads the server's LANE line for member's lane n out of an ask's answer. An
 // answer with no such line, or one naming another member or lane, is a refusal: the lane
 // runs nothing (the fault of 2026-10-10 21:42Z: a take answered OK and the lane said "took"
-// while the server still showed the card ready).
+// while the server still showed the card ready). A line for this lane that holds a card but
+// lacks its generation, kind or job is Unparseable, naming the field (the fault of 2026-10-14
+// 03:51Z: rank= between holds= and kind= left a reader-only friend's lanes refusing every read
+// card's line, once every TakeRetry, all night).
 func ParseLaneHold(member string, n int, out string) (LaneHold, error) {
 	for _, line := range strings.Split(out, "\n") {
 		m := laneLineRE.FindStringSubmatch(line)
@@ -89,14 +122,28 @@ func ParseLaneHold(member string, n int, out string) (LaneHold, error) {
 		if err != nil {
 			return LaneHold{}, &Refused{Why: "the server's LANE line names no epoch"}
 		}
-		h := LaneHold{Lane: n, Epoch: epoch, Kind: m[5], Job: m[6]}
+		h := LaneHold{Lane: n, Epoch: epoch}
+		for _, w := range strings.Fields(m[5]) {
+			k, v, _ := strings.Cut(w, "=")
+			switch k {
+			case "kind":
+				h.Kind = v
+			case "job":
+				h.Job = v
+			}
+		}
 		if m[4] == "-" {
 			return h, nil
 		}
 		id, g, ok := strings.Cut(m[4], "@")
 		gen, err := strconv.Atoi(g)
-		if !ok || id == "" || err != nil || gen < 1 || h.Job == "" || !validJob(h.Job) {
-			return LaneHold{}, &Refused{Why: "the server's LANE line names no card at a generation and its job"}
+		switch {
+		case !ok || id == "" || err != nil || gen < 1:
+			return LaneHold{}, unparseable("gen")
+		case h.Kind != "work" && h.Kind != "read":
+			return LaneHold{}, unparseable("kind")
+		case h.Job == "" || !validJob(h.Job):
+			return LaneHold{}, unparseable("job")
 		}
 		h.Card, h.Gen = id, gen
 		return h, nil
@@ -136,6 +183,13 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 		h, err = ParseLaneHold(member, ln.n, out)
 	}
 	ln.asked = true
+	var bad *Unparseable
+	if errors.As(err, &bad) {
+		// the same server answers the same line: asking again is a loop, not a retry
+		ln.askAt = now.Add(neverAgain)
+		l.laneSay(ln, fmt.Sprintf("%s lane %d: asked the server what it holds: refused: %s; it runs nothing and asks no more until the daemon restarts", at, ln.n, oneLine(err.Error(), 400)))
+		return Card{}, false
+	}
 	if err != nil {
 		ln.askAt = now.Add(TakeRetry)
 		l.laneSay(ln, fmt.Sprintf("%s lane %d: asked the server what it holds: refused: %s; it runs nothing and asks again in %s", at, ln.n, oneLine(err.Error(), 300), TakeRetry))
