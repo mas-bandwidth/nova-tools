@@ -15,18 +15,21 @@ Claude Code session.
 
 ## One notice
 
-At most one notice is pending. Messages that arrive while that notice is
-queued, or while a turn is held, fold into it. The client counts a whole read
-from the bus, then emits once. A burst of 50 ordinary messages is one line,
-`49 more messages; read the bus`. One ordinary message is `bus message; read
-the bus`. A challenge is the prove line `run: nova-hook prove --as <name>
---nonce <n>`, and a challenge folded with other messages prefixes that line.
+At most one ordinary notice is pending. Ordinary messages that arrive while
+that notice is queued, or while a turn is held, fold into it. The client
+counts a whole read from the bus, then emits once. A burst of 50 ordinary
+messages is one line, `49 more messages; read the bus`. One ordinary message
+is `bus message; read the bus`. A challenge is the prove line `run: nova-hook
+prove --as <name> --nonce <n>`, and a challenge folded with other messages
+before the first notice prefixes that line. A challenge, and a newer nonce for
+that challenge, is delivered even while the ordinary notice is held. It does
+not wait for the Stop hook. The nonce already shown is not delivered again.
 Message body and subject never enter the notice. The client's own bus messages
 are skipped, except a challenge a server addresses to the hooked name.
 
 `tla/ClaudeCodeNotice.tla` is that machine: Arrive, Deliver, fold while held,
-Boundary. TLC has not been run. The coverage row is partial, owed by
-`claude-code-notice-tlc`.
+NewerNonce, DeliverChallenge, Boundary. TLC has not been run. The coverage row
+is partial, owed by `claude-code-notice-tlc`. The bench cfg is owed.
 
 ## Install
 
@@ -44,8 +47,10 @@ after that check and before the hook record is written, so a failed install
 leaves the record alone.
 
 The settings directory gains `nova-hook-claude-boundary.sh` and one Stop
-command in `settings.json`. An existing settings file is kept. A second install
-does not add the command again. The script runs `nova-hook hook` with `--as`,
+command in `settings.json`. The command is that script path as one
+single-quoted shell word, so a settings directory with a space or a semicolon
+stays one argument. An existing settings file is kept. A second install does
+not add the command again. The script runs `nova-hook hook` with `--as`,
 `--role` and `--claude-boundary`. That command writes the next decimal into
 `<state>/generation` and exits before Redis and before arming. The running
 client reads the file with its own clock; the file is the boundary, not a

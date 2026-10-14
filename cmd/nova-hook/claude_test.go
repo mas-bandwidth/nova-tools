@@ -91,6 +91,94 @@ func TestClaudeNoticeKeepsTheNewestProveLine(t *testing.T) {
 	assert.Equal(t, "run: nova-hook prove --as ada --nonce only", d.Text)
 }
 
+func TestClaudeNoticeDeliversANewerNonceWhileANoticeIsHeld(t *testing.T) {
+	t.Parallel()
+	oldLine := "run: nova-hook prove --as ada --nonce old"
+	newLine := "run: nova-hook prove --as ada --nonce new"
+	current := "run: nova-hook prove --as ada --nonce current"
+
+	t.Run("next nonce", func(t *testing.T) {
+		t.Parallel()
+		a := newClaudeNotice()
+		a.askIdle = func() bool { return false }
+		a.offer(1, oldLine)
+		d, ok := a.take()
+		require.True(t, ok)
+		assert.Equal(t, oldLine, d.Text)
+		assert.False(t, d.Wake)
+
+		a.offer(1, oldLine)
+		_, ok = a.take()
+		assert.False(t, ok, "the nonce already shown stays folded")
+
+		a.offer(2, "")
+		_, ok = a.take()
+		assert.False(t, ok, "ordinary messages stay folded while the notice is held")
+
+		a.offer(1, newLine)
+		d, ok = a.take()
+		require.True(t, ok, "the next nonce is delivered before the Stop boundary")
+		assert.Equal(t, newLine, d.Text)
+		assert.Equal(t, 1, d.Count)
+		assert.False(t, d.Wake)
+		_, ok = a.take()
+		assert.False(t, ok)
+
+		a.askIdle = nil
+		d, ok = a.boundary()
+		require.True(t, ok)
+		assert.True(t, d.Wake)
+		assert.Equal(t, "2 more messages; read the bus", d.Text)
+	})
+
+	t.Run("first challenge", func(t *testing.T) {
+		t.Parallel()
+		a := newClaudeNotice()
+		a.askIdle = func() bool { return false }
+		a.offer(1, "")
+		d, ok := a.take()
+		require.True(t, ok)
+		assert.Equal(t, "bus message; read the bus", d.Text)
+
+		a.offer(4, current)
+		d, ok = a.take()
+		require.True(t, ok, "a challenge is delivered while the ordinary notice is outstanding")
+		assert.Equal(t, current, d.Text)
+		assert.Equal(t, 1, d.Count)
+		assert.False(t, d.Wake)
+
+		_, ok = a.take()
+		assert.False(t, ok, "the companions of that challenge stay folded")
+		d, ok = a.boundary()
+		require.True(t, ok)
+		assert.Equal(t, "2 more messages; read the bus", d.Text)
+	})
+}
+
+func TestClaudeStopCommandQuotesTheScriptPath(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	settings := filepath.Join(t.TempDir(), "dir with space;and'quote")
+	require.NoError(t, os.Mkdir(settings, 0o700))
+	setup := claudeSetup{as: "ada", role: "comms", state: state, settings: settings}
+	require.NoError(t, installClaudeFiles(setup))
+	require.NoError(t, installClaudeFiles(setup))
+
+	script := filepath.Join(settings, claudeBoundaryScript)
+	want := shQuote(script)
+	raw, err := os.ReadFile(filepath.Join(settings, claudeSettingsFile))
+	require.NoError(t, err)
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(raw, &root))
+	assert.Equal(t, 1, countStopCommand(t, root, want))
+	assert.Contains(t, want, "dir with space;and")
+	assert.Contains(t, want, `'\''`)
+
+	again, err := os.ReadFile(filepath.Join(settings, claudeSettingsFile))
+	require.NoError(t, err)
+	assert.Equal(t, raw, again)
+}
+
 func TestClaudeInstallIsIdempotentAndKeepsExistingSettings(t *testing.T) {
 	t.Parallel()
 	state := t.TempDir()
@@ -118,7 +206,7 @@ func TestClaudeInstallIsIdempotentAndKeepsExistingSettings(t *testing.T) {
 	var root map[string]any
 	require.NoError(t, json.Unmarshal(raw, &root))
 	assert.Equal(t, "dark", root["theme"])
-	assert.Equal(t, 1, countStopCommand(t, root, script))
+	assert.Equal(t, 1, countStopCommand(t, root, shQuote(script)))
 	assert.Contains(t, string(raw), "echo keep")
 
 	before := append([]byte(nil), raw...)

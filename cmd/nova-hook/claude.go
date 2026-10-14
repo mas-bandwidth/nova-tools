@@ -36,11 +36,14 @@ type claudeDelivery struct {
 }
 
 // claudeNotice is the pending notice. tla/ClaudeCodeNotice.tla (Arrive,
-// Deliver, Boundary). At most one delivery is held. A burst folds into the
-// queue and leaves in that one delivery. TLC is owed.
+// NewerNonce, Deliver, DeliverChallenge, Boundary). At most one ordinary
+// delivery is held. A burst folds into the queue and leaves in that one
+// delivery. A newer challenge nonce leaves while that delivery is held.
+// TLC is owed; the bench cfg is owed with it.
 type claudeNotice struct {
 	queued    int
 	prove     string
+	shown     string
 	delivered bool
 	idle      bool
 	askIdle   func() bool
@@ -54,32 +57,67 @@ func newClaudeNotice() *claudeNotice {
 	return &claudeNotice{idle: true}
 }
 
-// offer folds n messages into the one pending notice. prove replaces any
-// older challenge line. n is the whole read, not one message at a time
-// followed by a take.
+// offer folds n messages into the one pending notice. A prove line newer than
+// the one already shown replaces any older pending line. While a notice is
+// held, that challenge is not an ordinary fold: companions stay queued and
+// the line itself waits for take. n is the whole read, not one message at a
+// time followed by a take.
 func (a *claudeNotice) offer(n int, prove string) {
 	if a == nil || n <= 0 {
 		return
 	}
+	fresh := prove != "" && prove != a.shown
+	if a.delivered && fresh {
+		if n > 1 {
+			a.queued += n - 1
+		}
+		a.prove = prove
+		return
+	}
 	a.queued += n
-	if prove != "" {
+	if fresh {
 		a.prove = prove
 	}
 }
 
-// take emits when the turn does not already hold a notice and the queue is
-// nonempty. The emitted count leaves the queue. Further offers wait for a
-// boundary.
+// take emits the ordinary notice when the turn does not already hold one and
+// the queue is nonempty. A challenge nonce that is not the one already shown
+// is emitted even while that notice is outstanding. The ordinary queue stays
+// for the boundary.
 func (a *claudeNotice) take() (claudeDelivery, bool) {
-	if a == nil || a.delivered || a.queued <= 0 {
+	if a == nil {
 		return claudeDelivery{}, false
 	}
-	d := claudeDelivery{Text: claudeNoticeText(a.queued, a.prove), Wake: a.isIdle(), Count: a.queued}
+	fresh := a.prove != "" && a.prove != a.shown
+	wake := a.isIdle()
+	if a.delivered {
+		if !fresh {
+			return claudeDelivery{}, false
+		}
+		a.shown = a.prove
+		d := claudeDelivery{Text: a.prove, Wake: wake, Count: 1}
+		a.prove = ""
+		return d, true
+	}
+	if a.queued <= 0 && !fresh {
+		return claudeDelivery{}, false
+	}
+	prove := ""
+	if fresh {
+		prove = a.prove
+		a.shown = a.prove
+	}
+	text := prove
+	count := 1
+	if a.queued > 0 {
+		text = claudeNoticeText(a.queued, prove)
+		count = a.queued
+	}
 	a.queued = 0
 	a.prove = ""
 	a.delivered = true
 	a.idle = false
-	return d, true
+	return claudeDelivery{Text: text, Wake: wake, Count: count}, true
 }
 
 // boundary is a Stop-hook turn edge: the session is idle, the hold drops, and
@@ -318,7 +356,8 @@ func (w world) pollClaude(c *tool.Call) *tool.Out {
 
 // installClaudeFiles writes the Stop hook. The script's command is nova-hook
 // with the required --as and --role, and --claude-boundary advances the
-// generation file. settings.json gains that command once.
+// generation file. settings.json gains that script path once, as one
+// single-quoted shell word.
 func installClaudeFiles(s claudeSetup) error {
 	bin, err := os.Executable()
 	if err != nil {
@@ -331,7 +370,7 @@ func installClaudeFiles(s claudeSetup) error {
 	if err := atomicfile.Write(script, []byte(body), 0o700, atomicfile.ExactMode()); err != nil {
 		return err
 	}
-	return mergeClaudeStopHook(filepath.Join(s.settings, claudeSettingsFile), script)
+	return mergeClaudeStopHook(filepath.Join(s.settings, claudeSettingsFile), shQuote(script))
 }
 
 func shQuote(s string) string {

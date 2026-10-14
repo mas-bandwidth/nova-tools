@@ -1475,7 +1475,7 @@ its start. `nova-hook status` lists every record; `nova-hook unhook --as <name>`
 ends one, and tools refuse that name when it acts without its required proven push.
 The proof records a protocol response to the challenge; it does not establish
 foreground session presence or native idle-wake behavior.
-`nova-hook hook --as <name> --role <role> --harness claude --claude-state <dir> --claude-settings <dir>` installs the Claude Code Stop hook and prints one coalesced bus notice per turn ([SPEC-CLAUDE-CODE-ADAPTER](SPEC-CLAUDE-CODE-ADAPTER.md)). The harness word is `claude`.
+`nova-hook hook --as <name> --role <role> --harness claude --claude-state <dir> --claude-settings <dir>` installs the Claude Code Stop hook and prints one coalesced bus notice per turn, and a newer challenge nonce while that notice is held ([SPEC-CLAUDE-CODE-ADAPTER](SPEC-CLAUDE-CODE-ADAPTER.md)). The harness word is `claude`.
 `nova-hook hook` and `nova-hook prove` take `--dry-run`: each reads the record
 and prints what it would write -- the plan, or the pushes it would prove -- and
 writes nothing.

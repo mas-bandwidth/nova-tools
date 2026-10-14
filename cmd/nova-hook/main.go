@@ -835,7 +835,8 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				line(c, tool.Done().As("STATE").Fact("state", "read").Note("the bus stream answers again"))
 			}
 			if w.claude != nil {
-				// One notice for the whole read. tla/ClaudeCodeNotice.tla: Arrive, then Deliver.
+				// One ordinary notice for the whole read. tla/ClaudeCodeNotice.tla:
+				// Arrive or NewerNonce, then Deliver or DeliverChallenge.
 				var n int
 				var prove string
 				cursor, n, prove = claudeBatch(s.as, cursor, got)
