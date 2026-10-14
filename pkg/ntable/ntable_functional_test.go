@@ -16,10 +16,11 @@ import (
 )
 
 // live is a throwaway redis-server with the nova_sprint library loaded
-// (table.lua registers the table operations), as the default user.
+// (table.lua registers the table operations), as the default user. It holds no
+// key of its own (StartRaw): a table test reads every key the store holds.
 func live(t *testing.T, extra ...string) (string, *redis.Client) {
 	t.Helper()
-	addr := testutil.Start(t, extra...)
+	addr := testutil.StartRaw(t, extra...)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	require.NoError(t, fn.Load(context.Background(), c))
