@@ -236,3 +236,6 @@ MCCodexHookRecovery.cfg	MCCodexHookRecovery.tla	pass	-	ignore-terminal	codexhook
 MCCodexHookRecoveryBrokenCursor.cfg	MCCodexHookRecovery.tla	invariant	NoUnansweredGap	ignore-terminal	codexhookrecovery	required	-
 MCCodexHookRecoveryBrokenCutoff.cfg	MCCodexHookRecovery.tla	invariant	NoUnansweredGap	ignore-terminal	codexhookrecovery	required	-
 MCCodexHookRecoveryBrokenRetry.cfg	MCCodexHookRecovery.tla	invariant	OneAttemptPerProcess	ignore-terminal	codexhookrecovery	required	-
+MCDshNativeWake.cfg	MCDshNativeWake.tla	pass	-	ignore-terminal	dshnativewake	required	-
+MCDshNativeWakeBrokenHide.cfg	MCDshNativeWake.tla	invariant	PriorityUnblocked	ignore-terminal	dshnativewake	required	-
+MCDshNativeWakeWitnessIdle.cfg	MCDshNativeWake.tla	invariant	IdleWakeUnreachable	ignore-terminal	dshnativewake	required	-

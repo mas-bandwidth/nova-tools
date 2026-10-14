@@ -198,7 +198,7 @@ is not proof or acknowledgment: only the model runs nova-hook prove or answers w
 revokes route proof and stops renewal; unknown native outcomes are reported without declaring the model absent.
 Do not blindly restart after accepted or unknown delivery: inspect the saved event and model answer first.
 An explicit --codex-since UTC timestamp (or NOVA_HOOK_CODEX_SINCE) declares earlier ordinary messages archived history: work still needed must be resent. Persist that fixed timestamp in launch configuration; never reset it on restart. Current server challenge proof is independent of this boundary.
-Codex clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
+Codex and DeepSeek clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
 Muse clients use --harness Muse: before arming it installs the nova-hook plugin bundle (--muse-bundle, or
 NOVA_HOOK_MUSE_BUNDLE, or muse-bundle beside the binary) with muse plugins install and approves its one hook
 capability (pending-challenges, PostToolUse) with muse plugins approve. The hook only reads nova-bus peek and
@@ -218,8 +218,9 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
 					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
 					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
-					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "existing private directory for bounded external event JSON and the pending notice")
-					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "path the harness-side hook config is written to (a hooks.json)")
+					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "existing private directory for bounded external event JSON and the native notification queue")
+					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path; mount in the harness profile before use")
+					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "exact existing live harness session identity; never creates or resumes a session")
 					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
@@ -432,7 +433,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Refuse(err.Error())
 		}
-		if c.Str("dsh-events-dir") != "" || c.Str("dsh-hooks-file") != "" || c.Str("dsh-since") != "" {
+		if c.Str("dsh-events-dir") != "" || c.Str("dsh-hooks-file") != "" || c.Str("dsh-since") != "" || c.Str("dsh-session") != "" {
 			return tool.Refuse("Muse delivery and dsh delivery are exclusive; configure one harness route")
 		}
 	} else {
@@ -473,9 +474,21 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		return tool.Refuse("dsh delivery wants a role with the bus push")
 	}
 	if dsh != nil {
+		release, err := w.codexLock(dsh.route.EventsDir)
+		if err != nil {
+			return tool.Refuse("dsh route is not exclusively held: " + err.Error())
+		}
+		defer func() {
+			if err := release(); err != nil {
+				line(c, tool.Done().As("STATE").Fact("state", "unlock-failed").Note(err.Error()))
+			}
+		}()
+	}
+	if dsh != nil {
 		if err := dshdesktop.Install(dsh.route); err != nil {
 			return tool.Refuse("dsh harness-side setup failed: " + err.Error())
 		}
+		line(c, tool.Done().As("STATE").Fact("state", "native-include-written").Fact("path", dsh.route.HooksFile).Note("mount this include in the harness profile; writing files does not mount a plugin or prove delivery"))
 	}
 	var recovery codexRecovery
 	if native != nil {
@@ -572,7 +585,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 			}
 		}
 		if dsh != nil && created {
-			m := bus.Message{ID: "challenge-" + nonce, From: s.as, Subject: "HOOK CHALLENGE nonce=" + nonce, Body: "run: nova-hook prove --as " + s.as + " --nonce " + nonce}
+			m := bus.Message{ID: "dsh-bootstrap-" + w.nonce(), From: s.as, Subject: "HOOK CHALLENGE nonce=" + nonce, Body: challengeText(s.as, nonce, hook.ChallengeEvery)}
 			if out := w.dshPush(c, s, dsh, role, epoch, m.ID, &m); out != nil {
 				return out
 			}

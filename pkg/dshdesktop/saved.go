@@ -1,11 +1,13 @@
 package dshdesktop
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 )
 
 // ValidateDirectory checks the pathname grammar used in the closed saved-event
@@ -36,81 +38,42 @@ func SavedPath(directory, eventID string) (string, error) {
 	return filepath.Join(directory, eventID+".json"), nil
 }
 
-// hookConfig is the Claude Code hook shape the harness's bridge reads. The
-// PostToolUse hook surfaces the pending notice after every tool call; the Stop
-// hook forces another step when a notice is still pending at the turn boundary.
-type hookConfig struct {
-	Hooks struct {
-		PostToolUse []struct {
-			Matcher string `json:"matcher"`
-			Hooks   []struct {
-				Type    string `json:"type"`
-				Command string `json:"command"`
-			} `json:"hooks"`
-		} `json:"PostToolUse"`
-		Stop []struct {
-			Matcher string `json:"matcher"`
-			Hooks   []struct {
-				Type    string `json:"type"`
-				Command string `json:"command"`
-			} `json:"hooks"`
-		} `json:"Stop"`
-	} `json:"hooks"`
-}
+//go:embed receiver.mjs
+var receiverSource []byte
 
-// Install writes the harness-side hook config that points the PostToolUse and
-// Stop command hooks at the pending notice. It writes nothing else.
+//go:embed plugin.mjs
+var pluginSource []byte
+
+// Install writes a native module and its Cordis include configuration. It does
+// not mount the plugin or mutate a running harness profile. The operator must
+// include HooksFile in that profile before claiming native delivery.
 func Install(r Route) error {
 	if err := ValidateRoute(r); err != nil {
 		return err
 	}
-	pendingPath, err := PendingPath(r.EventsDir)
-	if err != nil {
-		return err
+	directory := filepath.Dir(r.HooksFile)
+	core := filepath.Join(directory, "nova-hook-dsh-receiver.mjs")
+	entry := filepath.Join(directory, "nova-hook-dsh-plugin.mjs")
+	for path, data := range map[string][]byte{core: receiverSource, entry: pluginSource} {
+		if err := atomicfile.Write(path, data, 0600); err != nil {
+			return fmt.Errorf("write native module: %w", err)
+		}
 	}
-	cfg := hookConfig{}
-	cfg.Hooks.PostToolUse = []struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-		} `json:"hooks"`
-	}{
-		{Matcher: "*", Hooks: []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-		}{{Type: "command", Command: "cat " + pendingPath}}},
-	}
-	stopCmd := "test -s " + pendingPath + " && printf '{\"continue\":false,\"stopReason\":\"pending bus messages\"}'"
-	cfg.Hooks.Stop = []struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-		} `json:"hooks"`
-	}{
-		{Matcher: "", Hooks: []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-		}{{Type: "command", Command: stopCmd}}},
-	}
+	cfg := []map[string]any{{"id": "nova-hook-dsh", "name": entry, "config": map[string]string{"eventsDir": r.EventsDir, "sessionId": r.SessionID}}}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(r.HooksFile, data, 0600); err != nil {
-		return fmt.Errorf("write hook config: %w", err)
-	}
-	return nil
+	return atomicfile.Write(r.HooksFile, data, 0600)
 }
 
-// ErrPreSend means no pending notice was written.
-var ErrPreSend = errors.New("dsh desktop delivery failed before notice write")
+// ErrPreSend means no notification was published by this attempt.
+var ErrPreSend = errors.New("dsh desktop delivery failed before notice publication")
 
-// ErrRejected is kept so the hook route and the Codex route share the one
-// delivery error taxonomy; a file write has no matched rejection.
+// ErrRejected denotes an explicit native rejection; queue acceptance alone
+// cannot establish native admission or rejection.
 var ErrRejected = errors.New("dsh desktop delivery rejected")
 
-// ErrOutcomeUnknown is kept so the hook route and the Codex route share the one
-// delivery error taxonomy; a file write has no ambiguous outcome.
+// ErrOutcomeUnknown means publication may already have become visible. Inspect
+// saved, queued and claimed records before retry; never infer model proof.
 var ErrOutcomeUnknown = errors.New("dsh desktop delivery outcome unknown")

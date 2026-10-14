@@ -1,55 +1,89 @@
-# DeepSeek Harness desktop wake adapter
+# DeepSeek Harness native wake adapter
 
-`pkg/dshdesktop` delivers a closed notice into a DeepSeek Harness desktop
-session through the harness's own hook bridge, not through the gateway. It does
-not call the HTTP gateway, hold a cookie, resume a CLI process, retry an
-ambiguous write, keep a delivery ledger, or claim that the model answered.
+The recipient-owned `nova-hook hook --harness deepseek` (alias `dsh`) queues
+bounded saved-event JSON and immutable, locally authored notification records.
+A native Cordis plugin targets exactly `--dsh-session`, an existing live session.
+It uses the agent registry's `get(sessionId)`; it never creates, resumes, or
+selects another session. No gateway credentials or HTTP gateway are involved.
 
-The caller supplies a private event directory, the path of the harness-side hook
-config, an event ID, and one of the package's two closed local notifications:
-`BusNotice` or `ChallengeNotice`. Arbitrary notification text is refused before
-any write, so the external event body cannot become native turn text through
-this API. The adapter appends only the separately validated event ID to the
-notice, and the notice is coalesced: at most one pending notice exists, and
-messages arriving while one is pending fold into "N messages available; read the
-bus".
+## Mounting and the verified native contract
 
-## The route
+Configure `--dsh-events-dir`, `--dsh-hooks-file` and `--dsh-session` together
+(or `NOVA_HOOK_DSH_EVENTS_DIR`, `NOVA_HOOK_DSH_HOOKS_FILE`,
+`NOVA_HOOK_DSH_SESSION`). The existing event directory must be canonical,
+owned by the current user and private (0700). The include path must be an
+absolute `.json` file in an existing canonical directory. `--once` is refused;
+`--dry-run` writes no include, module, saved event or notification.
 
-Install writes a hook config in the Claude Code hook shape. Its `PostToolUse`
-command hook surfaces the pending notice after every tool call, so a notice
-reaches a running turn; its `Stop` command hook forces another step when a
-notice is still pending at the turn boundary, so an idle session keeps working
-until the queue drains. The pending notice is one JSON file in the event
-directory; the hook reads it and the harness attaches its text as context. The
-external event body is never in that file: it is saved as separate event JSON,
-named only by its validated event ID.
+Install writes the native module, receiver module and a Cordis include list:
+`[{"id":"nova-hook-dsh","name":"<absolute plugin module>","config":
+{"eventsDir":"<private directory>","sessionId":"<exact session identity>"}}]`.
+The operator must mount that include with the harness profile's
+`cordis:include` entry and restart the harness, unless profile HMR is enabled.
+Writing these files alone does not mount a plugin or establish delivery.
+Codex, Muse and DeepSeek routes are mutually exclusive.
 
-## Recipient-owned nova-hook client
+The implementation contract is pinned to Harness 0.2.0-rc.2, source
+`5e9e301dd9dc8923b2762f76dacfc5751f6ca851`: `dsh-agent` exposes live
+`ctx.agents.get(sessionId)` and agent-scoped `agent/pre-step`; `dsh-agent-loop`
+implements synchronous `followup` (next turn, wakes idle driver) and `steer`
+(next step, wakes driver). `inject` does not wake. Identified input uses
+the verified `dsh-llm` `createUserMessage` structure (fresh UUIDv4, role user,
+structured clone and recursive freeze), with explicit
+`source: {kind: 'plugin', plugin: 'nova-hook'}`. The runtime brand helper is identity; this dependency-free construction avoids
+an unresolved bare import from a loose module outside the app archive.
+External message bodies and nonces stay in the saved JSON; native text contains only a fixed notice and a
+validated receiver path. Reading that fresh file supplies the nonce and proof
+instructions without a bus read.
 
-Run the recipient client with `--harness deepseek` (alias `dsh`),
-`--dsh-events-dir` and `--dsh-hooks-file` together, or use `NOVA_HOOK_HARNESS`,
-`NOVA_HOOK_DSH_EVENTS_DIR` and `NOVA_HOOK_DSH_HOOKS_FILE`. The event directory
-must exist, be canonical without symlink ancestors, and be private to its owner.
-Before arming, the client validates configuration and writes the hook config;
-`--once` is refused; `--dry-run` does not write the hook config or saved events.
-Codex delivery and dsh delivery are exclusive: configure one route.
+The former command-hook bridge could only run at tool/Stop boundaries.
+Its `continue:false` output is ignored by this harness's actual hook protocol;
+it could not wake an already idle session. This adapter uses native agent input
+and does not install those command hooks.
 
-A challenge uses the `ChallengeNotice`; an ordinary bus message the `BusNotice`.
-The saved event envelope names the identity, the Redis address, and the two model
-instructions: prove a current challenge with `nova-hook prove --as <identity>
---nonce <nonce>`, and answer an ordinary message with `nova-bus send --re <id>`.
-A surfaced notice is neither proof nor acknowledgment; only the model proves or
-answers on the bus.
+## Queue and admission boundaries
 
-`ErrPreSend` means the pending notice was not written. The route shares the one
-delivery error taxonomy with the Codex route (`ErrRejected`, `ErrOutcomeUnknown`)
-but a file write has no matched rejection and no ambiguous outcome.
+A single recipient writer holds the event-directory route lock. Each saved
+receiver and `.notices/notice-<id>.json` publication is immutable and atomic. The native
+plugin owns one receiver lock and watches filesystem publication, with an initial
+drain and an agent-created listener to cover startup races. It consumes individual
+records; there is no shared read/modify/write pending summary to resurrect during
+a producer/consumer race. A cold or disposed pinned target retains the queue and
+logs the unavailable target; it does not guess another identity.
 
-## Install its own harness-side setup
+Ordinary records form one native summary while a prior ordinary inbox input is
+pending. Further ordinary records wait. The loop removes claimed input before
+`agent/pre-step`, even when a listener rejects or replaces it, so claiming that
+input releases the ordinary hold in every middleware outcome. This is inbox
+progress only; it does not claim the model read it or answered it.
 
-The route is installed by the same verb, with no new tool: `--harness deepseek`
-on `nova-hook hook` carries the harness-side setup (the event directory and the
-hook config path) into the running client, which writes the hook config before
-arming. No gateway and no cookie: the harness's own bridge reads the pending
-notice.
+Challenge priority requires the entire canonical challenge body, the active
+store nonce hash and the current epoch. Stale nonces, lookalikes and wrong epochs
+remain ordinary traffic. A new current challenge bypasses an ordinary inbox hold
+with a new immutable receiver path and new native input. If multiple challenges
+queued while cold, the newest queued challenge is surfaced. Ordinary work is
+retained independently. The same timely-challenge rule applies to every adapter.
+
+Before native input, records are renamed to `claimed-<id>.json`. On successful
+synchronous admission they are removed. If native input throws, its outcome may
+already be accepted: claimed records remain for inspection, never automatic
+retry. A process crash can also leave a receiver lock or claimed records; the
+operator must inspect the native inbox and saved events before clearing them.
+Normal Cordis unload calls the returned idempotent disposer, closing the watcher,
+releasing listeners and removing the receiver lock; forced exit cannot do this.
+Native admission is not a durable model receipt. No daemon proves a challenge,
+writes a bus answer, or treats queue consumption as acknowledgment.
+
+`--dsh-since` retains its fixed UTC configuration boundary; it must never be
+advanced on restart. This checkpoint does not implement a Redis history backfill
+or prove 24-hour recovery coverage. Earlier work still needed must be resent.
+Actual mounted-app busy/idle proof is a separate acceptance gate from source,
+Linux executor tests and hosted CI.
+
+## Validation
+
+Go tests cover immutable publication, native include installation, canonical
+current-challenge priority and no automatic proof/answer. On a Linux bench run
+`node --test pkg/dshdesktop/testdata/receiver.test.mjs` to execute busy refresh,
+true idle wake, ordinary batching, rejected/filtered inbox claims, concurrent
+publication, consumed silence, cold target and ambiguous native admission.
