@@ -9,8 +9,9 @@ import (
 )
 
 // fuseHelp is one verb's help: what `nova-fuse help <verb>` prints. A verb's
-// -h is refused rather than answered (exit 0 is this tool's CLEAR), so this
-// table is the only route to it. It never runs a verb or reads a box.
+// -h (and --help) now prints the help at exit 0 (cites the design section
+// "Help is never a refusal." in docs/STANDARD.md); help.go holds the text
+// and the verdict lines name their verb. It never runs a verb or reads a box.
 type fuseHelp struct {
 	usage  string
 	effect string // "inspection: ..." or "local write: ...", the line's prefix in the skeleton's grammar
@@ -92,6 +93,7 @@ var fuseHelps = map[string]fuseHelp{
 }
 
 func cmdHelp(args []string, stdout, stderr io.Writer) int {
+	// Help is never a refusal: <verb> -h prints at exit 0 using the text here.
 	if len(args) == 0 {
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -121,7 +123,7 @@ func cmdHelp(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, "  --           end flags; following words are literal surfaces or reasons\nFlags precede positional arguments; each flag is given once.")
 	}
-	fmt.Fprintf(stdout, "\nexit codes: %s\neffect: %s\nHelp: nova-fuse help %s; -h after a verb is refused at exit 2.\n",
+	fmt.Fprintf(stdout, "\nexit codes: %s\neffect: %s\nHelp: nova-fuse help %s; -h and --help after the verb also print this.\n",
 		oneline.Escape(h.exits), oneline.Escape(h.effect), oneline.Escape(name))
 	return 0
 }

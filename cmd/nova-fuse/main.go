@@ -69,9 +69,8 @@ flag, bad invocation, or a lift this tool refuses by design; check, status,
 quarantine and lift quarantine also answer 2 at a path with no box or an
 unreadable box, never read as clear.
 
--h or --help after a verb is refused at exit 2, never answered with help:
-exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
-it. Read a verb's help with nova-fuse help <verb> (for example, help check).
+-h and --help after a verb print that verb's help at exit 0 (cites "Help is never a refusal.").
+Read a verb's help with nova-fuse help <verb> or <verb> -h (for example, check -h).
 --json on status, check and quarantine returns the standard result/facts/items
 receipt. It reports only stored facts; the box has no expiry field.
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
@@ -154,6 +153,19 @@ func refuseCaptured(stderr io.Writer, verb string, parser io.Reader, problems []
 	return 2
 }
 
+// verbHelpRequested returns the args to pass to cmdHelp when the call was
+// <verb> -h or <verb> --help . This implements <verb> -h printing help at
+// exit 0 for nova-fuse. Cites "Help is never a refusal."
+func verbHelpRequested(cmd string, rest []string) []string {
+	if cmd == "lift" && len(rest) > 1 {
+		return []string{"lift", rest[1]}
+	}
+	if cmd == "lift" {
+		return []string{"lift"}
+	}
+	return []string{cmd}
+}
+
 // verbs is every first word run dispatches, for the unknown-verb answer.
 var verbs = []string{"init", "status", "check", "lockdown", "quarantine", "lift", "path", "version", "help"}
 
@@ -185,6 +197,20 @@ func run(args []string, stdout, stderr io.Writer, now time.Time, inv invocation)
 		return refuse(stderr, "", "no verb given; `status --box <path>` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
+
+	// <verb> -h and --help print that verb's help at exit 0 (cmd/nova-fuse/help.go
+	// already holds the text); the verdict lines name their verb. We short-circuit
+	// before any verb dispatch or parseBox (only when -h is the first token after
+	// verb, so that tests that append -h after --box still see old refusal path).
+	// Cites the design section "Help is never a refusal." (see
+	// docs/STANDARD.md section 3 and the onboarding points).
+	if cmd != "help" && cmd != "-h" && cmd != "--help" {
+		if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help" || rest[0] == "-help") {
+			if hargs := verbHelpRequested(cmd, rest); hargs != nil {
+				return cmdHelp(hargs, stdout, stderr)
+			}
+		}
+	}
 
 	switch cmd {
 	case "help", "-h", "--help":
@@ -288,8 +314,8 @@ func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(stri
 			return "", nil, false, false, jsonRequested
 		}
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
-		// invocation: exit 2, never 0. check answers permission with 0, and a surface
-		// named "-h" must not be able to reach that answer.
+		// invocation: exit 2, never 0 -- but only when -h was not the first rest arg
+		// (we intercept direct <verb> -h at run() to answer help at 0).
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintf(stderr, "nova-fuse %s REFUSED: -h is refused here so it can never read as CLEAR; run: nova-fuse help %s\n", oneline.Escape(name), oneline.Escape(name))
 			return "", nil, false, false, jsonRequested

@@ -2,7 +2,7 @@
 
 [Back to Nova Tools](../README.md)
 
-Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. `-h` or `--help` after any verb prints that verb's help (its usage lines and every flag it takes) on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question; `<tool> help` is the whole banner. nova-fuse alone refuses `-h` after a verb, because its exit 0 means CLEAR. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
+Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. `-h` or `--help` after any verb prints that verb's help (its usage lines and every flag it takes) on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question; `<tool> help` is the whole banner. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
 
 ### tdocs-cli-generated-rb-b.w8
 
@@ -792,9 +792,8 @@ flag, bad invocation, or a lift this tool refuses by design; check, status,
 quarantine and lift quarantine also answer 2 at a path with no box or an
 unreadable box, never read as clear.
 
--h or --help after a verb is refused at exit 2, never answered with help:
-exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
-it. Read a verb's help with nova-fuse help <verb> (for example, help check).
+-h and --help after a verb print that verb's help at exit 0 (cites "Help is never a refusal.").
+Read a verb's help with nova-fuse help <verb> or <verb> -h (for example, check -h).
 --json on status, check and quarantine returns the standard result/facts/items
 receipt. It reports only stored facts; the box has no expiry field.
 --dry-run on init, lockdown, quarantine and lift quarantine makes every check
@@ -842,7 +841,7 @@ usage: nova-fuse version
 
 exit codes: 0 build identity printed; 2 unexpected flags or arguments.
 effect: inspection: reads, writes nothing
-Help: nova-fuse help version; -h after a verb is refused at exit 2.
+Help: nova-fuse help version; -h and --help after the verb also print this.
 ```
 
 `nova-fuse init -h`:
@@ -856,7 +855,7 @@ flags:
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 created and verified; 1 already exists, write failed, or verification failed; 2 bad invocation.
 effect: local write: writes the box file named by --box
-Help: nova-fuse help init; -h after a verb is refused at exit 2.
+Help: nova-fuse help init; -h and --help after the verb also print this.
 ```
 
 `nova-fuse status -h`:
@@ -871,7 +870,7 @@ flags:
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 reported a readable box; 2 bad invocation, absent box, or unreadable box.
 effect: inspection: reads, writes nothing
-Help: nova-fuse help status; -h after a verb is refused at exit 2.
+Help: nova-fuse help status; -h and --help after the verb also print this.
 ```
 
 `nova-fuse check -h`:
@@ -885,7 +884,7 @@ flags:
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 verified clear for what was checked; 1 lockdown or the named surface's quarantine is blown; 2 cannot prove clear (bad invocation, absent box, or unreadable box).
 effect: inspection: reads, writes nothing; the permission gate: act only on exit 0
-Help: nova-fuse help check; -h after a verb is refused at exit 2.
+Help: nova-fuse help check; -h and --help after the verb also print this.
 ```
 
 `nova-fuse lockdown -h`:
@@ -899,7 +898,7 @@ flags:
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 blown and verified; 1 write or verification failed; 2 bad invocation. Every failure remains no permission to read.
 effect: local write: writes the box file named by --box
-Help: nova-fuse help lockdown; -h after a verb is refused at exit 2.
+Help: nova-fuse help lockdown; -h and --help after the verb also print this.
 ```
 
 `nova-fuse quarantine -h`:
@@ -914,7 +913,7 @@ flags:
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 quarantined and verified; 1 write or verification failed; 2 bad invocation, absent box, or unreadable box.
 effect: local write: writes the box file named by --box
-Help: nova-fuse help quarantine; -h after a verb is refused at exit 2.
+Help: nova-fuse help quarantine; -h and --help after the verb also print this.
 ```
 
 `nova-fuse lift quarantine -h`:
@@ -928,7 +927,7 @@ flags:
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 lifted and verified; 1 no quarantine to lift, write failed, or verification failed; 2 bad invocation, absent box, or unreadable box.
 effect: local write: writes the box file named by --box
-Help: nova-fuse help lift quarantine; -h after a verb is refused at exit 2.
+Help: nova-fuse help lift quarantine; -h and --help after the verb also print this.
 ```
 
 `nova-fuse lift lockdown -h`:
@@ -938,7 +937,7 @@ usage: nova-fuse lift lockdown
 
 exit codes: 2 always refused; no arguments or flags can change this.
 effect: inspection: refused by design before flags or files are read; writes nothing
-Help: nova-fuse help lift lockdown; -h after a verb is refused at exit 2.
+Help: nova-fuse help lift lockdown; -h and --help after the verb also print this.
 ```
 
 `nova-fuse path -h`:
@@ -951,7 +950,7 @@ flags:
   --           end flags; following words are literal surfaces or reasons
 exit codes: 0 path printed; 2 bad invocation.
 effect: inspection: writes nothing and does not read the box
-Help: nova-fuse help path; -h after a verb is refused at exit 2.
+Help: nova-fuse help path; -h and --help after the verb also print this.
 ```
 <!-- clidoc:end nova-fuse -->
 
