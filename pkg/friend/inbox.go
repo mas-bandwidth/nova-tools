@@ -136,6 +136,27 @@ func ParseHeld(friend, out string) ([]HeldCard, error) {
 // InboxEvery is how often the daemon reconciles her inbox with her row: every loop.
 const InboxEvery = BeatEvery
 
+// InboxBackoffMax bounds the wait between two asks while the server does not answer them: the
+// wait doubles from InboxEvery with each unanswered ask in a row (inboxWait) up to this, and an
+// answer, a refusal included, ends it. The server runs one verb at a time and an ask the client
+// gave up on (the sprint ask's ten-second deadline) is still run, so asking again at once after
+// each deadline, as the daemon did, piled the abandoned asks on the server that was already
+// too slow to answer them (emma's log of 2026-10-06 to 2026-10-14: 48,796 "did not answer" lines).
+const InboxBackoffMax = 30 * time.Second
+
+// inboxWait is how long after an ask the next may be made, given the unanswered asks in a row:
+// InboxEvery with none, doubled for each up to InboxBackoffMax.
+func inboxWait(unanswered int) time.Duration {
+	wait := InboxEvery
+	for range unanswered {
+		if wait >= InboxBackoffMax {
+			break
+		}
+		wait *= 2
+	}
+	return min(wait, InboxBackoffMax)
+}
+
 // ViewEvery is how often the worker view is read while friend cards is refused: it runs on
 // the server's line (serveView takes the tick's lock), so it is read about as often as friend
 // sync's loop runs, never every loop. ServedEvery is how often friend cards is asked again.
@@ -306,7 +327,7 @@ func (l *loop) inboxStep(now time.Time) {
 	if d.Stage != nil {
 		l.stageStep(nil, now) // every stage that ended is said each step, not once a reconcile
 	}
-	if d.Held == nil || (!d.inboxAt.IsZero() && now.Sub(d.inboxAt) < InboxEvery) {
+	if d.Held == nil || (!d.inboxAt.IsZero() && now.Sub(d.inboxAt) < inboxWait(d.inboxUnanswered)) {
 		return
 	}
 	d.inboxAt = now
@@ -317,6 +338,7 @@ func (l *loop) inboxStep(now time.Time) {
 	}
 	var ns *NotServed
 	if errors.As(err, &ns) {
+		d.inboxUnanswered = 0 // the server answered, with a refusal: it is not slow
 		l.refused(FriendCardsVerb, ns.Why, now)
 		// asked again once a ServedEvery, so said once a minute, never once a loop
 		d.Record(fmt.Sprintf("%s inbox: %s; nothing written or retired until it does", now.UTC().Format(time.RFC3339), oneLine(ns.Error(), 400)))
@@ -324,12 +346,14 @@ func (l *loop) inboxStep(now time.Time) {
 		return
 	}
 	if err != nil {
+		d.inboxUnanswered++ // asked again after a longer wait each time, up to InboxBackoffMax
 		if why := err.Error(); why != d.status.InboxError {
 			d.Record(d.sayf("%s inbox: the server did not say which cards are on {their} row: %s; nothing written or retired until it does", now.UTC().Format(time.RFC3339), oneLine(why, 300)))
 			d.status.InboxError = why
 		}
 		return
 	}
+	d.inboxUnanswered = 0 // the server answered
 	if row.Refused != "" {
 		l.refused(FriendCardsVerb, row.Refused, now)
 	} else if row.From == FromCards {

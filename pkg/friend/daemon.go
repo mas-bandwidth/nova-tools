@@ -325,6 +325,9 @@ type Daemon struct {
 	cards       []string  // the cards she held at it
 	walked      time.Time // when it was
 	inboxAt     time.Time // when the inbox was last reconciled
+	// inboxUnanswered is the asks in a row the server did not answer: the next waits longer
+	// for each (inboxWait), and one answer sets it to zero.
+	inboxUnanswered int
 	heldIDs     []string  // the cards on her row at it
 	heldCards   []HeldCard
 	heldAt      time.Time            // when the ask that answered heldCards began: a lane's card taken after it is not judged by it (laneCheck)
