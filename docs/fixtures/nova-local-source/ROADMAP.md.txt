@@ -1,0 +1,286 @@
+SOURCE: mas-bandwidth/barrio ROADMAP.md at main d2dc14e9d269 (2026-10-07), copied with personal and machine names replaced by roles. Staged as the seed of the card nova-local-is-born-from-barrio; the card adapts it into docs/nova-local/ and deletes this directory.
+
+; barrio roadmap. Same shape as nova-tools/docs/roadmaps/nova-work.sexp: epics hold
+; features; a feature has :subfeatures (its acceptance criteria), :depends-on (feature
+; ids that must be DONE, i.e. measured and landed, before it starts), :state
+; (missing | partial | done), :tag (the exactness tag the work carries), :evidence
+; (measured facts only, with a date and a RESULTS.md pointer). Data, not code; nothing
+; here is evaluated. Written 2026-10-07 by the coordinator.
+
+(  :schema "barrio-roadmap-1"
+  :scope-revision 1
+  :sources (    :recipe "https://tangled.org/<recipe-author>/ds4-recipe"
+    :machine "MACHINE.md"
+    :economics "ECONOMICS.md"
+    :plan "README.md")
+  :rules (    "A feature is done only when its measurement is in RESULTS.md and matches the arithmetic, or the gap is named."
+    "Every feature carries one tag: exact | reference-defining | approx-approved | policy."
+    "Anything with states and transitions gets a TLA+ module beside it, checked with TLC on a bench machine."
+    "Stop at any feature whose measurement does not match the arithmetic, and say so.")
+  :epics (
+    (      :id "E00"
+      :title "Verify the premises"
+      :features (
+        (          :id "E00-F01"
+          :title "The model card holds what the plan assumes"
+          :subfeatures (            "V4.1 Flash uses sparse attention: KV read per token is bounded at any context"
+            "V4.1 Flash ships a draft (MTP) head usable for speculation"
+            "Expert, backbone, Engram and vision sizes on disk match README (0.51 TB; 289 / 10 / 203 GB)"
+            "The weights are obtainable and their license permits local serving")
+          :depends-on ()
+          :tag "reference-defining"
+          :state "done"
+          :evidence ("2026-10-07 RESULTS.md E00-F01: sparse attention CSA2 (window 128 + top-512, KV 890 B/token; first-level indexer still scans index keys over full context); DSpark draft head in the main checkpoint (3 MTP layers); 510.3 GB in 48 shards, sizes match; MIT"))
+        (          :id "E00-F02"
+          :title "MLX loads V4.1 Flash at all"
+          :subfeatures (            "A kernel layer parses the architecture: MoE, MLA, sparse attention, Engram, vision (candidates: mlx-lm, mlx-vlm, antirez/ds4)"
+            "What is missing is listed, each item sized as hours or weeks"
+            "A go / no-go on the kernel layer, written in RESULTS.md")
+          :depends-on ("E00-F01")
+          :tag "reference-defining"
+          :state "done"
+          :evidence ("2026-10-07 RESULTS.md E00-F02: go, on antirez/ds4 (Metal, resident on M3 Ultra 512 GB measured 18.7 t/s main, 30–35 bit-exact in unmerged PRs, batching + disk KV + OpenAI server present); mlx-lm refuses the real checkpoint (no Engram), mlx-vlm runs it at 17 t/s; MLX is the fallback"))
+        (          :id "E00-F03"
+          :title "Engram access pattern measured"
+          :subfeatures (            "Reads per token and bytes per read, on a real prompt"
+            "Whether reads batch per layer or are serial"
+            "Hot-set size at which the SSD disappears from the per-token path"
+            "Decides MACHINE.md: internal SSD requirement, and RAM budget in E02")
+          :depends-on ("E00-F02")
+          :tag "reference-defining"
+          :state "missing"
+          :evidence ())))
+    (      :id "E01"
+      :title "Load and one correct token"
+      :features (
+        (          :id "E01-F01"
+          :title "Weights converted to the runtime store"
+          :subfeatures (            "Experts packed MXFP4, bit-verified against the source (the recipe's method)"
+            "Backbone, Engram, vision, draft head in their reference formats"
+            "Conversion is a verb, reproducible, with a checksum manifest"
+            "Scratch for conversion is the external enclosure, never the serving disk")
+          :depends-on ("E00-F02")
+          :tag "exact"
+          :state "missing"
+          :evidence ())
+        (          :id "E01-F02"
+          :title "One token decodes correctly on the M3 Ultra"
+          :subfeatures (            "Greedy output on a fixed prompt set matches DeepSeek's reference logits within fp tolerance"
+            "Tolerance and prompt set are written down once and never changed silently"
+            "Runs on the keeper machine without harming CI or the lander (measured, not assumed)")
+          :depends-on ("E01-F01")
+          :tag "reference-defining"
+          :state "missing"
+          :evidence ())))
+    (      :id "E02"
+      :title "Memory ledger"
+      :features (
+        (          :id "E02-F01"
+          :title "Ledger arithmetic"
+          :subfeatures (            "One ledger owns every byte: experts, backbone, Engram hot set, KV per slot, scratch"
+            "Budget is a setting with a good default (~470 GB of 512), never a guess at runtime"
+            "Refusals: a load that does not fit is refused with the numbers, never partially loaded"
+            "Cleanup is automatic; the disk and the memory never fill (the owner 2026-10-02)")
+          :depends-on ("E00-F03" "E01-F02")
+          :tag "exact"
+          :state "missing"
+          :evidence ())
+        (          :id "E02-F02"
+          :title "TLA+: the allocator"
+          :subfeatures (            "Variables: the ledger; actions: load, unload, slot open, slot grow, slot close, cleanup"
+            "Invariants: sum never exceeds budget; no slot reads freed memory; a refused load changes nothing"
+            "Checked with TLC on a bench machine, counterexamples verified against the code by hand"
+            "Cited from the allocator's code")
+          :depends-on ("E02-F01")
+          :tag "exact"
+          :state "missing"
+          :evidence ())))
+    (      :id "E03"
+      :title "Decode at the floor"
+      :features (
+        (          :id "E03-F01"
+          :title "Bytes per token and tok/s measured against the bandwidth floor"
+          :subfeatures (            "Sustained bandwidth of the machine measured by a known kernel (the floor, not Apple's peak)"
+            "Bytes read per generated token measured; split backbone / experts / KV / Engram"
+            "tok/s one lane on the fixed prompt set; the gap to floor named as a percentage"
+            "Results in RESULTS.md for the M3 Ultra; the M5 column waits for the machine")
+          :depends-on ("E02-F01")
+          :tag "reference-defining"
+          :state "missing"
+          :evidence ())
+        (          :id "E03-F02"
+          :title "Close the gap to the floor"
+          :subfeatures (            "Kernel-level work on whatever E03-F01 names: fused MoE dispatch, MLA attention, Engram gather"
+            "Each change is exact: identical logits on the prompt set, or it is not kept"
+            "Stops when within 20% of floor or when the remaining gap is explained and written down")
+          :depends-on ("E03-F01")
+          :tag "exact"
+          :state "missing"
+          :evidence ())))
+    (      :id "E04"
+      :title "Backbone to 4-bit"
+      :features (
+        (          :id "E04-F01"
+          :title "Attention and shared layers at 4-bit, quality-gated"
+          :subfeatures (            "Per-step bytes drop from ~15 GB toward ~9.5 GB; measured"
+            "KL divergence against the fp reference on the prompt set below 0.01, or the change is dropped"
+            "Switchable: the fp backbone stays loadable for reference runs")
+          :depends-on ("E03-F02")
+          :tag "approx-approved"
+          :state "missing"
+          :evidence ())))
+    (      :id "E05"
+      :title "Speculative decoding"
+      :features (
+        (          :id "E05-F01"
+          :title "Draft head, one draft per step"
+          :subfeatures (            "Outputs bit-identical to plain decode on the prompt set (verification correctness)"
+            "Acceptance rate measured on code and on prose, separately"
+            "tok/s gain measured against E04 baseline")
+          :depends-on ("E04-F01" "E00-F01")
+          :tag "exact"
+          :state "missing"
+          :evidence ())
+        (          :id "E05-F02"
+          :title "TLA+: verification never changes outputs"
+          :subfeatures (            "Variables: committed prefix, draft tree, verified positions; actions: draft, verify, accept, reject, rollback"
+            "Invariant: the committed sequence equals what plain decode would produce from the same prefix"
+            "Liveness: every step commits at least one token"
+            "Checked with TLC; cited from the code")
+          :depends-on ("E05-F01")
+          :tag "exact"
+          :state "missing"
+          :evidence ())
+        (          :id "E05-F03"
+          :title "Draft tree"
+          :subfeatures (            "Tree width and depth are settings; 8–16 positions per step by default"
+            "Extra bytes per step measured (distinct experts touched); the point where the tree stops paying is found and written down"
+            "Acceptance and tok/s on code and prose; the planning figure in ECONOMICS.md is replaced by the measurement")
+          :depends-on ("E05-F02")
+          :tag "exact"
+          :state "missing"
+          :evidence ())))
+    (      :id "E06"
+      :title "Persistent KV cache"
+      :features (
+        (          :id "E06-F01"
+          :title "Disk-backed KV with suffix reuse"
+          :subfeatures (            "A prompt sharing a prefix with a stored session reuses its KV; reuse fraction measured on real agent turns"
+            "FP4 KV as the stored format (890 B/token; ds4 stores F32 today); the KL cost of FP4 measured once; lanes × context no longer bounded by memory"
+            "Written atomically; a crash mid-write loses the entry, never the cache"
+            "Bounded on disk by the ledger; eviction automatic")
+          :depends-on ("E02-F01" "E03-F02")
+          :tag "approx-approved"
+          :state "missing"
+          :evidence ())
+        (          :id "E06-F02"
+          :title "TLA+: the cache"
+          :subfeatures (            "Variables: entries, in-use set, disk budget; actions: lookup, insert, evict, crash, recover"
+            "Invariants: an entry in use is never evicted; recovery never yields a torn entry; budget holds"
+            "Checked with TLC; cited from the code")
+          :depends-on ("E06-F01")
+          :tag "exact"
+          :state "missing"
+          :evidence ())))
+    (      :id "E07"
+      :title "Multi-lane serving"
+      :features (
+        (          :id "E07-F01"
+          :title "N lanes, backbone read shared"
+          :subfeatures (            "Lanes is a setting; the ceiling is measured where aggregate tok/s stops rising, not assumed (ECONOMICS.md, Throughput through lanes)"
+            "Per-lane and aggregate tok/s measured at 1, 2, 4, 8, 16, 32, 64, 128 lanes; compared to the table in ECONOMICS.md"
+            "Pools are a setting in nova-config (the owner 2026-10-07 ~22:05 ET: configured how we want, fast friend work or slow fleet work): name, lanes, priority, max context; good defaults first"
+            "Each pool is its own route row on the same endpoint with its own concurrency and tier; local is a configuration, not a tier: the row carries the tier (fleet: flash, friends: pro, on V4.1 Flash); the dealer fills both"
+            "The scheduler gives the higher-priority pool first claim on each step; a pool at 0 lanes is off"
+            "A pool change is applied live: drain and re-shape, no restart"
+            "Admission is jittered at start and bounded in flight (at most k cold prefills; the rest queue), so lanes never finish turns in lockstep and the fleet sees a trickle of tool calls, not a wave (the owner 2026-10-07 ~23:05 ET)"
+            "A lane's KV lives in its slot of the ledger; a lane that would not fit is refused, never starved"
+            "Prefill shared across lanes with a common prefix (the recipe's four-slot result)")
+          :depends-on ("E05-F03" "E06-F02")
+          :tag "policy"
+          :state "missing"
+          :evidence ())
+        (          :id "E07-F02"
+          :title "TLA+: the scheduler"
+          :subfeatures (            "Variables: lanes, their phases (prefill, decode, idle), the step batch; actions: admit, step, finish, cancel"
+            "Invariants: a lane is never in two batches; a cancelled lane frees its slot; no lane waits forever while another is idle"
+            "Checked with TLC; cited from the code")
+          :depends-on ("E07-F01")
+          :tag "exact"
+          :state "missing"
+          :evidence ())))
+    (      :id "E08"
+      :title "The provider: nova-local v2 (Go tool in nova-tools cmd/nova-local; spec revision beside SPEC-LOCAL.md)"
+      :features (
+        (          :id "E08-F01"
+          :title "OpenAI-compatible endpoint on the tailnet"
+          :subfeatures (            "chat/completions with streaming; usage counts true to the token (the owner: every number true)"
+            "Prompt caching honoured through E06; cache hits reported in usage"
+            "Bound to loopback and the tailnet address only; the tailnet is the boundary"
+            "Usable cold by another AI from the tool's own help")
+          :depends-on ("E07-F01")
+          :tag "policy"
+          :state "missing"
+          :evidence ())
+        (          :id "E08-F02"
+          :title "switch <model>: the library on the 8 TB drive"
+          :subfeatures (            "Drains lanes, unloads, loads, announces the new model and its tier to nova-config"
+            "A switch that fails leaves the previous model serving, never nothing"
+            "Library is a manifest: model, format, size, tier, checksum; listing is a verb"
+            "Switch time measured (target: a load, ~40 s, never a copy)")
+          :depends-on ("E08-F01" "E02-F02")
+          :tag "policy"
+          :state "missing"
+          :evidence ())
+        (          :id "E08-F03"
+          :title "TLA+: the provider lifecycle"
+          :subfeatures (            "Variables: loaded model, lanes in flight, announced tier; actions: switch, drain, fail, beat"
+            "Invariants: the announced tier always matches the loaded model; a request never sees a half-loaded model"
+            "Checked with TLC; cited from the code")
+          :depends-on ("E08-F02")
+          :tag "exact"
+          :state "missing"
+          :evidence ())
+        (          :id "E08-F04"
+          :title "Health beat and width for the fleet"
+          :subfeatures (            "A beat like every friend's; a billing-style refusal cannot happen, but a load failure is reported as down with reason"
+            "Width is the one number nova-config understands: lanes"
+            "A nova-config route whose provider is barrio, tier set on the row, concurrency = the box's lanes, and a priority ceiling (low, perhaps normal; never blocker/critical/high/reads); the lanes are on the fleet machines and the box caps how many draw on it"
+            "Down means down: no beat, no route"
+            "Fleet-side sizing (the owner 2026-10-07 ~23:10 ET, concerned that slow lanes swamp both the box and the fleet): a lane on the local route waits ~3 min per turn and loads its machine at ~5–10% of a fast lane, so machine width is sized to tool-call load, alarms are effects on cards, and the local route's concurrency and priority ceiling keep fast lanes first; 128 slow lanes over five flash machines is ~25 each, ~2 fast lanes of load")
+          :depends-on ("E08-F02")
+          :tag "policy"
+          :state "missing"
+          :evidence ())))
+    (      :id "E09"
+      :title "A friend on the provider"
+      :features (
+        (          :id "E09-F01"
+          :title "A harness pointed at barrio works the sprint"
+          :subfeatures (            "A friend (first candidate: a local Zhi) runs its harness against the endpoint and lands cards"
+            "Cost per landed card and takes-to-land measured against Zhi-on-API for the same cards"
+            "The pro-tier case in ECONOMICS.md is replaced by that measurement")
+          :depends-on ("E08-F04")
+          :tag "policy"
+          :state "missing"
+          :evidence ())))
+    (      :id "E10"
+      :title "The M5 box"
+      :features (
+        (          :id "E10-F01"
+          :title "Everything above re-measured on the M5 Ultra"
+          :subfeatures (            "Sustained bandwidth, bytes per token, tok/s per lane and aggregate, switch time"
+            "Each number beside its M3 column in RESULTS.md; the ratio named"
+            "Serving box separate from the keeper, per MACHINE.md; the keeper's work measured unharmed")
+          :depends-on ("E09-F01")
+          :tag "reference-defining"
+          :state "missing"
+          :evidence ())
+        (          :id "E10-F02"
+          :title "The reference platform"
+          :subfeatures (            "One Strix Halo box runs the recipe unmodified"
+            "The same prompt set on both; any divergence in logits or acceptance is a finding, never a shrug")
+          :depends-on ("E03-F01")
+          :tag "reference-defining"
+          :state "missing"
+          :evidence ())))))

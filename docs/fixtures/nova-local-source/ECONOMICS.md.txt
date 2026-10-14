@@ -1,0 +1,119 @@
+SOURCE: mas-bandwidth/barrio ECONOMICS.md at main d2dc14e9d269 (2026-10-07), copied with personal and machine names replaced by roles. Staged as the seed of the card nova-local-is-born-from-barrio; the card adapts it into docs/nova-local/ and deletes this directory.
+
+# Economics and placement
+
+Written 2026-10-07 by the coordinator, from the conversation with the owner that started barrio. Prices as searched that day; throughput figures are the README's arithmetic, not measurements.
+
+## API prices for DeepSeek V4.1 Flash (per 1M tokens)
+
+| Provider | Input | Output | Cache hit |
+|---|---|---|---|
+| DeepSeek direct, peak | $0.30 | $1.20 | $0.006 |
+| DeepSeek direct, off-peak | $0.15 | $0.60 | $0.003 |
+| OpenCode Zen / Go | $0.30 | $1.20 | $0.006 |
+| OpenRouter standard | $0.045 | $0.30 | $0.021 |
+
+Agent traffic is ~90% cache reads on long turns, so the cache-hit column dominates real cost; DeepSeek direct and Zen are 3–4× cheaper than OpenRouter there, despite OpenRouter's lower fresh-token price.
+
+## What the box produces, flat out (M5 Ultra 512 GB, estimates)
+
+- Decode 40–50 tok/s one lane; ~100–150 tok/s aggregate over 4–8 lanes before speculation.
+- Prefill ~400–1,000 tok/s, with 90–98% of prompt tokens from the persistent KV cache.
+- 24/7: ~8–13M output tokens/day, ~50M fresh input tokens/day.
+
+Valued at API prices: $300–600/month at DeepSeek direct, $100–150/month at OpenRouter, at 100% utilisation. Box ~$14–16k plus ~$25/month power. **Payback vs DeepSeek direct: 2–4 years at full use; vs OpenRouter, never.** the owner, 2026-10-07: agreed it will be slower and more expensive per token for its lifetime. The case is not savings.
+
+## The case
+
+1. Sovereignty: no rate limits, no 402s, no "no credits is down". A provider whose liveness is ours.
+2. Model-agnostic: the same 512 GB runs whatever open weights are best; against a $2–4/M-output model the box is 3–5× better than against Flash.
+3. Privacy for what should not leave the house.
+4. 1M-token persistent sessions with near-free re-reads.
+
+## Where it sits in the tiers
+
+- **Not a flash tier.** The flash tier's value is width: dozens of Gemini Flash lanes at ~$0.19 per landed card. $12k is ~63,000 landed flash cards; the box's 4–8 lanes would take years to produce that many.
+- **A third to half of the pro tier.** Pro is already friend-served (Emma, Alex, Zhi; fleet pro routes off), ~10–15 lanes total. The box adds 4–8 pro-class lanes. The last measured Gemini Pro rate was $18.38 per landed card; even at a few dollars per landed card on DeepSeek, $12k is ~650–3,000 landed pro cards, i.e. months of full use, not years. **The box earns its keep at pro tier if DeepSeek V4.1 Flash lands pro cards at Zhi's rate or better.** Zhi's measured cost per landed card and takes-to-land is the number to read before buying.
+
+## Lanes
+
+One box serves multiple lanes, each slower. Per token: ~10 GB dense backbone (read once per step, shared by all lanes) + ~4.5 GB experts (6 of 384 per layer × 40 layers, ~19 MB each; grows per lane, sub-linearly through overlap). At ~1 TB/s, worst case:
+
+| Lanes | Read/step | Per lane | Aggregate |
+|---|---|---|---|
+| 1 | ~15 GB | ~65 tok/s | 65 |
+| 4 | ~28 GB | ~36 tok/s | ~143 |
+| 8 | ~46 GB | ~22 tok/s | ~174 |
+
+Planning figure: **4 lanes at ~35 tok/s**, before the levers below. Risk is software (MLX multi-slot with per-slot persistent KV, README layer 7) and KV memory per lane at long context, not the hardware.
+
+## Levers that stack on the floor
+
+There is no trick past the bandwidth; there are four that stack. Each is measured before the next is built.
+
+1. **Backbone to 4-bit** `[approx]`: ~15 → ~9.5 GB/step; one lane ~65 → ~100 tok/s. Kept only if KL < 0.01.
+2. **Speculative decoding with a draft tree** `[exact]`: decode uses ~3% of the GPU's compute; verifying 8–16 draft tokens per step costs almost no extra bytes. Acceptance 3–4 on code, 1.5–2 on prose: ~100 → ~250–350 tok/s on code, ~150 on prose. Verification never changes outputs; that invariant is the TLA+ model.
+3. **Sparse attention keeps long context off the bandwidth**: relies on the model's own design; verify on the card (README layer 0).
+4. **Lanes share the backbone**: four lanes ~300–500 tok/s aggregate on code.
+
+Does not help: the neural accelerators (prefill only, and prefill is mostly cache hits), the faster SSD (Engram lookups only), a second Studio over Thunderbolt (aggregate, not per lane).
+
+## Payback at 4 lanes, continuous (added 2026-10-07, evening)
+
+the owner: nova-sprint can keep the box at 100% utilisation. The earlier payback figure counted output only; agent work is dominated by input re-reads, so the full accounting is below.
+
+Assumptions: 4 lanes at ~35 tok/s, ~100k context per lane, a turn every ~15 s, 90% cache hits, prefill ~500 tok/s capping fresh input at ~43M tokens/day.
+
+| Per day, 4 lanes flat out | Tokens | DeepSeek peak | Off-peak |
+|---|---|---|---|
+| Output | ~12M | $14 | $7 |
+| Fresh input (prefill-capped) | ~43M | $13 | $6 |
+| Cached re-reads | ~2.3B | $14 | $7 |
+| **Total replaced** | | **~$41/day** | **~$20/day** |
+
+DeepSeek's peak window is 01:00–04:00 and 06:00–10:00 UTC on weekdays: ~21% of a 24/7 week, so a continuous sprint blends to **~$25/day**, ~$36/day if tree speculation delivers ~2.5× on output.
+
+Box ~$15k plus ~$1/day power: **payback ~20 months on DeepSeek Flash alone, ~14 months with speculation.** Against OpenRouter's fresh-token price, past 3 years. Against any model priced $2–4/M output loaded on the same box, a few months.
+
+The measured replacement for this table is E09-F01: cost per landed card on the box vs Zhi on the API, same cards.
+
+## Throughput through lanes (the owner, 2026-10-07 ~21:55 ET: "if we can change things enough, so we get more total throughput, with more lanes")
+
+Decode reads weights, and the backbone read is shared by every lane; the expert read grows with lanes until every step touches every expert. Past that point the box reads the whole model once per step and advances every lane one token, which is how the datacenter serves cheaply. At ~1 TB/s (M5 Ultra), worst case with no expert overlap:
+
+| Lanes | Read/step | Per lane tok/s | Aggregate tok/s |
+|---|---|---|---|
+| 1 | 15 GB | 65 | 65 |
+| 4 | 28 GB | 36 | 143 |
+| 16 | 82 GB | 12 | 195 |
+| 64 | 299 GB (all experts) | 3.3 | 213 |
+| 128 | 299 GB | 3.3 | 427 |
+| 256 | 299 GB | 3.3 | 853 |
+
+Compute does not bind until ~1,000 lanes. Real routing overlaps on popular experts, so the flat region (16–64) is shorter in practice. Two conditions, both ours to build:
+
+1. **KV packed** (E06): ds4 stores KV as F32, ~1.4 GB per lane at 100k context, ~140 lanes in 200 GB. Packed to the model's FP4 (890 B/token) it is 89 MB per lane.
+2. **The scheduler** (E07): prefill is compute-bound (~1,000 tok/s shared) and ds4 runs it ordered (#1166: two cold prefills collapse throughput). At 100+ lanes the box lives on cache hits and on prefill never starving decode.
+
+**The use case (the owner, 2026-10-07 ~22:10 ET): 100% utilisation, flash-tier work offloaded from the fleet machines to nova-local.** Flash cards are wide, mechanical and latency-tolerant: the 128-lane regime exactly. V4.1 Flash is a class above Gemini Flash, so the fleet gets a better model at $0 and the flash API spend is what the box replaces; measure that spend per day from cost tracking for the real payback.
+
+Pro tier on two linked M5 Ultras (V4 Pro, 1.6T/49B active, ~865 GB native): per lane ~20–25 tok/s, ~280 aggregate at 128 lanes, heavy-tier quality, 2× the money; a different product, not a faster one. Decision (the owner, ~22:40 ET): **Flash now on one box; Pro later on future hardware** that fits it in one machine. The box serves and the fleet works: harness children never run on the engine's box.
+
+The trade is latency: 3 tok/s is a 3-minute turn. Right for sprint cards that take hours; wrong for a friend in conversation. So: two pools on one width number, a few fast lanes for friends and many slow lanes for the sprint. Payback at 128 lanes is ~3× the 4-lane figure: ~6 months.
+
+## Measured flash spend (2026-10-07, from the sprint store; fleet machines only, friends unpriced)
+
+Read by a child from a copy of the Redis snapshot (`nova-bench/redis/dump.rdb`, 15:10 ET), live store untouched. Per-call cost records on cards; `docs/SPEC-SPRINT.md` "What a card cost".
+
+| Day | Flash cards landed | Calls | Fresh input | Cached reads | Output | Flash $ |
+|---|---|---|---|---|---|---|
+| 10-03 | 143 | 26,012 | 83M | 1.63B | 9.2M | 54.61 |
+| 10-04 (full sprint day) | 619 | 59,427 | 170M | 3.45B | 21.9M | 113.81 |
+| 10-06 | 36 | 14,740 | 64M | 1.77B | 5.3M | 58.48 |
+
+~$0.17 per landed flash card. Top routes Oct 3–7: glm-5.3-flash and deepseek-v4.1-flash on both OpenRouter and OpenCode (~$40 each), qwen3.8-flash, laguna-s-2.1. Flash machines: space, hetzner, vision, batman, superman. Pro tier on 10-04: $963.69 in one day (Gemini Pro; fleet pro routes since switched off, pro to friends).
+
+What it says about the box:
+- Output (22M/day) is within one M5 box at 128 lanes (~37M/day).
+- **Fresh input (170M/day) exceeds the prefill budget (~45–85M/day).** One box takes roughly half of a full sprint day's flash work unless its KV prefix cache converts more of the 3.4B cached reads into real hits. E06's number.
+- Payback on real volume: ~$60/day replaced at Oct 4 pace → ~8 months; at Oct 6 pace ~16 months. Flash only, one box.

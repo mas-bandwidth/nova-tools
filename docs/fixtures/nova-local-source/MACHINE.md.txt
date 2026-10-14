@@ -1,0 +1,86 @@
+SOURCE: mas-bandwidth/barrio MACHINE.md at main d2dc14e9d269 (2026-10-07), copied with personal and machine names replaced by roles. Staged as the seed of the card nova-local-is-born-from-barrio; the card adapts it into docs/nova-local/ and deletes this directory.
+
+# The machine
+
+Spec for the ideal Mac Studio for barrio, money no object. Written 2026-10-07 by the coordinator for the owner. Prices for the 512 GB tier are not in Apple's configurator yet (ships late October 2026); where a price is given it is an estimate.
+
+## The order
+
+**Mac Studio, M5 Ultra**
+- 36-core CPU (12 super + 24 performance), 80-core GPU, 32-core Neural Engine. Top bin. The GPU count matters for prefill; nothing else in the box affects decode.
+- **512 GB unified memory.** The only number that decides anything. Experts (~289 GB) + backbone (~10 GB) resident, ~200 GB for Engram hot set, KV cache and lanes.
+- **8 TB internal SSD** (the owner's call, 2026-10-07). Enough for 4–6 models hot on the Gen 6 drive plus ~1–2 TB of persistent KV cache: switching models is a load (~40 s), never a copy from external. 4 TB means managing disk; 16 TB buys nothing more for us.
+- 10 Gb Ethernet (standard). Thunderbolt 5 ×6.
+
+Estimate: $14–16k.
+
+## Beside it
+
+- **Two Thunderbolt 5 NVMe enclosures, 8 TB each** (~$900 each). One is the cold model library and download landing zone; the other is scratch for weight conversion (MXFP4 packing needs the source and the output on disk at once, ~1 TB per model). Nothing on the serving path.
+- **UPS, 1500 VA.** The machine holds a 500 GB working set that takes a minute to rebuild; a brownout mid-session is a minute of outage, not a corrupted KV cache, if the cache is written atomically. Still worth it.
+- **No display, no peripherals.** Headless, Screen Sharing and SSH, like the keeper machine.
+
+## The second box, and why it is the real recommendation
+
+Serving competes with the keeper. the owner's standing rule is that work moves off the Studio (2026-10-07): CI, the lander's gates and the children's work are already owed a move, and a serving process holding 500 GB and the whole memory bus is the worst neighbour the keeper could have.
+
+So, money no object: **two machines.**
+1. The barrio box above: serving only, no CI, no children, no keeper duties. One process owns the memory.
+2. the keeper machine as it is (M3 Ultra, 512 GB) stays the keeper and the writer of canon, and takes the CI and gate work that is owed a home.
+
+If one box only: it is the barrio box, and the keeper role moves to it only after serving has been measured to leave the keeper's work unharmed. Measure, don't assume.
+
+## What it is: a provider (nova-local v2)
+
+the owner, 2026-10-07 ~21:40 ET: "This should become a new version of nova-local. A provider shaped local provider." nova-local (nova-tools `cmd/nova-local`, `docs/SPEC-LOCAL.md`) already has the ds4 adapter, `status` / `serve` / `worker`, the loopback pin and the `local` route with `--endpoint` and `--concurrency`. Barrio's E08 is its next version: `switch <model>` from a library manifest, the beat, tier announced by the loaded model, width as the one number, multi-lane serve on ds4's `--batched-session`, true usage counts. The Go tool stays in nova-tools (spec revision beside SPEC-LOCAL.md); barrio holds the ds4 fork, the measurements, the models and the roadmap that drives both.
+
+the owner, 2026-10-07: the box is a **provider**, in the same sense as DeepSeek, OpenRouter or Gemini are providers to the fleet: an OpenAI-compatible endpoint on the tailnet, one model loaded at a time, switchable from the library on the 8 TB drive. Nothing in the fleet knows or cares that it is local.
+
+Configured how we want (the owner, 2026-10-07): pools in nova-config, e.g. `friends: lanes 4, priority high` and `fleet: lanes 64, priority normal`, each its own route row on the one endpoint; all friends or all fleet by setting the other to 0; changed live.
+
+Two ways to use it, both at once if wanted:
+1. **A friend runs on it.** A harness (OpenCode, the DeepSeek Harness, whatever fits the model) points at the local endpoint and the friend works through the sprint like Zhi does today, with the provider's lanes as its width.
+2. **The fleet routes to it.** nova-config gets a route whose provider is barrio, at a tier set by the model loaded (DeepSeek V4.1 Flash is pro-class). The dealer treats its lanes as width on that tier. Switch the model, and the tier the box serves changes with it.
+
+What this requires of barrio: the endpoint speaks the OpenAI API (chat completions, streaming, cache-aware prompt reuse); a `switch <model>` verb that drains lanes, unloads, loads, and announces the new tier to nova-config; a health beat like every friend's; and the lanes exposed as the one width number nova-config already understands. The serving layers (README, layers 1–7) are the inside; this is the outside.
+
+## Two boxes: never linked (the owner, 2026-10-07 ~22:25 ET: "agreed. it's provider")
+
+A second M5 Ultra is a second fleet machine, not a tensor-parallel pair: 2× aggregate exactly, no interconnect, each switchable or down alone. Linked over Thunderbolt 5 gives +21% per lane (ds4 measured) for 2× the money. Link only for a model that does not fit in 512 GB. Buy the second after the first has been measured at 128 lanes.
+
+Pro, checked 2026-10-07 (child, primary sources): DeepSeek is phasing out V4 Pro (since 2026-09-14 `deepseek-v4-pro` API calls route to V4.1 Flash "until V4.1-Pro launches"); V4.1 Pro is unreleased. ds4's two-Mac Pro is layer-split over TCP, 11.47 tok/s measured on 2× M3 Ultra in June, reported collapsed to ~0.14 tok/s on macOS 27 (issues #501, #845, open); tensor-parallel Pro is undocumented and unmeasured on ds4, mlx-lm and exo. One Mac runs Pro Q2 (433 GiB) resident at ~10–12 tok/s, 2-bit quality. V4 Pro API list price $0.66/$1.32 in, $1.98/$3.96 out, $0.022/$0.044 cache hit (off-peak/peak). Decision stands: Flash now; Pro when there is a Pro and a box that holds it.
+
+## Considered and declined: a GPU box (2026-10-07 ~23:55 ET)
+
+At ~$250k the strongest engine is one 8× RTX Pro 6000 Blackwell box (~$100k; 768 GB VRAM, vLLM/SGLang already batch hundreds of lanes with native MXFP4 and MTP; Pro resident on one machine; payback in weeks against the measured Oct 4 spend). It needs ~5 kW, cooling, and a room without a person in it; power is not the constraint (the owner: a 30 kW outlet already exists), heat and noise are. the owner: the only place for it would be the basement, and "I'd prefer not to." Declined. The plan stays Macs only, quiet, on the desk: M5 Ultras bought one at a time after each is measured; the friend corner (two M5 Ultras) agreed.
+
+## What money does not buy
+
+- **Bandwidth.** 1.2 TB/s peak (~1 TB/s sustained) is the ceiling at any price. No option on the sheet raises it.
+- **Lanes.** Four lanes at ~35 tok/s each, or ~300–500 tok/s aggregate on code with speculation, is the box. A second box doubles aggregate, not per-lane.
+- **Model quality.** The M5 runs the same weights as the M3; it runs them ~1.5× faster.
+
+## Config line
+
+Mac Studio / M5 Ultra 36C CPU 80C GPU / 512 GB / 8 TB / 10 GbE. Two TB5 8 TB enclosures. UPS. No display.
+
+## Alternatives at roughly the same money (~$12–16k)
+
+Ranked. Per-lane numbers are the same arithmetic as the README (bytes per token over sustained bandwidth), not measurements.
+
+| | Setup | Cost est. | Memory | One lane est. | Runs today? | Notes |
+|---|---|---|---|---|---|---|
+| 1 | **Mac Studio M5 Ultra 512 GB** (this spec) | $14–16k | 512 GB @ ~1 TB/s | ~65 → 250+ with levers | No: Metal port, layers 1–7 | Quiet, ~300 W, one process owns everything. The simplest system. |
+| 2 | **EPYC/Threadripper Pro + 768 GB DDR5 + one GPU** | $13–18k | 768 GB @ ~500–580 GB/s (12-ch DDR5) + GPU 32–96 GB @ 1.8 TB/s | ~60–80 | **Yes**: ktransformers / SGLang hybrid already serve DeepSeek this way on CUDA | Experts on CPU memory, attention + backbone on the GPU. Per lane close to the M5 because the backbone read moves to the fast GPU. Loud, ~1 kW, Linux, a build. Upgradeable: add GPUs later. Multi-lane is limited by CPU matmul, not bandwidth. |
+| 3 | **4× Strix Halo boxes** (Framework Desktop 128 GB, ~$2k each) | ~$8k | 4 × 128 GB @ 240 GB/s | ~13–20 each (the recipe's own numbers) | **Yes**, the recipe literally, unmodified | Four independent lanes, no shared memory, each with the expert cache and NVMe misses. Half the per-lane speed of the M5 for half the money, zero port work. The honest cheap option. |
+| 4 | **A second M3 Ultra 512 GB** | ~$10–11k | 512 GB @ ~650–700 GB/s | ~65% of the M5 | No: same Metal port as 1 | Available now, and identical to the keeper machine, so everything built here runs on both unchanged. |
+| — | NVIDIA DGX Spark (GB10) | $4k | 128 GB @ 273 GB/s | — | — | Too small for the experts; two linked still too small. Not a candidate. |
+| — | Rented H100s | ~$5/hr per pair | — | fast | yes | $15k is ~4 months of a pair, then nothing. Not sovereign; the point of the box is that it is ours. |
+
+### What decides it
+
+- **Want it working this month:** option 2 or 3. Both run the existing CUDA/ROCm stacks; nothing to port.
+- **Want the quiet, finished, long-lived box and are willing to build the Metal stack (which is also the thing we'd learn the most from):** option 1.
+- **Want to hedge:** option 3 now ($8k, runs the recipe, teaches us the patterns on real hardware), then option 1 when the layers are understood. That is the tracer-bullet shape, and the Strix boxes stay useful as four flash-class lanes afterwards.
+
+My pick with money no object: option 1 for the serving box, and I would still want one Strix Halo box ($2k) beside it as the reference platform, because the recipe's numbers were measured on it and every "is the Metal port right?" question gets answered by running the same prompt on both.

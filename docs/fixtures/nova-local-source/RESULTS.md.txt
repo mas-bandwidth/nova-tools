@@ -1,0 +1,39 @@
+SOURCE: mas-bandwidth/barrio RESULTS.md at main d2dc14e9d269 (2026-10-07), copied with personal and machine names replaced by roles. Staged as the seed of the card nova-local-is-born-from-barrio; the card adapts it into docs/nova-local/ and deletes this directory.
+
+# Results ledger
+
+Measured only. Date, machine, layer, what was measured, number, how.
+
+## 2026-10-07 · E00-F01 · the model card (the keeper machine, read only)
+
+Source: huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash (README, config.json, inference/model.py, inference/engram.py, safetensors headers), read by a child; primary sources only.
+
+- Sparse attention: yes (CSA2). Per attention layer: sliding window 128 raw tokens + top-512 compressed positions (`index_topk 512`); compression ratio 2 on layers 2–19, 1 on 20–39. Candidate pool 2048 blocks × 8 built at layer 20; index-source layers 2, 8, 14, 20, 24, 28, 32, 36. Main KV: FP4, **890 bytes/token**, shared from source layers 2, 8, 14, 20. Caveat: a first-level indexer layer not restricted to the candidate pool scores all compressed positions (`index_k[..., :end_pos//ratio]`), so the FP4 index-key read still grows with context; only the main KV read and the deeper indexers are bounded.
+- Draft head: yes, in the main checkpoint. `num_nextn_predict_layers 3`, `dspark_block_size 5`, target layers 37–39, markov rank 256; draft MoE 128 experts, 3 active; weights `mtp.0–2.*` with `markov_head` and `confidence_head`. The reference code has the forward pass only; the speculative loop is not in the repo. V4 and V4.1 drafters are not interchangeable.
+- Architecture: 552B backbone + 196B Engram; 8B active prefill / 16B decode; 40 layers (20 encoder + 20 decoder) + 3 MTP; hidden 5120; 64 heads, 1 KV head, head_dim 512, qk_rope 64, q_lora 1280, o_lora 1024 in 8 groups; 384 routed experts, 6 active, 1 shared, MoE intermediate 2304, `sqrtsoftplus` + `noaux_tc`; hyper-connections ×4; vocab 129,280; context 1,048,576 (YaRN 16 over 65,536).
+- Engram: hashed n-gram (2–4) embedding memory added to the residual at layers 1 and 14; two tables ~384M rows × 256, FP8 E4M3 with E8M0 scales per 32 columns, ~203 GB; **48 rows gathered per token**; gated by similarity to the hidden state. Does not need to be resident.
+- On disk: 48 safetensors shards, **510,296,708,312 bytes**; experts FP4 packed in int8, dense and Engram FP8, some BF16/F32. Vision (DeepSeek-ViT, 32 layers, `vision.*` + `aligner.*`) is inside the same shards.
+- License: **MIT**. Local serving and commercial use permitted.
+- Runtimes: mlx-lm has `deepseek_v41.py` (PR #1895, merged 2026-09-29) but refuses the official config (no Engram), drops MTP and vision, and cannot batch V4.1 or reload its cache. mlx-vlm PR #2214 (merged 2026-09-28) has Engram + vision; measured on an M3 Ultra 512 GiB, 4/8-bit 436.74 GiB: 319 tok/s prefill, 17.25 decode at 1K; 192 / 7.40 at 32K. antirez/ds4 (Metal) states full residency tested on an M3 Ultra 512 GB, with 2–8 batched sessions and a disk KV cache; survey pending. llama.cpp V4.1 is an open PR (#28696).
+
+Verdict: E00-F01 criteria 1–4 verified. The README's premises hold, with the indexer caveat noted above (to be measured in E03-F01 at depth).
+
+## 2026-10-07 · E00-F02 · the kernel layer (the keeper machine, code read; no weights run)
+
+Two children surveyed mlx-lm, mlx-vlm and antirez/ds4 from source and issue trackers.
+
+- mlx-lm 0.32.0: `deepseek_v41.py` (PR #1895, merged 2026-09-29, "not tested against the real weights"). Refuses the official config (`engram_layer_ids [1,14]` raises), drops MTP and vision, `LayerCache` cannot merge (no batching for V4.1) or reload from disk, not trimmable (no speculation). Missing: Engram 3–5 d, batch cache 3–5 d, cache reload hours, DSpark 1–3 wk, DSML tool parser 1 d. mlx core #4571: the hyper-connection matmul is ~5.5× slower with batch > 1.
+- mlx-vlm PR #2214 (merged 2026-09-28): Engram, vision, native fp4/fp8. Measured M3 Ultra 512 GiB, 4/8-bit 436.74 GiB: 319 prefill / 17.25 decode at 1K; 192 / 7.40 at 32K (the 32K drop unexplained).
+- antirez/ds4 (`main` 0aaea5a, 2026-09-20): C11 + Metal (+CUDA, ROCm), `make`, MIT; ~194k lines C, 85k in ds4.c, 33k Metal; 797 commits, 63 contributors. V4.1 Flash on Metal since 2026-09-12. CSA2 indexer kernels in `metal/dsv41.metal`; experts as stacked per-layer tensors, mmap'd, dispatched by `mul_mv_id` Q4_K kernels; Engram by uncached `pread` with up to 16 readers, ~12.7 KB/token, never resident (189 GiB on disk); disk KV prefix cache (`--kv-disk-dir`); `--batched-session 2–8` native decode for resident V4.1; `ds4-server` with `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, streaming, tools, no auth. Measured M3 Ultra 512 GB, Q4 resident (`QA_BEFORE_RELEASES.md` §17): decode 18.7 t/s @4K, 18.1 @32K; prefill 342 @4K, 716 on a 16K append. Unmerged, same machine, bit-exact: #1041 23.1; #1090 29.9; #1073 Q4 33.4 / MXFP4 34.7 / +DSpark ~49.9 on code (prose no gain) / two-Mac TP 40.4. Gaps: Q4_K is a lossy re-quant of the shipped MXFP4 experts (lossless MXFP4 for V4.1 only in #1073); KV stored F32 (size lanes × context together); DSpark off while batching; #1135 (batched compressed-attention leak, visual path) unmerged; #1166 concurrent cold prefills collapse; no published multi-session aggregate. `main` idle since Sep 20 with 200+ open PRs.
+
+Verdict: **go, on ds4.** It already covers README layers 1, 6, 7 and the endpoint of E08, with a measured resident run on this exact machine class. The work is a fork that carries the verified PRs (#1041, #1090, #1073, #1135), a lossless MXFP4 recipe, and our measurements. MLX is the fallback, ~4–6 weeks behind. Floor check: M3 Ultra ~700 GB/s sustained over ~15 GB/token gives ~45 t/s; the bit-exact forks at 30–35 are ~75% of floor.
+
+Consequence for the roadmap: E01-F01 converts with ds4's quantizer (and #1073's MXFP4); E03 starts from the fork, not from zero; E05 starts from #1073's DSpark; E06 and E08-F01 are mostly measurement.
+
+## 2026-10-07 · download
+
+`deepseek-ai/DeepSeek-V4.1-Flash` to `<barrio-dir>/models/deepseek-ai--DeepSeek-V4.1-Flash` on the internal drive (the owner's call, 21:10 ET: "create a new barrio folder on the studio internal"; nova's free space is for friends, swarms and CI). Started on the 22 TB USB array, moved at 47 GB and resumed. Unauthenticated, ~38 MB/s, ETA ~4 h.
+
+## 2026-10-07 · E01 prep · ds4 builds on the keeper machine
+
+Clone at `barrio/ds4` (ignored), HEAD `0aaea5a` (main, 2026-09-20). `make -j8`: 13 s, 0 warnings, 0 errors; `ds4`, `ds4-server`, `ds4-bench`, `ds4-eval`, `ds4-agent`. No Metal compiler on the box (CLT only; Xcode 27 license unaccepted) and none needed: shaders compile at runtime. Weight-free tests: `ds4_test --server` OK; `test-session-state` all pass; layer_pack 97/97; mgpu_placement 114/114; gpu_args_cli 90/0; mxfp4_dot 4/4; q4k_dot 4/4; ds4-eval 92 core + 50 hard; Metal: `test_deepseek41_metal` 91/0, `test_mxfp4_metal` PASS, `--metal-kernels` OK. Converter: `--quant q2|q4` only on main (no lossless/MXFP4 for V4.1; that is PR #1073); Q4 output ~483 GiB (294 weights + 189 Engram), needs output + 32 GiB free, so ~515 GiB on the internal drive. Converter deps (numpy, tokenizers, sympy) installed in `barrio/.venv` (Python 3.13). Revision: ds4 pins `df42c109`; the download is `2cba9e42` = df42c109 + "fix(encoding): preserve tool namespaces" + "Adding chat template (#68)"; weights unchanged. Commands in `notes/ds4-build-2026-10-07.md`.
