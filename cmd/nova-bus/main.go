@@ -192,7 +192,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 					f.String("skip-subject", "PING,PONG", "subjects starting with one of these prefixes, comma-separated, are skipped; matched without case")
 					f.String("wake-after", "", "0 replays the file from byte zero; otherwise the complete wake-after cursor returned by wait; requires --wake-file; preserves unread bytes across rearm and restart")
 					f.String("wake-file", "", "a file whose lines, appended after the start, also end the wait (one line per message)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					f.Check(func(c *tool.Call) {
 						if v := c.Str("after"); v != "" && !streamID(v) {
 							c.Problem(fmt.Sprintf("--after wants a stream entry id, <ms>-<seq> as WAIT ARMED and WAIT OK print it; %q is not one", v))
@@ -254,7 +254,7 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
 					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
 					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
 						refuseNonPositiveTimeout(c)
@@ -270,16 +270,18 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 			},
 			{
 				Name:    "peek",
-				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--timeout <duration>] [--redis <addr>]",
+				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Example: "peek --as bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE state=<pending|new> id=<id> from=<name>
-[kind=<k>] at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, new is never delivered.
+[kind=<k>] at=<RFC3339> subject=<s> line per message, up to --max with a MORE line: pending is delivered
+and not acked, new is never delivered.
 --kind <k>[,<k>] lists only messages of those kinds; kind=<k> is left off a status's line.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -319,7 +321,7 @@ before kinds existed.`,
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
 					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
 						refuseNonPositiveTimeout(c)
@@ -355,7 +357,7 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -377,7 +379,7 @@ example: nova-bus receipts --as bob`,
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("id", "", "the message ids, comma-separated, as recv printed them (default: every receipt you hold)")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -399,7 +401,7 @@ example: nova-bus overdue --older 10m`,
 					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
 					f.Duration("older", 10*time.Minute, "how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
 						refuseNonPositiveTimeout(c)
@@ -412,16 +414,19 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--as <me>] [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Usage:   "log [--as <me>] [--bodies] [--max <n>] [--oldest] [--timeout <duration>] [--redis <addr>]",
 				Example: "log --as bob --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
-[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
+[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, with body=<text> too under --bodies. The
+default is the newest --max messages, printed oldest-first within that window, and one LOG MORE line
+naming how many older messages there are; --oldest reads from the start as before, the oldest --max.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
 					f.Bool("bodies", false, "print each message's body as well")
+					f.Bool("oldest", false, "read the log from the start, the oldest --max messages (the default is the newest --max)")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -429,18 +434,19 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "names",
-				Usage:   "names [--as <me>] [--timeout <duration>] [--redis <addr>]",
+				Usage:   "names [--as <me>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Example: "names --as bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> push=<state> age=<age>
-harness=<h> line per known name (nova-config's friend and machine rows). push is proven (its friend
-daemon proved and renewed its inbox push under ten minutes ago), stale (the daemon stopped
-renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no daemon ever
-recorded one); age is how long ago the daemon wrote it, never when there is none. The push is the
-seat's liveness rule and a sender's advice: send and recv say it as a NOTE, never refuse on it.`,
+harness=<h> line per known name (nova-config's friend and machine rows), up to --max with a MORE line.
+push is proven (its friend daemon proved and renewed its inbox push under ten minutes ago), stale (the
+daemon stopped renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no
+daemon ever recorded one); age is how long ago the daemon wrote it, never when there is none. The push
+is the seat's liveness rule and a sender's advice: send and recv say it as a NOTE, never refuse on it.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus; with none of the three set the verb refuses naming "+RedisEnv+")")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -970,14 +976,30 @@ func (w world) log(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	o := tool.Done().Fact("total", len(got))
-	for _, e := range got {
+	total := len(got)
+	// The store's Range reads forward from "-", so its bounded read holds the
+	// oldest window. The default is the newest window, the tail of that bounded
+	// read, and --oldest keeps today's oldest window (SPEC-BUS.md, the log).
+	max := c.Int("max")
+	newest := !c.Bool("oldest") && max > 0 && max < total
+	window := got
+	if newest {
+		window = got[total-max:]
+	}
+	o := tool.Done().Fact("total", total)
+	for _, e := range window {
 		m := e.Message()
 		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})
 		if c.Bool("bodies") {
 			kv = append(kv, "body", tool.Text(m.Body))
 		}
 		o.Item("message", kv...)
+	}
+	if newest {
+		// the skeleton caps from the front, which the newest window already is;
+		// the MORE line is this verb's, naming the older entries the cap hid.
+		o.More = append(o.More, tool.More{Kind: "message", Shown: max, Total: total,
+			Remedy: fmt.Sprintf("%d older: --max 0 lists all", total-max)})
 	}
 	return o
 }
