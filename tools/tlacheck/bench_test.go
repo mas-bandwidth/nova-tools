@@ -253,12 +253,9 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 	dir := filepath.Join(t.TempDir(), "o")
 
 	r := do(e, out, errs, "run", "--root", root, "--dir", dir, "--bench", "vision", "--jar", f.jar, "--trough-poll", "20s")
-	if r.code != 0 {
-		t.Fatalf("%+v", r)
-	}
-	if len(*slept) != 2 || (*slept)[0] != 20*time.Second {
-		t.Errorf("slept %v, want two polls of 20s while the load was 70 and 60 (limit 51.2)", *slept)
-	}
+	require.Equal(t, 0, r.code)
+	require.Len(t, *slept, 2)
+	assert.Equal(t, 20*time.Second, (*slept)[0])
 	want := [][]string{}
 	for _, g := range []struct {
 		name string
@@ -269,12 +266,9 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 				"--group", g.name, "--shards", fmt.Sprint(g.n), "--shard", fmt.Sprint(i), "--workers", "2", "--timeout", "1m50s"})
 		}
 	}
-	if fmt.Sprint(f.ran) != fmt.Sprint(want) {
-		t.Errorf("ran\n%v\nwant\n%v", f.ran, want)
-	}
-	if len(f.gone) != 1 || f.gone[0] != f.staged[0] {
-		t.Errorf("removed %v, want the staged %v", f.gone, f.staged)
-	}
+	assert.Equal(t, fmt.Sprint(want), fmt.Sprint(f.ran))
+	require.Len(t, f.gone, 1)
+	assert.Equal(t, f.staged[0], f.gone[0])
 	for _, w := range []string{
 		"BENCH OK bench=vision platform=linux-amd64 cpus=64 load=0.50 below=51.20 jar=" + f.jar,
 		"TROUGH OK bench=vision group=alpha case=1/2 load=3.00 below=51.20 waited=40s",
@@ -282,24 +276,21 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 		"CASE OK config=MCABroken.cfg result=PASS",
 		"MERGE OK runs=4 records=4 out=" + filepath.Join(root, "tla", tlc.RunsFile),
 	} {
-		if !strings.Contains(r.stdout, w) {
-			t.Errorf("stdout lacks %q:\n%s", w, r.stdout)
-		}
+		assert.Contains(t, r.stdout, w)
 	}
 	e2, out2, errs2 := testEnv(t, nil)
-	if g := do(e2, out2, errs2, "groups", "--root", root, "--stale"); g.code != 0 || g.stdout != "[]\n" {
-		t.Errorf("after the bench run the records are not current: %+v", g)
-	}
+	g := do(e2, out2, errs2, "groups", "--root", root, "--stale")
+	require.Equal(t, 0, g.code)
+	assert.Equal(t, "[]\n", g.stdout)
 	for _, l := range strings.Split(strings.TrimSpace(r.stdout), "\n") {
-		if !eventRE.MatchString(l) {
-			t.Errorf("not an event: %q", l)
-		}
+		assert.Regexp(t, eventRE, l)
 	}
 	// Run again: nothing is stale, so the bench is not reached.
 	e3, out3, errs3, _ := benchEnv(t, f, nil)
-	if again := do(e3, out3, errs3, "run", "--root", root, "--dir", filepath.Join(t.TempDir(), "o"), "--bench", "vision", "--jar", f.jar); again.code != 0 || again.stdout != "BENCH OK bench=vision stale=0 records="+filepath.Join(root, "tla", tlc.RunsFile)+"\n" || len(f.staged) != 1 {
-		t.Errorf("a run with nothing stale: %+v staged %v", again, f.staged)
-	}
+	again := do(e3, out3, errs3, "run", "--root", root, "--dir", filepath.Join(t.TempDir(), "o"), "--bench", "vision", "--jar", f.jar)
+	require.Equal(t, 0, again.code)
+	assert.Equal(t, "BENCH OK bench=vision stale=0 records="+filepath.Join(root, "tla", tlc.RunsFile)+"\n", again.stdout)
+	require.Len(t, f.staged, 1)
 }
 
 // TestRunOnABenchRefusesWhatIsNotARecordMachine: a bench whose jar is not
