@@ -477,6 +477,17 @@ func (t *Tool) names() []string {
 	return names
 }
 
+// actingFlag reports whether a shown verb takes the acting name, under either
+// spelling: the banner states the one precedence rule for it once.
+func (t *Tool) actingFlag() bool {
+	for _, v := range t.shown() {
+		if v.flags().actor != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Banner is what `help` prints: what, how, usage, the standard flags, the exit
 // codes, and the example block last (docs/ONBOARDING.md point 1).
 func (t *Tool) Banner() string {
@@ -520,6 +531,12 @@ func (t *Tool) Banner() string {
 		why = t.NoJSON
 	}
 	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
+	if t.actingFlag() {
+		// One sentence, once, for the flag whose value is a name (STANDARD §2:
+		// one shape across the set): the two spellings are one flag, and the
+		// value comes from the flag, then the environment, then the login.
+		b.WriteString("The acting name is one flag, --as (alias --actor): the flag, then the environment, then the login.\n\n")
+	}
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	b.WriteString("example:\n")
 	for _, v := range t.shown() {
@@ -543,8 +560,14 @@ func lines(s string) []string {
 // call parses one verb's flags, runs it, caps its listing, and renders its Out.
 func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	f := v.flags()
+	args, conflict := f.actorArgs(args)
 	c := &Call{Ctx: ctx, Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{},
 		token: strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))}
+	if conflict != "" {
+		o := Refuse(conflict)
+		o.Remedy = t.Name + " " + v.Name + " -h"
+		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
+	}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
 		o := Refuse(flagProblems(&v, f, args, err)...)
 		o.Remedy = t.Name + " " + v.Name + " -h"
@@ -628,7 +651,6 @@ func flagProblems(v *Verb, f *Flags, args []string, err error) []string {
 			out = append(out, m)
 		}
 	}
-	isFlag := func(a string) bool { return len(a) > 1 && a[0] == '-' }
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" || !isFlag(a) {
@@ -683,8 +705,83 @@ func (v Verb) flags() *Flags {
 	if !f.prints {
 		f.Bool("json", false, "print the result as one JSON object instead of lines")
 	}
+	f.actorSpellings()
 	return f
 }
+
+// actorSpellings makes the acting name one flag: whichever of `as` and
+// `actor` the verb declared is the canonical spelling and the other is its
+// alias, and the help's flag list names the alias beside it (STANDARD §2: the
+// same flag means the same thing in every tool). A verb that declares both
+// spellings itself is left as it is.
+func (f *Flags) actorSpellings() {
+	as, actor := f.Lookup("as"), f.Lookup("actor")
+	switch {
+	case as != nil && actor == nil:
+		f.actor, f.alias = "as", "actor"
+		as.Usage = aliasWants(as.Usage, "actor")
+	case actor != nil && as == nil:
+		f.actor, f.alias = "actor", "as"
+		actor.Usage = aliasWants(actor.Usage, "as")
+	}
+}
+
+// aliasWants adds the other spelling to a flag's description, so the help's
+// flag list reads `--as <string>  the acting name (alias --actor)`.
+func aliasWants(wants, alias string) string {
+	return strings.TrimRight(wants, " ") + " (alias --" + alias + ")"
+}
+
+// actorArgs rewrites the acting-name flag's alias spelling to the one the verb
+// declared, so `--as` and `--actor` are one flag (STANDARD §2: the same flag
+// means the same thing in every tool). It returns the words to parse and, when
+// both spellings were given with different values, the refusal naming both. A
+// verb that declares neither spelling is returned unchanged.
+func (f *Flags) actorArgs(args []string) ([]string, string) {
+	if f.actor == "" {
+		return args, ""
+	}
+	out := make([]string, 0, len(args))
+	var canonVal, aliasVal string
+	var canonSeen, aliasSeen bool
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !isFlag(a) {
+			out = append(out, args[i:]...) // the terminator, or the first argument
+			break
+		}
+		name, inline, hasInline := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if name == f.actor || name == f.alias {
+			v, has := inline, hasInline
+			if !has && i+1 < len(args) {
+				v, has = args[i+1], true
+				i++
+			}
+			if name == f.actor {
+				canonSeen, canonVal = true, v
+			} else {
+				aliasSeen, aliasVal = true, v
+			}
+			out = append(out, "--"+f.actor)
+			if has {
+				out = append(out, v)
+			}
+			continue
+		}
+		out = append(out, a)
+		if fl := f.Lookup(name); fl != nil && !hasInline && !boolFlag(fl) && i+1 < len(args) {
+			out = append(out, args[i+1]) // its value, whatever it looks like
+			i++
+		}
+	}
+	if canonSeen && aliasSeen && canonVal != aliasVal {
+		return out, fmt.Sprintf("--%s and --%s are one flag, the acting name, and both were given with different values; give one", f.actor, f.alias)
+	}
+	return out, ""
+}
+
+// isFlag reports whether a word is read as a flag, as the flag package reads it.
+func isFlag(a string) bool { return len(a) > 1 && a[0] == '-' }
 
 // emit fills what the tool knows (the verb, the door) and renders o: lines on
 // stdout when it is OK and on stderr when it is not, but for a verb that ran
@@ -732,6 +829,10 @@ type Flags struct {
 	max, prints bool
 	required    [][2]string
 	checks      []func(c *Call)
+	// actor is the spelling of the acting name the verb declared (`as` or
+	// `actor`), and alias the other one; both mean one flag (actorSpellings).
+	// "" when the verb declares neither.
+	actor, alias string
 }
 
 // Required declares a string flag the verb cannot run without: empty, it is a
