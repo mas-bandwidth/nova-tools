@@ -70,10 +70,13 @@ func OpenRedis(ctx context.Context, addr string, getenv func(string) string) (Re
 	return Redis{C: conn.Client()}, resolved.User, func() { conn.Close() }, nil // ignored: closing at exit, nothing is left to report it to
 }
 
-// Address is the store a verb opens: given (a verb's --redis, whose default
-// is RedisEnv), else the fleet row's bus field read from the sprint store at
-// SprintRedisEnv; with none of the three, a refusal naming all three. The
-// refusal is "" when there is an address.
+// Address is the store a verb opens (SPEC-BUS.md, the config): given (a verb's
+// --redis, whose default is RedisEnv), else the fleet row's bus field read from
+// the sprint store at SprintRedisEnv with the fleet's login; with none of the
+// three, a refusal naming all three. When only the sprint store names the
+// address and no login is available for it, reading the row would be the ACL's
+// NOAUTH, so Address refuses before the dial and names RedisEnv and --redis.
+// The refusal is "" when there is an address.
 func Address(ctx context.Context, given string, getenv func(string) string, fleetBus func(ctx context.Context, addr string) (string, error)) (addr, refusal string) {
 	if strings.TrimSpace(given) != "" {
 		return given, ""
@@ -81,6 +84,9 @@ func Address(ctx context.Context, given string, getenv func(string) string, flee
 	sprint := getenv(SprintRedisEnv)
 	if sprint == "" {
 		return "", "--redis is required: " + RedisEnv + " is unset, and with no " + SprintRedisEnv + " the fleet's bus row (nova-config fleet set --bus <host:port>, then apply) cannot be read either; refusing to guess"
+	}
+	if getenv(redisauth.UserEnv) == "" {
+		return "", "--redis is required: " + RedisEnv + " is unset and " + SprintRedisEnv + " names the sprint store with no fleet login (" + redisauth.UserEnv + " is unset), so its ACL answers the fleet's bus row with NOAUTH before any dial; pass --redis or set " + RedisEnv + " to say where the bus is"
 	}
 	addr, err := fleetBus(ctx, sprint)
 	if err != nil {

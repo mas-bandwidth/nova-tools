@@ -123,7 +123,7 @@ func hookTool(w world) *tool.Tool {
 strict gates require the acting name's role push to be live and proven.
 nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.
 a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.
-the record is in bus Redis; address: --redis, NOVA_BUS_REDIS, else fleet:bus.`,
+record in bus Redis; address: --redis, else NOVA_BUS_REDIS, else fleet:bus at NOVA_SPRINT_REDIS.`,
 		ExitTable: "0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"ARMED", "CHALLENGE", "PUSH", "STATE", "STOP", "DRY-RUN"},
 		Verbs: []tool.Verb{
