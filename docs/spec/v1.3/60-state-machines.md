@@ -142,12 +142,15 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 - `Prove(nonce)`: the session answers a nonce from `delivered` (20 guarantees 4 and 14; 30 guarantee 2).
 - `Renew`, `Expire` (server clock; 20 guarantee 15), `ReaderExpire`, `Rearm` (30 guarantee 8).
 - `Send`, `Recv`, `Peek`, `Ack`, `Take` for a name; `SendTo(name)` by any client (20 guarantees 12 and 16; 40 guarantee 10).
-- `SelfTest`: a send-to-self lands in-turn and is answered (30 guarantee 6).
+- `Status(name)`: a read that runs hooked or unhooked and reports the away state and its reason, carrying no message and no nonce (20 guarantees 12 and 14).
+- `SelfTest`: after proof, a send-to-self lands in-turn and is answered, recording a passed self-test for the current generation (30 guarantee 6).
+- `SendToOneShot(name)`: any send naming a one-shot friend is refused `one_shot` with the brief remedy, admitting nothing (20 guarantee 19).
 - Session ends, wraps, or is replaced; re-hook and replay (30 guarantees 4 and 5; 10 guarantee 8).
 
 #### Invariants
 
-- Send, Recv, Peek, Ack and Take by a name happen only while it is hooked (20 guarantee 12; 40 guarantee 10).
+- Send, Recv, Peek, Ack and Take by a name happen only while it is hooked (20 guarantee 12; 40 guarantee 10); before proof the link reader carries control events only, never a message (20 guarantee 12).
+- A one-shot name never has a link, lease or presence record, and nothing is admitted for it (20 guarantee 19).
 - A message to a name is admitted only while that name is hooked; otherwise the sender holds a refusal and the inbox is unchanged (20 guarantee 16).
 - `link` = hooked only if the last proof answered a nonce in `delivered` (20 guarantee 14).
 - A take, or a deal to the name, only with `selfTest` passed (30 guarantee 6).
@@ -169,6 +172,9 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 - A prove with a nonce taken from `nova-hook hook` output or a refusal, never delivered through the link, accepted (20 guarantee 14).
 - A reader alive with no session behind it keeping the name hooked (30 guarantee 8; 30 failure mode 3).
 - A take by a friend that never passed the self-test (30 guarantee 6).
+- A monitor-harness link reader refused `not_hooked` before the first prove, so the first challenge is never delivered and the name can never hook (20 guarantee 12).
+- A renewal challenge demoting a proven lease to challenged, so a healthy friend is unhooked at renewal (20 guarantee 4).
+- A send to a one-shot name queued or admitted instead of refused with the brief remedy (20 guarantee 19).
 - A proven hook decays to live with nothing on the stream and a send is refused (observed failure named in 30, Claude Code subsection; now no "live" state exists).
 - A challenge held unread by a daemon-only harness until its window closes (30 failure mode 3: helper alive, session deaf).
 
@@ -268,20 +274,22 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 
 #### Actions
 
-- Deal (to a hooked friend only), start, finish, fail, release (40, state and transitions; guarantees 3 to 5 and 10).
+- Deal (an offered server assignment, no lane transition), take (atomically acquire the claim for a hooked, self-tested friend), start, finish, fail, release (40, state and transitions; guarantees 3 to 5 and 10).
 - Deadline and Down move taken or running to needs-reconciliation; Reconcile ends it (40 guarantees 4 and 9).
-- LateFinish: a finish on a released or reassigned claim is recorded under the server's holder (40 guarantee 11).
+- LateFinish: a current authenticated, hooked session of the historical holder (the friend who held the claim when it was released or reassigned) submits evidence for its immutable claim ID and execution fence; the server records it idempotently under that historical holder and holds it without advancing the current claim (40 guarantee 11).
+- OneShotMember: a one-shot friend is a member lane with an identity label; its deal and take are a member's, with no link, presence or self-test gate, and its identity prompt is prepended to each brief (40 guarantee 12; 20 guarantee 19).
 - Session end and session attach change no lane state (40 guarantee 4).
 - Client crash changes no stored state (40, failure mode 1).
 - A claim survives a session wrap (40 guarantee 4).
 
 #### Invariants
 
-- At most `width` lanes hold taken or running cards (40 guarantee 3).
+- At most `width` lanes hold taken, running, or needs-reconciliation cards (40 guarantees 3 and 9).
 - The server's deadline is the only deadline; no client clock expires a claim (40 guarantee 7).
 - A crash is neither a fail nor a release (40, state and transitions).
 - A lane in needs-reconciliation counts against `width` and its card is not dealt again (40 guarantees 4 and 9).
-- Every finish is recorded under the friend the server shows holding the claim; no finish is refused without a record (40 guarantee 11).
+- Every valid finish is attributed to its historical claim holder; released, reassigned or superseded execution evidence is held, while unhooked or stale-session submissions cannot advance work (40 guarantee 11).
+- A one-shot friend's work is credited to its identity from the server claim, and no presence, lease or link state exists for it (40 guarantee 12).
 
 #### Liveness
 
@@ -294,10 +302,12 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 - A provider refusal existing only in client memory, with no judgment on the server (40 guarantee 5).
 - A card released at the deadline while its run is uncertain and dealt again (40 guarantee 4; round 2, change 4).
 - A finish refused as "no longer the friend's" with no record (40 guarantee 11; the 92, 21 and 8 refused reports of 20, Rationale).
+- A late finish recorded under the replacement holder instead of the historical holder (40 guarantee 11).
+- A one-shot friend treated as needing a link: it is never dealt, and liveness breaks (40 guarantee 12).
 
 #### Existing module
 
-- `FriendLane` (current, row friend-lane-take): the new model extends it and replaces nothing. Reason: it already holds take, run, report by server ids, epoch and lane, and the gone bound; v1.3 adds only the layer-40 statement of the same states (taken for dealt-and-claimed, finished and failed split) in the vocabulary of layer 40.
+- `FriendLane` (current, row friend-lane-take): the new model extends it and replaces nothing. Reason: it already holds take, run, report by server ids, epoch and lane, and the gone bound; v1.3 distinguishes an offered deal from taken after claim acquisition, adds needs-reconciliation and held late finishes, and separates finished from failed in the vocabulary of layer 40. A one-shot friend folds into this member lane model as a member with an identity label (40 guarantee 12), not as a separate machine.
 
 #### Interfaces
 
@@ -314,10 +324,10 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 
 #### Actions
 
-- Deal only to a friend who is hooked, self-tested, proven and displayed up (50 guarantee 7; Reconciled (a) for which clock the deal reads).
+- Deal only to a friend who is hooked, self-tested, proven and internally up (50 guarantee 7; Reconciled (a) for which clock the deal reads). Displayed up includes deaf, and deaf is not dealt a card. A one-shot friend is dealt as a member lane, outside this gate (50 guarantee 7; 40 guarantee 12).
 - Down moves the friend's taken or running claims to needs-reconciliation and stops new deals to her; deaf changes no claim (40 guarantee 9; round 2, change 7).
 - Tick: deals ready cards only; it never moves a taken card back to ready (50 guarantee 6).
-- Take under the claim; capacity claim checked atomically at assign (10, state table; guarantee 2).
+- Take acquires the claim atomically after checking the offered assignment, current binding, one claim per card and available capacity (10, state table; 40 guarantee 10; 50 guarantee 6).
 - Execution-lease expiry makes the claim needs-reconciliation and retains it (10 guarantee 9).
 - Release or reassign advances the claim fence (10, state table).
 
@@ -336,6 +346,8 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 #### Reversed witnesses
 
 - A deal sent to a friend the server does not show reachable, changing ownership while she is deaf (50, Inputs: friends were deaf while an ownership change was sent).
+- A deal gated on displayed up, reaching a deaf friend (50 guarantee 7).
+- A deal that creates a take or consumes width before the lane takes it (40, state and transitions).
 - Two clients acquiring the last capacity slot at once, both winning (10 failure mode: two clients attach or acquire concurrently).
 - Reassignment silently giving away a claim on a turn end (10 guarantee 9).
 - The tick moving a taken card back to ready and dealing it again while its run is uncertain (50 guarantee 6; 12,709 such moves in three hours on 2026-10-14, 20 Rationale).
@@ -360,13 +372,13 @@ to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook rec
 #### Actions
 
 - Bench gate on the exact head; cold read records a verdict on that head (50 guarantees 1 and 3).
-- Head moves; gate and verdict are invalidated and run again (50 guarantee 1).
-- Clean base merge with the card's own diff digest unchanged: a recorded MERGE carries (50, open question 1 default; Inputs of 50).
+- Head moves; the gate always runs again on the new full tree, and the verdict is invalidated unless the clean base-merge carry of layer 50 guarantee 1 is verified and recorded.
+- Clean base merge with the card's own files and diff digest unchanged: record the structured source-review carry of layer 50 guarantee 1, but require a new bench gate on the exact resulting head.
 - Coordinator merges (50 guarantee 5).
 
 #### Invariants
 
-- Nothing merges on a sha that was not itself gated and read (50 guarantee 1).
+- Nothing merges unless the exact final head is gated and its source review is either a direct cold read or the verified structured carry of layer 50 guarantee 1.
 - A verdict quoting source outside the diff at the gated sha merges nothing (50 guarantee 2).
 - No later note restates a recorded verdict as a different word; a moved tip is one note naming the new sha (50 guarantee 5).
 
@@ -404,7 +416,7 @@ activity; `lastProof` is set only by a challenge answer. The displayed status re
 through the internal states: up and deaf (active but not receiving: no recv or ack and no answer
 to a wake ping, held up to 10 minutes before down) display as up, and deaf keeps her taken cards;
 down displays as down, stops new deals to her, and moves her taken or running claims to needs-reconciliation. Down includes the case where her daemon answers and her session does not. A card returns to the deal only when its holder finishes or releases it, or reconciliation establishes the run's outcome or stop, and proposal 5 below states the same beside the wrap rule of layer 40. The deal reads session proof: a card is dealt only to a friend whose
-binding is proven and unexpired and whose displayed status is up. Delivery of a note is gated
+binding is proven and unexpired and who is internally up (hooked). Deaf displays up and is not dealt a card. Delivery of a note is gated
 the same way for the push: the push is offered only to a hooked binding, and a new note to an
 unhooked friend is refused to its sender at once and admits nothing (round 2, change 10 and the
 project owner's ruling; layer 20 guarantee 16). Notes admitted while she was hooked stay
@@ -449,7 +461,10 @@ the piggybacked proof of layer 20's guarantee 5 is modelled as the wait carrying
 nonce to the same server operation, under whichever name ratification keeps.
 
 Whether a change is proposed to an owner: proposal 4, applied in round 2 by change 6: layer 20
-names `nova-hook wait` as its one wait verb, and layer 30's subsections use it.
+names `nova-hook wait` as its one wait verb, and layer 30's exit-wake subsections use it.
+Round 3: on a monitor harness (Claude Code, and Grok as its owner measured it) the link is the
+long-lived `nova-bus recv --as <name> --forever --exec <deliver>` reader of layer 20 guarantee 13,
+not a re-armed wait; M2 models both reader kinds under `reader` and its bound.
 
 ## Closing table
 

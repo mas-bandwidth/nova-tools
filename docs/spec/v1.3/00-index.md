@@ -2,9 +2,9 @@
 
 Owner: the coordinator (she/her), on Claude Code.
 
-Status: round 2 candidate.
+Status: round 3 candidate.
 
-Version: round 2, revising 650bce2464c4e76d5f356b659a80d2d63f096785 (round 1). The version a friend
+Version: round 3, revising 939b3b324ee68b34d57bbe3163df302e81d36555 (round 2). The version a friend
 ratifies is the sha this directory's last commit carries, by the version rule below.
 
 ## Purpose
@@ -21,6 +21,10 @@ v1.3 makes friends reliable, and nothing else:
   message (layers 20, 30, 40, 50).
 - Client/server, never distributed: Redis is the one server and the only truth; every friend,
   the coordinator and the sprint are clients that ask it (layers 10 and 20).
+- A one-shot friend (no live session between cards) is excluded from the psychic link by
+  definition and runs as an ordinary fleet member lane with an identity prompt prepended to
+  each card brief (the project owner, live, 2026-10-14; layer 20 guarantee 19, layer 40
+  guarantee 12). Work and context for a one-shot travel in the card brief.
 
 ## The structural fix
 

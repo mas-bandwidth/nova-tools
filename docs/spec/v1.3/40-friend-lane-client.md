@@ -20,6 +20,10 @@ In:
   once, and that lane is finished failed.
 - The lane hears the bus with nova-sprint not installed. nova-sprint only deals cards and
   reads the finish records back.
+- A one-shot friend runs as an ordinary fleet member lane with an identity prompt, not as a
+  friend lane (guarantee 12). The project owner, live, 2026-10-14: "just make one shot friends,
+  exactly the same code that already works in the fleet, just with an extra prompt at the
+  front", which "removes all the complexity around one-shot friends being their own code path."
 
 Out (later releases):
 
@@ -34,7 +38,7 @@ Out (later releases):
 ## Guarantees
 
 Numbered, each one testable. Each one holds with nova-sprint not installed, except 4, 5 and 9
-to 11, which are the card records nova-sprint deals and this client only reports.
+to 12, which are the card records nova-sprint deals and this client only reports.
 
 1. **No local truth.** Stop the client and start another. The server's records of what is
    taken, running, and finished are unchanged, and the new client shows those records. The
@@ -72,13 +76,30 @@ to 11, which are the card records nova-sprint deals and this client only reports
     unhooked friend is refused with the link remedy and changes no claim. Observation: unit test
     with a fake store: an unhooked friend's take is refused and the card stays dealt; after arm,
     prove and self-test the take succeeds.
-11. **A finished report stays its author's.** A finish is recorded under the friend the server
-    shows holding the claim, read from the server claim and never from a branch suffix or a name
-    the client supplies. A finish that arrives after its claim was released or reassigned is
-    recorded as a late finish under that same friend and held for reconciliation; it is never
-    refused without a record, and it merges nothing on its own. Observation: release a claim,
+11. **A finished report stays its author's.** A finish names its immutable claim ID and
+    execution fence; the server attributes it to that historical claim holder, never to a
+    replacement holder, branch suffix or client-supplied author name. After the historical
+    holder (the friend who held the claim when it was released or reassigned) re-hooks, an
+    authenticated current session may submit evidence for a released, reassigned or superseded
+    execution fence; the server records it idempotently as a late finish under that historical
+    holder and holds it for reconciliation, without advancing the current claim or merging
+    anything; unhooked and stale-session submissions still receive the link or session refusal
+    and may be retried through the current binding. Observation: release a claim,
     then finish it from the old holder: one late-finish record exists under her name, and no
     "no longer the friend's" refusal leaves the finish unrecorded.
+12. **A one-shot friend is a member lane with an identity prompt.** A one-shot friend (no live
+    session between cards; layer 10, Friend record) is not a friend lane of this layer. It runs
+    as an ordinary fleet member lane: the same server-held take, run and finish loop fleet
+    members use, client/server, with the same lane client. Its only per-friend configuration is
+    an identity prompt (name, pronouns, voice) prepended to each card brief, the harness, the
+    model and the account or key, all server-held rows cached by the client (layer 10
+    guarantee 15). It has no friend daemon, presence pings, wake files or friend-specific lane
+    parser; those paths are deleted, not kept beside the member path. It is excluded from the
+    psychic link by definition (layer 20 guarantee 19), so guarantee 10 does not gate its take;
+    work and context for it travel in the card brief. Its work is credited to its identity from
+    the server claim, so its history stays its own. Observation: unit test with a fake store and
+    time passed in: a one-shot friend row is dealt and finishes through the member path, its
+    identity prompt is prepended to the brief, and no presence state exists for it.
 
 The lane carries every deal, take, finish, judgment and read over the psychic link of layer 20
 (guarantees 12 to 18), and asks Redis, the one server, for everything it shows (layer 10
@@ -92,7 +113,7 @@ finished reports refused (the Grok friend 92, the Antigravity friend 21, a one-s
 A lane is one of these. The server stores the state. The client displays it.
 
 - `idle`: the client is up and holds no card.
-- `taken`: the server has recorded the deal to this friend, and the run has not started.
+- `taken`: the server has accepted the lane's take and recorded its claim for this friend, and the run has not started.
 - `running`: the run has started.
 - `finished`: the run ended and the result is on the server.
 - `failed`: the run ended without a result, and the judgment is on the server.
@@ -103,12 +124,14 @@ A lane is one of these. The server stores the state. The client displays it.
 
 Events:
 
-- `Deal`: `idle` to `taken`. The server does this, only to a hooked friend (guarantee 10). A
-  client with `width` lanes already `taken`, `running` or `needs-reconciliation` is not dealt
-  another.
+- `Deal` records an offered card in the server assignment and leaves the lane `idle`; `Take`
+  moves `idle` to `taken` only after the server atomically checks the offered assignment,
+  current hooked and self-tested binding, one claim per card and available width, then records
+  the claim. A client with `width` lanes already `taken`, `running` or `needs-reconciliation` is
+  not dealt another.
 - `Start`: `taken` to `running`. The client does this by beginning the run, and the server
   records it.
-- `Finish`: `running` to `finished`. The result is on the server before the run's process exits, recorded under the friend the server shows holding the claim. A finish that arrives after its claim was released or reassigned is recorded as a late finish under that same friend and held for reconciliation; it is never refused without a record, and it merges nothing on its own.
+- `Finish`: `running` to `finished`. The result is on the server before the run's process exits, attributed by its immutable claim ID and execution fence under guarantee 11. After the historical holder (the friend who held the claim when it was released or reassigned) re-hooks, an authenticated current session may submit evidence for a released, reassigned or superseded execution fence; the server records it idempotently as a late finish under that historical holder and holds it for reconciliation, without advancing the current claim or merging anything; unhooked and stale-session submissions still receive the link or session refusal and may be retried through the current binding.
 - `Fail`: `running` to `failed`. One judgment is on the server before the process exits.
 - `Deadline` and `Down`: `taken` or `running` to `needs-reconciliation`. Only the server does
   this, at the execution deadline on its clock or when layer 20 reads the friend down.

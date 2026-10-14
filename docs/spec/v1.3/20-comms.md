@@ -20,6 +20,8 @@ In:
 - 100% standalone operation within `nova-tools`, fully functional with `nova-sprint` uninstalled.
 - The psychic link: the push into each friend's live session, mandatory for every bus verb, and
   the one transport for every sprint, friend and coordinator message (guarantees 12 to 18).
+- The exclusion of one-shot friends from the link, with a send to one refused at once
+  (guarantee 19).
 
 Out (later releases):
 
@@ -33,10 +35,10 @@ Out (later releases):
 Numbered, each one testable. Every one holds with `nova-sprint` not installed.
 
 1. **Standalone completeness**: Every comms binary (`nova-bus`, `nova-hook`, `nova-wake`) installs, runs, and passes its complete test suite in an environment where `nova-sprint` is absent and unreferenced.
-2. **Single authoritative lease**: Exactly one presence record exists per friend in the server truth (`lease:<friend>`), holding status `AWAY`, `CHALLENGED`, or `PROVEN`. No client maintains private presence claims, wake files, or secondary heartbeat ledgers.
+2. **Single authoritative lease**: Exactly one presence record exists per live friend (a one-shot friend has none; guarantee 19) in the server truth (`lease:<friend>`), holding status `AWAY`, `CHALLENGED`, or `PROVEN`. No client maintains private presence claims, wake files, or secondary heartbeat ledgers.
 3. **No silent decay**: A lease in `PROVEN` status never transitions to an unproven or degraded state without either emitting an explicit challenge notice to the friend's active stream or logging a timestamped, structured expiration reason (`lease_expired`) in the server record.
-4. **Challenge-response atomicity**: Generating a challenge nonce transitions lease status to `CHALLENGED` with a finite challenge deadline ($T_{challenge}$). Submitting the matching nonce via `nova-hook prove` or `nova-hook wait` atomically transitions the lease to `PROVEN`, extends the lease expiration deadline by $T_{lease}$, and clears the challenge.
-5. **Zero-polling reactive wake**: `nova-hook wait --as <friend> --nonce <nonce> [--timeout <dur>]` blocks synchronously on the server notification channel. Upon message delivery or challenge issuance, it writes arrival JSON and the next valid nonce to stdout and exits with status 0 within 50ms of the server event.
+4. **Challenge-response atomicity**: Generating an initial challenge nonce transitions lease status to `CHALLENGED` with a finite challenge deadline ($T_{challenge}$); issuing a renewal challenge preserves `PROVEN` and its existing lease deadline until a timely answer renews it or that deadline expires. Submitting the matching nonce via `nova-hook prove` or `nova-hook wait` atomically transitions the lease to `PROVEN`, extends the lease expiration deadline by $T_{lease}$, and clears the challenge.
+5. **Zero-polling reactive wake**: `nova-hook wait --as <friend> [--nonce <nonce>] [--timeout <dur>]` blocks synchronously on the server notification channel. Upon message delivery or challenge issuance, it writes arrival JSON and the next valid nonce to stdout and exits with status 0. The wait returns on the server event, with no poll interval. A 50ms bound is a bench measurement, not a unit-test failure.
 6. **Atomic multi-recipient delivery**: Sending a message to multiple recipients (`--to <a,b>` and optional `--cc <c,d>`) enqueues immutable, identically attributed message records into every recipient's inbox queue within a single atomic server transaction. If any recipient is invalid or unknown, the entire send is refused with status 2 and zero messages are enqueued.
 7. **Verbatim quote anchor validation**: When `--anchor-repo <path> --anchor-commit <sha> --quote <text>` is specified on `nova-bus send`, the tool extracts the patch for `<sha>` in `<path>` and verifies that `<text>` exists verbatim within the diff lines. If the quote is missing, truncated, or from a different commit, the send is refused with status 2 and no message is sent.
 8. **Idempotent acknowledgment**: `nova-bus ack --as <friend> --id <msg-id>` transitions the message status in the friend's inbox to `ACKED`. Repeated invocations for an already acknowledged ID succeed with exit code 0 and produce no duplicate state changes or side effects.
@@ -45,18 +47,21 @@ Numbered, each one testable. Every one holds with `nova-sprint` not installed.
 11. **Bounded message size and storage safety**: Message bodies are capped at 64 KiB. Any attempt to send a payload exceeding 65,536 bytes is refused at ingress with exit code 2. Acknowledged messages are pruned after a configurable retention horizon ($T_{retain}$), preventing unbounded storage growth.
 
 Guarantees 12 to 18 are the psychic link, from the project owner's rulings of 2026-10-14 (see
-Rationale below). A name is **hooked** when its layer 10 binding is `PROVEN`, its lease deadline
+Rationale below); guarantee 19 excludes one-shot friends from it. A name is **hooked** when its layer 10 binding is `PROVEN`, its lease deadline
 is in the future on the server clock, and its last proof answered a challenge that was delivered
 through its link. Every other name is **unhooked**.
 
 12. **Nothing works on the bus until the name is hooked.** Every verb that sends, receives, reads
-    or acknowledges for a name (`nova-bus send`, `recv`, `peek`, `ack`, `status --as`, and
+    or acknowledges a message for a name (`nova-bus send`, `recv`, `peek`, `ack`, and
     `nova-hook wait` carrying messages) refuses for an unhooked name with the envelope of
     guarantee 10, `refusal: not_hooked`, and a remedy naming the exact link recipe for that
-    name's harness (layer 30 guarantee 7). Only the verbs that arm and prove the link run
-    unhooked: `nova-hook hook`, the link reader before proof (which carries control events only:
-    the challenge and its refusals, never a message), `nova-hook prove`, `nova-hook away`, help
-    and version. This is the same gate nova-sprint keeps until a caller hooks in. Observation:
+    name's harness (layer 30 guarantee 7), while `nova-bus status --as` always runs as a read
+    and reports the away state and its reason. Only the verbs that arm and prove the link run
+    unhooked: `nova-hook hook`, the link reader before proof (`nova-hook wait`, or
+    `nova-bus recv --as <name> --forever --exec <deliver>` on a monitor harness; it carries
+    control events only: the challenge and its refusals, never a message, and it refuses
+    `not_hooked` only when it has no control event to carry), `nova-hook prove`,
+    `nova-hook away`, help and version. This is the same gate nova-sprint keeps until a caller hooks in. Observation:
     unit test with a fake store and time passed in: an unhooked name's send, recv, peek and ack
     each exit 2 with `not_hooked` and the recipe; after arm and prove each succeeds.
 13. **The link is the push into the live session.** A name's psychic link is one bounded reader
@@ -84,7 +89,8 @@ through its link. Every other name is **unhooked**.
     the whole send is refused to the sender with `refusal: friend_not_hooked`, naming each such
     recipient and its away reason, and nothing is admitted. No send to an unhooked friend
     queues, silently or otherwise. Messages admitted while a recipient was hooked stay pending
-    and replay when she hooks in again (guarantee 9). Observation: unit test: a send to a name
+    and replay when she hooks in again (guarantee 9). A one-shot recipient is refused
+    `one_shot` instead (guarantee 19). Observation: unit test: a send to a name
     whose lease lapsed one tick earlier exits 2 with `friend_not_hooked` and her inbox depth is
     unchanged.
 17. **Presence has two clocks and three internal states.** Over layer 10's `last_heard` and
@@ -105,6 +111,16 @@ through its link. Every other name is **unhooked**.
     guarantee 14); each party is a client of it, and no client keeps a lease, nonce, wake file
     or presence copy of its own. Observation: with the client's runtime directory deleted
     between two pushes, the second push lands in the session exactly as the first did.
+19. **A one-shot friend is not on the link.** A name whose layer 10 identity is one-shot (no
+    live session between cards) is excluded from the psychic link by definition (the project
+    owner, live, 2026-10-14): it has no lease, challenge, presence, inbox or link reader, and
+    guarantees 12 to 17 do not apply to it. `nova-hook hook` for it is refused, and every send
+    naming it, alone or among other recipients, is refused at once with the envelope of
+    guarantee 10, `refusal: one_shot`, and the remedy "<name> is a one-shot: put it in the next
+    card's brief"; nothing is admitted and nothing queues. Observation: unit test with a fake
+    store and time passed in: a send to a one-shot name exits 2 with `one_shot` and that remedy,
+    no inbox, lease or presence key exists for that name, and a send naming a hooked friend and
+    the one-shot together admits nothing.
 
 ## State and transitions
 
@@ -217,7 +233,7 @@ Layer 20 requires Layer 10 to provide:
 
 Layer 20 exposes the following unified CLI commands and libraries to higher layers:
 
-1. `nova-hook hook --as <friend> [--role <r>] [--json]`:
+1. `nova-hook hook --as <friend> --harness <h> [--role <r>] [--json]`:
    - Arms the link: enters the friend into the presence registry and prints the link recipe for the harness (`--harness <h>`, layer 30). It never prints a nonce; the challenge is delivered only through the link (guarantee 14).
 2. `nova-hook prove --as <friend> --nonce <n> [--json]`:
    - Validates challenge nonce; transitions lease to `PROVEN` and extends lease TTL.
@@ -228,7 +244,7 @@ Layer 20 exposes the following unified CLI commands and libraries to higher laye
    - `nova-bus recv --as <friend> --forever --exec <deliver>` is the link on monitor harnesses (guarantee 13).
 5. `nova-bus send --as <sender> --to <recipients> [--cc <recipients>] --subject <s> --body <b> [--anchor-repo <dir> --anchor-commit <sha> --quote <q>] [--json]`:
    - Submits message to the bus with optional quote validation.
-6. `nova-bus recv --as <friend> [--all] [--ack] [--json]`:
+6. `nova-bus recv --as <friend> [--all] [--ack] [--forever --exec <deliver>] [--json]`:
    - Retrieves pending messages, optionally acknowledging them in the same transaction.
 7. `nova-bus peek --as <friend> [--json]`:
    - Non-destructive inspection of pending inbox messages without altering message state.
@@ -248,7 +264,9 @@ daemon polls of the bus and the sprint; ping/pong session checks and their nonce
 files and the separate `nova-wake` wake ledger as a delivery path; the friend daemon's local
 inbox, outbox, presence file, lane files and epoch flag; the local nudge-debt ledger; the
 seat's per-minute goal nudge as a delivery path; the friend-sync roster loop; queue-for-later
-sends to unhooked friends; and the tick's take-back of taken cards to redeal them.
+sends to unhooked friends; the tick's take-back of taken cards to redeal them; and the one-shot
+friend path (the friend daemon for one-shots, its presence pings and its friend-specific lane
+parser), which layer 40 guarantee 12 replaces with an ordinary member lane.
 
 ## Rationale (round 2)
 

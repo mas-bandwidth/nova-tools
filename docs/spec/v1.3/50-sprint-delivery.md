@@ -16,7 +16,8 @@ In:
 - The merge gate, in order: the Linux bench gate on the exact head, then a cold reader's
   verdict, then the coordinator's merge. No step substitutes for another.
 - Merge candidates are sprint branches only. A card is a candidate when the delivery branch its deal
-  names is pushed and its head is the sha that was gated and read.
+  names is pushed and its head is the sha that was gated and read, or reached by the verified
+  clean base-merge carry of guarantee 1.
 
 Out (later releases):
 
@@ -36,17 +37,21 @@ Out (later releases):
 
 Numbered, each one testable.
 
-1. **Exact head, one fence.** The Linux bench gate runs on the exact head sha that will be
-   merged, and the gate, the cold read and the merge all name that same sha. Any move of the
-   head — a new commit, a rebase, a base merge that changes the card's own files — invalidates
-   the gate and the verdict, and both run again on the new head. There is one fence: nothing
-   crosses to merge on a sha that was not itself gated and read.
+1. **Exact head, one fence.** The Linux bench gate runs on the exact final head sha that will be
+   merged; source review names that head directly or reaches it through a structured clean
+   base-merge carry naming the original verdict, old and new head, old and new base, and
+   unchanged card diff digest. Every head move invalidates the bench gate and requires it to run
+   on the new full tree; it also invalidates the verdict unless the only move is a clean base
+   merge that leaves the card's own files and diff digest unchanged, verified and recorded at
+   the fence. There is one fence: the exact final head must be gated, and its source review must
+   be either a direct cold read or the verified structured carry above.
 2. **A verdict is about the diff it names.** A cold reader's MERGE quotes at least one changed
    hunk from the candidate's diff verbatim, and the merge step checks that every quoted path is
    in that diff at the gated sha. A verdict that quotes source not in the diff, or files that do
    not exist at that sha, is not a verdict on this candidate and cannot merge it.
-3. **Green means the gated build.** The cold reader's MERGE stands beside a green build of the
-   exact head on the Linux bench: the same sha that was read is the sha that built green. A
+3. **Green means the gated build.** The cold reader's MERGE, or its verified structured carry
+   under guarantee 1, stands beside a green Linux bench build of the exact final head; no carry
+   reuses an older head's build result. A
    green build of any other sha, and a correct sha copied into prose, are not proof of a read
    or of a build.
 4. **Race is checked, not assumed.** Before the merge, the head is checked against its base
@@ -55,9 +60,10 @@ Numbered, each one testable.
    both shas it compared.
 5. **Only the coordinator merges.** Authors push candidates; the cold reader records MERGE,
    FIX or HOLD on the head sha; the coordinator alone performs the merge, and only on a
-   candidate sprint branch whose gate and verdict both name the current head. No later note
-   restates a recorded verdict as a different word; a moved tip is one note naming the new sha,
-   and the gate and read run again under guarantee 1.
+   candidate sprint branch whose gate names the current head and whose verdict either names it
+   directly or has the verified structured carry of guarantee 1. No later note restates a
+   recorded verdict as a different word; a moved tip is one note naming the new sha, its gate
+   runs again, and its read runs again unless guarantee 1 permits a verified structured carry.
 6. **One claim per card; no take-back.** One card holds at most one active or
    needs-reconciliation claim. The server refuses a second deal of a card under such a claim,
    and the card returns to the deal only on a finish, a release, or a completed reconciliation
@@ -68,8 +74,10 @@ Numbered, each one testable.
    of working-to-ready moves is zero.
 7. **Deal only to a hooked friend.** A card is dealt only to a friend who is hooked into her
    psychic link and has passed the self-test of layer 30 guarantee 6, whose binding is proven
-   and unexpired, and whose displayed status is up; never to a deaf or down friend (layer 20
-   guarantees 12 and 17). Observation: unit test: with one friend hooked, one deaf and one
+   and unexpired, and whose internal state is up; never to a deaf or down friend (layer 20
+   guarantees 12 and 17). Displayed status is not the gate: deaf displays up. A one-shot friend
+   is not on the link (layer 20 guarantee 19); it is dealt as an ordinary fleet member lane
+   (layer 40 guarantee 12), and this gate does not apply to it. Observation: unit test: with one friend hooked, one deaf and one
    down, a deal of three cards lands only on the hooked friend, and the rest stay with the
    server.
 8. **Every sprint message rides the link.** Every deal, take, finish, read, judgment and push
@@ -80,7 +88,10 @@ Numbered, each one testable.
    raised as a judgment to the coordinator, never queued. Observation: with nova-sprint
    running against a fake store, every judgment and deal it emits appears as a bus message to a
    hooked recipient, and one addressed to an unhooked friend produces a `friend_not_hooked`
-   refusal and a coordinator judgment.
+   refusal and a coordinator judgment. A one-shot friend is the one exception, by definition:
+   it has no link, so what it needs travels in its card's brief, and a sprint message addressed
+   to it is refused `one_shot` with the remedy to put it in the next card's brief (layer 20
+   guarantee 19).
 
 Rationale (round 2): in the three hours before 14:24Z on 2026-10-14 the sprint moved friend
 cards from working back to ready by the tick deal 12,709 times, and finished friend reports
@@ -104,8 +115,9 @@ one-shot dsh friend 8). Guarantees 6 to 8 make the take-back and the unheard dea
 For each: how it is detected, and how it is recovered.
 
 1. **Stale verdict.** The head moved after the cold read. Detected by comparing the verdict's
-   sha to the branch's current head at the fence. Recovered by re-gating and re-reading the new
-   head; the old verdict stays recorded against its own sha and merges nothing.
+   sha to the branch's current head at the fence. Recovered by gating the new full tree and
+   either re-reading it or recording the clean base-merge carry allowed by guarantee 1; the old
+   verdict remains bound to its original sha.
 2. **Verdict about the wrong source.** A quoted hunk or path is absent from the candidate's
    diff at the gated sha. Detected by the merge step's quote check (guarantee 2). Recovered by
    returning the candidate for a fresh cold read of the actual diff; the merge does not proceed

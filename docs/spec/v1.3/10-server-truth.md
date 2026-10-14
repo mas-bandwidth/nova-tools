@@ -104,9 +104,9 @@ ready. Larger payloads do not justify another writer; their durable bodies remai
     authenticated activity of that identity (a bus message, a take, a finish, a push, a pull
     request, a beat, a proof), and `last_proof`, advanced only by a session's answer to the
     current challenge (guarantee 4). Activity never advances `last_proof` or extends a lease.
-    Proof, push delivery and claim acquisition read `last_proof` and the lease deadline alone;
-    a displayed up or down is a projection of both clocks that the layers above define, and it
-    never feeds back into proof. Observation: with a fake clock, a stream of sends and takes with
+    Proof reads `last_proof` and the lease deadline alone; push delivery and claim acquisition
+    also read the name's hooked state (guarantee 14), and a displayed up or down is a projection
+    of both clocks that the layers above define and never feeds back into proof. Observation: with a fake clock, a stream of sends and takes with
     no challenge answer leaves `last_proof` unchanged and the lease expires on time, while
     `last_heard` advances with each.
 14. **Client/server, never distributed: Redis is the server.** Redis is the one server and the
@@ -139,7 +139,7 @@ never guesses how to merge the caller's intent.
 | Record | States / fields | Events and effect |
 |---|---|---|
 | Server | recovering, serving, unavailable; epoch; increasing revision | Start recovers committed rows and receipts before serving. A persistence failure stops admission. Restart conservatively invalidates live proofs and execution leases and emits their recovery reasons; durable claims and pending messages remain. |
-| Friend | enrolled, disabled; stable identity | Enroll publishes one identity. Disable fences its binding and claims against new progress without deleting evidence. Re-enable requires a fresh binding/proof. |
+| Friend | enrolled, disabled; stable identity; kind: live or one-shot | Enroll publishes one identity. Disable fences its binding and claims against new progress without deleting evidence. Re-enable requires a fresh binding/proof. A live friend has a session and binds as below. A one-shot friend has no session between cards: it never has a binding, challenge, subscription or presence record, and its claims are member-lane claims credited to its identity (layer 20 guarantee 19; layer 40 guarantee 12). |
 | Binding | absent, challenged, proven, away, closed; session; generation; deadline; reason; `last_heard`; `last_proof` | Attach creates a challenge. A matching timely session answer makes it proven. A fresh challenge renews only when answered. Timeout makes it away. Explicit detach closes it. Replacement increments generation and starts challenged; it cannot inherit proof. |
 | Challenge | issued, answered, expired, superseded; nonce; binding generation; deadline | A fresh challenge supersedes the preceding unanswered challenge. Its issue does not extend an existing proof deadline. A consumed, stale or wrong-session nonce cannot create proof. |
 | Subscription | active, closed; identity; binding generation; filter; last offered revision | Subscribe binds the authenticated session to bounded replay. Disconnect closes only the transport subscription, not pending delivery. Reconnect resumes from a valid cursor or an explicit fresh snapshot. User filters cannot suppress binding/proof control events. |
@@ -152,8 +152,8 @@ binding state, proof deadline, reason, generation and the measured delivery mode
 Presence reads also return both clocks of guarantee 13. A displayed up or down reads the
 last-heard clock through the internal states that layer 20 defines over this record (round 2
 applies proposal 1 of layer 60: up and deaf display up; down displays down, including the case
-where her daemon answers and her session does not), while proof, the deal and the push gate on
-the challenge-answer clock alone. This layer stores the clocks; it does not depend on how they
+where her daemon answers and her session does not), while proof gates on the challenge-answer
+clock alone, and the deal and the push also read the hooked state (guarantee 13). This layer stores the clocks; it does not depend on how they
 are displayed. No displayed status means native idle wake. Poll completion is not session closure. A known binding loss or expiry cannot be
 hidden by keeping a socket or a helper process alive.
 
