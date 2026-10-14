@@ -52,11 +52,15 @@ func placeFlags(fs interface {
 	}
 }
 
-// setVerb runs one set change and prints the verb's line.
-func (app *application) setVerb(fs *flag.FlagSet, pos []string, verb, table, addr string, o ntable.SetOpts, write *ntable.WriteOptions, receipt bool, line string, stdout, stderr io.Writer) int {
+// runWrite is the one skeleton every write verb runs: the dry run's own plan
+// (preflight), one store connection, the verb's one call and its receipt. A
+// handler keeps only what makes it itself — its flags, its argument checks,
+// its call and the line it prints — and the lines between are here once
+// (docs/STANDARD.md section 7: duplicated function becomes one lower-level
+// module the others depend on; a copy is a bug).
+func (app *application) runWrite(stdout, stderr io.Writer, fs *flag.FlagSet, verb, addr string, pos []string, write *ntable.WriteOptions, receipt bool, call func(redis.Cmdable) error, print func(trips int64)) int {
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int, error) { return ntable.Set(ctx, c, table, o, *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, addr, pos, sent(call)); done {
+	if code, done := app.preflight(stdout, stderr, fs, verb, addr, pos, call); done {
 		return code
 	}
 	st, c, code := app.client(ctx, verb, addr, stderr)
@@ -65,12 +69,38 @@ func (app *application) setVerb(fs *flag.FlagSet, pos []string, verb, table, add
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	if _, err := call(c); err != nil {
+	if err := call(c); err != nil {
 		return st.refusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "%s trips=%d\n", line, trips.N())
+	print(trips.N())
 	printReceipt(stdout, write, receipt)
 	return 0
+}
+
+// runRead is the read verbs' half of the same skeleton: one store connection,
+// the call and its refusal, and the verb's own print, which returns the exit
+// (a read that found an unreadable cell exits 1; most return 0).
+func (app *application) runRead(stdout, stderr io.Writer, verb, addr string, call func(redis.Cmdable) error, print func(trips int64) int) int {
+	ctx := context.Background()
+	st, c, code := app.client(ctx, verb, addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	if err := call(c); err != nil {
+		return st.refusal(stderr, verb, err)
+	}
+	return print(trips.N())
+}
+
+// setVerb runs one set change and prints the verb's line through runWrite.
+func (app *application) setVerb(fs *flag.FlagSet, pos []string, verb, table, addr string, o ntable.SetOpts, write *ntable.WriteOptions, receipt bool, line string, stdout, stderr io.Writer) int {
+	ctx := context.Background()
+	call := func(c redis.Cmdable) error { _, err := ntable.Set(ctx, c, table, o, *write); return err }
+	return app.runWrite(stdout, stderr, fs, verb, addr, pos, write, receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "%s trips=%d\n", line, trips)
+	})
 }
 
 func (app *application) cmdColAdd(args []string, stdout, stderr io.Writer) int {
@@ -114,12 +144,20 @@ func (app *application) cmdColDel(args []string, stdout, stderr io.Writer) int {
 		fmt.Sprintf("TABLE COL DEL table=%s col=%s", pos[0], pos[1]), stdout, stderr)
 }
 
-func (app *application) cmdColMove(args []string, stdout, stderr io.Writer) int {
-	const verb = "col move"
+// axisMove runs col move or row move: one item of an axis placed by
+// --first/--last/--before/--after, through the one order set verb. The two
+// verbs differ only in the axis they name and the line they print, so they
+// are one handler (docs/STANDARD.md section 7: duplicated function becomes
+// one lower-level module the others depend on).
+func (app *application) axisMove(args []string, stdout, stderr io.Writer, column bool) int {
+	verb, what, short := "row move", "row", "row"
+	if column {
+		verb, what, short = "col move", "column", "col"
+	}
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	write, receipt := app.writeFlags(fs)
-	place := placeFlags(fs, "column")
+	place := placeFlags(fs, what)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -129,10 +167,20 @@ func (app *application) cmdColMove(args []string, stdout, stderr io.Writer) int 
 		return refuse(stderr, verb, err.Error())
 	}
 	if len(pos) != 2 || at == nil {
-		return refuse(stderr, verb, "wants a table, a column and a place: col move <table> <col> "+placeUsage)
+		return refuse(stderr, verb, "wants a table, a "+what+" and a place: "+verb+" <table> <"+short+"> "+placeUsage)
 	}
-	return app.setVerb(fs, pos, verb, pos[0], *addr, ntable.SetOpts{ColMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
-		fmt.Sprintf("TABLE COL MOVE table=%s col=%s%s", pos[0], pos[1], placeWord(at)), stdout, stderr)
+	move := &ntable.Reorder{Item: pos[1], Place: *at}
+	o := ntable.SetOpts{RowMove: move}
+	line := fmt.Sprintf("TABLE ROW MOVE table=%s row=%s%s", pos[0], field(pos[1]), placeWord(at))
+	if column {
+		o = ntable.SetOpts{ColMove: move}
+		line = fmt.Sprintf("TABLE COL MOVE table=%s col=%s%s", pos[0], pos[1], placeWord(at))
+	}
+	return app.setVerb(fs, pos, verb, pos[0], *addr, o, write, *receipt, line, stdout, stderr)
+}
+
+func (app *application) cmdColMove(args []string, stdout, stderr io.Writer) int {
+	return app.axisMove(args, stdout, stderr, true)
 }
 
 func placeWord(p *ntable.Place) string {
@@ -146,24 +194,7 @@ func placeWord(p *ntable.Place) string {
 }
 
 func (app *application) cmdRowMove(args []string, stdout, stderr io.Writer) int {
-	const verb = "row move"
-	fs := verbflag.New(verb)
-	addr := app.redisFlag(fs)
-	write, receipt := app.writeFlags(fs)
-	place := placeFlags(fs, "row")
-	pos, err := parseInterleaved(fs, args)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	at, err := place()
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	if len(pos) != 2 || at == nil {
-		return refuse(stderr, verb, "wants a table, a row and a place: row move <table> <row> "+placeUsage)
-	}
-	return app.setVerb(fs, pos, verb, pos[0], *addr, ntable.SetOpts{RowMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
-		fmt.Sprintf("TABLE ROW MOVE table=%s row=%s%s", pos[0], field(pos[1]), placeWord(at)), stdout, stderr)
+	return app.axisMove(args, stdout, stderr, false)
 }
 
 func (app *application) cmdRowOrder(args []string, stdout, stderr io.Writer) int {

@@ -33,25 +33,15 @@ func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int 
 		return refuse(stderr, verb, err.Error())
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int64, error) {
-		return ntable.CellsAdd(ctx, c, pos[0], pos[1], pos[2], sc, pos[3:], *write)
+	var n int64
+	call := func(c redis.Cmdable) error {
+		var err error
+		n, err = ntable.CellsAdd(ctx, c, pos[0], pos[1], pos[2], sc, pos[3:], *write)
+		return err
 	}
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
-	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips)
+	})
 }
 
 // scoreOf reads --score, the unix time in milliseconds when empty (the
@@ -81,25 +71,15 @@ func (app *application) cmdCellRemove(args []string, stdout, stderr io.Writer) i
 		return refuse(stderr, verb, "wants a table, a row, a column and one or more members: cell remove <table> <row> <col> <member>...")
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int64, error) {
-		return ntable.CellsRemove(ctx, c, pos[0], pos[1], pos[2], pos[3:], *write)
+	var n int64
+	call := func(c redis.Cmdable) error {
+		var err error
+		n, err = ntable.CellsRemove(ctx, c, pos[0], pos[1], pos[2], pos[3:], *write)
+		return err
 	}
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
-	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips)
+	})
 }
 
 func (app *application) cmdCellMove(args []string, stdout, stderr io.Writer) int {
@@ -115,29 +95,19 @@ func (app *application) cmdCellMove(args []string, stdout, stderr io.Writer) int
 		return refuse(stderr, verb, "wants a table, a row, the column left, the column joined and one or more members: cell move <table> <row> <from-col> <to-col> <member>...")
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int64, error) {
-		return ntable.CellsMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4:], *write)
+	var n int64
+	call := func(c redis.Cmdable) error {
+		var err error
+		n, err = ntable.CellsMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4:], *write)
+		return err
 	}
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
-	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	if len(pos) == 5 {
-		fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n, trips.N())
-	} else {
-		fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s members=%d from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), len(pos)-4, pos[2], pos[3], n, trips.N())
-	}
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		if len(pos) == 5 {
+			fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n, trips)
+		} else {
+			fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s members=%d from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), len(pos)-4, pos[2], pos[3], n, trips)
+		}
+	})
 }
 
 func (app *application) cmdCellMembers(args []string, stdout, stderr io.Writer) int {
@@ -152,19 +122,17 @@ func (app *application) cmdCellMembers(args []string, stdout, stderr io.Writer) 
 		return refuse(stderr, verb, "wants a table, a row and a column: cell members <table> <row> <col>")
 	}
 	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
+	var ms []ntable.Member
+	call := func(c redis.Cmdable) error {
+		var err error
+		ms, err = ntable.CellMembers(ctx, c, pos[0], pos[1], pos[2])
+		return err
 	}
-	defer st.Close()
-	trips := st.CountTrips()
-	ms, err := ntable.CellMembers(ctx, c, pos[0], pos[1], pos[2])
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], len(ms), trips.N())
-	for _, m := range ms {
-		fmt.Fprintf(stdout, "TABLE MEMBER table=%s row=%s col=%s member=%s score=%s\n", pos[0], field(pos[1]), pos[2], field(m.Member), strconv.FormatFloat(m.Score, 'f', -1, 64))
-	}
-	return 0
+	return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+		fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], len(ms), trips)
+		for _, m := range ms {
+			fmt.Fprintf(stdout, "TABLE MEMBER table=%s row=%s col=%s member=%s score=%s\n", pos[0], field(pos[1]), pos[2], field(m.Member), strconv.FormatFloat(m.Score, 'f', -1, 64))
+		}
+		return 0
+	})
 }

@@ -39,25 +39,15 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		if batch {
 			ctx := context.Background()
-			call := func(c redis.Cmdable) (int, error) {
-				return ntable.RowsAddWithSpec(ctx, c, pos[0], pos[1:], spec, *write)
+			var n int
+			call := func(c redis.Cmdable) error {
+				var err error
+				n, err = ntable.RowsAddWithSpec(ctx, c, pos[0], pos[1:], spec, *write)
+				return err
 			}
-			if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-				return code
-			}
-			st, c, code := app.client(ctx, verb, *addr, stderr)
-			if code != 0 {
-				return code
-			}
-			defer st.Close()
-			trips := st.CountTrips()
-			n, err := call(c)
-			if err != nil {
-				return st.refusal(stderr, verb, err)
-			}
-			fmt.Fprintf(stdout, "TABLE ROWS ADD table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
-			printReceipt(stdout, write, *receipt)
-			return 0
+			return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+				fmt.Fprintf(stdout, "TABLE ROWS ADD table=%s rows=%d trips=%d\n", pos[0], n, trips)
+			})
 		}
 	}
 	for _, bind := range pos[2:] {
@@ -74,29 +64,21 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "a row that binds a set wants --owner <verb>, the verb that writes it, so a write here can name it")
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (ntable.Row, error) { return ntable.RowAdd(ctx, c, pos[0], pos[1], spec, *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
+	var row ntable.Row
+	call := func(c redis.Cmdable) error {
+		var err error
+		row, err = ntable.RowAdd(ctx, c, pos[0], pos[1], spec, *write)
+		return err
 	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	row, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	bound := 0
-	for _, cell := range row.Cells {
-		if cell.Bound {
-			bound++
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		bound := 0
+		for _, cell := range row.Cells {
+			if cell.Bound {
+				bound++
+			}
 		}
-	}
-	fmt.Fprintf(stdout, "TABLE ROW ADD table=%s row=%s cols=%d bound=%d trips=%d\n", pos[0], field(pos[1]), len(row.Cells), bound, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+		fmt.Fprintf(stdout, "TABLE ROW ADD table=%s row=%s cols=%d bound=%d trips=%d\n", pos[0], field(pos[1]), len(row.Cells), bound, trips)
+	})
 }
 
 func (app *application) cmdRowDel(args []string, stdout, stderr io.Writer) int {
@@ -112,27 +94,19 @@ func (app *application) cmdRowDel(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table and a row: row del <table> <row>")
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (bool, error) { return ntable.RowDel(ctx, c, pos[0], pos[1], *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
+	var existed bool
+	call := func(c redis.Cmdable) error {
+		var err error
+		existed, err = ntable.RowDel(ctx, c, pos[0], pos[1], *write)
+		return err
 	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	existed, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	was := 0
-	if existed {
-		was = 1
-	}
-	fmt.Fprintf(stdout, "TABLE ROW DEL table=%s row=%s existed=%d trips=%d\n", pos[0], field(pos[1]), was, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		was := 0
+		if existed {
+			was = 1
+		}
+		fmt.Fprintf(stdout, "TABLE ROW DEL table=%s row=%s existed=%d trips=%d\n", pos[0], field(pos[1]), was, trips)
+	})
 }
 
 // cmdRowSet: row set <table> <row> <col>=<value> ...: a text column's value
@@ -158,23 +132,15 @@ func (app *application) cmdRowSet(args []string, stdout, stderr io.Writer) int {
 		texts[col] = v
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int, error) { return ntable.RowSet(ctx, c, pos[0], pos[1], texts, *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
+	var n int
+	call := func(c redis.Cmdable) error {
+		var err error
+		n, err = ntable.RowSet(ctx, c, pos[0], pos[1], texts, *write)
+		return err
 	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE ROW SET table=%s row=%s cols=%d trips=%d\n", field(pos[0]), field(pos[1]), n, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "TABLE ROW SET table=%s row=%s cols=%d trips=%d\n", field(pos[0]), field(pos[1]), n, trips)
+	})
 }
 
 // cmdRowsHide: row hide|show <table> <row> ...: rows hidden from the render
@@ -195,25 +161,17 @@ func (app *application) cmdRowsHide(args []string, stdout, stderr io.Writer, hid
 		return refuse(stderr, verb, "wants a table and at least one row: "+verb+" <table> <row> ...")
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int, error) { return ntable.RowsHide(ctx, c, pos[0], hide, pos[1:], *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
+	var n int
+	call := func(c redis.Cmdable) error {
+		var err error
+		n, err = ntable.RowsHide(ctx, c, pos[0], hide, pos[1:], *write)
+		return err
 	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	word := "shown"
-	if hide {
-		word = "hidden"
-	}
-	fmt.Fprintf(stdout, "TABLE ROWS %s table=%s rows=%d trips=%d\n", strings.ToUpper(word), pos[0], n, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		word := "shown"
+		if hide {
+			word = "hidden"
+		}
+		fmt.Fprintf(stdout, "TABLE ROWS %s table=%s rows=%d trips=%d\n", strings.ToUpper(word), pos[0], n, trips)
+	})
 }
