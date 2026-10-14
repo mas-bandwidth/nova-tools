@@ -1029,6 +1029,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
+	// THE END THE START PHASE GAVE A CARD THAT NEVER STARTED: the harness showed none of
+	// the three signs of life in the start window, so the watch ended the card before the
+	// idle window could hide it (nativeidle.go's start phase). It is printed here, beside
+	// the idle line, through the injected writer, so the no-start end never hand-prints.
+	if res.noStart {
+		fmt.Fprintln(stdout, oneline.Escape(swarm.CardNoStartLine(cfg.label, res.idleEnd.Idle)))
+	}
 	if res.deadlined && res.blockedPath != "" {
 		fmt.Fprintf(stdout, "NATIVE NOTE: the card was ended at its deadline with commits and published no report of its own; one naming the work was written to %s\n", oneline.Field(res.blockedPath))
 	}

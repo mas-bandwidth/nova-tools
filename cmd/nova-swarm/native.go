@@ -1460,7 +1460,6 @@ func collect(s *nativeRunState, st *nativeStarted, wat *nativeWatched, attempt i
 // report finalizes the run: folding budget numbers, closing logs, diagnosing wall or
 // harness failures, recording timeline, running gate checks, and publishing results.
 func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
-	stdout := os.Stdout
 	if s.prep.cfg.onPhase != nil {
 		s.prep.cfg.onPhase("report")
 	}
@@ -1485,10 +1484,11 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	s.res.fence = fenceRejected(s.prep.jobDir)
 	if s.res.noStart {
 		// THE HARNESS NEVER STARTED (nativeidle.go's start phase). The typed no-start line
-		// names the window; the harness-fault line carries `reason=no-start`, which the
-		// member reads as EndNoStart, a harness fault, so the existing redeal-and-judge
-		// rules apply and the lane is free at the start window, not the idle one.
-		fmt.Fprintln(stdout, oneline.Escape(swarm.CardNoStartLine(s.prep.cfg.label, s.res.idleEnd.Idle)))
+		// names the window and is printed by main.go's run through the injected writer, the
+		// way the idle line is; the harness-fault line here carries `reason=no-start`,
+		// which the member reads as EndNoStart, a harness fault, so the existing
+		// redeal-and-judge rules apply and the lane is free at the start window, not the
+		// idle one.
 		fmt.Fprintln(errOut, oneline.Escape(harnessFaultLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model,
 			"no-start: the card produced no sign of starting in "+strconv.Itoa(int(s.res.idleEnd.Idle.Seconds()))+"s")))
 		s.res.reason = "no-start"

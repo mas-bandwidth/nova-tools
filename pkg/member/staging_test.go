@@ -35,6 +35,17 @@ func TestJudgeNamesAStagingRefusalByItsKind(t *testing.T) {
 	require.Equal(t, "staging refused: stage-timeout", why)
 }
 
+// A launch the start phase ended (the harness never showed a sign of life in the start
+// window) is a harness fault handled as a stage refusal is: the kind is `staging refused`
+// and the reason names what the card did, so the sprint deals the card to another member
+// rather than judging it (docs/SPEC-SWARM.md, native; StageRefused).
+func TestJudgeNamesANoStartEndAsAStagingRefusal(t *testing.T) {
+	t.Parallel()
+	fin, why := Judge(Result{End: EndNoStart}, Push{None: "nothing"})
+	require.Equal(t, FinishFailed, fin)
+	require.Equal(t, "staging refused: the card produced no sign of starting", why)
+}
+
 // A launch native ended because this member's usage source stopped answering (its read of
 // the harness's usage database, three reads in a row), which left no result, is the member's
 // failure and never the card's (the owner, 2026-10-03: a provider problem is never a card
