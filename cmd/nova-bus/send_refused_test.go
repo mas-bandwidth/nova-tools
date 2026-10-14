@@ -140,14 +140,18 @@ func TestARefusedSendPrintsSendRefusedOnStdout(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(strings.TrimSuffix(res.Stdout, "\n"), "\n")+1, "stdout is one JSON object: %q", res.Stdout)
 		var got struct {
 			Result struct {
+				Verb   string `json:"verb"`
 				Status string `json:"status"`
 				Exit   int    `json:"exit"`
+				Remedy string `json:"remedy"`
 				Line   string `json:"line"`
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(res.Stdout), &got), res.Stdout)
+		assert.Equal(t, "send", got.Result.Verb, "the refusal keeps the verb")
 		assert.Equal(t, 1, got.Result.Exit)
 		assert.Equal(t, "failed", got.Result.Status)
+		assert.Equal(t, "nova-hook status --as ada", got.Result.Remedy, "the refusal keeps its remedy")
 		assert.True(t, strings.HasPrefix(got.Result.Line, "SEND REFUSED reason=unhooked: "), got.Result.Line)
 	})
 }
@@ -178,6 +182,12 @@ func TestEveryRefusedSendPrintsOneStdoutLine(t *testing.T) {
 			[]string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "b"}, 2},
 		{"unknown recipient", "refused-by-bus", nil,
 			[]string{"send", "--as", "ada", "--to", "zed", "--subject", "s", "--body", "b"}, 2},
+		{"unknown flag", "usage", nil,
+			[]string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "b", "--nope"}, 2},
+		{"invalid flag value", "usage", nil,
+			[]string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "b", "--timeout", "xyz"}, 2},
+		{"positional argument", "usage", nil,
+			[]string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "b", "extra"}, 2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

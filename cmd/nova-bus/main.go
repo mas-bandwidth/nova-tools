@@ -256,6 +256,13 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					callTimeoutFlag(f)
 				},
 				Run: w.send,
+				// a refusal the skeleton raises before send runs (an unknown flag,
+				// a bad value, a positional argument) also prints the one SEND
+				// REFUSED line, so send's stdout contract holds for those too
+				// (docs/SPEC-BUS.md, send's refusal line).
+				RefuseLine: func(o *tool.Out) string {
+					return sendRefusedLine(codeUsage, o.Why[0], false)
+				},
 			},
 			{
 				Name:    "peek",
@@ -607,8 +614,17 @@ func (w world) sendRefused(c *tool.Call, o *tool.Out, code string, dry bool) *to
 		why = o.Why[0]
 	}
 	line := sendRefusedLine(code, why, dry)
-	if c.Bool("json") && writeSendJSON(c.Stdout, o, line) {
-		return tool.Exit(o.Exit)
+	if c.Bool("json") {
+		// The skeleton fills the result's verb and remedy in emit; this run
+		// marshals the object itself (writeSendJSON), so fill them here to keep
+		// the one output value in both renderings (STANDARD §2).
+		o.Verb = "send"
+		if o.Status == tool.Refused && o.Remedy == "" {
+			o.Remedy = "nova-bus help"
+		}
+		if writeSendJSON(c.Stdout, o, line) {
+			return tool.Exit(o.Exit)
+		}
 	}
 	fmt.Fprintln(c.Stdout, line)
 	return o
