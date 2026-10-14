@@ -117,6 +117,16 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 		// redisconn's line ends in its next step; the line keeps one remedy,
 		// this verb's, which names the command to run again.
 		cause, _, _ = strings.Cut(cause, "; next: ")
+		if c.Bool("json") {
+			// --json is the other rendering of the same value: the cause is the
+			// reason, the sha, store and remedy the facts, one object
+			// (STANDARD §2, one output structure, two renderings).
+			o := tool.Fail(cause).Fact("sha", want).Fact("store", at).Fact("remedy", tool.Text(remedy(sub, err, store)))
+			if !answered(err) {
+				o.Status, o.Exit = tool.Refused, 2
+			}
+			return jsonResult(c, "fn "+sub, o)
+		}
 		line(c.Stderr, "FAILED "+name, "sha", want, "store", at, "err", free(cause), "remedy", quoted(remedy(sub, err, store)))
 		if answered(err) {
 			return tool.Exit(1)
@@ -145,6 +155,22 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 		if err != nil {
 			return failed(err)
 		}
+		if c.Bool("json") {
+			// --json is the other rendering of the same value: the receipt's
+			// fields as facts, one object (STANDARD §2, one output structure,
+			// two renderings).
+			o := tool.Done().Fact("library", r.Library).Fact("sha", r.Digest).Fact("store", at)
+			if r.Was != "" {
+				o.Fact("was", r.Was)
+			}
+			if r.Why != "" {
+				o.Fact("why", r.Why)
+			}
+			if alias != "" {
+				o.Note(alias)
+			}
+			return jsonResult(c, "fn load", o)
+		}
 		// The receipt's own line (redisfn.Receipt.String) after its outcome word.
 		word := r.Outcome.String()
 		line(c.Stdout, word, "library", bare{strings.TrimPrefix(r.String(), word+" "), map[string]string{"name": r.Library, "sha": r.Digest, "was": r.Was, "why": r.Why}}, "store", at)
@@ -160,6 +186,16 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 	}
 	switch state {
 	case redisfn.Same:
+		if c.Bool("json") {
+			// --json is the other rendering of the same value: the check's
+			// fields as facts, one object (STANDARD §2, one output structure,
+			// two renderings).
+			o := tool.Done().Fact("library", lib.Name).Fact("sha", want).Fact("loaded", want).Fact("want", want).Fact("store", at)
+			if alias != "" {
+				o.Note(alias)
+			}
+			return jsonResult(c, "fn check", o)
+		}
 		line(c.Stdout, "OK "+name, "sha", want, "loaded", want, "want", want, "store", at)
 		after()
 		return tool.Exit(0)
@@ -167,6 +203,17 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 		word := "STALE"
 		if state == redisfn.Absent {
 			word = "MISSING"
+		}
+		if c.Bool("json") {
+			// --json is the other rendering of the same value: the drift as
+			// facts and the remedy, one object (STANDARD §2, one output
+			// structure, two renderings).
+			o := tool.Fail().As(word).Fact("library", lib.Name).Fact("sha", want).Fact("loaded", loaded).Fact("want", want).Fact("store", at).
+				Fact("remedy", tool.Text("nova-redis fn load "+store.flags()+" puts this binary's library on the store"))
+			if alias != "" {
+				o.Note(alias)
+			}
+			return jsonResult(c, "fn check", o)
 		}
 		line(c.Stdout, word+" "+name, "sha", want, "loaded", loaded, "want", want, "store", at,
 			"remedy", quoted("nova-redis fn load "+store.flags()+" puts this binary's library on the store"))

@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
 )
 
 // TestEveryVerbTakesJSON: every verb of the tool takes --json, so a bad flag
@@ -64,4 +66,43 @@ func TestEveryVerbTakesJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(sOut), &ok), "one JSON object: %s", sOut)
 	require.Equal(t, "acl render", ok.Result.Verb)
 	require.Equal(t, "ok", ok.Result.Status)
+
+	// fn load and fn check success under --json print one object each, over a
+	// fake store (the fn verbs dial a store, so the fake stands where connect's
+	// connection stands).
+	h := newFnHarness(t)
+	lExit, lOut, lErr := h.run("fn", "load", "--redis", "127.0.0.1:6399", "--json")
+	require.Equal(t, 0, lExit, lErr)
+	require.Empty(t, lErr, "--json says everything on stdout")
+	var lr result
+	require.NoError(t, json.Unmarshal([]byte(lOut), &lr), "one JSON object: %s", lOut)
+	require.Equal(t, "fn load", lr.Result.Verb)
+	require.Equal(t, "ok", lr.Result.Status)
+
+	cExit, cOut, cErr := h.run("fn", "check", "--redis", "127.0.0.1:6399", "--json")
+	require.Equal(t, 0, cExit, cErr)
+	require.Empty(t, cErr, "--json says everything on stdout")
+	var cr result
+	require.NoError(t, json.Unmarshal([]byte(cOut), &cr), "one JSON object: %s", cOut)
+	require.Equal(t, "fn check", cr.Result.Verb)
+	require.Equal(t, "ok", cr.Result.Status)
+
+	// acl apply and acl check success under --json print one object each, over
+	// a fake store: apply sets the users, then check reads them back as OK.
+	f := &fakeACL{live: map[string]redisacl.Live{}, cat: redisacl.Catalog{"read": {"get"}, "write": {"set"}}}
+	apExit, apOut, apErr := aclRun(t, f, append(append(append([]string{"apply"}, login4...), sourced...), "--json")...)
+	require.Equal(t, 0, apExit, apErr)
+	require.Empty(t, apErr, "--json says everything on stdout")
+	var apr result
+	require.NoError(t, json.Unmarshal([]byte(apOut), &apr), "one JSON object: %s", apOut)
+	require.Equal(t, "acl apply", apr.Result.Verb)
+	require.Equal(t, "ok", apr.Result.Status)
+
+	acExit, acOut, acErr := aclRun(t, f, append(append([]string{"check"}, login4...), "--json")...)
+	require.Equal(t, 0, acExit, acErr)
+	require.Empty(t, acErr, "--json says everything on stdout")
+	var acr result
+	require.NoError(t, json.Unmarshal([]byte(acOut), &acr), "one JSON object: %s", acOut)
+	require.Equal(t, "acl check", acr.Result.Verb)
+	require.Equal(t, "ok", acr.Result.Status)
 }
