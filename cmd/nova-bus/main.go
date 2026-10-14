@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -240,9 +241,9 @@ other arguments, or past its life, is refused naming the message that went. The 
 Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
-					f.Required("to", "the recipients, comma-separated names")
+					f.String("to", "", "the recipients, comma-separated names (required)")
 					f.String("cc", "", "more recipients, comma-separated names; each gets the message as well")
-					f.Required("subject", "one line saying what the message is")
+					f.String("subject", "", "one line saying what the message is (required)")
 					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
@@ -253,15 +254,6 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
-					f.Check(func(c *tool.Call) {
-						refuseNonPositiveTimeout(c)
-						if c.Given("body") == c.Given("stdin") {
-							c.Problem("the body comes from exactly one of --body <text> or --stdin")
-						}
-						if c.Dur("token-life") <= 0 || c.Dur("token-cleanup") <= 0 {
-							c.Problem("--token-life and --token-cleanup want a duration above zero")
-						}
-					})
 				},
 				Run: w.send,
 			},
@@ -562,6 +554,160 @@ func names(csv string) []string {
 	return out
 }
 
+// The four codes a send that does not end in SEND OK names its cause by, on
+// its stderr headline as reason=<code> and as the reason field of its --json
+// object (docs/SPEC-BUS.md, send's refusal line).
+const (
+	codeUnhooked     = "unhooked"
+	codeUsage        = "usage"
+	codeStore        = "store"
+	codeRefusedByBus = "refused-by-bus"
+)
+
+// busRefusalCode is the code of a refusal that stopped send before it acted
+// (w.bus): a store that was never named (bus.Address's refusal) or an address
+// the tool refuses (bus.CheckAddr's rule) is a usage refusal, the caller's
+// input; a store that did not answer is the store's (docs/SPEC-BUS.md, send's
+// refusal line).
+func busRefusalCode(o *tool.Out) string {
+	if len(o.Why) > 0 {
+		for _, usage := range []string{"--redis is required", "nova-bus reaches a store over loopback"} {
+			if strings.HasPrefix(o.Why[0], usage) {
+				return codeUsage
+			}
+		}
+	}
+	return codeStore
+}
+
+// gateFailureCode is the code of the hook gate's no: a hook record that says
+// the identity is not hooked in is unhooked, a record that could not be read
+// is the store's (pkg/hookgate, fail closed).
+func gateFailureCode(o *tool.Out) string {
+	if o.Status == tool.Failed {
+		return codeUnhooked
+	}
+	return codeStore
+}
+
+// sendRefused is every refusal of send as the verb's result: the same Out the
+// skeleton prints on stderr (stdout stays empty, the refusal grammar's), its
+// headline naming its cause as reason=<code>, one code per why line
+// (tool.Out.Reasons, parallel to Why), so a reader sees which of the four it
+// is; under --json the one object on stdout carries the headline as
+// result.line and the code as its reason field, the one stream a script reads
+// to see every outcome of a send (docs/SPEC-BUS.md, send's refusal line). A
+// --dry-run that would be refused marks its line " (dry run)", riding the
+// remedy's tail.
+func (w world) sendRefused(c *tool.Call, o *tool.Out, code string, dry bool) *tool.Out {
+	o.Reasons = nil
+	for range o.Why {
+		o.Reasons = append(o.Reasons, code)
+	}
+	o.Verb = "send" // the token of the line writeSendJSON renders (STANDARD §2, one value, two renderings)
+	if o.Status == tool.Refused && o.Remedy == "" {
+		o.Remedy = "nova-bus help" // the skeleton fills this in emit; this run renders the object itself
+	}
+	if dry && o.Remedy != "" {
+		o.Remedy += " (dry run)"
+	}
+	if c.Bool("json") {
+		if writeSendJSON(c.Stdout, o, code) {
+			return tool.Exit(o.Exit)
+		}
+	}
+	return o
+}
+
+// writeSendJSON prints the one object a send's outcome is under --json: the
+// Out's own marshaling (Out.MarshalJSON, its bidi controls escaped), the
+// headline the text form prints added under result.line and, when reason
+// names a code (every outcome but OK), the code as the object's reason field,
+// absent on OK (docs/SPEC-BUS.md, send's refusal line). It reports whether
+// the object was written; false falls back to the skeleton's rendering.
+func writeSendJSON(w io.Writer, o *tool.Out, reason string) bool {
+	raw, err := o.MarshalJSON()
+	if err != nil {
+		return false
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false
+	}
+	var t bytes.Buffer
+	o.Render(&t, false) // the text form; only its first line, the headline, is kept
+	line, err := oneJSONString(strings.SplitN(t.String(), "\n", 2)[0])
+	if err != nil {
+		return false
+	}
+	res := obj["result"]
+	if len(res) == 0 || res[len(res)-1] != '}' {
+		return false
+	}
+	// result gains the line as its last field; every other value keeps the
+	// bytes its own marshaling wrote
+	withLine := append(res[:len(res)-1:len(res)-1], `,"line":`...)
+	withLine = append(withLine, line...)
+	withLine = append(withLine, '}')
+	var b bytes.Buffer
+	b.WriteString(`{"result":`)
+	b.Write(withLine)
+	written := 1 // "result"
+	for _, k := range []string{"facts", "items", "more", "notes", "payload"} {
+		if v, ok := obj[k]; ok {
+			b.WriteString(`,"` + k + `":`)
+			b.Write(v)
+			written++
+		}
+	}
+	if len(obj) != written {
+		return false // the Out's JSON grew a key this walk does not know; the skeleton renders the object whole rather than this dropping it
+	}
+	if reason != "" {
+		b.WriteString(`,"reason":"` + reason + `"`) // the code is one of the four, all ASCII: no escaping wants doing
+	}
+	b.WriteString("}\n")
+	_, _ = w.Write(b.Bytes()) // ignored: the caller's stream is the skeleton's own, which reports its own failures
+	return true
+}
+
+// oneJSONString is s as one JSON string, the HTML escaping off, so the object
+// keeps `<` as `<` the way the Out's own marshaling does (pkg/tool, marshal).
+func oneJSONString(s string) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
+// sendProblems is every problem of one send invocation, named at once: the
+// required flags and the flags that depend on one another (docs/ONBOARDING.md
+// point 2, docs/SPEC-BUS.md). They are named here rather than declared
+// (tool.Flags.Required, tool.Flags.Check), so a send the skeleton would have
+// refused still runs and prints its SEND REFUSED line.
+func sendProblems(c *tool.Call) []string {
+	var p []string
+	if strings.TrimSpace(c.Str("to")) == "" {
+		p = append(p, "--to is required; it wants the recipients, comma-separated names; refusing to guess")
+	}
+	if strings.TrimSpace(c.Str("subject")) == "" {
+		p = append(p, "--subject is required; it wants one line saying what the message is; refusing to guess")
+	}
+	if c.Given("body") == c.Given("stdin") {
+		p = append(p, "the body comes from exactly one of --body <text> or --stdin")
+	}
+	if c.Dur("token-life") <= 0 || c.Dur("token-cleanup") <= 0 {
+		p = append(p, "--token-life and --token-cleanup want a duration above zero")
+	}
+	if c.Dur("timeout") <= 0 {
+		p = append(p, "--timeout must be above zero: a call with no deadline can wait for ever on a store that does not answer")
+	}
+	return p
+}
+
 func (w world) send(c *tool.Call) *tool.Out {
 	// Read the dry-run before setup can refuse so its early exits are handled
 	// simulations too (STANDARD.md, a verb that writes has a dry run).
@@ -570,22 +716,28 @@ func (w world) send(c *tool.Call) *tool.Out {
 	if c.Bool("stdin") {
 		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus.MaxBody+1))
 		if err != nil {
-			return tool.Refuse("--stdin: " + err.Error())
+			return w.sendRefused(c, tool.Refuse("--stdin: "+err.Error()), codeUsage, dry)
 		}
 		if len(raw) > bus.MaxBody {
-			return tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus.MaxBody))
+			return w.sendRefused(c, tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus.MaxBody)), codeUsage, dry)
 		}
 		body = string(raw)
+	}
+	if p := sendProblems(c); len(p) > 0 {
+		return w.sendRefused(c, tool.Refuse(p...), codeUsage, dry)
 	}
 	gated := w.requirePush(c)
 	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
-		return refused
+		return w.sendRefused(c, refused, busRefusalCode(refused), dry)
 	}
 	defer closeStore()
-	as, refused := w.acting(c, b, login)
+	as, refused := identity(c, login)
 	if refused != nil {
-		return refused
+		return w.sendRefused(c, refused, codeUsage, dry)
+	}
+	if o := w.hooked(b, as); o != nil {
+		return w.sendRefused(c, o, gateFailureCode(o), dry)
 	}
 	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
@@ -620,7 +772,12 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	m, err := send(context.Background(), draft)
 	if err != nil {
-		return answer(err)
+		code := codeStore
+		var r *bus.Refusal
+		if errors.As(err, &r) {
+			code = codeRefusedByBus
+		}
+		return w.sendRefused(c, answer(err), code, dry)
 	}
 	// the push proof is advice, never a gate: the message landed (or would), and a
 	// name nothing proven is pushing into is one NOTE each (SPEC-BUS.md,
@@ -635,7 +792,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 			unheard, err = b.UnheardAt(context.Background(), m.At, names...)
 		}
 		if err != nil {
-			return answer(err)
+			return w.sendRefused(c, answer(err), codeStore, dry)
 		}
 	}
 	sum := sha256.Sum256([]byte(m.Body))
@@ -644,6 +801,15 @@ func (w world) send(c *tool.Call) *tool.Out {
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 	for _, line := range unheard {
 		o.Note(line)
+	}
+	if dry {
+		o.Fact("dry_run", true) // the skeleton adds it after Run, which this object never reaches (writeSendJSON)
+	}
+	o.Verb = "send" // the token of the line writeSendJSON renders (STANDARD §2, one value, two renderings)
+	if c.Bool("json") {
+		if writeSendJSON(c.Stdout, o, "") {
+			return tool.Exit(o.Exit)
+		}
 	}
 	return o
 }

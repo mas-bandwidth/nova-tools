@@ -434,7 +434,7 @@ func TestAStoreOffLoopbackAndTheTailnetIsRefusedBeforeTheDial(t *testing.T) {
 	cli := r.cli()
 	const rule = "nova-bus reaches a store over loopback or the tailnet (100.64.0.0/10) only: "
 	cli.Do(t, "names", "--as", "ada", "--redis", "far.test:6381").Exit(2).Err("NAMES REFUSED: " + rule + "far.test:6381 is 203.0.113.9")
-	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x", "--redis", "elsewhere.test:6381").Exit(2).Err("SEND REFUSED: " + rule + "elsewhere.test:6381 does not resolve")
+	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x", "--redis", "elsewhere.test:6381").Exit(2).Err("SEND REFUSED reason=usage: " + rule + "elsewhere.test:6381 does not resolve")
 	r.env[RedisEnv] = "lan.test:6381"
 	cli.Do(t, "peek", "--as", "bob").Exit(2).Err("PEEK REFUSED: " + rule + "lan.test:6381 is 10.0.0.5")
 	assert.Equal(t, 0, r.opened, "nothing was dialled")

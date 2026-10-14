@@ -1369,7 +1369,12 @@ each message `{"id":<id>,"from":<name>,"subject":<s>,"bytes":<n>}` and the wake
 `{"file":<path>,"line":<text>}`.
 
 `send` prints `SEND OK id= to= cc= at= bytes= sha256=`: the id is the message's for ever, the
-count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). Who you
+count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). A send
+that does not end in `SEND OK` names its cause on its stderr headline as `reason=<code>`
+(`<code>` one of `unhooked`, `usage`, `store`, `refused-by-bus`) and stdout stays empty, the refusal
+grammar's; a script that must see every outcome of a send reads `nova-bus send --json`: one object per
+send on stdout, the headline as `result.line` and the code as the object's `reason` field
+([SPEC-BUS.md](SPEC-BUS.md)). Who you
 are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
 may repeat it or be left out, and another name is refused; on a store with no
 users (this first run) `--as` is your word and every write says `login=none`. `peek`

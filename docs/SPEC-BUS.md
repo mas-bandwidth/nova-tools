@@ -92,6 +92,20 @@ takes `--json`; `log` takes `--max`.
   advice and never a refusal (bus-requires-inbox-push-proof, below).
   `--token <t> [--token-life <d>] [--token-cleanup <d>]` makes the send safe
   to retry (a-lost-send-response-is-safe-to-retry.w1, below).
+  A send that does not end in `SEND OK` names its cause on its stderr
+  headline, `reason=<code>` before the colon: `<code>` is `unhooked` (never
+  hooked, a hook that lapsed, a push not live), `usage` (a missing or
+  malformed flag, a missing `--redis`, an address the tool refuses such as an
+  off-loopback `--redis`), `store` (the store did not answer, a hook record
+  that cannot be read) or `refused-by-bus` (any other refusal the bus
+  returned). The refusal stays the grammar's, on stderr with stdout empty,
+  and the `SEND NOTE` remedy lines stay on stderr; the exit codes are the
+  banner's (1 for the gate's no, 2 for a refusal or a store that did not
+  answer), and a `--dry-run` that would be refused marks its line
+  ` (dry run)`. So a script that must see every outcome of a send reads
+  `nova-bus send --json`: exactly one JSON object per send on stdout, the
+  headline the text form prints carried as `result.line` and the code as the
+  object's `reason` field, absent on `SEND OK`.
 - `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
   <command>]` prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
   line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
