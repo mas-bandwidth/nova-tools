@@ -48,7 +48,7 @@ leaves the record alone.
 
 The settings directory gains `nova-hook-claude-boundary.sh` and one Stop
 command in `settings.json`. The command is that script path as one
-single-quoted shell word, so a settings directory with a space or a semicolon
+single-quoted shell word, so a settings directory with whitespace or a semicolon
 stays one argument. An existing settings file is kept. A second install does
 not add the command again. The script runs `nova-hook hook` with `--as`,
 `--role` and `--claude-boundary`. That command writes the next decimal into
