@@ -457,7 +457,10 @@ nova-bus stream and, when the session is free, pushes every waiting message in a
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
-		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
+		// Exit codes tell the truth and the banner states them (docs/STANDARD.md
+		// §2): status exits 1 only on STATUS NONE (no status file), never on
+		// daemon=down, which is what the verb does.
+		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
 			{
@@ -711,14 +714,15 @@ the window succeeded and neither a session pong nor a real message came back in 
 no delivery was due in the window and nothing came back; down by presence; else ok. --shown is what a
 consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","working":<n>}} from a file or
 - for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
-with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
+with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or their agent
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
 friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
 reason, session_live, queued}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
-(a refused flag, an unreadable --shown).
+(a refused flag, an unreadable --shown, a flag given where a friend name goes: flags go before the friend
+names, nova-friend check [flags] <friend>...).
 With --harness the verb is the delivery check instead, which
 proves the live session takes a delivery: a SESSION CHECK <nonce> goes in through the harness's deliver
 command, the session runs the exact nova-friend pong line it carries, and a pong with that nonce from
@@ -735,7 +739,7 @@ at exit 1 with one CHECK DRIFT line per setting, harness= file= name= want= have
 real directory belongs is have="symlink to <target>"); install again writes them.
 example: nova-friend check --as ada bob`,
 				Flags: func(f *tool.Flags) {
-					f.String("as", "", "your name, the coordinator (the health check); the friend itself with --harness")
+					f.String("as", "", "your name, the coordinator (the health check); the friend's own with --harness")
 					f.String("harness", "", "the harness the session runs in (delivery check): "+strings.Join(friend.Harnesses, ", "))
 					f.String("dir", "", "the friend's working directory")
 					f.String("session", "", "the session to deliver into (delivery check); for grok the wake file (--settings)")
@@ -986,7 +990,7 @@ example: nova-friend watch --as ada --timeout 10m`,
 last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= envelope= envelope_bytes= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
 (once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=, and a lane faulted on a provider refusal lane_fault=<n> refusal=<first line>)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
-from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
+from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file; when daemon=down the last pong, pongs, queue, working, width and beats are the last known values from those files, printed labelled (last_pong_last_known= pongs_last_known= queue_last_known= working_last_known= width_last_known= beats_last_known=), their values kept;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
@@ -2486,10 +2490,21 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if p.Width > 0 {
 		width = p.Width
 	}
+	// With the daemon down, the last pong and the counters it left in its
+	// files stopped being live when it did: each prints labelled last-known
+	// (queue_last_known=), its value kept, so the files' last word cannot
+	// read as the daemon's now (docs/SPEC-FRIEND.md, "A friend's status,
+	// from evidence").
+	lastKnown := func(name string) string {
+		if daemon == "down" {
+			return name + "_last_known"
+		}
+		return name
+	}
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
-		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
-		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("envelope", s.Envelope).Fact("envelope_bytes", s.EnvelopeBytes).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
+		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact(lastKnown("last_pong"), stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact(lastKnown("pongs"), s.Pongs).
+		Fact(lastKnown("queue"), queue).Fact(lastKnown("working"), working).Fact(lastKnown("width"), width).Fact(lastKnown("beats"), s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("envelope", s.Envelope).Fact("envelope_bytes", s.EnvelopeBytes).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}

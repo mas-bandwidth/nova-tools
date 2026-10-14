@@ -94,6 +94,18 @@ func (w world) healthCheckVerb(c *tool.Call) *tool.Out {
 		friends = v.([]string)
 	}
 
+	// The flag parser stops at the first friend name, so a flag after one
+	// arrives here as a name: refused, named, before any friend is checked
+	// (docs/STANDARD.md §2, "It refuses to guess, and recovery takes one
+	// turn"): the flags go before the friend names.
+	for _, f := range friends {
+		if strings.HasPrefix(f, "-") {
+			o := tool.Refuse(fmt.Sprintf("%q is no friend name: it is a flag, and flags go before the friend names (nova-friend check [flags] <friend>...)", f))
+			o.Remedy = "nova-friend check -h"
+			return o
+		}
+	}
+
 	// Read --shown if given
 	var shownMap map[string]friend.ShownEntry
 	if shownArg := c.Str("shown"); shownArg != "" {

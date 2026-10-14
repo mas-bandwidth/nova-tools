@@ -1533,7 +1533,7 @@ usage:
 
 Every verb but run, serve takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 
 example:
   nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
@@ -1555,7 +1555,7 @@ from `nova-friend help`:
 flags:
   --harness <string>  claude: the harness whose PreToolUse JSON is on stdin (required)
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing: reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON
 ```
 
@@ -1601,7 +1601,7 @@ flags:
   --wall-jobs <string>  job directories outside --dir that are writable inside the lane's wall, comma-separated
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  the friend's width, from the nova-config friend row; 0 is unknown
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the daemon; messages go into the session, beats and pongs go out, until a signal
 ```
 
@@ -1618,7 +1618,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing
 ```
 
@@ -1659,7 +1659,7 @@ flags:
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  the friend's width, from the nova-config friend row; 0 is unknown
   --within <duration>  how long the delivery check after loading waits for the session's pong
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it
 ```
 
@@ -1674,7 +1674,7 @@ flags:
   --as <string>  your name, the friend the agent was installed for (required)
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: boots the agent out and removes its plist
 ```
 
@@ -1687,7 +1687,7 @@ from `nova-friend help`:
 example: nova-friend check --as ada bob
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session
-  --as <string>  your name, the coordinator (the health check); the friend itself with --harness
+  --as <string>  your name, the coordinator (the health check); the friend's own with --harness
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --dir <string>  the friend's working directory
@@ -1703,7 +1703,7 @@ flags:
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --to <string>  who the pong goes to (default: the seat the daemon's status names, else --as)
   --within <duration>  how long to wait for the session's pong (delivery check)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: without --harness it only reads (the health check); with --harness it delivers one session check into the live session (the delivery check)
 ```
 
@@ -1722,7 +1722,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --prompt <string>  the idle prompt, a regular expression the last non-empty line of the pane matches (default: the harness's)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: starts the launch command in a new detached tmux session friend-<me> and saves the session and prompt in the state directory
 ```
 
@@ -1770,7 +1770,7 @@ flags:
   --to-friends  ping every friend the friends table holds up: wake pings, with --wake
   --wake  a wake check: the session is pushed the pong line as its own turn when it is free
   --within <duration>  with --to-friends: how long each pass waits for the sessions' pongs
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: one PING on the friend's stream, as the coordinator
 ```
 
@@ -1793,7 +1793,7 @@ flags:
   --to <string>  the coordinator (default: the seat the last ping named)
   --width <int>  your width, from the nova-config friend row
   --working <int>  tasks working, from your own task list
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the session's answer to a PING, one note on the bus to the coordinator, and the pong file
 ```
 
@@ -1827,7 +1827,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing
 ```
 
@@ -1875,7 +1875,7 @@ flags:
   --as <string>  your name, the coordinator: the pings come from it and the pongs come to it (required)
   --dry-run  print what the verb would write and write nothing
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the coordinator's ping loop; a PING to every friend each second, until a signal
 ```
 
@@ -1917,7 +1917,7 @@ flags:
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  the friend's width, from the nova-config friend row; 0 is unknown
   --within <duration>  accepted and ignored: the install's delivery-check window
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the acceptance run; one lane runs the friend's own program under the real lane wall, writes RESULT.md, and exits with the wall's real code
 ```
 
@@ -1929,7 +1929,7 @@ from `nova-friend help`:
   nova-friend version
 flags:
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing
 ```
 <!-- clidoc:end nova-friend -->
@@ -1985,7 +1985,9 @@ last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (br
 `session_id= broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
 her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
 daemon writes every card she holds"), then `status= why= evidence= harness_seen=`, or
-`STATUS NONE` at exit 1 where no daemon ever ran. A friend is up on her session's
+`STATUS NONE` at exit 1 where no daemon ever ran. With the daemon down,
+last_pong, pongs, queue, working, width and beats print labelled
+`_last_known`, their values kept. A friend is up on her session's
 answer, never on a process: `harness_seen=running|not-seen` is the daemon's look at
 the process table, advisory, so a session run from its command line (`dsh` headless,
 `codex exec`, `claude -p`) is as up as one in an app. What a first run gets wrong: a `--harness` that is not one
@@ -2168,14 +2170,15 @@ the window succeeded and neither a session pong nor a real message came back in 
 no delivery was due in the window and nothing came back; down by presence; else ok. --shown is what a
 consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","working":<n>}} from a file or
 - for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
-with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
+with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or their agent
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
 friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
 reason, session_live, queued}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
-(a refused flag, an unreadable --shown).
+(a refused flag, an unreadable --shown, a flag given where a friend name goes: flags go before the friend
+names, nova-friend check [flags] <friend>...).
 ```
 
 Example, as written:
