@@ -115,7 +115,7 @@ func runExample(t *testing.T, h exampleHome, transcript []string, volatile []onb
 			switch {
 			case strings.HasPrefix(a, "~/"):
 				a = filepath.Join(h.home, strings.TrimPrefix(a, "~/"))
-			case a == "/opt/homebrew/bin/sops":
+			case a == "/opt/homebrew/bin/sops", a == "$SOPS":
 				a = h.sops
 			}
 			args = append(args, a)
@@ -147,7 +147,7 @@ func TestTheHelpExampleIsWhatSealDryRunPrints(t *testing.T) {
 	t.Parallel()
 	h := newExampleHome(t, "API_KEY: old-value")
 	runExample(t, h, []string{
-		"$ nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run",
+		"$ nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops \"$SOPS\" --name API_KEY --dry-run",
 		"! seal: reading worker.yaml",
 		"SECRETS SEAL PLAN write=secrets/worker.yaml action=replace name=API_KEY seat=worker recipients=" + exWorker + "," + exRecovery + " value=not read (dry run)",
 		`SECRETS SEAL PLAN git store=./secrets from=main branch=seal/worker-API_KEY-20260930-120000 commit="seal API_KEY into worker.yaml"`,
@@ -160,7 +160,7 @@ func TestTheHelpExampleIsWhatSeatInjectDryRunPrints(t *testing.T) {
 	t.Parallel()
 	h := newExampleHome(t, "API_KEY: source-value")
 	runExample(t, h, []string{
-		"$ nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run",
+		"$ nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops \"$SOPS\" --dry-run",
 		"! seat inject: reading lead.yaml",
 		"SECRETS SEAT INJECT PLAN write=secrets/worker.yaml from=lead deliver=API_KEY recipients=" + exWorker + "," + exRecovery + " keep-clear=- every other held name is re-sealed from the source; values not shown",
 		`SECRETS SEAT INJECT PLAN git store=./secrets from=main branch=seal/worker-API_KEY-20260930-120000 commit="inject API_KEY into worker.yaml from lead"`,
@@ -174,7 +174,7 @@ func TestTheHelpExampleIsWhatPlaceDryRunPrints(t *testing.T) {
 	h := newExampleHome(t, "API_KEY: the-value")
 	remote := "/home/bench/.config/nova-secrets/API_KEY.env"
 	runExample(t, h, []string{
-		"$ nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run",
+		"$ nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops \"$SOPS\" --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run",
 		"SECRETS PLACE PLAN machine=bench secret=API_KEY path=" + remote + " mode=0600 file=worker.yaml head=- blob=" + blobOf(t, filepath.Join(h.home, "secrets", "worker.yaml")),
 		"SECRETS PLACE PLAN ssh=ssh target=bench.example writes=" + remote + " the value travels on stdin, never in an argument",
 		"SECRETS PLACE PLAN receipt=/home/you/.config/nova-secrets/placed/bench.receipt action=add",

@@ -90,9 +90,9 @@ func runSitting(t *testing.T, h sittingHome, banner []string, sitting []onboardi
 			switch {
 			case strings.HasPrefix(a, "~/"):
 				a = filepath.Join(h.home, strings.TrimPrefix(a, "~/"))
-			case a == "/opt/homebrew/bin/sops":
+			case a == "/opt/homebrew/bin/sops", a == "$SOPS":
 				a = h.sops
-			case a == "/opt/homebrew/bin/age-keygen":
+			case a == "/opt/homebrew/bin/age-keygen", a == "$AGE_KEYGEN":
 				a = h.ageKeygen
 			case a == "$BO_PUB":
 				a = h.bo
@@ -133,7 +133,7 @@ func TestTheHelpExampleIsWhatKeygenPrints(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(h.home, ".config", "nova-secrets", "ada.key")))
 	pub := "age1fake000000000000000000000000000000000000000000000000000000000"
 	runSitting(t, h, bannerExamples(t), []onboarding.Step{
-		{Line: "$ nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen", Want: []string{
+		{Line: "$ nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen \"$AGE_KEYGEN\"", Want: []string{
 			"SECRETS RULE   creation_rules:",
 			`SECRETS RULE     - path_regex: ^ada\.yaml$`,
 			"SECRETS RULE       age: " + pub + ",<recovery key>",

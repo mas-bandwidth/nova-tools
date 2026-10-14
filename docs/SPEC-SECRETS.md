@@ -224,8 +224,10 @@ writes it to disk, so `RLIMIT_CORE` is set to 0 before the exec; and on darwin n
 a **waiting parent**, so for the seat's lifetime a process outside the wall holds it. Nothing
 of *nova-secrets* is left alive holding a plaintext; that is not nothing at all.
 
-**It replaces itself.** `exec` uses `execve` — same pid, no wrapper left in the tree: no
+**It replaces itself**, except when `--json` is asked. `exec` uses `execve` — same pid, no wrapper left in the tree: no
 zombie, no signal relay to get wrong, no second process for a deadline to kill by mistake.
+`--json` forks and waits instead (Output grammar), so the process can report the child's
+exit in the one JSON object; it does not execve, and it does not write the child's output.
 
 **Its exit code is the command's, and its own refusal is 125**, nova-sandbox's number adopted
 verbatim: in the nested launcher a `2` could be `gh`'s, a flag error, or this tool's refusal,
@@ -979,6 +981,18 @@ deviation** from Conventions, because from the next instruction the command owns
 Every `key=value` field is escaped by the shared `pkg/oneline` helper so a field is one
 token; the free-text tail after `: ` is never scanned for fields. Nothing a file holds and no
 caller argument can author a second line.
+
+**Every verb takes `--json`**, `help` and `version` aside (STANDARD §2, one output structure,
+two renderings). One JSON object goes on stdout and nothing else: the `result` (verb, status,
+exit, and on a refusal its reason and remedy), the first line's fields as `facts`, later lines
+as `notes`. A refusal asked for as `--json` is that object too, the flag refusals included, so
+`nova-secrets check --json` with no other flag is `check`'s own refusal and not the parser's
+unknown-flag line. The object carries no value, no fragment of a value and no length, because
+`--json` renders exactly the value the lines render and the lines never carry one; `exec --json`
+describes the launch only (the names passed and the child's exit), never the child's own output.
+It forks and waits for that exit (it does not execve); the child's stdout and stderr are
+discarded, not rendered.
+`names --json` is the same object built from `NamesReport` in `names.go`.
 
 ```
 SECRETS REFUSED: <reason>; run: nova-secrets help
