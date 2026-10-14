@@ -190,6 +190,22 @@ func (w world) codexPush(c *tool.Call, s *session, r *codexRoute, role hook.Role
 		r.pendingTurn = ""
 	}
 	if r != nil && r.pending {
+		if m != nil && canonicalHookChallenge(*m, s.as) {
+			ctx, cancel := call()
+			challenge, err := s.hooks.C.HMGet(ctx, hook.ChallengeKey(s.as), "sum", "epoch").Result()
+			cancel()
+			if err != nil {
+				return codexDeliveryFailure(s, role, epoch, id, err)
+			}
+			nonce := strings.TrimPrefix(m.Subject, "HOOK CHALLENGE nonce=")
+			if challenge[0] == hook.Sum(nonce) && challenge[1] == strconv.FormatInt(epoch, 10) {
+				// SPEC-CODEX-DESKTOP-WAKE: a native notice is immutable. A
+				// current heartbeat gets a fresh notice without waiting for the
+				// proof it requests. Keep the ordinary summary's boundary intact.
+				priority := *r
+				return w.codexSend(c, s, &priority, role, epoch, savedCodexEvent{EventID: id, Message: m, HookEpoch: epoch, HookRole: role})
+			}
+		}
 		if m != nil {
 			r.fold(*m)
 		}
