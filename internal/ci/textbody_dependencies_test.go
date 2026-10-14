@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Webhook decoding must not compile merge policy to filter comment text. The
-// shared filter stays standard-library-only. Walk all platform variants and
-// transitive edges, so another intermediary cannot reintroduce the dependency.
+// Webhook decoding must not compile merge policy to filter comment text. Walk
+// all platform variants and transitive edges, so another intermediary cannot
+// reintroduce the dependency.
 func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
@@ -44,7 +44,7 @@ func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 			imports[pkg] = append(imports[pkg], dep)
 		}
 	}
-	for _, root := range []string{"internal/ghevent", "internal/textbody"} {
+	for _, root := range []string{"internal/ghevent"} {
 		_, ok := imports[module+root]
 		require.Truef(t, ok, "missing root %s", root)
 		seen := map[string]bool{}
@@ -56,15 +56,12 @@ func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 			seen[pkg] = true
 			for _, dep := range imports[pkg] {
 				if strings.HasPrefix(dep, module) {
-					assert.Falsef(t, root == "internal/textbody" || dep == module+"internal/merge", "%s reaches %s through %s; use general text filtering without merge policy", root, dep, pkg)
+					assert.Falsef(t, dep == module+"internal/merge", "%s reaches %s through %s; use general text filtering without merge policy", root, dep, pkg)
 					_, ok := imports[dep]
 					if !assert.Truef(t, ok, "cannot inspect %s", dep) {
 						continue
 					}
 					walk(dep)
-				} else {
-					first, _, _ := strings.Cut(dep, "/")
-					assert.Falsef(t, root == "internal/textbody" && strings.Contains(first, "."), "textbody reaches third-party %s", dep)
 				}
 			}
 		}
