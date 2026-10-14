@@ -530,6 +530,13 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "card moved out of the sprint (work record, 2026-10-04); issue #4306")
+  (item "friend-session-auto-recovery" :group "friends"
+   :title "A broken friend session renews itself"
+   :text "The friend daemon renews a session it marked broken, in the same harness, and exposes the
+    renewal as a verb. No person has to renew it by hand."
+   :date "2026-10-10"
+   :release "v1.5"
+   :origin "card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "friend-back-up-detection-and-adopt" :group "friends"
    :title "Friends and machines noticed back up and made current"
    :text "A hold or down state carries its cause and end time, and the tick notices when it ends.
@@ -622,6 +629,14 @@
     everyone. Pro routes then serve friends and flash routes serve the fleet."
    :date "2026-10-10"
    :release "after v1.4"
+   :origin "card moved out of the sprint (work record, 2026-10-04)")
+  (item "friend-daemon-liveness" :group "friends"
+   :title "Show and alarm friend daemon state, and ping every friend each second"
+   :text "A test pins the installed service definition, and a view shows which binary each friend daemon
+    runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping
+    loop and marks a friend down after ten seconds without a pong."
+   :date "2026-10-10"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-lane-wall-profile" :group "friends"
    :title "Run every friend lane inside a wall profile taken from its friend row"
@@ -1701,6 +1716,13 @@
    :date "2026-10-10"
    :release "v1.5"
    :origin "card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)")
+  (item "bus-trims-acknowledged-keepalives" :group "ops"
+   :title "The bus trims acknowledged keepalive messages"
+   :text "Keepalive messages that every reader has acknowledged are trimmed from the bus log, so the log
+    stops growing without bound."
+   :date "2026-10-10"
+   :release "v1.5"
+   :origin "card from the sprint store (2026-10-10)")
   (item "core-module-tla-models" :group "docs"
    :title "TLA+ models for the core state packages"
    :text "Each package that owns state (bus, cairn, card tree, config, decision record, secrets, update,

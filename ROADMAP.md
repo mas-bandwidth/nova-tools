@@ -23,8 +23,8 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (23)
-- [Setup, release and operations](#setup-release-and-operations) (96)
+- [Friends](#friends) (25)
+- [Setup, release and operations](#setup-release-and-operations) (97)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -178,6 +178,14 @@ Target: after v1.4
 
 From: cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
 
+### A broken friend session renews itself
+
+The friend daemon renews a session it marked broken, in the same harness, and exposes the renewal as a verb. No person has to renew it by hand.
+
+Target: v1.5
+
+From: card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
 ### Friends and machines noticed back up and made current
 
 A hold or down state carries its cause and end time, and the tick notices when it ends. Returning friends and fleet machines adopt the latest tools before taking work.
@@ -201,6 +209,14 @@ Every one-shot friend lane counts tokens and stops at a per-card cap. Briefs cit
 Target: after v1.4
 
 From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
+
+### Show and alarm friend daemon state, and ping every friend each second
+
+A test pins the installed service definition, and a view shows which binary each friend daemon runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping loop and marks a friend down after ten seconds without a pong.
+
+Target: v1.5
+
+From: card moved out of the sprint (work record, 2026-10-04)
 
 ### Run every friend lane inside a wall profile taken from its friend row
 
@@ -1083,6 +1099,14 @@ From: card from the sprint store (2026-10-10); card moved out of the sprint (wor
 ### Fix the text scanners: large input speed and host names with digits
 
 The self-talk scanner must scan a megabyte of installation text within its time bound. The generality tokenizer must catch a host name that ends in digits.
+
+Target: v1.5
+
+From: card from the sprint store (2026-10-10)
+
+### The bus trims acknowledged keepalive messages
+
+Keepalive messages that every reader has acknowledged are trimmed from the bus log, so the log stops growing without bound.
 
 Target: v1.5
 
