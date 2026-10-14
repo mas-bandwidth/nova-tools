@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -305,7 +304,7 @@ func readRoles(field string) ([]string, error) {
 		return nil, fmt.Errorf("carries no role; every machine is at least one of %s, %s, %s, %s",
 			RoleBench, RoleRunner, RoleCoordination, RoleServices)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

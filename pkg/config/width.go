@@ -1,9 +1,10 @@
 package config
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -51,7 +52,7 @@ func Widths(ctx context.Context, st Store) ([]MachineWidth, error) {
 	for _, m := range machines {
 		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == ""})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Machine < out[j].Machine })
+	slices.SortFunc(out, func(a, b MachineWidth) int { return cmp.Compare(a.Machine, b.Machine) })
 	return out, nil
 }
 

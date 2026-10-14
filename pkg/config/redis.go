@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/redis/go-redis/v9"
+	"slices"
 )
 
 // The Redis keys apply writes, per kind. A friend's keys are the ones the
@@ -241,7 +241,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	if err != nil {
 		return nil, 0, fmt.Errorf("redis: read %s: %w", FriendsKey, err)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	pipe := a.Client.Pipeline()
 	desired := make([]*redis.SliceCmd, len(names))
 	roles := make([]*redis.StringCmd, len(names))
@@ -593,7 +593,7 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 	if err != nil {
 		return nil, 0, fmt.Errorf("redis: read %s: %w", MachinesKey, err)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	pipe := a.Client.Pipeline()
 	ceiling := make([]*redis.StringCmd, len(names))
 	reg := make([]*redis.MapStringStringCmd, len(names))
@@ -771,7 +771,7 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 		}
 	}
 	if len(users) > 0 {
-		sort.Strings(users)
+		slices.Sort(users)
 		return &RefusedError{Err: ErrInUse, Detail: fmt.Sprintf("machine %s still carries %s in Redis; move or remove them first", m, strings.Join(users, ","))}
 	}
 	pipe := a.Client.TxPipeline()
@@ -817,7 +817,7 @@ func (a *RedisApplier) readHashes(ctx context.Context, h hashKind) (map[string]V
 		return nil, 0, fmt.Errorf("redis: read %s: %w", h.set, err)
 	}
 	names := members.Val()
-	sort.Strings(names)
+	slices.Sort(names)
 	hashes := make([]*redis.MapStringStringCmd, len(names))
 	if len(names) > 0 {
 		pipe := a.Client.Pipeline()

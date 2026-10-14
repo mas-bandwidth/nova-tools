@@ -3,9 +3,10 @@ package tlc
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -38,8 +39,8 @@ func LoadCases(root string) ([]Case, error) {
 		}
 		seen[c.Config] = true
 	}
-	sort.Strings(actual)
-	sort.Strings(named)
+	slices.Sort(actual)
+	slices.Sort(named)
 	if strings.Join(actual, "\n") != strings.Join(named, "\n") {
 		return nil, fmt.Errorf("%s must name every MC*.cfg exactly once", CasesFile)
 	}
@@ -60,11 +61,7 @@ func RequiredGroups(cases []Case) []string {
 			set[c.Group] = true
 		}
 	}
-	out := make([]string, 0, len(set))
-	for g := range set {
-		out = append(out, g)
-	}
-	sort.Strings(out)
+	out := slices.Sorted(maps.Keys(set))
 	return out
 }
 

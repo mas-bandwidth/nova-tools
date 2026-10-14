@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 )
 
@@ -63,7 +63,7 @@ func ReadSums(dir string) ([]Artifact, error) {
 		return nil, refuse("build the release again with `nova-update release build`",
 			"%s lists no artifact", SumsFile)
 	}
-	sort.Slice(arts, func(i, j int) bool { return arts[i].Name < arts[j].Name })
+	slices.SortFunc(arts, func(a, b Artifact) int { return cmp.Compare(a.Name, b.Name) })
 	return arts, nil
 }
 

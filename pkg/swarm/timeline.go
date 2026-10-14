@@ -27,7 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -311,7 +311,7 @@ func ProfileJobs(pattern string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm profile: --jobs wants a glob, got %q: %s\n", pattern, err)
 		return 2
 	}
-	sort.Strings(matches)
+	slices.Sort(matches)
 
 	var jobs []JobProfile
 	for _, m := range matches {

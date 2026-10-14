@@ -2,7 +2,7 @@ package release
 
 import (
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -73,7 +73,7 @@ func Sensitive(files []string) []string {
 			}
 		}
 	}
-	sort.Strings(hits)
+	slices.Sort(hits)
 	return hits
 }
 

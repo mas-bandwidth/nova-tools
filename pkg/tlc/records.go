@@ -1,6 +1,7 @@
 package tlc
 
 import (
+	"cmp"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -239,11 +239,8 @@ func OneJar(cases []Case, records []Record) error {
 		return nil
 	}
 	jars := slices.Collect(maps.Keys(count))
-	sort.Slice(jars, func(a, b int) bool {
-		if count[jars[a]] != count[jars[b]] {
-			return count[jars[a]] > count[jars[b]]
-		}
-		return jars[a] < jars[b]
+	slices.SortFunc(jars, func(a, b string) int {
+		return cmp.Or(cmp.Compare(count[b], count[a]), cmp.Compare(a, b))
 	})
 	group := map[string]string{}
 	for _, c := range cases {
@@ -321,11 +318,7 @@ func StaleGroups(src Source, cases []Case, records []Record) ([]string, error) {
 			set[c.Group] = true
 		}
 	}
-	out := make([]string, 0, len(set))
-	for g := range set {
-		out = append(out, g)
-	}
-	sort.Strings(out)
+	out := slices.Sorted(maps.Keys(set))
 	return out, nil
 }
 

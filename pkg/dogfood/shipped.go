@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -52,7 +51,7 @@ func CmdTools(cmdDir string) ([]string, error) {
 		}
 		tools = append(tools, e.Name())
 	}
-	sort.Strings(tools)
+	slices.Sort(tools)
 	return tools, nil
 }
 

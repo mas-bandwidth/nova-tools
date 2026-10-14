@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
-	"sort"
 	"strings"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 )
 
@@ -240,7 +240,7 @@ type PriceRefresh struct {
 func PlanPriceRefresh(routes []Row, list map[string]ListPrice, provider, source, today string) []PriceRefresh {
 	var out []PriceRefresh
 	sorted := slices.Clone(routes)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	slices.SortFunc(sorted, func(a, b Row) int { return cmp.Compare(a.Name, b.Name) })
 	for _, r := range sorted {
 		f := r.Fields
 		if f["enabled"] == "false" || (provider != "" && f["provider"] != provider) {

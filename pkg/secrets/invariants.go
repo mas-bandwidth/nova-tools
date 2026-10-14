@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -543,7 +542,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 			}
 		}
 	}
-	sort.Strings(yamlFiles)
+	slices.Sort(yamlFiles)
 
 	if sopsCfg != nil {
 		inv2Fails := CheckInvariant2(storeDir, sopsCfg, yamlFiles)

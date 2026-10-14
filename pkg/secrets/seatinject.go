@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -237,7 +236,7 @@ func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
 	if len(names) == 0 {
 		return nil, fmt.Errorf("--only <NAME,…> named no keys")
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names, nil
 }
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -189,6 +189,6 @@ func seatAbsent(storeDir, asName string) error {
 	if len(seats) == 0 {
 		return fmt.Errorf("seat file %s.yaml is absent: store %s holds no seat file yet; seal writes a seat's first value: run: nova-secrets seal --store %s --as %s --key <path> --sops <path> --name <NAME>", asName, storeDir, storeDir, asName)
 	}
-	sort.Strings(seats)
+	slices.Sort(seats)
 	return fmt.Errorf("seat file %s.yaml is absent in store %s; its seats are %s: pass --as one of them; seal starts a new seat: run: nova-secrets seal --store %s --as %s --key <path> --sops <path> --name <NAME>", asName, storeDir, strings.Join(seats, ", "), storeDir, asName)
 }

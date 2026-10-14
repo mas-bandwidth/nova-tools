@@ -1,12 +1,12 @@
 package config
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -336,7 +336,7 @@ func (m *Mem) List(_ context.Context, kind string) ([]Row, error) {
 	for _, r := range m.rows[kind] {
 		out = append(out, r.Clone())
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Row) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
 }
 

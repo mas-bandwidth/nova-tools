@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/fleet"
@@ -49,7 +48,7 @@ func RunGate(in GateInput) (string, int) {
 	if len(changed) == 0 {
 		return gateApprove(0, in.MachinesPath), 0
 	}
-	sort.Strings(changed)
+	slices.Sort(changed)
 	var gateFindings []gateFinding
 
 	// Check 3: No other file changes except README.md.
@@ -579,7 +578,7 @@ func gitTreeFiles(storeDir, ref string) ([]string, error) {
 		return nil, err
 	}
 	files := splitLines(res.Stdout)
-	sort.Strings(files)
+	slices.Sort(files)
 	return files, nil
 }
 

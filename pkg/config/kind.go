@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -30,6 +29,7 @@ import (
 	"time"
 	"unicode"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
 )
@@ -1196,7 +1196,7 @@ func splitList(raw string) ([]string, error) {
 			words = append(words, w)
 		}
 	}
-	sort.Strings(words)
+	slices.Sort(words)
 	return words, nil
 }
 
@@ -1244,7 +1244,7 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 		}
 	}
 	if len(problems) > 0 {
-		sort.Strings(problems)
+		slices.Sort(problems)
 		return Row{}, fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return row, nil
@@ -1295,7 +1295,7 @@ func (k *Kind) Changes(raw map[string]string) (map[string]string, error) {
 		}
 	}
 	if len(problems) > 0 {
-		sort.Strings(problems)
+		slices.Sort(problems)
 		return nil, fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return out, nil
@@ -1304,14 +1304,14 @@ func (k *Kind) Changes(raw map[string]string) (map[string]string, error) {
 // Sorted returns the rows in apply order: Kind.ApplyOrder first, then name.
 func (k *Kind) Sorted(rows []Row) []Row {
 	out := append([]Row(nil), rows...)
-	sort.SliceStable(out, func(i, j int) bool {
+	slices.SortStableFunc(out, func(a, b Row) int {
 		if k.ApplyOrder != nil {
-			a, b := k.ApplyOrder(out[i]), k.ApplyOrder(out[j])
-			if a != b {
-				return a < b
+			x, y := k.ApplyOrder(a), k.ApplyOrder(b)
+			if x != y {
+				return cmp.Compare(x, y)
 			}
 		}
-		return out[i].Name < out[j].Name
+		return cmp.Compare(a.Name, b.Name)
 	})
 	return out
 }

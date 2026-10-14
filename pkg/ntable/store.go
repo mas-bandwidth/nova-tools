@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 	"github.com/redis/go-redis/v9"
+	"maps"
+	"slices"
 )
 
 const (
@@ -996,11 +997,7 @@ func RowSetMany(ctx context.Context, c redis.Cmdable, name string, rows map[stri
 	if err != nil {
 		return err
 	}
-	keys := make([]string, 0, len(rows))
-	for k := range rows {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(rows))
 	pipe := c.Pipeline()
 	cmds := make([]*redis.Cmd, len(keys))
 	for i, k := range keys {

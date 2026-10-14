@@ -10,13 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/readregular"
+	"slices"
 )
 
 // Receipt is one person saying: I ran this verb, on this day, on real work, and
@@ -305,7 +305,7 @@ func ReadReceipts(dir string) ([]Receipt, []Failure, error) {
 		}
 		names = append(names, e.Name())
 	}
-	sort.Strings(names) // the order is the filenames', so two runs read the same
+	slices.Sort(names) // the order is the filenames', so two runs read the same
 
 	for _, name := range names {
 		path := filepath.Join(dir, name)

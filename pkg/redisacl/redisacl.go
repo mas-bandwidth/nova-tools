@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/redisfn"
@@ -348,8 +347,8 @@ func diff(want, have map[string]bool) (add, del []string) {
 			del = append(del, h)
 		}
 	}
-	sort.Strings(add)
-	sort.Strings(del)
+	slices.Sort(add)
+	slices.Sort(del)
 	return add, del
 }
 

@@ -8,13 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"golang.org/x/mod/semver"
+	"slices"
 )
 
 // prNumber matches the `(#123)` a squash merge puts at the end of the subject.
@@ -314,8 +314,8 @@ func ciNotGreen(runs []CheckRun) (failing, pending []string) {
 			failing = append(failing, r.Name+"="+r.Conclusion)
 		}
 	}
-	sort.Strings(failing)
-	sort.Strings(pending)
+	slices.Sort(failing)
+	slices.Sort(pending)
 	return failing, pending
 }
 

@@ -9,13 +9,14 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"cmp"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
+	"slices"
 )
 
 // Migrations are the numbered SQL files under migrations/, applied in order,
@@ -60,7 +61,7 @@ func Migrations() ([]Migration, error) {
 		}
 		out = append(out, Migration{Version: v, Name: base, SQL: string(body)})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
+	slices.SortFunc(out, func(a, b Migration) int { return cmp.Compare(a.Version, b.Version) })
 	return out, nil
 }
 

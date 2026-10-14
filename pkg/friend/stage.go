@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"slices"
 )
 
 // The daemon stages every job it holds (the finding of 2026-10-05: the first lanes of the
@@ -504,11 +504,8 @@ func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]s
 		}
 		done = append(done, finished{job: job, repo: repo, mirror: mirror, at: at})
 	}
-	sort.Slice(done, func(i, j int) bool {
-		if !done[i].at.Equal(done[j].at) {
-			return done[i].at.Before(done[j].at)
-		}
-		return done[i].job < done[j].job
+	slices.SortFunc(done, func(a, b finished) int {
+		return cmp.Or(a.at.Compare(b.at), cmp.Compare(a.job, b.job))
 	})
 	var pruned []string
 	var firstErr error

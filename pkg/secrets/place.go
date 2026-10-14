@@ -7,14 +7,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/testguard"
+	"slices"
 )
 
 // place.go implements `nova-secrets place`, which copies one named secret from the
@@ -477,7 +478,7 @@ func readReceipts(dir, machine string) ([]placedReceipt, error) {
 			return nil, fmt.Errorf("receipt %s line %d: want 6 tab-separated fields (secret, path, file, head, blob, stamp); run: rm %s and place again", receiptPath(dir, machine), n+1, receiptPath(dir, machine))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Secret < out[j].Secret })
+	slices.SortFunc(out, func(a, b placedReceipt) int { return cmp.Compare(a.Secret, b.Secret) })
 	return out, nil
 }
 
@@ -500,7 +501,7 @@ func writeReceipt(dir, machine string, add placedReceipt) error {
 	if !replaced {
 		existing = append(existing, add)
 	}
-	sort.Slice(existing, func(i, j int) bool { return existing[i].Secret < existing[j].Secret })
+	slices.SortFunc(existing, func(a, b placedReceipt) int { return cmp.Compare(a.Secret, b.Secret) })
 
 	var b strings.Builder
 	// Every line is written in the six-field form, so an older build's line loses its

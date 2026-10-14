@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1078,7 +1077,7 @@ func DroppedEnv(env []string) []string {
 			out = append(out, name)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

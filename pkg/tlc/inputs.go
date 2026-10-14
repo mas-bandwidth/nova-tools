@@ -2,6 +2,7 @@ package tlc
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -131,7 +133,7 @@ func (s Source) Inputs(config string) ([]Input, error) {
 		sum := sha256.Sum256(raw)
 		out = append(out, Input{Path: path, SHA256: hex.EncodeToString(sum[:])})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b Input) int { return cmp.Compare(a.Path, b.Path) })
 	return out, nil
 }
 
@@ -141,7 +143,7 @@ func (s Source) Inputs(config string) ([]Input, error) {
 // same digest wherever they are read.
 func Digest(inputs []Input) string {
 	sorted := append([]Input(nil), inputs...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
+	slices.SortFunc(sorted, func(a, b Input) int { return cmp.Compare(a.Path, b.Path) })
 	h := sha256.New()
 	for _, in := range sorted {
 		h.Write([]byte(in.Path))
