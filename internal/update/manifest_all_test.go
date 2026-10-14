@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 )
 
 // A manifest with several problems is refused with ALL of them, in line order, each worded
@@ -33,7 +35,7 @@ func TestLoadReportsEveryProblemOfTheManifest(t *testing.T) {
 	if !errors.As(err, &me) {
 		require.Failf(t, "", "Load returned %v, want a *ManifestError", err)
 	}
-	for _, want := range []string{
+	must.ContainsAll(t, err.Error(),
 		"line 3: unknown kind gadget",
 		"line 4: unknown source nowhere",
 		"line 5: 3 fields, want 6",
@@ -41,11 +43,7 @@ func TestLoadReportsEveryProblemOfTheManifest(t *testing.T) {
 		"line 7: duplicate name a",
 		"line 8: pin requires local source",
 		"line 9: installed: argv requires single spaces",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			assert.Failf(t, "", "the refusal does not carry %q:\n%s", want, err)
-		}
-	}
+	)
 	if len(me.Problems) != 7 || me.More != 0 {
 		assert.Failf(t, "", "%d problems (+%d more), want 7: %q", len(me.Problems), me.More, me.Problems)
 	}
@@ -98,11 +96,7 @@ func TestReportRefusesAManifestNamingEveryProblem(t *testing.T) {
 	if rc := Main("nova-version", []string{"report", "--file", path}, "v0", &out, &errs); rc != 2 {
 		require.EqualValuesf(t, 2, rc, "exit %d, want 2: %s", rc, errs.String())
 	}
-	for _, want := range []string{"REPORT REFUSED", "line 2: unknown kind gadget", "line 3: unknown source nowhere"} {
-		if !strings.Contains(errs.String(), want) {
-			assert.Failf(t, "", "stderr has no %q: %s", want, errs.String())
-		}
-	}
+	must.ContainsAll(t, errs.String(), "REPORT REFUSED", "line 2: unknown kind gadget", "line 3: unknown source nowhere")
 	if strings.Count(errs.String(), "\n") != 1 {
 		assert.Failf(t, "", "the refusal is not one line: %q", errs.String())
 	}
@@ -120,9 +114,7 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 			require.EqualValuesf(t, 0, rc, "%s help: exit %d", name, rc)
 		}
 		help := out.String()
-		for _, want := range []string{"two binaries", "THE MANIFEST is the file --file names"} {
-			assert.Contains(t, help, want, name)
-		}
+		must.ContainsAll(t, help, "two binaries", "THE MANIFEST is the file --file names")
 		// nova-update has no snapshot verb, so its help names no snapshot default.
 		for _, untrue := range []string{"ONE binary", "same build", "snapshot's --timeout"} {
 			assert.NotContains(t, help, untrue, name)
@@ -149,11 +141,7 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 		if numbered != 6 {
 			assert.EqualValuesf(t, 6, numbered, "%s report -h carries %d manifest lines, want six:\n%s", name, numbered, h)
 		}
-		for _, want := range []string{"name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner", "github:<owner>/<repo>", "harness, engine, model, tool or pin", "EVERY problem"} {
-			if !strings.Contains(h, want) {
-				assert.Containsf(t, h, want, "%s report -h does not carry %q", name, want)
-			}
-		}
+		must.ContainsAll(t, h, "name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner", "github:<owner>/<repo>", "harness, engine, model, tool or pin", "EVERY problem")
 	}
 	// nova-version's exit codes name no verb it does not have
 	var out, errs bytes.Buffer
