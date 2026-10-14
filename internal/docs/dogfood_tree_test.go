@@ -1,13 +1,11 @@
 package docs
 
 import (
-	"io/fs"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/repotree"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,33 +23,20 @@ var (
 func TestDocsTreeIsConsistent(t *testing.T) {
 	t.Parallel()
 
-	root := filepath.Join("..", "..", "docs", "dogfood", "2026-10-06", "codex")
-	var reports []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if !entry.IsDir() && filepath.Ext(path) == ".md" {
-			reports = append(reports, path)
-		}
-		return nil
+	files := repotree.Files(t, repotree.Query{
+		Under: []string{"docs/dogfood/2026-10-06/codex"},
+		Ext:   ".md",
 	})
-	require.NoError(t, err, "walk docs/dogfood")
-
-	for _, path := range reports {
-		path := path
-		t.Run(filepath.ToSlash(path), func(t *testing.T) {
+	for _, f := range files {
+		t.Run(f.Rel, func(t *testing.T) {
 			t.Parallel()
 
-			data, readErr := os.ReadFile(path)
-			require.NoError(t, readErr, "%s", path)
-			text := string(data)
-			require.Len(t, dogfoodReadLine.FindAllString(text, -1), 1, "%s needs one READ score", path)
-			require.Len(t, dogfoodUseLine.FindAllString(text, -1), 1, "%s needs one USE score", path)
-
+			text := string(f.Src)
+			require.Len(t, dogfoodReadLine.FindAllString(text, -1), 1, "%s needs one READ score", f.Rel)
+			require.Len(t, dogfoodUseLine.FindAllString(text, -1), 1, "%s needs one USE score", f.Rel)
 			lines := strings.Split(strings.TrimSpace(text), "\n")
 			require.NotEmpty(t, lines)
-			require.Regexp(t, dogfoodCountLine, lines[len(lines)-1], "%s must end with urgent/next counts", path)
+			require.Regexp(t, dogfoodCountLine, lines[len(lines)-1], "%s must end with urgent/next counts", f.Rel)
 		})
 	}
 }
