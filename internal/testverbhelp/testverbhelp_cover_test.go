@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/onboardtest"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -162,20 +164,16 @@ func TestTestverbhelpCoverOkClosingReadsTheLastLineOnly(t *testing.T) {
 		})
 	}
 }
-
-// TestTestverbhelpCoverOneRunsTheSeamWithNoProblems pins One's main path: it
-// hands the case, with {dir} and {addr} replaced and the spelling appended, to
-// the tool exactly once, and a tool that meets the rule keeps t quiet. The
-// ways a run can break the rule are the returned problems, pinned by
-// TestProblemsCatchesEveryWayToBreakTheRule.
+// TestTestverbhelpCoverOneRunsTheSeamWithNoProblems pins the seam's main path
+// through onboardtest.VerbHelp; One stays held by testverbhelp.Check above.
 func TestTestverbhelpCoverOneRunsTheSeamWithNoProblems(t *testing.T) {
 	t.Parallel()
-	c := Case{Verb: "send", Flags: []string{"--dir", "{dir}", "--addr", "{addr}"}}
 	var calls atomic.Int32
-	run := countRun(fakeToolRun, &calls)
-	One(t, run, c, "-h")
-	One(t, run, c, "--help")
-	assert.Equal(t, int32(2), calls.Load(), "One handed the case and each spelling to the tool once")
+	m := testkit.Main(func(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+		return countRun(fakeToolRun, &calls)(args, stdout, stderr)
+	})
+	onboardtest.VerbHelp(t, m, onboardtest.Spec{Name: "nova-demo", Verbs: []string{"send", "slots take"}})
+	assert.Equal(t, int32(4), calls.Load(), "VerbHelp handed every verb and each spelling to the tool once")
 }
 
 // TestTestverbhelpCoverHelpVerbMatchesTheFlagSpelling pins HelpVerb's checks:

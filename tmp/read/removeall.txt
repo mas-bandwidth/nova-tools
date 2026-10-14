@@ -1,0 +1,1 @@
+ok  	github.com/mas-bandwidth/nova-tools/internal/ci	0.241s
