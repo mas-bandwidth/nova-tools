@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
@@ -59,7 +60,7 @@ func runSnapshot(ctx context.Context, args []string, stdout, stderr io.Writer, d
 		return refuse(stderr, verb, err.Error())
 	}
 	defer func() { _ = st.Close() }() // ignored: every file the verb writes is already read, so a close error changes nothing
-	snap, err := config.TakeSnapshot(ctx, st, d.now().UTC().Format(time.RFC3339), version)
+	snap, err := config.TakeSnapshot(ctx, st, d.now().UTC().Format(time.RFC3339), buildinfo.Version(version))
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}

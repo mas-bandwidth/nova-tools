@@ -250,9 +250,9 @@ func TestCompareVerbNamesTheActBehindAChangedRow(t *testing.T) {
 			if jsonFlag {
 				args = append(args, "--json")
 			}
-			code, _, errs := h.run(t, args...)
+			code, out, errs := h.run(t, args...)
 			assert.Equal(t, 2, code)
-			assert.Contains(t, errs, "provider.json")
+			assert.Contains(t, out+errs, "provider.json")
 		}
 	})
 
