@@ -717,7 +717,7 @@ func (w world) checkRecipients(ctx context.Context, b *bus.Bus, as string, draft
 			}
 		}
 	}
-	var problems, reasons []string
+	var problems, reasons, notes []string
 	firstDown := ""
 	for _, st := range sts {
 		if st.State == hook.StateProven && st.Down == "" {
@@ -737,7 +737,9 @@ func (w world) checkRecipients(ctx context.Context, b *bus.Bus, as string, draft
 				jm, jerr := b.Send(ctx, bus.Message{From: as, To: []string{coord}, Kind: bus.KindJudgment, Subject: subject, Body: body, Once: once})
 				if jerr == nil && jm.ID != "" {
 					if hs, herr := hookgate.Store(b.Store); herr == nil {
-						_ = hs.OpenJudgment(ctx, hook.Judgment{ID: jm.ID, To: []string{coord}, Subject: subject}, 2*time.Minute)
+						if oerr := hs.OpenJudgment(ctx, hook.Judgment{ID: jm.ID, To: []string{coord}, Subject: subject}, 2*time.Minute); oerr != nil {
+							notes = append(notes, "the judgment record could not be written: "+oerr.Error())
+						}
 					}
 				}
 			}
@@ -746,6 +748,9 @@ func (w world) checkRecipients(ctx context.Context, b *bus.Bus, as string, draft
 	o := tool.Fail(problems...)
 	o.Reasons = reasons
 	o.Remedy = "nova-hook status --as " + firstDown
+	for _, n := range notes {
+		o.Note(n)
+	}
 	return o
 }
 
