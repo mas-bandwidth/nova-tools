@@ -28,7 +28,11 @@ func checkPlists(ctx context.Context, env Env) Result {
 		}
 		out, err := env.Exec(ctx, linter, args...)
 		if err != nil {
-			bad = append(bad, fmt.Sprintf("%s: %s", p, firstLine(out)))
+			reason := firstLine(out)
+			if reason == "" {
+				reason = firstLine(err.Error())
+			}
+			bad = append(bad, fmt.Sprintf("%s: %s", p, reason))
 		}
 	}
 	if len(bad) > 0 {
