@@ -113,7 +113,7 @@ func dash(s string) string {
 
 // busRefusals are the openings of nova-bus's own refusal grammar. A line is
 // relayed only if it begins with one of them.
-var busRefusals = []string{"SEND FAIL ", "SEND REFUSED: ", "SEND OK "}
+var busRefusals = []string{"SEND REFUSED reason=", "SEND FAIL ", "SEND REFUSED: ", "SEND OK "}
 
 // busSaid carries the bus's OWN first line into the caller's diagnostic. Without
 // it an operator reading a failed delivery is told "exit 1" and nothing else,
