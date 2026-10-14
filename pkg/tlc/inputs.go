@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -223,8 +222,7 @@ var (
 var referencesCache sync.Map // [sha256.Size]byte -> *referencesEntry
 
 type referencesEntry struct {
-	once   sync.Once
-	refs   []string
+	refsOf func() []string
 	parsed atomic.Int64 // how many times the text was parsed: one; a test reads it
 }
 
@@ -232,13 +230,13 @@ type referencesEntry struct {
 // content of text. The slice it returns is shared and is not to be changed.
 func cachedModuleReferences(text []byte) []string {
 	key := sha256.Sum256(text)
-	hit, _ := referencesCache.LoadOrStore(key, &referencesEntry{})
-	e := hit.(*referencesEntry)
-	e.once.Do(func() {
-		e.parsed.Add(1)
-		e.refs = ModuleReferences(text)
+	fresh := &referencesEntry{}
+	fresh.refsOf = sync.OnceValue(func() []string {
+		fresh.parsed.Add(1)
+		return ModuleReferences(text)
 	})
-	return e.refs
+	hit, _ := referencesCache.LoadOrStore(key, fresh)
+	return hit.(*referencesEntry).refsOf()
 }
 
 // ModuleReferences returns the names of the modules a module's text extends or
@@ -303,7 +301,7 @@ func ModuleReferences(text []byte) []string {
 	for _, m := range instanceRE.FindAllSubmatchIndex(clean, -1) {
 		hits = append(hits, hit{m[0], []string{string(clean[m[2]:m[3]])}})
 	}
-	sort.SliceStable(hits, func(i, j int) bool { return hits[i].at < hits[j].at })
+	slices.SortStableFunc(hits, func(a, b hit) int { return cmp.Compare(a.at, b.at) })
 	var out []string
 	seen := map[string]bool{}
 	for _, h := range hits {

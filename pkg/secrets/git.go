@@ -185,12 +185,12 @@ func readBranchConfig(gitDir, branch string) (remote, merge string, err error) {
 		if !inBranchSection {
 			continue
 		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
+		key, val, found := strings.Cut(line, "=")
+		if !found {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
 		switch key {
 		case "remote":
 			remote = val
@@ -285,11 +285,10 @@ func readLooseObject(gitDir, sha string) (string, []byte, error) {
 		return "", nil, fmt.Errorf("malformed loose object %s: missing null byte", sha)
 	}
 	header := string(data[:nullIdx])
-	parts := strings.SplitN(header, " ", 2)
-	if len(parts) != 2 {
+	objType, _, found := strings.Cut(header, " ")
+	if !found {
 		return "", nil, fmt.Errorf("malformed loose object %s header", sha)
 	}
-	objType := parts[0]
 	return objType, data[nullIdx+1:], nil
 }
 

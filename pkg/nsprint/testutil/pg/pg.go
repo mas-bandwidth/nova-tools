@@ -170,15 +170,14 @@ type Server struct {
 	Bin  string
 	Port string
 	// User is the superuser initdb made; trust authentication, no password.
-	User    string
-	next    atomic.Int64
-	log     string
-	cmd     *exec.Cmd     // the foreground postmaster
-	exited  chan struct{} // closed when the foreground postmaster is gone
-	ended   error         // what it ended with; read only after exited is closed
-	sentry  *post         // kills the postmaster when this test binary is gone
-	stop    sync.Once
-	stopErr error
+	User   string
+	next   atomic.Int64
+	log    string
+	cmd    *exec.Cmd     // the foreground postmaster
+	exited chan struct{} // closed when the foreground postmaster is gone
+	ended  error         // what it ended with; read only after exited is closed
+	sentry *post         // kills the postmaster when this test binary is gone
+	stop   func() error
 }
 
 // DSN is the connection string of one database on the server, for pgx: a
@@ -204,6 +203,7 @@ func StartServer(dir string) (*Server, error) {
 	data := filepath.Join(dir, "data")
 	logPath := filepath.Join(dir, "postgres.log")
 	s := &Server{Dir: dir, Bin: bin, User: "postgres", log: logPath}
+	s.stop = sync.OnceValue(s.stopRunning)
 	initdb, stopInitdb := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(bin, "initdb"), "-D", data, "-U", s.User, "--auth=trust", "--no-sync", "-E", "UTF8", "--locale=C")
 	defer stopInitdb()
 	initdb.Env = cleanEnv()
@@ -336,8 +336,7 @@ func (s *Server) ready() error {
 // Stop stops the server (immediate mode: nothing here is kept), waits for the
 // foreground postmaster, then closes the sentry's pipe and waits for it.
 func (s *Server) Stop() error {
-	s.stop.Do(func() { s.stopErr = s.stopRunning() })
-	return s.stopErr
+	return s.stop()
 }
 
 func (s *Server) stopRunning() (result error) {

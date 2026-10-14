@@ -100,7 +100,7 @@ const (
 // taken back; a card whose stream and id match none of Streams is skipped; any other runs.
 // The reason is a sentence for the record and for friend take.
 func (r LaneRules) Judge(id, stream, tier string) (LaneVerdict, string) {
-	if len(r.Tiers) > 0 && !contains(r.Tiers, tier) {
+	if len(r.Tiers) > 0 && !slices.Contains(r.Tiers, tier) {
 		if tier == "" {
 			tier = "-"
 		}
@@ -118,15 +118,6 @@ func (r LaneRules) Judge(id, stream, tier string) (LaneVerdict, string) {
 		return LaneSkip, fmt.Sprintf("neither stream %s nor id %s matches %s", stream, id, strings.Join(r.Streams, ","))
 	}
 	return LaneRun, ""
-}
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // TakeArgv is the coordinator's verb that takes a dealt, unstarted card back from the friend
@@ -462,7 +453,7 @@ var GoShimNames = []string{"go", "gofmt"}
 // GoShimName says whether argv0 names a shim (this binary run as go or gofmt, by symlink).
 func GoShimName(argv0 string) (string, bool) {
 	name := filepath.Base(argv0)
-	return name, contains(GoShimNames, name)
+	return name, slices.Contains(GoShimNames, name)
 }
 
 // GoRefusal is what a shim prints, and exits 2 with.

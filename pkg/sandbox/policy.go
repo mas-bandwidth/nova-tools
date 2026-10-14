@@ -1185,22 +1185,19 @@ func (p *Policy) watch(tick <-chan time.Time, usage func() (Usage, error), kill 
 			}
 		}
 	}()
-	var once sync.Once
-	return func() string {
-		once.Do(func() {
-			close(quit)
-			wg.Wait()
-			release()
-			if line != "" {
-				return
+	return sync.OnceValue(func() string {
+		close(quit)
+		wg.Wait()
+		release()
+		if line != "" {
+			return line
+		}
+		if u, err := usage(); err == nil {
+			if l, hit := p.Over(u); hit {
+				line = l
+				kill()
 			}
-			if u, err := usage(); err == nil {
-				if l, hit := p.Over(u); hit {
-					line = l
-					kill()
-				}
-			}
-		})
+		}
 		return line
-	}
+	})
 }

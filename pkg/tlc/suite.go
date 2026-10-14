@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -291,15 +292,7 @@ func fingerprints(src Source, cases []Case) (map[string]fingerprint, error) {
 }
 
 func sameFingerprints(a, b map[string]fingerprint) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
+	return maps.Equal(a, b)
 }
 
 // CopyModels copies the TLA+ modules and configurations of src into dst,

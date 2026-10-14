@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
@@ -107,8 +108,7 @@ type RedisApplier struct {
 	// Now is the stamp's clock (time.Now when nil).
 	Now func() time.Time
 
-	prepareOnce sync.Once
-	prepareErr  error
+	prepare atomic.Pointer[prepareFunc]
 
 	coordinator     string
 	coordinatorRead bool
@@ -122,14 +122,22 @@ func (a *RedisApplier) now() int64 {
 	return time.Now().UnixMilli()
 }
 
+// prepareFunc is LoadMissing cached for one applier.
+type prepareFunc func() error
+
 // Prepare installs the nova_sprint function library when the store has none
 // (fn.LoadMissing: never replaces a deployed one). It runs at most once per
-// process (RedisApplier).
+// applier, with the first caller's context.
 func (a *RedisApplier) Prepare(ctx context.Context) error {
-	a.prepareOnce.Do(func() {
-		a.prepareErr = fn.LoadMissing(ctx, a.Client)
-	})
-	return a.prepareErr
+	if p := a.prepare.Load(); p != nil {
+		return (*p)()
+	}
+	call := sync.OnceValue(func() error { return fn.LoadMissing(ctx, a.Client) })
+	p := prepareFunc(call)
+	if a.prepare.CompareAndSwap(nil, &p) {
+		return call()
+	}
+	return (*a.prepare.Load())()
 }
 
 func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, int64, error) {

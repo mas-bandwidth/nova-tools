@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -115,10 +116,7 @@ func (b *Bus) Stages(ctx context.Context, as string, ids ...string) ([]Stage, ti
 	}
 	h := hashes[0]
 	if len(ids) == 0 {
-		for id := range h {
-			ids = append(ids, id)
-		}
-		slices.Sort(ids) // a ULID sorts by the store's time
+		ids = slices.Sorted(maps.Keys(h)) // a ULID sorts by the store's time
 	}
 	out := make([]Stage, len(ids))
 	for i, id := range ids {

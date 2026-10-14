@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -81,11 +82,5 @@ func (m *membersCmd) result() ([]Member, error) {
 	if m.exclude == "" {
 		return out, nil
 	}
-	kept := out[:0]
-	for _, x := range out {
-		if x.Member != m.exclude {
-			kept = append(kept, x)
-		}
-	}
-	return kept, nil
+	return slices.DeleteFunc(out, func(x Member) bool { return x.Member == m.exclude }), nil
 }

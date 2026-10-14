@@ -374,10 +374,11 @@ func goTestTargets(seg string) []string {
 	var out []string
 	for _, f := range strings.Fields(seg) {
 		f = strings.Trim(f, `"'`)
+		head, _, _ := strings.Cut(f, "/")
 		switch {
 		case f == ".", f == "...", strings.HasPrefix(f, "./"), strings.HasPrefix(f, "../"):
 			out = append(out, f)
-		case !strings.HasPrefix(f, "-") && strings.Contains(f, "/") && strings.Contains(strings.SplitN(f, "/", 2)[0], "."):
+		case !strings.HasPrefix(f, "-") && strings.Contains(f, "/") && strings.Contains(head, "."):
 			out = append(out, f)
 		}
 	}

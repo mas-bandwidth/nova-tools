@@ -286,9 +286,9 @@ func parseStoreFile(f io.Reader) (keys []StoreFileKey, recipients []string, hasS
 			// Root key outside sops (could be before or after sops block)
 			inSops = false
 			inAge = false
-			parts := strings.SplitN(line, ":", 2)
-			keyName := strings.TrimSpace(parts[0])
-			val := strings.TrimSpace(parts[1])
+			keyName, val, _ := strings.Cut(line, ":")
+			keyName = strings.TrimSpace(keyName)
+			val = strings.TrimSpace(val)
 			isClear := !strings.HasPrefix(val, "ENC[")
 			keys = append(keys, StoreFileKey{
 				Name:  keyName,
@@ -478,9 +478,9 @@ func ParseDecryptedSecrets(data []byte) (map[string]Secret, []string, error) {
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.Contains(line, ":") {
 			flushCurrent()
 
-			parts := strings.SplitN(line, ":", 2)
-			k := strings.TrimSpace(parts[0])
-			v := strings.TrimSpace(parts[1])
+			k, v, _ := strings.Cut(line, ":")
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
 
 			if !IsValidEnvVar(k) {
 				badKeys = append(badKeys, k)

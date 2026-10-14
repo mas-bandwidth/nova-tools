@@ -240,6 +240,12 @@ func (d *firstDial) dialer(ctx context.Context, network, addr string) (net.Conn,
 	d.mu.Unlock()
 
 	tc := &trackedConn{Conn: nc, dialer: d}
+	tc.close = sync.OnceValue(func() error {
+		if tc.dialer != nil {
+			tc.dialer.remove(tc.Conn)
+		}
+		return tc.Conn.Close()
+	})
 	if d.opening.Load() {
 		first := &firstConn{Conn: tc}
 		d.first.Store(first)
@@ -285,19 +291,12 @@ func (d *firstDial) hangUp() {
 
 type trackedConn struct {
 	net.Conn
-	dialer    *firstDial
-	closeOnce sync.Once
-	closeErr  error
+	dialer *firstDial
+	close  func() error
 }
 
 func (c *trackedConn) Close() error {
-	c.closeOnce.Do(func() {
-		if c.dialer != nil {
-			c.dialer.remove(c.Conn)
-		}
-		c.closeErr = c.Conn.Close()
-	})
-	return c.closeErr
+	return c.close()
 }
 
 type trackedSysConn struct {

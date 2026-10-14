@@ -2,6 +2,7 @@ package dogfood
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -356,14 +357,7 @@ func containsWords(have, want []string) bool {
 		return false
 	}
 	for i := 0; i+len(want) <= len(have); i++ {
-		match := true
-		for j := range want {
-			if have[i+j] != want[j] {
-				match = false
-				break
-			}
-		}
-		if match {
+		if slices.Equal(have[i:i+len(want)], want) {
 			return true
 		}
 	}

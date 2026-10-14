@@ -84,8 +84,8 @@ type ProviderProxy struct {
 	sentAt    time.Time
 	noHeaders bool
 
-	once      sync.Once
-	closeOnce sync.Once
+	once  sync.Once
+	close func() error
 
 	budget *ProxyBudget
 	bstate budgetState
@@ -141,6 +141,12 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 	harness.User = nil
 	p.harness = harness.String()
 	p.srv = &http.Server{Handler: p}
+	p.close = sync.OnceValue(func() error {
+		p.cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		return p.srv.Shutdown(ctx)
+	})
 	go func() {
 		_ = p.srv.Serve(ln) // ignored: the run ends the card; a failed accept is a dial error, not a silent body
 	}()
@@ -205,14 +211,7 @@ func (p *ProviderProxy) HeaderWall() time.Duration {
 // Close stops the listener and unblocks a body read still in progress.
 // A read cancelled here is not UNKNOWN: the run is already over.
 func (p *ProviderProxy) Close() error {
-	var err error
-	p.closeOnce.Do(func() {
-		p.cancel()
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		err = p.srv.Shutdown(ctx)
-	})
-	return err
+	return p.close()
 }
 
 // ProviderProxyEligible reports whether baseURL is an http(s) endpoint the

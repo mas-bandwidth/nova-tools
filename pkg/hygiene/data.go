@@ -29,23 +29,27 @@ type keyShape struct {
 	re   *regexp.Regexp
 }
 
-var (
-	loadOnce  sync.Once
-	strayList []strayRule
-	keyShapes []keyShape
-	loadErr   error
-)
+var strayLoaded = sync.OnceValues(func() (strayLoad, error) {
+	rules, err := parseStray(strayData)
+	if err != nil {
+		return strayLoad{}, err
+	}
+	keys, err := parseKeyShapes(keyShapeData)
+	if err != nil {
+		return strayLoad{rules: rules}, err
+	}
+	return strayLoad{rules: rules, keys: keys}, nil
+})
+
+// strayLoad is the parsed stray and key-shape tables, kept once.
+type strayLoad struct {
+	rules []strayRule
+	keys  []keyShape
+}
 
 func load() ([]strayRule, []keyShape, error) {
-	loadOnce.Do(func() {
-		strayList, loadErr = parseStray(strayData)
-		// ignored: loadErr is the package variable load returns below; the Once only stops the second parse
-		if loadErr != nil {
-			return
-		}
-		keyShapes, loadErr = parseKeyShapes(keyShapeData)
-	})
-	return strayList, keyShapes, loadErr
+	got, err := strayLoaded()
+	return got.rules, got.keys, err
 }
 
 func parseStray(data string) ([]strayRule, error) {
@@ -55,13 +59,13 @@ func parseStray(data string) ([]strayRule, error) {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 2)
-		rule := strayRule{pattern: strings.TrimSpace(fields[0]), except: map[string]bool{}}
+		pattern, rest, found := strings.Cut(line, "\t")
+		rule := strayRule{pattern: strings.TrimSpace(pattern), except: map[string]bool{}}
 		if rule.pattern == "" {
 			return nil, fmt.Errorf("stray.txt:%d: a row with no pattern", n+1)
 		}
-		if len(fields) == 2 {
-			for _, k := range strings.Split(fields[1], ",") {
+		if found {
+			for _, k := range strings.Split(rest, ",") {
 				if k = strings.TrimSpace(k); k != "" {
 					rule.except[k] = true
 				}
@@ -79,12 +83,12 @@ func parseKeyShapes(data string) ([]keyShape, error) {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 2)
-		if len(fields) != 2 {
+		name, expr, found := strings.Cut(line, "\t")
+		if !found {
 			return nil, fmt.Errorf("keyshapes.txt:%d: want <name>\\t<regexp>", n+1)
 		}
-		name := strings.TrimSpace(fields[0])
-		re, err := regexp.Compile(fields[1])
+		name = strings.TrimSpace(name)
+		re, err := regexp.Compile(expr)
 		if err != nil {
 			return nil, fmt.Errorf("keyshapes.txt:%d: %s: %v", n+1, name, err)
 		}
@@ -103,48 +107,51 @@ type kindRow struct {
 	instruction string
 }
 
-var (
-	kindOnce  sync.Once
-	kindNames []string
-	kindSet   map[string]bool
-	kindRows  map[string]kindRow
-)
+var kindTableOnce = sync.OnceValue(func() kindTable {
+	set := map[string]bool{}
+	rows := map[string]kindRow{}
+	var names []string
+	for _, line := range strings.Split(kindData, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		name := strings.TrimSpace(fields[0])
+		if name == "" || set[name] {
+			continue
+		}
+		row := kindRow{gated: true}
+		if len(fields) >= 3 && strings.TrimSpace(fields[2]) == "ungated" {
+			row.gated = false
+		}
+		if len(fields) >= 4 {
+			row.instruction = strings.TrimSpace(fields[3])
+		}
+		set[name] = true
+		rows[name] = row
+		names = append(names, name)
+	}
+	return kindTable{names: names, set: set, rows: rows}
+})
+
+// kindTable is the one kinds list, kept once.
+type kindTable struct {
+	names []string
+	set   map[string]bool
+	rows  map[string]kindRow
+}
 
 func loadKinds() ([]string, map[string]bool) {
-	kindOnce.Do(func() {
-		kindSet = map[string]bool{}
-		kindRows = map[string]kindRow{}
-		for _, line := range strings.Split(kindData, "\n") {
-			line = strings.TrimRight(line, "\r")
-			if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-				continue
-			}
-			fields := strings.Split(line, "\t")
-			name := strings.TrimSpace(fields[0])
-			if name == "" || kindSet[name] {
-				continue
-			}
-			row := kindRow{gated: true}
-			if len(fields) >= 3 && strings.TrimSpace(fields[2]) == "ungated" {
-				row.gated = false
-			}
-			if len(fields) >= 4 {
-				row.instruction = strings.TrimSpace(fields[3])
-			}
-			kindSet[name] = true
-			kindRows[name] = row
-			kindNames = append(kindNames, name)
-		}
-	})
-	return kindNames, kindSet
+	k := kindTableOnce()
+	return k.names, k.set
 }
 
 // InstructionKind is the instruction kind of a declared work kind, the column
 // of the one list (docs/SPEC-ISA.md). ok is false when name is not declared or
 // the row names no instruction kind.
 func InstructionKind(name string) (string, bool) {
-	loadKinds()
-	row, ok := kindRows[name]
+	row, ok := kindTableOnce().rows[name]
 	if !ok || row.instruction == "" {
 		return "", false
 	}
@@ -155,8 +162,7 @@ func InstructionKind(name string) (string, bool) {
 // keeps that column on the same list). A kind the list does not declare is
 // gated: TEST: none is not a declaration for it.
 func KindGated(name string) bool {
-	loadKinds()
-	row, ok := kindRows[name]
+	row, ok := kindTableOnce().rows[name]
 	if !ok {
 		return true
 	}
