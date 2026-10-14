@@ -10,7 +10,7 @@
       {
         "id": "pending-challenges",
         "event": "PostToolUse",
-        "command": ["sh", "hooks/nova-hook-pending.sh"],
+        "command": ["nova-hook", "pending"],
         "timeoutMs": 3000,
         "statusMessage": "Checking for pending hook challenges"
       }

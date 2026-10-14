@@ -1,9 +1,9 @@
 # Nova Hook for Muse
 
 A Muse plugin bundle with one hook: after each tool call (`PostToolUse`),
-`hooks/nova-hook-pending.sh` runs `nova-bus peek --as <name>` and prints the
+`nova-hook pending` runs `nova-bus peek --as <name>` and prints the
 pending bus lines, one per line, so a `HOOK CHALLENGE` reaches the model
-inside its turn instead of waiting for the turn to end. The script only
+inside its turn instead of waiting for the turn to end. The verb only
 reads: it discards stdin, always exits 0, and never proves, sends, acks or
 writes.
 
@@ -29,7 +29,7 @@ Wake: `wake_delay` is a per-Monitor setting (`wake_delay_ms`) with no
 persistent store, so pass `wake_delay_ms=0` on each Monitor call for the
 friend; the install prints this line and stores nothing.
 
-Script knobs: `NOVA_BUS_BIN` (default: `nova-bus` on PATH, else
+Hook knobs: `NOVA_BUS_BIN` (default: `nova-bus` on PATH, else
 `$HOME/.local/bin/nova-bus`), `NOVA_HOOK_AS` (default `aurora`),
 `NOVA_BUS_REDIS` (default `127.0.0.1:6381`).
 

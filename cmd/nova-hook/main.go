@@ -301,6 +301,24 @@ example: nova-hook serve --as ada --once`,
 				},
 				Run: w.serve,
 			},
+			{
+				Name:    "pending",
+				Usage:   "pending [--as <name>] [--redis <addr>] [--bus <path>]",
+				Example: "", // the bundle's hook runs it; no hand run can carry its bus
+				Effect:  tool.Inspection,
+				Hidden:  true,
+				Detail: `The Muse bundle's PostToolUse hook: discards stdin, runs nova-bus peek for the name and
+prints only its PEEK MESSAGE lines (a HOOK CHALLENGE among them), one per line, so the challenge reaches
+the model inside its turn. It only reads: it never proves, sends, acks or writes, and it always exits 0;
+a missing or failing bus prints nothing.`,
+				Flags: func(f *tool.Flags) {
+					f.Prints()
+					f.String("as", w.getenv("NOVA_HOOK_AS"), "the name whose pending bus lines to print (default: NOVA_HOOK_AS, else aurora)")
+					f.String("redis", w.getenv("NOVA_BUS_REDIS"), "the bus Redis address, host:port (default: NOVA_BUS_REDIS, else 127.0.0.1:6381)")
+					f.String("bus", w.getenv("NOVA_BUS_BIN"), "the nova-bus binary to run (default: NOVA_BUS_BIN, else nova-bus on PATH, else ~/.local/bin/nova-bus)")
+				},
+				Run: w.pending,
+			},
 		},
 	}
 }
