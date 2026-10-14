@@ -62,7 +62,7 @@ func genKey(t *testing.T, dir, name string) keyPair {
 			}
 		}
 	}
-	t.Fatalf("public key comment missing in %s", privPath)
+	require.Failf(t, "public key comment missing", "in %s", privPath)
 	return keyPair{}
 }
 

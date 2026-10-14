@@ -134,7 +134,7 @@ func runExample(t *testing.T, h exampleHome, transcript []string, volatile []onb
 		got = append(got, onboarding.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()})
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, volatile) {
-		t.Error(p)
+		assert.Fail(t, p.String())
 	}
 	after := treeBytes(t, h.home)
 	assert.Len(t, after, len(before), "the dry run changed the file set: %d files before, %d after", len(before), len(after))

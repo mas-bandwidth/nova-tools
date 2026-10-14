@@ -129,7 +129,7 @@ func runWithTemp(t *testing.T, bin, tmp string, args ...string) (string, string,
 	case errors.As(err, &exitErr):
 		return stdout.String(), stderr.String(), exitErr.ExitCode()
 	case err != nil:
-		t.Fatalf("nova-secrets did not run: %v", err)
+		require.Failf(t, "nova-secrets did not run", "%v", err)
 	}
 	return stdout.String(), stderr.String(), 0
 }

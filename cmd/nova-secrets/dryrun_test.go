@@ -24,7 +24,7 @@ func fieldOf(t *testing.T, text, key string) string {
 			return v
 		}
 	}
-	t.Fatalf("no %s= in:\n%s", key, text)
+	require.Failf(t, "field", "no %s= in:\n%s", key, text)
 	return ""
 }
 
