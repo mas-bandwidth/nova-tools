@@ -91,16 +91,11 @@ func VerbHelp(t testing.TB, m testkit.Main, spec Spec) {
 }
 
 // Problems runs every onboarding check and returns each way the command broke
-// the standard, in the legs' order; an empty return is a pass.
+// the standard, in the legs' order; an empty return is a pass. The verb-help
+// write-nothing check is omitted (no dir supplied).
 func Problems(m testkit.Main, spec Spec) []string {
 	var problems []string
-	dir, err := os.MkdirTemp("", "onboardtest-")
-	if err != nil {
-		return []string{err.Error()}
-	}
-	// ignored: the check's own temp dir, removed the moment it is read, never outliving the test binary
-	defer os.RemoveAll(dir)
-	for _, l := range legs(dir) {
+	for _, l := range legs("") {
 		problems = append(problems, l.problems(m, spec)...)
 	}
 	return problems
@@ -195,8 +190,10 @@ func verbProblems(m testkit.Main, spec Spec, dir string) []string {
 			if r.Stderr != "" {
 				fail("`%s %s` wrote to stderr: %q; help is not a refusal", spec.Name, verb, r.Stderr)
 			}
-			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
-				fail("`%s %s` left entries under the check's temp dir (err %v); help writes nothing", spec.Name, verb, err)
+			if dir != "" {
+				if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+					fail("`%s %s` left entries under the check's temp dir (err %v); help writes nothing", spec.Name, verb, err)
+				}
 			}
 		}
 	}
