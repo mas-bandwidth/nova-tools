@@ -197,7 +197,9 @@ A proof says a push reached a session once; the heartbeat says the model is stil
   `state=connected` line, and the episode is reported to `hook:events` once (event `not-connected`).
 - **A stale server is no server.** While `hook:serve` is more than two intervals old by the store's TIME at the
   read, no reader trusts a record's last written state: `nova-hook friends` reads every name down with reason
-  "hook server stale", `nova-hook status` lists every name stale, and `status --as` fails NO CHALLENGE FOR <age>.
+  "hook server stale", `nova-hook status` lists every name stale, and the gate in every tool (Status.Stale, set
+  by Store.Read from the same rule, Served.Stale) refuses every name with that reason. Only `nova-hook serve`'s
+  own check sets it aside, so a server can always start.
 - **Everyone can ask.** `nova-hook friends [--json]` lists every name's state from the hook record alone: up
   (hooked and proven) or down, since, reason, the last challenge and answer, misses; and the coordinator and the
   server's age.

@@ -220,7 +220,7 @@ func TestStatusSaysNoChallengeWhenTheServerIsGone(t *testing.T) {
 	r.h.Hook(t, "ada", hook.Comms)
 	res := cli.Run("status", "--as", "ada")
 	assert.Equal(t, 1, res.Code)
-	assert.Contains(t, res.Stdout+res.Stderr, "NO CHALLENGE FOR 2m1s: hook server stale: the heartbeat server last passed 2m1s ago")
+	assert.Contains(t, res.Stdout+res.Stderr, "ada is not hooked in: hook server stale")
 }
 
 // TestAClientThatLosesTheServerSaysItOnceAndReportsItOnce pins the hook

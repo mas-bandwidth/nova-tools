@@ -740,12 +740,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Refuse("the heartbeat server's stamp could not be read: " + err.Error())
 		}
-		if sv.Stale() {
-			age := sv.Now.Sub(sv.At).Round(time.Second)
-			o = tool.Fail(fmt.Sprintf("NO CHALLENGE FOR %s: %s: the heartbeat server last passed %s ago (every %s), so no record is current", age, hook.StaleReason, age, sv.Every))
-			o.Remedy = "nova-hook serve --as <a coordinator or comms name>"
-			o.Facts = statusFacts(st[0])
-		} else if age, lost := noChallenge(st[0], sv); lost {
+		if age, lost := noChallenge(st[0], sv); lost { // the gate refuses a stale server first (Status.Stale)
 			o = tool.Fail(fmt.Sprintf("NO CHALLENGE FOR %s: the heartbeat server last passed %s ago (every %s), so nothing checks this link", age, sv.Now.Sub(sv.At).Round(time.Second), sv.Every))
 			o.Remedy = "nova-hook serve --as <a coordinator or comms name>"
 			o.Facts = statusFacts(st[0])

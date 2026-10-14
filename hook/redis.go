@@ -367,6 +367,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 	}
 	all := make([]reads, len(names))
 	var clock *redis.TimeCmd
+	var served *redis.MapStringStringCmd
 	ctx, cancel := s.call(ctx)
 	defer cancel()
 	_, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
@@ -380,7 +381,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 				r.proofLeft = append(r.proofLeft, p.PTTL(ctx, ProofKey(n, push)))
 			}
 		}
-		clock = p.Time(ctx)
+		clock, served = p.Time(ctx), p.HGetAll(ctx, ServeKey)
 		return nil
 	})
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -402,6 +403,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 			prs = append(prs, PushRead{Live: r.live[j].Val(), Proof: r.proof[j].Val(), LiveLeft: max(r.liveLeft[j].Val(), 0), ProofLeft: max(r.proofLeft[j].Val(), 0)})
 		}
 		out[i] = Judge(n, rec, prs)
+		out[i].Stale = servedOf(served.Val(), now.UTC()).Stale()
 	}
 	return out, now.UTC(), nil
 }
@@ -699,13 +701,16 @@ func (s Store) Serve(ctx context.Context) (Served, error) {
 	}); err != nil {
 		return Served{}, err
 	}
-	now := clock.Val().UTC()
-	m := rec.Val()
+	return servedOf(rec.Val(), clock.Val().UTC()), nil
+}
+
+// servedOf is the server row m as read at the store's now.
+func servedOf(m map[string]string, now time.Time) Served {
 	every, err := strconv.ParseInt(m["every"], 10, 64)
 	if err != nil || every <= 0 {
-		return Served{Now: now}, nil // ignored: no stamp, or one with no interval, is no server
+		return Served{Now: now} // ignored: no stamp, or one with no interval, is no server
 	}
-	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}, nil
+	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}
 }
 
 // JudgmentsKey holds the heartbeat's open judgments: a hash of message id to

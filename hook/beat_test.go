@@ -279,3 +279,28 @@ func TestAFriendsAnswerProvesItsWorkPush(t *testing.T) {
 	assert.Equal(t, 2, n)
 	assert.Equal(t, hook.StateProven, r.state(t, "ada").State)
 }
+
+// TestTheGateRefusesEveryoneWhileTheServerIsStale pins the one staleness
+// rule in the shared gate (Served.Stale, read at the check by the store's
+// TIME): a hooked, proven record passes while the server row is fresh and is
+// refused, "hook server stale", once it is older than two intervals.
+func TestTheGateRefusesEveryoneWhileTheServerIsStale(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
+	require.NoError(t, r.s.Gate(ctx, want), "no server ever passed: the records stand")
+	r.beat(t, "srv", nonces())
+	r.pass(2 * hook.BeatEvery)
+	r.Hook(t, "ada", hook.Comms) // its holder's renewal: the record itself is fresh
+	require.NoError(t, r.s.Gate(ctx, want), "two intervals exactly: fresh")
+	r.pass(time.Second)
+	r.Hook(t, "ada", hook.Comms)
+	err := r.s.Gate(ctx, want)
+	var refusal *hook.Refusal
+	require.ErrorAs(t, err, &refusal)
+	assert.Contains(t, refusal.Why, "hook server stale")
+	r.beat(t, "srv", nonces())
+	assert.NoError(t, r.s.Gate(ctx, want), "the server passing again: fresh")
+}

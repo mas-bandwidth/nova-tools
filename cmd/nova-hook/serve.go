@@ -27,9 +27,17 @@ func (w world) serve(c *tool.Call) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("--every %s is under a second; it wants the interval between passes, such as %s", every, hook.BeatEvery))
 	}
 	within := c.Dur("judge-within")
+	// the server's own gate, with the staleness it exists to end set aside: a
+	// stale server row refuses every name, and a server must still be able to start
 	ctx, cancel := call()
-	err := s.hooks.Gate(ctx, hook.Want{Name: s.as, Need: []hook.Push{hook.Bus}, Roles: []hook.Role{hook.Coordinator, hook.Comms}, Role: hook.Comms})
+	st, _, err := s.hooks.Read(ctx, s.as)
 	cancel()
+	if err == nil {
+		st[0].Stale = false
+		if r := st[0].Gate(hook.Want{Name: s.as, Need: []hook.Push{hook.Bus}, Roles: []hook.Role{hook.Coordinator, hook.Comms}, Role: hook.Comms}); r != nil {
+			err = r
+		}
+	}
 	if err != nil {
 		o := tool.Fail("the heartbeat server must itself be hooked in, as coordinator or comms: " + err.Error())
 		o.Remedy = hook.HookCommand(s.as, hook.Comms)

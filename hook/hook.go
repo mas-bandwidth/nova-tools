@@ -189,8 +189,11 @@ type Status struct {
 	Reason   string    // why it was unhooked, when the heartbeat did it ("missed 2 challenges")
 	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
 	AnswerAt time.Time // when the session last answered a challenge, zero when never
-	Misses   int       // challenges in a row left unanswered
-	Pushes   []PushStatus
+	// Stale is the heartbeat server gone at this read (Served.Stale): no
+	// reader trusts the record's last written state, and the gate refuses.
+	Stale  bool
+	Misses int // challenges in a row left unanswered
+	Pushes []PushStatus
 }
 
 // Judge is the status a record and its pushes' reads say: the state machine,
@@ -302,7 +305,7 @@ func (st Status) Gate(w Want) *Refusal {
 		}
 	}
 	otherRole := hooked && len(w.Roles) > 0 && !slices.Contains(w.Roles, st.Role)
-	if st.State == StateProven && len(missing) == 0 && !otherRole {
+	if st.State == StateProven && len(missing) == 0 && !otherRole && !st.Stale {
 		return nil
 	}
 	role := st.Role
@@ -311,6 +314,8 @@ func (st Status) Gate(w Want) *Refusal {
 	}
 	r := &Refusal{Status: st}
 	switch {
+	case st.Stale && hooked:
+		r.Why = fmt.Sprintf("%s is not hooked in: %s: the heartbeat server has not passed for two of its intervals, so no record is current; nothing on the bus, friend comms or the sprint works until a server runs (nova-hook serve)", w.Name, StaleReason)
 	case st.State == StateNone:
 		r.Why = fmt.Sprintf("%s is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is", w.Name)
 	case st.State == StateUnhooked:

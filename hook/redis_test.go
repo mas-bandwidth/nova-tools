@@ -227,7 +227,7 @@ func TestReadIsOneRoundTripForAnyNames(t *testing.T) {
 	st, now, err := r.s.Read(ctx, "ada", "bob", "carol")
 	require.NoError(t, err)
 	assert.Len(t, st, 3)
-	assert.Equal(t, 1+3*(1+4*len(hook.Pushes)), r.mr.CommandCount()-before, "one pipeline: TIME and per name a record and four reads per push")
+	assert.Equal(t, 2+3*(1+4*len(hook.Pushes)), r.mr.CommandCount()-before, "one pipeline: TIME, the heartbeat server's row, and per name a record and four reads per push")
 	assert.Equal(t, 2026, now.Year())
 	assert.Equal(t, []string{hook.StateExpired, hook.StateNone, hook.StateNone}, []string{st[0].State, st[1].State, st[2].State})
 
