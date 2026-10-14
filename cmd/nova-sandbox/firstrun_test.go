@@ -253,11 +253,8 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	// (run 38268825121, shard 3: "race detected during execution of test" on seven
 	// tests of this package, the write at this test and the read at newWJob). The verb is
 	// reached as run() reaches it, one `case "worktree"` down.
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	j.useFakeGit(g)
 	sha := "0123456789abcdef0123456789abcdef01234567"
-	j.useForge(&fakeForge{byID: map[int]worktreePR{123: {Head: sha, Base: "main", State: "open"}}})
+	j, _ := newWJobWith(t, openPRs(sha, 123))
 	j.ws.GUID = func() string { return "1f450ab70c635e66f675ff8a4e395760" }
 
 	docScratch := "/path/to/workdir/scratch"
