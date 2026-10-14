@@ -32,12 +32,10 @@ import (
 
 // helpRefusedByDesign names the living commands whose verbs keep refusing -h
 // at exit 2, with the reason. It is not a skip: the refusal is asserted, so a
-// change to it is a decision someone has to make on purpose. nova-fuse is the
-// one: its exit 0 means CLEAR or DONE-AND-VERIFIED, and a surface or reason
-// that arrives as "-h" must never be answered with exit 0.
-var helpRefusedByDesign = map[string]string{
-	"nova-fuse": "exit 0 is the fuse's CLEAR and DONE; a surface named -h must not read as permission",
-}
+// change to it is a decision someone has to make on purpose. It is empty now:
+// nova-fuse, the last exception, answers -h with the verb's help at exit 0 too
+// (docs/STANDARD.md section 3, "Help is never a refusal.").
+var helpRefusedByDesign = map[string]string{}
 
 // exitLabel is the label of an exit-codes paragraph in any case: `exit codes:`
 // anywhere in a line, or the short `exit:` where it opens one.

@@ -65,7 +65,7 @@ func TestEveryRefusalSaysREFUSED(t *testing.T) {
 	t.Parallel()
 	box := boxIn(t)
 	for _, args := range [][]string{
-		nil, {"defuse"}, {"status"}, {"check", "--zzz"}, {"check", "--box", box, "-h"},
+		nil, {"defuse"}, {"status"}, {"check", "--zzz"},
 		{"quarantine", "--box", box}, {"lift"}, {"lift", "lockdown"}, {"version", "x"},
 		{"status", "--box", box, "--max", "-1"}, {"help", "defuse"},
 	} {
