@@ -49,7 +49,7 @@ CONSTANTS Names, Servers, Limit, Broken, CoordRole, NoCoord, Parts, UpBound
 QCap == UpBound + 1
 
 \* Parts: what a case turns on, to keep each instance small:
-\*   "tell" (the tell and its sends), "judge", "hold", "client", "ask".
+\*   "tell" (the tell and its sends), "judge", "hold", "client", "ask", "bootstrap".
 \* Broken (reversed witnesses, each must fail):
 \*   "noonce"      no once-key: every server's pass is taken
 \*   "heldfirst"   BadHeldWhileDown: the dashboard reads the hold before the hook
@@ -60,13 +60,15 @@ QCap == UpBound + 1
 \*   "markafter"   BadMarkAfterSend: told marked in a step after the send, not in its write
 \*   "nostale"     BadUpWithServerGone: the dashboard ignores the server row's age
 \*   "nodeadline"  BadUpAfterOutage: the dashboard ignores the answer's age
+\*   "bootstrapoverwrite" client DEL/HSET replaces a delivered server nonce
 \* BadUnhookAtThree is Limit = 3.
 
 None == <<>>
 
 VARIABLES
     hooked,    \* [Names -> BOOLEAN]: the hook record's state is hooked
-    chal,      \* [Names -> {"none", "open", "late"}]: the standing challenge; late is past its interval
+    chal,      \* challenge kind: none, server open/late, bootstrap, or server nonce clobbered
+    beatOwned, \* [Names -> BOOLEAN]: beat_at stands in this epoch, even after Answer
     misses,    \* [Names -> Nat]: challenges in a row left standing
     events,    \* [Names -> Nat]: heartbeat unhooks logged on hook:events
     hooks,     \* [Names -> Nat]: times the name hooked in (its word)
@@ -94,9 +96,9 @@ VARIABLES
 
 tellv == <<told, tv, out, sent, dups, heard>>
 judv == <<jst, jkind, jto, jresent>>
-server == <<hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries>>
+server == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries>>
 client == <<elapsed, alarm>>
-vars == <<hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
+vars == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
           jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries>>
 
 Cap3(x) == IF x < 3 THEN x ELSE 3
@@ -126,6 +128,7 @@ Shown(n) ==
 Init ==
     /\ hooked = [n \in Names |-> TRUE]
     /\ chal = [n \in Names |-> "none"]
+    /\ beatOwned = [n \in Names |-> FALSE]
     /\ misses = [n \in Names |-> 0]
     /\ events = [n \in Names |-> 0]
     /\ hooks = [n \in Names |-> 1]
@@ -157,11 +160,11 @@ Tick ==
     /\ taken' = FALSE
     /\ passed' = {}
     /\ rowAge' = Cap3(rowAge + 1)
-    /\ chal' = [n \in Names |-> IF chal[n] = "open" THEN "late" ELSE chal[n]]
+    /\ chal' = [n \in Names |-> IF chal[n] = "open" THEN "late" ELSE IF chal[n] = "bootstrap" THEN "none" ELSE chal[n]]
     /\ ask' = [n \in Names |-> IF ask[n] = "open" THEN "due" ELSE ask[n]]
     /\ jst' = IF jst = "open" THEN "due" ELSE jst
     /\ qtime' = [n \in Names |-> IF qtime[n] < QCap THEN qtime[n] + 1 ELSE QCap]
-    /\ UNCHANGED <<hooked, misses, events, hooks, tellv, jkind, jto, jresent, alive, quiet, client, held, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, alive, quiet, client, held, expiries>>
 
 \* One server's pass (beatLua), atomic: the beat, the row stamped, and a tell
 \* prepared when what the friends are to hear differs from the row's told.
@@ -170,9 +173,10 @@ Pass(s) ==
     /\ s \notin passed
     /\ passed' = passed \cup {s}
     /\ ~taken \/ "noonce" \in Broken
+    /\ beatOwned' = [n \in Names |-> beatOwned[n] \/ hooked[n]]
     /\ taken' = TRUE
     /\ rowAge' = 0
-    /\ LET m == [n \in Names |-> IF hooked[n] /\ chal[n] # "none" THEN misses[n] + 1 ELSE misses[n]]
+    /\ LET m == [n \in Names |-> IF hooked[n] /\ beatOwned[n] /\ chal[n] # "none" THEN misses[n] + 1 ELSE misses[n]]
            gone == {n \in Names : hooked[n] /\ m[n] >= Limit}
            h2 == [n \in Names |-> hooked[n] /\ n \notin gone]
            now == StateOf(h2)
@@ -225,14 +229,14 @@ Tell(s) ==
                         ELSE /\ out' = [out EXCEPT ![s] = None]
                              /\ told' = t.to
                              /\ tv' = t.v + 1
-    /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries>>
 
 \* The send fails: nothing is marked, a later pass prepares it again.
 TellFails(s) ==
     /\ out[s] # None
     /\ ~out[s].sent
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
 
 \* The server crashes holding a tell, before or after its send: the tell in
 \* hand is lost; a later pass prepares it again (under "markafter", a crash
@@ -240,7 +244,7 @@ TellFails(s) ==
 Crash(s) ==
     /\ out[s] # None
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
 
 \* BadMarkAfterSend: after the send, the row's told is marked, if no one marked it since.
 Mark(s) ==
@@ -250,7 +254,7 @@ Mark(s) ==
           THEN told' = out[s].to /\ tv' = tv + 1
           ELSE UNCHANGED <<told, tv>>
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
 
 \* A judgment past its due is pushed again as OVERDUE, once (Judge).
 Judge ==
@@ -258,25 +262,25 @@ Judge ==
     /\ jresent = 0
     /\ jst' = "overdue"
     /\ jresent' = jresent + 1
-    /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, alive, quiet, qtime, client, held, ask, expiries>>
 
 \* A live recipient answers the judgment: closed.
 JudgeAnswered ==
     /\ jst \in {"open", "due", "overdue"}
     /\ \E n \in jto : alive[n]
     /\ jst' = "closed"
-    /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, alive, quiet, qtime, client, held, ask, expiries>>
 
 \* The model answers its open challenge (answerLua); a late one is refused.
 Answer(n) ==
     /\ alive[n]
     /\ hooked[n]
-    /\ chal[n] = "open"
+    /\ chal[n] \in {"open", "bootstrap"}
     /\ chal' = [chal EXCEPT ![n] = "none"]
     /\ misses' = [misses EXCEPT ![n] = 0]
     /\ quiet' = [quiet EXCEPT ![n] = 0]
     /\ qtime' = [qtime EXCEPT ![n] = 0]
-    /\ UNCHANGED <<hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, client, held, ask, expiries>>
 
 \* BadDaemonAnswers: a process answers with no model behind it; the record
 \* cannot tell (answered_at is stamped), only the ghost quiet can.
@@ -287,13 +291,14 @@ DaemonAnswer(n) ==
     /\ chal' = [chal EXCEPT ![n] = "none"]
     /\ misses' = [misses EXCEPT ![n] = 0]
     /\ qtime' = [qtime EXCEPT ![n] = 0]
-    /\ UNCHANGED <<hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, client, held, ask, expiries>>
 
 \* The model's own word hooks it in again (armLua: a new epoch, misses cleared).
 Hook(n) ==
     /\ alive[n]
     /\ ~hooked[n]
     /\ hooks[n] < 2
+    /\ beatOwned' = [beatOwned EXCEPT ![n] = FALSE]
     /\ hooked' = [hooked EXCEPT ![n] = TRUE]
     /\ hooks' = [hooks EXCEPT ![n] = hooks[n] + 1]
     /\ misses' = [misses EXCEPT ![n] = 0]
@@ -304,6 +309,20 @@ Hook(n) ==
     /\ qtime' = [qtime EXCEPT ![n] = 0]
     /\ UNCHANGED <<events, taken, passed, rowAge, tellv, judv, alive, held, ask, expiries>>
 
+\* Client startup/periodic challengeLua is one atomic write. beat_at belongs
+\* to the epoch, so an answered or expired server challenge does not reopen
+\* bootstrap. The broken DEL/HSET erases both the nonce sum and until.
+Bootstrap(n) ==
+    /\ "bootstrap" \in Parts
+    /\ hooked[n]
+    /\ IF "bootstrapoverwrite" \in Broken
+          THEN chal' = [chal EXCEPT ![n] = IF chal[n] \in {"open", "late", "clobbered"}
+                                             THEN "clobbered" ELSE "bootstrap"]
+          ELSE /\ ~beatOwned[n] /\ chal[n] = "none"
+               /\ chal' = [chal EXCEPT ![n] = "bootstrap"]
+    /\ UNCHANGED <<beatOwned, hooked, misses, events, hooks, taken, passed, rowAge,
+                   tellv, judv, alive, quiet, qtime, client, held, ask, expiries>>
+
 \* The world: the model goes silent (a closed app, a limit, a stuck turn) or comes back.
 GoSilent(n) == /\ alive[n] /\ alive' = [alive EXCEPT ![n] = FALSE]
                /\ UNCHANGED <<server, quiet, qtime, client>>
@@ -313,7 +332,7 @@ ComeBack(n) == /\ ~alive[n] /\ alive' = [alive EXCEPT ![n] = TRUE]
 \* The sprint sets or clears its hold, any time.
 SetHold(n, v) == /\ "hold" \in Parts
                  /\ held[n] # v /\ held' = [held EXCEPT ![n] = v]
-                 /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, ask, expiries>>
+                 /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, ask, expiries>>
 
 \* A client loses everything it holds (a restart): the server reads nothing of it.
 ClientLose(n) == /\ "client" \in Parts
@@ -337,20 +356,20 @@ ClientAlarm(n) == /\ "client" \in Parts
 \* any expiry delivers its timeout once (AddOnce's once-key).
 Ask(n) == /\ "ask" \in Parts
           /\ ask[n] = "none" /\ ask' = [ask EXCEPT ![n] = "open"]
-          /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries>>
+          /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries>>
 Reply(n) == /\ alive[n] /\ ask[n] = "open" /\ ask' = [ask EXCEPT ![n] = "answered"]
-            /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries>>
+            /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries>>
 Expire(s, n) == /\ ask[n] = "due"
                 /\ ask' = [ask EXCEPT ![n] = "timedout"]
                 /\ expiries' = [expiries EXCEPT ![n] = expiries[n] + 1]
-                /\ UNCHANGED <<hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held>>
+                /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held>>
 
 Next ==
     \/ Tick
     \/ \E s \in Servers : Pass(s) \/ Tell(s) \/ TellFails(s) \/ Crash(s) \/ Mark(s)
     \/ Judge \/ JudgeAnswered
     \/ \E s \in Servers, n \in Names : Expire(s, n)
-    \/ \E n \in Names : \/ Answer(n) \/ DaemonAnswer(n) \/ Hook(n)
+    \/ \E n \in Names : \/ Answer(n) \/ DaemonAnswer(n) \/ Hook(n) \/ Bootstrap(n)
                         \/ GoSilent(n) \/ ComeBack(n)
                         \/ ClientLose(n) \/ ClientElapse(n) \/ ClientAlarm(n)
                         \/ Ask(n) \/ Reply(n)
@@ -368,7 +387,8 @@ ClockSpec == Spec /\ WF_vars(Tick)
 
 TypeOK ==
     /\ hooked \in [Names -> BOOLEAN]
-    /\ chal \in [Names -> {"none", "open", "late"}]
+    /\ beatOwned \in [Names -> BOOLEAN]
+    /\ chal \in [Names -> {"none", "open", "late", "bootstrap", "clobbered"}]
     /\ misses \in [Names -> 0..Limit]
     /\ quiet \in [Names -> 0..3]
     /\ elapsed \in [Names -> 0..2]
@@ -437,6 +457,12 @@ OnePassPerInterval == Cardinality(passed) <= 1
 \* The client's timeout is its own: its alarm sounds only after two intervals of
 \* its own clock with no valid contact, and a contact silences it.
 ClientAlarmOnlyAfterTwo == \A n \in Names : alarm[n] => elapsed[n] >= 2
+
+\* A nonce the server delivered remains answerable through its deadline;
+\* a client must not replace its sum or remove its deadline.
+BootstrapPreservesServerNonce == \A n \in Names : chal[n] # "clobbered"
+BootstrapOnlyBeforeHeartbeat == \A n \in Names : beatOwned[n] => chal[n] # "bootstrap"
+WitnessBootstrap == \A n \in Names : chal[n] # "bootstrap"
 
 \* Reversed witnesses: reached states. TLC's counterexample shows each is reached.
 WitnessUnhook == \A n \in Names : events[n] = 0

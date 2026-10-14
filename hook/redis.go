@@ -110,12 +110,13 @@ redis.call('DEL', KEYS[2])
 return 1
 `)
 
-// challengeLua sets name's challenge (tla/Hook.tla, Challenge): the nonce's
-// sum, never the nonce, so only a reader of the hook's stream can answer.
+// challengeLua bootstraps a challenge (tla/HookBeat.tla, Bootstrap): an
+// existing challenge or beat_at in this epoch belongs to its issuer. The
+// store keeps only the nonce's sum; only a reader of its delivery can answer.
 // KEYS: record, challenge. ARGV: epoch, role, sum, pushes (comma), ttl ms.
 var challengeLua = redis.NewScript(`
 if not (` + held + `) then return 0 end
-redis.call('DEL', KEYS[2])
+if redis.call('EXISTS', KEYS[2]) == 1 or tonumber(redis.call('HGET', KEYS[1], 'beat_at') or '0') > 0 then return -1 end
 redis.call('HSET', KEYS[2], 'epoch', ARGV[1], 'sum', ARGV[3], 'pushes', ARGV[4])
 redis.call('PEXPIRE', KEYS[2], ARGV[5])
 return 1
@@ -286,10 +287,12 @@ func Sum(nonce string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Challenge sets name's challenge for pushes under epoch and role,
-// outstanding for AnswerBound: the hook prints the nonce on its stream, and
-// only a session that read it answers it (Answer).
-func (s Store) Challenge(ctx context.Context, name string, role Role, epoch int64, pushes []Push, nonce string) error {
+// Challenge bootstraps a challenge for pushes under epoch and role
+// (tla/HookBeat.tla, Bootstrap). It returns false without writing if a
+// challenge stands or the heartbeat owns this epoch, including after Answer.
+// Only a created challenge's nonce is delivered; a skipped client waits for
+// the heartbeat's next delivery. A bootstrap lasts AnswerBound.
+func (s Store) Challenge(ctx context.Context, name string, role Role, epoch int64, pushes []Push, nonce string) (created bool, err error) {
 	var ps []string
 	for _, p := range pushes {
 		ps = append(ps, string(p))
@@ -298,9 +301,9 @@ func (s Store) Challenge(ctx context.Context, name string, role Role, epoch int6
 	defer cancel()
 	got, err := challengeLua.Run(ctx, s.C, []string{RecordKey(name), ChallengeKey(name)}, epoch, string(role), Sum(nonce), strings.Join(ps, ","), AnswerBound.Milliseconds()).Int64()
 	if err == nil && got == 0 {
-		return ErrNotHooked
+		return false, ErrNotHooked
 	}
-	return err
+	return got == 1 && err == nil, err
 }
 
 // The refusals of Answer, by the script's code.
