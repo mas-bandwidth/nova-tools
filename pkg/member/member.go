@@ -246,6 +246,12 @@ const (
 	// never fired (docs/roadmap.sexp, swarm-idle-reap-verdict: the verdict states idle
 	// reaping).
 	EndIdleReap = "idle-reap"
+	// EndNoStart is native's mark for a card its start phase ended (`reason=no-start`
+	// on the NATIVE line): the launch showed none of the three signs of life within the
+	// start window, so the harness never started. It is a harness fault, handled as a
+	// stage refusal is (docs/SPEC-SWARM.md, native: the existing harness-fault rules
+	// apply -- redeal once, then judgment -- and the lane is free at the start window).
+	EndNoStart = "no-start"
 	// EndUnverifiable is native's end=budget-unverifiable (docs/SPEC-SWARM.md, native): the
 	// member's usage source, its read of the harness's usage database, stopped answering and
 	// native ended the child for a budget it could no longer see. Judge says it as a budget
@@ -304,6 +310,16 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the member's machine refused the launch before any child ran: the kind and the
 		// stage's reason; the sprint deals the card to another member (StageRefused)
 		return FinishFailed, EndStaging + ": " + r.Staging
+	case r.End == EndNoStart:
+		// the launch never showed a sign of life within the start window: the harness
+		// never started, a harness fault handled as a stage refusal is, so the sprint
+		// deals the card to another member rather than judging it (docs/SPEC-SWARM.md,
+		// native; StageRefused)
+		why := r.Staging
+		if why == "" {
+			why = "the card produced no sign of starting"
+		}
+		return FinishFailed, EndStaging + ": " + why
 	case r.End == EndUnverifiable && !r.Shaped:
 		// this member's usage source stopped answering and native ended the child for it,
 		// which left no result: the member's failure and never the card's (the owner,

@@ -164,6 +164,7 @@ func TestTheEndOfALaunchIsReadFromNativesLog(t *testing.T) {
 		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000\n":                member.EndDeadline,
 		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10 reason=terminated":     "",
 		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000 reason=idle-reap": "idle-reap",
+		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000 reason=no-start":  "no-start",
 		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000\n":                         "",
 	} {
 		assert.Equal(t, want, nativeEnd([]byte(log)), log)

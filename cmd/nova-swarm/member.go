@@ -1141,6 +1141,8 @@ func nativeEnd(log []byte) string {
 		return member.EndBudget
 	case nativeIdleReap.Match(log):
 		return member.EndIdleReap
+	case nativeNoStart.Match(log):
+		return member.EndNoStart
 	case nativeKilled.Match(log) && !nativeTermed.Match(log):
 		return member.EndDeadline
 	}
@@ -1205,8 +1207,12 @@ var (
 	// states idle reaping, and the finish names the reaping and never the deadline,
 	// which never fired for it (docs/roadmap.sexp, swarm-idle-reap-verdict)
 	nativeIdleReap = regexp.MustCompile(`\breason=idle-reap\b`)
-	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeNoStart is native's mark for a card its start phase ended: the launch showed no
+	// sign of life in the start window. It is a harness fault, read beside the idle reaping
+	// (docs/SPEC-SWARM.md, native; nativeidle.go's start phase)
+	nativeNoStart = regexp.MustCompile(`\breason=no-start\b`)
+	nativeKilled  = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed  = regexp.MustCompile(`\breason=terminated\b`)
 	// nativeWall is native's WALL line: the harness's own fence or the OS wall refused a
 	// write outside the job, so the run ended the card for it (swarm.WallLine's `WALL
 	// task=` and swarm.WallRefusedLine's `WALL REFUSED`). On a read it is the reader's own
@@ -1247,6 +1253,14 @@ func (c *nativeChild) Result() member.Result {
 				// the machine's fault, never the card's, so it ends as a staging refusal does
 				// and the sprint deals the card to another member (StageRefused)
 				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
+			if m := nativeNoStart.FindSubmatch(b); m != nil {
+				// the harness never started: none of the three signs of life in the start
+				// window. It is a harness fault like staging -- no work of the card's was
+				// spent -- so the member reads it before the staging line and spends no
+				// card attempt or cost on it
+				c.result = member.Result{End: member.EndNoStart, Report: "harness fault: the card produced no sign of starting (see " + c.logPath + ")"}
 				return
 			}
 			if m := nativeHarnessFault.FindSubmatch(b); m != nil {
