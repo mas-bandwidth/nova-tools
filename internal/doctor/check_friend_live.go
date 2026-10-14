@@ -15,8 +15,9 @@ func init() {
 }
 
 // checkFriendLive reads each daemon's status and fails when the hook gate
-// refused its beats or inbox (it logs the refusal and takes nothing), or when
-// its last beat is older than the window while the agent is loaded
+// refused its beats or inbox (it logs the refusal and takes nothing), when the
+// status answered daemon=down (the daemon is not running, however its exit was),
+// or when its last beat is older than the window while the agent is loaded
 // (docs/SPEC-DOCTOR.md, "friend-live").
 func checkFriendLive(ctx context.Context, env Env) Result {
 	daemons, ok := friendDaemonsOrOK(env)
@@ -39,6 +40,17 @@ func checkFriendLive(ctx context.Context, env Env) Result {
 			bad = append(bad, fmt.Sprintf("daemon %s: %s", d.Name, line))
 			continue
 		}
+		// a status that answered daemon=down at exit 0 is a down daemon: the
+		// exit code alone cannot tell it from one that did not answer
+		// (docs/SPEC-DOCTOR.md, "friend-live").
+		if jsonString(out, "daemon") == "down" {
+			line := "daemon=down"
+			if since := jsonString(out, "status_age"); since != "" {
+				line += " since " + since
+			}
+			bad = append(bad, fmt.Sprintf("daemon %s: %s", d.Name, line))
+			continue
+		}
 		last := jsonString(out, "last_beat")
 		if last == "" {
 			continue
@@ -50,7 +62,7 @@ func checkFriendLive(ctx context.Context, env Env) Result {
 	}
 	if len(bad) > 0 {
 		return Result{Status: Fail, Evidence: strings.Join(bad, "; "),
-			Fix: "read ~/Library/Logs/nova-friend-<name>.log, launchctl kickstart -k gui/<uid>/<label>; for a hook refusal the seat must be hooked: nova-sprint hook"}
+			Fix: "read ~/Library/Logs/nova-friend-<name>.log; nova-friend status --as <name>; nova-friend install --as <name>; for a hook refusal the seat must be hooked: nova-sprint hook"}
 	}
 	return Result{Status: OK, Evidence: fmt.Sprintf("%d friend daemons beat in the window", len(daemons))}
 }
