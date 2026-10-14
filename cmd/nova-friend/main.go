@@ -106,6 +106,13 @@ type world struct {
 	// docs/SPEC-HOOK.md). realWorld sets both; a test's world that sets neither gates nothing.
 	hookStore func(bus.Store) (hook.Store, error)
 	gate      func(ctx context.Context, st bus.Store, want hook.Want) error
+	// presenceHook reads one identity's bus push for the presence view
+	// (docs/SPEC-FRIEND.md, the proof domains): its state and the stamp of the
+	// evidence that state rests on (the lease armed, the proof proven), zero
+	// when down or none. realWorld reads it through the bus store's hook
+	// record (hookgate.Store); a test's world sets its own fake, and nil reads
+	// none.
+	presenceHook func(ctx context.Context, st bus.Store, name string) (state string, at time.Time, err error)
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -272,16 +279,46 @@ func realWorld() world {
 		finish:    sprintVerb,
 		hookStore: hookgate.Store,
 		gate:      hookgate.Gate,
-		down:      sprintVerb,
-		cards:     sprintAsk,
-		view:      sprintView,
-		friends:   coordinatorFriends,
-		holders:   sprintHolders,
-		stage:     func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
-		tip:       (&friend.Stager{}).Tip,
-		lookPath:  exec.LookPath,
-		copy:      friend.CopyExecutable,
-		settings:  friend.OSFS{},
+		presenceHook: func(ctx context.Context, st bus.Store, name string) (string, time.Time, error) {
+			// the friend's bus push over the bus store's hook record, judged at the
+			// store's now; the stamp's age is the TTL that remains (docs/SPEC-HOOK.md).
+			hs, err := hookgate.Store(st)
+			if err != nil {
+				return hook.StateNone, time.Time{}, nil // no Redis store keeps no hook record
+			}
+			sts, _, err := hs.Read(ctx, name)
+			if err != nil {
+				return "", time.Time{}, err
+			}
+			s := sts[0]
+			if s.State == hook.StateNone || s.State == hook.StateUnhooked {
+				return hook.StateNone, time.Time{}, nil
+			}
+			for _, p := range s.Pushes {
+				if p.Push != hook.Bus {
+					continue
+				}
+				switch p.State {
+				case hook.PushProven:
+					return p.State, time.Now().Add(-(hook.ProofTTL - p.ProofLeft)), nil
+				case hook.PushArmed:
+					return p.State, time.Now().Add(-(hook.LeaseTTL - p.LiveLeft)), nil
+				default:
+					return hook.PushDown, time.Time{}, nil
+				}
+			}
+			return hook.StateNone, time.Time{}, nil
+		},
+		down:     sprintVerb,
+		cards:    sprintAsk,
+		view:     sprintView,
+		friends:  coordinatorFriends,
+		holders:  sprintHolders,
+		stage:    func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
+		tip:      (&friend.Stager{}).Tip,
+		lookPath: exec.LookPath,
+		copy:     friend.CopyExecutable,
+		settings: friend.OSFS{},
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -1009,6 +1046,38 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 					redis(f)
 				},
 				Run: w.status,
+			},
+			{
+				Name:    "presence",
+				Usage:   "presence --as <name> [--dir <d>] [--state-dir <d>] [--redis <addr>] [--since <d>] [--json] [--max <n>]",
+				Example: "", // the banner's example block runs the first run; -h carries the example below
+				Effect:  tool.Inspection,
+				Detail: `The reconciled view of one identity (docs/SPEC-FRIEND.md, the proof domains): four independent
+proofs of life read in one result, never merged into one boolean. One PRESENCE DOMAIN line per domain,
+each with its source path, its age and its own verdict: daemon, the status file (verdict up, stale or
+none, fresh under ` + friend.DaemonStale.String() + `); bus, the friend's real messages on the bus log within --since
+(default 24h; verdict active when at least one, quiet when none, with count=); hook, the friend's bus
+push lease and proof (verdict proven, armed, down or none); pong, the session pong file (verdict fresh
+under ` + friend.AnswerBound.String() + `, stale or none). Then one result line states the conclusions, each naming the
+domains it rests on: reachable=` + friend.ReachableByPush + `|` + friend.ReachableByPollOnly + `|` + friend.ReachableNo + ` (by-push on a proven
+hook; by-poll-only on a fresh daemon status, an active bus or a fresh pong; no on none), and
+native_wake=` + friend.NativeWakeProven + `|` + friend.NativeWakeNotProven + ` (proven only by the session pong, never the daemon's). Read-only; it
+opens the store only when --redis names it, and writes nothing. --json prints the same value as one object.
+example: nova-friend presence --as bob --dir ./bob`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name")
+					f.String("dir", "", "the friend's working directory (default: where the daemon wrote its state, else the home directory's)")
+					stateDir(f)
+					redis(f)
+					f.Duration("since", 24*time.Hour, "the window the bus domain judges real messages over")
+					f.Max()
+					f.Check(func(c *tool.Call) {
+						if c.Dur("since") <= 0 {
+							c.Problem("--since wants a positive duration, such as 24h")
+						}
+					})
+				},
+				Run: w.presence,
 			},
 			{
 				Name:    "lanes",
@@ -2584,6 +2653,63 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	if s.Harness == "claude" {
 		o.Fact("route", "passive").Note(friend.ClaudeWaitLine(c.Str("as"), friend.ClaudeWakePath(state, c.Str("as"))))
+	}
+	return o
+}
+
+// presence is the reconciled view of one identity (docs/SPEC-FRIEND.md, the
+// proof domains): the four proof domains, each with its source, age and
+// verdict, and the reachable and native wake conclusions, each naming the
+// domains it rests on. Read-only: it opens the store only when --redis names
+// one, and writes nothing.
+func (w world) presence(c *tool.Call) *tool.Out {
+	name := c.Str("as")
+	state := w.stateDir(c, c.Str("dir"))
+	now := w.now()
+	facts := friend.PresenceFacts{
+		Now:          now,
+		DaemonSource: filepath.Join(state, friend.StatusFile),
+		PongSource:   filepath.Join(state, friend.PongFile),
+		HookSource:   hook.LiveKey(name, hook.Bus),
+	}
+	if s, found, err := friend.ReadStatus(state); err == nil && found {
+		facts.DaemonFound, facts.DaemonAt = true, s.At
+	}
+	if p, found, _ := friend.ReadPong(state); found {
+		facts.PongFound, facts.PongAt = true, p.At
+	}
+	if addr := c.Str("redis"); addr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+		st, closeStore, err := w.open(ctx, addr)
+		cancel()
+		if err != nil {
+			return tool.Refuse("the store did not answer: " + err.Error())
+		}
+		defer closeStore()
+		facts.BusSource = addr + " " + bus.LogKey
+		if count, last, err := friend.BusLogEntries(c.Ctx, st, name, now.Add(-c.Dur("since"))); err == nil {
+			facts.BusReal, facts.BusLast = count, last
+		}
+		if w.presenceHook != nil {
+			hookState, hookAt, err := w.presenceHook(c.Ctx, st, name)
+			if err != nil {
+				return tool.Refuse("the hook record could not be read: " + err.Error())
+			}
+			facts.HookState, facts.HookAt = hookState, hookAt
+		} else {
+			facts.HookState = hook.StateNone
+		}
+	}
+	view := friend.PresenceViewOf(name, facts)
+	o := tool.Done().Fact("friend", name).
+		Fact("reachable", view.Reachable).Fact("reachable_by", view.ReachableBy).
+		Fact("native_wake", view.NativeWake).Fact("native_wake_by", view.NativeWakeBy)
+	for _, d := range view.Domains {
+		if d.Domain == friend.DomainBus {
+			o.Item("DOMAIN", "domain", d.Domain, "source", d.Source, "age", d.Age, "verdict", d.Verdict, "count", d.Count)
+			continue
+		}
+		o.Item("DOMAIN", "domain", d.Domain, "source", d.Source, "age", d.Age, "verdict", d.Verdict)
 	}
 	return o
 }

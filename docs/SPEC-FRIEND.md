@@ -2874,6 +2874,57 @@ A proof ends the ladder: `REACH PROOF step=<s> after=<duration> by=<pong|message
 
 example: nova-friend reach --as ada --to bob --dry-run
 
+## The proof domains (nova-friend presence; pkg/friend/presence.go)
+
+One identity has four independent proofs of life, and four verbs answer them
+with four different words: `nova-friend status` reads the daemon status file,
+`nova-friend check` reads the session pong, `nova-bus names` reads the recent
+bus messages, and `nova-hook status` reads the hook lease. An AI reader needs
+extra calls to tell foreground communication from native wake health. The
+`presence` verb reads all four in one result and reconciles them: it never
+merges the domains into one boolean, it lists each domain with its source
+path, its age and its own verdict, and then states two conclusions, each
+naming the domains it rests on.
+
+`nova-friend presence --as <name> [--dir <d>] [--state-dir <d>] [--redis <addr>] [--since <d>] [--json] [--max <n>]`
+is read-only; it writes nothing and takes no acting-identity gate (it opens no
+stream it would need a hook for; `--redis` names the store it reads). The four
+domains:
+
+1. **daemon** — the status file (`status.json` in the state directory). Its
+   verdict is `up` while the file is younger than `DaemonStale`, `stale` when
+   it is older, `none` when no daemon ever wrote one. Its source is the file's
+   path; its age is `now` minus the file's `at`.
+2. **bus** — the friend's real messages on the bus log (`bus2:log`) within the
+   `--since` window (default 24h, as `check` reads it; real: not ping, pong,
+   daemon-pong or keepalive). Its verdict is `active` when at least one real
+   message is in the window, `quiet` when none is; its age is `now` minus the
+   newest real message, and `count` is the window's count.
+3. **hook** — the friend's `bus` push lease and proof (docs/SPEC-HOOK.md,
+   `hook:live:<name>:bus` and `hook:proof:<name>:bus`). Its verdict is the
+   push's own word: `proven`, `armed`, `down`, or `none` when no record (or no
+   Redis store) stands. Its age is the lease's (armed) or the proof's
+   (proven) age.
+4. **pong** — the session pong file (`pong.json` in the state directory), the
+   session's own answer. Its verdict is `fresh` while younger than
+   `AnswerBound`, `stale` when older, `none` when there is none. Its age is
+   `now` minus the pong's `at`.
+
+The conclusions:
+
+- **reachable** is `by-push` when the hook's bus push is proven (a live,
+  answered push channel: messages reach the session), resting on the `hook`
+  domain; else `by-poll-only` when the friend is still seen by a fresh daemon
+  status, an active bus or a fresh pong, resting on those domains; else `no`,
+  resting on none.
+- **native wake** is `proven` when the session pong is fresh — the session
+  itself woke and answered, never the daemon's own pong — resting on the
+  `pong` domain; else `not-proven`.
+
+The result line is `PRESENCE OK friend=<name> reachable= reachable_by= native_wake= native_wake_by=` and one `PRESENCE DOMAIN domain= source= age= verdict=` line per domain (bus also carries `count=`); `--json` carries the
+same value as one object. The model is the function `PresenceViewOf` in
+pkg/friend/presence.go; each verdict and conclusion cites this section.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the

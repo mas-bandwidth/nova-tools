@@ -852,3 +852,165 @@ func (s *SessionCheck) record(now time.Time, line string) {
 		s.Record(now.UTC().Format(time.RFC3339) + " " + line)
 	}
 }
+
+// The proof domains (docs/SPEC-FRIEND.md, "The proof domains (nova-friend
+// presence)"). nova-friend presence reads four independent proofs of one
+// identity and lists each with its source, its age and its own verdict, then
+// states two conclusions — reachable and native wake — each naming the
+// domains it rests on. The domains are never merged into one boolean.
+const (
+	DomainDaemon = "daemon"
+	DomainBus    = "bus"
+	DomainHook   = "hook"
+	DomainPong   = "pong"
+
+	// Reachable is how the identity can be reached: by-push when the hook's
+	// bus push is proven (a live, answered push channel), by-poll-only when no
+	// push is proven but the identity is still seen (a fresh daemon status, an
+	// active bus, or a fresh session pong), no when nothing is live.
+	ReachableByPush     = "by-push"
+	ReachableByPollOnly = "by-poll-only"
+	ReachableNo         = "no"
+
+	// NativeWake is whether the session itself woke and answered (the pong):
+	// proven when the session pong is fresh, not-proven otherwise. The daemon's
+	// own pong never proves it.
+	NativeWakeProven    = "proven"
+	NativeWakeNotProven = "not-proven"
+)
+
+// PresenceDomain is one proof domain's read: its source path, its age ("-"
+// when it has no evidence) and its own verdict (docs/SPEC-FRIEND.md, the
+// proof domains).
+type PresenceDomain struct {
+	Domain  string `json:"domain"`          // daemon, bus, hook, pong
+	Source  string `json:"source"`          // the file path or store key read
+	Age     string `json:"age"`             // "-" when there is none, else a duration
+	Verdict string `json:"verdict"`         // the domain's own word
+	Count   int    `json:"count,omitempty"` // the bus domain's real messages
+}
+
+// PresenceView is the reconciled view (docs/SPEC-FRIEND.md, the proof
+// domains): the four domains, each with its source, age and verdict, and the
+// two conclusions, each naming the domains it rests on.
+type PresenceView struct {
+	Friend       string           `json:"friend"`
+	Domains      []PresenceDomain `json:"domains"`
+	Reachable    string           `json:"reachable"`      // by-push, by-poll-only, no
+	ReachableBy  string           `json:"reachable_by"`   // the domains it rests on, "none" for no
+	NativeWake   string           `json:"native_wake"`    // proven, not-proven
+	NativeWakeBy string           `json:"native_wake_by"` // the domain it rests on (pong)
+}
+
+// PresenceFacts are the four domains' raw reads plus the clock, as the verb
+// gathered them (docs/SPEC-FRIEND.md, the proof domains). A found flag is
+// false for a domain with no file; an At is the newest evidence's stamp, zero
+// when there is none. HookState is the bus push's own word: proven, armed,
+// down, or none.
+type PresenceFacts struct {
+	Now time.Time
+
+	DaemonFound  bool
+	DaemonAt     time.Time
+	DaemonSource string
+
+	BusReal   int
+	BusLast   time.Time
+	BusSource string
+
+	HookState  string
+	HookAt     time.Time
+	HookSource string
+
+	PongFound  bool
+	PongAt     time.Time
+	PongSource string
+}
+
+// PresenceViewOf reconciles the four proof domains into one view
+// (docs/SPEC-FRIEND.md, the proof domains): each domain's verdict and age,
+// then reachable and native wake, each naming the domains it rests on. It is a
+// pure function of the facts, so the rules are tested with no socket and no
+// real time.
+func PresenceViewOf(friend string, f PresenceFacts) PresenceView {
+	now := f.Now
+
+	daemonVerdict, daemonAge := "none", time.Duration(-1)
+	switch {
+	case !f.DaemonFound:
+	case now.Sub(f.DaemonAt) < DaemonStale:
+		daemonVerdict, daemonAge = "up", now.Sub(f.DaemonAt)
+	default:
+		daemonVerdict, daemonAge = "stale", now.Sub(f.DaemonAt)
+	}
+
+	busVerdict, busAge := "quiet", time.Duration(-1)
+	if f.BusReal > 0 {
+		busVerdict, busAge = "active", now.Sub(f.BusLast)
+	}
+
+	hookVerdict := f.HookState
+	if hookVerdict == "" {
+		hookVerdict = "none"
+	}
+	hookAge := time.Duration(-1)
+	if !f.HookAt.IsZero() {
+		hookAge = now.Sub(f.HookAt)
+	}
+
+	pongVerdict, pongAge := "none", time.Duration(-1)
+	switch {
+	case !f.PongFound:
+	case now.Sub(f.PongAt) < AnswerBound:
+		pongVerdict, pongAge = "fresh", now.Sub(f.PongAt)
+	default:
+		pongVerdict, pongAge = "stale", now.Sub(f.PongAt)
+	}
+
+	view := PresenceView{
+		Friend: friend,
+		Domains: []PresenceDomain{
+			{Domain: DomainDaemon, Source: f.DaemonSource, Age: presenceAge(daemonAge), Verdict: daemonVerdict},
+			{Domain: DomainBus, Source: f.BusSource, Age: presenceAge(busAge), Verdict: busVerdict, Count: f.BusReal},
+			{Domain: DomainHook, Source: f.HookSource, Age: presenceAge(hookAge), Verdict: hookVerdict},
+			{Domain: DomainPong, Source: f.PongSource, Age: presenceAge(pongAge), Verdict: pongVerdict},
+		},
+	}
+
+	// native wake is the pong's alone: only the session's own answer proves it.
+	view.NativeWake, view.NativeWakeBy = NativeWakeNotProven, DomainPong
+	if pongVerdict == "fresh" {
+		view.NativeWake = NativeWakeProven
+	}
+
+	switch {
+	case hookVerdict == "proven":
+		view.Reachable, view.ReachableBy = ReachableByPush, DomainHook
+	default:
+		var by []string
+		if daemonVerdict == "up" {
+			by = append(by, DomainDaemon)
+		}
+		if busVerdict == "active" {
+			by = append(by, DomainBus)
+		}
+		if pongVerdict == "fresh" {
+			by = append(by, DomainPong)
+		}
+		if len(by) > 0 {
+			view.Reachable, view.ReachableBy = ReachableByPollOnly, strings.Join(by, ",")
+		} else {
+			view.Reachable, view.ReachableBy = ReachableNo, "none"
+		}
+	}
+	return view
+}
+
+// presenceAge is a domain's age as a line reads it: "-" when there is no
+// evidence, else the duration to the second.
+func presenceAge(d time.Duration) string {
+	if d < 0 {
+		return "-"
+	}
+	return d.Round(time.Second).String()
+}
