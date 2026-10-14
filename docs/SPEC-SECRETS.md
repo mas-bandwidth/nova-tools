@@ -224,8 +224,10 @@ writes it to disk, so `RLIMIT_CORE` is set to 0 before the exec; and on darwin n
 a **waiting parent**, so for the seat's lifetime a process outside the wall holds it. Nothing
 of *nova-secrets* is left alive holding a plaintext; that is not nothing at all.
 
-**It replaces itself.** `exec` uses `execve` — same pid, no wrapper left in the tree: no
+**It replaces itself**, except when `--json` is asked. `exec` uses `execve` — same pid, no wrapper left in the tree: no
 zombie, no signal relay to get wrong, no second process for a deadline to kill by mistake.
+`--json` forks and waits instead (Output grammar), so the process can report the child's
+exit in the one JSON object; it does not execve, and it does not write the child's output.
 
 **Its exit code is the command's, and its own refusal is 125**, nova-sandbox's number adopted
 verbatim: in the nested launcher a `2` could be `gh`'s, a flag error, or this tool's refusal,
@@ -988,6 +990,8 @@ as `notes`. A refusal asked for as `--json` is that object too, the flag refusal
 unknown-flag line. The object carries no value, no fragment of a value and no length, because
 `--json` renders exactly the value the lines render and the lines never carry one; `exec --json`
 describes the launch only (the names passed and the child's exit), never the child's own output.
+It forks and waits for that exit (it does not execve); the child's stdout and stderr are
+discarded, not rendered.
 `names --json` is the same object built from `NamesReport` in `names.go`.
 
 ```

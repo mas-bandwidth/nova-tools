@@ -3198,7 +3198,8 @@ contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
 Every verb takes `--json`: its one value as one JSON object on stdout, a refusal
 included (the reason and exit), and never a value, because the lines never carry
 one. `exec --json` describes the launch only (the names passed and the child's
-exit), never the child's own output.
+exit), never the child's own output. It forks and waits for that exit; it does
+not replace the process, and the child's output is not written.
 
 ### Gate a seat pull request
 

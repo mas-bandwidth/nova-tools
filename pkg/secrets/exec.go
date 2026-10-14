@@ -1,7 +1,10 @@
 package secrets
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -10,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // RunExec validates all preflight invariants, decrypts <store>/<as>.yaml,
@@ -18,6 +22,22 @@ import (
 // line goes out before the exec call, so a failure of that call returns 125 with
 // a FAIL line saying the command never started.
 func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
+	return runExec(os.Stderr, false, storeDir, asName, keyPath, sopsPath, onlyArg, required, cmdArgs)
+}
+
+// RunExecWait is RunExec when the caller must remain to report the child's exit
+// (docs/SPEC-SECRETS.md "Output grammar": exec --json forks and waits, never
+// execve, and the object describes the launch and that exit, never the child's
+// output). The OK line is written to stderr so the caller can render it; the
+// child's own streams are discarded.
+func RunExecWait(stderr io.Writer, storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	return runExec(stderr, true, storeDir, asName, keyPath, sopsPath, onlyArg, required, cmdArgs)
+}
+
+func runExec(stderr io.Writer, wait bool, storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
 	// No core file: a crash after the decrypt must not write the values to disk.
 	if err := setRlimitCoreZero(); err != nil {
 		return 125, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
@@ -104,8 +124,10 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	}
 
 	// The OK line, on stderr, every field escaped: the command's own stdout stays its
-	// own. It cannot move below the exec call: a successful exec never returns.
-	fmt.Fprintf(os.Stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
+	// own. On the execve path it cannot move below the exec call: a successful exec
+	// never returns. On the wait path (docs/SPEC-SECRETS.md "Output grammar") the
+	// caller renders this line as the launch, and the child's exit is the return.
+	fmt.Fprintf(stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
 		oneline.Field(asName), len(selectedSecrets), oneline.Field(onlyWord), len(required),
 		oneline.Field(targetFile), oneline.Field(headSHA), oneline.Field(cmdArgs[0]))
 
@@ -146,7 +168,15 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		})
 	}
 
-	// Become the command.
+	// Become the command, unless the caller must remain to report the exit
+	// (docs/SPEC-SECRETS.md "Output grammar": exec --json forks and waits).
+	if wait {
+		code, err := waitForChild(cmdArgs, env)
+		if err != nil {
+			return 125, fmt.Errorf("exec failed: %w; the command never started", err)
+		}
+		return code, nil
+	}
 	if err := replaceProcess(cmdArgs, env); err != nil {
 		// The OK line above is already out, and it cannot wait for the exec below:
 		// a successful exec never returns. So this return is a FAIL after an OK, and
@@ -156,4 +186,34 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	}
 
 	return 0, nil
+}
+
+// waitForChild forks cmdArgs and waits (docs/SPEC-SECRETS.md "Output grammar":
+// exec --json does not execve, so the parent can report the child's exit). The
+// child's own output is discarded: the answer is the launch, not what the child
+// printed, and a value must not reach the caller's streams through the child.
+func waitForChild(argv []string, env []string) (int, error) {
+	if len(argv) == 0 {
+		return 0, fmt.Errorf("no command specified")
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	cmd := subproc.Long(ctx, argv[0], argv[1:]...)
+	cmd.Env = env
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		if code < 0 {
+			code = 1
+		}
+		return code, nil
+	}
+	return 0, err
 }

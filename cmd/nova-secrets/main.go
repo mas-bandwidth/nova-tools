@@ -28,8 +28,8 @@ seat naming its recipients), a recovery.pub (the recovery key every file is also
 sealed to) and one sops-encrypted <seat>.yaml per seat; a seat is a named identity
 whose age key file (mode 0600) opens its file. exec decrypts only the --only names
 into one command's environment; names reads names without decrypting; no value is printed.
-first run: setup: makes a store from an empty directory (it needs age-keygen
-and sops on PATH); first value: seals one with --stdin, the path a harness takes.
+first run: setup: makes a store from an empty directory (SOPS and AGE_KEYGEN
+are absolute paths); first value: seals one with --stdin, the path a harness takes.
 
 usage:
   nova-secrets version  print this build identity (--version also accepted)
@@ -98,20 +98,20 @@ gate verdict, one line per failure), 2 could not run or refused (one line naming
 the remedy); exec ends with the command's own status, and 125 when exec itself
 refused and the command never ran.
 
-setup: needs age-keygen and sops on PATH; run these from an empty directory first
+setup: age-keygen and sops by absolute path, set below; run these from an empty directory first
   # set SOPS and AGE_KEYGEN to the absolute paths of this machine's own binaries
   SOPS=/opt/homebrew/bin/sops
   AGE_KEYGEN=/opt/homebrew/bin/age-keygen
   mkdir -m 700 -p ~/.config/nova-secrets
   nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
-    --age-keygen "$(command -v age-keygen)"
+    --age-keygen "$AGE_KEYGEN"
   mkdir -p ./secrets && git -C ./secrets init -q -b main
   sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
-    --age-keygen "$(command -v age-keygen)" \
+    --age-keygen "$AGE_KEYGEN" \
     --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
   nova-secrets keygen --as bo --key ~/.config/nova-secrets/bo.key \
-    --age-keygen "$(command -v age-keygen)"
+    --age-keygen "$AGE_KEYGEN"
   BO_PUB="$(sed -n 's/^# public key: //p' ~/.config/nova-secrets/bo.key)"
   git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
   git init -q --bare ./secrets.git
@@ -120,7 +120,7 @@ setup: needs age-keygen and sops on PATH; run these from an empty directory firs
 
 first value:
   printf '%s\n' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
-    --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops \
+    --key ~/.config/nova-secrets/ada.key --sops "$SOPS" \
     --name GH_TOKEN --stdin --no-pr
 
 example:
@@ -233,10 +233,13 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 }
 
 // streams are what a verb reads and writes: the process's own from main, a test's
-// buffers when it drives run in process.
+// buffers when it drives run in process. wait is set only for exec --json
+// (docs/SPEC-SECRETS.md "Output grammar"): fork and wait, never execve, so the
+// caller can render the child's exit.
 type streams struct {
 	stdin          io.Reader
 	stdout, stderr io.Writer
+	wait           bool
 }
 
 // refuse prints a verb's refusal in the tool's one grammar, `SECRETS <VERB> REFUSED:
@@ -386,11 +389,26 @@ func jsonVerb(verb string, s streams, args []string, beforeDash bool, fn func([]
 		return fn(args, s)
 	}
 	var stdout, stderr strings.Builder
-	code := fn(trimmed, streams{stdin: s.stdin, stdout: &stdout, stderr: &stderr})
+	code := fn(trimmed, streams{stdin: s.stdin, stdout: &stdout, stderr: &stderr, wait: beforeDash})
 	o := verbOut(verb, code, stdout.String(), stderr.String())
+	if verb == "exec" {
+		// docs/SPEC-SECRETS.md "Output grammar": a launched exec's exit is the
+		// child's, not a refusal, and the object carries that exit.
+		execJSONExit(o, code)
+	}
 	o.Verb = verb
 	o.Render(s.stdout, true)
 	return code
+}
+
+// execJSONExit keeps a launched exec at status ok with the child's exit
+// (docs/SPEC-SECRETS.md "Output grammar" and "Exit codes": 0-124 are the
+// command's own status). A refusal has a reason; a launch does not.
+func execJSONExit(o *tool.Out, code int) {
+	if len(o.Why) == 0 {
+		o.Status = tool.OK
+		o.Exit = code
+	}
 }
 
 // jsonSeat is jsonVerb for the seat group: the subverb leads the words, so the

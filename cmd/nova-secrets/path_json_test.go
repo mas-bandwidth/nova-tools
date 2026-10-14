@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -67,6 +68,7 @@ func TestEveryVerbTakesJSONAndTheExampleSetsEveryVariable(t *testing.T) {
 	// law: PATH is the attacker's guess), and the new seat's public key from the
 	// key file its own keygen line writes.
 	require.NoError(t, exampleAssignsEveryVariable(t), "the banner references a variable it does not set")
+	require.NoError(t, exampleUsesTheAssignedBinaries(t), "a later line hardcodes a path or looks a binary up on PATH")
 
 	// (c) A verb's --json over a planted store with a fake sops at an absolute
 	// path never prints the planted value: a value never appears in JSON any more
@@ -81,6 +83,16 @@ func TestEveryVerbTakesJSONAndTheExampleSetsEveryVariable(t *testing.T) {
 	var r jsonResult
 	require.NoError(t, json.Unmarshal([]byte(stdout.String()), &r), "one JSON object: %s", stdout.String())
 	assert.Equal(t, "place", r.Result.Verb)
+
+	// (d) exec --json on a launch that succeeds forks and waits, then prints one
+	// JSON object with the child's exit and none of the child's output
+	// (docs/SPEC-SECRETS.md "Output grammar"). A subprocess, so an execve
+	// regression replaces that process and this assertion sees the child's
+	// output instead of the object.
+	t.Run("exec launch", func(t *testing.T) {
+		t.Parallel()
+		assertExecJSONWaits(t)
+	})
 }
 
 // assignmentRe matches a shell assignment's name at the start of a word.
@@ -116,4 +128,57 @@ func exampleAssignsEveryVariable(t *testing.T) error {
 		return assert.AnError
 	}
 	return nil
+}
+
+// exampleUsesTheAssignedBinaries pins the banner's law for the two binaries:
+// after the setup assignments, every --sops and --age-keygen uses $SOPS or
+// $AGE_KEYGEN, and no line looks either up on PATH (docs/SPEC-SECRETS.md
+// "--sops <path> is the sops binary").
+func exampleUsesTheAssignedBinaries(t *testing.T) error {
+	t.Helper()
+	_, tail, found := strings.Cut(usage, "\nsetup:")
+	require.True(t, found, "the banner has no `setup:` block")
+	heading, _, _ := strings.Cut(tail, "\n")
+	assert.NotContains(t, heading, "on PATH", "the setup heading must not send a reader to PATH: %s", heading)
+	assert.NotContains(t, tail, "command -v", "the runnable block looks a binary up on PATH")
+	assert.NotContains(t, tail, "--sops /opt/", "a later line hardcodes a sops path")
+	for _, raw := range strings.Split(tail, "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.Contains(line, "--age-keygen") {
+			assert.Contains(t, line, "$AGE_KEYGEN", "age-keygen is not the assigned variable: %s", line)
+		}
+		if strings.Contains(line, "--sops") {
+			assert.Contains(t, line, "$SOPS", "sops is not the assigned variable: %s", line)
+		}
+	}
+	return nil
+}
+
+// assertExecJSONWaits runs exec --json against a planted store and a child that
+// prints the planted value and exits 7. The object names the launch and that
+// exit; the value is absent (docs/SPEC-SECRETS.md "Output grammar").
+func assertExecJSONWaits(t *testing.T) {
+	t.Helper()
+	h := newSittingHome(t)
+	child := filepath.Join(t.TempDir(), "show")
+	writeFakeExe(t, child, "#!/bin/sh\nprintf '%s\\n' \"$GH_TOKEN\"\nexit 7\n")
+	stdout, stderr, code := runNovaSecrets(h.bin,
+		"exec", "--json",
+		"--store", filepath.Join(h.home, "secrets"),
+		"--as", "ada",
+		"--key", filepath.Join(h.home, ".config", "nova-secrets", "ada.key"),
+		"--sops", h.sops,
+		"--only", "GH_TOKEN",
+		"--", child,
+	)
+	require.Equal(t, 7, code, "exec --json exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	require.NotContains(t, stdout, "gh-value", "the child's output reached stdout: %s", stdout)
+	require.NotContains(t, stderr, "gh-value", "the child's output reached stderr: %s", stderr)
+	require.Equal(t, 1, strings.Count(stdout, "\n"), "one JSON object: %q", stdout)
+	var r jsonResult
+	require.NoError(t, json.Unmarshal([]byte(stdout), &r), "the object is JSON: %s", stdout)
+	assert.Equal(t, "exec", r.Result.Verb)
+	assert.Equal(t, "ok", r.Result.Status)
+	assert.Equal(t, 7, r.Result.Exit)
+	assert.Equal(t, "1", r.Facts["only"], "the names passed are the launch's only count: %v", r.Facts)
 }
