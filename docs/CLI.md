@@ -1538,6 +1538,8 @@ usage:
 
 Every verb but run, serve takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
+The acting name is one flag, --as (alias --actor): the flag, then the environment, then the login.
+
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 
 example:
@@ -1572,7 +1574,7 @@ from `nova-friend help`:
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused
-  --as <string>  your name, a nova-config friend row (required)
+  --as <string>  your name, a nova-config friend row (required) (alias --actor)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
@@ -1618,7 +1620,7 @@ from `nova-friend help`:
   nova-friend beat --as <me> [--server <addr>] [--redis <addr>]
 example: nova-friend beat --as bob --server 127.0.0.1:6390
 flags:
-  --as <string>  your name, a nova-config friend row (required)
+  --as <string>  your name, a nova-config friend row (required) (alias --actor)
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
@@ -1636,7 +1638,7 @@ from `nova-friend help`:
   nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused
-  --as <string>  your name, a nova-config friend row (required)
+  --as <string>  your name, a nova-config friend row (required) (alias --actor)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
@@ -1676,7 +1678,7 @@ from `nova-friend help`:
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend uninstall --as bob --dry-run
 flags:
-  --as <string>  your name, the friend the agent was installed for (required)
+  --as <string>  your name, the friend the agent was installed for (required) (alias --actor)
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
@@ -1692,7 +1694,7 @@ from `nova-friend help`:
 example: nova-friend check --as ada bob
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session
-  --as <string>  your name, the coordinator (the health check); the friend's own with --harness
+  --as <string>  your name, the coordinator (the health check); the friend's own with --harness (alias --actor)
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --dir <string>  the friend's working directory
@@ -1720,7 +1722,7 @@ from `nova-friend help`:
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
   nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
 flags:
-  --as <string>  your name, a nova-config friend row (required)
+  --as <string>  your name, a nova-config friend row (required) (alias --actor)
   --dir <string>  the friend's working directory: the TUI's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the TUI is, for its idle prompt pattern: aider, grok, opencode (other: name --prompt) (required)
@@ -1739,7 +1741,7 @@ from `nova-friend help`:
   nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
 example: nova-friend reach --as ada --to bob --dry-run
 flags:
-  --as <string>  your name, the coordinator (required)
+  --as <string>  your name, the coordinator (required) (alias --actor)
   --dir <string>  the friend's working directory
   --dry-run  print what the verb would write and write nothing
   --from <string>  the step to start at: bus, push or window (default bus)
@@ -1762,7 +1764,7 @@ from `nova-friend help`:
   nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
   nova-friend ping --as ada --to bob --nonce abc123
 flags:
-  --as <string>  your name, the coordinator (required)
+  --as <string>  your name, the coordinator (required) (alias --actor)
   --dry-run  print what the verb would write and write nothing
   --every <duration>  with --to-friends: pass again each d until interrupted (default: one pass)
   --json  print the result as one JSON object instead of lines
@@ -1787,7 +1789,7 @@ from `nova-friend help`:
   nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 flags:
-  --as <string>  your name, the friend the daemon in --dir runs as (required)
+  --as <string>  your name, the friend the daemon in --dir runs as (required) (alias --actor)
   --dir <string>  the friend's working directory; when given, omitted queue and working counts are read from its inbox/QUEUE.json
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
@@ -1810,7 +1812,7 @@ from `nova-friend help`:
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
 example: nova-friend watch --as ada --timeout 10m
 flags:
-  --as <string>  your name, the coordinator whose stream and wake file are watched (required)
+  --as <string>  your name, the coordinator whose stream and wake file are watched (required) (alias --actor)
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
@@ -1827,7 +1829,7 @@ from `nova-friend help`:
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
   nova-friend status --as bob --dir ./bob
 flags:
-  --as <string>  your name (required)
+  --as <string>  your name (required) (alias --actor)
   --dir <string>  the friend's working directory, where the queue file lives (required)
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
@@ -1844,7 +1846,7 @@ from `nova-friend help`:
   nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]
   nova-friend lanes --as bob --clear-faults
 flags:
-  --as <string>  your name, the friend whose lanes these are (required)
+  --as <string>  your name, the friend whose lanes these are (required) (alias --actor)
   --clear-faults  clear the lane fault so the lanes take cards again; writes nothing without it
   --dir <string>  the friend's working directory, whose state directory holds the fault (default: found by --as)
   --dry-run  print what the verb would write and write nothing
@@ -1861,7 +1863,7 @@ usage: nova-friend resume [flags]
 from `nova-friend help`:
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
 flags:
-  --as <string>  your name (required)
+  --as <string>  your name (required) (alias --actor)
   --dir <string>  the friend's working directory, whose state directory holds the marker (default: found by --as)
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
@@ -1877,7 +1879,7 @@ usage: nova-friend serve [flags]
 from `nova-friend help`:
   nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
 flags:
-  --as <string>  your name, the coordinator: the pings come from it and the pongs come to it (required)
+  --as <string>  your name, the coordinator: the pings come from it and the pongs come to it (required) (alias --actor)
   --dry-run  print what the verb would write and write nothing
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no status file (STATUS NONE); check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
@@ -1892,7 +1894,7 @@ from `nova-friend help`:
   nova-friend acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused
-  --as <string>  your name, a nova-config friend row (required)
+  --as <string>  your name, a nova-config friend row (required) (alias --actor)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
