@@ -51,7 +51,7 @@ func TestDeliverFirstNoticeHasNoCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, text, ChallengeNotice)
 	assert.NotContains(t, text, "messages available")
-	assert.Equal(t, 1, readPending(t, r).Count)
+	assert.Zero(t, readPending(t, r).Count, "a challenge folds no ordinary message yet")
 }
 
 func TestDeliverRefusesExternalNoticeAndBadInputs(t *testing.T) {
