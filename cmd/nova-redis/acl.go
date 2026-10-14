@@ -181,7 +181,6 @@ func aclRenderVerb(d deps) tool.Verb {
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 		},
 		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "render") },
 	}
@@ -195,7 +194,6 @@ func aclCheckVerb(d deps) tool.Verb {
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			loginFlags(f)
 		},
 		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "check") },
@@ -211,7 +209,6 @@ func aclApplyVerb(d deps) tool.Verb {
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			loginFlags(f)
 			f.Var(passwordSources{}, "password-env-for", "<user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one")
 			f.String("rotate", "", "comma-separated ACL users whose password this run rotates: the variable --password-env-for names for the user holds the password to add beside the old one, or with --drop-old the old one to remove (neither value is printed)")
