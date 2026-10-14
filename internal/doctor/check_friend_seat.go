@@ -178,7 +178,11 @@ func firstLine(s string) string { return oneLine(strings.SplitN(strings.TrimSpac
 func friendDaemonsOrOK(env Env) ([]friendDaemon, *Result) {
 	daemons := friendDaemons(env)
 	if len(daemons) == 0 {
-		return nil, &Result{Status: OK, Evidence: "no friend daemons here"}
+		// The evidence names the unit pattern and the directory it read
+		// (docs/SPEC-DOCTOR.md, "the friend checks"), so an empty count
+		// cannot be mistaken for a different source.
+		dir, prefix, suffix := friendDaemonDir(env)
+		return nil, &Result{Status: OK, Evidence: fmt.Sprintf("no friend daemons here (no %s*%s units under %s)", prefix, suffix, dir)}
 	}
 	return daemons, nil
 }
@@ -212,5 +216,11 @@ func checkFriendSeat(ctx context.Context, env Env) Result {
 		return Result{Status: Fail, Evidence: strings.Join(bad, "; "),
 			Fix: "nova-friend install --as <friend> --coordinator " + seat + " (or drop --coordinator so the daemon reads the seat from the server)"}
 	}
-	return Result{Status: OK, Evidence: fmt.Sprintf("%d friend daemons on seat %s", len(daemons), seat)}
+	// The evidence names the units it counted (docs/SPEC-DOCTOR.md,
+	// "friend-seat"), so the count cannot be read against another source.
+	labels := make([]string, len(daemons))
+	for i, d := range daemons {
+		labels[i] = d.Label
+	}
+	return Result{Status: OK, Evidence: fmt.Sprintf("%d friend daemons (%s) on seat %s", len(daemons), strings.Join(labels, ", "), seat)}
 }
