@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -307,20 +308,15 @@ func sameObserved(a, b map[string]observed) bool {
 	}
 	return true
 }
+
 func snapshotScope(o options) string {
 	to := strings.Split(o.to, ",")
 	for i := range to {
 		to[i] = strings.TrimSpace(to[i])
 	}
-	sort.Strings(to)
+	slices.Sort(to)
 	b, _ := json.Marshal([]string{o.as, strings.Join(to, ","), o.host})
 	return string(b)
 }
 
-func cloneObserved(m map[string]observed) map[string]observed {
-	n := map[string]observed{}
-	for k, v := range m {
-		n[k] = v
-	}
-	return n
-}
+func cloneObserved(m map[string]observed) map[string]observed { return maps.Clone(m) }

@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -945,11 +946,7 @@ func Index(store, session string) ([]IndexRow, []string, int, error) {
 		}
 	}
 	slices.SortFunc(rows, compareIndexRows)
-	sessions := make([]string, 0, len(names))
-	for id := range names {
-		sessions = append(sessions, id)
-	}
-	slices.Sort(sessions)
+	sessions := slices.Sorted(maps.Keys(names))
 	return rows, sessions, len(rows), nil
 }
 

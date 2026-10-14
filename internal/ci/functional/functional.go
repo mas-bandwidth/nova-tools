@@ -20,7 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -67,7 +67,7 @@ func Select(dirs []string) ([]Package, error) {
 		if len(tests) == 0 {
 			continue
 		}
-		sort.Strings(tests)
+		slices.Sort(tests)
 		out = append(out, Package{Dir: dir, Tests: tests})
 	}
 	return out, nil
@@ -125,7 +125,7 @@ func RunPattern(pkgs []Package) string {
 			}
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return "^(" + strings.Join(names, "|") + ")$"
 }
 

@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -314,7 +314,7 @@ func Gaps(help, refusal string) []string {
 			}
 		}
 	}
-	sort.Strings(gaps)
+	slices.Sort(gaps)
 	return gaps
 }
 
@@ -404,7 +404,7 @@ func Ledger(text string) (map[string][]string, error) {
 		if _, dup := rows[key]; dup {
 			return nil, fmt.Errorf("ledger line %d: %q appears twice", n+1, key)
 		}
-		sort.Strings(parts)
+		slices.Sort(parts)
 		rows[key] = parts
 	}
 	return rows, nil

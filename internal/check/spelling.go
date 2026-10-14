@@ -1,10 +1,12 @@
 package check
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -48,21 +50,17 @@ type SpellingChecker struct {
 }
 
 var (
-	defaultOnce    sync.Once
-	defaultChecker *SpellingChecker
+	defaultChecker = sync.OnceValue(func() *SpellingChecker {
+		r := misspell.New()
+		r.AddRuleList(misspell.DictAmerican)
+		r.Compile()
+		return &SpellingChecker{rep: r}
+	})
 	checkerCacheMu sync.RWMutex
 	checkerCache   = make(map[string]*SpellingChecker)
 )
 
-func defaultSpellingChecker() *SpellingChecker {
-	defaultOnce.Do(func() {
-		r := misspell.New()
-		r.AddRuleList(misspell.DictAmerican)
-		r.Compile()
-		defaultChecker = &SpellingChecker{rep: r}
-	})
-	return defaultChecker
-}
+func defaultSpellingChecker() *SpellingChecker { return defaultChecker() }
 
 // NewSpellingChecker compiles a misspell Replacer with DictAmerican and removes ignored words.
 // It caches compiled checkers so repetitive compilation across tests and files is avoided.
@@ -72,16 +70,10 @@ func NewSpellingChecker(ignore []string) *SpellingChecker {
 		return defaultSpellingChecker()
 	}
 
-	sorted := make([]string, len(words))
-	copy(sorted, words)
-	sort.Strings(sorted)
+	sorted := slices.Clone(words)
+	slices.Sort(sorted)
+	dedup := slices.Compact(sorted)
 
-	dedup := sorted[:0]
-	for i, w := range sorted {
-		if i == 0 || w != sorted[i-1] {
-			dedup = append(dedup, w)
-		}
-	}
 	cacheKey := strings.Join(dedup, ",")
 
 	checkerCacheMu.RLock()
@@ -581,9 +573,7 @@ func applyDiffs(originalText string, diffs []misspell.Diff) string {
 			continue
 		}
 		// Sort diffs in descending order of Column so earlier columns are not shifted.
-		sort.Slice(ds, func(p, q int) bool {
-			return ds[p].Column > ds[q].Column
-		})
+		slices.SortFunc(ds, func(a, b misspell.Diff) int { return cmp.Compare(b.Column, a.Column) })
 		cur := line
 		for _, d := range ds {
 			col := d.Column

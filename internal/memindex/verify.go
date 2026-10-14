@@ -7,7 +7,6 @@ import (
 	"path"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -225,8 +224,8 @@ func Coverage(fsys fs.FS, globA, globB string) ([]Finding, error) {
 		return nil, fmt.Errorf("coverage %s:%s matched %d and %d files — an empty side is a broken check, not a pass",
 			globA, globB, len(aFiles), len(bFiles))
 	}
-	sort.Strings(aFiles)
-	sort.Strings(bFiles)
+	slices.Sort(aFiles)
+	slices.Sort(bFiles)
 
 	// The B side, read once: concatenated text for bounded stem matching, and
 	// the set of paths its relative .md links actually resolve to. The link
@@ -362,7 +361,7 @@ func FrontmatterPresent(fsys fs.FS, glob string, exempt []string) ([]Finding, er
 	if len(files) == 0 {
 		return nil, fmt.Errorf("frontmatter glob %s matched nothing — a broken check, not a pass", glob)
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 	var out []Finding
 	for _, f := range files {
 		base := path.Base(f)
