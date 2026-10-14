@@ -64,7 +64,7 @@ func TestLibraryCoverTableLibrary(t *testing.T) {
 
 	lib := tableLibrary()
 	require.Equal(t, "nova_sprint", lib.Name, "tableLibrary name")
-	require.Equal(t, "nova-redis fn load --addr <host:port>", lib.Remedy, "tableLibrary remedy")
+	require.Equal(t, "nova-redis fn load --redis <host:port>", lib.Remedy, "tableLibrary remedy")
 	require.Equal(t, "lua/*.lua", lib.Glob, "tableLibrary glob")
 	require.NotNil(t, lib.Files, "tableLibrary files")
 	digest, err := lib.Digest()

@@ -3550,14 +3550,14 @@ nova-redis fn check <login>                                                   # 
 nova-redis acl render                                                         # the store's ACL users this build renders, one ACL SETUSER line each; opens no store
 nova-redis acl check <login>                                                  # compare the store's live ACL with them; changes nothing
 nova-redis acl apply <login> [--password-env-for <user>=<NAME>]... [--dry-run] # set the users that differ, and save the ACL file
-# <login> is --addr <host:port> [--user <name>] [--password-env <NAME>]
+# <login> is --redis <host:port> [--user <name>] [--password-env <NAME>] (--addr is the old spelling)
 # <secret login> is --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>
 ```
 
 **The store and the bus as services.** `install store` and `install bus` write a unit (a launchd agent on macOS, a systemd user unit on Linux, kept alive and started again at login) that runs `nova-redis serve` itself, and load it with `launchctl` or `systemctl --user`. serve writes redis-server's whole configuration from its flags and hands it over stdin, so no configuration file is written by hand: the binding (default `127.0.0.1`, loopback and tailnet only), the port (default 6380 for the store, 6381 for the bus) and the store directory under the bench root (default `~/nova-bench/redis/store` or `~/nova-bench/redis/bus`). The unit carries no password and no `nova-secrets exec`: with `<secret login>`, serve reads the password in its own process from that name in that seat (the path `nova-secrets exec` takes), and hands it to redis-server on stdin only; install refuses a login missing a field. `--dry-run` prints the unit and writes and loads nothing; `uninstall` unloads it and removes its file. `nova-sprint units --check` names both units installed, missing or different.
 
 `nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Every verb that talks to a store opens it one way, through `pkg/redisconn`: one dial, the handshake and the login bounded, no retry.
-- `--addr` is the store's `host:port`.
+- `--redis` is the store's `host:port` (`--addr` is the old spelling, kept for one release).
 - `--user` is the ACL user to log in as. Its default is `NOVA_REDIS_USER`, and with neither set the verb logs in as the store's default user.
 - `--password-env` names the variable that holds the password. Its default is the variable `NOVA_REDIS_PASSWORD_ENV` names, else `NOVA_REDIS_PASSWORD`. A seat whose secret has its own name (`nova-secrets exec --only <NAME>`) passes `--password-env <NAME>` and needs no copy. The password itself is never an argument.
 
