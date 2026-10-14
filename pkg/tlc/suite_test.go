@@ -8,23 +8,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type fakeClock struct {
-	now  time.Time
-	step time.Duration
-}
+// testClock returns a clock whose Now advances by step on each read, over a
+// clockwork fake: the suite reads the clock once per case, so a case's stamp
+// and the seconds its record carries are the step, never the machine's time.
+func testClock(step time.Duration) func() time.Time { return steppingClock(time.Now(), step) }
 
-func (c *fakeClock) Now() time.Time {
-	t := c.now
-	c.now = c.now.Add(c.step)
-	return t
-}
-
-func testClock(step time.Duration) *fakeClock {
-	return &fakeClock{now: time.Now(), step: step}
+func steppingClock(start time.Time, step time.Duration) func() time.Time {
+	c := clockwork.NewFakeClockAt(start)
+	return func() time.Time { now := c.Now(); c.Advance(step); return now }
 }
 
 func suiteTree(t *testing.T) (string, []Case) {
@@ -61,11 +57,11 @@ func script(t *testing.T, seen *[]Run) Executor {
 	}
 }
 
-func suiteOptions(root string, cases []Case, out string, exec Executor, clock *fakeClock) Options {
+func suiteOptions(root string, cases []Case, out string, exec Executor, clock func() time.Time) Options {
 	return Options{
 		Root: root, Cases: cases, Out: out, Budget: 110 * time.Second, Workers: 2, Platform: "linux-amd64", CPUs: 8,
 		Jar:  Jar{Path: "/j/tla2tools.jar", Source: "flag", SHA256: strings.Repeat("b", 64)},
-		Java: "/usr/bin/java", JavaVer: "21.0.12.1", Clock: clock.Now, Exec: exec,
+		Java: "/usr/bin/java", JavaVer: "21.0.12.1", Clock: clock, Exec: exec,
 	}
 }
 
@@ -120,8 +116,7 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	t.Parallel()
 	s := openSuite(t)
 	var reported []Record
-	clock := &fakeClock{now: time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC), step: 250 * time.Millisecond}
-	s.opt.Clock = clock.Now
+	s.opt.Clock = steppingClock(time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC), 250*time.Millisecond)
 	s.opt.OnCase = func(r Record) { reported = append(reported, r) }
 	res, err := RunSuite(s.opt)
 	require.NoError(t, err, "suite = %+v, %v", res, err)
@@ -205,7 +200,7 @@ func TestRunSuiteWritesNothingWhenItsInputsMoveUnderIt(t *testing.T) {
 func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
 	t.Parallel()
 	s := openSuite(t)
-	s.opt.Clock = testClock(time.Minute).Now
+	s.opt.Clock = testClock(time.Minute)
 	s.opt.Budget = 90 * time.Second
 	res, err := RunSuite(s.opt)
 	require.NoError(t, err)
@@ -220,7 +215,7 @@ func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
 func TestRunSuiteNeverStartsACaseAfterTheBudget(t *testing.T) {
 	t.Parallel()
 	s := openSuite(t)
-	s.opt.Clock = testClock(time.Hour).Now
+	s.opt.Clock = testClock(time.Hour)
 	s.opt.Budget = time.Second
 	res, err := RunSuite(s.opt)
 	require.NoError(t, err, "ran %d cases, failed=%v, err=%v", len(s.seen), res.Failed, err)

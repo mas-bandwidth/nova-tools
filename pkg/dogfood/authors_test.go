@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 )
 
@@ -188,20 +189,15 @@ func TestAuthorsFromGitAgainstARealRepository(t *testing.T) {
 
 // A fake clock, so the progress policy is tested and the suite waits for
 // nothing: the whole of both tests below is arithmetic.
-type fakeClock struct{ at time.Time }
-
-func (c *fakeClock) now() time.Time       { return c.at }
-func (c *fakeClock) tick(d time.Duration) { c.at = c.at.Add(d) }
-
 func TestProgressSaysNothingOnARunThatAnswersAtOnce(t *testing.T) {
 	t.Parallel()
 
-	clock := &fakeClock{at: time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC)}
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC))
 	said := 0
-	progress := NewProgress(clock.now, 100*time.Millisecond, 2*time.Second, func(done, total int) { said++ })
-	clock.tick(10 * time.Millisecond)
+	progress := NewProgress(clock.Now, 100*time.Millisecond, 2*time.Second, func(done, total int) { said++ })
+	clock.Advance(10 * time.Millisecond)
 	progress(1, 2)
-	clock.tick(10 * time.Millisecond)
+	clock.Advance(10 * time.Millisecond)
 	progress(2, 2)
 	require.Equal(t, 0, said, "a run that answered at once printed %d progress lines", said)
 }
@@ -209,18 +205,18 @@ func TestProgressSaysNothingOnARunThatAnswersAtOnce(t *testing.T) {
 func TestProgressSpeaksUpOnARunThatLooksLikeAHangAndThenHoldsItsPace(t *testing.T) {
 	t.Parallel()
 
-	clock := &fakeClock{at: time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC)}
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC))
 	var said [][2]int
-	progress := NewProgress(clock.now, 100*time.Millisecond, 2*time.Second, func(done, total int) {
+	progress := NewProgress(clock.Now, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 		said = append(said, [2]int{done, total})
 	})
-	clock.tick(500 * time.Millisecond)
+	clock.Advance(500 * time.Millisecond)
 	progress(1, 4) // past --after: the first line
-	clock.tick(100 * time.Millisecond)
+	clock.Advance(100 * time.Millisecond)
 	progress(2, 4) // inside the interval: silence
-	clock.tick(3 * time.Second)
+	clock.Advance(3 * time.Second)
 	progress(3, 4) // past the interval: a second line
-	clock.tick(10 * time.Millisecond)
+	clock.Advance(10 * time.Millisecond)
 	progress(4, 4) // the last one always speaks
 	want := [][2]int{{1, 4}, {3, 4}, {4, 4}}
 	require.Equal(t, want, said, "progress lines %v, want %v", said, want)
