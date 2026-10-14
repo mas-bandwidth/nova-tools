@@ -73,7 +73,7 @@ func makeTest(t *testing.T, fixture string, vars ...string) (int, string) {
 	case errors.As(err, &exit):
 		return exit.ExitCode(), out.String()
 	case err != nil:
-		t.Fatalf("make: %v\n%s", err, out.String())
+		require.Failf(t, "make failed", "make: %v\n%s", err, out.String())
 	}
 	return 0, out.String()
 }

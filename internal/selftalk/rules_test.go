@@ -64,7 +64,7 @@ func TestEveryRuleFindsItsSentenceAndPassesItsNearMiss(t *testing.T) {
 			case "licensed":
 				assert.NotEmpty(t, names(r.Finds), "%q is the sentence before the licence, and is reported", r.Finds)
 			default:
-				t.Errorf("unknown class %q", r.Class)
+				assert.Failf(t, "unknown class", "unknown class %q", r.Class)
 			}
 			if r.find != nil {
 				assert.NotEmpty(t, r.find(r.Finds), "the row's own pattern must match %q, not only an earlier row", r.Finds)

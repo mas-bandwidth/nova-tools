@@ -85,7 +85,7 @@ func realGit(t *testing.T) string {
 			return p
 		}
 	}
-	t.Fatal("no real git on PATH: every git there is a script")
+	require.FailNow(t, "no real git on PATH: every git there is a script")
 	return ""
 }
 

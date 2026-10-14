@@ -367,7 +367,7 @@ func TestCoverage(t *testing.T) {
 	fnds, err := Coverage(fsys, "notes/*.md", "notes/index-*.md")
 	require.NoError(t, err, "Coverage")
 	for _, f := range fnds {
-		t.Errorf("unexpected finding on a clean corpus: %s: %s", f.Kind, f.Detail)
+		assert.Failf(t, "unexpected finding on a clean corpus", "%s: %s", f.Kind, f.Detail)
 	}
 	// Prove it can fail, in both directions: an orphan note nothing points
 	// at, and an index line pointing at nothing.
@@ -459,7 +459,7 @@ func TestCoverageCollidingStemIsNotCoverage(t *testing.T) {
 			haveFoo = true
 			continue
 		}
-		t.Errorf("unexpected finding on a genuinely indexed file: %s: %s", f.Kind, f.Detail)
+		assert.Failf(t, "unexpected finding on a genuinely indexed file", "%s: %s", f.Kind, f.Detail)
 	}
 	assert.True(t, haveFoo, "notes/foo.md passed coverage on foobar.md's index entry — a substring is not membership")
 }
@@ -647,7 +647,7 @@ func TestMaskingNeverHidesARealLink(t *testing.T) {
 					return
 				}
 			}
-			t.Errorf("masking HID a real dangling link (%s)", name)
+			assert.Failf(t, "masking hid a real dangling link", "masking HID a real dangling link (%s)", name)
 		})
 	}
 }

@@ -547,7 +547,7 @@ func workloadBody(t *testing.T, class string) string {
 			return w.Body
 		}
 	}
-	t.Fatalf("no %s workload ships", class)
+	require.Failf(t, "no workload ships", "no %s workload ships", class)
 	return ""
 }
 
