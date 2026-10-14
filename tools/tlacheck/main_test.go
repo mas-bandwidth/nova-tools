@@ -21,14 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	_ = assert.Equal
-	_ = require.NoError
-	_ = fsx.Tree
-	_ = must.ContainsAll
-	_ = tverb.Run
-)
-
 type result struct {
 	code           int
 	stdout, stderr string
@@ -48,9 +40,7 @@ func scriptedTLC(t *testing.T, code map[string]int, runs *[]tlc.Run) tlc.Executo
 			*runs = append(*runs, r)
 		}
 		status := code[strings.TrimSuffix(r.Config, ".cfg")]
-		if err := os.WriteFile(log, []byte(logs[status]), 0o644); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, os.WriteFile(log, []byte(logs[status]), 0o644))
 		return status
 	}
 }
@@ -74,7 +64,7 @@ func testEnv(t *testing.T, exec tlc.Executor) (env, *bytes.Buffer, *bytes.Buffer
 	return e, e.stdout.(*bytes.Buffer), e.stderr.(*bytes.Buffer)
 }
 
-// testMain adapts tlacheck's run for use with verb and onboardtest.
+// testMain adapts tlacheck's run to the verb mini-module's Main.
 func testMain(exec tlc.Executor) tverb.Main {
 	return func(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		e := newTestEnv(exec)
@@ -149,9 +139,12 @@ func TestHelpIsOnStdoutAtExitZeroForTheToolAndEveryVerb(t *testing.T) {
 
 func TestHelpHasNoSideEffects(t *testing.T) {
 	t.Parallel()
-	e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran for help"); return 0 })
-	e.lookPath = func(string) (string, error) { t.Error("a program was looked up for help"); return "", errors.New("no") }
-	e.getenv = func(string) string { t.Error("the environment was read for help"); return "" }
+	e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { assert.Fail(t, "TLC ran for help"); return 0 })
+	e.lookPath = func(string) (string, error) {
+		assert.Fail(t, "a program was looked up for help")
+		return "", errors.New("no")
+	}
+	e.getenv = func(string) string { assert.Fail(t, "the environment was read for help"); return "" }
 	for _, v := range verbs() {
 		do(e, out, errs, v.name, "-h")
 	}
@@ -163,15 +156,11 @@ func TestAnUnknownVerbIsNamedAndTheVerbsAreListed(t *testing.T) {
 	require.Equal(t, 2, r.code)
 	require.Empty(t, r.stdout)
 	require.Equal(t, 1, strings.Count(r.stderr, "\n"))
-	for _, want := range []string{`unknown verb "bogus"`, "run, groups, merge, inputs, table, member, replay, witnesses", "run: tlacheck help"} {
-		assert.Contains(t, r.stderr, want)
-	}
-	if r := call(t, nil, "help", "bogus"); r.code != 2 || !strings.Contains(r.stderr, `unknown verb "bogus"`) {
-		t.Fatalf("help of an unknown verb: %+v", r)
-	}
-	if r := call(t, nil); r.code != 2 || !strings.Contains(r.stderr, "usage: tlacheck") || r.stdout != "" {
-		t.Fatalf("no arguments: %+v", r)
-	}
+	must.ContainsAll(t, r.stderr, `unknown verb "bogus"`, "run, groups, merge, inputs, table, member, replay, witnesses", "run: tlacheck help")
+	tverb.Run(t, testMain(nil), "help", "bogus").Code(2).Stderr(`unknown verb "bogus"`)
+	bare := tverb.Run(t, testMain(nil))
+	bare.Code(2).Stderr("usage: tlacheck")
+	assert.Empty(t, bare.Result.Stdout, bare)
 }
 
 func TestAMalformedInvocationIsRefusedInOneLine(t *testing.T) {
@@ -198,9 +187,7 @@ func TestAMalformedInvocationIsRefusedInOneLine(t *testing.T) {
 			require.Equal(t, 2, r.code)
 			require.Equal(t, 1, strings.Count(r.stderr, "\n"))
 			assert.NotContains(t, r.stdout, "OK")
-			for _, want := range tc.want {
-				assert.Contains(t, r.stderr, want)
-			}
+			must.ContainsAll(t, r.stderr, tc.want...)
 			assert.True(t, strings.HasPrefix(r.stderr, "tlacheck "+tc.args[0]+": "), "refusal starts with tool+verb")
 		})
 	}
@@ -226,14 +213,14 @@ func TestGroupsPrintsTheRequiredGroupsAsOneLineOfJSON(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(r.stdout, "\n"))
 	// The repository's own plan.
 	r = call(t, nil, "groups", "--root", filepath.Join("..", ".."))
-	if r.code != 0 || json.Unmarshal([]byte(r.stdout), &groups) != nil || len(groups) < 5 {
-		t.Fatalf("the repository's groups: %+v", r)
-	}
+	require.Equal(t, 0, r.code, "the repository's groups: %+v", r)
+	require.NoError(t, json.Unmarshal([]byte(r.stdout), &groups), "the repository's groups: %+v", r)
+	assert.GreaterOrEqual(t, len(groups), 5, "the repository's groups: %+v", r)
 	// A root with no plan is a refusal and prints no payload.
 	r = call(t, nil, "groups", "--root", t.TempDir())
-	if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "the case plan is refused") {
-		t.Fatalf("a root with no plan: %+v", r)
-	}
+	require.Equal(t, 2, r.code, "a root with no plan: %+v", r)
+	assert.Empty(t, r.stdout, "a root with no plan: %+v", r)
+	assert.Contains(t, r.stderr, "the case plan is refused", "a root with no plan: %+v", r)
 }
 
 func TestRunWritesRecordsAndReportsEachCase(t *testing.T) {
@@ -268,23 +255,22 @@ func TestRunRecordsTheJavaVersionAndWorkersAndRefusesWhenJavaHasNone(t *testing.
 	t.Parallel()
 	root, jar := checkout(t)
 	dir := filepath.Join(t.TempDir(), "run")
-	if r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha", "--workers", "1"); r.code != 0 || !strings.Contains(r.stdout, "HELPER OK name=java-version version=21.0.12.1") {
-		t.Fatalf("%+v", r)
-	}
+	r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha", "--workers", "1")
+	require.Equal(t, 0, r.code, "%+v", r)
+	assert.Contains(t, r.stdout, "HELPER OK name=java-version version=21.0.12.1", "%+v", r)
 	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
 	assert.Equal(t, "21.0.12.1", recs[0].JavaVersion)
 	assert.Equal(t, 1, recs[0].Workers)
 	assert.Equal(t, 1, recs[1].Workers)
-	e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran without a java version"); return 0 })
+	e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { assert.Fail(t, "TLC ran without a java version"); return 0 })
 	e.javaVersion = func(string) (string, error) { return "", errors.New("java -version printed no quoted version") }
 	dir2 := filepath.Join(t.TempDir(), "run2")
-	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir2, "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, "the java version cannot be read") || !strings.Contains(r.stderr, "nothing was run") {
-		t.Fatalf("%+v", r)
-	}
-	_, err = os.Stat(filepath.Join(dir2, tlc.RunsFile))
-	assert.Error(t, err)
+	r = do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir2, "--group", "alpha")
+	require.Equal(t, 2, r.code, "%+v", r)
+	must.ContainsAll(t, r.stderr, "the java version cannot be read", "nothing was run")
+	assert.NoFileExists(t, filepath.Join(dir2, tlc.RunsFile))
 }
 
 // The host column is the tool's own platform label, and there is no way to
@@ -296,9 +282,8 @@ func TestRunWritesThePlatformLabelAndNeverAHostName(t *testing.T) {
 	e.goarch, e.cpus = "arm64", func() int { return 64 }
 	e.getenv = func(name string) string { return "HOSTNAME-or-" + name }
 	dir := filepath.Join(t.TempDir(), "run")
-	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha"); r.code != 0 {
-		t.Fatalf("%+v", r)
-	}
+	r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha")
+	require.Equal(t, 0, r.code, "%+v", r)
 	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
@@ -308,14 +293,17 @@ func TestRunWritesThePlatformLabelAndNeverAHostName(t *testing.T) {
 	raw := fsx.Read(t, filepath.Join(dir, tlc.RunsFile))
 	assert.NotContains(t, raw, "HOSTNAME")
 	assert.NotContains(t, raw, "bench")
-	e, out, errs = testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran on an unlisted platform"); return 0 })
+	e, out, errs = testEnv(t, func(context.Context, tlc.Run, string) int {
+		assert.Fail(t, "TLC ran on an unlisted platform")
+		return 0
+	})
 	e.goarch = "sparc"
-	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r2"), "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, `platform "linux-sparc" is not one the runner records`) {
-		t.Errorf("an unlisted architecture: %+v", r)
-	}
-	if r := call(t, nil, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r3"), "--group", "alpha", "--host", "x"); r.code != 2 || !strings.Contains(r.stderr, "unknown flag") {
-		t.Errorf("a --host flag exists: %+v", r)
-	}
+	r = do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r2"), "--group", "alpha")
+	assert.Equal(t, 2, r.code, "an unlisted architecture: %+v", r)
+	assert.Contains(t, r.stderr, `platform "linux-sparc" is not one the runner records`, "an unlisted architecture: %+v", r)
+	r = call(t, nil, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r3"), "--group", "alpha", "--host", "x")
+	assert.Equal(t, 2, r.code, "a --host flag exists: %+v", r)
+	assert.Contains(t, r.stderr, "unknown flag", "a --host flag exists: %+v", r)
 }
 
 func TestRunReportsAFailingCaseOnStderrAndExitsOne(t *testing.T) {
@@ -361,7 +349,7 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 		{"no java", []string{"--group", "alpha"}, func(e *env) { e.lookPath = func(string) (string, error) { return "", errors.New("no") } }, "java is not on PATH"},
 	}
 	for _, tc := range tests {
-		e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Errorf("%s: TLC ran", tc.name); return 0 })
+		e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { assert.Failf(t, "TLC ran", "%s", tc.name); return 0 })
 		if tc.tweak != nil {
 			tc.tweak(&e)
 		}
@@ -424,20 +412,18 @@ func TestMergeJoinsTheRecordsOfEveryGroup(t *testing.T) {
 	assert.Equal(t, "MCA.cfg", recs[0].Config)
 	assert.Equal(t, "MCCard.cfg", recs[3].Config)
 	// A run that is missing is a refusal, and the output is left alone.
-	before, _ := os.ReadFile(merged)
+	before, err := os.ReadFile(merged)
+	require.NoError(t, err)
 	r = call(t, nil, "merge", "--root", root, "--out", merged, dirs[0], dirs[1])
-	if r.code != 1 || !strings.Contains(r.stderr, "MERGE FAIL") || !strings.Contains(r.stderr, "no record for 1 declared cases") {
-		t.Fatalf("an incomplete merge: %+v", r)
-	}
-	if after, _ := os.ReadFile(merged); string(after) != string(before) {
-		t.Fatal("a refused merge changed the output")
-	}
+	require.Equal(t, 1, r.code, "an incomplete merge: %+v", r)
+	must.ContainsAll(t, r.stderr, "MERGE FAIL", "no record for 1 declared cases")
+	must.FileReads(t, merged, string(before))
 	// A file that is not records is a refusal.
 	junk := filepath.Join(t.TempDir(), "junk.tsv")
-	_ = os.WriteFile(junk, []byte("not\trecords\n"), 0o644)
-	if r := call(t, nil, "merge", "--root", root, "--out", merged, junk); r.code != 2 || !strings.Contains(r.stderr, "cannot read records") {
-		t.Fatalf("junk: %+v", r)
-	}
+	require.NoError(t, os.WriteFile(junk, []byte("not\trecords\n"), 0o644))
+	r = call(t, nil, "merge", "--root", root, "--out", merged, junk)
+	require.Equal(t, 2, r.code, "junk: %+v", r)
+	assert.Contains(t, r.stderr, "cannot read records", "junk: %+v", r)
 }
 
 // A merge holds every record to the fingerprint of its own case at this
@@ -449,22 +435,17 @@ func TestMergeRefusesRecordsOfAModelEditedSinceTheRuns(t *testing.T) {
 	var runs []string
 	for _, group := range []string{"alpha", "beta", "gamma"} {
 		dir := filepath.Join(t.TempDir(), group)
-		if r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group); r.code != 0 {
-			t.Fatalf("%s: %+v", group, r)
-		}
+		r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group)
+		require.Equal(t, 0, r.code, "%s: %+v", group, r)
 		runs = append(runs, filepath.Join(dir, tlc.RunsFile))
 	}
-	if err := os.WriteFile(filepath.Join(root, "tla", "MCAStale.cfg"), []byte("edited since\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "MCAStale.cfg"), []byte("edited since\n"), 0o644))
 	merged := filepath.Join(t.TempDir(), "RUNS.tsv")
 	r := call(t, nil, append([]string{"merge", "--root", root, "--out", merged}, runs...)...)
-	if r.code != 1 || !strings.Contains(r.stderr, "1 records were measured on other inputs than these: MCAStale.cfg (") || strings.Contains(r.stderr, "MCABroken") {
-		t.Fatalf("%+v", r)
-	}
-	if _, err := os.Stat(merged); err == nil {
-		t.Fatal("a refused merge wrote its output")
-	}
+	require.Equal(t, 1, r.code, "%+v", r)
+	assert.Contains(t, r.stderr, "1 records were measured on other inputs than these: MCAStale.cfg (", "%+v", r)
+	assert.NotContains(t, r.stderr, "MCABroken", "%+v", r)
+	assert.NoFileExists(t, merged, "a refused merge wrote its output")
 }
 
 // After an edit only the groups that hold a case that reads it are run again,
@@ -476,73 +457,57 @@ func TestOnlyTheStaleGroupsAreRunAndMergedOntoTheCommittedRecords(t *testing.T) 
 	codes := map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}
 	runGroup := func(group string) string {
 		dir := filepath.Join(t.TempDir(), group)
-		if r := call(t, scriptedTLC(t, codes, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group); r.code != 0 {
-			t.Fatalf("%s: %+v", group, r)
-		}
+		r := call(t, scriptedTLC(t, codes, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group)
+		require.Equal(t, 0, r.code, "%s: %+v", group, r)
 		return filepath.Join(dir, tlc.RunsFile)
 	}
 	runs := filepath.Join(root, "tla", tlc.RunsFile)
 	first := filepath.Join(t.TempDir(), "first.tsv")
-	if r := call(t, nil, "merge", "--root", root, "--out", first, runGroup("alpha"), runGroup("beta"), runGroup("gamma")); r.code != 0 {
-		t.Fatalf("%+v", r)
-	}
-	raw, _ := os.ReadFile(first)
-	if err := os.WriteFile(runs, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	r := call(t, nil, "merge", "--root", root, "--out", first, runGroup("alpha"), runGroup("beta"), runGroup("gamma"))
+	require.Equal(t, 0, r.code, "%+v", r)
+	raw, err := os.ReadFile(first)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(runs, raw, 0o644))
 	groups := func() string {
-		r := call(t, nil, "groups", "--root", root, "--stale")
-		if r.code != 0 || r.stderr != "" {
-			t.Fatalf("%+v", r)
-		}
-		return strings.TrimSpace(r.stdout)
+		g := call(t, nil, "groups", "--root", root, "--stale")
+		require.Equal(t, 0, g.code, "%+v", g)
+		require.Empty(t, g.stderr, "%+v", g)
+		return strings.TrimSpace(g.stdout)
 	}
-	if got := groups(); got != "[]" {
-		t.Fatalf("stale groups of current records = %s", got)
-	}
+	require.Equal(t, "[]", groups(), "stale groups of current records")
 	// MCAStale.cfg is the only case of group beta; MCABroken.cfg and MCA.cfg are alpha's.
-	if err := os.WriteFile(filepath.Join(root, "tla", "MCAStale.cfg"), []byte("edited\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := groups(); got != `["beta"]` {
-		t.Fatalf("stale groups after editing one configuration = %s", got)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "MCAStale.cfg"), []byte("edited\n"), 0o644))
+	require.Equal(t, `["beta"]`, groups(), "stale groups after editing one configuration")
 	// Without --keep the one group is an incomplete merge; with it, a complete one.
 	merged := filepath.Join(t.TempDir(), "merged.tsv")
 	beta := runGroup("beta")
-	if r := call(t, nil, "merge", "--root", root, "--out", merged, beta); r.code != 1 || !strings.Contains(r.stderr, "no record for 3 declared cases") {
-		t.Fatalf("no --keep: %+v", r)
-	}
-	if r := call(t, nil, "merge", "--root", root, "--keep", runs, "--out", merged, beta); r.code != 0 || !strings.Contains(r.stdout, "MERGE OK runs=1 records=4 ") {
-		t.Fatalf("--keep: %+v", r)
-	}
+	r = call(t, nil, "merge", "--root", root, "--out", merged, beta)
+	require.Equal(t, 1, r.code, "no --keep: %+v", r)
+	assert.Contains(t, r.stderr, "no record for 3 declared cases", "no --keep: %+v", r)
+	r = call(t, nil, "merge", "--root", root, "--keep", runs, "--out", merged, beta)
+	require.Equal(t, 0, r.code, "--keep: %+v", r)
+	assert.Contains(t, r.stdout, "MERGE OK runs=1 records=4 ", "--keep: %+v", r)
 	got, err := tlc.ReadRecordsFile(merged)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old, _ := tlc.ReadRecordsFile(runs)
+	require.NoError(t, err)
+	old, err := tlc.ReadRecordsFile(runs)
+	require.NoError(t, err)
 	for i := range got {
 		same := got[i] == old[i]
-		if same == (got[i].Config == "MCAStale.cfg") {
-			t.Errorf("%s: kept=%v, want kept only for the cases that did not read the edit", got[i].Config, same)
-		}
+		assert.NotEqual(t, got[i].Config == "MCAStale.cfg", same, "%s: kept=%v, want kept only for the cases that did not read the edit", got[i].Config, same)
 	}
-	if err := os.WriteFile(runs, []byte(fsx.Read(t, merged)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := groups(); got != "[]" {
-		t.Fatalf("stale groups after the merge = %s", got)
-	}
+	require.NoError(t, os.WriteFile(runs, []byte(fsx.Read(t, merged)), 0o644))
+	require.Equal(t, "[]", groups(), "stale groups after the merge")
 	// A kept record that is not current is not carried.
-	if err := os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited model\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if r := call(t, nil, "merge", "--root", root, "--keep", runs, "--out", merged, runGroup("beta")); r.code != 1 || !strings.Contains(r.stderr, "3 kept records are stale, measured on inputs their cases no longer read: MCA.cfg (group alpha), MCABroken.cfg (group alpha), MCCard.cfg (group gamma)") || strings.Contains(r.stderr, "no record for") || !strings.Contains(r.stderr, "tlacheck run --root "+root+" --jar <jar> --dir <a clean directory>/alpha --group alpha") || !strings.Contains(r.stderr, "--group gamma") || !strings.Contains(r.stderr, "then merge again with --keep") {
-		t.Fatalf("a stale kept record: %+v", r)
-	}
-	if got := groups(); got != `["alpha","beta","gamma"]` {
-		t.Fatalf("stale groups after editing the module every case reads = %s", got)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited model\n"), 0o644))
+	r = call(t, nil, "merge", "--root", root, "--keep", runs, "--out", merged, runGroup("beta"))
+	require.Equal(t, 1, r.code, "a stale kept record: %+v", r)
+	must.ContainsAll(t, r.stderr,
+		"3 kept records are stale, measured on inputs their cases no longer read: MCA.cfg (group alpha), MCABroken.cfg (group alpha), MCCard.cfg (group gamma)",
+		"tlacheck run --root "+root+" --jar <jar> --dir <a clean directory>/alpha --group alpha",
+		"--group gamma",
+		"then merge again with --keep")
+	assert.NotContains(t, r.stderr, "no record for", "a stale kept record: %+v", r)
+	require.Equal(t, `["alpha","beta","gamma"]`, groups(), "stale groups after editing the module every case reads")
 }
 
 // The messages of a merge that cannot carry what it was asked to keep.
@@ -553,51 +518,39 @@ func TestMergeKeepNamesWhatItCannotCarry(t *testing.T) {
 	var runs []string
 	for _, group := range []string{"alpha", "beta", "gamma"} {
 		dir := filepath.Join(t.TempDir(), group)
-		if r := call(t, scriptedTLC(t, codes, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group); r.code != 0 {
-			t.Fatalf("%s: %+v", group, r)
-		}
+		r := call(t, scriptedTLC(t, codes, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group)
+		require.Equal(t, 0, r.code, "%s: %+v", group, r)
 		runs = append(runs, filepath.Join(dir, tlc.RunsFile))
 	}
 	keep := filepath.Join(t.TempDir(), "keep.tsv")
-	if r := call(t, nil, append([]string{"merge", "--root", root, "--out", keep}, runs...)...); r.code != 0 {
-		t.Fatalf("%+v", r)
-	}
+	r := call(t, nil, append([]string{"merge", "--root", root, "--out", keep}, runs...)...)
+	require.Equal(t, 0, r.code, "%+v", r)
 	merged := filepath.Join(t.TempDir(), "merged.tsv")
 
 	// A kept record of a case the plan no longer declares is dropped, by name.
 	raw := fsx.Read(t, keep)
 	extra := strings.Split(strings.Split(raw, "\n")[1], "\t")
 	extra[0] = "MCGone.cfg"
-	if err := os.WriteFile(keep, []byte(raw+strings.Join(extra, "\t")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r := call(t, nil, "merge", "--root", root, "--keep", keep, "--out", merged, runs[0], runs[1], runs[2])
-	if r.code != 0 || !strings.Contains(r.stdout, "DROP OK config=MCGone.cfg why=not-in-the-plan keep=") {
-		t.Fatalf("a record for a case no longer in the plan: %+v", r)
-	}
-	if recs, err := tlc.ReadRecordsFile(merged); err != nil || len(recs) != 4 {
-		t.Fatalf("merged %d records (%v), want the plan's four", len(recs), err)
-	}
+	require.NoError(t, os.WriteFile(keep, []byte(raw+strings.Join(extra, "\t")+"\n"), 0o644))
+	r = call(t, nil, "merge", "--root", root, "--keep", keep, "--out", merged, runs[0], runs[1], runs[2])
+	require.Equal(t, 0, r.code, "a record for a case no longer in the plan: %+v", r)
+	assert.Contains(t, r.stdout, "DROP OK config=MCGone.cfg why=not-in-the-plan keep=", "a record for a case no longer in the plan: %+v", r)
+	recs, err := tlc.ReadRecordsFile(merged)
+	require.NoError(t, err, "want the plan's four")
+	assert.Len(t, recs, 4, "want the plan's four")
 
 	// A file in the old column layout is refused naming both layouts.
 	old := filepath.Join(t.TempDir(), "old.tsv")
 	oldText := "config\tmodule\tinput_sha256\tjar_sha256\thost\tstarted_utc\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n"
-	if err := os.WriteFile(old, []byte(oldText), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(old, []byte(oldText), 0o644))
 	r = call(t, nil, "merge", "--root", root, "--keep", old, "--out", merged, runs[0])
-	for _, want := range []string{"cannot read the records to keep", "another layout: found 15 columns", "reads and writes 19", "take the tla/RUNS.tsv of the base branch"} {
-		if r.code != 2 || !strings.Contains(r.stderr, want) {
-			t.Errorf("an old layout: %q lacks %q (code %d)", r.stderr, want, r.code)
-		}
-	}
+	assert.Equal(t, 2, r.code, "an old layout: %q", r.stderr)
+	must.ContainsAll(t, r.stderr, "cannot read the records to keep", "another layout: found 15 columns", "reads and writes 19", "take the tla/RUNS.tsv of the base branch")
 	// groups --stale reads the committed records in the same way.
-	if err := os.WriteFile(filepath.Join(root, "tla", tlc.RunsFile), []byte(oldText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if r := call(t, nil, "groups", "--root", root, "--stale"); r.code != 2 || !strings.Contains(r.stderr, "another layout") || !strings.Contains(r.stderr, "take the tla/RUNS.tsv of the base branch") {
-		t.Errorf("groups --stale on an old layout: %+v", r)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", tlc.RunsFile), []byte(oldText), 0o644))
+	r = call(t, nil, "groups", "--root", root, "--stale")
+	assert.Equal(t, 2, r.code, "groups --stale on an old layout: %+v", r)
+	must.ContainsAll(t, r.stderr, "another layout", "take the tla/RUNS.tsv of the base branch")
 }
 
 // The commands tla/README.md shows are held to the real flag parser: each
@@ -608,9 +561,7 @@ func TestMergeKeepNamesWhatItCannotCarry(t *testing.T) {
 func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "tla", "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	invocation := regexp.MustCompile(`tlacheck\s+([a-z]+)((?:\s+[^\s|)&;><]+)*)`)
 	var commands [][]string
 	inBlock := false
@@ -631,28 +582,24 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 	shown := map[string]int{}
 	for _, args := range commands {
 		shown[args[0]]++
-		e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Errorf("%v ran TLC", args); return 0 })
+		e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { assert.Failf(t, "TLC ran", "%v", args); return 0 })
 		e.parseOnly = true
-		if r := do(e, out, errs, args...); r.code != 0 || r.stdout != "" || r.stderr != "" {
-			t.Errorf("tlacheck %s: the real parser refuses it: %+v", strings.Join(args, " "), r)
-		}
+		r := do(e, out, errs, args...)
+		assert.Equal(t, 0, r.code, "tlacheck %s: the real parser refuses it: %+v", strings.Join(args, " "), r)
+		assert.Empty(t, r.stdout, "tlacheck %s: the real parser refuses it: %+v", strings.Join(args, " "), r)
+		assert.Empty(t, r.stderr, "tlacheck %s: the real parser refuses it: %+v", strings.Join(args, " "), r)
 	}
 	for _, verb := range []string{"groups", "run", "merge", "inputs"} {
-		if shown[verb] == 0 {
-			t.Errorf("the README shows no tlacheck %s command", verb)
-		}
+		assert.NotZero(t, shown[verb], "the README shows no tlacheck %s command", verb)
 	}
-	if shown["groups"] < 1 || len(commands) < 8 {
-		t.Errorf("only %d commands found in the README's blocks: %v", len(commands), commands)
-	}
+	assert.GreaterOrEqual(t, len(commands), 8, "only %d commands found in the README's blocks: %v", len(commands), commands)
 	// The control: the parser does refuse a flag it does not have, a flag after a
 	// positional and a missing flag value, so a pass above means something.
 	for _, args := range [][]string{{"run", "--dir", "x", "--bogus"}, {"merge", "--out", "o", "a.tsv", "--keep", "k"}, {"groups", "--root"}} {
 		e, out, errs := testEnv(t, nil)
 		e.parseOnly = true
-		if r := do(e, out, errs, args...); r.code != 2 {
-			t.Errorf("%v was parsed: %+v", args, r)
-		}
+		r := do(e, out, errs, args...)
+		assert.Equal(t, 2, r.code, "%v was parsed: %+v", args, r)
 	}
 }
 
@@ -673,110 +620,89 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 		require.NoError(t, os.WriteFile(p, raw, 0o644))
 	}
 	runs := filepath.Join(root, "tla", tlc.RunsFile)
-	if err := os.WriteFile(runs, []byte(strings.Join(tlc.RecordsHeader, "\t")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(runs, []byte(strings.Join(tlc.RecordsHeader, "\t")+"\n"), 0o644))
 	verbs := map[string][]string{
 		"groups --stale": {"groups", "--root", root, "--stale"},
 		"inputs":         {"inputs", "--root", root, "--case", "MCA.cfg"},
 		"merge":          {"merge", "--root", root, "--keep", runs, "--out", filepath.Join(t.TempDir(), "o.tsv")},
 		"run":            {"run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r"), "--group", "alpha"},
 	}
-	ok := func(name string, args []string, wantCode int) result {
+	ok := func(args []string) result {
 		return call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil), args...)
 	}
 	// The files as the binary has them are accepted (merge with nothing to keep
 	// still needs a record for every case, so its code is 1, not a refusal).
 	for name, args := range verbs {
-		if r := ok(name, args, 0); r.code == 2 && strings.Contains(r.stderr, "built from other runner files") {
-			t.Errorf("%s refused the matching runner files: %+v", name, r)
-		}
+		r := ok(args)
+		assert.False(t, r.code == 2 && strings.Contains(r.stderr, "built from other runner files"), "%s refused the matching runner files: %+v", name, r)
 	}
 	// One result file edited under the root: each refuses, naming it and the remedy.
-	if err := os.WriteFile(filepath.Join(dir, "run.go"), []byte("another runner\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "run.go"), []byte("another runner\n"), 0o644))
 	for name, args := range verbs {
-		r := ok(name, args, 2)
-		if r.code != 2 || !strings.Contains(r.stderr, "built from other runner files than the ones under "+root) || !strings.Contains(r.stderr, "pkg/tlc/run.go differ") || strings.Contains(r.stderr, "outcome.go") || !strings.Contains(r.stderr, "build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck") || r.stdout != "" && name != "run" {
-			t.Errorf("%s: %+v", name, r)
-		}
+		r := ok(args)
+		assert.Equal(t, 2, r.code, "%s: %+v", name, r)
+		must.ContainsAll(t, r.stderr,
+			"built from other runner files than the ones under "+root,
+			"pkg/tlc/run.go differ",
+			"build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck")
+		assert.NotContains(t, r.stderr, "outcome.go", "%s: %+v", name, r)
+		assert.True(t, r.stdout == "" || name == "run", "%s: %+v", name, r)
 	}
 	// The list of inputs is computed by inputs.go: a binary built from another
 	// one lists other inputs than the checkout does, and each verb refuses it.
-	if err := os.WriteFile(filepath.Join(dir, "run.go"), built["pkg/tlc/run.go"], 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "run.go"), built["pkg/tlc/run.go"], 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644))
 	for name, args := range verbs {
-		r := ok(name, args, 2)
-		if r.code != 2 || !strings.Contains(r.stderr, "pkg/tlc/inputs.go differ") || strings.Contains(r.stderr, "run.go") {
-			t.Errorf("%s with another input list: %+v", name, r)
-		}
+		r := ok(args)
+		assert.Equal(t, 2, r.code, "%s with another input list: %+v", name, r)
+		assert.Contains(t, r.stderr, "pkg/tlc/inputs.go differ", "%s with another input list: %+v", name, r)
+		assert.NotContains(t, r.stderr, "run.go", "%s with another input list: %+v", name, r)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), built["pkg/tlc/inputs.go"], 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inputs.go"), built["pkg/tlc/inputs.go"], 0o644))
 	// A bookkeeping file that differs is no concern of the fingerprint.
-	if err := os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if r := ok("inputs", verbs["inputs"], 0); r.code != 0 {
-		t.Errorf("a bookkeeping file that differs: %+v", r)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping\n"), 0o644))
+	r := ok(verbs["inputs"])
+	assert.Equal(t, 0, r.code, "a bookkeeping file that differs: %+v", r)
 	// A missing result file is a difference too.
-	if err := os.Remove(filepath.Join(dir, "outcome.go")); err != nil {
-		t.Fatal(err)
-	}
-	if r := ok("inputs", verbs["inputs"], 2); r.code != 2 || !strings.Contains(r.stderr, "pkg/tlc/outcome.go differ") {
-		t.Errorf("a missing result file: %+v", r)
-	}
+	require.NoError(t, os.Remove(filepath.Join(dir, "outcome.go")))
+	r = ok(verbs["inputs"])
+	assert.Equal(t, 2, r.code, "a missing result file: %+v", r)
+	assert.Contains(t, r.stderr, "pkg/tlc/outcome.go differ", "a missing result file: %+v", r)
 }
 
 func TestInputsPrintsWhatACaseReadsAndItsFingerprint(t *testing.T) {
 	t.Parallel()
 	root, _ := checkout(t)
 	r := call(t, nil, "inputs", "--root", root, "--case", "MCA.cfg")
-	if r.code != 0 || r.stderr != "" {
-		t.Fatalf("%+v", r)
-	}
+	require.Equal(t, 0, r.code, "%+v", r)
+	require.Empty(t, r.stderr, "%+v", r)
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
 	last := lines[len(lines)-1]
 	src, err := tlc.SourceAt(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	inputs, err := src.Inputs("MCA.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(lines) != len(inputs)+1 || last != "INPUTS OK case=MCA.cfg files="+fmt.Sprint(len(inputs))+" fingerprint="+tlc.Digest(inputs) {
-		t.Fatalf("output %q for %v", r.stdout, inputs)
-	}
+	require.NoError(t, err)
+	require.Len(t, lines, len(inputs)+1, "output %q for %v", r.stdout, inputs)
+	assert.Equal(t, "INPUTS OK case=MCA.cfg files="+fmt.Sprint(len(inputs))+" fingerprint="+tlc.Digest(inputs), last, "output %q for %v", r.stdout, inputs)
 	for i, in := range inputs {
-		if lines[i] != "INPUT OK path="+in.Path+" sha256="+in.SHA256 || !eventRE.MatchString(lines[i]) {
-			t.Errorf("line %d: %q", i, lines[i])
-		}
+		assert.Equal(t, "INPUT OK path="+in.Path+" sha256="+in.SHA256, lines[i], "line %d", i)
+		assert.Regexp(t, eventRE, lines[i], "line %d", i)
 	}
-	if !strings.Contains(r.stdout, "path=tla/MCA.cfg ") || !strings.Contains(r.stdout, "path=tla/MCA.tla ") || !strings.Contains(r.stdout, "path=tla/CASES.tsv#MCA.cfg ") || strings.Contains(r.stdout, "MCAStale") {
-		t.Errorf("the case's own files are not the list: %q", r.stdout)
-	}
+	must.ContainsAll(t, r.stdout, "path=tla/MCA.cfg ", "path=tla/MCA.tla ", "path=tla/CASES.tsv#MCA.cfg ")
+	assert.NotContains(t, r.stdout, "MCAStale", "the case's own files are not the list: %q", r.stdout)
 	// The case is named as its plan names it, or without the extension.
-	if again := call(t, nil, "inputs", "--root", root, "--case", "MCA"); again.code != 0 || again.stdout != r.stdout {
-		t.Fatalf("MCA: %+v", again)
-	}
+	again := call(t, nil, "inputs", "--root", root, "--case", "MCA")
+	require.Equal(t, 0, again.code, "MCA: %+v", again)
+	assert.Equal(t, r.stdout, again.stdout, "MCA: %+v", again)
 	// It is the fingerprint a run records.
 	dir := filepath.Join(t.TempDir(), "run")
 	_, jar := checkout(t)
-	if run := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha"); run.code != 0 {
-		t.Fatalf("%+v", run)
-	}
+	run := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha")
+	require.Equal(t, 0, run.code, "%+v", run)
 	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
-	if err != nil || recs[0].InputSHA256 != tlc.Digest(inputs) || recs[0].InputFiles != len(inputs) {
-		t.Fatalf("records %+v (%v), inputs digest %s over %d", recs, err, tlc.Digest(inputs), len(inputs))
-	}
+	require.NoError(t, err, "records %+v, inputs digest %s over %d", recs, tlc.Digest(inputs), len(inputs))
+	assert.Equal(t, tlc.Digest(inputs), recs[0].InputSHA256, "records %+v", recs)
+	assert.Equal(t, len(inputs), recs[0].InputFiles, "records %+v", recs)
 }
 
 func TestInputsRefusesWhatItCannotAnswer(t *testing.T) {
@@ -819,29 +745,22 @@ func TestTableAndMemberReportEachStepAndStopAtTheFirstFailure(t *testing.T) {
 	// the first finding does not violate its invariant.
 	passing := scriptedTLC(t, map[string]int{}, nil)
 	r := call(t, passing, "table", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "t"), "--mode", "all")
-	if r.code != 1 {
-		t.Fatalf("%+v", r)
-	}
-	if !strings.Contains(r.stdout, "TABLE OK case=MCTableMachine verdict=pass") || !strings.Contains(r.stdout, "TABLE OK case=MCTableFixedPoint verdict=pass") {
-		t.Errorf("stdout = %q", r.stdout)
-	}
-	if !strings.Contains(r.stderr, "TABLE FAIL case=MCTableOnePlace verdict=fail") || !strings.Contains(r.stderr, "TABLE FAIL mode=all cases=3") {
-		t.Errorf("stderr = %q", r.stderr)
-	}
+	require.Equal(t, 1, r.code, "%+v", r)
+	must.ContainsAll(t, r.stdout, "TABLE OK case=MCTableMachine verdict=pass", "TABLE OK case=MCTableFixedPoint verdict=pass")
+	must.ContainsAll(t, r.stderr, "TABLE FAIL case=MCTableOnePlace verdict=fail", "TABLE FAIL mode=all cases=3")
 	r = call(t, passing, "table", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "t"), "--mode", "contracts")
-	if r.code != 0 || !strings.Contains(r.stdout, "TABLE OK mode=contracts cases=2") {
-		t.Fatalf("contracts: %+v", r)
-	}
+	require.Equal(t, 0, r.code, "contracts: %+v", r)
+	assert.Contains(t, r.stdout, "TABLE OK mode=contracts cases=2", "contracts: %+v", r)
 	// The member suite: its small positive instance passes on a pass exit.
 	r = call(t, passing, "member", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "m"), "--suite", "small")
-	if r.code != 1 || !strings.Contains(r.stdout, "MEMBER OK case=MCMemberFixedPoint verdict=pass") || !strings.Contains(r.stderr, "MEMBER FAIL case=MCMemberBrokenMove verdict=fail") {
-		t.Fatalf("member: %+v", r)
-	}
+	require.Equal(t, 1, r.code, "member: %+v", r)
+	assert.Contains(t, r.stdout, "MEMBER OK case=MCMemberFixedPoint verdict=pass", "member: %+v", r)
+	assert.Contains(t, r.stderr, "MEMBER FAIL case=MCMemberBrokenMove verdict=fail", "member: %+v", r)
 	for _, args := range [][]string{{"table", "--mode", "nonsense"}, {"member", "--suite", "nonsense"}, {"member", "--workers", "0"}} {
 		r = call(t, passing, append([]string{args[0], "--root", root, "--jar", jar, "--dir", t.TempDir()}, args[1:]...)...)
-		if r.code != 2 || strings.Count(r.stderr, "\n") != 1 || strings.Contains(r.stdout, "CASE") {
-			t.Errorf("%v: %+v", args, r)
-		}
+		assert.Equal(t, 2, r.code, "%v: %+v", args, r)
+		assert.Equal(t, 1, strings.Count(r.stderr, "\n"), "%v: %+v", args, r)
+		assert.NotContains(t, r.stdout, "CASE", "%v: %+v", args, r)
 	}
 }
 
@@ -859,29 +778,26 @@ func TestReplayAndWitnessesRefuseWhatIsMissingBeforeStartingAnything(t *testing.
 	e, out, errs := testEnv(t, nil)
 	noRedis(&e)
 	r := do(e, out, errs, "witnesses", "table.lua")
-	if r.code != 2 || !strings.Contains(r.stderr, "redis-server is not on PATH") || !strings.Contains(r.stderr, "run: tlacheck witnesses --redis-server /path/to/redis-server") {
-		t.Fatalf("witnesses without redis: %+v", r)
-	}
+	require.Equal(t, 2, r.code, "witnesses without redis: %+v", r)
+	must.ContainsAll(t, r.stderr, "redis-server is not on PATH", "run: tlacheck witnesses --redis-server /path/to/redis-server")
 	e, out, errs = testEnv(t, nil)
 	noRedis(&e)
 	r = do(e, out, errs, "replay", "--root", root, "--jar", jar, "--source", "table.lua", "--dir", t.TempDir())
-	if r.code != 2 || !strings.Contains(r.stderr, "redis-server is not on PATH") || strings.Contains(r.stdout, "REPLAY") {
-		t.Fatalf("replay without redis: %+v", r)
-	}
+	require.Equal(t, 2, r.code, "replay without redis: %+v", r)
+	assert.Contains(t, r.stderr, "redis-server is not on PATH", "replay without redis: %+v", r)
+	assert.NotContains(t, r.stdout, "REPLAY", "replay without redis: %+v", r)
 	// An unreadable source is a refusal of the environment (exit 2), not a
 	// finding that failed.
 	e, out, errs = testEnv(t, nil)
 	e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil }
 	r = do(e, out, errs, "witnesses", filepath.Join(t.TempDir(), "gone.lua"))
-	if r.code != 2 || strings.Contains(r.stderr, "WITNESS FAIL") {
-		t.Fatalf("witnesses of a missing source: %+v", r)
-	}
+	require.Equal(t, 2, r.code, "witnesses of a missing source: %+v", r)
+	assert.NotContains(t, r.stderr, "WITNESS FAIL", "witnesses of a missing source: %+v", r)
 	e, out, errs = testEnv(t, nil)
 	e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil }
 	r = do(e, out, errs, "replay", "--root", root, "--jar", jar, "--source", filepath.Join(t.TempDir(), "gone.lua"), "--dir", t.TempDir())
-	if r.code != 2 || strings.Contains(r.stderr, "REPLAY FAIL") {
-		t.Fatalf("replay of a missing source: %+v", r)
-	}
+	require.Equal(t, 2, r.code, "replay of a missing source: %+v", r)
+	assert.NotContains(t, r.stderr, "REPLAY FAIL", "replay of a missing source: %+v", r)
 }
 
 // A remedy is a command that pastes: the ones that point at help run through

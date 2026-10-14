@@ -16,17 +16,10 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit/fsx"
-	tverb "github.com/mas-bandwidth/nova-tools/internal/testkit/verb"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-)
-
-var (
-	_ = assert.Equal
-	_ = require.NoError
-	_ = fsx.Tree
-	_ = tverb.Run
 )
 
 // loads reads the given 1-minute loads in turn, the last one again and again.
@@ -74,7 +67,7 @@ func TestTroughGivesUpAfterTheWait(t *testing.T) {
 	broken := func(context.Context) (float64, error) {
 		return 0, errors.New("ssh: connect to host vision port 22: timed out")
 	}
-	_, _, err = trough(context.Background(), broken, 51.2, time.Second, time.Minute, func(time.Duration) { t.Error("slept on a load it could not read") })
+	_, _, err = trough(context.Background(), broken, 51.2, time.Second, time.Minute, func(time.Duration) { assert.Fail(t, "slept on a load it could not read") })
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out")
 }
@@ -158,9 +151,7 @@ func (f *fakeBench) Stage(_ context.Context, archive io.Reader) (string, error) 
 
 func (f *fakeBench) Run(_ context.Context, dir string, args []string, stdout, stderr io.Writer) (int, error) {
 	f.ran = append(f.ran, args)
-	if _, err := os.Stat(filepath.Join(dir, "tlacheck")); err != nil {
-		require.NoError(f.t, err, "the bench ran a tlacheck that was not staged")
-	}
+	require.FileExists(f.t, filepath.Join(dir, "tlacheck"), "the bench ran a tlacheck that was not staged")
 	e, _, _ := testEnv(f.t, f.exec)
 	e.stdout, e.stderr = stdout, stderr
 	return run(args, e), nil
@@ -215,7 +206,7 @@ func benchCheckout(t *testing.T, jarBytes []byte) string {
 func benchEnv(t *testing.T, f *fakeBench, rows []benchRow) (env, *bytes.Buffer, *bytes.Buffer, *[]time.Duration) {
 	t.Helper()
 	e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int {
-		t.Error("TLC ran on the machine running the command")
+		assert.Fail(t, "TLC ran on the machine running the command")
 		return 0
 	})
 	e.goos, e.goarch = "darwin", "arm64"
@@ -224,9 +215,8 @@ func benchEnv(t *testing.T, f *fakeBench, rows []benchRow) (env, *bytes.Buffer, 
 		dial:     func(machine string) remote { return f },
 		machines: func(context.Context) ([]benchRow, error) { return rows, nil },
 		build: func(_ context.Context, root, goos, goarch, out string) error {
-			if goos != "linux" || goarch != "amd64" {
-				t.Errorf("built for %s-%s, want the bench's linux-amd64", goos, goarch)
-			}
+			assert.Equal(t, "linux", goos, "built for the bench's linux-amd64")
+			assert.Equal(t, "amd64", goarch, "built for the bench's linux-amd64")
 			return os.WriteFile(out, []byte("#!tlacheck "+root+"\n"), 0o755)
 		},
 		sleep: func(d time.Duration) { *slept = append(*slept, d) },
@@ -247,7 +237,7 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 	f := newFakeBench(t, jar, loads(0.5, 70, 60, 3, 2, 1))
 	e, out, errs, slept := benchEnv(t, f, nil)
 	e.bench.machines = func(context.Context) ([]benchRow, error) {
-		t.Error("a named record machine read the fleet's rows: its namer chose it by them")
+		assert.Fail(t, "a named record machine read the fleet's rows: its namer chose it by them")
 		return nil, errors.New("no store")
 	}
 	dir := filepath.Join(t.TempDir(), "o")
@@ -266,18 +256,15 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 				"--group", g.name, "--shards", fmt.Sprint(g.n), "--shard", fmt.Sprint(i), "--workers", "2", "--timeout", "1m50s"})
 		}
 	}
-	assert.Equal(t, fmt.Sprint(want), fmt.Sprint(f.ran))
+	assert.Equal(t, want, f.ran)
 	require.Len(t, f.gone, 1)
 	assert.Equal(t, f.staged[0], f.gone[0])
-	for _, w := range []string{
-		"BENCH OK bench=vision platform=linux-amd64 cpus=64 load=0.50 below=51.20 jar=" + f.jar,
+	must.ContainsAll(t, r.stdout,
+		"BENCH OK bench=vision platform=linux-amd64 cpus=64 load=0.50 below=51.20 jar="+f.jar,
 		"TROUGH OK bench=vision group=alpha case=1/2 load=3.00 below=51.20 waited=40s",
 		"TROUGH OK bench=vision group=gamma case=1/1 load=1.00 below=51.20 waited=0s",
 		"CASE OK config=MCABroken.cfg result=PASS",
-		"MERGE OK runs=4 records=4 out=" + filepath.Join(root, "tla", tlc.RunsFile),
-	} {
-		assert.Contains(t, r.stdout, w)
-	}
+		"MERGE OK runs=4 records=4 out="+filepath.Join(root, "tla", tlc.RunsFile))
 	e2, out2, errs2 := testEnv(t, nil)
 	g := do(e2, out2, errs2, "groups", "--root", root, "--stale")
 	require.Equal(t, 0, g.code)
@@ -329,12 +316,11 @@ func TestRunOnABenchRefusesWhatIsNotARecordMachine(t *testing.T) {
 			}
 			args := append([]string{"run", "--root", root, "--dir", filepath.Join(t.TempDir(), "o"), "--jar", f.jar}, tc.args...)
 			r := do(e, out, errs, args...)
-			if r.code != 2 || !strings.Contains(r.stderr, tc.want) || strings.Count(r.stderr, "\n") != 1 {
-				t.Errorf("%+v, want exit 2 and %q", r, tc.want)
-			}
-			if len(f.staged) != 0 || len(f.ran) != 0 {
-				t.Errorf("staged %v ran %v", f.staged, f.ran)
-			}
+			assert.Equal(t, 2, r.code, "%+v, want exit 2 and %q", r, tc.want)
+			assert.Contains(t, r.stderr, tc.want, "%+v", r)
+			assert.Equal(t, 1, strings.Count(r.stderr, "\n"), "%+v, want one line", r)
+			assert.Empty(t, f.staged, "staged %v", f.staged)
+			assert.Empty(t, f.ran, "ran %v", f.ran)
 		})
 	}
 }
@@ -347,23 +333,18 @@ func TestRunOnABenchLeavesTheRecordsAloneWhenACaseFails(t *testing.T) {
 	jar := []byte("the pinned jar")
 	root := benchCheckout(t, jar)
 	before, err := os.ReadFile(filepath.Join(root, "tla", tlc.RunsFile))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	f := newFakeBench(t, jar, loads(0.5))
 	f.exec = scriptedTLC(t, map[string]int{"MCABroken": 0, "MCAStale": 13}, nil) // MCABroken is declared to violate an invariant
 	e, out, errs, _ := benchEnv(t, f, []benchRow{{Name: "vision", TLA: true}})
 	r := do(e, out, errs, "run", "--root", root, "--dir", filepath.Join(t.TempDir(), "o"), "--bench", "vision", "--jar", f.jar, "--group", "alpha")
-	if r.code != 1 || !strings.Contains(r.stderr, "BENCH FAIL bench=vision") || strings.Contains(r.stdout, "MERGE OK") {
-		t.Fatalf("%+v", r)
-	}
+	require.Equal(t, 1, r.code, "%+v", r)
+	assert.Contains(t, r.stderr, "BENCH FAIL bench=vision", "%+v", r)
+	assert.NotContains(t, r.stdout, "MERGE OK", "%+v", r)
 	after, err := os.ReadFile(filepath.Join(root, "tla", tlc.RunsFile))
-	if err != nil || !bytes.Equal(before, after) {
-		t.Errorf("the records changed after a failed case: %v", err)
-	}
-	if len(f.gone) != 1 {
-		t.Errorf("removed %v, want the staged directory", f.gone)
-	}
+	require.NoError(t, err, "the records changed after a failed case")
+	assert.Equal(t, before, after, "the records changed after a failed case")
+	assert.Len(t, f.gone, 1, "removed %v, want the staged directory", f.gone)
 }
 
 // TestBenchAnyPicksTheQuietestRecordMachine: --bench any reads the fleet's
@@ -382,12 +363,11 @@ func TestBenchAnyPicksTheQuietestRecordMachine(t *testing.T) {
 		return map[string]remote{"space": busy, "vision": quiet, "hetzner": stale}[m]
 	}
 	r := do(e, out, errs, "run", "--root", root, "--dir", filepath.Join(t.TempDir(), "o"), "--bench", "any", "--jar", busy.jar)
-	if r.code != 0 || len(quiet.ran) != 4 || len(busy.ran) != 0 || len(stale.ran) != 0 {
-		t.Fatalf("%+v quiet=%v busy=%v stale=%v", r, quiet.ran, busy.ran, stale.ran)
-	}
-	if !strings.Contains(r.stdout, "BENCH OK bench=vision ") {
-		t.Errorf("stdout: %s", r.stdout)
-	}
+	require.Equal(t, 0, r.code, "%+v quiet=%v busy=%v stale=%v", r, quiet.ran, busy.ran, stale.ran)
+	assert.Len(t, quiet.ran, 4, "%+v quiet=%v", r, quiet.ran)
+	assert.Empty(t, busy.ran, "%+v busy=%v", r, busy.ran)
+	assert.Empty(t, stale.ran, "%+v stale=%v", r, stale.ran)
+	assert.Contains(t, r.stdout, "BENCH OK bench=vision ", "stdout: %s", r.stdout)
 }
 
 // TestTheSSHCommandsAreQuotedAndNiced: the shell lines the real transport
@@ -398,26 +378,34 @@ func TestTheSSHCommandsAreQuotedAndNiced(t *testing.T) {
 	t.Parallel()
 	got := runLine("/home/u/tla-runs/tlacheck-ab12", []string{"run", "--root", "/home/u/tla-runs/tlacheck-ab12", "--group", "it's"})
 	want := `cd '/home/u/tla-runs/tlacheck-ab12' && exec nice -n 15 '/home/u/tla-runs/tlacheck-ab12/tlacheck' 'run' '--root' '/home/u/tla-runs/tlacheck-ab12' '--group' 'it'\''s'`
-	if got != want {
-		t.Errorf("runLine\n got %s\nwant %s", got, want)
-	}
-	if !strings.Contains(stageLine, `mktemp -d "$HOME/tla-runs/tlacheck-XXXXXX"`) || !strings.Contains(stageLine, "-mmin +1440") {
-		t.Errorf("stageLine: %s", stageLine)
-	}
+	assert.Equal(t, want, got, "runLine\n got %s\nwant %s", got, want)
+	assert.Contains(t, stageLine, `mktemp -d "$HOME/tla-runs/tlacheck-XXXXXX"`, "stageLine: %s", stageLine)
+	assert.Contains(t, stageLine, "-mmin +1440", "stageLine: %s", stageLine)
 	for _, d := range []string{"/", "/home/u", "/home/u/tla-runs", "/home/u/tla-runs/other", "/home/u/tla-runs/tlacheck-ab/../../x"} {
-		if _, err := removeLine(d); err == nil {
-			t.Errorf("removeLine(%q) would remove it", d)
-		}
+		_, err := removeLine(d)
+		assert.Error(t, err, "removeLine(%q) would remove it", d)
 	}
-	if l, err := removeLine("/home/u/tla-runs/tlacheck-ab12"); err != nil || l != `rm -r -- '/home/u/tla-runs/tlacheck-ab12'` {
-		t.Errorf("removeLine = %q %v", l, err)
+	l, err := removeLine("/home/u/tla-runs/tlacheck-ab12")
+	require.NoError(t, err, "removeLine = %q %v", l, err)
+	assert.Equal(t, `rm -r -- '/home/u/tla-runs/tlacheck-ab12'`, l)
+	probes := []struct {
+		name string
+		in   string
+		want benchProbe
+	}{
+		{"a full probe", "Linux x86_64\n64\n0.86 1.62 3.01 1/123 456\n936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  /opt/tla/tla2tools.jar\n",
+			benchProbe{GOOS: "linux", GOARCH: "amd64", CPUs: 64, Load: 0.86, JarSHA256: "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"}},
+		{"no jar", "Linux aarch64\n8\n0.10 0.2 0.3 1/2 3\n",
+			benchProbe{GOOS: "linux", GOARCH: "arm64", CPUs: 8, Load: 0.1}},
 	}
-	p, err := parseProbe("Linux x86_64\n64\n0.86 1.62 3.01 1/123 456\n936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  /opt/tla/tla2tools.jar\n")
-	if err != nil || p != (benchProbe{GOOS: "linux", GOARCH: "amd64", CPUs: 64, Load: 0.86, JarSHA256: "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"}) {
-		t.Errorf("parseProbe = %+v %v", p, err)
-	}
-	if p, err := parseProbe("Linux aarch64\n8\n0.10 0.2 0.3 1/2 3\n"); err != nil || p.GOARCH != "arm64" || p.JarSHA256 != "" {
-		t.Errorf("parseProbe with no jar = %+v %v", p, err)
+	for _, tc := range probes {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := parseProbe(tc.in)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, p)
+		})
 	}
 }
 
@@ -427,7 +415,5 @@ func TestTheSSHCommandsAreQuotedAndNiced(t *testing.T) {
 func TestTheMachineRowsAreReadFromNovaConfigsList(t *testing.T) {
 	t.Parallel()
 	rows := parseMachineList("MACHINE name=vision user=glenn seat=vision slots=64 runners=0 width=32 tla=true\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 tla=false\nMACHINE name=old user=u seat=s slots=1 runners=0 width=0\nCONFIG LIST kind=machine rows=3\n")
-	if fmt.Sprint(rows) != fmt.Sprint([]benchRow{{"vision", true}, {"studio", false}, {"old", false}}) {
-		t.Errorf("rows = %v", rows)
-	}
+	assert.Equal(t, []benchRow{{"vision", true}, {"studio", false}, {"old", false}}, rows)
 }
