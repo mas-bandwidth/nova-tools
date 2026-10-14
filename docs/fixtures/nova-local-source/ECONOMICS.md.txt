@@ -33,7 +33,7 @@ Valued at API prices: $300–600/month at DeepSeek direct, $100–150/month at O
 ## Where it sits in the tiers
 
 - **Not a flash tier.** The flash tier's value is width: dozens of Gemini Flash lanes at ~$0.19 per landed card. $12k is ~63,000 landed flash cards; the box's 4–8 lanes would take years to produce that many.
-- **A third to half of the pro tier.** Pro is already friend-served (Emma, Alex, Zhi; fleet pro routes off), ~10–15 lanes total. The box adds 4–8 pro-class lanes. The last measured Gemini Pro rate was $18.38 per landed card; even at a few dollars per landed card on DeepSeek, $12k is ~650–3,000 landed pro cards, i.e. months of full use, not years. **The box earns its keep at pro tier if DeepSeek V4.1 Flash lands pro cards at Zhi's rate or better.** Zhi's measured cost per landed card and takes-to-land is the number to read before buying.
+- **A third to half of the pro tier.** Pro is already friend-served (a friend, a friend, a friend; fleet pro routes off), ~10–15 lanes total. The box adds 4–8 pro-class lanes. The last measured Gemini Pro rate was $18.38 per landed card; even at a few dollars per landed card on DeepSeek, $12k is ~650–3,000 landed pro cards, i.e. months of full use, not years. **The box earns its keep at pro tier if DeepSeek V4.1 Flash lands pro cards at a friend's rate or better.** a friend's measured cost per landed card and takes-to-land is the number to read before buying.
 
 ## Lanes
 
@@ -75,7 +75,7 @@ DeepSeek's peak window is 01:00–04:00 and 06:00–10:00 UTC on weekdays: ~21% 
 
 Box ~$15k plus ~$1/day power: **payback ~20 months on DeepSeek Flash alone, ~14 months with speculation.** Against OpenRouter's fresh-token price, past 3 years. Against any model priced $2–4/M output loaded on the same box, a few months.
 
-The measured replacement for this table is E09-F01: cost per landed card on the box vs Zhi on the API, same cards.
+The measured replacement for this table is E09-F01: cost per landed card on the box vs a friend on the API, same cards.
 
 ## Throughput through lanes (the owner, 2026-10-07 ~21:55 ET: "if we can change things enough, so we get more total throughput, with more lanes")
 

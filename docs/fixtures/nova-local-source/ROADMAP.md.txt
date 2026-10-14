@@ -257,8 +257,8 @@ SOURCE: mas-bandwidth/barrio ROADMAP.md at main d2dc14e9d269 (2026-10-07), copie
       :features (
         (          :id "E09-F01"
           :title "A harness pointed at barrio works the sprint"
-          :subfeatures (            "A friend (first candidate: a local Zhi) runs its harness against the endpoint and lands cards"
-            "Cost per landed card and takes-to-land measured against Zhi-on-API for the same cards"
+          :subfeatures (            "A friend (first candidate: a local a friend) runs its harness against the endpoint and lands cards"
+            "Cost per landed card and takes-to-land measured against a friend-on-API for the same cards"
             "The pro-tier case in ECONOMICS.md is replaced by that measurement")
           :depends-on ("E08-F04")
           :tag "policy"

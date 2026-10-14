@@ -39,7 +39,7 @@ the owner, 2026-10-07: the box is a **provider**, in the same sense as DeepSeek,
 Configured how we want (the owner, 2026-10-07): pools in nova-config, e.g. `friends: lanes 4, priority high` and `fleet: lanes 64, priority normal`, each its own route row on the one endpoint; all friends or all fleet by setting the other to 0; changed live.
 
 Two ways to use it, both at once if wanted:
-1. **A friend runs on it.** A harness (OpenCode, the DeepSeek Harness, whatever fits the model) points at the local endpoint and the friend works through the sprint like Zhi does today, with the provider's lanes as its width.
+1. **A friend runs on it.** A harness (OpenCode, the DeepSeek Harness, whatever fits the model) points at the local endpoint and the friend works through the sprint like a friend does today, with the provider's lanes as its width.
 2. **The fleet routes to it.** nova-config gets a route whose provider is barrio, at a tier set by the model loaded (DeepSeek V4.1 Flash is pro-class). The dealer treats its lanes as width on that tier. Switch the model, and the tier the box serves changes with it.
 
 What this requires of barrio: the endpoint speaks the OpenAI API (chat completions, streaming, cache-aware prompt reuse); a `switch <model>` verb that drains lanes, unloads, loads, and announces the new tier to nova-config; a health beat like every friend's; and the lanes exposed as the one width number nova-config already understands. The serving layers (README, layers 1–7) are the inside; this is the outside.
