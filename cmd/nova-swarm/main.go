@@ -56,7 +56,7 @@ usage:
                         --decide asks the brief decision nova-sprint add asks; an adopter's own rules go
                         in --child-rules-file. --member-injects lints the card as the member stages it.
                         nova-swarm lint -h has the rest.)
-  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--dry-run] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
                        (runs the card's own programs: a card whose every work step is a script step,
                         walked in the checkout with no model, each program, POST command and git in its
                         own wall (network denied, no credential, the checkout and a private temp the only
@@ -81,11 +81,10 @@ usage:
                         TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
   nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
                        (keep the bench's bare mirrors fresh: each repository cloned into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each; --every runs until stopped. mirror -h has the rest.)
-  nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
+  nova-swarm install   <disk-guard> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
                        (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
-                        flags ride on the unit; mirror-refresh is refused here, and its loop runs
-                        nova-swarm mirror as a nova-config loop row.)
-  nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
+                        flags ride on the unit.)
+  nova-swarm uninstall <disk-guard> [--dir <dir>] [--dry-run]
                        (unloads that unit and removes its file; a dry run removes nothing.)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
@@ -182,7 +181,7 @@ func verbHelpLines(verb string) string {
 		add += "effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing\n"
 	}
 	if verb == "verify" {
-		add += "effect: inspection: reads the job's RESULT.md and checks its line 1, writes nothing\n"
+		add += "effect: local write: reads the job's RESULT.md, checks its line 1, and writes the <result>.receipt\n"
 	}
 	if verb == "disk-guard" {
 		add += "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
@@ -422,11 +421,13 @@ func (f *flags) wantCount(value int, name, wants string) {
 
 func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
 
-// refused prints every problem this run found, one line each, and reports whether there
-// were any. Three independent flags cost one run, not three.
+// refused prints every problem this run found, one refusal line each, and reports whether
+// there were any. Three independent flags cost one run, not three. Each problem is routed
+// through refuse so the line carries the REFUSED word and the run remedy like every other
+// refusal (ONBOARDING point 1).
 func (f *flags) refused(stderr io.Writer) bool {
 	for _, p := range f.problems {
-		fmt.Fprintf(stderr, "nova-swarm %s: %s\n", f.verb, oneline.Escape(p))
+		refuse(stderr, " "+f.verb, p)
 	}
 	return len(f.problems) > 0
 }
@@ -488,16 +489,14 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	card := f.fs.String("card", "", "the card `file`, read only when given, for the checks that need the card")
 	runRecord := f.fs.String("run-record", "", "the job's exit.json `file`: the harness's exit code joins the verdict")
 	usageFile := f.fs.String("usage", "", "the job's usage.tsv `file`: tokens, dollars and wall time join the receipt")
-	max := f.fs.Int("max", swarm.DefaultContractLines, "the most evidence lines past the disposition, at least 1")
+	max := f.fs.Int("max", swarm.DefaultContractLines, "the most evidence lines past the disposition; 0 lists all")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*result, "result", "the path to the job's RESULT.md whose line 1 is to be checked")
 	f.want(*contract, "contract", "the card's contract line, which line 1 of RESULT.md must equal exactly")
 	f.want(*label, "label", "the job's label, carried on the result line and in the receipt")
-	if *max < 1 {
-		f.add(fmt.Sprintf("--max is at least 1, got %d; it bounds the evidence lines past the disposition", *max))
-	}
+	f.wantMax(*max)
 	if f.refused(stderr) {
 		return 2
 	}
