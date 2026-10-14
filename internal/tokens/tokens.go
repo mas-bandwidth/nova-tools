@@ -17,6 +17,7 @@ subprocess the OpenCode reader declares.
 package tokens
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"io/fs"
@@ -24,7 +25,6 @@ import (
 	"math"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -231,11 +231,8 @@ func (f *Folder) Overlaps() []Overlap {
 	for pair, n := range f.overlaps {
 		out = append(out, Overlap{A: pair[0], B: pair[1], IDs: n})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].A != out[j].A {
-			return out[i].A < out[j].A
-		}
-		return out[i].B < out[j].B
+	slices.SortFunc(out, func(a, b Overlap) int {
+		return cmp.Or(cmp.Compare(a.A, b.A), cmp.Compare(a.B, b.B))
 	})
 	return out
 }
@@ -328,8 +325,8 @@ func (f *Folder) DayRows(day string) (rows []*Row, mixed []Mixed) {
 	}
 	// Sorted by the whole key, (model, repo). The rows come out of a map, so the order is
 	// made here and not left to it.
-	sort.Slice(rows, func(i, j int) bool { return keyLess(rows[i].Key, rows[j].Key) })
-	sort.Slice(mixed, func(i, j int) bool { return keyLess(mixed[i].Key, mixed[j].Key) })
+	slices.SortFunc(rows, func(a, b *Row) int { return cmp.Or(cmp.Compare(a.Model, b.Model), cmp.Compare(a.Repo, b.Repo)) })
+	slices.SortFunc(mixed, func(a, b Mixed) int { return cmp.Or(cmp.Compare(a.Model, b.Model), cmp.Compare(a.Repo, b.Repo)) })
 	return rows, mixed
 }
 

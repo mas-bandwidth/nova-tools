@@ -8,7 +8,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -86,7 +85,7 @@ func ParserColumns(kind string) []string {
 		return nil
 	}
 	out := slices.AppendSeq([]string{sh.model}, maps.Keys(sh.columns))
-	sort.Strings(out)
+	slices.Sort(out)
 	return append([]string{sh.stamp + " or " + sh.date}, out...)
 }
 

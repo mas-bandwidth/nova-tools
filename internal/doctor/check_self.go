@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,11 +30,7 @@ func checkSelf(ctx context.Context, env Env) Result {
 		return Result{Status: Fail, Evidence: "no nova-* tool is on PATH",
 			Fix: "nova-update apply --file <manifest> <tool>, or put the directory holding the nova tools on PATH"}
 	}
-	names := make([]string, 0, len(tools))
-	for n := range tools {
-		names = append(names, n)
-	}
-	slices.Sort(names)
+	names := slices.Sorted(maps.Keys(tools))
 
 	byVersion := map[string][]string{}
 	var broken []string

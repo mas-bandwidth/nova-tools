@@ -10,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 )
@@ -174,7 +173,7 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules, bounds ...ClaudeBou
 		s.unreadable(dir, walkErr.Error())
 		return s
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 
 	if bound.MaxFiles > 0 && len(files) > bound.MaxFiles {
 		s.unreadable(dir, fmt.Sprintf("the tree holds %d transcript files and %d bytes, over the --max-files ceiling of %d; run: raise --max-files or pass --exclude <glob> to keep a temporary tree out", len(files), bytesFound, bound.MaxFiles))

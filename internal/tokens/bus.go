@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -227,7 +226,7 @@ func ReadBus(dir string, fsys fs.FS, rules *Rules, at time.Time) []*Source {
 				files = append(files, filepath.Join(laneDir, e.Name()))
 			}
 		}
-		sort.Strings(files)
+		slices.Sort(files)
 		for _, fname := range files {
 			path := filepath.Join(dir, fname)
 			raw, err := readSourceFS(fsys, fname)
@@ -285,7 +284,7 @@ func laneNames(fsys fs.FS) ([]string, error) {
 	if len(out) == 0 {
 		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Ada","lane":"from-ada"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 
@@ -529,7 +528,7 @@ func foldLane(s *Source, lane string, notes []*note, all map[noteKey]*note) {
 			for _, n := range tips {
 				ids = append(ids, n.id)
 			}
-			sort.Strings(ids)
+			slices.Sort(ids)
 			s.Conflicts = append(s.Conflicts, Conflict{Label: label, Day: day, Notes: ids})
 			continue
 		}

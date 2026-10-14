@@ -1,9 +1,10 @@
 package tokens
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -116,7 +117,7 @@ func SumMonth(out, month string) (*Sum, error) {
 		}
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		day, findings, err := ReadDayFile(filepath.Join(out, name))
 		if err != nil {
@@ -161,22 +162,15 @@ func SumMonth(out, month string) (*Sum, error) {
 	}
 	// Descending by total, ties by name: the biggest spend first is what a reader of a
 	// capped listing came for.
-	sort.Slice(s.Pairs, func(i, j int) bool {
-		a, b := total(s.Pairs[i].Agg), total(s.Pairs[j].Agg)
-		if a != b {
-			return a > b
-		}
-		if s.Pairs[i].Model != s.Pairs[j].Model {
-			return s.Pairs[i].Model < s.Pairs[j].Model
-		}
-		return s.Pairs[i].Repo < s.Pairs[j].Repo
+	slices.SortFunc(s.Pairs, func(a, b Pair) int {
+		return cmp.Or(
+			cmp.Compare(total(b.Agg), total(a.Agg)),
+			cmp.Compare(a.Model, b.Model),
+			cmp.Compare(a.Repo, b.Repo),
+		)
 	})
-	sort.Slice(s.Models, func(i, j int) bool {
-		a, b := total(s.Models[i].Agg), total(s.Models[j].Agg)
-		if a != b {
-			return a > b
-		}
-		return s.Models[i].Model < s.Models[j].Model
+	slices.SortFunc(s.Models, func(a, b ModelSum) int {
+		return cmp.Or(cmp.Compare(total(b.Agg), total(a.Agg)), cmp.Compare(a.Model, b.Model))
 	})
 	return s, nil
 }

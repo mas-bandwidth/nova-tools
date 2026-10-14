@@ -1,11 +1,12 @@
 package ci
 
 import (
+	"cmp"
 	"go/ast"
 	"go/token"
 	"io/fs"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -100,7 +101,7 @@ func findBenchRunnersWith(root string, seams SourceSeams) ([]BenchRunnerSite, er
 			return nil, err
 		}
 	}
-	sort.Slice(sites, func(i, j int) bool { return sites[i].Key() < sites[j].Key() })
+	slices.SortFunc(sites, func(a, b BenchRunnerSite) int { return cmp.Compare(a.Key(), b.Key()) })
 	return sites, nil
 }
 

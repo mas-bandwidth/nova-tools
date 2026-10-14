@@ -24,12 +24,12 @@ package timing
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -288,14 +288,8 @@ func parse(raw string) (time.Time, error) {
 // went all-green.
 func Render(rows []Row) string {
 	sorted := append([]Row(nil), rows...)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Repo != sorted[j].Repo {
-			return sorted[i].Repo < sorted[j].Repo
-		}
-		if sorted[i].PR != sorted[j].PR {
-			return sorted[i].PR < sorted[j].PR
-		}
-		return sorted[i].Job < sorted[j].Job
+	slices.SortFunc(sorted, func(a, b Row) int {
+		return cmp.Or(cmp.Compare(a.Repo, b.Repo), cmp.Compare(a.PR, b.PR), cmp.Compare(a.Job, b.Job))
 	})
 	var b strings.Builder
 	b.WriteString("repo\tpr\tjob\topened\tqueue_s\tsetup_s\ttest_s\tpr_open_to_green_s\n")

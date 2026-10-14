@@ -32,7 +32,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -258,7 +258,7 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 			res.Unlisted = append(res.Unlisted, k)
 		}
 	}
-	sort.Strings(res.Unlisted)
+	slices.Sort(res.Unlisted)
 
 	if !update {
 		if n, ok := l.Ceiling(); ok && len(l.rows) > n {

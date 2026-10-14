@@ -14,7 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,7 +43,7 @@ func readFleetBuilds(ctx context.Context, c *redis.Client) ([]benchBuild, error)
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	if len(names) == 0 {
 		return nil, nil
 	}

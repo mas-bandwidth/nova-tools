@@ -1,11 +1,12 @@
 package tablemodel
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -390,7 +391,7 @@ func validateDelta(event Event, before, after State) error {
 	for _, m := range raw {
 		actual = append(actual, change{m["id"], m["from"], m["to"], m["score"]})
 	}
-	byID := func(l []change) { sort.Slice(l, func(i, j int) bool { return l[i].ID < l[j].ID }) }
+	byID := func(l []change) { slices.SortFunc(l, func(a, b change) int { return cmp.Compare(a.ID, b.ID) }) }
 	byID(expected)
 	byID(actual)
 	if len(expected) != len(actual) || (len(expected) > 0 && !reflect.DeepEqual(expected, actual)) {
@@ -426,7 +427,7 @@ func validateDelta(event Event, before, after State) error {
 				c.data = append(c.data, d.Member+"\x00"+strconv.Itoa(d.Score))
 			}
 		}
-		sort.Strings(c.data)
+		slices.Sort(c.data)
 		return c
 	}
 	for _, row := range rowKeys {
