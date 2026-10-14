@@ -821,7 +821,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	decideAnswers := f.fs.String("decide-answers", "", "with --decide: the fixed backend's answers `file` (nova-decide's shape), in place of Jev: no network, no key")
 	decideRecord := f.fs.String("decide-record", "", "with --decide: the record `file` the decision is appended to (nova-decide's; created if absent); none records nothing")
 	max := maxFlag(f.fs)
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	// `--rules` is the document a bench can read. A card writer on a bench has
@@ -847,7 +847,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 		if *typed || *trustPath != "" || *lineupPath != "" || *decideBrief {
 			f.add("--typed, --trust, --lineup and --decide are card checks; --fleet holds a launcher script, and a card flag over a script is a guess about a different file")
 		}
-		if f.refused(stderr) {
+		if f.refused(stdout, stderr) {
 			return 2
 		}
 		raw, err := os.ReadFile(*fleet)
@@ -882,7 +882,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 		return 1
 	}
 	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; give --fleet <file> instead to lint a launcher script, or --rules to print every rule and what it wants")
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	raw, err := os.ReadFile(*card)

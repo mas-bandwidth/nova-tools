@@ -134,10 +134,10 @@ func cmdInstall(args []string, stdout, stderr io.Writer) int {
 		f.fs.String("log", "", "the file the unit's lines go to on macOS; on Linux they are in the journal")
 		f.fs.Duration("every", 15*time.Minute, "the least time between two starts")
 		f.fs.Bool("dry-run", false, "print the unit and write and load nothing")
-		if !f.parse(args, stderr) {
+		if !f.parse(args, stdout, stderr) {
 			return 2
 		}
-		return refuse(stderr, " install", "install wants the unit's kind first: "+swarmKindNames()+"; run: nova-swarm install disk-guard --dry-run")
+		return refuse(stdout, stderr, jsonAsked(args), " install", "install wants the unit's kind first: "+swarmKindNames()+"; run: nova-swarm install disk-guard --dry-run")
 	}
 	return installKind(args[0], args[1:], stdout, stderr)
 }
@@ -145,11 +145,11 @@ func cmdInstall(args []string, stdout, stderr io.Writer) int {
 func installKind(kind string, args []string, stdout, stderr io.Writer) int {
 	name := "install " + kind
 	if other, ok := foreignInstall(kind); ok {
-		return refuse(stderr, " install", "the "+kind+" unit is not nova-swarm's to install; run: "+other)
+		return refuse(stdout, stderr, jsonAsked(args), " install", "the "+kind+" unit is not nova-swarm's to install; run: "+other)
 	}
 	k, ok := swarmKindOf(kind)
 	if !ok {
-		return refuse(stderr, " install", "no unit kind "+oneline.Escape(kind)+"; the kinds are "+swarmKindNames()+"; run: nova-sprint units --check")
+		return refuse(stdout, stderr, jsonAsked(args), " install", "no unit kind "+oneline.Escape(kind)+"; the kinds are "+swarmKindNames()+"; run: nova-sprint units --check")
 	}
 	f := newFlags("install")
 	dir := f.fs.String("dir", "", "the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
@@ -170,19 +170,19 @@ func installKind(kind string, args []string, stdout, stderr io.Writer) int {
 	cloneAge := f.fs.Duration("clone-age", 0, "how long a land clone must be unused before it is removed, when set")
 	mirrors := f.fs.String("mirrors", "", "the `dir` of the bench's mirrors, when set")
 	floor := f.fs.Int("disk-floor", -1, "the free `GiB` under which the run warns, when set")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	if k.owed != "" {
-		return refuse(stderr, " "+name, k.owed+"; nothing was written")
+		return refuse(stdout, stderr, jsonAsked(args), " "+name, k.owed+"; nothing was written")
 	}
 	if *every <= 0 {
-		return refuse(stderr, " "+name, "--every is the least time between two starts, above zero; nothing was written")
+		return refuse(stdout, stderr, jsonAsked(args), " "+name, "--every is the least time between two starts, above zero; nothing was written")
 	}
 	goos := unitOS()
 	bin, err := unitExe()
 	if err != nil {
-		return refuse(stderr, " "+name, "the path of this nova-swarm cannot be read: "+err.Error()+"; nothing was written")
+		return refuse(stdout, stderr, jsonAsked(args), " "+name, "the path of this nova-swarm cannot be read: "+err.Error()+"; nothing was written")
 	}
 	uargs := []string{bin, "disk-guard"}
 	add := func(flag, v string) {
@@ -227,20 +227,20 @@ func installKind(kind string, args []string, stdout, stderr io.Writer) int {
 	if *dir == "" {
 		home, err := unitHome()
 		if err != nil {
-			return refuse(stderr, " "+name, "--dir names no directory and the home cannot be read: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), " "+name, "--dir names no directory and the home cannot be read: "+err.Error())
 		}
 		*dir = unitDir(goos, home, os.Getenv)
 	}
 	if logPath == "" && goos == "darwin" {
 		home, err := unitHome()
 		if err != nil {
-			return refuse(stderr, " "+name, "--log names no file and the home cannot be read: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), " "+name, "--log names no file and the home cannot be read: "+err.Error())
 		}
 		logPath = filepath.Join(home, "Library", "Logs", "nova-swarm-"+kind+".log")
 	}
 	text, err := diskGuardText(k, goos, uargs, logPath, *every)
 	if err != nil {
-		return refuse(stderr, " "+name, err.Error()+"; nothing was written")
+		return refuse(stdout, stderr, jsonAsked(args), " "+name, err.Error()+"; nothing was written")
 	}
 	head := "INSTALL " + strings.ToUpper(kind)
 	path := filepath.Join(*dir, k.file(goos))
@@ -265,38 +265,38 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) int {
 		f := newFlags("uninstall")
 		f.fs.String("dir", "", "the directory the unit was written into (default: as install's)")
 		f.fs.Bool("dry-run", false, "say which unit would be unloaded and removed, and unload and remove nothing")
-		if !f.parse(args, stderr) {
+		if !f.parse(args, stdout, stderr) {
 			return 2
 		}
-		return refuse(stderr, " uninstall", "uninstall wants the unit's kind first: "+swarmKindNames()+"; run: nova-swarm uninstall disk-guard --dry-run")
+		return refuse(stdout, stderr, jsonAsked(args), " uninstall", "uninstall wants the unit's kind first: "+swarmKindNames()+"; run: nova-swarm uninstall disk-guard --dry-run")
 	}
 	kind := args[0]
 	name := "uninstall " + kind
 	if other, ok := foreignInstall(kind); ok {
-		return refuse(stderr, " uninstall", "the "+kind+" unit is not nova-swarm's to uninstall; run: "+strings.Replace(other, "install", "uninstall", 1))
+		return refuse(stdout, stderr, jsonAsked(args), " uninstall", "the "+kind+" unit is not nova-swarm's to uninstall; run: "+strings.Replace(other, "install", "uninstall", 1))
 	}
 	k, ok := swarmKindOf(kind)
 	if !ok {
-		return refuse(stderr, " uninstall", "no unit kind "+oneline.Escape(kind)+"; the kinds are "+swarmKindNames())
+		return refuse(stdout, stderr, jsonAsked(args), " uninstall", "no unit kind "+oneline.Escape(kind)+"; the kinds are "+swarmKindNames())
 	}
 	f := newFlags("uninstall")
 	dir := f.fs.String("dir", "", "the directory the unit was written into (default: as install's)")
 	dry := f.fs.Bool("dry-run", false, "say which unit would be unloaded and removed, and unload and remove nothing")
-	if !f.parse(args[1:], stderr) {
+	if !f.parse(args[1:], stdout, stderr) {
 		return 2
 	}
 	goos := unitOS()
 	if *dir == "" {
 		home, err := unitHome()
 		if err != nil {
-			return refuse(stderr, " "+name, "--dir names no directory and the home cannot be read: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), " "+name, "--dir names no directory and the home cannot be read: "+err.Error())
 		}
 		*dir = unitDir(goos, home, os.Getenv)
 	}
 	head := "UNINSTALL " + strings.ToUpper(kind)
 	file := k.file(goos)
 	if file == "" {
-		return refuse(stderr, " "+name, name+" removes a launchd agent (macOS) or a systemd user unit (Linux), and "+goos+" has neither")
+		return refuse(stdout, stderr, jsonAsked(args), " "+name, name+" removes a launchd agent (macOS) or a systemd user unit (Linux), and "+goos+" has neither")
 	}
 	path := filepath.Join(*dir, file)
 	if *dry {

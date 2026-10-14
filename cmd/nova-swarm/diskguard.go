@@ -844,7 +844,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	dry := f.fs.Bool("dry-run", false, "judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing")
 	floor := f.fs.Int("disk-floor", guardFloorGiB, "the free `GiB` under which the run warns, the members' own floor (default 10; 0 warns never)")
 	stopFloor := f.fs.Int("stop-floor", 0, "the free `GiB` under which the run ends DISK-GUARD STOP with exit 3, for the loop row to stop the loops (default 0: never)")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	for _, c := range []struct {
@@ -870,12 +870,12 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	if runtime.GOOS == "windows" {
 		f.add("a Windows machine is a client of the swarm and never a bench: it has no pools, loops or land clones to guard")
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return refuse(stderr, " disk-guard", "the user's home could not be read: "+err.Error())
+		return refuse(stdout, stderr, jsonAsked(args), " disk-guard", "the user's home could not be read: "+err.Error())
 	}
 	tilde := func(p string) string {
 		if rest, ok := strings.CutPrefix(p, "~/"); ok {
@@ -910,7 +910,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	for _, c := range caches {
 		matches, err := filepath.Glob(tilde(c))
 		if err != nil {
-			return refuse(stderr, " disk-guard", fmt.Sprintf("--cache %q is not a glob: %s", c, oneline.Err(err)))
+			return refuse(stdout, stderr, jsonAsked(args), " disk-guard", fmt.Sprintf("--cache %q is not a glob: %s", c, oneline.Err(err)))
 		}
 		g.caches = append(g.caches, matches...)
 	}

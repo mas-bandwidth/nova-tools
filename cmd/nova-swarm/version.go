@@ -30,9 +30,9 @@ var version string
 // --short, no --json and no --long, because a second output shape is a second thing to
 // agree about and this verb exists to end an argument rather than to start one.
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
-	verbflag.HelpIfAsked(args, "version")
+	verbflag.HelpIfAsked(args, "version", verbflag.Flag{Name: "json", Bool: true, Wants: "print the result as one JSON object instead of lines"})
 	if len(args) > 0 {
-		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d; run: nova-swarm version -h", len(args)))
+		return refuse(stdout, stderr, jsonAsked(args), " version", fmt.Sprintf("takes no flags and no arguments, got %d; run: nova-swarm version -h", len(args)))
 	}
 	return cmdVersionStamp(version, stdout, stderr)
 }

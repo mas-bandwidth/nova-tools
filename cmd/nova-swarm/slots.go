@@ -25,9 +25,9 @@ import (
 // cmdSlots dispatches the slots verb's subcommands: init, take, release, list, run.
 func cmdSlots(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " slots", "wants a subcommand: init (make a store), take (grant leases), release (free them), list (print them) or run (execute under a lease)")
+		return refuse(stdout, stderr, jsonAsked(args), " slots", "wants a subcommand: init (make a store), take (grant leases), release (free them), list (print them) or run (execute under a lease)")
 	}
-	verbflag.HelpIfAsked(args[:1], "slots")
+	verbflag.HelpIfAsked(args[:1], "slots", verbflag.Flag{Name: "json", Bool: true, Wants: "print the result as one JSON object instead of lines"})
 	switch args[0] {
 	case "init":
 		return cmdSlotsInit(args[1:], stdout, stderr)
@@ -40,7 +40,7 @@ func cmdSlots(args []string, stdout, stderr io.Writer) int {
 	case "run":
 		return cmdSlotsRun(args[1:], stdout, stderr)
 	}
-	return refuse(stderr, " slots", fmt.Sprintf("unknown subcommand %q", args[0]))
+	return refuse(stdout, stderr, jsonAsked(args), " slots", fmt.Sprintf("unknown subcommand %q", args[0]))
 }
 
 // cmdSlotsRun executes a command under a bounded slot lease (docs/SPEC-SWARM.md, "Bench slot leases").
@@ -61,7 +61,7 @@ func cmdSlotsRunContext(ctx context.Context, args []string, stdout, stderr io.Wr
 	label := f.fs.String("label", "", "a `label` the leases carry (default: command name)")
 	waitDur := f.fs.String("wait", "", "how long to wait when capacity is occupied, a bounded `duration` such as 30s")
 
-	if !f.parseArgs(args, stderr) {
+	if !f.parseArgs(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*store, "store", "the directory holding shares.tsv and slots/")
@@ -92,7 +92,7 @@ func cmdSlotsRunContext(ctx context.Context, args []string, stdout, stderr io.Wr
 	if len(cmdArgs) == 0 {
 		f.add("command is required; pass -- <command> [args...]")
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 
@@ -167,7 +167,7 @@ func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	owner := f.fs.String("owner", "", "required: the one `owner` the store starts with")
 	capacity := f.fs.Int("capacity", 0, "required: how many leases the bench grants at once, at least 1")
 	share := f.fs.Int("share", 0, "required: how many of those the owner may hold at once, at least 1 and at most --capacity")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*store, "store", "the directory to create: it will hold shares.tsv and slots/")
@@ -191,7 +191,7 @@ func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	if *capacity > 0 && *share > *capacity {
 		f.add(fmt.Sprintf("--share %d is more than --capacity %d: a share is this owner's slice of the bench, so it cannot be wider than the bench", *share, *capacity))
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	path := filepath.Join(*store, "shares.tsv")
@@ -240,7 +240,7 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	forDur := f.fs.String("for", "", "required: how long the leases last, a positive `duration` such as 30m")
 	label := f.fs.String("label", "", "a `label` the leases carry, which slots release --label frees")
 	kind := f.fs.String("kind", "", "the card's `kind`, charged at its admission weight")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*store, "store", "the directory holding shares.tsv and slots/")
@@ -250,7 +250,7 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	if err != nil || dur <= 0 {
 		f.add(fmt.Sprintf("--for wants a positive duration such as 30m, got %q", *forDur))
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	ids, held, share, free, holders, ok, terr := swarm.TakeSlotLeasesKind(
@@ -285,7 +285,7 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	// than the default because freeing a live seat without stopping its holder is how two
 	// cards end up on a one-seat bench.
 	force := f.fs.Bool("force", false, "free a lease whose holder is still running too: an operator's act, which can oversubscribe the bench")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*store, "store", "the directory holding shares.tsv and slots/")
@@ -296,7 +296,7 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	if !*all && *label == "" {
 		f.add("--label or --all is required; it wants which of this owner's leases to free: the ones carrying a label, or all of them")
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	released, held, live, err := swarm.ReleaseSlotLeasesForcing(*store, *owner, *label, *all, *force)
@@ -317,16 +317,16 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots list")
 	store := f.fs.String("store", "", "required: the store `dir` holding shares.tsv and slots/")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*store, "store", "the directory holding shares.tsv and slots/")
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	// a directory that is no store is refused, never listed as empty (tool ledger W13)
 	if _, err := os.Stat(filepath.Join(*store, "shares.tsv")); err != nil {
-		return refuse(stderr, " slots list", fmt.Sprintf("--store %s is no slot store (it holds no shares.tsv); run: nova-swarm slots init --store %s --owner <name> --capacity <n> --share <n>", oneline.Field(*store), oneline.Field(*store)))
+		return refuse(stdout, stderr, jsonAsked(args), " slots list", fmt.Sprintf("--store %s is no slot store (it holds no shares.tsv); run: nova-swarm slots init --store %s --owner <name> --capacity <n> --share <n>", oneline.Field(*store), oneline.Field(*store)))
 	}
 	now := time.Now().UTC()
 	leases, err := swarm.ListSlotLeases(*store, now)

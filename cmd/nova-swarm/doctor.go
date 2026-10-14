@@ -471,7 +471,7 @@ func (e doctorEnv) cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("doctor")
 	pathFlag := f.fs.String("path", "", "the nova-swarm binary `file` to read as the one first on PATH (default: PATH's)")
 	localFlag := f.fs.String("local", "", "the nova-swarm binary `file` to read as the local build (default: ~/.local/bin/nova-swarm)")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	r := e.compareBinaries(e.resolveBinaries(*pathFlag, *localFlag))

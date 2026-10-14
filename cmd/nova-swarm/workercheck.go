@@ -48,10 +48,10 @@ func workerHelpFlag(arg string) bool {
 // description that cannot be read is refused, exit 2.
 func cmdWorker(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && workerHelpFlag(args[0]) {
-		verbflag.HelpIfAsked(args[:1], "worker")
+		verbflag.HelpIfAsked(args[:1], "worker", verbflag.Flag{Name: "json", Bool: true, Wants: "print the result as one JSON object instead of lines"})
 	}
 	if len(args) == 0 || args[0] != "check" {
-		return refuse(stderr, " worker", "the only worker subcommand is `check <description.json> [--env] [--max <n>]`")
+		return refuse(stdout, stderr, jsonAsked(args), " worker", "the only worker subcommand is `check <description.json> [--env] [--max <n>]`")
 	}
 	rest := args[1:]
 	path, requireEnv, max := "", false, bounded.Default
@@ -67,7 +67,7 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 		case strings.HasPrefix(rest[i], "--env="):
 			b, err := strconv.ParseBool(strings.TrimPrefix(rest[i], "--env="))
 			if err != nil {
-				return refuse(stderr, " worker check", fmt.Sprintf("--env is true or false, got %q", strings.TrimPrefix(rest[i], "--env=")))
+				return refuse(stdout, stderr, jsonAsked(args), " worker check", fmt.Sprintf("--env is true or false, got %q", strings.TrimPrefix(rest[i], "--env=")))
 			}
 			requireEnv = b
 		case rest[i] == "--max" || strings.HasPrefix(rest[i], "--max="):
@@ -76,36 +76,36 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 				word = v
 			} else {
 				if i+1 >= len(rest) {
-					return refuse(stderr, " worker check", "--max wants a count")
+					return refuse(stdout, stderr, jsonAsked(args), " worker check", "--max wants a count")
 				}
 				i++
 				word = rest[i]
 			}
 			n, err := strconv.Atoi(word)
 			if err != nil {
-				return refuse(stderr, " worker check", fmt.Sprintf("--max wants a count, got %q", word))
+				return refuse(stdout, stderr, jsonAsked(args), " worker check", fmt.Sprintf("--max wants a count, got %q", word))
 			}
 			max = n
 		case strings.HasPrefix(rest[i], "-"):
-			return refuse(stderr, " worker check", fmt.Sprintf("unknown flag %s; worker check takes --env, --max", oneline.Field(rest[i])))
+			return refuse(stdout, stderr, jsonAsked(args), " worker check", fmt.Sprintf("unknown flag %s; worker check takes --env, --max", oneline.Field(rest[i])))
 		default:
 			if path != "" {
-				return refuse(stderr, " worker check", "takes exactly one worker description")
+				return refuse(stdout, stderr, jsonAsked(args), " worker check", "takes exactly one worker description")
 			}
 			path = rest[i]
 		}
 	}
 	if path == "" {
-		return refuse(stderr, " worker check", "wants a worker description JSON file")
+		return refuse(stdout, stderr, jsonAsked(args), " worker check", "wants a worker description JSON file")
 	}
 	if max < 0 {
-		return refuse(stderr, " worker check", fmt.Sprintf("--max is 0 or more, got %d; 0 shows all", max))
+		return refuse(stdout, stderr, jsonAsked(args), " worker check", fmt.Sprintf("--max is 0 or more, got %d; 0 shows all", max))
 	}
 
 	// a description that cannot be read is a check that could not run (exit 2); one read
 	// and found wanting is the verb saying no (exit 1; tool ledger W11, X10)
 	if _, err := os.ReadFile(path); err != nil {
-		return refuse(stderr, " worker check", "the worker description cannot be read: "+oneline.Err(err)+"; it wants a JSON file, nova-swarm template --name worker prints one")
+		return refuse(stdout, stderr, jsonAsked(args), " worker check", "the worker description cannot be read: "+oneline.Err(err)+"; it wants a JSON file, nova-swarm template --name worker prints one")
 	}
 	w, drifts := checkWorkerDescription(path, requireEnv, os.Getenv)
 	if len(drifts) == 0 {

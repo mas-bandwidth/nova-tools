@@ -38,7 +38,7 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	from := f.fs.String("from", "", "with --remainder: the failed `step` the remainder starts at")
 	land := f.fs.String("land", "", "with --remainder: the full `sha` steps 1..n-1 landed at (the finish's pushed=)")
 	dryRun := f.fs.Bool("dry-run", false, "print each step the walk would run (its language, paths and POST lines) and the wall its commands would run in, and run and write nothing")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*card, "card", "the tree card's file")
@@ -48,34 +48,34 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	} else {
 		f.want(*dir, "dir", "the checkout the steps run in")
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	raw, err := os.ReadFile(*card)
 	if err != nil {
-		return refuse(stderr, "step", "--card wants a readable card file: "+err.Error())
+		return refuse(stdout, stderr, jsonAsked(args), "step", "--card wants a readable card file: "+err.Error())
 	}
 	t := cardtree.Parse(string(raw))
 	if *remainder != "" {
 		if _, ok := t.Step(*from); !ok {
-			return refuse(stderr, "step", fmt.Sprintf("--from %s names no step of the card", oneline.Field(*from)))
+			return refuse(stdout, stderr, jsonAsked(args), "step", fmt.Sprintf("--from %s names no step of the card", oneline.Field(*from)))
 		}
 		rem, err := cardtree.Remainder(string(raw), *remainder, *from, *land)
 		if err != nil {
-			return refuse(stderr, "step", "--land: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), "step", "--land: "+err.Error())
 		}
 		fmt.Fprint(stdout, rem)
 		return 0
 	}
 	if fs := cardtree.Lint(string(raw)); len(fs) > 0 {
-		return refuse(stderr, "step", fmt.Sprintf("the card's tree has %d finding(s), the first %s: %d: %s; run: nova-swarm lint --card %s", len(fs), oneline.Field(fs[0].Check), fs[0].Line, oneline.Escape(fs[0].Excerpt), oneline.Field(*card)))
+		return refuse(stdout, stderr, jsonAsked(args), "step", fmt.Sprintf("the card's tree has %d finding(s), the first %s: %d: %s; run: nova-swarm lint --card %s", len(fs), oneline.Field(fs[0].Check), fs[0].Line, oneline.Escape(fs[0].Excerpt), oneline.Field(*card)))
 	}
 	if !t.AllScript() {
-		return refuse(stderr, "step", "the card has no script step, or has model steps too; the executor runs a card whose every work step is a script step")
+		return refuse(stdout, stderr, jsonAsked(args), "step", "the card has no script step, or has model steps too; the executor runs a card whose every work step is a script step")
 	}
 	wall, why := stepWall(*sandbox, *noWall)
 	if why != "" {
-		return refuse(stderr, "step", why)
+		return refuse(stdout, stderr, jsonAsked(args), "step", why)
 	}
 	if *dryRun {
 		bin := wall.Bin
@@ -89,16 +89,16 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	}
 	if *work == "" {
 		if *work, err = os.MkdirTemp("", "nova-step-"); err != nil {
-			return refuse(stderr, "step", "no directory for the programs: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), "step", "no directory for the programs: "+err.Error())
 		}
 	}
 	if *work, err = filepath.Abs(*work); err != nil {
-		return refuse(stderr, "step", "--work: "+err.Error())
+		return refuse(stdout, stderr, jsonAsked(args), "step", "--work: "+err.Error())
 	}
 	bin, tmp := filepath.Join(*work, "bin"), filepath.Join(*work, "tmp")
 	for _, d := range []string{bin, tmp} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			return refuse(stderr, "step", "--work: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), "step", "--work: "+err.Error())
 		}
 	}
 	wall.Tmp = tmp
@@ -118,7 +118,7 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	})
 	if *result != "" {
 		if err := os.WriteFile(*result, []byte(stepResult(*dir, t, done)), 0o644); err != nil {
-			return refuse(stderr, "step", "--result could not be written: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), "step", "--result could not be written: "+err.Error())
 		}
 	}
 	if done[len(done)-1].Verdict != cardtree.OK {
