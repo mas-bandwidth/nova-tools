@@ -124,12 +124,6 @@ type Verb struct {
 	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
-	// RefuseLine, when set, is the one line a refusal the skeleton raises before
-	// the verb runs (a flag or argument problem) also writes on stdout, beside
-	// the stderr headline, so a verb that promises every outcome as one stdout
-	// line keeps it for those too. A refusal the verb's own Run returns is not
-	// passed here; the verb prints its own line. nil adds no line.
-	RefuseLine func(o *Out) string
 }
 
 // Effect is what running a verb does beyond printing: one of the three below,
@@ -554,7 +548,7 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
 		o := Refuse(flagProblems(&v, f, args, err)...)
 		o.Remedy = t.Name + " " + v.Name + " -h"
-		return t.emitRefused(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
+		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
 	asJSON := !f.prints && c.Bool("json")
@@ -574,7 +568,7 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
 	}
 	if o := c.Refused(); o != nil {
-		return t.emitRefused(&v, o, asJSON, stdout, stderr)
+		return t.emit(&v, o, asJSON, stdout, stderr)
 	}
 	if err := c.Ctx.Err(); err != nil {
 		// A cancelled context ends the verb (skeleton contract 2.4): the closing
@@ -690,20 +684,6 @@ func (v Verb) flags() *Flags {
 		f.Bool("json", false, "print the result as one JSON object instead of lines")
 	}
 	return f
-}
-
-// emitRefused is emit for a refusal the skeleton raised before the verb ran (a
-// flag or argument problem). A verb that declares RefuseLine gets that one line
-// written to stdout too, so a verb with a one-line-on-stdout contract keeps it
-// for a refusal that never reached its Run (docs/SPEC-BUS.md, send's refusal
-// line).
-func (t *Tool) emitRefused(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int {
-	if v != nil && !asJSON && o.Status != OK && v.RefuseLine != nil {
-		if l := v.RefuseLine(o); l != "" {
-			fmt.Fprintln(stdout, l)
-		}
-	}
-	return t.emit(v, o, asJSON, stdout, stderr)
 }
 
 // emit fills what the tool knows (the verb, the door) and renders o: lines on

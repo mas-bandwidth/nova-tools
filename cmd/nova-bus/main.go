@@ -256,13 +256,6 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					callTimeoutFlag(f)
 				},
 				Run: w.send,
-				// a refusal the skeleton raises before send runs (an unknown flag,
-				// a bad value, a positional argument) also prints the one SEND
-				// REFUSED line, so send's stdout contract holds for those too
-				// (docs/SPEC-BUS.md, send's refusal line).
-				RefuseLine: func(o *tool.Out) string {
-					return sendRefusedLine(codeUsage, o.Why[0], false)
-				},
 			},
 			{
 				Name:    "peek",
@@ -561,8 +554,9 @@ func names(csv string) []string {
 	return out
 }
 
-// The four codes a refused send names on stdout and in result.line
-// (docs/SPEC-BUS.md, send's refusal line).
+// The four codes a send that does not end in SEND OK names its cause by, on
+// its stderr headline as reason=<code> and as the reason field of its --json
+// object (docs/SPEC-BUS.md, send's refusal line).
 const (
 	codeUnhooked     = "unhooked"
 	codeUsage        = "usage"
@@ -570,24 +564,18 @@ const (
 	codeRefusedByBus = "refused-by-bus"
 )
 
-// sendRefusedLine is the one line a send that does not end in SEND OK prints
-// on stdout: SEND REFUSED reason=<code>: <why>, why the reason text the stderr
-// headline carries, marked when the refused run was --dry-run
-// (docs/SPEC-BUS.md, send's refusal line).
-func sendRefusedLine(code, why string, dry bool) string {
-	line := "SEND REFUSED reason=" + code + ": " + oneline.Escape(why)
-	if dry {
-		line += " (dry run)"
-	}
-	return line
-}
-
-// busRefusalCode is the code of a refusal that stopped send before it acted:
-// an address the caller did not supply is a usage refusal, anything else the
-// store's (w.bus, docs/SPEC-BUS.md, send's refusal line).
+// busRefusalCode is the code of a refusal that stopped send before it acted
+// (w.bus): a store that was never named (bus.Address's refusal) or an address
+// the tool refuses (bus.CheckAddr's rule) is a usage refusal, the caller's
+// input; a store that did not answer is the store's (docs/SPEC-BUS.md, send's
+// refusal line).
 func busRefusalCode(o *tool.Out) string {
-	if len(o.Why) > 0 && strings.Contains(o.Why[0], "--redis is required") {
-		return codeUsage
+	if len(o.Why) > 0 {
+		for _, usage := range []string{"--redis is required", "nova-bus reaches a store over loopback"} {
+			if strings.HasPrefix(o.Why[0], usage) {
+				return codeUsage
+			}
+		}
 	}
 	return codeStore
 }
@@ -603,58 +591,96 @@ func gateFailureCode(o *tool.Out) string {
 }
 
 // sendRefused is every refusal of send as the verb's result: the same Out the
-// skeleton prints on stderr, plus the one SEND REFUSED reason=<code> line on
-// stdout, so a loop that reads only stdout sees every outcome of a send as
-// exactly one line, SEND OK or SEND REFUSED (docs/SPEC-BUS.md). Under --json
-// the line is result.line of the one object, and the object is printed as the
-// result.
+// skeleton prints on stderr (stdout stays empty, the refusal grammar's), its
+// headline naming its cause as reason=<code>, one code per why line
+// (tool.Out.Reasons, parallel to Why), so a reader sees which of the four it
+// is; under --json the one object on stdout carries the headline as
+// result.line and the code as its reason field, the one stream a script reads
+// to see every outcome of a send (docs/SPEC-BUS.md, send's refusal line). A
+// --dry-run that would be refused marks its line " (dry run)", riding the
+// remedy's tail.
 func (w world) sendRefused(c *tool.Call, o *tool.Out, code string, dry bool) *tool.Out {
-	why := "refused"
-	if len(o.Why) > 0 {
-		why = o.Why[0]
+	o.Reasons = nil
+	for range o.Why {
+		o.Reasons = append(o.Reasons, code)
 	}
-	line := sendRefusedLine(code, why, dry)
+	o.Verb = "send" // the token of the line writeSendJSON renders (STANDARD §2, one value, two renderings)
+	if o.Status == tool.Refused && o.Remedy == "" {
+		o.Remedy = "nova-bus help" // the skeleton fills this in emit; this run renders the object itself
+	}
+	if dry && o.Remedy != "" {
+		o.Remedy += " (dry run)"
+	}
 	if c.Bool("json") {
-		// The skeleton fills the result's verb and remedy in emit; this run
-		// marshals the object itself (writeSendJSON), so fill them here to keep
-		// the one output value in both renderings (STANDARD §2).
-		o.Verb = "send"
-		if o.Status == tool.Refused && o.Remedy == "" {
-			o.Remedy = "nova-bus help"
-		}
-		if writeSendJSON(c.Stdout, o, line) {
+		if writeSendJSON(c.Stdout, o, code) {
 			return tool.Exit(o.Exit)
 		}
 	}
-	fmt.Fprintln(c.Stdout, line)
 	return o
 }
 
-// writeSendJSON prints o's one JSON object with the refused send's line under
-// result.line, so --json carries the same line the text form prints. It
-// reports whether the object was written.
-func writeSendJSON(w io.Writer, o *tool.Out, line string) bool {
+// writeSendJSON prints the one object a send's outcome is under --json: the
+// Out's own marshaling (Out.MarshalJSON, its bidi controls escaped), the
+// headline the text form prints added under result.line and, when reason
+// names a code (every outcome but OK), the code as the object's reason field,
+// absent on OK (docs/SPEC-BUS.md, send's refusal line). It reports whether
+// the object was written; false falls back to the skeleton's rendering.
+func writeSendJSON(w io.Writer, o *tool.Out, reason string) bool {
 	raw, err := o.MarshalJSON()
 	if err != nil {
 		return false
 	}
-	var obj map[string]any
+	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return false
 	}
-	res, ok := obj["result"].(map[string]any)
-	if !ok {
+	var t bytes.Buffer
+	o.Render(&t, false) // the text form; only its first line, the headline, is kept
+	line, err := oneJSONString(strings.SplitN(t.String(), "\n", 2)[0])
+	if err != nil {
 		return false
 	}
-	res["line"] = line
+	res := obj["result"]
+	if len(res) == 0 || res[len(res)-1] != '}' {
+		return false
+	}
+	// result gains the line as its last field; every other value keeps the
+	// bytes its own marshaling wrote
+	withLine := append(res[:len(res)-1:len(res)-1], `,"line":`...)
+	withLine = append(withLine, line...)
+	withLine = append(withLine, '}')
+	var b bytes.Buffer
+	b.WriteString(`{"result":`)
+	b.Write(withLine)
+	written := 1 // "result"
+	for _, k := range []string{"facts", "items", "more", "notes", "payload"} {
+		if v, ok := obj[k]; ok {
+			b.WriteString(`,"` + k + `":`)
+			b.Write(v)
+			written++
+		}
+	}
+	if len(obj) != written {
+		return false // the Out's JSON grew a key this walk does not know; the skeleton renders the object whole rather than this dropping it
+	}
+	if reason != "" {
+		b.WriteString(`,"reason":"` + reason + `"`) // the code is one of the four, all ASCII: no escaping wants doing
+	}
+	b.WriteString("}\n")
+	_, _ = w.Write(b.Bytes()) // ignored: the caller's stream is the skeleton's own, which reports its own failures
+	return true
+}
+
+// oneJSONString is s as one JSON string, the HTML escaping off, so the object
+// keeps `<` as `<` the way the Out's own marshaling does (pkg/tool, marshal).
+func oneJSONString(s string) ([]byte, error) {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(obj); err != nil {
-		return false
+	if err := enc.Encode(s); err != nil {
+		return nil, err
 	}
-	_, _ = w.Write(b.Bytes())
-	return true
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 // sendProblems is every problem of one send invocation, named at once: the
@@ -775,6 +801,15 @@ func (w world) send(c *tool.Call) *tool.Out {
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 	for _, line := range unheard {
 		o.Note(line)
+	}
+	if dry {
+		o.Fact("dry_run", true) // the skeleton adds it after Run, which this object never reaches (writeSendJSON)
+	}
+	o.Verb = "send" // the token of the line writeSendJSON renders (STANDARD §2, one value, two renderings)
+	if c.Bool("json") {
+		if writeSendJSON(c.Stdout, o, "") {
+			return tool.Exit(o.Exit)
+		}
 	}
 	return o
 }
