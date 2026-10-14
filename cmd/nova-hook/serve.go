@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -99,9 +100,7 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Dur
 		}
 		serveLine(c, "challenge", "", "name", bt.Name, "misses", bt.Misses)
 	}
-	if p.Changed() {
-		w.tell(c, s, b, p, within)
-	}
+	w.tell(c, s, b, p, within)
 	w.judgments(c, s, b)
 	ctx, cancel = call()
 	expired, err := b.ExpireAsks(ctx)
@@ -119,75 +118,102 @@ func fault(c *tool.Call, what string, err error) {
 	serveLine(c, "fault", err.Error()+"; the next pass tries again", "at", what)
 }
 
-// tell says what changed in this pass, once, in at most two messages
-// (tla/HookBeat.tla, Tell): the coordinator gets one judgment naming every
-// friend down or back; every other live name one message with all of it, a
-// judgment when the coordinator itself went down (who takes over).
+// tell says what each audience has not yet been told, in at most one
+// message each (tla/HookBeat.tla, Tell): the coordinator one judgment naming
+// every friend down or back; every other live name that did not itself change
+// one message with all of it and the coordinator, a judgment when the
+// coordinator itself went down (who takes over). An audience is marked told
+// only once its message went out, so a failed send is told by the next pass,
+// and never twice.
 func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within time.Duration) {
+	if !p.Changed(hook.ToCoordinator) && !p.Changed(hook.ToRest) {
+		return
+	}
 	ctx, cancel := call()
-	sts, _, err := s.hooks.Read(ctx, p.Down...)
+	sts, _, err := s.hooks.Read(ctx, p.Unhooked...)
 	cancel()
 	if err != nil {
 		fault(c, "reasons", err)
 		return
 	}
-	var lines []string
+	why := map[string]string{}
 	for _, st := range sts {
-		why := st.Reason
-		if why == "" {
-			why = "unhooked"
+		why[st.Name] = cmp.Or(st.Reason, "unhooked")
+	}
+	lines := func(down, back []string) []string {
+		var out []string
+		for _, n := range down {
+			out = append(out, "FRIEND DOWN "+n+": "+why[n])
 		}
-		lines = append(lines, "FRIEND DOWN "+st.Name+": "+why)
+		for _, n := range back {
+			out = append(out, "FRIEND BACK "+n)
+		}
+		return out
 	}
-	for _, n := range p.Back {
-		lines = append(lines, "FRIEND BACK "+n)
+	mark := func(audience string) {
+		ctx, cancel := call()
+		defer cancel()
+		if err := s.hooks.Told(ctx, p, audience); err != nil {
+			fault(c, "told "+audience, err)
+		}
 	}
-	coordDown := p.WasCoord != "" && p.Coord == "" && slices.Contains(p.Down, p.WasCoord)
-	if p.Coord != "" && len(lines) > 0 {
-		w.judge(c, s, b, []string{p.Coord}, strings.Join(lines, "; "), "Answer with nova-bus send --re <this message's id> and one of: wait | reassign <name>'s work | tell the owner.", within)
+	if down, back, _ := p.Diff(hook.ToCoordinator); p.Changed(hook.ToCoordinator) {
+		ls := lines(down, back)
+		if p.Coord == "" || len(ls) == 0 || w.judge(c, s, b, []string{p.Coord}, strings.Join(ls, "; "), "Answer with nova-bus send --re <this message's id> and one of: wait | reassign <name>'s work | tell the owner.", within) {
+			mark(hook.ToCoordinator) // nothing to say to the coordinator, or said
+		}
 	}
-	if p.Coord != p.WasCoord && p.Coord != "" {
-		lines = append(lines, "COORDINATOR IS "+p.Coord)
+	if !p.Changed(hook.ToRest) {
+		return
+	}
+	down, back, was := p.Diff(hook.ToRest)
+	ls := lines(down, back)
+	if p.Coord != was && p.Coord != "" {
+		ls = append(ls, "COORDINATOR IS "+p.Coord)
 	}
 	var rest []string // the live names this pass did not change: the ones who need telling
 	for _, n := range p.Live {
-		if n != p.Coord && !slices.Contains(p.Back, n) {
+		if n != p.Coord && !slices.Contains(back, n) {
 			rest = append(rest, n)
 		}
 	}
-	if len(rest) == 0 || len(lines) == 0 {
+	if len(rest) == 0 || len(ls) == 0 {
+		mark(hook.ToRest)
 		return
 	}
-	if coordDown {
-		w.judge(c, s, b, rest, "COORDINATOR DOWN "+p.WasCoord+": who takes over? "+strings.Join(lines, "; "), "Answer with nova-bus send --re <this message's id> and one of: I take over (nova-hook hook --as <me> --role coordinator) | wait | tell the owner.", within)
+	subject := strings.Join(ls, "; ")
+	if was != "" && p.Coord == "" && slices.Contains(down, was) {
+		if w.judge(c, s, b, rest, "COORDINATOR DOWN "+was+": who takes over? "+subject, "Answer with nova-bus send --re <this message's id> and one of: I take over (nova-hook hook --as <me> --role coordinator) | wait | tell the owner.", within) {
+			mark(hook.ToRest)
+		}
 		return
 	}
-	subject := strings.Join(lines, "; ")
 	if err := w.send(b, bus.Message{From: s.as, To: rest, Subject: subject, Body: subject + "\nnova-hook friends shows every name's state.\n"}); err != nil {
 		fault(c, "tell", err)
 		return
 	}
+	mark(hook.ToRest)
 	serveLine(c, "told", subject, "to", strings.Join(rest, ","))
 }
 
 // judge raises one judgment: a bus message of kind judgment, open in
-// hook:judgments until a recipient answers it.
-func (w world) judge(c *tool.Call, s *session, b *bus.Bus, to []string, subject, answers string, within time.Duration) {
-	ctx, cancel := call()
-	m, err := b.Send(ctx, bus.Message{From: s.as, To: to, Kind: bus.KindJudgment, Subject: subject, Body: subject + "\n" + answers + "\n"})
-	cancel()
+// hook:judgments until a recipient answers it. It reports whether the message
+// went out.
+func (w world) judge(c *tool.Call, s *session, b *bus.Bus, to []string, subject, answers string, within time.Duration) bool {
+	m, err := w.deliver(b, bus.Message{From: s.as, To: to, Kind: bus.KindJudgment, Subject: subject, Body: subject + "\n" + answers + "\n"})
 	if err != nil {
 		fault(c, "judgment", err)
-		return
+		return false
 	}
-	ctx, cancel = call()
+	ctx, cancel := call()
 	err = s.hooks.OpenJudgment(ctx, hook.Judgment{ID: m.ID, To: to, Subject: subject}, within)
 	cancel()
 	if err != nil {
-		fault(c, "judgment record", err)
-		return
+		fault(c, "judgment record", err) // delivered all the same: it is told, unopened
+		return true
 	}
 	serveLine(c, "judgment", subject, "id", m.ID, "to", strings.Join(to, ","))
+	return true
 }
 
 // judgments looks after the open judgments: an answered one is closed, and
@@ -237,9 +263,7 @@ func (w world) judgments(c *tool.Call, s *session, b *bus.Bus) {
 
 // send is one bus message under its own deadline.
 func (w world) send(b *bus.Bus, m bus.Message) error {
-	ctx, cancel := call()
-	defer cancel()
-	_, err := b.Send(ctx, m)
+	_, err := w.deliver(b, m)
 	return err
 }
 

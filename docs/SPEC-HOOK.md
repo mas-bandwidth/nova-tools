@@ -179,7 +179,9 @@ A proof says a push reached a session once; the heartbeat says the model is stil
   cleared), with `reason` "missed 2 challenges", and logs one entry on the capped stream `hook:events`. Hooking
   in again clears `misses`, `reason` and `beat_at`.
 - **Each real change is told once, coalesced.** The pass compares the unhooked set and the coordinator (the
-  first hooked name of that role) with the row's `told` and `coord`; only a pass that finds a change tells it,
+  first hooked name of that role) with what each audience was last told (the row's `told:<audience>` and
+  `coord:<audience>`, the coordinator and the rest); an audience is marked told only after its message went out,
+  so a send that fails is told by the next pass, and never twice. Only a pass that finds a change tells it,
   in at most two messages: the coordinator gets one judgment (bus kind `judgment`) naming every `FRIEND DOWN
   <name>: <reason>` and `FRIEND BACK <name>`, and every other live name that did not itself change gets one
   message with the same lines and `COORDINATOR IS <name>`, a judgment instead when the coordinator itself went
@@ -193,6 +195,9 @@ A proof says a push reached a session once; the heartbeat says the model is stil
   session, `HOOK STATE state=not-connected since=<local time>` with the judgment NOT CONNECTED TO THE SERVER and its
   answers (re-hook, check the network, tell the coordinator when reachable); the next move is one
   `state=connected` line, and the episode is reported to `hook:events` once (event `not-connected`).
+- **A stale server is no server.** While `hook:serve` is more than two intervals old by the store's TIME at the
+  read, no reader trusts a record's last written state: `nova-hook friends` reads every name down with reason
+  "hook server stale", `nova-hook status` lists every name stale, and `status --as` fails NO CHALLENGE FOR <age>.
 - **Everyone can ask.** `nova-hook friends [--json]` lists every name's state from the hook record alone: up
   (hooked and proven) or down, since, reason, the last challenge and answer, misses; and the coordinator and the
   server's age.

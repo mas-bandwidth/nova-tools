@@ -28,6 +28,9 @@ type rig struct {
 	clock  time.Time
 	cancel context.CancelFunc
 	nonces int
+	// failTells makes every judgment and told message fail to send, as a bus
+	// that does not answer would; challenges still go out.
+	failTells atomic.Bool
 }
 
 func newRig(t *testing.T) *rig {
@@ -103,6 +106,14 @@ func (r *rig) world() world {
 		holder: "test",
 		tick:   time.Millisecond,
 		after:  func(time.Duration) <-chan time.Time { return nil }, // serve's tests run --once
+		deliver: func(b *bus.Bus, m bus.Message) (bus.Message, error) {
+			if r.failTells.Load() && !strings.HasPrefix(m.Subject, "HOOK CHALLENGE") {
+				return bus.Message{}, context.DeadlineExceeded
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), bus.CallTimeout)
+			defer cancel()
+			return b.Send(ctx, m)
+		},
 	}
 }
 

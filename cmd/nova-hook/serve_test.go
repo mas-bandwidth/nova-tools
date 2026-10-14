@@ -220,7 +220,7 @@ func TestStatusSaysNoChallengeWhenTheServerIsGone(t *testing.T) {
 	r.h.Hook(t, "ada", hook.Comms)
 	res := cli.Run("status", "--as", "ada")
 	assert.Equal(t, 1, res.Code)
-	assert.Contains(t, res.Stdout+res.Stderr, "NO CHALLENGE FOR 2m1s: the heartbeat server last passed 2m1s ago")
+	assert.Contains(t, res.Stdout+res.Stderr, "NO CHALLENGE FOR 2m1s: hook server stale: the heartbeat server last passed 2m1s ago")
 }
 
 // TestAClientThatLosesTheServerSaysItOnceAndReportsItOnce pins the hook
@@ -286,4 +286,57 @@ func TestATickExpiresAnOverdueAskOnce(t *testing.T) {
 	out += cli.Do(t, "serve", "--as", "ada", "--once").Exit(0).Stdout
 	assert.Equal(t, 1, strings.Count(out, "event=expired"), out)
 	assert.Equal(t, 1, r.count(t, "ada", "ASK TIMEOUT"), "one timeout reaches the sender")
+}
+
+// TestAFailedTellIsToldAgainOnceAtTheNextPass pins mark-after-delivery
+// (tla/HookBeat.tla, the finding of the model run): a pass whose messages do
+// not go out marks nothing told, the next pass tells the same change, and once
+// delivered it is never told again.
+func TestAFailedTellIsToldAgainOnceAtTheNextPass(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	r.step(t, []string{"ada"}, "ada", "carl")
+	r.step(t, []string{"ada"}, "ada", "carl")
+	r.failTells.Store(true) // the pass that unhooks bob: its tells do not go out
+	r.step(t, []string{"ada"}, "ada", "carl")
+	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
+	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN bob"))
+	r.failTells.Store(false)
+	for range 3 {
+		r.step(t, []string{"ada"}, "ada", "carl")
+	}
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"), "told at the next pass, once")
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob"), "told at the next pass, once")
+}
+
+// TestAStaleServerReadsEveryoneDown pins that no reader trusts the last
+// written state once the heartbeat server is gone (the finding of the model
+// run): hook:serve older than two intervals by the store's TIME, read at the
+// query, and every name reads down (hook server stale).
+func TestAStaleServerReadsEveryoneDown(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.step(t, []string{"ada"}, "ada") // the server passed a minute ago
+	r.h.Pass(hook.BeatEvery)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	res := r.cli().Run("friends")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "state=up", "two intervals exactly: not yet stale")
+	r.h.Pass(time.Second)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	res = r.cli().Run("friends")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "serve_alive=false")
+	assert.Contains(t, res.Stdout, `name=ada role=coordinator state=down`)
+	assert.Contains(t, res.Stdout, `reason="hook server stale"`)
+	res = r.cli().Run("status")
+	assert.Contains(t, res.Stdout, "state=stale", res.Stdout)
+	res = r.cli().Run("status", "--as", "ada")
+	assert.Equal(t, 1, res.Code)
+	assert.Contains(t, res.Stdout+res.Stderr, "hook server stale")
 }

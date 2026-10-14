@@ -194,6 +194,32 @@ func (r *rig) passAll(t *testing.T, by string, next func() string) hook.Passed {
 	return got
 }
 
+// TestAChangeNotMarkedToldIsFoundAgain pins mark-after-delivery at the
+// store: until the server marks an audience told, every pass finds the same
+// change for it; once marked, none.
+func TestAChangeNotMarkedToldIsFoundAgain(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	next := nonces()
+	for range 3 {
+		r.passAll(t, "srv", next)
+		r.pass(hook.BeatEvery)
+	}
+	for range 2 {
+		p := r.passAll(t, "srv", next)
+		down, _, _ := p.Diff(hook.ToCoordinator)
+		assert.Equal(t, []string{"ada"}, down, "not yet marked: found again")
+		r.pass(hook.BeatEvery)
+	}
+	p := r.passAll(t, "srv", next)
+	require.NoError(t, r.s.Told(context.Background(), p, hook.ToCoordinator))
+	r.pass(hook.BeatEvery)
+	p = r.passAll(t, "srv", next)
+	assert.False(t, p.Changed(hook.ToCoordinator), "marked: told once")
+	assert.True(t, p.Changed(hook.ToRest), "each audience is marked on its own")
+}
+
 // TestEachChangeIsToldOncePerTransition pins what a pass tells
 // (tla/HookBeat.tla, Tell): a name down, a name back and the coordinator
 // changing are each told by exactly one pass, never again for the same
@@ -213,7 +239,11 @@ func TestEachChangeIsToldOncePerTransition(t *testing.T) {
 		p := r.passAll(t, "srv-a", next)
 		require.True(t, p.Taken)
 		assert.False(t, r.passAll(t, "srv-b", next).Taken, "a second server inside the interval")
-		got = append(got, told{p.Down, p.Back, p.Coord, p.WasCoord})
+		down, back, was := p.Diff(hook.ToRest)
+		got = append(got, told{down, back, p.Coord, was})
+		for _, a := range hook.Audiences { // delivered: marked told
+			require.NoError(t, r.s.Told(context.Background(), p, a))
+		}
 		r.pass(hook.BeatEvery)
 	}
 	step()

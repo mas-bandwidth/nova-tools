@@ -36,7 +36,9 @@ func (w world) friends(c *tool.Call) *tool.Out {
 	coord, up := "", 0
 	for _, st := range sts {
 		state, since, reason := "down", st.Unhooked, st.Reason
-		if st.State == hook.StateProven {
+		if sv.Stale() {
+			since, reason = sv.At, hook.StaleReason // the last written state is not trusted once the server is gone
+		} else if st.State == hook.StateProven {
 			state, since, reason = "up", st.Armed, ""
 			up++
 			if st.Role == hook.Coordinator && coord == "" {

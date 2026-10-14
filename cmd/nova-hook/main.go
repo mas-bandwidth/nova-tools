@@ -49,9 +49,10 @@ type world struct {
 	now      func() time.Time
 	signals  func(ctx context.Context) (context.Context, context.CancelFunc)
 	nonce    func() string
-	after    func(time.Duration) <-chan time.Time // the heartbeat server's wait between passes
-	holder   string                               // who holds the pushes this process holds, as the lease shows it
-	tick     time.Duration                        // one blocking read of the loop
+	after    func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
+	deliver  func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
+	holder   string                                           // who holds the pushes this process holds, as the lease shows it
+	tick     time.Duration                                    // one blocking read of the loop
 }
 
 func realWorld() world {
@@ -59,7 +60,7 @@ func realWorld() world {
 	if err != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
-	w := world{getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After,
+	w := world{getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
 		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
@@ -84,6 +85,13 @@ func realWorld() world {
 	}
 	w.fleetBus = func(ctx context.Context, addr string) (string, error) { return bus.ReadFleetBus(ctx, addr, w.getenv) }
 	return w
+}
+
+// deliver is one bus message under one call's deadline.
+func deliver(b *bus.Bus, m bus.Message) (bus.Message, error) {
+	ctx, cancel := call()
+	defer cancel()
+	return b.Send(ctx, m)
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
@@ -137,7 +145,8 @@ the record is in bus Redis; serve challenges each hooked name every minute, two 
 				Detail: `With --as, one name's record: STATUS OK when it is proven (exit 0), else STATUS FAILED with what is not
 live and the command that hooks it in (exit 1). Without it, every name that ever hooked in: STATUS OK count=<n>
 proven=<n>, then one STATUS NAME name= state= role= epoch= <push>=<down|armed|proven> line each, at exit 0.
-The states: none, unhooked, expired (no push live), partial, live (every push live, not every one proven), proven.
+The states: none, unhooked, expired (no push live), partial, live (every push live, not every one proven), proven;
+and stale for every name while the heartbeat server has not passed for two of its intervals (hook server stale).
 Once a heartbeat server (nova-hook serve) has passed, --as is also the client's timeout: a hooked name the server
 challenges that has had no challenge for two of the server's intervals is STATUS FAILED NO CHALLENGE FOR <age>
 (exit 1): the server is down, so nothing is checking the link. Without --as the first line carries serve_age=.
@@ -731,7 +740,12 @@ func (w world) status(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Refuse("the heartbeat server's stamp could not be read: " + err.Error())
 		}
-		if age, lost := noChallenge(st[0], sv); lost {
+		if sv.Stale() {
+			age := sv.Now.Sub(sv.At).Round(time.Second)
+			o = tool.Fail(fmt.Sprintf("NO CHALLENGE FOR %s: %s: the heartbeat server last passed %s ago (every %s), so no record is current", age, hook.StaleReason, age, sv.Every))
+			o.Remedy = "nova-hook serve --as <a coordinator or comms name>"
+			o.Facts = statusFacts(st[0])
+		} else if age, lost := noChallenge(st[0], sv); lost {
 			o = tool.Fail(fmt.Sprintf("NO CHALLENGE FOR %s: the heartbeat server last passed %s ago (every %s), so nothing checks this link", age, sv.Now.Sub(sv.At).Round(time.Second), sv.Every))
 			o.Remedy = "nova-hook serve --as <a coordinator or comms name>"
 			o.Facts = statusFacts(st[0])
@@ -746,17 +760,24 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse("the hook record could not be read: " + err.Error())
 	}
+	sv, err := s.hooks.Serve(ctx)
+	if err != nil {
+		return tool.Refuse("the heartbeat server's stamp could not be read: " + err.Error())
+	}
 	proven := 0
 	o := tool.Done()
 	for _, st := range sts {
+		if sv.Stale() {
+			st.State = "stale" // the server is gone: the last written state is not trusted
+		}
 		if st.State == hook.StateProven {
 			proven++
 		}
 		o.Item("name", fieldsOf(statusFacts(st))...)
 	}
 	o.Fact("count", len(sts)).Fact("proven", proven)
-	if sv, err := s.hooks.Serve(ctx); err == nil && sv.OK {
-		o.Fact("serve_age", sv.Now.Sub(sv.At).Round(time.Second).String())
+	if sv.OK {
+		o.Fact("serve_age", sv.Now.Sub(sv.At).Round(time.Second).String()).Fact("serve_stale", sv.Stale())
 	}
 	return o
 }
