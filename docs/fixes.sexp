@@ -1,7 +1,7 @@
 ; The nova-tools point releases: the data FIXES.md is generated from.
-; Read by internal/roadmap through internal/roadmap/sexp (data, never evaluated).
+; Read by pkg/roadmap through pkg/sexp (data, never evaluated).
 ; Edit this file, then run `make roadmap`; never edit FIXES.md by hand.
-; The shape is in internal/roadmap/fixes.go.
+; The shape is in pkg/roadmap/fixes.go.
 (fixes "v1"
  :title "nova-tools fixes"
  :text "The point releases after v1.2.2: what each one shipped, is shipping or will ship. A point release

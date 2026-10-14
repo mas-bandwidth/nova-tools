@@ -1,12 +1,14 @@
 /*
 Package roadmap reads docs/roadmap.sexp and renders ROADMAP.md from it.
 
-The roadmap is data: one `(roadmap "v1" ...)` form read through internal/roadmap/sexp
+The roadmap is data: one `(roadmap "v1" ...)` form read through pkg/sexp
 (nothing is evaluated), decoded here into typed records, and refused whole, every
 problem named, when a record is not exactly the shape below. tools/roadmap writes
-the rendered page; internal/docs holds the committed ROADMAP.md to what Render
-makes of the committed sexp, so the page is never written by hand (#4855 deleted
-the hand-written one).
+the rendered page; each repository that keeps one holds its committed ROADMAP.md to
+what Render makes of its committed sexp (here internal/docs), so the page is never
+written by hand (#4855 deleted the hand-written one). It is the one copy of the
+roadmap code: nova-sprint's roadmapdoc package was a renamed fork of it, and
+imports this package instead.
 
 The shape:
 
@@ -14,11 +16,18 @@ The shape:
 	 :title "<page title>"
 	 :text "<the page's opening paragraph>"
 	 :scheduled ((scheduled "<id>" :release "<vX.Y>" :title "..." :text "..." :date "YYYY-MM-DD") ...)
-	 :done ((done "<id>" :title "..." :text "..." :date "YYYY-MM-DD") ...)
+	 :done ((done "<id>" :title "..." :text "..." :date "YYYY-MM-DD" [:kept (...)]) ...)
 	 :groups ((group "<id>" :title "..." :text "...") ...)
 	 :items ((item "<id>" :group "<group id>" :title "..." :text "..." :date "YYYY-MM-DD"
 	          [:why "..."] [:area "..."] [:exists "..."] [:cards <n>]
-	          [:origin "<where it came from: issue #n, PR #n, a card>"] [:release "<target release>"]) ...))
+	          [:origin "<where it came from: issue #n, PR #n, a card>"] [:release "<target release>"]
+	          [:kept (:<key> "<value>" ...)]) ...))
+
+:kept holds the fields a move between docs/roadmap.sexp and docs/fixes.sexp
+carried that have no meaning where the record now is (an item's :why on a fix,
+a fix's :status on an item), each under a key naming where it came from
+(item-why, fix-status), so a move never drops one and a move back restores it.
+It is data for nova-work roadmap (nova-sprint's roadmap editor) and is not rendered.
 
 Text values may be wrapped across lines in the file; Render joins every run of
 whitespace into one blank, so the page reads the same however the file is wrapped.
@@ -31,7 +40,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/roadmap/sexp"
+	"github.com/mas-bandwidth/nova-tools/pkg/sexp"
 )
 
 // Format is the one format string the roadmap form carries.
@@ -55,6 +64,13 @@ type Doc struct {
 // release, or already done. Release is empty for a done note.
 type Note struct {
 	ID, Release, Title, Text, Date string
+	Kept                           []Pair
+}
+
+// Pair is one field a move carried under :kept: its key and its value, which
+// may be empty (an empty value records that the field was absent).
+type Pair struct {
+	Key, Value string
 }
 
 // Group is one heading of the roadmap; every item names the group it sits under.
@@ -74,6 +90,7 @@ type Item struct {
 	// Origin names where the item came from (an issue, a pull request, a card
 	// moved out of the sprint); Release is the release it is aimed at, when one is.
 	Origin, Release string
+	Kept            []Pair
 }
 
 var datePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -209,6 +226,25 @@ func (d *decoder) count(at string, vals map[string]sexp.Form, k string) int {
 	return int(f.Int)
 }
 
+// kept reads :kept, a list of :key "value" pairs, each key once; nil when absent.
+func (d *decoder) kept(at string, vals map[string]sexp.Form) []Pair {
+	l := d.list(at, vals, "kept")
+	var out []Pair
+	seen := map[string]bool{}
+	for i := 0; i < len(l); i += 2 {
+		if l[i].Kind != sexp.Keyword || i+1 >= len(l) || l[i+1].Kind != sexp.String {
+			d.fail(at, ":kept wants :key \"value\" pairs")
+			return nil
+		}
+		if seen[l[i].Value] {
+			d.fail(at, ":kept key :%s stands twice", l[i].Value)
+		}
+		seen[l[i].Value] = true
+		out = append(out, Pair{Key: l[i].Value, Value: l[i+1].Value})
+	}
+	return out
+}
+
 // list returns the members of the list value of key k, nil when the key is absent.
 func (d *decoder) list(at string, vals map[string]sexp.Form, k string) []sexp.Form {
 	f, ok := vals[k]
@@ -253,12 +289,12 @@ func (d *decoder) doc(top sexp.Form) *Doc {
 	}
 	for i, f := range d.list("top", vals, "done") {
 		at := fmt.Sprintf(":done[%d]", i)
-		id, v, ok := d.record(at, f, "done", true, []string{"title", "text", "date"}, nil)
+		id, v, ok := d.record(at, f, "done", true, []string{"title", "text", "date"}, []string{"kept"})
 		if !ok {
 			continue
 		}
 		seen(at, "done", id)
-		doc.Done = append(doc.Done, Note{ID: id, Title: d.str(at, v, "title"), Text: d.str(at, v, "text"), Date: d.date(at, v)})
+		doc.Done = append(doc.Done, Note{ID: id, Title: d.str(at, v, "title"), Text: d.str(at, v, "text"), Date: d.date(at, v), Kept: d.kept(at, v)})
 	}
 	groups := map[string]bool{}
 	for i, f := range d.list("top", vals, "groups") {
@@ -276,14 +312,14 @@ func (d *decoder) doc(top sexp.Form) *Doc {
 		at := fmt.Sprintf(":items[%d]", i)
 		id, v, ok := d.record(at, f, "item", true,
 			[]string{"group", "title", "text", "date"},
-			[]string{"why", "area", "exists", "cards", "origin", "release"})
+			[]string{"why", "area", "exists", "cards", "origin", "release", "kept"})
 		if !ok {
 			continue
 		}
 		seen(at, "item", id)
 		it := Item{ID: id, Group: d.str(at, v, "group"), Title: d.str(at, v, "title"), Text: d.str(at, v, "text"),
 			Why: d.str(at, v, "why"), Date: d.date(at, v), Area: d.str(at, v, "area"), Exists: d.str(at, v, "exists"),
-			Cards: d.count(at, v, "cards"), Origin: d.str(at, v, "origin"), Release: d.str(at, v, "release")}
+			Cards: d.count(at, v, "cards"), Origin: d.str(at, v, "origin"), Release: d.str(at, v, "release"), Kept: d.kept(at, v)}
 		if it.Group != "" && !groups[it.Group] {
 			d.fail(at, ":group %q names no (group ...) record", it.Group)
 		}
