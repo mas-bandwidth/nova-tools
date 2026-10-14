@@ -67,8 +67,8 @@ var verbDetail = map[string]string{
 	"slots init": "creates the slot store for an owner: the machine's capacity and the owner's share of it, which slots take then leases from.",
 	"slots list": "prints the store's slots: each owner's capacity and share, and every lease held, with its label and when it expires.",
 	"member": `run this machine as a sprint member; --server is the address of nova-sprint run --listen.
-Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
-A reader uses its machine's width; --width overrides it. This machine opens no store.
+Each tick beats, reads the queue, reports ended children and takes cards to the width nova-config names, answered with the queue every pass.
+A reader uses its machine's width; a worker has no width of its own (nova-config is the one definition), and --width is refused. This machine opens no store.
 Each card runs as one native child with its frame and an allowlist environment.
 Its packet supplies the model, budget and deadline; the flags fill missing route values.
 --reader runs reads from the readers table; its flags override the read's route.

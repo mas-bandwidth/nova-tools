@@ -410,7 +410,9 @@ func friendTool(w world) *tool.Tool {
 		f.String("adapter", "", "delivery route: folder for an existing watched Codex session; implicit Codex delivery is refused")
 		f.String("delivery-dir", "", "existing folder watched by that Codex session when --adapter folder")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
-		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
+		// the width is nova-config's alone, answered on each beat (row_width): a loop row or plist
+		// that still passes --width is refused, naming the remedy (docs/SPEC-SWARM.md, the width)
+		f.Int("width", 0, "retired, refused when given: the width is the nova-config friend row's alone, read from each beat's answer (nova-config friend set <me> --width <n>)")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
@@ -423,6 +425,9 @@ func friendTool(w world) *tool.Tool {
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		f.String("pronouns", "", "the friend's startup pronouns, one of "+friend.PronounList()+" (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them")
 		f.Check(func(c *tool.Call) {
+			if c.Given("width") {
+				c.Problem(fmt.Sprintf("--width is refused: the width is the nova-config friend row's alone, read from each beat's answer, and the daemon has none of its own; remove --width from the loop row or plist and set the row: nova-config friend set %s --width %d", c.Str("as"), c.Int("width")))
+			}
 			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
 				c.Problem(err.Error())
 			}
@@ -472,7 +477,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 			},
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -615,7 +620,7 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -1682,7 +1687,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var machineStopped atomic.Bool
 	owedStopReturns := func() int { return 0 }
 	d := &friend.Daemon{
-		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: dir,
 		Pro:            pro,
 		MachineStopped: machineStopped.Load,
 		StopReturn: func(ctx context.Context, argv []string) error {
@@ -2164,7 +2169,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		log = filepath.Join(w.home, "Library", "Logs", prefix+name+".log")
 	}
 	a := friend.Agent{
-		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), Adapter: c.Str("adapter"), DeliveryDir: c.Str("delivery-dir"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), Adapter: c.Str("adapter"), DeliveryDir: c.Str("delivery-dir"), StateDir: c.Str("state-dir"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), DenySelf: c.Str("deny-self"), WallReads: c.Str("wall-reads"),

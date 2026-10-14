@@ -4799,7 +4799,7 @@ func TestAReadAgainstATagOrAShaNeedsNoFetch(t *testing.T) {
 // (reader-<m> is the reader on m), read with its queue every tick as a member
 // reads its own (the owner, 2026-10-02: "why not just have as many readers as
 // workers per-machine"). Nothing here names width as missing; the run fails
-// only at the server no test has, and the start line says width=row.
+// only at the server no test has, and the start line says width=config.
 func TestAReaderNeedsNoWidth(t *testing.T) {
 	t.Parallel()
 	var args []string
@@ -4815,7 +4815,7 @@ func TestAReaderNeedsNoWidth(t *testing.T) {
 	var out, errb bytes.Buffer
 	run(args, strings.NewReader(""), &out, &errb, time.Now())
 	assert.NotContains(t, errb.String(), "--width", "a reader without --width is refused:\n%s", errb.String())
-	assert.Contains(t, out.String(), "MEMBER reader as=reader-m1 width=row ", "the start line:\n%s", out.String())
+	assert.Contains(t, out.String(), "MEMBER reader as=reader-m1 width=config ", "the start line:\n%s", out.String())
 }
 
 // TestAPlumbingRewriteCannotPassThePushBoundary pins RewriteKeptIsPushed in

@@ -20,7 +20,7 @@ import (
 // without --load.
 func TestABeatNeverGoesWithoutItsLoad(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1, Meter: hostload.NewSampler(hostload.Source{})})
+	g := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{})})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	require.NoError(t, g.m.Beat())
 	require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"), "no sample: the beat still carries --load 0")
@@ -31,7 +31,7 @@ func TestABeatNeverGoesWithoutItsLoad(t *testing.T) {
 // `fleet beat -h` lists the flag (Config.LoadUnmeasured, the caller's one probe at start).
 func TestABeatCarriesLoadUnmeasuredWhenTheFlagIsListed(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1, Meter: hostload.NewSampler(hostload.Source{}), LoadUnmeasured: func() bool { return true }})
+	g := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{}), LoadUnmeasured: func() bool { return true }})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	require.NoError(t, g.m.Beat())
 	require.Equal(t, []string{"fleet beat m --stop-returns 0 --load-unmeasured --load 0.0"}, g.s.lines("beat"), "the unmeasured 0 is said, not a bare 0")
@@ -41,7 +41,7 @@ func TestABeatCarriesLoadUnmeasuredWhenTheFlagIsListed(t *testing.T) {
 // --load-unmeasured gets a plain --load 0, never a flag it would refuse.
 func TestABeatSendsAPlainZeroWhenTheFlagIsNotListed(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1, Meter: hostload.NewSampler(hostload.Source{}), LoadUnmeasured: func() bool { return false }})
+	g := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{}), LoadUnmeasured: func() bool { return false }})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	require.NoError(t, g.m.Beat())
 	require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"), "the flag is not listed, so the beat carries a plain 0")
@@ -52,7 +52,7 @@ func TestABeatSendsAPlainZeroWhenTheFlagIsNotListed(t *testing.T) {
 func TestABeatProbesForTheFlagOnce(t *testing.T) {
 	t.Parallel()
 	var asked atomic.Int64
-	g := newRig(Config{As: "m", Width: 1, Meter: hostload.NewSampler(hostload.Source{}), LoadUnmeasured: func() bool { asked.Add(1); return true }})
+	g := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{}), LoadUnmeasured: func() bool { asked.Add(1); return true }})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	require.NoError(t, g.m.Beat())
 	require.NoError(t, g.m.Beat())
@@ -115,7 +115,7 @@ func TestTheBeatAndThePassSayThingsOneAtATime(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		out := newOverlapWriter()
-		m := New(Config{As: "m", Width: 1, Room: func() (bool, string) { return false, "the disk is under its floor" }}, newScript(), newRunner(), &fakePusher{}, out)
+		m := New(Config{As: "m", Room: func() (bool, string) { return false, "the disk is under its floor" }}, rowWidth(newScript(), 1), newRunner(), &fakePusher{}, out)
 		beat, pass := make(chan struct{}), make(chan struct{})
 		go func() { defer close(beat); _ = m.Beat() }()            // no meter: "NOTE beat: load unmeasured", its first line
 		<-out.entered                                              // the beat's line is inside the writer
@@ -136,7 +136,7 @@ func TestTheBeatAndThePassSayThingsOneAtATime(t *testing.T) {
 func TestARefusedBeatIsLoggedOncePerMinute(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1000, 0)
-	g := newRig(Config{As: "m", Width: 1, Now: func() time.Time { return now }})
+	g := newWidthRig(1, Config{As: "m", Now: func() time.Time { return now }})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	g.s.set("beat", 2, "a beat sent to the server is fleet beat <member> --stop-returns <n> --load <percent> and nothing more")
 	require.Error(t, g.m.Beat())
@@ -155,7 +155,7 @@ func TestARefusedBeatIsLoggedOncePerMinute(t *testing.T) {
 func TestARefusedBeatMarksTheMemberBeatRefused(t *testing.T) {
 	t.Parallel()
 	var marks []string
-	g := newRig(Config{As: "m", Width: 1, Status: func(word string) error { marks = append(marks, word); return nil }})
+	g := newWidthRig(1, Config{As: "m", Status: func(word string) error { marks = append(marks, word); return nil }})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	g.s.set("beat", 2, "a beat sent to the server is fleet beat <member> --stop-returns <n> --load <percent> and nothing more")
 	require.Error(t, g.m.Beat())

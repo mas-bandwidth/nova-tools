@@ -112,7 +112,6 @@ type Daemon struct {
 	// Pro holds the friend's pronouns (the row's pronouns setting): every text the daemon
 	// writes about the friend says them through d.say. Nil is they/them.
 	Pro              *PronounsRef
-	Width            int
 	Store            bus.Store
 	Deliver          Deliverer
 	Beat             func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
@@ -170,7 +169,8 @@ type Daemon struct {
 	// Row is the friend's nova-config row as the daemon last read it (from
 	// its beat): her delivery mode (ModeBatch or ModeOneShot) and width,
 	// read every step so a change takes effect without a restart; nil, or
-	// empty answers, deliver in batch at Width.
+	// empty answers, deliver in batch, and a width of 0 runs no lane: the width
+	// is nova-config's alone, answered by the server (row).
 	Row func() (mode string, width int)
 	// Pacing is the row's pacing as the daemon last read it: the fraction of each
 	// subscription window the lanes may spend, read every step; nil, or out of
@@ -618,6 +618,7 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
+	saidNoWidth  bool            // the NOTE that the beat answer names no width has been said (row)
 	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
@@ -727,8 +728,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	defer l.followWG.Wait()
-	defer l.workWG.Wait() // a turn under way ends with ctx (its process group is signalled): Run never returns while one runs
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	defer l.workWG.Wait()                                                          // a turn under way ends with ctx (its process group is signalled): Run never returns while one runs
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing} // the width is the beat answer's, set by row each step
 	if !l.passive {
 		d.status.Session = SessionOK
 	}
@@ -1056,21 +1057,29 @@ func (l *loop) idle(now time.Time) {
 // Row says it (one-shot needs a harness that opens sessions, LaneHarness,
 // else the daemon delivers in batch and says why once; or a CardRunner that
 // can run a card, else its refusal is recorded once and nothing runs), else
-// batch at Width.
+// batch. The width is the beat answer's row_width alone, read every step: the
+// server reads it from nova-config, the one definition of a width, and the
+// daemon has none of its own and no floor. No answer, or 0, is no lane, said
+// once with its remedy (docs/SPEC-SWARM.md, the width; tla/FriendLane.tla
+// RowWidth, LanesStartNeverPastWidth: a floor of 1 opens a lane at width 0).
 func (l *loop) row(now time.Time) (mode string, width int) {
 	d := l.d
-	mode, width = ModeBatch, d.Width
+	mode = ModeBatch
 	if d.Row != nil {
 		m, w := d.Row()
 		if m != "" {
 			mode = m
 		}
-		if w > 0 {
-			width = w
-		}
+		width = max(w, 0)
 	}
-	if width < 1 {
-		width = 1
+	switch {
+	case mode != ModeOneShot: // one batch turn: no lane reads the width
+	case width == 0 && !l.saidNoWidth:
+		l.saidNoWidth = true
+		d.Record(now.UTC().Format(time.RFC3339) + " NOTE width 0: the beat answer names no width for this friend, so no lane takes a card; nova-config is the one definition of a width: nova-config friend set " + d.Friend + " --width <n>")
+	case width > 0 && l.saidNoWidth:
+		l.saidNoWidth = false
+		d.Record(fmt.Sprintf("%s width %d: the beat answer names it; the lanes take cards again", now.UTC().Format(time.RFC3339), width))
 	}
 	d.status.Width = width
 	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {

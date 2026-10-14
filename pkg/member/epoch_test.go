@@ -36,7 +36,7 @@ func (r *epochRunner) told() []uint64 {
 func TestTheRunnerIsToldTheSprintsEpochEachPass(t *testing.T) {
 	t.Parallel()
 	s, r := newScript(), &epochRunner{fakeRunner: newRunner()}
-	m := New(Config{As: "m", Width: 1}, s, r, &fakePusher{}, &bytes.Buffer{})
+	m := New(Config{As: "m"}, rowWidth(s, 1), r, &fakePusher{}, &bytes.Buffer{})
 	s.set("queue", 0, queueJSON(t, 13))
 	_, err := m.Tick(time.Unix(0, 0))
 	require.NoError(t, err)

@@ -328,10 +328,10 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist+" launchd_log="+filepath.Join(r.home, "Library", "Logs", "nova-friend-bob.log")+" dry_run=true",
 			`INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL PLAN command="launchctl bootstrap gui/501 `+plist+`"`,
-			"NOTE the agent runs: nova-friend run --as bob --harness opencode --dir /w/bob --width 4, with --redis and --server as given here")
+			"NOTE the agent runs: nova-friend run --as bob --harness opencode --dir /w/bob, with --redis and --server as given here")
 	assert.NoFileExists(t, plist)
 	assert.Empty(t, r.launchctl)
 
@@ -420,7 +420,7 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 	})
 	agents := filepath.Join(r.home, "Library", "LaunchAgents")
 	plist := filepath.Join(agents, "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--model", "deepseek/deepseek-v4", "--server", "127.0.0.1:6390").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--model", "deepseek/deepseek-v4", "--server", "127.0.0.1:6390").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
@@ -459,7 +459,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
 	s, found, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
@@ -467,7 +467,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, "bob", s.Friend)
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
-	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
+	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer: the daemon has none of its own")
 	assert.Equal(t, "batch", s.Mode, "the row's mode, read from the beat's answer")
 }
 
@@ -714,9 +714,9 @@ func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
 	r.onPath = map[string]string{"nova-secrets": "/opt/nova/bin/nova-secrets", "sops": "/opt/homebrew/bin/sops"}
 	wrap := "/opt/nova/bin/nova-secrets exec --store " + filepath.Join(r.home, "nova-bench", "secrets") + " --as studio --key " + filepath.Join(r.home, ".config", "nova-secrets", "studio.key") +
-		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390 --width 0"
+		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390"
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(0).
-		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis and --server as given here")
+		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob, with --redis and --server as given here")
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--model", "deepseek/deepseek-v4").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
 	raw, err := os.ReadFile(filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 	require.NoError(t, err)
@@ -1370,7 +1370,7 @@ func TestADaemonWhosePlistChangedSaysSoOnStart(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	dir := t.TempDir()
-	plist := friend.Agent{Friend: "bob", Harness: "opencode", Dir: dir, Width: 2, Binary: "/opt/nova/bin/nova-friend", Redis: "store.test:6379", Server: "127.0.0.1:6390", Home: r.home, Coordinator: "ada"}
+	plist := friend.Agent{Friend: "bob", Harness: "opencode", Dir: dir, Binary: "/opt/nova/bin/nova-friend", Redis: "store.test:6379", Server: "127.0.0.1:6390", Home: r.home, Coordinator: "ada"}
 	require.NoError(t, os.MkdirAll(filepath.Dir(plist.PlistPath()), 0o755))
 	require.NoError(t, os.WriteFile(plist.PlistPath(), []byte(plist.Plist()), 0o644))
 	start := func(args ...string) string {
@@ -1390,11 +1390,11 @@ func TestADaemonWhosePlistChangedSaysSoOnStart(t *testing.T) {
 	assert.NotContains(t, start(same...), "plist drift", "the plist's own arguments: no drift")
 
 	old := append([]string(nil), same...)
-	old[slices.Index(old, "--width")+1] = "4" // the arguments loaded before the plist was edited to --width 2
+	old[slices.Index(old, "--server")+1] = "127.0.0.1:6391" // the arguments loaded before the plist was edited to --server 127.0.0.1:6390
 	out := start(old...)
 	assert.Contains(t, out, "plist drift: this daemon's arguments differ from the installed plist")
-	assert.Contains(t, out, "--width 4")
-	assert.Contains(t, out, "plist: run --as bob --harness opencode --dir "+dir+" --redis store.test:6379 --server 127.0.0.1:6390 --width 2")
+	assert.Contains(t, out, "--server 127.0.0.1:6391")
+	assert.Contains(t, out, "plist: run --as bob --harness opencode --dir "+dir+" --redis store.test:6379 --server 127.0.0.1:6390")
 	assert.Contains(t, out, "nova-friend install again")
 }
 

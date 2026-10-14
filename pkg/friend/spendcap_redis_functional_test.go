@@ -73,7 +73,7 @@ func redisDaemon(t *testing.T, b *bus.Bus, h Deliverer) (*Daemon, context.Contex
 	ctx, cancel := context.WithCancel(context.Background())
 	beats := 0
 	d := &Daemon{
-		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: b.Store,
+		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Store: b.Store,
 		noPresent: true, StepBeatForTests: true,
 		Deliver: h,
 		Seat:    func(context.Context) (string, error) { return "ada", nil },

@@ -443,12 +443,10 @@ type takeOut struct {
 // Config is one member's or reader's standing.
 type Config struct {
 	As string // the member's (reader's) name in the fleet (readers) table
-	// Width is an override of the most cards it runs at once, a twin's. A
-	// worker with none runs the width its fleet row names, read with its
-	// queue every tick (the fleet row is the truth): a member's own row, a
-	// reader's the row of the machine it is named for (reader-<m> runs at
-	// m's width, sprint.ReaderMachine).
-	Width  int
+	// A worker has no width of its own: it runs the width its queue answers on every
+	// pass, which the server reads from nova-config, the one definition of a width (a
+	// member its own machine row, a reader named reader-<m> machine m's; docs/SPEC-SWARM.md,
+	// the width).
 	Reader bool // run the readers-table loop instead of the fleet's
 	// Room is asked once a tick before any child is started (a recovered card or a taken
 	// one): ok false starts none that tick, with why said once when it begins and once when
@@ -730,7 +728,7 @@ func NewMeter() *hostload.Sampler {
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: newOneWriter(out), running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
+	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: newOneWriter(out), running: map[string]launch{}, readRetried: map[string]bool{}, returnedAt: map[string]time.Time{},
 		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), reportGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}, finishRefused: map[string]*refusedFinish{}}
 	// the --load-unmeasured probe is the caller's one ask at start (Config.LoadUnmeasured),
 	// so it runs here, once, never on a later beat (Beat reads the flag it set)
@@ -1178,16 +1176,23 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			fmt.Fprintf(m.out, "NOTE reader %s: the readers table has its row; it beats and is asked reads\n", oneLine(m.cfg.As))
 		}
 	}
-	if m.cfg.Width == 0 && q.Width != m.width {
-		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
-		fmt.Fprintf(m.out, "width %d -> %d (the fleet row)\n", m.width, q.Width)
-		m.width = q.Width
+	// The width is the queue answer's on every pass, raised and lowered alike: the server
+	// reads it from nova-config, the one definition of a width, and the worker has none of
+	// its own (docs/SPEC-SWARM.md, the width). Lowered under running cards, none is killed:
+	// nothing new starts until Running() is under it (full, room, lanes; tla/FriendLane.tla
+	// LanesStartNeverPastWidth and NoLaneKilledOnLower hold for these lanes the same way).
+	if w := max(q.Width, 0); w != m.width {
+		fmt.Fprintf(m.out, "width %d -> %d (nova-config)\n", m.width, w)
+		m.width = w
+		if w > 0 {
+			m.saidNoWidth = false
+		}
 	}
-	if m.cfg.Width == 0 && m.width == 0 && !m.saidNoWidth {
-		// no row names a width: a member before its fleet row, a reader named for no
-		// machine; it takes nothing until one does, said once
+	if m.width == 0 && !m.saidNoWidth {
+		// no width answered: a member before its machine row, a reader named for no
+		// machine; it takes nothing until one is, said once
 		m.saidNoWidth = true
-		fmt.Fprintf(m.out, "NOTE width 0: no fleet row names this worker's width, so it takes nothing; a member runs at its own fleet row's, a reader named reader-<m> runs at machine m's (nova-config machine set <m> --width <n>, then nova-sprint fleet sync)\n")
+		fmt.Fprintf(m.out, "NOTE width 0: nova-config names no width for this worker, so it takes nothing; a member runs at its own machine row's, a reader named reader-<m> runs at machine m's (nova-config machine set <m> --width <n>)\n")
 	}
 	// The machine's stop (docs/SPEC-SPRINT.md section 14): every lane is cancelled and its
 	// card handed back with stop-return once the child has ended; nothing is reported,

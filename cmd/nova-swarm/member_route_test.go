@@ -224,12 +224,11 @@ func TestATakenCardTheMemberCannotLaunchIsFinishedFailed(t *testing.T) {
 }
 
 // The MEMBER line says what the member runs on: the card's route, its own model
-// only as an override, and the width as its fleet row's or an override.
+// only as an override, and the width as nova-config's (it has none of its own).
 func TestTheMemberLineSaysTheOverride(t *testing.T) {
 	t.Parallel()
 	for args, want := range map[string]string{
-		"--model ov/m --tokens 5 --deadline 9s": "width=row every=3s server=sprint.test:6390 harness=/bin/true model=card,override:ov/m",
-		"--width 3":                             "width=override:3 every=3s server=sprint.test:6390 harness=/bin/true model=card",
+		"--model ov/m --tokens 5 --deadline 9s": "width=config every=3s server=sprint.test:6390 harness=/bin/true model=card,override:ov/m",
 	} {
 		var out, errb bytes.Buffer
 		cmdMember(append([]string{"--as", "m1", "--harness", "/bin/true", "--root", t.TempDir(), "--once", "--server", "sprint.test:6390"}, strings.Fields(args)...), &out, &errb, noServer)

@@ -50,11 +50,11 @@ func TestAnEndedTakeIsDecidedAndTheFinishCarriesTheDecision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			a := &attemptAsks{err: tc.err}
-			cfg := Config{As: "m", Width: 2}
+			cfg := Config{As: "m"}
 			if tc.decide {
 				cfg.Attempt = a.decide
 			}
-			g := newRig(cfg)
+			g := newWidthRig(2, cfg)
 			p := pk("c1")
 			p.Gen = 2
 			g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
@@ -84,7 +84,7 @@ func TestAnEndedTakeIsDecidedAndTheFinishCarriesTheDecision(t *testing.T) {
 func TestALaunchRefusedAtStagingIsNeverDecided(t *testing.T) {
 	t.Parallel()
 	a := &attemptAsks{}
-	g := newRig(Config{As: "m", Width: 2, Attempt: a.decide})
+	g := newWidthRig(2, Config{As: "m", Attempt: a.decide})
 	p := pk("c1")
 	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
