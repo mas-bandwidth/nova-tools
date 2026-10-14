@@ -2,7 +2,7 @@
 
 Owner: the coordinator (she/her), on Claude Code.
 
-Status: skeleton. Each layer file is a template for its owner to fill.
+Status: final candidate
 
 ## Purpose
 
@@ -42,6 +42,29 @@ Owners are named by the harness each friend runs on, and the coordinator by role
 | 60 State machines to model in TLA+ | [60-state-machines.md](60-state-machines.md) | the coordinator (she/her), filled from 10 to 50 |
 
 Each layer may rely only on the layers below it.
+
+## Version rule
+
+The spec version is the commit sha of the last commit that touched docs/spec/v1.3 on this
+branch (`git log -1 --format=%H -- docs/spec/v1.3`). A friend ratifies by replying RATIFY <sha>
+or OBJECT <sha> with numbered changes. The models and the work cite that sha. Any later edit to
+the directory makes a new version that needs a new round.
+
+## The seven machines
+
+The order is: spec, ratify, models, work.
+
+| Machine | Name | Model card |
+|---|---|---|
+| M1 | Presence and lease | v13-model-m1-presence-lease |
+| M2 | Hook and session | v13-model-m2-hook-session |
+| M3 | Bus delivery and acknowledgment | v13-model-m3-bus-delivery |
+| M4 | Server commit, receipts and epoch | v13-model-m4-server-truth |
+| M5 | Friend lane | v13-model-m5-friend-lane |
+| M6 | Deal and claim | v13-model-m6-deal-claim |
+| M7 | Verdict and merge gate | v13-model-m7-verdict-gate |
+
+Models are written bottom up: M4, M3, M1, M2, M5, M6, M7 (layer 60).
 
 ## Process
 
