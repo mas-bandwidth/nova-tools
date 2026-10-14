@@ -23,7 +23,13 @@ var seatEnvironmentEndpoints = []struct {
 	{flag: "bus-redis", env: "NOVA_BUS_REDIS"},
 }
 
+// writeSeatEnvironment writes the version-1 seat environment profile, or, with
+// --dry-run, only validates it (docs/SPEC-UP.md "The seat environment" and
+// "Plan, then apply"): DryRun is read before any return so a refused dry run
+// is still a dry run and the skeleton never appends its "may have written"
+// diagnostic.
 func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
+	dry := c.DryRun()
 	environment := make(map[string]string, len(seatEnvironmentEndpoints))
 	var missing, invalid []string
 	for _, endpoint := range seatEnvironmentEndpoints {
@@ -70,7 +76,7 @@ func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("HOME must name an absolute directory when XDG_CONFIG_HOME is not absolute (%v)", err))
 	}
-	if c.DryRun() {
+	if dry {
 		return tool.Done().Note("dry run: seat environment validated; nothing written").Fact("fields", 3)
 	}
 	if err := ensureSeatEnvironmentDir(filepath.Dir(path)); err != nil {
