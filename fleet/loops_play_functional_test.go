@@ -1,3 +1,5 @@
+//go:build functional
+
 package fleet
 
 import (
@@ -13,7 +15,9 @@ import (
 
 // loops_play_functional_test.go renders fleet/loops.yml's Linux unit state
 // through ansible-core's own templar (docs/SPEC-RELEASE.md, "The seat adopts an
-// approved build"). At the base the task's state was a folded scalar holding a
+// approved build"). It carries //go:build functional (docs/STANDARD.md section 8;
+// unit-rule) so the unit tier does not compile the ansible render. At the base
+// the task's state was a folded scalar holding a
 // parenthesised ternary chained to a second `if ... else`; ansible-core stops at
 // the `else` ("expected token ')', got 'else'"), so no Linux host ever restarted
 // its unit. This renders the expression the task builds (loop_unit_state when
