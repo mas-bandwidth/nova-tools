@@ -32,6 +32,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -372,7 +373,7 @@ const FieldAnswerRulesOff = "answer_rules_off"
 // coordinator. Every attempt counts, whatever ended it. Only a coordinator decision on the
 // card opens a fresh window of as many attempts. Apply writes it to SprintKey(FieldMaxAttempts),
 // which the sprint's routes read takes; a stream's own `nova-sprint stream set <s> --attempts
-// <n>` still overrides it for that stream. The same field as nova-sprint's pkg/config copy.
+// <n>` still overrides it for that stream.
 const FieldMaxAttempts = "max_attempts"
 
 // DefaultMaxAttempts is the attempt bound when the sprint row names none: 4.
@@ -382,14 +383,20 @@ const DefaultMaxAttempts = 4
 const MaxAttemptsCeiling = 100
 
 // FieldGitIdentity is the sprint row's author and committer for every commit the sprint
-// machine makes, as "Name <email>". Apply writes it to SprintKey(FieldGitIdentity), which
-// nova-sprint's lander reads; the landing refuses to commit when it is empty, so nova-config
-// must be able to set it (the same field as nova-sprint's pkg/config copy, migration 0037).
+// machine makes (land, merge, rework-at-tip, ledger and roadmap writes), as "Name <email>".
+// Apply writes it to SprintKey(FieldGitIdentity), which the lander reads; an empty or
+// unapplied field is read as DefaultGitIdentity (nova-sprint's working defaults), so the
+// machine commits as its own identity, never the host's global git config.
 const FieldGitIdentity = "git_identity"
 
-// DefaultGitIdentity is the identity the sprint machine commits as when the sprint row
-// names none: a generic machine identity, which the coordinator sets to the fleet's own.
-const DefaultGitIdentity = "nova-sprint <nova-sprint@example.invalid>"
+// DefaultGitIdentity, GitIdentity and ParseGitIdentity live in pkg/gitrun (a leaf with
+// no store dependency, so a worker reaches the identity without opening the store through
+// pkg/config); they are re-exported here for the sprint row's readers.
+const DefaultGitIdentity = gitrun.DefaultGitIdentity
+
+type GitIdentity = gitrun.GitIdentity
+
+func ParseGitIdentity(v string) (GitIdentity, bool) { return gitrun.ParseGitIdentity(v) }
 
 // AnswerRules is every rule the sprint answers a mechanical judgment by (internal/sprint,
 // RuleNames, which a test holds equal): work came back failed, a card at its bound, a work
@@ -555,7 +562,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
 			{Name: FieldAnswerRulesOff, Type: TypeList, Enum: AnswerRules, Help: "the rules the machine does not answer judgments by: comma list of " + strings.Join(AnswerRules, ", ") + "; empty (the default) answers by every rule: failed and no-result work redealt then raised a tier, a card at its bound raised a tier (heavy to a friend), a late card waited once or returned and redealt, a conflict in a file no ledger owns returned, redone on the tip and resumed, the same finding twice marked a brief defect, the base tree gate retried before a stream stops, a friend's card the friend has not started past its bound taken back and dealt again, failed work whose report HOLDs for a card not landed waiting for it, a reader's first finding reworked as the fix, and a late read asked of another reader once an attempt (docs/SPEC-SPRINT.md section 8, answered by rule)"},
-			{Name: FieldGitIdentity, Type: TypeText, Default: DefaultGitIdentity, Help: "the author and committer every commit the sprint machine makes carries, as 'Name <email>'; the landing refuses to commit when it is empty, and doctor fails when its email equals the host's global user.email; " + DefaultGitIdentity + " (the default)"},
+			{Name: FieldGitIdentity, Type: TypeText, Default: DefaultGitIdentity, Help: "the author and committer every commit the sprint machine makes carries, as 'Name <email>'; an unapplied or empty one reads as the default (doctor warns), a value that does not parse is refused by the landing, and doctor fails when its email equals the host's global user.email; " + DefaultGitIdentity + " (the default)"},
 			{Name: FieldMaxAttempts, Type: TypeInt, Default: strconv.Itoa(DefaultMaxAttempts), Help: fmt.Sprintf("the attempt bound: how many attempts one card runs, every attempt counted whatever ended it, before the sprint stops dealing it and raises one judgment to the coordinator, who decides (brief, rework --tier, rework --carry, drop) and so opens a fresh window of as many attempts; a whole number from 1 to %d; %d (the default); a stream's own nova-sprint stream set <s> --attempts <n> still overrides it for that stream", MaxAttemptsCeiling, DefaultMaxAttempts)},
 		},
 		Check: checkSprint,

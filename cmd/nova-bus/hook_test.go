@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/hook/hooktest"
@@ -13,13 +14,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// hookedRig is the rig whose gate is the real hook record, on a hooktest
-// store beside the bus's fake: nothing is hooked until a test hooks it.
+// hookedRig is the rig whose gate and names reader are the real hook record, on
+// a hooktest store beside the bus's fake: nothing is hooked until a test hooks it.
 func hookedRig(t *testing.T) (*rig, *hooktest.Rig) {
 	t.Helper()
 	r := newRig("ada", "bob")
 	h := hooktest.New(t)
 	r.gate = func(ctx context.Context, _ bus.Store, want hook.Want) error { return h.Store.Gate(ctx, want) }
+	r.hooks = func(ctx context.Context, _ bus.Store, names ...string) ([]hook.Status, time.Time, error) {
+		return h.Store.Read(ctx, names...)
+	}
 	return r, h
 }
 
@@ -120,4 +124,43 @@ func TestTheGateFailsClosed(t *testing.T) {
 	got, err := (&bus.Bus{Store: r.store}).Log(context.Background(), "-")
 	require.NoError(t, err)
 	assert.Empty(t, got)
+}
+
+// TestNamesReadsTheHookRecord pins that nova-bus names reads each known name's
+// presence from the hook record: proven when hooked with its pushes proven and
+// heartbeat evidence fresh, none when never hooked, unhooked with the heartbeat's
+// reason when unhooked, and down when the holders are proven and the heartbeat
+// evidence is not.
+func TestNamesReadsTheHookRecord(t *testing.T) {
+	t.Parallel()
+	r, h := hookedRig(t)
+	cli := r.cli()
+	h.Hook(t, "ada", hook.Friend)
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=1",
+		"NAMES NAME name=ada state=proven role=friend reason=-",
+		"NAMES NAME name=bob state=none role=- reason=-",
+	)
+
+	h.Hook(t, "bob", hook.Comms)
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=2",
+		"NAMES NAME name=ada state=proven role=friend reason=-",
+		"NAMES NAME name=bob state=proven role=comms reason=-",
+	)
+
+	h.Unhook(t, "bob")
+	require.NoError(t, h.Client.HSet(context.Background(), hook.RecordKey("bob"), "reason", "missed 2 challenges").Err())
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=1",
+		`NAMES NAME name=bob state=unhooked role=comms reason="missed 2 challenges"`,
+	)
+
+	// bob hooks in again with holders proven, then loses its challenge answer
+	h.Hook(t, "bob", hook.Comms)
+	require.NoError(t, h.Client.HDel(context.Background(), hook.RecordKey("bob"), "answered_at").Err())
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=1",
+		`NAMES NAME name=bob state=down role=comms reason="no answer to a heartbeat challenge within the window"`,
+	)
 }

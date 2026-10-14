@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -40,9 +41,13 @@ type UsageRead struct {
 // {"data": {"total_credits": <dollars bought>, "total_usage": <dollars used>}}.
 const OpenRouterURL = "https://openrouter.ai/api/v1/credits"
 
+// DeepSeekURL is deepseek's user balance endpoint: GET with the key as a bearer token answers
+// {"is_available": <bool>, "balance_infos": [{"currency": "USD"|"CNY", "total_balance": "<decimal string>", ...}]}.
+const DeepSeekURL = "https://api.deepseek.com/user/balance"
+
 // KeyEnv is the variable each provider's key is in, as nova-secrets exec delivers it to the
 // run loop (`nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint run ...`).
-var KeyEnv = map[string]string{"openrouter": "OPENROUTER_API_KEY"}
+var KeyEnv = map[string]string{"openrouter": "OPENROUTER_API_KEY", "deepseek": "DEEPSEEK_API_KEY"}
 
 // unknownWhy is why a provider with no balance endpoint is recorded unknown.
 var unknownWhy = map[string]string{
@@ -62,20 +67,24 @@ const maxBody = 64 << 10
 // is unknown with why.
 func Read(ctx context.Context, rt http.RoundTripper, provider string, getenv func(string) string) ProviderRead {
 	unknown := func(why string) ProviderRead { return ProviderRead{Provider: provider, Note: why} }
-	if provider != "openrouter" {
+	env := KeyEnv[provider]
+	if env == "" {
 		if why, ok := unknownWhy[provider]; ok {
 			return unknown(why)
 		}
 		return unknown("no balance endpoint is known for provider " + provider)
 	}
-	env := KeyEnv[provider]
 	key := getenv(env)
 	if key == "" {
 		return unknown(env + " is not in the run loop's environment: run it under nova-secrets exec --only " + env)
 	}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OpenRouterURL, nil)
+	url := OpenRouterURL
+	if provider == "deepseek" {
+		url = DeepSeekURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return unknown("the request could not be made: " + err.Error())
 	}
@@ -85,15 +94,36 @@ func Read(ctx context.Context, rt http.RoundTripper, provider string, getenv fun
 	}
 	resp, err := (&http.Client{Transport: rt}).Do(req)
 	if err != nil {
-		return unknown("GET " + OpenRouterURL + " failed: " + err.Error())
+		return unknown("GET " + url + " failed: " + err.Error())
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return unknown("GET " + OpenRouterURL + ": the answer could not be read: " + err.Error())
+		return unknown("GET " + url + ": the answer could not be read: " + err.Error())
 	}
 	if resp.StatusCode != http.StatusOK {
-		return unknown(fmt.Sprintf("GET %s answered %d", OpenRouterURL, resp.StatusCode))
+		return unknown(fmt.Sprintf("GET %s answered %d", url, resp.StatusCode))
+	}
+	if provider == "deepseek" {
+		var wire struct {
+			BalanceInfos []struct {
+				Currency     string `json:"currency"`
+				TotalBalance string `json:"total_balance"`
+			} `json:"balance_infos"`
+		}
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return unknown("GET " + url + ": the answer could not be parsed: " + err.Error())
+		}
+		for _, info := range wire.BalanceInfos {
+			if info.Currency == "USD" {
+				bal, err := strconv.ParseFloat(info.TotalBalance, 64)
+				if err != nil {
+					return unknown("GET " + url + ": invalid USD balance: " + info.TotalBalance)
+				}
+				return ProviderRead{Provider: provider, Known: true, Balance: bal}
+			}
+		}
+		return unknown("GET " + url + ": no USD entry in balance_infos")
 	}
 	var wire struct {
 		Data struct {
@@ -102,7 +132,7 @@ func Read(ctx context.Context, rt http.RoundTripper, provider string, getenv fun
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil || wire.Data.Credits == nil || wire.Data.Usage == nil {
-		return unknown("GET " + OpenRouterURL + " answered no data.total_credits and data.total_usage")
+		return unknown("GET " + url + " answered no data.total_credits and data.total_usage")
 	}
 	return ProviderRead{Provider: provider, Known: true, Balance: *wire.Data.Credits - *wire.Data.Usage, HasUsed: true, Used: *wire.Data.Usage}
 }

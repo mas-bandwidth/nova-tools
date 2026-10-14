@@ -1231,6 +1231,10 @@ func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...
 	_, err = (operation{table: t.Name}).write(ctx, c, FnBind, opts, body)
 	return err
 }
+
+// Clear empties the table at its active epoch: every row and its cells and the
+// table's properties are removed, the table's definition kept. A row with a
+// column bound is refused, so nothing it guards is lost by the clear.
 func Clear(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (int64, error) {
 	reply, err := (operation{table: name}).write(ctx, c, FnClear, opts)
 	if err != nil {

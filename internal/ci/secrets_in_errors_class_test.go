@@ -24,6 +24,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 	"github.com/mas-bandwidth/nova-tools/pkg/fleet"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 	nslog "github.com/mas-bandwidth/nova-tools/pkg/log"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
@@ -102,6 +103,7 @@ var secretOpeners = map[string]any{
 	"internal/ci/allowlist.Parse":                 ciallowlist.Parse,
 	"pkg/config.OpenFile":                         config.OpenFile,
 	"pkg/config.OpenPG":                           config.OpenPG,
+	"pkg/config.ParseGitIdentity":                 config.ParseGitIdentity,
 	"internal/converge.ParseCerts":                converge.ParseCerts,
 	"internal/converge.ParseRetired":              converge.ParseRetired,
 	"internal/converge.ParseSince":                converge.ParseSince,
@@ -141,6 +143,7 @@ var secretOpeners = map[string]any{
 	"pkg/friend.ParseReadSlots":                   friend.ParseReadSlots,
 	"pkg/friend.ParseRow":                         friend.ParseRow,
 	"pkg/friend.ParseView":                        friend.ParseView,
+	"pkg/gitrun.ParseGitIdentity":                 gitrun.ParseGitIdentity,
 	"pkg/hostload.ParseProcStat":                  hostload.ParseProcStat,
 	"pkg/hostload.ParseTopCPU":                    hostload.ParseTopCPU,
 	"pkg/hostload.ParseTopCPUInterval":            hostload.ParseTopCPUInterval,
@@ -161,6 +164,7 @@ var secretOpeners = map[string]any{
 	"pkg/secretcheck.ParseAllowlist":              secretcheck.ParseAllowlist,
 	"pkg/secrets.NewSecret":                       secrets.NewSecret,
 	"pkg/secrets.OpenSeatFile":                    secrets.OpenSeatFile,
+	"pkg/secrets.ParseNameLine":                   secrets.ParseNameLine,
 	"pkg/secrets.ParseSopsConfig":                 secrets.ParseSopsConfig,
 	"pkg/secrets.ParseStoreFileWithoutDecrypting": secrets.ParseStoreFileWithoutDecrypting,
 	"pkg/swarm.NewWallReader":                     swarm.NewWallReader,

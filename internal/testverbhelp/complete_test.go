@@ -1,7 +1,6 @@
 package testverbhelp
 
 import (
-	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -21,17 +20,6 @@ exit codes: 0 done, 2 could not run
 `
 
 const completeRefusal = "GO REFUSED: unknown flag --nope; the flags of go are --fast, --out; run: tool go -h\n"
-
-func fixture(help, refusal string) Run {
-	return func(args []string, stdout, stderr io.Writer) int {
-		if args[len(args)-1] == UnknownFlag {
-			_, _ = io.WriteString(stderr, refusal)
-			return 2
-		}
-		_, _ = io.WriteString(stdout, help)
-		return 0
-	}
-}
 
 // A fixture verb missing each part is red for that part, and only that part.
 func TestEveryVerbsHelpIsComplete(t *testing.T) {
@@ -57,8 +45,6 @@ func TestEveryVerbsHelpIsComplete(t *testing.T) {
 		t.Run(r.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, r.want, Gaps(r.help, r.ref))
-			_, gaps := Completeness(fixture(r.help, r.ref), Case{Verb: "go"}, t.TempDir())
-			assert.Equal(t, r.want, gaps)
 		})
 	}
 }

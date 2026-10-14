@@ -6,9 +6,167 @@ import (
 	"testing"
 	"time"
 
+	"context"
+	"errors"
+	"os/exec"
+	"strings"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
+
+// testBaseSha40 is a full-length sha a BASE: line can carry.
+const testBaseSha40 = "0123456789abcdef0123456789abcdef01234567"
+
+// A base-repo: line is preferred over REPO:, and a Stage: line's files are collected.
+func TestReadCardBasePrefersBaseRepoAndCollectsStage(t *testing.T) {
+	t.Parallel()
+	card := []byte("RESULT: c1 sha=000000000000 tier: pro\n" +
+		"base-repo: git@github.com:mas-bandwidth/nova-sprint.git\n" +
+		"REPO: someone/else\n" +
+		"Stage: docs/a.sexp docs/b.sexp\n" +
+		"\n" +
+		"THE TASK.\n")
+	got := ReadCardBase(card)
+	assert.Equal(t, "git@github.com:mas-bandwidth/nova-sprint.git", got.Repo)
+	assert.Equal(t, "git@github.com:mas-bandwidth/nova-sprint.git", got.Named)
+	assert.Equal(t, []string{"docs/a.sexp", "docs/b.sexp"}, got.Stage)
+}
+
+// CardStageBranch names the branch the staged checkout is on: worker/<label> from line 1.
+func TestCardStageBranchNamesTheWorkerFromTheContractLine(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "worker/c1", CardStageBranch([]byte("RESULT: c1 sha=000000000000 tier: pro\n\nTHE TASK.\n")))
+	assert.Equal(t, "worker/card", CardStageBranch([]byte(":not a label\n")))
+}
+
+// CardNamesRepo reports whether the card names a repository at all, readable or not.
+func TestCardNamesRepoReportsANamedRepository(t *testing.T) {
+	t.Parallel()
+	assert.True(t, CardNamesRepo([]byte("RESULT: c1 sha=0\nREPO: mas-bandwidth/nova-sprint\n\nT.\n")))
+	assert.True(t, CardNamesRepo([]byte("RESULT: c1 sha=0\nREPO: not-a-repo\n\nT.\n")))
+	assert.False(t, CardNamesRepo([]byte("RESULT: c1 sha=0\n\nT.\n")))
+}
+
+// FindBenchMirror finds the bench's local mirror: a base repo that is a git dir on disk is
+// itself, and a name with no mirror anywhere is "".
+func TestFindBenchMirrorFindsTheLocalMirror(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+
+	assert.Equal(t, repo, FindBenchMirror(dir, repo))
+	assert.Equal(t, "", FindBenchMirror(dir, ""))
+	assert.Equal(t, "", FindBenchMirror(dir, filepath.Join(dir, "absent")))
+}
+
+// MirrorCloneArgs is the git argv of the one staging convention: a borrowing clone shares
+// the mirror's objects, a copying clone references then dissociates.
+func TestMirrorCloneArgsBuildsTheCloneArgv(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"clone", "-q", "--shared", "--", "m", "t"}, MirrorCloneArgs("m", "t", true))
+	assert.Equal(t, []string{"clone", "-q", "--reference", "m", "--dissociate", "--", "m", "t"}, MirrorCloneArgs("m", "t", false))
+}
+
+// WriteStageTimeoutResult writes the RESULT.md for a stage timeout, and nothing for an
+// empty job dir.
+func TestWriteStageTimeoutResultWritesTheResult(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dest, err := WriteStageTimeoutResult(dir, "bench1", 120)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "RESULT.md"), dest)
+	b, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "RESULT: BLOCKED stage-timeout bench1 120")
+
+	dest, err = WriteStageTimeoutResult("", "bench1", 120)
+	require.NoError(t, err)
+	assert.Equal(t, "", dest)
+}
+
+// initStageRepo makes a throwaway git repository under t.TempDir() with one commit, and
+// returns its directory and the full sha of the commit.
+func initStageRepo(t *testing.T) (dir, sha string) {
+	t.Helper()
+	dir = t.TempDir()
+	git := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = testgit.Environ()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644))
+	git("add", "-A")
+	git("commit", "-q", "-m", "base")
+	return dir, git("rev-parse", "HEAD")
+}
+
+// StageCard stages a card whose base-repo is a local git dir at its base-sha: the checkout
+// lands on the card's branch at the sha, and Staged is true.
+func TestStageCardStagesALocalRepoAtItsSha(t *testing.T) {
+	t.Parallel()
+	repo, sha := initStageRepo(t)
+	target := filepath.Join(t.TempDir(), "repo")
+	card := []byte("RESULT: c1 sha=000000000000 tier: pro\n" +
+		"base-repo: " + repo + "\n" +
+		"base-sha: " + sha + "\n" +
+		"\n" +
+		"THE TASK.\n")
+	res, err := StageCard(StageOptions{Card: card, TargetDir: target, BenchHome: t.TempDir()})
+	require.NoError(t, err)
+	assert.True(t, res.Staged)
+	assert.Equal(t, repo, res.BaseRepo)
+	assert.Equal(t, sha, res.BaseSha)
+	assert.Equal(t, "worker/c1", res.Branch)
+}
+
+// StageCard with no card and no base, and a card that names no repo, stage nothing.
+func TestStageCardStagesNothingWithoutARepo(t *testing.T) {
+	t.Parallel()
+	res, err := StageCard(StageOptions{})
+	require.NoError(t, err)
+	assert.False(t, res.Staged)
+
+	res, err = StageCard(StageOptions{Card: []byte("RESULT: c1 sha=0\n\nTHE TASK.\n"), TargetDir: filepath.Join(t.TempDir(), "r")})
+	require.NoError(t, err)
+	assert.False(t, res.Staged)
+}
+
+// stageTimedOut reports whether a staging call ended because the deadline passed.
+func TestStageTimedOutReadsTheDeadline(t *testing.T) {
+	t.Parallel()
+	// a deadline already past: the context is done at once, no clock waited on
+	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	defer cancel()
+	assert.True(t, stageTimedOut(ctx, ctx.Err()))
+	assert.True(t, stageTimedOut(ctx, context.DeadlineExceeded))
+	assert.True(t, stageTimedOut(ctx, exec.ErrWaitDelay))
+	assert.False(t, stageTimedOut(context.Background(), errors.New("other")))
+}
+
+// mirrorKeepsObjects reads the mirror's gc.auto and writes it when absent, so a borrowing
+// clone's objects are never dropped by a refresh's gc.
+func TestMirrorKeepsObjectsSetsAndReadsGcAuto(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	git := func(ctx context.Context, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = testgit.Environ()
+		return cmd
+	}
+	require.NoError(t, exec.Command("git", "init", "-q", dir).Run())
+	assert.True(t, mirrorKeepsObjects(context.Background(), git, dir))
+	assert.True(t, mirrorKeepsObjects(context.Background(), git, dir))
+}
 
 func TestParseCardBase(t *testing.T) {
 	t.Parallel()

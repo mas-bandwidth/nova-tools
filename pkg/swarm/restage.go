@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"os"
+
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
@@ -26,7 +28,7 @@ import (
 // A base that is a full sha, a tag (a ref the clone holds as a tag and not as a branch) or none
 // never moves: the checkout stays where the stage put it and the carry is nil. A fetch of the
 // branch that fails is the stage's failure (what names the step), never a stage at a stale tip.
-func restageAtTip(ctx context.Context, git func(context.Context, ...string) *exec.Cmd, dir, branch, base string, rw Rework,
+func restageAtTip(ctx context.Context, git func(context.Context, ...string) *exec.Cmd, dir, branch, base string, rw Rework, identity []string,
 	fetchTime, checkoutTime *time.Duration) (c *cardcontract.Carry, what string, out []byte, err error) {
 	if base == "" || typedrec.IsFullSha(base) {
 		return nil, "", nil, nil
@@ -97,7 +99,12 @@ func restageAtTip(ctx context.Context, git func(context.Context, ...string) *exe
 	}
 	msg := fmt.Sprintf("carry attempt %d's work (%s) onto the tip of %s (%s)\n\nnova-swarm staged this rework at the tip of its base branch with the work of the attempt before carried on top (docs/SPEC-CARD-CONTRACT.md, where a rework starts).",
 		rw.From, short12(rw.Prev), base, short12(tip))
-	if out, err := stageTimedOutput(git(ctx, in("-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", msg)...), checkoutTime); err != nil {
+	commitCmd := git(ctx, in("-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", msg)...)
+	// the rework-at-tip carry is the machine's own commit: it takes the configured identity
+	// (the sprint row's git_identity), never the clone's local config or the host's global
+	// one (docs/SPEC-SPRINT.md, the machine's commit identity).
+	withStageIdentity(commitCmd, identity)
+	if out, err := stageTimedOutput(commitCmd, checkoutTime); err != nil {
 		return nil, "commit of the carried work", out, err
 	}
 	headOut, err := git(ctx, in("rev-parse", "HEAD")...).Output()
@@ -115,4 +122,28 @@ func cmpErr(err error, why string) error {
 		return err
 	}
 	return errors.New(why)
+}
+
+// withStageIdentity sets cmd's environment to the configured identity's author and
+// committer, dropping any the caller's environment carries first, so the machine's own
+// commit carries the configured identity, never the host's global git config or the
+// clone's local config; identity empty leaves cmd as it is.
+func withStageIdentity(cmd *exec.Cmd, identity []string) {
+	if len(identity) == 0 || cmd == nil {
+		return
+	}
+	base := cmd.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	out := make([]string, 0, len(base)+len(identity))
+	for _, kv := range base {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL":
+			continue
+		}
+		out = append(out, kv)
+	}
+	cmd.Env = append(out, identity...)
 }

@@ -29,7 +29,6 @@ pkg/friend/stage_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): re
 pkg/member/meter_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
 pkg/nsprint/testutil/github_test.go:http 1 allowed until moved, v1.3 (2026-10-12): http.Get
 pkg/redisconn/open_test.go:deadline 1 allowed until moved, v1.3 (2026-10-12): spy.SetWriteDeadline(time.Now()...)
-pkg/release/adopt_one_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
 pkg/sandbox/policy_netallow_darwin_test.go:service 1 allowed until moved, v1.3 (2026-10-12): exec.LookPath("nc")
 pkg/swarm/lanereap_unix_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
 pkg/testredis/far_test.go:deadline 2 allowed until moved, v1.3 (2026-10-12): c.SetDeadline(time.Now()...)

@@ -16,6 +16,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `cardlimits/` | a card brief's refusal bound and the lint's size advice: two constants, no dependencies | `go test ./pkg/cardlimits` | `go test ./pkg/cardlimits` |
 | `cardtree/` | a card as a tree of steps: the step grammar, its lint, the script step the member runs with no model, the verdict per step and the remainder of a failed step | `go test ./pkg/cardtree` | `go test ./pkg/cardtree` |
 | `ci/` | class tests and CI budget invariants | `go test ./pkg/ci/...` | `go test ./pkg/ci/...` |
+| `codexdesktop/` | bounded native IPC delivery to an existing Codex desktop chat, with fixed external-event notices and inherited thread settings | `go test ./pkg/codexdesktop` | `go test ./pkg/codexdesktop` |
 | `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state | `go test ./pkg/config` | `go test ./pkg/config` |
 | `decide/` | nova-decide's decision system: schemas (read, attempt, grade), backends (Jev, fixed), the record and calibration | `go test ./pkg/decide` | `go test ./pkg/decide` |
 | `delayproxy/` | a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay | `go test ./pkg/delayproxy` | `go test ./pkg/delayproxy` |

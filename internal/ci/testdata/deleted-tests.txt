@@ -2322,3 +2322,8 @@ cmd/nova-swarm/contract_functional_test.go both tests (the scripted child end to
 internal/ci/testdata/toolanswers/cmd/nova-sprint.txt nova-sprint's tool-answers shard; the tool left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7), so its row has no site here
 internal/ci/nested_modules_class_test.go nova-tools is one module now (hook/ and pkg/oneline/ folded in, go.work gone); its rule is replaced by TestOneModule in internal/ci/one_module_class_test.go
 internal/update/transaction_locks_test.go stale: it tested only a test helper whose callers were the git-bus join tests, deleted with the join machinery in 91398786c
+pkg/testkit/waits_test.go testkit.Waits had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with waits.go
+pkg/testkit/script_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
+pkg/testkit/script_failure_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
+pkg/testkit/contract_test.go testkit.Contract had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with contract.go
+cmd/nova-bus/pushproof_test.go nova-bus send, recv and names read the hook record and no longer emit bus2:push notes or take --require-push; TestNamesReadsTheHookRecord in cmd/nova-bus/hook_test.go covers names

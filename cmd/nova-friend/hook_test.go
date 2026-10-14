@@ -43,26 +43,26 @@ func (r *hookRig) restart(t *testing.T, role hook.Role) {
 }
 
 // TestALaneTakesNothingWhileAPushIsDown pins the friend's gate in her daemon
-// (docs/SPEC-HOOK.md; tla/Hook.tla, GateMeansHooked): with her work push down
-// (no beat answered yet) her lanes take nothing and report nothing; once the
-// server answers a beat both pushes are proven and the take is sent; with her
-// session's check unanswered the bus push is unproven and nothing is taken;
-// unhooked, nothing is taken until she is hooked in again.
+// (docs/SPEC-HOOK.md; tla/Hook.tla, GateMeansHooked): with her bus push
+// unproven (her session's check unanswered) her lanes take nothing and report
+// nothing; once her bus push is proven the take is sent; unhooked, nothing is
+// taken until she is hooked in again.
 func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
+	r.session = false
 	sent := 0
 	take := gated(r.dh, func(context.Context, []string) (string, error) { sent++; return "LANE OK", nil })
 
 	r.dh.step(ctx)
 	_, err := take(ctx, []string{"friend", "take"})
 	require.ErrorIs(t, err, ErrUnhooked)
-	assert.Contains(t, err.Error(), "live as friend (bus=proven work=armed)")
-	assert.Zero(t, sent, "a lane with one push down takes nothing")
+	assert.Contains(t, err.Error(), "live as friend (bus=armed)")
+	assert.Zero(t, sent, "a lane with her bus push unproven takes nothing")
 	assert.Equal(t, hook.StateLive, r.h.State(t, "bob").State)
 
-	r.dh.beatAnswered(nil)
+	r.session = true
 	r.dh.step(ctx)
 	got, err := take(ctx, []string{"friend", "take"})
 	require.NoError(t, err)
@@ -76,13 +76,7 @@ func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnhooked, "her session's check unanswered: the bus push is unproven")
 	r.session = true
 
-	r.now = r.now.Add(hook.LeaseTTL)
-	r.dh.step(ctx)
-	_, err = take(ctx, nil)
-	assert.ErrorIs(t, err, ErrUnhooked, "no beat answered inside a lease: the work push is unproven")
-
 	r.h.Unhook(t, "bob")
-	r.dh.beatAnswered(nil)
 	r.dh.step(ctx)
 	_, err = take(ctx, nil)
 	require.ErrorIs(t, err, ErrUnhooked)
@@ -100,11 +94,12 @@ func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 
 // TestTheBeatSaysUnhooked pins her beat: while the gate says no her beat is a
 // down beat with the reason unhooked, never an up beat that would show her
-// alive; its answer is her work push's round trip; hooked in, the up beat goes.
+// alive; hooked in, the up beat goes.
 func TestTheBeatSaysUnhooked(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
+	r.session = false
 	var ups, downs []string
 	up := func(_ context.Context, _, name string, _ time.Time, _ friend.BeatWords) (string, error) {
 		ups = append(ups, name)
@@ -123,12 +118,14 @@ func TestTheBeatSaysUnhooked(t *testing.T) {
 	require.Len(t, downs, 1)
 	assert.Contains(t, downs[0], "bob until="+start.Add(hook.LeaseTTL).Format(time.RFC3339)+" unhooked: bob is not hooked in")
 
-	r.dh.step(ctx) // the down beat was answered: her work push is proven now
+	r.session = true
+	r.dh.step(ctx) // her bus push is proven now
 	_, err = beat(ctx, "srv", "bob", time.Time{}, friend.BeatWords{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bob"}, ups)
 
 	r2 := newHookRig(t, hook.Friend)
+	r2.session = false
 	beatNoDown, _ := r2.dh.beats(func() time.Time { return r2.now }, up, nil)
 	_, err = beatNoDown(ctx, "srv", "bob", time.Time{}, friend.BeatWords{})
 	assert.ErrorIs(t, err, ErrUnhooked, "with no down beat an unhooked beat is not sent")

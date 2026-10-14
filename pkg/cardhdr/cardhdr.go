@@ -65,8 +65,13 @@ type TestLine struct {
 	// Package and Name are `TEST: <package> <TestName>`: the Go package
 	// path the wrapper runs and the test it selects. Tags are the build
 	// tags the test needs (`TEST: -tags functional <package> <TestName>`),
-	// "" for none.
+	// "" for none. For `TEST: ctest <TestName>` the Runner is "ctest",
+	// Package is empty and Name is the ctest test name.
 	Package, Name, Tags string
+	// Runner is the test runner the line names: "go" for today's
+	// `[-tags <tags>] <package> <TestName>` form, "ctest" for
+	// `ctest <TestName>`. The empty string reads as "go".
+	Runner string
 	// None is `TEST: none <why>`; Why is the reason the card has no test.
 	None bool
 	Why  string
@@ -74,7 +79,7 @@ type TestLine struct {
 
 // TestRemedy is what a card whose DONE-WHEN cannot be turned into a test is
 // told, on every refusal.
-const TestRemedy = "name `go test <package> -run <TestName>` in DONE-WHEN, or add TEST: [-tags <tags>] <package> <TestName>, or TEST: none <why the change has no test>"
+const TestRemedy = "name `go test <package> -run <TestName>` in DONE-WHEN, or add TEST: [-tags <tags>] <package> <TestName>, or TEST: ctest <TestName>, or TEST: none <why the change has no test>"
 
 var (
 	// testPkgRE is a ./-relative or repository-relative Go package path.
@@ -83,17 +88,21 @@ var (
 	testPkgRE  = regexp.MustCompile(`^(\.|\./[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*)/?$`)
 	testNameRE = regexp.MustCompile(`^(Test|Example|Fuzz)[A-Za-z0-9_]*$`)
 	testTagsRE = regexp.MustCompile(`^[A-Za-z0-9_.]+(,[A-Za-z0-9_.]+)*$`)
+	// testCtestRE is a ctest test name: letters, digits, _, . and - and /,
+	// no spaces.
+	testCtestRE = regexp.MustCompile(`^[A-Za-z0-9_.\-\/]+$`)
 )
 
 // ParseTest reads a TEST value: `[-tags <tags>] <package> <TestName>` (the
 // package one ./-relative or repository-relative Go package with no .. and
-// no `...` pattern, the name a Go test name, the tags go test's -tags list)
-// or `none <why>`. Anything
+// no `...` pattern, the name a Go test name, the tags go test's -tags list),
+// `ctest <TestName>` (the name a ctest test name, run as
+// `ctest --test-dir build -R '^<TestName>$'`) or `none <why>`. Anything
 // else is refused: why is one line with the remedy, and the line is zero. A
 // bare `none` is refused too: the reader must see why.
 func ParseTest(v string) (TestLine, string) {
 	f := strings.Fields(v)
-	refused := "TEST " + strings.TrimSpace(v) + " is not `[-tags <tags>] <package> <TestName>` or `none <why>`: " + TestRemedy
+	refused := "TEST " + strings.TrimSpace(v) + " is not `[-tags <tags>] <package> <TestName>`, `ctest <TestName>` or `none <why>`: " + TestRemedy
 	switch {
 	case len(f) == 0:
 		return TestLine{}, "DONE-WHEN cannot be turned into a test (no TEST line): " + TestRemedy
@@ -103,6 +112,14 @@ func ParseTest(v string) (TestLine, string) {
 			return TestLine{}, "TEST: none says no why: write TEST: none <why the change has no test>, or TEST: <package> <TestName>"
 		}
 		return TestLine{None: true, Why: why}, ""
+	}
+	// `ctest <TestName>`: the new non-Go form. The name is a ctest name, and
+	// there is no package and no -tags.
+	if !strings.HasPrefix(f[0], "-") && strings.EqualFold(f[0], "ctest") {
+		if len(f) == 2 && testCtestRE.MatchString(f[1]) {
+			return TestLine{Runner: "ctest", Name: f[1]}, ""
+		}
+		return TestLine{}, refused
 	}
 	var tags string
 	flagged := strings.HasPrefix(f[0], "-")
@@ -119,7 +136,7 @@ func ParseTest(v string) (TestLine, string) {
 		return TestLine{}, "TEST " + strings.TrimSpace(v) + " names a package pattern (" + f[0] + "), not one package: a red at base must be the named test's own, so name the package the test is in: " + TestRemedy
 	}
 	if len(f) == 2 && testPkgRE.MatchString(f[0]) && !hasDotDot(f[0]) && testNameRE.MatchString(f[1]) {
-		return TestLine{Package: f[0], Name: f[1], Tags: tags}, ""
+		return TestLine{Package: f[0], Name: f[1], Tags: tags, Runner: "go"}, ""
 	}
 	return TestLine{}, refused
 }
