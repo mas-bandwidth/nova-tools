@@ -18,8 +18,8 @@ import (
 // a bug." So the push proof is the seat's liveness rule and a sender's
 // advice, never a gate: send lands and recv reads for every roster name, and
 // a name whose friend daemon has not proven its inbox push under ten minutes
-// is one NOTE push=<state> for <name> beside the result; names shows each
-// name's push, its age and what it rests on.
+// is one capped NOTE push=<state>: run: nova-hook status --as <name> beside
+// the result; names shows each name's push, its age and what it rests on.
 func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	t.Parallel()
 	r := deafRig("ada", "bob")
@@ -28,12 +28,10 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 
 	// no proof at all: the message lands, and the sender and the recipient are each a NOTE
 	first := id(t, cli.Do(t, send...).Exit(0).Out("SEND OK id=",
-		"SEND NOTE push=none for ada: no proven push since never: no daemon has recorded one",
-		"SEND NOTE push=none for bob: no proven push since never",
-		"waits on its stream until something reads it (nova-bus recv --as bob)",
-		"nova-friend install --as bob --harness <h> --dir <d>").Stdout)
+		"SEND NOTE push=none: run: nova-hook status --as ada",
+		"SEND NOTE push=none: run: nova-hook status --as bob").Stdout)
 	assert.Equal(t, 1, r.store.Len(bus.LogKey), "a send to an unheard name lands")
-	cli.Do(t, append(send, "--dry-run")...).Exit(0).Out("SEND OK ", "SEND NOTE push=none for ada").NotOut("id=0")
+	cli.Do(t, append(send, "--dry-run")...).Exit(0).Out("SEND OK ", "SEND NOTE push=none: run: nova-hook status --as ada").NotOut("id=0")
 	cli.Do(t, "recv", "--as", "bob", "--dry-run").Exit(0).Out("RECV OK pending=0 new=1", "RECV NOTE push=none for bob")
 	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id="+first, "RECV NOTE push=none for bob: no proven push since never")
 	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob", "RECV NOTE push=none for bob")
@@ -41,7 +39,7 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 
 	// a batch and a loop say it once, on the first result; a cc is a recipient too
 	cli.OK(t, send...)
-	cli.Do(t, "send", "--as", "ada", "--to", "ada", "--cc", "bob", "--subject", "s", "--body", "x").Exit(0).Out("SEND NOTE push=none for ada", "SEND NOTE push=none for bob")
+	cli.Do(t, "send", "--as", "ada", "--to", "ada", "--cc", "bob", "--subject", "s", "--body", "x").Exit(0).Out("SEND NOTE push=none: run: nova-hook status --as ada", "SEND NOTE push=none: run: nova-hook status --as bob")
 	cli.OK(t, send...)
 	out := cli.Do(t, "recv", "--as", "bob", "--all").Exit(0).Out("RECV NOTE push=none for bob").Stdout
 	assert.Equal(t, 1, strings.Count(out, "RECV NOTE"), "once per recv, not per message:\n%s", out)
@@ -49,7 +47,7 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 
 	// the sender proven, the recipient not: only the recipient is noted
 	r.prove(start, true, "ada")
-	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=none for bob").NotOut("for ada")
+	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=none: run: nova-hook status --as bob").NotOut("--as ada")
 	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK", "RECV NOTE push=none for bob")
 
 	// both proven: no NOTE at all
@@ -60,7 +58,7 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 
 	// a proof the daemon stopped renewing goes stale at ten minutes: still advice
 	r.store.Advance(bus.PushFresh)
-	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=stale for ada: no proven push since 10m", "last renewed it", "SEND NOTE push=stale for bob: no proven push since 10m")
+	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=stale: run: nova-hook status --as ada", "SEND NOTE push=stale: run: nova-hook status --as bob")
 	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK", "RECV NOTE push=stale for bob: no proven push since 10m")
 	cli.Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=bob push=stale age=10m")
 
@@ -69,7 +67,7 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	r.store.Advance(time.Minute)
 	r.prove(now, true, "ada")
 	r.prove(now, false, "bob")
-	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=down for bob: no proven push since", "holds no answered SESSION CHECK from the session (no session answer)").NotOut("for ada")
+	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=down: run: nova-hook status --as bob").NotOut("--as ada")
 	cli.Do(t, "names", "--as", "ada").Exit(0).Out("NAMES OK count=2 proven=1", "NAMES NAME name=ada push=proven", "NAMES NAME name=bob push=down age=", "harness=claude")
 	assert.Equal(t, 8, r.store.Len(bus.LogKey), "every send landed")
 }
@@ -85,7 +83,7 @@ func TestThePushGateIsAdvisoryUntilRequired(t *testing.T) {
 	cli := r.cli()
 	send := []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}
 
-	mid := id(t, cli.Do(t, send...).Exit(0).Out("SEND OK id=", "SEND NOTE push=none for ada", "SEND NOTE push=none for bob").Stdout)
+	mid := id(t, cli.Do(t, send...).Exit(0).Out("SEND OK id=", "SEND NOTE push=none: run: nova-hook status --as ada", "SEND NOTE push=none: run: nova-hook status --as bob").Stdout)
 	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id="+mid, "RECV NOTE push=none for bob")
 	assert.Equal(t, 1, r.store.Len(bus.LogKey), "the advisory send was written")
 

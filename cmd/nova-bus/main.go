@@ -225,8 +225,8 @@ landed=yes when the write succeeded (the message is on the stream); --dry-run ca
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none. The message lands whoever is listening: for the sender and each
-recipient with no proven push, one SEND NOTE push=<none|down|stale> for <name>: run: nova-hook status --as <name>
-(at most 160 chars). Nothing is refused on it (nova-bus names shows each name's push). A name with no proven push since never has no daemon recorded one; a message to it waits on its stream until something reads it (nova-bus recv --as <name>); the proof: the name runs its friend daemon (nova-friend install --as <name> --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK. With --require-push (or ` + RequirePushEnv + `=1) any such name is refused instead,
+recipient with no proven push, one SEND NOTE push=<none|down|stale>: run: nova-hook status --as <name>
+(at most 160 chars, the name in the command). Nothing is refused on it (nova-bus names shows each name's push). A name with no proven push since never has no daemon recorded one; a message to it waits on its stream until something reads it (nova-bus recv --as <name>); the proof: the name runs its friend daemon (nova-friend install --as <name> --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK. With --require-push (or ` + RequirePushEnv + `=1) any such name is refused instead,
 deaf: <name> has no proven push since <age> and the remedy, and nothing is written. --dry-run checks
 the message as send does (every problem named) and prints the line with no id and the same NOTE
 lines (or the same refusal), writing nothing. The long explanation of push states and why a message waits on the stream is in this help.
@@ -560,6 +560,13 @@ func names(csv string) []string {
 	return out
 }
 
+// pushNoteMax bounds one SEND NOTE line (docs/SPEC-BUS.md, the send NOTE): a
+// reader sees the state, the name and the one command that fixes it in one
+// glance, never the long explanation, which stays in send's help. A name is at
+// most bus.MaxName bytes and appears once, inside the command, so the line
+// cannot overflow it.
+const pushNoteMax = 160
+
 func shortPushNote(line string) string {
 	state, name := parsePush(line)
 	if name == "" {
@@ -568,7 +575,11 @@ func shortPushNote(line string) string {
 	if state == "" {
 		state = "none"
 	}
-	return fmt.Sprintf("push=%s for %s: run: nova-hook status --as %s", state, name, name)
+	note := fmt.Sprintf("push=%s: run: nova-hook status --as %s", state, name)
+	if len(note) > pushNoteMax {
+		note = note[:pushNoteMax]
+	}
+	return note
 }
 
 func parsePush(line string) (state, name string) {
