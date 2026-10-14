@@ -12,6 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -316,17 +317,21 @@ func TestRecvForeverJSONIsOneObjectPerMessageAndNothingElse(t *testing.T) {
 
 // The store is --redis, else NOVA_BUS_REDIS, else the fleet row's bus field as
 // nova-config apply wrote it into the sprint store (fleet:bus), read at
-// NOVA_SPRINT_REDIS, so no friend types the address; with none of the three,
-// or an empty row, or a sprint store that does not answer, a refusal that
-// names the row and how it is set.
+// NOVA_SPRINT_REDIS with the fleet's login, so no friend types the address;
+// with none of the three, a sprint store named without that login (its ACL
+// would answer the row with NOAUTH), or an empty row, or a sprint store that
+// does not answer, a refusal that names the row and how it is set.
 func TestTheStoreIsTheFlagTheVariableOrTheFleetRow(t *testing.T) {
 	t.Parallel()
 	r := newRig("ada", "bob")
 	r.env = map[string]string{"NOVA_REDIS_ADDR": "127.0.0.1:1"}
 	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("--redis is required", RedisEnv+" is unset", "no "+SprintRedisEnv, "nova-config fleet set --bus")
 	r.env = map[string]string{SprintRedisEnv: "127.0.0.1:6380"}
+	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("--redis is required", RedisEnv+" is unset", SprintRedisEnv+" names the sprint store with no fleet login", redisauth.UserEnv+" is unset", "pass --redis or set "+RedisEnv)
+	assert.Empty(t, r.fleetAt, "with no login the row is neither dialled nor read")
+	r.env[redisauth.UserEnv] = "ada"
 	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("the fleet's bus row is empty", "nova-config fleet set --bus <host:port>", "nova-config apply")
-	assert.Equal(t, []string{"127.0.0.1:6380"}, r.fleetAt, "the row is read from the sprint store")
+	assert.Equal(t, []string{"127.0.0.1:6380"}, r.fleetAt, "the row is read from the sprint store with the fleet's login")
 	r.fleet = "down"
 	r.cli().Do(t, "names", "--as", "ada").Exit(2).Err("could not be read from the sprint store", "unexpected EOF")
 	r.fleet = "store.test:6381"
