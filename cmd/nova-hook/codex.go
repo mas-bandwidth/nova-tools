@@ -28,13 +28,13 @@ func (w world) codexConfig(c *tool.Call) (*codexRoute, error) {
 		return nil, nil
 	}
 	if r.socket == "" || r.thread == "" || r.directory == "" {
-		return nil, errors.New("Codex delivery wants --codex-socket, --codex-thread and --codex-events-dir together")
+		return nil, errors.New("codex delivery wants --codex-socket, --codex-thread and --codex-events-dir together")
 	}
 	if c.Bool("once") {
-		return nil, errors.New("Codex delivery wants a running hook client; omit --once")
+		return nil, errors.New("codex delivery wants a running hook client; omit --once")
 	}
 	if w.codexLock == nil || w.codexValidate == nil || w.codexSave == nil || w.codexDeliver == nil {
-		return nil, errors.New("Codex delivery wants a configured local native receiver")
+		return nil, errors.New("codex delivery wants a configured local native receiver")
 	}
 	if c.DryRun() {
 		if _, err := codexdesktop.SavedPath(r.directory, "route"); err != nil {
