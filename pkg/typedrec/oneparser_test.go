@@ -79,6 +79,8 @@ var specAllowlist = []allowlistEntry{
 // than RESULT, sits outside part A's PATHS, and carries the commit that added
 // it and the reason it stays. A new hit on dev lands here only with both.
 var driftAllowlist = []allowlistEntry{
+	{file: "pkg/swarm/lintheader.go", fn: "cardHeaderKeys", record: "SPEC-CARD", since: "af9a13348",
+		reason: "the card header keys LintHeaderStranded checks below the header block (docs/SPEC-SPRINT.md §2, the card header), ported from nova-sprint"},
 	{file: "pkg/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
 	{file: "tools/ci/revertonred.go", fn: "land", record: "git-refspec", since: "a1f1f62c1",

@@ -164,4 +164,3 @@ func TestNamesReadsTheHookRecord(t *testing.T) {
 		`NAMES NAME name=bob state=down role=comms reason="no answer to a heartbeat challenge within the window"`,
 	)
 }
-
