@@ -94,7 +94,7 @@ func TestStageCardBringsAReusedCheckoutToTheFramesCommit(t *testing.T) {
 		return StageCard(StageOptions{
 			Card: card, TargetDir: target, JobDir: filepath.Dir(target),
 			BenchName: "testhost", Timeout: 30 * time.Second, Branch: branch,
-			fetchRetryDelay: 0, git: fake.cmd,
+			fetchRetryDelay: time.Millisecond, git: fake.cmd,
 		})
 	}
 
