@@ -56,7 +56,7 @@ var Roles = []Role{Coordinator, Friend, Comms, Member, Reader}
 // needs is each role's pushes.
 var needs = map[Role][]Push{
 	Coordinator: {Bus, Sprint},
-	Friend:      {Bus, Work},
+	Friend:      {Bus},
 	Comms:       {Bus},
 	Member:      {Work},
 	Reader:      {Work},
