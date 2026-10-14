@@ -603,8 +603,8 @@ runs the daemon, and the daemon beats already while its session is alive, so the
 agent of its own and no hand plist: this verb is the canary, run by hand. Like every verb that acts
 as a friend it is gated (docs/SPEC-HOOK.md): unless --as is hooked in as a friend or as comms, its bus
 push live and proven, it sends nothing and is FAILED at exit 1 with the breadcrumb. A friend working by
-hand, with no daemon holding her work push, is hooked in as comms (or a friend with the bus push proven)
-and proves her presence with this verb. A server that does not answer is exit 2. --dry-run says the
+hand, with no daemon holding the work push, is hooked in as comms (or as a friend with the bus push
+proven) and proves presence with this verb. A server that does not answer is exit 2. --dry-run says the
 beat it would send, and to which server, and opens nothing.
 example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 				DryRun: true,
