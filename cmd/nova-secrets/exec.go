@@ -127,16 +127,7 @@ func runExecCLI(args []string, s streams) int {
 		_ = os.Unsetenv(name)
 	}
 
-	// --json stays to report the child's exit (docs/SPEC-SECRETS.md "Output grammar"):
-	// fork and wait, never execve, so the wrapper can render that exit. The child's
-	// own output is not this verb's answer.
-	var code int
-	var err error
-	if s.wait {
-		code, err = secrets.RunExecWait(s.stderr, *storeFlag, *asFlag, *keyFlag, *sopsFlag, *onlyFlag, requireFlags, cmdArgs)
-	} else {
-		code, err = secrets.RunExec(*storeFlag, *asFlag, *keyFlag, *sopsFlag, *onlyFlag, requireFlags, cmdArgs)
-	}
+	code, err := secrets.RunExec(*storeFlag, *asFlag, *keyFlag, *sopsFlag, *onlyFlag, requireFlags, cmdArgs)
 	if err != nil {
 		return s.refuse("exec", code, err)
 	}

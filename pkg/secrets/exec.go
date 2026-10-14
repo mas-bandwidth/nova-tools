@@ -11,30 +11,71 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
+// execWaitFor marks the goroutine whose next RunExec must fork and wait, and
+// names the writer for the OK line (docs/SPEC-SECRETS.md "Output grammar":
+// exec --json does not execve, so the caller can report the child's exit, and
+// the object is built from that line). Keyed by goroutine so a parallel test
+// cannot steal another call's mark.
+var execWaitFor sync.Map
+
+// ArmExecWait marks this goroutine's next RunExec as the --json path
+// (docs/SPEC-SECRETS.md "Output grammar"). stderr receives the OK line; nil
+// discards it. DisarmExecWait clears a mark a refusal consumed before RunExec
+// ran, so it cannot leak onto a later call.
+func ArmExecWait(stderr io.Writer) {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	execWaitFor.Store(goroutineID(), stderr)
+}
+
+func DisarmExecWait() { execWaitFor.Delete(goroutineID()) }
+
+func takeExecWait() (io.Writer, bool) {
+	v, ok := execWaitFor.LoadAndDelete(goroutineID())
+	if !ok {
+		return nil, false
+	}
+	w, _ := v.(io.Writer)
+	if w == nil {
+		w = io.Discard
+	}
+	return w, true
+}
+
+// goroutineID is the id runtime.Stack prints for this goroutine. A parse that
+// fails shares id 0; Arm and take still agree, because both read the same line.
+func goroutineID() uint64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	rest := strings.TrimPrefix(string(buf[:n]), "goroutine ")
+	id, _, _ := strings.Cut(rest, " ")
+	nID, err := strconv.ParseUint(id, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return nID
+}
+
 // RunExec validates all preflight invariants, decrypts <store>/<as>.yaml,
 // applies --only and --require filters, prints the OK line to stderr,
 // sets RLIMIT_CORE to 0, and replaces the current process with cmdArgs. The OK
 // line goes out before the exec call, so a failure of that call returns 125 with
-// a FAIL line saying the command never started.
+// a FAIL line saying the command never started. When this goroutine armed the
+// wait (docs/SPEC-SECRETS.md "Output grammar"), it forks and waits instead, and
+// the child's own streams are discarded.
 func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
-	return runExec(os.Stderr, false, storeDir, asName, keyPath, sopsPath, onlyArg, required, cmdArgs)
-}
-
-// RunExecWait is RunExec when the caller must remain to report the child's exit
-// (docs/SPEC-SECRETS.md "Output grammar": exec --json forks and waits, never
-// execve, and the object describes the launch and that exit, never the child's
-// output). The OK line is written to stderr so the caller can render it; the
-// child's own streams are discarded.
-func RunExecWait(stderr io.Writer, storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
-	if stderr == nil {
-		stderr = io.Discard
+	stderr, wait := takeExecWait()
+	if !wait {
+		stderr = os.Stderr
 	}
-	return runExec(stderr, true, storeDir, asName, keyPath, sopsPath, onlyArg, required, cmdArgs)
+	return runExec(stderr, wait, storeDir, asName, keyPath, sopsPath, onlyArg, required, cmdArgs)
 }
 
 func runExec(stderr io.Writer, wait bool, storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
