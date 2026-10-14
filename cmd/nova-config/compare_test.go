@@ -57,6 +57,65 @@ func TestSnapshotVerbFeedsCompare(t *testing.T) {
 	assert.Contains(t, out, "OPERATOR-DIFF provider p")
 }
 
+// TestCompareMaxKeepsFullVerdictAndCounts pins a presentation ceiling without
+// changing the comparison's full verdict or hiding the omitted row count.
+func TestCompareMaxKeepsFullVerdictAndCounts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	before, err := config.TakeSnapshot(ctx, h.store, "2026-10-13T20:00:00Z", "test")
+	require.NoError(t, err)
+	after, err := config.TakeSnapshot(ctx, h.store, "2026-10-13T22:00:00Z", "test")
+	require.NoError(t, err)
+	for _, name := range []string{"a", "b", "c"} {
+		before.Kinds[config.KindProvider] = config.CmpKind{Kind: config.KindProvider, Rows: append(before.Kinds[config.KindProvider].Rows, config.CmpRow{Name: name, Fields: map[string]string{"funded": "false"}})}
+		after.Kinds[config.KindProvider] = config.CmpKind{Kind: config.KindProvider, Rows: append(after.Kinds[config.KindProvider].Rows, config.CmpRow{Name: name, Fields: map[string]string{"funded": "true"}})}
+	}
+	bdir, adir := t.TempDir(), t.TempDir()
+	require.NoError(t, config.WriteSnapshot(bdir, before))
+	require.NoError(t, config.WriteSnapshot(adir, after))
+	args := []string{"compare", "--before", bdir, "--after", adir, "--max", "1"}
+	code, lines, errs := h.run(t, args...)
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, lines, "CRIT-DIFF provider a")
+	assert.NotContains(t, lines, "CRIT-DIFF provider b")
+	assert.Contains(t, lines, "COMPARE MORE kind=row shown=1 total=3")
+	assert.True(t, strings.HasSuffix(lines, "COMPARE CRIT\n"))
+	code, out, errs := h.run(t, append(args, "--json")...)
+	require.Equal(t, 1, code, errs)
+	var result struct {
+		Facts map[string]any `json:"facts"`
+		Items []struct {
+			Kind string `json:"kind"`
+		} `json:"items"`
+		More []struct {
+			Kind  string `json:"kind"`
+			Shown int    `json:"shown"`
+			Total int    `json:"total"`
+		} `json:"more"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	assert.Equal(t, float64(3), result.Facts["rows"])
+	var shownRows int
+	for _, item := range result.Items {
+		if item.Kind == "row" {
+			shownRows++
+		}
+	}
+	assert.Equal(t, 1, shownRows)
+	require.Len(t, result.More, 1)
+	assert.Equal(t, "row", result.More[0].Kind)
+	assert.Equal(t, 1, result.More[0].Shown)
+	assert.Equal(t, 3, result.More[0].Total)
+	code, all, errs := h.run(t, "compare", "--before", bdir, "--after", adir, "--max", "0")
+	require.Equal(t, 1, code, errs)
+	assert.Equal(t, 3, strings.Count(all, "CRIT-DIFF provider"))
+	code, _, errs = h.run(t, "compare", "--before", bdir, "--after", adir, "--max", "-1")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--max must be zero or more")
+}
+
 // TestCompareJSONIncludesChangedFieldValues pins both renderings of one
 // comparison result (docs/SPEC-CONFIG.md, "Snapshot and compare").
 func TestCompareJSONIncludesChangedFieldValues(t *testing.T) {

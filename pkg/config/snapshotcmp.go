@@ -72,9 +72,11 @@ type whenFile struct {
 
 // FieldDiff is one compared field's before and after.
 type FieldDiff struct {
-	Field  string `json:"field"`
-	Before string `json:"before"`
-	After  string `json:"after"`
+	Field         string `json:"field"`
+	Before        string `json:"before"`
+	After         string `json:"after"`
+	BeforeMissing bool   `json:"before_missing,omitempty"`
+	AfterMissing  bool   `json:"after_missing,omitempty"`
 }
 
 // RowDiff is one row that differs: its class, the compared fields that differ
@@ -185,8 +187,9 @@ func CompareSnapshots(ctx context.Context, st Store, before, after CmpSnap, opts
 				if liveFields[f] {
 					continue
 				}
-				if a.Fields[f] != b.Fields[f] {
-					diffs = append(diffs, FieldDiff{Field: f, Before: b.Fields[f], After: a.Fields[f]})
+				av, present := a.Fields[f]
+				if !present || av != b.Fields[f] {
+					diffs = append(diffs, FieldDiff{Field: f, Before: b.Fields[f], After: av, AfterMissing: !present})
 				}
 			}
 			for _, f := range sortedFields(a.Fields) {
@@ -220,7 +223,7 @@ func CompareSnapshots(ctx context.Context, st Store, before, after CmpSnap, opts
 			var diffs []FieldDiff
 			for _, f := range sortedFields(b.Fields) {
 				if !liveFields[f] {
-					diffs = append(diffs, FieldDiff{Field: f, Before: b.Fields[f]})
+					diffs = append(diffs, FieldDiff{Field: f, Before: b.Fields[f], AfterMissing: true})
 				}
 			}
 			rd, err := classifyRow(ctx, st, kind, b.Name, diffs, nil, ignoreSet, from, to)
@@ -293,7 +296,7 @@ func classifyAddedRow(ctx context.Context, st Store, kind string, row CmpRow, ig
 			if !ok || got != value {
 				return rd, nil
 			}
-			if _, explained := explainedBy(FieldDiff{Field: field, After: value}, history, ignoreSet); !explained {
+			if _, explained := explainedBy(FieldDiff{Field: field, After: value, BeforeMissing: true}, history, ignoreSet); !explained {
 				return rd, nil
 			}
 		}
@@ -306,9 +309,9 @@ func classifyAddedRow(ctx context.Context, st Store, kind string, row CmpRow, ig
 		}
 	}
 	rd.Class = CompareAdded
-	rd.Actor = last.Actor
-	rd.At = last.At
-	rd.Reason = last.Reason
+	rd.Actor = created.Actor
+	rd.At = created.At
+	rd.Reason = created.Reason
 	return rd, nil
 }
 
@@ -318,6 +321,7 @@ func classifyAddedRow(ctx context.Context, st Store, kind string, row CmpRow, ig
 // out-of-band final value or an ignored final write remains unexplained.
 func explainedBy(diff FieldDiff, history []Change, ignoreSet map[string]bool) (Change, bool) {
 	value := diff.Before
+	present := !diff.BeforeMissing
 	var last Change
 	for _, c := range history {
 		bv, bok := c.Before[diff.Field]
@@ -328,12 +332,12 @@ func explainedBy(diff FieldDiff, history []Change, ignoreSet map[string]bool) (C
 		if !bok && !aok || bok && aok && bv == av {
 			continue
 		}
-		if !bok && value != "" || bok && bv != value {
+		if bok != present || bok && bv != value {
 			return Change{}, false
 		}
-		value, last = av, c
+		value, present, last = av, aok, c
 	}
-	return last, last.Op != "" && !ignoreSet[last.Actor] && value == diff.After
+	return last, last.Op != "" && !ignoreSet[last.Actor] && present == !diff.AfterMissing && value == diff.After
 }
 
 // snapshotHistory returns the row's history within the finite snapshot window
@@ -505,6 +509,9 @@ func LoadSnapshot(dir string) (CmpSnap, error) {
 		for _, row := range ks.Rows {
 			if row.Name == "" || seen[row.Name] {
 				return CmpSnap{}, fmt.Errorf("snapshot: %s: row names must be nonempty and unique", name)
+			}
+			if row.Fields == nil {
+				return CmpSnap{}, fmt.Errorf("snapshot: %s: row %s fields are required", name, row.Name)
 			}
 			seen[row.Name] = true
 		}

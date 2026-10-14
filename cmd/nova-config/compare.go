@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
@@ -86,6 +87,7 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	c := seatStoreFlags(fs)
 	before := fs.String("before", "", "the `dir` of the before snapshot")
 	after := fs.String("after", "", "the `dir` of the after snapshot")
+	max := fs.Int("max", bounded.Default, "maximum comparison rows to print; 0 prints all")
 	ign := &actorList{}
 	fs.Var(ign, "ignore-actor", "an actor whose history entries are the tool writing the store, not an operator act (repeatable); default: "+config.MigrationActor)
 	asJSON := jsonFlag(fs)
@@ -94,6 +96,9 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "compare takes no arguments")
+	}
+	if *max < 0 {
+		return refuse(stderr, verb, "--max must be zero or more; run: "+toolName+" compare -h")
 	}
 	var problems []string
 	if *before == "" {
@@ -129,8 +134,9 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	res, shown, total := capCompareRows(res, *max)
 	if *asJSON {
-		o := tool.Done().Fact("class", res.Class)
+		o := tool.Done().Fact("class", res.Class).Fact("rows", total)
 		o.Verb = verb
 		for _, kd := range res.Kinds {
 			o.Item("kind", "kind", kd.Kind, "class", kd.Class)
@@ -160,10 +166,35 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 			o.Status = tool.Failed
 			o.Exit = 1
 		}
+		if shown < total {
+			o.More = append(o.More, tool.More{Kind: "row", Shown: shown, Total: total, Remedy: tool.MaxRemedy})
+		}
 		return emit(stdout, o)
 	}
-	compareLines(stdout, res)
+	compareLines(stdout, res, shown, total)
 	return res.Exit()
+}
+
+// capCompareRows limits presentation only: each kind and the final result
+// retain the verdict computed over every row (docs/STANDARD.md, section 2).
+func capCompareRows(res config.CompareResult, max int) (config.CompareResult, int, int) {
+	limited := res
+	limited.Kinds = append([]config.KindDiff(nil), res.Kinds...)
+	shown, total := 0, 0
+	for i := range limited.Kinds {
+		rows := limited.Kinds[i].Rows
+		total += len(rows)
+		keep := len(rows)
+		if max > 0 && keep > max-shown {
+			keep = max - shown
+			if keep < 0 {
+				keep = 0
+			}
+		}
+		limited.Kinds[i].Rows = rows[:keep]
+		shown += keep
+	}
+	return limited, shown, total
 }
 
 // compareLines renders the verdict: one line per row that differs (an
@@ -171,7 +202,7 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 // unexplained fields), the added fields listed apart, then one COMPARE line per
 // kind and a last COMPARE line naming the worst verdict (SAME, OPERATOR or
 // CRIT). Each row's line is printed once.
-func compareLines(stdout io.Writer, res config.CompareResult) {
+func compareLines(stdout io.Writer, res config.CompareResult, shown, total int) {
 	for _, kd := range res.Kinds {
 		if len(kd.Rows) == 0 {
 			fmt.Fprintf(stdout, "COMPARE %s %s\n", kd.Kind, config.Verdict(kd.Class))
@@ -204,6 +235,9 @@ func compareLines(stdout io.Writer, res config.CompareResult) {
 		}
 		fmt.Fprintf(stdout, "COMPARE %s %s\n", kd.Kind, config.Verdict(kd.Class))
 	}
+	if shown < total {
+		fmt.Fprintf(stdout, "COMPARE MORE kind=row shown=%d total=%d %s\n", shown, total, tool.MaxRemedy)
+	}
 	fmt.Fprintf(stdout, "COMPARE %s\n", config.Verdict(res.Class))
 }
 
@@ -212,7 +246,11 @@ func compareLines(stdout io.Writer, res config.CompareResult) {
 func diffSummary(diffs []config.FieldDiff) string {
 	parts := make([]string, 0, len(diffs))
 	for _, df := range diffs {
-		parts = append(parts, fmt.Sprintf("%s %s -> %s", df.Field, df.Before, df.After))
+		after := df.After
+		if df.AfterMissing {
+			after = "<absent>"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s -> %s", df.Field, df.Before, after))
 	}
 	return strings.Join(parts, ", ")
 }

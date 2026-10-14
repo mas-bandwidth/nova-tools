@@ -3475,7 +3475,7 @@ nova-config route prices --refresh [--provider openrouter|opencode] [--from <pat
 nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
 nova-config snapshot --out <dir> [--pg <dsn> | --file <path>] [--json]    # write <dir>/{kind}.json for the eight kinds and <dir>/when.json (the instant and tool), the same files snap.sh wrote; reads the store, writes only those files
-nova-config compare --before <dir> --after <dir> [--ignore-actor <name>...] [--json]  # judge the after snapshot against the before; for each row that differs, ask the store's history who made the change: an operator act is OPERATOR (reported, never a failure), a change only the --ignore-actor (default migrate) explains or with no history is CRIT; writes nothing, reverts nothing, exit 0 SAME/OPERATOR and 1 CRIT
+nova-config compare --before <dir> --after <dir> [--ignore-actor <name>...] [--max <n>] [--json]  # judge the after snapshot against the before; for each row that differs, ask the store's history who made the change: an operator act is OPERATOR (reported, never a failure), a change only the --ignore-actor (default migrate) explains or with no history is CRIT; writes nothing, reverts nothing, exit 0 SAME/OPERATOR and 1 CRIT
 ```
 
 `nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (tiers, roles, width: the jobs the friend works at once and the friend's one capacity number, 8 by default, with no slots and no machine ceiling, mode: one-shot always, how the daemon hands the friend work; batch is retired, pronouns: a stated value prints as stored, and an empty value is unstated, read as they/them and printed `pronouns=they/them(unstated)`; a set that names other fields leaves the stored pronouns), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash, pro or heavy tier: tier, provider, model, harness, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash, pro and heavy, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
@@ -3553,7 +3553,11 @@ fields named (`unexplained: <field,...>`). The live fields `balance_usd`,
 `balance_as_of` and `beat` are never compared, and a field the after build
 added is listed apart (`ADDED ...`). One `COMPARE <kind> <verdict>` line per
 kind and a last `COMPARE SAME|OPERATOR|CRIT` names the worst verdict;
-`--json` prints the same lines as typed items. The verb writes nothing and
+`--max <n>` prints at most `n` comparison rows (20 by default, 0 for all);
+when shortened, `COMPARE MORE kind=row shown=<n> total=<n>` names the cut.
+Every kind and final verdict still judge all rows. JSON carries the full row
+total in `facts.rows` and the same cut in `more`. `--json` prints the shown
+lines as typed items. The verb writes nothing and
 reverts nothing: exit 0 for SAME and OPERATOR, 1 for CRIT (2 for usage or a
 snapshot that cannot be read), so the caller decides what CRIT means — the
 release readback reverts at once on CRIT, reports an OPERATOR to the

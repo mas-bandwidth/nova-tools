@@ -630,7 +630,7 @@ global ids, so they rise across kinds and never repeat.
 same files the release executor's `snap.sh` wrote, and writes nothing else.
 It reads only: it is the tool's own replay of that hand script.
 
-**`nova-config compare --before <dir> --after <dir>`** judges the after
+**`nova-config compare --before <dir> --after <dir> [--max <n>]`** judges the after
 snapshot against the before, and when a row differs asks the store's history
 for that row between the two `when.json` instants to name the act behind the
 change. This is the judgment `snapcmp.sh` could not make: it read only the two
@@ -660,6 +660,11 @@ reverts nothing: a `COMPARE SAME` or `COMPARE OPERATOR` line exits 0, a
 `COMPARE CRIT` exits 1, and the caller decides what CRIT means (the release
 readback reverts at once on CRIT, reports an OPERATOR to the coordinator and
 never reverts).
+
+The default `--max 20` bounds displayed comparison rows, and `--max 0` shows
+all of them. A shortened result prints `COMPARE MORE kind=row shown=<n>
+total=<n>` (the JSON `more` carries the same count); each kind and the final
+verdict still judge every row. JSON also carries the full count in `facts.rows`.
 
 ## Apply
 

@@ -70,6 +70,8 @@ func TestSnapshotFilesRequireCompleteMetadata(t *testing.T) {
 		{name: "wrong kind", file: "provider.json", content: `{"kind":"route","rows":[]}`, want: "kind"},
 		{name: "nameless row", file: "provider.json", content: `{"kind":"provider","rows":[{}]}`, want: "row names"},
 		{name: "duplicate row", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p"},{"name":"p"}]}`, want: "row names"},
+		{name: "missing fields", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p"}]}`, want: "fields"},
+		{name: "null fields", file: "provider.json", content: `{"kind":"provider","rows":[{"name":"p","fields":null}]}`, want: "fields"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -91,6 +93,27 @@ func TestSnapshotFilesRequireCompleteMetadata(t *testing.T) {
 		_, err := CompareSnapshots(context.Background(), NewMem(), CmpSnap{At: "2026-10-13T22:00:00Z"}, CmpSnap{At: "2026-10-13T20:00:00Z"}, CompareOptions{})
 		assert.ErrorContains(t, err, "before")
 	})
+}
+
+// TestSnapshotComparisonDistinguishesAbsentFromEmpty catches an omitted old
+// field even when its previous value was the empty string.
+func TestSnapshotComparisonDistinguishesAbsentFromEmpty(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	before := CmpSnap{At: "2026-10-13T20:00:00Z", Kinds: map[string]CmpKind{KindProvider: {Kind: KindProvider, Rows: []CmpRow{{Name: "p", Fields: map[string]string{"billing": "metered", "funded": "false", "console_url": ""}}}}}}
+	after := CmpSnap{At: "2026-10-13T22:00:00Z", Kinds: map[string]CmpKind{KindProvider: {Kind: KindProvider, Rows: []CmpRow{{Name: "p", Fields: map[string]string{"billing": "metered", "funded": "false"}}}}}}
+	res, err := CompareSnapshots(ctx, NewMem(), before, after, CompareOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, CompareCrit, res.Class)
+	assert.Equal(t, 1, res.Exit())
+	row := findRow(t, res, KindProvider, "p")
+	assert.Equal(t, []string{"console_url"}, row.Unexplained)
+	require.Len(t, row.Fields, 1)
+	assert.True(t, row.Fields[0].AfterMissing)
+
+	entry := Change{ID: 1, Op: OpSet, Before: map[string]string{"console_url": ""}, After: map[string]string{}, Actor: "operator", At: "2026-10-13T21:00:00Z"}
+	_, explained := explainedBy(FieldDiff{Field: "console_url", AfterMissing: true}, []Change{entry}, map[string]bool{MigrationActor: true})
+	assert.True(t, explained, "a recorded operator field removal remains attributable")
 }
 
 // TestSnapshotComparisonReportsRemovedRows pins removals as row differences,
@@ -153,6 +176,31 @@ func TestSnapshotComparisonDoesNotCreditAnIgnoredPartOfAnAddedRow(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, CompareCrit, res.Class)
 	assert.Equal(t, CompareCrit, findRow(t, res, KindProvider, "p").Class)
+}
+
+// TestSnapshotAddedRowNamesCreator pins the add act's actor and reason even
+// when a later operator edit helps produce the final recorded row.
+func TestSnapshotAddedRowNamesCreator(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	before, err := TakeSnapshot(ctx, m, "2026-10-13T20:00:00Z", "test")
+	require.NoError(t, err)
+	m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 0, 0, 0, time.UTC) }
+	_, err = m.Insert(WithReason(ctx, "created provider"), KindProvider, Row{Name: "p", Fields: map[string]string{"billing": "metered", "funded": "false"}}, "creator")
+	require.NoError(t, err)
+	m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 30, 0, 0, time.UTC) }
+	_, _, err = m.Update(WithReason(ctx, "changed billing"), KindProvider, "p", map[string]string{"billing": "both"}, "editor")
+	require.NoError(t, err)
+	after, err := TakeSnapshot(ctx, m, "2026-10-13T22:00:00Z", "test")
+	require.NoError(t, err)
+	res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
+	require.NoError(t, err)
+	row := findRow(t, res, KindProvider, "p")
+	assert.Equal(t, CompareAdded, row.Class)
+	assert.Equal(t, "creator", row.Actor)
+	assert.Equal(t, "2026-10-13T21:00:00Z", row.At)
+	assert.Equal(t, "created provider", row.Reason)
 }
 
 // TestSnapshotCompareNamesTheActBehindAChangedRow pins compare's rule: a row

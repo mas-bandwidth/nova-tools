@@ -87,7 +87,7 @@ usage:
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
                         [--timeout <duration>] [--example]
   nova-config snapshot --out <dir> [--pg <dsn> | --file <path>] [--json]
-  nova-config compare --before <dir> --after <dir> [--ignore-actor <name>...] [--json]
+  nova-config compare --before <dir> --after <dir> [--ignore-actor <name>...] [--max <n>] [--json]
   nova-config <kind> add <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
   nova-config <kind> remove <name> --actor <name> [--dry-run] [--json]
