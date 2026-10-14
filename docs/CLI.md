@@ -43,7 +43,7 @@ usage:
   nova-check version
   nova-check help [<verb>]
 
-  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes
+  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes.
 An edge is what the run found; a receipt records it: --not-ok, or an Edge: or Edges: in the notes.
 The remedy is one nova-check dogfood record --ok per verb named, and per edge --closes <id> or
 the finder running it again.
