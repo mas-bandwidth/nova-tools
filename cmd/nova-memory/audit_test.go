@@ -68,8 +68,9 @@ var memoryAudit = audit.Config{
 		// It writes to no stream.
 		`"bufio"`, `"flag"`, `"fmt"`, `"io"`, `"math"`, `"os"`, `"path"`, `"runtime"`, `"sort"`, `"strings"`, `"time"`,
 		// maps and slices hold no writer: they return keys, sorted copies and membership,
-		// which this package renders through oneline at its own print sites.
-		`"maps"`, `"slices"`,
+		// which this package renders through oneline at its own print sites. cmp.Or
+		// picks between two values the caller already holds; it holds no writer.
+		`"maps"`, `"slices"`, `"cmp"`,
 		// bytes holds the refusal lines of a --json run and a quickstart step's JSON in
 		// memory; encoding/json wraps that step's object, already rendered by tool.Out, as
 		// one value of the quickstart's own; strconv quotes an unknown verb. None writes.
