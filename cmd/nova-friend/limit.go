@@ -12,9 +12,11 @@
 package main
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
@@ -122,16 +124,117 @@ func ReadRefusal(harness string, t LaneText, now time.Time) (Refusal, bool) {
 	return Refusal{}, false
 }
 
-// FirstErrorLine is a lane's first error line for the alike judgment: the
-// first non-empty line of stderr, else stdout, else the harness log, else the
-// REPORT.md, trimmed and capped. It is "" when the lane said nothing.
+// refusalKeys are the JSON keys whose first string value names a lane's
+// failure ahead of any line: a body printed as JSON says why under one of them.
+var refusalKeys = map[string]bool{"message": true, "error": true, "detail": true}
+
+// jsonRefusalLine reads a possibly truncated JSON body for the first string
+// value of a key named message, error or detail, in document order. It walks
+// the tokens rather than unmarshalling the whole body, so a body the harness
+// cut at its own limit still yields the message it did print; a decode error
+// before any such value answers false, and the line rule reads the body
+// instead (docs/SPEC-FRIEND.md, the lanes). The standard library encoding/json
+// is the parser; a tolerant walk is used because the body may be truncated.
+func jsonRefusalLine(s string) (string, bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	var stack []byte
+	expectingKey, wantValue := false, false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return "", false
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			wantValue = false
+			switch t {
+			case '{':
+				stack = append(stack, 'o')
+				expectingKey = true
+			case '[':
+				stack = append(stack, 'a')
+				expectingKey = false
+			default:
+				if len(stack) > 0 {
+					stack = stack[:len(stack)-1]
+				}
+				expectingKey = len(stack) > 0 && stack[len(stack)-1] == 'o'
+			}
+		case string:
+			if wantValue {
+				return t, true
+			}
+			if expectingKey {
+				wantValue = refusalKeys[t]
+				expectingKey = false
+			} else {
+				expectingKey = len(stack) > 0 && stack[len(stack)-1] == 'o'
+			}
+		default:
+			wantValue = false
+			expectingKey = len(stack) > 0 && stack[len(stack)-1] == 'o'
+		}
+	}
+}
+
+// countableFailureLine is the line that may stand for a lane's failure: after
+// JSON punctuation and whitespace are trimmed from its ends it holds at least
+// one letter or digit and is longer than three characters. A line that says
+// nothing -- `{`, `}`, `[]`, punctuation alone -- is no identity at all, so it
+// is never counted (docs/SPEC-FRIEND.md, the lanes).
+func countableFailureLine(line string) (string, bool) {
+	trimmed := strings.Trim(line, "{}[],:\" \t\r\n")
+	if len(trimmed) <= 3 {
+		return "", false
+	}
+	hasWord := false
+	for _, r := range trimmed {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			hasWord = true
+			break
+		}
+	}
+	if !hasWord {
+		return "", false
+	}
+	return oneline.Cap(trimmed, 200), true
+}
+
+// FirstErrorLine is a lane's identity for the alike judgment: for each of the
+// lane's sources in turn (stderr, stdout, the harness log, the REPORT.md) the
+// first string value of a JSON key message, error or detail, else the first
+// line that holds a letter or digit once JSON punctuation is trimmed and is
+// longer than three characters. It is "" when the lane said nothing that names
+// a failure, so a content-free line is never counted and never faulted
+// (docs/SPEC-FRIEND.md, the lanes).
 func FirstErrorLine(t LaneText) string {
 	for _, src := range []string{t.Stderr, t.Stdout, t.Log, t.Report} {
-		for _, line := range strings.Split(src, "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				return oneline.Cap(line, 200)
+		if msg, ok := jsonRefusalLine(src); ok {
+			if line, ok := countableFailureLine(msg); ok {
+				return line
 			}
 		}
+		for _, line := range strings.Split(src, "\n") {
+			if l, ok := countableFailureLine(line); ok {
+				return l
+			}
+		}
+	}
+	return ""
+}
+
+// AlikeOutputTail is the last n bytes of a lane's failing output (the first
+// non-empty of stderr, stdout, the harness log, the REPORT.md): the cause the
+// seat reads with the judgment, so a person need not open the log.
+func AlikeOutputTail(t LaneText, n int) string {
+	for _, src := range []string{t.Stderr, t.Stdout, t.Log, t.Report} {
+		if strings.TrimSpace(src) == "" {
+			continue
+		}
+		if len(src) > n {
+			return src[len(src)-n:]
+		}
+		return src
 	}
 	return ""
 }
@@ -160,18 +263,25 @@ func AlikeJudgment(line string) string {
 	return AlikeJudgmentPrefix + line
 }
 
+// AlikeTailBytes is how much of the failing lane's output rides with the
+// judgment the seat gets, so a person reads the cause without opening the log.
+const AlikeTailBytes = 400
+
 // alikeLanes counts lanes ending with the same first error line: the third
 // alike failure is one judgment, and a line that differs starts the count
-// again. said keeps the judgment to once per run of alike failures.
+// again. said keeps the judgment to once per run of alike failures; tail keeps
+// the last AlikeTailBytes of the output of the lane that raised it.
 type alikeLanes struct {
 	line  string
 	count int
 	said  bool
+	tail  string
 }
 
-// observe adds one lane's first error line and answers the judgment on the
-// AlikeLanes-th alike failure, once.
-func (a *alikeLanes) observe(line string) (string, bool) {
+// observe adds one lane's identity and the tail of its failing output and
+// answers the judgment on the AlikeLanes-th alike failure, once. A line that
+// says nothing is not added and the count does not move.
+func (a *alikeLanes) observe(line, tail string) (string, bool) {
 	if line == "" {
 		return "", false
 	}
@@ -179,6 +289,7 @@ func (a *alikeLanes) observe(line string) (string, bool) {
 		a.line, a.count, a.said = line, 0, false
 	}
 	a.count++
+	a.tail = tail
 	if a.count == AlikeLanes && !a.said {
 		a.said = true
 		return AlikeJudgment(line), true
@@ -216,12 +327,18 @@ func (w *RefusalWatch) Observe(t LaneText) (Refusal, bool) {
 		return r, true
 	}
 	if line := FirstErrorLine(t); line != "" {
-		if text, ok := w.alike.observe(line); ok && w.Judge != nil {
+		if text, ok := w.alike.observe(line, AlikeOutputTail(t, AlikeTailBytes)); ok && w.Judge != nil {
 			w.Judge(text)
 		}
 	}
 	return Refusal{}, false
 }
+
+// AlikeTail is the last AlikeTailBytes of the failing output of the lane that
+// raised the last judgment: the daemon's wiring adds it to the text the seat
+// gets (friend.LimitAlikeText), so a person reads the cause without opening the
+// log (docs/SPEC-FRIEND.md, the lanes).
+func (w *RefusalWatch) AlikeTail() string { return w.alike.tail }
 
 // refusalReaders is the reader surface the daemon's lane step drives: it reads
 // a lane's evidence (ReadRefusal, FirstErrorLine), names the down the server
