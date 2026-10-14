@@ -161,6 +161,7 @@ var secretOpeners = map[string]any{
 	"pkg/secretcheck.ParseAllowlist":              secretcheck.ParseAllowlist,
 	"pkg/secrets.NewSecret":                       secrets.NewSecret,
 	"pkg/secrets.OpenSeatFile":                    secrets.OpenSeatFile,
+	"pkg/secrets.ParseNameLine":                   secrets.ParseNameLine,
 	"pkg/secrets.ParseSopsConfig":                 secrets.ParseSopsConfig,
 	"pkg/secrets.ParseStoreFileWithoutDecrypting": secrets.ParseStoreFileWithoutDecrypting,
 	"pkg/swarm.NewWallReader":                     swarm.NewWallReader,
