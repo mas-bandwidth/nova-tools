@@ -74,9 +74,7 @@ func TestCIOneBenchRunner(t *testing.T) {
 	for _, row := range allow.Rows() {
 		assert.True(t, base[row.Key], "%s row %s was added after %s: the allow file may only shrink", BenchRunnerAllowPath, row.Key, benchRunnerBaseSHA)
 	}
-	for _, row := range allowlist.Check(t, allow, found).Stale {
-		t.Errorf("%s lists %s, which is no longer an ssh exec site: delete the row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)", BenchRunnerAllowPath, row.Key)
-	}
+	assert.Empty(t, allowlist.Check(t, allow, found).Stale, BenchRunnerAllowPath+" lists rows that are no longer ssh exec sites; delete them (the list only shrinks; NOVA_CI_UPDATE=1 drops it)")
 
 	t.Run("inventory-at-base", func(t *testing.T) {
 		header, _, _ := strings.Cut(allow.Text(), "\n")

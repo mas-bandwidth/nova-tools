@@ -157,9 +157,7 @@ func TestEveryFlagSaysWhatItWants(t *testing.T) {
 		}
 	}
 	require.NotZero(t, files, "no Go file under cmd/ or internal/; this test would pass by reading nothing")
-	for _, v := range ledger.violations(t, flagUsageRemedy) {
-		t.Error(v)
-	}
+	assert.Empty(t, ledger.violations(t, flagUsageRemedy))
 }
 
 // TestFlagUsageRuleReadsEveryShape proves the rule over source: each

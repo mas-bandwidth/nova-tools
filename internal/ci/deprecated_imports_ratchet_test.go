@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,17 +88,8 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	measured := measureLivingDeprecatedImports(t, tree.Files, lt)
 
 	res := allowlist.Check(t, allow, measured)
-	for _, row := range res.Stale {
-		t.Errorf("%s lists %s, but no living or kept package depends on it any more; delete the stale entry (the ratchet only shrinks)",
-			deprecatedImportsAllowlistPath, row.Key)
-	}
-	for _, unlisted := range res.Unlisted {
-		t.Errorf("%s: unlisted dependency on dropped deprecated package: %s\n"+
-			"A living package (or keep foundation test dependency) must not import dropped deprecated packages without an allowlist entry.\n"+
-			"A keep line in pkg/pkgselect/DEPRECATED permits importing that package; it is never permission for that package's test dependencies to import non-keep retired packages.\n"+
-			"Remedy: lift the target package into a shared module, decouple the test fixture, or remove the dependency; the allowlist only shrinks and refuses new rows.",
-			deprecatedImportsAllowlistPath, unlisted)
-	}
+	assert.Empty(t, res.Stale, deprecatedImportsAllowlistPath+" lists a dependency no living or kept package depends on any more; delete the stale entry (the ratchet only shrinks)")
+	assert.Empty(t, res.Unlisted, deprecatedImportsAllowlistPath+": unlisted dependency on a dropped deprecated package; a living package must not import dropped deprecated packages without an allowlist entry; a keep line in pkg/pkgselect/DEPRECATED permits importing that package but never its test dependencies; lift the target package into a shared module, decouple the test fixture, or remove the dependency (the allowlist only shrinks)")
 }
 
 // deprecatedImportsAllowlistBase finds the commit the allowlist is compared against.
@@ -165,10 +157,7 @@ func TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase(t *testing.T) {
 		t.Logf("%s is not in the merge base %s: this change is the allowlist seed", deprecatedImportsAllowlistPath, parent[:9])
 		return
 	}
-	for _, key := range added {
-		t.Errorf("%s adds the row %q, which its merge base %s does not have; the allowlist only shrinks: remove the dependency and drop the row",
-			deprecatedImportsAllowlistPath, key, parent[:9])
-	}
+	assert.Empty(t, added, deprecatedImportsAllowlistPath+" adds a row its merge base "+parent[:9]+" does not have; the allowlist only shrinks: remove the dependency and drop the row")
 }
 
 // TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit exercises the growth detection

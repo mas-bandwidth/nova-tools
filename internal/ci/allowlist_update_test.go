@@ -75,9 +75,7 @@ func TestCountedShardDirectoriesNameEveryLedger(t *testing.T) {
 		}
 	}
 	sort.Strings(missing)
-	for _, name := range missing {
-		t.Errorf("internal/ci/testdata/%s holds package shards but is not named in countedShardDirectories; name it so the allowlist guard discovers every shard below it", name)
-	}
+	assert.Empty(t, missing, "internal/ci/testdata directories that hold package shards must be named in countedShardDirectories so the allowlist guard discovers every shard below them")
 }
 
 // holdsRecursiveShard reports whether dir holds a .txt shard below a package
@@ -137,12 +135,8 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 		assert.True(t, loaded[name], "internal/ci/testdata/%s is not read through allowlist.Load (loadAllowlist in a test); its class test has no %s=1 path, so a removal would edit it by hand",
 			name, allowlist.UpdateEnv)
 	}
-	for _, dir := range unconsumedShardDirectories(shardDirs, loaded) {
-		t.Errorf("internal/ci/testdata/%s has package shards but no allowlist.LoadPackages call consumes the directory", dir)
-	}
-	for _, r := range raw {
-		t.Errorf("%s reads a list file or shard directory directly; use loadAllowlist, allowlist.Load, or allowlist.LoadPackages (nova-tools#4339)", r)
-	}
+	assert.Empty(t, unconsumedShardDirectories(shardDirs, loaded), "internal/ci/testdata directories with package shards must be consumed by an allowlist.LoadPackages call")
+	assert.Empty(t, raw, "a file reads a list file or shard directory directly; use loadAllowlist, allowlist.Load, or allowlist.LoadPackages (nova-tools#4339)")
 }
 
 // treeHelperReads walks every Go package under root (skipping .git, testdata and

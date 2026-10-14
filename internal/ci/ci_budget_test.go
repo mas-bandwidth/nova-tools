@@ -452,7 +452,7 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 					continue
 				}
 				// A bare duration with no multiplier on the line is one second.
-				t.Errorf("%s:%d: wall-clock bound under ten seconds in a test assertion or context deadline (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
+				assert.Failf(t, "wall-clock bound under ten seconds in a test assertion or context deadline", "%s:%d (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
 			}
 		}
 	}

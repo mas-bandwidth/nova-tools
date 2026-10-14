@@ -200,7 +200,7 @@ func ciNamedRefusal(t *testing.T, rule ciRule, name string) {
 			return
 		}
 	}
-	t.Fatalf("%s: no refusal case named %q", rule.key, name)
+	require.FailNowf(t, "no refusal case named", "%s: no refusal case named %q", rule.key, name)
 }
 
 // ciNamedAllow runs the allowed-shape case of rule named name.
@@ -219,7 +219,7 @@ func ciNamedAllow(t *testing.T, rule ciRule, name string) {
 			return
 		}
 	}
-	t.Fatalf("%s: no allow case named %q", rule.key, name)
+	require.FailNowf(t, "no allow case named", "%s: no allow case named %q", rule.key, name)
 }
 
 // ciClassTest is the class test itself for one rule: every _test.go under
@@ -234,14 +234,12 @@ func ciClassTest(t *testing.T, rule ciRule, allow string) {
 	require.NoError(t, err)
 	t.Log(res.okLine)
 	for _, f := range res.findings {
-		t.Error(f.render())
+		assert.Fail(t, f.render())
 	}
 	// The stale rows come from the one helper, which under NOVA_CI_UPDATE=1
 	// drops them from the file instead (nova-tools#4339).
 	list := loadAllowlist(t, allow, FileLineListOptions)
-	for _, row := range allowlist.Check(t, list, res.measured).Stale {
-		t.Errorf("%s:%d: %q names no offender on the tree; %s", allow, row.Line, row.Text, rule.allowRemedy)
-	}
+	assert.Empty(t, allowlist.Check(t, list, res.measured).Stale, allow+" names no offender on the tree; "+rule.allowRemedy)
 }
 
 // ciAllowlistGrowsRefused: an empty allowlist over a clean tree passes, a row

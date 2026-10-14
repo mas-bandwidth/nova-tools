@@ -512,9 +512,7 @@ func TestClassRuleLedgersOnlyShrinkAgainstMergeBase(t *testing.T) {
 
 	problems, err := ledgerRatchetProblems(t, repoRoot(t))
 	require.NoError(t, err, "the ledger ratchet could not read its base or its shards")
-	for _, problem := range problems {
-		t.Errorf("%s", problem)
-	}
+	require.Empty(t, problems)
 }
 
 // TestUnitSocketsLedgerSeedsOnlyWhenTheBaseHasNoShard pins the one-time seed

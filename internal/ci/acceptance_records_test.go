@@ -120,7 +120,7 @@ func checkAcceptanceRecord(t *testing.T, release, text string) {
 			body++
 		}
 	}
-	t.Fatalf("## Raw holds no closed, non-empty fenced block")
+	require.FailNow(t, "## Raw holds no closed, non-empty fenced block")
 }
 
 // acceptanceRecordFields reads the field list: every "- Name: value" line
