@@ -29,7 +29,7 @@ func sprintField(t *testing.T, name string) Field {
 			return f
 		}
 	}
-	t.Fatalf("the sprint row has no %s field", name)
+	require.Failf(t, "the sprint row lacks the field", "the sprint row has no %s field", name)
 	return Field{}
 }
 

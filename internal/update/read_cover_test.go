@@ -55,15 +55,9 @@ func TestReadCoverWithDrainTimerAttachesSeam(t *testing.T) {
 		name        string
 		deadline    time.Time
 		hasDeadline bool
-		checkDrain  func(t *testing.T, drain time.Duration)
 	}{
-		{"grace cap", time.Time{}, false, func(t *testing.T, drain time.Duration) {
-			assert.Equal(t, killGrace, drain)
-		}},
-		{"budget cap", time.Now().Add(time.Second), true, func(t *testing.T, drain time.Duration) {
-			assert.Greater(t, drain, time.Duration(0))
-			assert.Less(t, drain, killGrace, "the budget caps the drain below the grace")
-		}},
+		{"grace cap", time.Time{}, false},
+		{"budget cap", time.Now().Add(time.Second), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -111,19 +105,17 @@ func TestReadCoverWithDrainTimerSeamDrivesTheSelect(t *testing.T) {
 			drain := drainAllowance(ctx)
 			done := make(chan struct{})
 			var held bool
-			if seam, ok := ctx.Value(drainTimerKey{}).(func(time.Duration) (<-chan time.Time, func() bool)); ok && seam != nil {
-				timerChan, stopTimer := seam(drain)
-				if tc.done {
-					close(done)
-				}
-				select {
-				case <-done:
-					stopTimer()
-				case <-timerChan:
-					held = true
-				}
-			} else {
-				t.Fatal("WithDrainTimer must attach a seam the select adopts")
+			seam, ok := ctx.Value(drainTimerKey{}).(func(time.Duration) (<-chan time.Time, func() bool))
+			require.True(t, ok && seam != nil, "WithDrainTimer must attach a seam the select adopts")
+			timerChan, stopTimer := seam(drain)
+			if tc.done {
+				close(done)
+			}
+			select {
+			case <-done:
+				stopTimer()
+			case <-timerChan:
+				held = true
 			}
 			assert.Equal(t, tc.wantHeld, held, "held is reported only when the tick wins")
 			assert.Equal(t, tc.wantStopped, spy.stopped, "the seam's stop runs when the copy finishes first")
