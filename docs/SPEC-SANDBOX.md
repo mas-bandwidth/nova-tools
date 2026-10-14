@@ -943,6 +943,49 @@ copy off. A typo found after the card has run is worth nothing.
 `nova-sandbox run --help`, `-h` or `help` prints the verb's own usage on stdout
 and exits **0**, before validating the flags needed to run a command.
 
+## The stuck verb — what a launch that sits at exec was denied
+
+Measured on the bench host on 2026-10-13: a walled opencode sat at exec with
+about 0 CPU and every take was idle-reaped, and nothing on the machine named the
+mach service the wall had refused. `stuck` is the diagnostic a person or the
+seat runs OUTSIDE the wall, on the host, because the launch it diagnoses is the
+one that cannot run inside it.
+
+```
+nova-sandbox stuck [--pid <n> | --match <substring>] [--min-age <d>] [--max-cpu <d>] [--window <d>] [--json]
+```
+
+1. **Find the process.** With `--pid` it is that process; with `--match` every
+   process whose command contains the substring; with neither every process
+   whose parent chain holds a `nova-sandbox` wrapper. Every candidate is held to
+   `--min-age` (default 30s) and `--max-cpu` (default 1s): the defaults select
+   the bench host case, which was `1-22:27:51` old with `0:00.01` of CPU. Several
+   matches are all reported.
+2. **Read the stack.** On darwin the verb runs `/usr/bin/sample <pid> 2` and
+   prints the call graph, bounded to forty lines. The top symbol is the DEEPEST
+   frame of the main thread — the call it is parked in, a `mach_msg` or
+   `bootstrap_look_up`.
+3. **Read the denials.** It reads the window from the unified log
+   (`log show --last <window> --predicate 'sender == "Sandbox" OR subsystem ==
+   "com.apple.sandbox"' --style compact`), groups the `mach-lookup` denials by
+   name and process, and prints one `DENIED` line each with its count. A name
+   absent from the profile's `mach-lookup` list — the list is read from the
+   profile text the binary embeds — is marked `not-allowed-by-profile`.
+4. **Verdict.** It ends with one verdict line per match:
+   `STUCK LAUNCH pid=<n> state=<s> cpu=<t> age=<d> top=<symbol>
+   denied=mach-lookup:<name> x<n>`, or `denied=none` when the window held none,
+   so the stack is where to look next; `STUCK NONE` when no process matched. The
+   host's `sw_vers` product version is printed beside it so a healthy host and
+   the bench host compare on one line.
+5. **Read-only, and no guess off darwin.** It writes nothing, kills nothing and
+   starts nothing. On Linux and other platforms it prints
+   `STUCK UNSUPPORTED platform=<goos>: sample and the unified log are darwin's`
+   at exit 0. Exit 0 is any verdict; exit 2 is a usage error.
+
+The readers take their text as arguments — `ps` text, `sample` text and `log`
+text — so the unit tests step them on recorded fixtures and run no process; the
+darwin functional test starts a walled `sleep 1000` it ends itself.
+
 ## The egress verbs — the card's outbound wall, on linux
 
 ```
