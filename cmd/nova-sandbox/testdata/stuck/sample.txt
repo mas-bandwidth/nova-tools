@@ -1,6 +1,6 @@
 Analysis of sampling process 5210 (opencode.bin) every 1 millisecond
 Process:         opencode.bin [5210]
-Path:            /Users/glenn/nova-bench/harness-v1.18.20/opencode.bin
+Path:            /Users/me/nova-bench/harness-v1.18.20/opencode.bin
 Identifier:      opencode.bin
 Version:         1.18.20
 Code Type:       ARM64
@@ -31,4 +31,4 @@ Sort by top of stack, same collapsed (when >= 5):
         100 start_wqthread  (in libsystem_pthread.dylib) + 8
 
 Binary Images:
-        0x100000000 - 0x100ffffff  opencode.bin  (1.18.20)  <00000000-0000-0000-0000-000000000000>  /Users/glenn/nova-bench/harness-v1.18.20/opencode.bin
+        0x100000000 - 0x100ffffff  opencode.bin  (1.18.20)  <00000000-0000-0000-0000-000000000000>  /Users/me/nova-bench/harness-v1.18.20/opencode.bin
