@@ -3,7 +3,7 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are wait, send, peek, recv, ack, receipts, overdue, log and names, each run
+// are wait, send, peek, recv, ack, receipts, overdue, asks, log and names, each run
 // only while the identity acting is hooked in (pkg/hookgate, docs/SPEC-HOOK.md);
 // the dispatch, the banner,
 // the help, the version verb, the refusals and the output envelope are
@@ -11,6 +11,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -214,7 +215,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 			},
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--kind ask --deadline <duration>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
@@ -237,7 +238,12 @@ lines (or the same refusal), writing nothing.
 whose answer was lost after the store took it is retried without a second message; the same token with
 other arguments, or past its life, is refused naming the message that went. The store drops a token at
 --token-cleanup (default 168h, never before its life ends). Without --token every send is a new message.
-Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.`,
+Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.
+--kind ask --deadline <duration> sends an ask: the store stamps its deadline from its own clock (at plus
+the duration, never yours) and the line adds deadline=<RFC3339>. An ask wants a deadline and only an ask
+takes one: never wait for ever. It is answered only by a message from one of its recipients with
+--re <its id>; past its deadline unanswered, the overdue alarm delivers you one message of kind timeout,
+re=<its id>, subject "ASK TIMEOUT <id> <recipients> after <age>: <subject>" (nova-bus asks lists them).`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
 					f.Required("to", "the recipients, comma-separated names")
@@ -246,7 +252,8 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
-					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
+					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on (timeout is the bus's own)")
+					f.Duration("deadline", 0, "an ask's wait for its answer, a Go duration (10m, 1h); wants --kind ask, and an ask wants it")
 					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
 					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
 					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
@@ -260,6 +267,15 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 						}
 						if c.Dur("token-life") <= 0 || c.Dur("token-cleanup") <= 0 {
 							c.Problem("--token-life and --token-cleanup want a duration above zero")
+						}
+						ask := c.Str("kind") == bus.KindAsk
+						switch {
+						case ask && !c.Given("deadline"):
+							c.Problem("an ask wants --deadline <duration>: never wait for ever")
+						case !ask && c.Given("deadline"):
+							c.Problem("--deadline is for --kind ask")
+						case c.Given("deadline") && c.Dur("deadline") <= 0:
+							c.Problem("--deadline wants a duration above zero: never wait for ever")
 						}
 					})
 				},
@@ -383,7 +399,7 @@ example: nova-bus receipts --as bob`,
 			{
 				Name:      "overdue",
 				Usage:     "overdue [--as <me>] [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
-				Effect:    tool.Inspection,
+				Effect:    tool.Delivery + ": an ask past its deadline gets its one timeout message, to its sender",
 				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more, or not hooked in (FAILED reason=unhooked); 2 could not run (a flag, a store that did not answer).",
 				Detail: `The alarm the coordinator's loop and the seat check run. Looks at every known name's stream and
 lists each message still short of delivered (new, never taken by a reader, or pending with no
@@ -391,6 +407,10 @@ delivered receipt) sent longer ago than --older (a Go duration, default 10m), by
 Prints OVERDUE OK count=0 older=<d> at exit 0 when there is none; else OVERDUE OVERDUE count=<n>
 older=<d>, then one OVERDUE MESSAGE name=<recipient> id=<id> state=<new|pending> from=<name>
 age=<duration> subject=<s> line each, oldest first, at exit 1. A message acked is never listed.
+It is also the expiry of asks, first: every ask past its deadline (the store's clock) with no answer by
+it gets its timeout, exactly once however many loops run the alarm: one message to the ask's sender,
+kind timeout, re=<ask id>, which wakes its session; one OVERDUE TIMEOUT ask=<id> from=<sender>
+to=<names> message=<id> line each. A timeout never changes the exit.
 example: nova-bus overdue --older 10m`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
@@ -406,6 +426,44 @@ example: nova-bus overdue --older 10m`,
 					})
 				},
 				Run: w.overdue,
+			},
+			{
+				Name:    "asks",
+				Usage:   "asks [--as <me>] [--open | --timedout | --all] [--liveness [--window <duration>]] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Effect:  tool.Inspection,
+				Detail: `Prints ASKS OK count=<n> open=<n> answered=<n> timedout=<n>, then one ASKS ASK id=<id>
+state=<open|answered|timedout> to=<names> deadline=<RFC3339> age=<duration> answered_by=<name|->
+timeout=<id|-> subject=<s> line per ask you sent (send --kind ask --deadline <d>), newest first; count is
+of those listed, the three after it of every ask. By the store's clock: answered when a recipient sent
+--re <its id> by its deadline, timedout once the deadline passed without one (timeout= names the message
+the overdue alarm delivered, - until it has), else open. --open and --timedout list only those; --all,
+the default, every one. --liveness prints ASKS OK count=<n> window=<d>, then one ASKS LIVE name=<friend>
+state=<up|deaf|unreached|down> ask=<id|-> age=<duration|-> line per friend, from the newest ask to it sent
+within --window (default 24h) whose outcome is known: up, it answered by the deadline; deaf, delivered
+to it and not answered; unreached, never delivered before the deadline; down, no such ask: nothing heard.
+An ask still open says nothing yet.
+example: nova-bus asks --as ada --timedout`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
+					f.Bool("open", false, "only the asks still open")
+					f.Bool("timedout", false, "only the asks past their deadline unanswered")
+					f.Bool("all", false, "every ask (the default)")
+					f.Bool("liveness", false, "each friend's liveness from the asks to it, instead of your asks")
+					f.Duration("window", 24*time.Hour, "with --liveness, how far back an ask counts, a Go duration (1h, 24h)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
+						if n := len(slices.DeleteFunc([]bool{c.Bool("open"), c.Bool("timedout"), c.Bool("all")}, func(b bool) bool { return !b })); n > 1 {
+							c.Problem("give one of --open, --timedout or --all")
+						}
+						if c.Dur("window") <= 0 {
+							c.Problem("--window wants a duration above zero")
+						}
+					})
+				},
+				Run: w.asks,
 			},
 			{
 				Name:    "log",
@@ -590,6 +648,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
 		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
+		Wait: c.Dur("deadline"),
 	}
 	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
 	send := b.Send
@@ -640,7 +699,11 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	sum := sha256.Sum256([]byte(m.Body))
 	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
-	o = loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
+	o = kindFact(o, m)
+	if !m.Due.IsZero() {
+		o.Fact("deadline", m.Due.Format(time.RFC3339))
+	}
+	o = loginFact(o.Fact("at", m.At.Format(time.RFC3339)).
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 	for _, line := range unheard {
 		o.Note(line)
@@ -996,6 +1059,12 @@ func (w world) overdue(c *tool.Call) *tool.Out {
 	if _, refused := w.acting(c, b, login); refused != nil {
 		return refused
 	}
+	// the expiry of asks first (bus.ExpireAsks): a timeout is a message, and
+	// the alarm below sees it like any other
+	expired, err := b.ExpireAsks(context.Background())
+	if err != nil {
+		return answer(err)
+	}
 	older := c.Dur("older")
 	late, _, err := b.Overdue(context.Background(), older)
 	if err != nil {
@@ -1009,7 +1078,69 @@ func (w world) overdue(c *tool.Call) *tool.Out {
 	for _, l := range late {
 		o.Item("message", "name", l.Name, "id", l.ID, "state", l.State, "from", l.From, "age", l.Age.Round(time.Second).String(), "subject", tool.Text(l.Subject))
 	}
+	for _, e := range expired {
+		o.Item("timeout", "ask", e.Ask.ID, "from", e.Ask.From, "to", strings.Join(e.Ask.To, ","), "message", e.MessageID)
+	}
 	return o
+}
+
+// asks is what as asked and where each stands, newest first, or with
+// --liveness each friend's word from the asks to it, by the store's clock
+// (SPEC-BUS.md, asks).
+func (w world) asks(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := w.acting(c, b, login)
+	if refused != nil {
+		return refused
+	}
+	if c.Bool("liveness") {
+		window := c.Dur("window")
+		lives, now, err := b.Liveness(context.Background(), window)
+		if err != nil {
+			return answer(err)
+		}
+		o := tool.Done().Fact("count", len(lives)).Fact("window", window.String())
+		for _, l := range lives {
+			ask, age := "-", "-"
+			if l.AskID != "" {
+				ask, age = l.AskID, now.Sub(l.At).Round(time.Second).String()
+			}
+			o.Item("live", "name", l.Name, "state", l.State, "ask", ask, "age", age)
+		}
+		return o
+	}
+	all, now, err := b.Asks(context.Background(), as)
+	if err != nil {
+		return answer(err)
+	}
+	want := ""
+	switch {
+	case c.Bool("open"):
+		want = bus.AskOpen
+	case c.Bool("timedout"):
+		want = bus.AskTimedOut
+	}
+	counts := map[string]int{}
+	var shown []bus.Ask
+	for _, a := range slices.Backward(all) {
+		counts[a.State(now)]++
+		if want == "" || a.State(now) == want {
+			shown = append(shown, a)
+		}
+	}
+	o := tool.Done().Fact("count", len(shown)).Fact("open", counts[bus.AskOpen]).
+		Fact("answered", counts[bus.AskAnswered]).Fact("timedout", counts[bus.AskTimedOut])
+	for _, a := range shown {
+		by, timeout := cmp.Or(a.AnsweredBy, "-"), cmp.Or(a.TimeoutID, "-")
+		o.Item("ask", "id", a.ID, "state", a.State(now), "to", strings.Join(a.To, ","),
+			"deadline", a.Due.Format(time.RFC3339), "age", now.Sub(a.At).Round(time.Second).String(),
+			"answered_by", by, "timeout", timeout, "subject", tool.Text(a.Subject))
+	}
+	return loginFact(o, login)
 }
 
 // address is the store a verb opens: --redis (its default is RedisEnv),
