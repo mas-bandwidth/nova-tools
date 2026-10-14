@@ -316,6 +316,7 @@ func (OSEnv) Getenv(k string) string                  { return os.Getenv(k) }
 func (OSEnv) Now() time.Time                          { return time.Now() }
 func (OSEnv) ReadFile(p string) ([]byte, error)       { return os.ReadFile(p) }
 func (OSEnv) ReadDir(p string) ([]fs.DirEntry, error) { return os.ReadDir(p) }
+
 // Exec runs a child and returns its stdout; a non-zero exit carries the child's
 // stderr so a check can quote its reason (docs/SPEC-DOCTOR.md, "plists").
 func (OSEnv) Exec(ctx context.Context, name string, args ...string) (string, error) {
