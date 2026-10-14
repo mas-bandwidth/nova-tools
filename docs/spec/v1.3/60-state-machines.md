@@ -57,7 +57,7 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - `binding`: absent, challenged, proven, away, or closed, per friend (layer 10).
 - `generation`: the current session binding generation; `deadline`: the lease deadline.
 - `lastHeard`: set by any valid authenticated activity; `lastProof`: set only by a challenge answer.
-- `displayed`: up or down; `internal`: up, deaf, asleep, or down (see Reconciled (a)).
+- `displayed`: up or down; `internal`: up, deaf, or down (down includes the case where her daemon answers and her session does not; see Reconciled (a)).
 
 #### Actions
 
@@ -85,7 +85,7 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 
 #### Existing module
 
-- `FriendPresence` (partial, tla/COVERAGE.tsv row friend-presence) and `Friend` (partial, row friend-lifecycle): the new model extends both and replaces neither. Reason: they hold session proof and the friends-table word in part, while the two clocks of Reconciled (a) and the deaf and asleep states are not in either; the presence-and-leases row of COVERAGE.tsv names no module, so this machine is where that gap closes.
+- `FriendPresence` (partial, tla/COVERAGE.tsv row friend-presence) and `Friend` (partial, row friend-lifecycle): the new model extends both and replaces neither. Reason: they hold session proof and the friends-table word in part, while the two clocks of Reconciled (a) and the deaf state and the daemon-answers case of down are not in either; the presence-and-leases row of COVERAGE.tsv names no module, so this machine is where that gap closes.
 
 #### Interfaces
 
@@ -332,15 +332,15 @@ The choice for the models: M1 carries two clocks. `lastHeard` is set by any vali
 activity; `lastProof` is set only by a challenge answer. The displayed status reads `lastHeard`
 through the internal states: up and deaf (active but not receiving: no recv or ack and no answer
 to a wake ping, held up to 10 minutes before down) display as up, and deaf keeps her taken cards;
-asleep (her daemon answers, her session does not) and down display as down, and asleep returns
-her cards to the deal. The deal reads session proof: a card is dealt only to a friend whose
+down displays as down and returns her cards to the deal. Down includes the case where her
+daemon answers and her session does not; that case returns her cards the same way. The deal reads session proof: a card is dealt only to a friend whose
 binding is proven and unexpired and whose displayed status is up. Delivery of a note is gated
 the same way for the push: the push is offered only to a proven binding, while the note itself
 is queued on the server for any enrolled friend, proven or not, and replays on attach (M3).
 
 Whether a change is proposed to an owner: yes, proposal 1 below to the owner of layer 10 (its
 "convenience up" paragraph and guarantee 5) and proposal 2 to the owner of layer 20 (its lease
-states carry no deaf or asleep state).
+states carry no deaf state and do not name the daemon-answers case of down).
 
 ### (b) Vocabulary
 
@@ -395,16 +395,17 @@ file does not edit those layers.
 
 1. File: docs/spec/v1.3/10-server-truth.md. Sentence: in the paragraph beginning "If a
    convenience `up` field exists", state that the displayed up or down reads the last-heard
-   clock through the internal states of layer 60 Reconciled (a) (up and deaf display up; asleep
-   and down display down), while proof, the deal, and the push gate on the challenge-answer
+   clock through the internal states of layer 60 Reconciled (a) (up and deaf display up; down
+   displays down, including the case where her daemon answers and her session does not), while
+   proof, the deal, and the push gate on the challenge-answer
    clock alone. Reason: layer 10's up currently means only a current proven lease, which
    contradicts the standing friends-table rule that any authenticated activity resets the
    timeout; M1 models both clocks and needs layer 10 to name both.
 2. File: docs/spec/v1.3/20-comms.md. Sentence: in the lease state machine, add the internal
    states deaf (active, not receiving, held up to 10 minutes, displays up, keeps taken cards)
-   and asleep (daemon answers, session does not, displays down, cards return to the deal), or
-   record that they live only in layer 60's M1. Reason: the deal and the display read them, and
-   layer 20's four lease states cannot express them.
+   and the daemon-answers case of down (her daemon answers, her session does not; displays
+   down, cards return to the deal), or record that they live only in layer 60's M1. Reason: the
+   deal and the display read them, and layer 20's four lease states cannot express them.
 3. File: docs/spec/v1.3/20-comms.md. Sentence: name EXPIRED a transition into AWAY carrying its
    reason (challenge_timeout or lease_expired), not a fifth state. Reason: the one-to-one map
    of layer 60 Reconciled (b), which the models use with layer 10's names.
@@ -413,6 +414,7 @@ file does not edit those layers.
    record `nova-bus wait` as deferred to a later release. Reason: two blocking wait verbs would
    be modelled and built twice for one operation (layer 60 Reconciled (c)).
 5. File: docs/spec/v1.3/40-friend-lane-client.md. Sentence: in guarantee 4 and the state list,
-   note that asleep (layer 60 Reconciled (a)) returns a friend's taken cards to the deal while
+   note that down (layer 60 Reconciled (a)), including the case where her daemon answers and
+   her session does not, returns a friend's taken cards to the deal while
    deaf keeps them, as an exception stated beside the claim-survives-a-wrap rule. Reason: M6
    deals on that distinction and layer 40 currently states the wrap rule without it.
