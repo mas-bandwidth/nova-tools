@@ -207,7 +207,21 @@ In the claude and openai profiles `gh pr create` and `gh pr review` record it in
 a file the child is never told to write, so a RESULT.md the child also writes (as an older card
 template asked) overwrites nothing: it rides at the end of the pull request body. A plain child
 writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
-keys is no result.
+keys is no result, with one exception measured on a worker's own file: a result with every key
+but `report:` (head a commit or `-`, a known verdict, branch, gate and output present) and a body
+takes the body's first prose line as its report (`CardResult.ReportDerived`;
+`TestAResultWithNoReportLineTakesItsReportFromTheBody`). The report guards nothing; the head and
+the verdict still do, and a `report:` line that is present and empty is still refused
+(`TestAResultWithNoReportLineIsStillRefusedWhenAnythingElseFails`).
+
+**A result out of shape says why.** The failed finish's reason stays `no RESULT.md shape`, and
+its report now begins `RESULT.md shape fault: ` and names what is wrong with a file the worker
+wrote: the keys missing, a head that is no commit, a verdict that is none of the four
+(`CardResult.Fault`, `shapeFault`), so the attempt after it fixes that and does not guess. A
+RESULT.md native wrote itself for a card it ended (an idle reap, a deadline, a stage timeout;
+`written-by: nova-swarm native`) is native's word and carries no fault
+(`typedrec.NativeWritten`). Every profile's JOB.md states the rules right after the shape
+(`cardcontract.ShapeRules`, and for a work card `ShapeWorkRule`).
 
 **The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
 also carries one line per work step in its body (under `## Body`, never among the header's

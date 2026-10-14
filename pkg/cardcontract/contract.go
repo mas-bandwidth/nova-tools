@@ -330,6 +330,15 @@ func LastPushed(job string) (branch, head string) {
 // (docs/SPEC-CARD-CONTRACT.md section 3): it names the defect, or it is no verdict.
 const BrokenFindingText = "A broken verdict tells them what to do: at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks, and says what to change. \"Request changes.\" alone, or an approval's words, is no finding: a broken verdict that names no file, line or rule is not a verdict, and the sprint asks another reader."
 
+// ShapeRules is what a job says right after the shape, in the worker's own terms: the
+// file opens with `head:` on line 1 and carries all six keys, written as plain `key: value`
+// lines. A RESULT.md in another form is refused with the reason `no RESULT.md shape` and the
+// attempt is lost, however much work it reports: measured on a worker that wrote a
+// `RESULT: <card> sha=<sha>` line and the word DONE (main-report-schema-new-leg-2.w4, the
+// head it named the staged commit and not its own), and on one that left out the report
+// line. Plain text, no markdown on the keys, nothing before line 1.
+const ShapeRules = "Write the file as plain `key: value` lines, exactly as above: line 1 is `head:` (not a `RESULT:` line, no heading, no code fence, no bold or bullets on the keys), all six keys are required (`-` where the line says \"or -\"). A file in any other form (DONE or BLOCKED words, a prose summary) is refused as `no RESULT.md shape` and the attempt is lost, however much work it reports.\n"
+
 // ShapeText is the result shape as JOB.md quotes it, for a work card or a read.
 func ShapeText(kind string) string {
 	verdict := "ok | not-done | nothing"
@@ -341,3 +350,6 @@ func ShapeText(kind string) string {
 	return "    head: <the commit, full sha>\n    branch: <the branch it is on>\n    verdict: " + verdict +
 		"\n    gate: <the gate command you ran, or ->\n    output: <the path of its output, or ->\n    report: <one line>\n\n    ## Body\n\n    <" + body + ">\n"
 }
+
+// ShapeWorkRule is the rule a work card's job adds: the head is the commit the work made.
+const ShapeWorkRule = "`head:` is the commit you made on this branch, never the commit the checkout started from.\n"
