@@ -53,7 +53,7 @@ func addProvider(t *testing.T, st Store, name string) {
 	require.NoError(t, err)
 }
 
-func providerCase(t *testing.T, array string) (providers, routes, tiers []Row) {
+func providerCase(t *testing.T) (providers, routes, tiers []Row) {
 	t.Helper()
 	st := NewMem()
 	addProvider(t, st, "opencode")
@@ -71,10 +71,6 @@ func providerCase(t *testing.T, array string) (providers, routes, tiers []Row) {
 		_, err = st.Insert(context.Background(), KindRoute, row, "operator")
 		require.NoError(t, err)
 	}
-	_, _, err = st.Update(context.Background(), KindTier, "pro", map[string]string{"routes": array}, "operator")
-	require.NoError(t, err)
-	_, _, err = st.Update(context.Background(), KindTier, "heavy", map[string]string{"routes": "heavy-a"}, "operator")
-	require.NoError(t, err)
 	providers, err = st.List(context.Background(), KindProvider)
 	require.NoError(t, err)
 	routes, err = st.List(context.Background(), KindRoute)
@@ -84,21 +80,30 @@ func providerCase(t *testing.T, array string) (providers, routes, tiers []Row) {
 	return
 }
 
-func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
+// TestProviderCoverageCountsEveryEnabledRouteOfATier pins that a route is
+// never outside its tier: membership is route.tier (pkg/config/kind.go,
+// TierMembers; docs/SPEC-CONFIG.md, "tier"), so the seven enabled pro routes
+// count for pro and there is no array to exclude one.
+func TestProviderCoverageCountsEveryEnabledRouteOfATier(t *testing.T) {
 	t.Parallel()
-	providers, routes, tiers := providerCase(t, "pro-a")
+	providers, routes, tiers := providerCase(t)
 	lines, warns := ProviderReport(providers, routes, tiers)
-	assert.Contains(t, lines, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 pro=1/7")
-	assert.Contains(t, warns, "provider=opencode funded=true routes-in-no-tier-array=pro-b,pro-c,pro-d,pro-e,pro-f,pro-g; run: nova-config tier set pro --routes pro-a,pro-b,pro-c,pro-d,pro-e,pro-f,pro-g")
+	assert.Contains(t, lines, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 pro=7")
+	for _, warning := range warns {
+		assert.NotContains(t, warning, "routes-in-no-tier-array")
+	}
 	assert.Contains(t, warns, "tier=heavy holds no route of a funded provider; run: nova-config tier show heavy")
 }
 
-func TestAnEmptyTierArrayTakesEveryEnabledRoute(t *testing.T) {
+// TestEveryEnabledRouteIsInItsTier pins that the report counts a tier's
+// enabled routes only, including frontier beside the seeded tier rows, and a
+// disabled route contributes to none (pkg/config/kind.go, TierMembers).
+func TestEveryEnabledRouteIsInItsTier(t *testing.T) {
 	t.Parallel()
-	providers, routes, tiers := providerCase(t, "")
+	providers, routes, tiers := providerCase(t)
 	routes = append(routes, Row{Name: "frontier-a", Fields: map[string]string{"provider": "opencode", "tier": "frontier", "enabled": "true"}}, Row{Name: "disabled", Fields: map[string]string{"provider": "opencode", "tier": "pro", "enabled": "false"}})
 	lines, warns := ProviderReport(providers, routes, tiers)
-	assert.Contains(t, lines, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 frontier=1/1 pro=7/7")
+	assert.Contains(t, lines, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 frontier=1 pro=7")
 	for _, warning := range warns {
 		assert.NotContains(t, warning, "routes-in-no-tier-array")
 		assert.NotContains(t, warning, "tier=frontier")

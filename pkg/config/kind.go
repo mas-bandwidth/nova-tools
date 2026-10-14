@@ -129,6 +129,12 @@ type Kind struct {
 	// as a friend's Redis role) is added here, so Redis holds it and the
 	// stored row does not. nil derives nothing.
 	Derive func(ctx context.Context, st Store, rows []Row) ([]Row, error)
+	// Derived names the fields Derive computes for Redis alone: they are a
+	// column of no table and a flag of no verb, apply compares them so a
+	// change in what they derive rewrites the row, and no line prints them
+	// (docs/SPEC-CONFIG.md, "tier": the tier's routes come from route.tier).
+	// nil is none.
+	Derived []string
 	// ApplyOrder sorts the rows of this kind for apply: a row with a lower
 	// number is written first. nil keeps name order. Friends put the
 	// coordinator first so ns_friend_roles' bootstrap has one.
@@ -644,17 +650,20 @@ var Kinds = []*Kind{
 		CheckChanges: checkRouteChanges,
 	},
 	{
-		// A tier's route array: the deal takes routes[index mod len] for each
-		// card of the tier, the index a uint64 counter on the fleet table
-		// (internal/sprint/route.go, tla/RouteIndex.tla).
+		// A tier: the row the deal knows a tier by, its membership kept once,
+		// on each route's tier field. The deal takes the tier's enabled
+		// routes, a route named by no array, so the stored route rows are the
+		// one record (docs/SPEC-CONFIG.md, "route" and "tier").
 		Name:  KindTier,
 		Table: "tiers",
-		Doc:   "a model tier's route array: the deal takes routes[index mod len] for each card of the tier, a route named twice taking two turns; one row each for " + strings.Join(RouteTiers, " and ") + ", created by migrate",
-		Fields: []Field{
-			{Name: "routes", Type: TypeSeq, Ref: KindRoute, Help: "the ordered comma list of the tier's routes, a name repeated for more turns; each an enabled route of the tier; empty takes the tier's enabled routes in name order"},
-		},
+		Doc:   "a model tier: one row each for " + strings.Join(RouteTiers, " and ") + ", created by migrate; its routes are the enabled routes whose --tier names it, so the route rows are the one record",
 		Seed:  RouteTiers,
 		Check: checkTier,
+		Derive: deriveTierRoutes,
+		// routes is the tier's membership as Redis holds it for the deal,
+		// recomputed from route.tier on every apply: no column, no flag, no
+		// line, so the field cannot drift from the routes.
+		Derived: []string{"routes"},
 	},
 }
 
@@ -950,6 +959,40 @@ func deriveLoopLog(ctx context.Context, st Store, rows []Row) ([]Row, error) {
 	for _, r := range rows {
 		r = r.Clone()
 		r.Fields["log"] = LoopLog(dir, r.Name)
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// TierMembers is a tier's membership: the names of its enabled routes, in
+// name order, read from the route rows (docs/SPEC-CONFIG.md, "tier"). It is
+// how apply derives the Redis array and how a report counts a tier, so
+// route.tier is membership's one record.
+func TierMembers(routes []Row, tier string) []string {
+	var out []string
+	for _, r := range routes {
+		if r.Fields["enabled"] == "true" && r.Fields["tier"] == tier {
+			out = append(out, r.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// deriveTierRoutes is the tier kind's Derive: each tier's routes are its
+// enabled routes in name order, read from the route rows, so route.tier is the
+// one record of membership and Redis's routes field is only its copy
+// (docs/SPEC-CONFIG.md, "tier"). A route disabled or moved to another tier
+// leaves the array on the next apply.
+func deriveTierRoutes(ctx context.Context, st Store, rows []Row) ([]Row, error) {
+	routes, err := st.List(ctx, KindRoute)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Row, 0, len(rows))
+	for _, r := range rows {
+		r = r.Clone()
+		r.Fields["routes"] = strings.Join(TierMembers(routes, r.Name), ",")
 		out = append(out, r)
 	}
 	return out, nil

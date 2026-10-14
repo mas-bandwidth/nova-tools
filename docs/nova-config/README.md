@@ -349,15 +349,14 @@ machine a loop names cannot be removed until the loop is.
 
 One way to run a model tier: the provider and model a card of that tier runs
 on, its token budget per card and its deadline in seconds. A tier with several
-routes spreads its cards across providers and models, in the order of the
-tier's array. Three pro routes, the pro array (the direct route named twice, so
-it takes two turns of every four), then the apply that hands them to the deal:
+routes spreads its cards across providers and models, in the order of its
+enabled routes. Three pro routes, then the apply that hands them to the deal
+and writes the tier its routes derived from `--tier`:
 
 ```
 nova-config route add pro-deepseek-opencode --tier pro --provider opencode --model deepseek-v4 --tokens 400000 --deadline 1800
 nova-config route add pro-deepseek-direct --tier pro --provider deepseek --model deepseek-v4 --tokens 400000 --deadline 1800
 nova-config route add pro-grok-openrouter --tier pro --provider openrouter --model x-ai/grok-4 --tokens 300000 --deadline 1800
-nova-config tier set pro --routes pro-deepseek-direct,pro-deepseek-opencode,pro-deepseek-direct,pro-grok-openrouter
 nova-config apply
 ```
 
@@ -368,17 +367,18 @@ stop; `--usd 0.50` is a dollar budget per card beside it, the harness's reported
 cost at which the card is stopped (a model that re-sends its whole context
 uncached spends tokens fast and cents slowly, so its token budget can be a
 generous ceiling and the dollars the bound); `--deadline` is required and above 0; `--enabled false` takes a route out
-of the deal. The deal takes `routes[index mod len]` of the card's tier's array
+of the deal. The deal takes `routes[index mod len]` of the card's tier's routes
 for each card, the index a counter on the fleet table moved by one a card
 dealt, and a redeal moves past the routes already taken for that card when
 another remains; a card's `model:` header pins it instead and moves no index.
-`tier set` refuses a route that is not a row, is disabled or is of another
-tier, and `tier remove` is refused (migrate made both rows and the deal reads
-them); a tier with an empty array takes its enabled routes in name order;
-`nova-config tier list` prints the arrays. The tier is `flash` or
-`pro`: frontier cards are never dealt from routes, they escalate to the
+**A tier carries no `--routes`:** membership is the enabled routes whose
+`--tier` names it, in name order, so `tier set --routes` is refused and the fix
+is on the route (`nova-config route set <route> --tier <tier>`); `tier remove`
+is refused (migrate made the rows and the deal reads them). The tier is `flash`
+or `pro`: frontier cards are never dealt from routes, they escalate to the
 coordinator. apply writes the hashes `route:<name>` and `tier:<name>` and the
-sets `routes` and `tiers`, which the deal reads.
+sets `routes` and `tiers`, which the deal reads; the tier hash's `routes` field
+is written from the route rows on every apply, never stored.
 
 A route also holds its price sheet, so what a card cost on it is known and
 looked up in one place. Every field is optional, and every price is a
@@ -452,7 +452,7 @@ nova-config fleet set REFUSED: --store m9 names no machine row; run: nova-config
 nova-config friend set REFUSED: friend f9 not found; run: nova-config friend add f9 --<field> <value> ...
 nova-config machine remove REFUSED: machine m1 is the --coordinator of the fleet; run: nova-config machine list
 nova-config friend remove REFUSED: friend f1 is the --coordinator of the sprint; run: nova-config friend list
-nova-config route remove REFUSED: route flash-a is in the --routes of tier flash; set it out of the list first (tier set flash --routes <the rest>); run: nova-config route list
+nova-config tier set REFUSED: a tier carries no --routes: its membership is the enabled routes whose --tier names it; set the route's tier instead: nova-config route set <route> --tier <tier>; run: nova-config route list
 nova-config route set REFUSED: --enabled false takes a route out of the deal and a disabled route carries its reason; say why: --note '<the measured reason>'; run: nova-config route set -h
 nova-config fleet set REFUSED: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config fleet set -h
 nova-config loop set REFUSED: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1

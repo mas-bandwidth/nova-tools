@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
+func TestStatusCountsEveryEnabledRouteOfATier(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
 	h.dir = t.TempDir()
@@ -36,15 +36,16 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 		code, _, errs = h.run(t, "route", "add", name, "--tier", tier, "--provider", provider, "--model", "m", "--deadline", "60", "--file", "case.json")
 		require.Zero(t, code, errs)
 	}
-	for _, args := range [][]string{{"tier", "set", "pro", "--routes", "pro-a"}, {"tier", "set", "heavy", "--routes", "heavy-a"}} {
-		code, _, errs = h.run(t, append(args, "--file", "case.json")...)
-		require.Zero(t, code, errs)
-	}
+	// A tier carries no --routes: membership is the enabled routes whose
+	// --tier names it, so no array excludes a funded route (docs/SPEC-CONFIG.md, "tier").
+	code, _, errs = h.run(t, "tier", "set", "pro", "--routes", "pro-a", "--file", "case.json")
+	assert.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "a tier carries no --routes")
+	assert.Contains(t, errs, "set the route's tier instead: nova-config route set <route> --tier <tier>")
 	code, out, errs := h.run(t, "status", "--file", "case.json")
 	require.Zero(t, code, errs)
-	assert.Contains(t, out, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 pro=1/7\n")
-	warning := "provider=opencode funded=true routes-in-no-tier-array=pro-b,pro-c,pro-d,pro-e,pro-f,pro-g; run: nova-config tier set pro --routes pro-a,pro-b,pro-c,pro-d,pro-e,pro-f,pro-g --actor operator --file case.json"
-	assert.Contains(t, out, "CONFIG WARN "+warning+"\n")
+	assert.Contains(t, out, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 pro=7\n")
+	assert.NotContains(t, out, "routes-in-no-tier-array")
 	assert.Contains(t, out, "CONFIG WARN tier=heavy holds no route of a funded provider; run: nova-config tier show heavy --file case.json\n")
 	code, out, errs = h.run(t, "status", "--file", "case.json", "--json")
 	require.Zero(t, code, errs)
@@ -57,8 +58,8 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &result))
 	assert.Zero(t, result.Result.Exit)
-	assert.Contains(t, string(result.Facts["providers"]), "pro=1/7")
-	assert.Contains(t, result.Notes, warning)
+	assert.Contains(t, string(result.Facts["providers"]), "pro=7")
+	assert.Contains(t, result.Notes, "tier=heavy holds no route of a funded provider; run: nova-config tier show heavy")
 	code, out, errs = h.run(t, "kinds")
 	require.Zero(t, code, errs)
 	assert.Contains(t, out, "name=provider table=config.providers")
@@ -233,23 +234,21 @@ func TestStatusWarningRemediesUseTheChosenStore(t *testing.T) {
 				code, _, errs := h.run(t, append([]string{"migrate"}, flags...)...)
 				require.Zero(t, code, errs)
 			}
-			commands := [][]string{{"provider", "add", "p", "--billing", "metered", "--funded", "true"}, {"route", "add", "a", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"route", "add", "b", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"tier", "set", "pro", "--routes", "a"}}
+			commands := [][]string{{"provider", "add", "p", "--billing", "metered", "--funded", "true"}, {"route", "add", "a", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"route", "add", "b", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}}
 			for _, command := range commands {
 				code, _, errs := h.run(t, append(command, flags...)...)
 				require.Zero(t, code, errs)
 			}
 			code, out, errs := h.run(t, append([]string{"status"}, flags...)...)
 			require.Zero(t, code, errs)
-			write := "nova-config tier set pro --routes a,b --actor 'review bot' " + flag + " " + value
+			// pro holds the funded routes a and b; heavy holds none, and its
+			// remedy repeats the chosen store (docs/SPEC-CONFIG.md, "status").
 			show := "nova-config tier show heavy " + flag + " " + value
-			assert.Contains(t, out, "; run: "+write+"\n")
 			assert.Contains(t, out, "; run: "+show+"\n")
-			command := words(write)
+			assert.NotContains(t, out, "routes-in-no-tier-array")
+			command := words(show)
 			code, _, errs = h.run(t, command[1:]...)
 			require.Zero(t, code, errs, "the warning's correction runs on this store")
-			code, out, errs = h.run(t, append([]string{"status"}, flags...)...)
-			require.Zero(t, code, errs)
-			assert.NotContains(t, out, "routes-in-no-tier-array")
 		})
 	}
 }

@@ -44,7 +44,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 		assert.Contains(t, Tiers, w, "a route tier is a tier")
 	}
 	names := KindNames()
-	assert.Equal(t, []string{KindRoute, KindTier}, names[len(names)-2:], "routes apply before the tiers that name them")
+	assert.Equal(t, []string{KindRoute, KindTier}, names[len(names)-2:], "routes apply before the tiers whose membership they are")
 
 	// The Redis view: route:<name> in the set routes, no derived field; a
 	// loop's view keeps its log.
@@ -381,11 +381,11 @@ func TestApplyWritesRoutesAndReachesParity(t *testing.T) {
 	assert.Equal(t, "metered", view["billing"])
 }
 
-// A route a tier's array names is held, as a row a ref names is: removing it
-// would leave the deal an array naming a route that is not there, which set
-// itself refuses (checkTierRoutes). The remove names the tier; once the array
-// lets it go, the route goes.
-func TestARouteATierNamesIsHeld(t *testing.T) {
+// A route a tier serves is not held: membership is derived from route.tier,
+// so the remove takes it out of the deal's tier, and a tier row that carries
+// the removed --routes is refused with the fix (pkg/config/kind.go, KindTier;
+// docs/SPEC-CONFIG.md, "tier").
+func TestARouteATierServesIsRemovedFreely(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := NewMem()
@@ -397,15 +397,18 @@ func TestARouteATierNamesIsHeld(t *testing.T) {
 		_, err = st.Insert(ctx, KindRoute, row, "a1")
 		require.NoError(t, err)
 	}
+	// the stored array is gone: a tier carrying routes is refused, and the
+	// refusal names the route's --tier as the fix
 	_, _, err := st.Update(ctx, KindTier, "flash", map[string]string{"routes": "flash-b,flash-a,flash-b"}, "a1")
-	require.NoError(t, err)
+	assert.ErrorIs(t, err, ErrInvalid)
+	assert.ErrorContains(t, err, "set the route's tier instead: nova-config route set <route> --tier flash")
+	// the route goes with nothing to release first, and membership follows
+	// the rows that remain
 	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
-	assert.ErrorIs(t, err, ErrReferenced)
-	assert.ErrorContains(t, err, "route flash-a is in the --routes of tier flash")
-	_, _, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "flash-b"}, "a1")
 	require.NoError(t, err)
-	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
-	assert.NoError(t, err)
+	routes, err := st.List(ctx, KindRoute)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"flash-b"}, TierMembers(routes, "flash"))
 }
 
 func TestAMuseRouteIsAddedListedAndReadBack(t *testing.T) {

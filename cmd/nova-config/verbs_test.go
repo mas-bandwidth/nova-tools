@@ -57,7 +57,6 @@ func TestEveryKindsExamplesRunInOrder(t *testing.T) {
 	clear := []string{
 		"nova-config sprint set --coordinator '' --as a1 --file try.json",
 		"nova-config fleet set --coordinator '' --store '' --as a1 --file try.json",
-		"nova-config tier set flash --routes '' --as a1 --file try.json",
 	}
 	for _, e := range kindExamples {
 		if e.verb == "remove" && clear != nil {

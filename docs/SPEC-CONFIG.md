@@ -38,8 +38,8 @@ sprint row holds who coordinates; a friend's roles are what the deal reads.
 A loop's row is a process someone decides runs on one machine: its command,
 the seat and secret names it opens, and how it runs. A route's row is one way
 someone decides to run a model tier: the provider and model, the budget and
-deadline. A tier's row is the order someone decides the deal takes a tier's
-routes in.
+deadline. A tier's row is the tier the deal knows, its membership read from
+each route's `tier`: there is no second list.
 
 Where each field of this cut sits:
 
@@ -51,7 +51,7 @@ Where each field of this cut sits:
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
-| tier (decided per tier) | `routes` |
+| tier (the tier's one row) | none: its routes are the enabled routes whose `tier` names it |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
 (`pkg/config/kind.go`: `Kind`), one migration, one Redis writer. The
@@ -351,24 +351,21 @@ and this cut changes no model or TLC receipt. Providers apply before routes.
 
 `status` always prints a `PROVIDER name=<name> funded=<bool> billing=<word>
 balance_usd=<value or -> as_of=<date or ->` line for each provider, followed
-by `<tier>=<enabled in array>/<enabled total>` for every tier it serves.
-Empty or absent tier arrays select all enabled routes, including frontier's
-implicit array; disabled routes do not contribute. A non-empty provider note
-appears on its line, including the migration reminder. A funded provider's enabled
-routes excluded by a non-empty array produce `CONFIG WARN provider=<name>
-funded=true routes-in-no-tier-array=<names>` and a concrete `tier set --routes`
-command preserving the existing array. A configured tier selecting no enabled
-route of any funded provider produces `CONFIG WARN tier=<tier> holds no route
-of a funded provider` and `tier show` as its remedy. These warnings are advisory
-and never change the exit code. CLI warning commands retain the chosen
-`--file`, `--pg` or `--seat`; writes carry the known actor or an explicit
-`--actor <name>` placeholder. JSON carries the provider lines as the
-`providers` fact and the same warnings as notes.
+by `<tier>=<enabled routes>` for every tier it serves. A tier's membership is
+its enabled routes, read from `route.tier`; disabled routes do not contribute. A
+non-empty provider note appears on its line, including the migration reminder.
+A configured tier with no enabled route of any funded provider produces
+`CONFIG WARN tier=<tier> holds no route of a funded provider` and `tier show`
+as its remedy. These warnings are advisory and never change the exit code. CLI
+warning commands retain the chosen `--file`, `--pg` or `--seat`; writes carry
+the known actor or an explicit `--actor <name>` placeholder. JSON carries the
+provider lines as the `providers` fact and the same warnings as notes.
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
-models, in the order of the tier's array (the `tier` kind below); a card's
+models, in the order of the tier's routes (the enabled routes whose `tier`
+names it; the `tier` kind below); a card's
 `model:` header pins it instead. The route kind accepts `frontier` alongside
 flash, pro and heavy and carries it through add, set, list and apply. Automatic
 frontier fleet dispatch requires the sprint deal integration. A heavy route
@@ -500,24 +497,26 @@ empty, and the file run again keeps a note written since. A binary with the
 note refuses every machine verb on a store older than 0015 as it refuses
 every route verb on one older than 0007 (`behindSchema`).
 
-**`tier`** (`config.tiers`): a model tier's route array (the owner,
-2026-10-01: "the per-tier provider/model array should be specified in
-nova-config"). It has three rows, `flash`, `pro` and `heavy`, made by migrate, so `set`
-takes them on a new store and there is nothing to add. The deal takes
-`routes[index mod len]` for each card of the tier, the index a uint64
-counter on the fleet table (`route_index_flash`, `route_index_pro`), moved
-by one a card dealt; a redeal moves past the entries it leaves out
-(internal/sprint/route.go, tla/RouteIndex.tla). A route named twice takes
-two turns: the array is how a route gets more of the tier's cards.
+**`tier`** (`config.tiers`): a model tier, the row the deal knows a tier by
+(the owner, 2026-10-01: "the per-tier provider/model array should be specified
+in nova-config"). It has three rows, `flash`, `pro` and `heavy`, made by
+migrate, so there is nothing to add and no field to set. Membership is the
+enabled routes whose `tier` names the row: the route rows are the one record,
+so a tier has no `routes` column and no `--routes` flag. The deal takes the
+tier's routes at `index mod len` for each card of the tier, the index a uint64
+counter on the fleet table (`route_index_flash`, `route_index_pro`), moved by
+one a card dealt; a redeal moves past the entries it leaves out
+(internal/sprint/route.go, tla/RouteIndex.tla). A route disabled or moved to
+another tier leaves the deal on the next apply.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `routes` | ordered comma list of route names, a name repeated as given | (empty) | the deal: the tier's array, read with the routes in one round trip; empty takes the tier's enabled routes in name order | `tier:<t>` |
+| (`routes`) | derived, never stored or set | | apply, from the route rows: the enabled routes whose `tier` names the row, in name order; the deal reads it | `tier:<t>` |
 
-`set` refuses a name that is no route row, a disabled route, or a route of
-another tier (the store's check beside the kind's), and `remove` refuses
-both rows: the deal reads them. A route disabled or removed after the array
-is set is skipped by the deal. `tier list` prints the arrays.
+`tier set --routes` is refused, naming the fix: the route's `--tier` decides
+membership (`nova-config route set <route> --tier <tier>`). `remove` refuses
+the rows: the deal reads them. `tier list` prints each tier's name and no
+array; `nova-config route list` shows the routes by their tier.
 
 ## The schema
 
@@ -598,9 +597,10 @@ config.routes            (name PK, tier flash|frontier|heavy|pro, provider, mode
                           reasoning_as_output boolean, long_context,
                           billing metered|plan, price_source, price_as_of;
                           note added by 0015, text NOT NULL DEFAULT '')
-config.tiers             (name PK flash|pro|heavy, routes, created_at, updated_at;
-                          CHECK routes a comma list of names; the three rows
-                          inserted by the migration)
+config.tiers             (name PK flash|pro|heavy, created_at, updated_at;
+                          the three rows inserted by the migration; routes
+                          added by 0008 and dropped by 0045: membership is
+                          route.tier)
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
@@ -683,8 +683,8 @@ the tool never sets, guesses or defaults one.
    never a friend's capacity) is named on one line,
    `CONFIG REFUSED kind=<k> name=<row> why=<one line> run: <remedy>`, and the
    kind's remaining ops are still written (`DoOps`). **The ref rule:** a row
-   whose ref or seq field names a row refused earlier in this run (the sprint
-   row's coordinator, a loop's machine, a tier's routes, the fleet's machines)
+   whose ref field names a row refused earlier in this run (the sprint
+   row's coordinator, a loop's machine, the fleet's machines)
    is refused with that reason (`ErrRefusedRef`) and never written
    half-referenced (`RefRefused`), when the named row is absent from Redis
    (its refused op was an add) or the op changes that ref field itself. A row
@@ -693,10 +693,9 @@ the tool never sets, guesses or defaults one.
    still lands. The rule judges the row actually written against Redis's,
    so with the live seat held (the coordinator Redis keeps) the stored
    row's coordinator never refuses it (`SprintRefusedOnlyForItsWrittenRef`).
-   A kind refused whole counts each of its pending rows refused: a route
-   kind refused for one unpriced route refuses a tier whose `routes` names
-   any route with a pending add or set, priced or not, until that route is
-   priced or disabled;
+   A derived field is not a ref the rule judges: a tier's routes come from
+   `route.tier` on every apply, and the deal skips a route Redis does not
+   hold, so a route kind refused whole never blocks the tier;
 8. **stamp** `config:decl rev:<kind> = <rev>, at:<kind> = <server ms>`,
    compare-and-set: inside `WATCH config:decl`, the stamp is written only
    while it still reads the value step 2 read; a stamp that moved is

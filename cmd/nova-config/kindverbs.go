@@ -114,6 +114,26 @@ func fieldUsage(f config.Field, add bool) string {
 	return head + ": " + f.Help
 }
 
+// hasRoutesFlag reports whether a tier verb's arguments carry --routes, the
+// flag the tier kind no longer has: its route list is derived from
+// route.tier, so the refusal names that fix instead of the stock unknown-flag
+// line.
+func hasRoutesFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name := strings.TrimLeft(a, "-")
+		if name == "routes" || strings.HasPrefix(name, "routes=") {
+			return true
+		}
+	}
+	return false
+}
+
 func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, stdout, stderr io.Writer, d deps) int {
 	verb, op := k.Name+" set", config.OpSet
 	if add {
@@ -138,6 +158,9 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		values[f.Name] = fs.String(f.Name, "", fieldUsage(f, add))
 	}
 	name, rest := nameAndRest(k, args)
+	if k.Name == config.KindTier && hasRoutesFlag(rest) {
+		return refuse(stderr, verb, "a tier carries no --routes: its membership is the enabled routes whose --tier names it; set the route's tier instead: nova-config route set <route> --tier <tier>; run: nova-config route list")
+	}
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
 		return code
 	}
@@ -331,6 +354,10 @@ func writeRemedy(k *config.Kind, add bool, name string, err error, next string) 
 			return remedy
 		}
 	}
+	if k.Name == config.KindTier {
+		// a tier carries no field: what its write refused is set on the route
+		return toolName + " " + config.KindRoute + " list"
+	}
 	switch {
 	case add, k.Singleton, errors.Is(err, config.ErrNotFound):
 		return next
@@ -357,41 +384,6 @@ func refRemedy(k *config.Kind) string {
 		return ""
 	}
 	return toolName + " " + ref + " list"
-}
-
-// removeRemedy is the command a remove refusal names: a route a tier still
-// lists is taken out by that tier's set, the remaining routes read from the
-// store and filled in, so the next turn is a paste and not a search
-// (docs/STANDARD.md, section 3, point 2). Every other refusal keeps next.
-func removeRemedy(ctx context.Context, st pgStore, k *config.Kind, name, again, next string) string {
-	if k.Name != config.KindRoute {
-		return next
-	}
-	tiers, err := st.List(ctx, config.KindTier)
-	if err != nil {
-		return next
-	}
-	for _, tier := range tiers {
-		var rest []string
-		found := false
-		for _, r := range strings.Split(tier.Fields["routes"], ",") {
-			switch {
-			case r == name:
-				found = true
-			case r != "":
-				rest = append(rest, r)
-			}
-		}
-		if !found {
-			continue
-		}
-		value := strings.Join(rest, ",")
-		if value == "" {
-			value = "''" // an empty --routes: the shell word the flag takes
-		}
-		return toolName + " " + config.KindTier + " set " + tier.Name + " --routes " + value + again
-	}
-	return next
 }
 
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
@@ -465,9 +457,6 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	id, err := st.Delete(config.WithReason(ctx, reasonText), k.Name, name, actor)
 	if err != nil {
 		next := toolName + " " + k.Name + " list" + c.again()
-		if errors.Is(err, config.ErrReferenced) {
-			next = removeRemedy(ctx, st, k, name, c.again(), next)
-		}
 		return storeErr(stderr, verb, err, next)
 	}
 	if *asJSON {

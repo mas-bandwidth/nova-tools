@@ -319,8 +319,13 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		addProvider(t, st, via["provider"])
 		id, err = st.Insert(ctx, KindRoute, mk(route, "r", via), "t")
 		readBack(KindRoute, "r", OpAdd, via, id, err)
-		_, id, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "r"}, "t")
-		readBack(KindTier, "flash", OpSet, map[string]string{"routes": "r"}, id, err)
+		// A tier's routes are derived from route.tier on every apply, never
+		// stored: a set that carries them is refused, and the fix is on the
+		// route (pkg/config/kind.go, Kind.Derived; docs/SPEC-CONFIG.md, "tier").
+		_, _, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "r"}, "t")
+		require.ErrorContains(t, err, "route set <route> --tier flash", "a tier carrying routes is refused with the fix")
+		_, id, err = st.Update(ctx, KindTier, "flash", map[string]string{}, "t")
+		readBack(KindTier, "flash", OpSet, map[string]string{}, id, err)
 		_, id, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "box"}, "t")
 		readBack(KindFleet, KindFleet, OpSet, map[string]string{"store": "box"}, id, err)
 		_, id, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "f"}, "t")

@@ -63,10 +63,10 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"route", "list", "nova-config route list --file try.json"},
 	{"route", "show", "nova-config route show flash-a --file try.json"},
 	{"route", "history", "nova-config route history flash-a --file try.json"},
-	{"tier", "set", "nova-config tier set flash --routes flash-a --actor a1 --file try.json"},
 	{"tier", "list", "nova-config tier list --file try.json"},
 	{"tier", "show", "nova-config tier show flash --file try.json"},
-	{"tier", "history", "nova-config tier history flash --file try.json"},
+	// a tier row is made by migrate and carries no field to write, so a tier
+	// has no history of its own: membership is read from the route rows.
 	// a row another names is held (the sprint names f1, the fleet m1, the tier
 	// flash-a): the run test clears those fields before these lines
 	{"loop", "remove", "nova-config loop remove reader-m1 --actor a1 --file try.json"},
@@ -132,8 +132,11 @@ func verbExtra(verb string) string {
 		if words[0] == config.KindMachine && (words[1] == "add" || words[1] == "set") {
 			more += noteMore(words[0])
 		}
+		if words[0] == config.KindTier && (words[1] == "add" || words[1] == "set") {
+			more = "a tier carries no field: its rows are made by migrate, and membership is the enabled routes whose --tier names it; set the route's tier instead: nova-config route set <route> --tier <tier>\n"
+		}
 		if words[0] == config.KindTier && words[1] == "remove" {
-			more = "a tier row is made by migrate and never removed: set its --routes instead\n"
+			more = "a tier row is made by migrate and never removed: membership follows each route's --tier\n"
 		}
 		for _, e := range kindExamples {
 			if e.kind == words[0] && e.verb == words[1] {

@@ -149,30 +149,18 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 			return refusal
 		}
 	}
-	if k.Name == KindTier {
-		return checkTierRoutes(ctx, st, row)
-	}
-	return nil
-}
-
-// checkTierRoutes refuses a tier's array that names a route that is not a row,
-// is disabled, or serves another tier: the deal would only skip it.
-func checkTierRoutes(ctx context.Context, st Store, row Row) error {
-	for _, name := range strings.Split(row.Fields["routes"], ",") {
-		if name == "" {
+	// A derived field is apply's to write, never a caller's: a tier row that
+	// carries routes names a field no longer stored, and the fix is on the
+	// route (docs/SPEC-CONFIG.md, "tier").
+	for _, name := range k.Derived {
+		if _, has := row.Fields[name]; !has {
 			continue
 		}
-		r, found, err := st.Get(ctx, KindRoute, name)
-		switch {
-		case err != nil:
-			return err
-		case !found:
-			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--routes %s names no route row", name)}
-		case r.Fields["enabled"] != "true":
-			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--routes %s names a disabled route; enable it first (route set %s --enabled true)", name, name)}
-		case r.Fields["tier"] != row.Name:
-			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--routes %s names a route of tier %s, not %s", name, r.Fields["tier"], row.Name)}
+		detail := fmt.Sprintf("%s %s carries --%s, which is derived on every apply, never stored; set the route's tier instead: nova-config route set <route> --tier %s", k.Name, row.Name, name, row.Name)
+		if k.Name == KindTier && name == "routes" {
+			return &RefusedError{Err: ErrInvalid, Detail: detail}
 		}
+		return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("%s %s carries --%s, which is derived on every apply, never stored", k.Name, row.Name, name)}
 	}
 	return nil
 }

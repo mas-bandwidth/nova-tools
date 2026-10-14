@@ -74,6 +74,14 @@ func Plan(k *Kind, rows []Row, views map[string]View) []Op {
 				changed = append(changed, f.Name)
 			}
 		}
+		// A derived field is compared too: what it derives (a tier's routes
+		// from route.tier) moving rewrites the row, so Redis never keeps a
+		// stale copy (docs/SPEC-CONFIG.md, "tier").
+		for _, name := range k.Derived {
+			if row.Fields[name] != prev[name] {
+				changed = append(changed, name)
+			}
+		}
 		if len(changed) > 0 {
 			ops = append(ops, Op{Op: OpSet, Name: row.Name, Changed: changed, Row: row, Prev: prev})
 		}

@@ -281,10 +281,10 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	assert.Equal(t, "", view["price_cache_read"], "a price not set is empty, never 0")
 }
 
-// A route a tier still lists cannot be removed, and the refusal names the
-// tier set that takes it out with the remaining routes filled in, so the
-// remedy runs in one turn (docs/STANDARD.md, section 3, point 2).
-func TestRouteRemoveRemedyNamesTheTierSetThatClearsIt(t *testing.T) {
+// A route a tier serves can be removed: membership is derived from route.tier,
+// so the remove needs no tier set first, and apply derives the tier from the
+// routes that remain (docs/SPEC-CONFIG.md, "tier").
+func TestRouteRemoveNeedsNoTierSet(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t)
@@ -296,27 +296,24 @@ func TestRouteRemoveRemedyNamesTheTierSetThatClearsIt(t *testing.T) {
 		code, _, errs := h.run(t, args...)
 		require.Equal(t, 0, code, errs)
 	}
-	code, _, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b")
-	require.Equal(t, 0, code, errs)
-
 	code, out, errs := h.run(t, "route", "remove", "a")
-	assert.Equal(t, 1, code)
-	assert.Empty(t, out)
-	assert.Equal(t, "nova-config route remove REFUSED: route a is in the --routes of tier flash; set it out of the list first (tier set flash --routes <the rest>); run: nova-config tier set flash --routes b\n", errs)
-
-	// the remedy is the command that unblocks the remove
-	code, _, errs = h.run(t, "tier", "set", "flash", "--routes", "b")
-	require.Equal(t, 0, code, errs)
-	code, out, errs = h.run(t, "route", "remove", "a")
 	require.Equal(t, 0, code, "stdout %q stderr %q", out, errs)
 	assert.True(t, strings.HasPrefix(out, "CONFIG REMOVE kind=route name=a rev="), out)
+
+	// apply derives the tier from what is left
+	code, _, errs = h.run(t, "apply", "--kind", "route")
+	require.Equal(t, 0, code, errs)
+	code, _, errs = h.run(t, "apply", "--kind", "tier")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "b", h.redis.views["tier"]["flash"]["routes"])
 }
 
-// The tier kind through the one grammar: migrate made the flash and pro rows, so
-// set writes a tier's route array on a new store, in order and with a name
-// repeated; a route that is no row or is disabled is refused; remove is refused
-// for both tiers (the deal reads them); list prints both tiers; apply writes
-// tier:<name> (docs/SPEC-CONFIG.md, "tier").
+// The tier kind through the one grammar: migrate made the flash, heavy and pro
+// rows, so there is nothing to add and no field to set; a set that carries the
+// removed --routes is refused, naming the route's --tier as the fix; remove is
+// refused for every tier (the deal reads them); list prints each tier's name and
+// no array; apply writes tier:<name> with the routes derived from route.tier
+// (docs/SPEC-CONFIG.md, "tier").
 func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 	t.Parallel()
 
@@ -330,23 +327,21 @@ func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 		code, _, errs := h.run(t, args...)
 		require.Equal(t, 0, code, errs)
 	}
-	code, out, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b,b")
-	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG SET kind=tier name=flash rev=5 changed=routes\n", out)
-	for routes, refusal := range map[string]string{"a,nope": "--routes nope names no route row", "off": "--routes off names a disabled route"} {
-		code, _, errs = h.run(t, "tier", "set", "flash", "--routes", routes)
-		assert.Equal(t, 1, code, routes)
-		assert.Contains(t, errs, refusal)
-	}
+	code, _, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b,b")
+	assert.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "a tier carries no --routes")
+	assert.Contains(t, errs, "set the route's tier instead: nova-config route set <route> --tier <tier>")
 	for _, tier := range []string{"flash", "pro"} {
 		code, _, errs = h.run(t, "tier", "remove", tier)
 		assert.Equal(t, 1, code, "tier remove %s", tier)
 		assert.Contains(t, errs, "tier "+tier+" is made by migrate and the deal reads it; it is never removed")
 	}
-	code, out, _ = h.run(t, "tier", "list")
-	require.Equal(t, 0, code)
-	assert.Equal(t, "TIER name=flash routes=a,b,b\nTIER name=heavy routes=-\nTIER name=pro routes=-\nCONFIG LIST kind=tier rows=3\n", out)
+	code, out, errs := h.run(t, "tier", "list")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "TIER name=flash\nTIER name=heavy\nTIER name=pro\nCONFIG LIST kind=tier rows=3\n", out)
+	assert.NotContains(t, out, "routes=")
 	code, _, errs = h.run(t, "apply", "--kind", "tier")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "a,b,b", h.redis.views["tier"]["flash"]["routes"])
+	assert.Equal(t, "a,b", h.redis.views["tier"]["flash"]["routes"], "the enabled routes of the tier, in name order")
+	assert.Equal(t, "", h.redis.views["tier"]["heavy"]["routes"])
 }

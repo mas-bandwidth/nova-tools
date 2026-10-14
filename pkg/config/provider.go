@@ -31,10 +31,12 @@ func checkProvider(r Row) error {
 	return nil
 }
 
-// ProviderReport shows declared funding and coverage of enabled routes by the
-// deal's tier arrays. Empty or absent arrays take every enabled route of that
-// tier. No state is changed; warnings are advisory, including tiers with no
-// enabled route of a funded provider.
+// ProviderReport shows declared funding and coverage of enabled routes by
+// tier. A tier's membership is its enabled routes, read from route.tier
+// (docs/SPEC-CONFIG.md, "tier"), so no route is outside its tier and the
+// report is a count, never an array's fraction. No state is changed;
+// warnings are advisory, among them a tier with no enabled route of a funded
+// provider.
 //
 // At 100 providers and 10,000 routes (two orders beyond a small fleet), the rows
 // occupy roughly 20 MB and fit one process; the store rows are the only truth.
@@ -42,17 +44,6 @@ func checkProvider(r Row) error {
 // cover the grouping and deterministic rendering; adopted modules add no simpler
 // projection for these three small tables.
 func ProviderReport(providers, routes, tiers []Row) (lines, warns []string) {
-	arrays := map[string]string{}
-	selected := map[string]map[string]bool{}
-	for _, t := range tiers {
-		arrays[t.Name] = t.Fields["routes"]
-		if arrays[t.Name] != "" {
-			selected[t.Name] = map[string]bool{}
-			for _, name := range strings.Split(arrays[t.Name], ",") {
-				selected[t.Name][name] = true
-			}
-		}
-	}
 	funded := map[string]bool{}
 	for _, p := range providers {
 		funded[p.Name] = p.Fields["funded"] == "true"
@@ -64,46 +55,27 @@ func ProviderReport(providers, routes, tiers []Row) (lines, warns []string) {
 			continue
 		}
 		byProvider[r.Fields["provider"]] = append(byProvider[r.Fields["provider"]], r)
-		tier := r.Fields["tier"]
-		if funded[r.Fields["provider"]] && (arrays[tier] == "" || selected[tier][r.Name]) {
-			fundedInTier[tier] = true
+		if funded[r.Fields["provider"]] {
+			fundedInTier[r.Fields["tier"]] = true
 		}
 	}
 	ordered := slices.Clone(providers)
 	slices.SortFunc(ordered, func(a, b Row) int { return strings.Compare(a.Name, b.Name) })
 	for _, p := range ordered {
 		line := fmt.Sprintf("PROVIDER name=%s funded=%s billing=%s balance_usd=%s as_of=%s", p.Name, Value(p.Fields["funded"]), Value(p.Fields["billing"]), Value(p.Fields["balance_usd"]), Value(p.Fields["balance_as_of"]))
-		total, inside := map[string]int{}, map[string]int{}
-		missing := map[string][]string{}
+		counts := map[string]int{}
 		for _, r := range byProvider[p.Name] {
-			tier := r.Fields["tier"]
-			total[tier]++
-			if arrays[tier] == "" || selected[tier][r.Name] {
-				inside[tier]++
-			} else {
-				missing[tier] = append(missing[tier], r.Name)
-			}
+			counts[r.Fields["tier"]]++
 		}
 		for _, tier := range Tiers {
-			if total[tier] != 0 {
-				line += fmt.Sprintf(" %s=%d/%d", tier, inside[tier], total[tier])
+			if counts[tier] != 0 {
+				line += fmt.Sprintf(" %s=%d", tier, counts[tier])
 			}
 		}
 		if p.Fields["note"] != "" {
 			line += " note=" + Value(p.Fields["note"])
 		}
 		lines = append(lines, line)
-		if p.Fields["funded"] != "true" {
-			continue
-		}
-		for _, tier := range Tiers {
-			names := missing[tier]
-			if len(names) == 0 {
-				continue
-			}
-			slices.Sort(names)
-			warns = append(warns, fmt.Sprintf("provider=%s funded=true routes-in-no-tier-array=%s; run: nova-config tier set %s --routes %s,%s", p.Name, strings.Join(names, ","), tier, arrays[tier], strings.Join(names, ",")))
-		}
 	}
 	orderedTiers := slices.Clone(tiers)
 	slices.SortFunc(orderedTiers, func(a, b Row) int { return strings.Compare(a.Name, b.Name) })

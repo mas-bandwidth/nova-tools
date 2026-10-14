@@ -844,6 +844,10 @@ func (a *RedisApplier) readHashes(ctx context.Context, h hashKind) (map[string]V
 				v[f.Name] = hv[f.Name]
 			}
 		}
+		// a derived field is a text copy of what the store derives
+		for _, name := range k.Derived {
+			v[name] = hv[name]
+		}
 		views[n] = v
 	}
 	return views, revValue(rev), nil
@@ -868,6 +872,10 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])
+	}
+	// a derived field (a tier's routes) is written too, from what Derive set
+	for _, name := range k.Derived {
+		fields = append(fields, name, row.Fields[name])
 	}
 	pipe := a.Client.TxPipeline()
 	pipe.SAdd(ctx, h.set, row.Name)

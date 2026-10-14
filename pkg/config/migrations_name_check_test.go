@@ -10,8 +10,8 @@ import (
 )
 
 // migrationVersion is the migration number at index i. The files are
-// consecutive: 0042 is machine roles, 0043 is subscription billing, and
-// 0044 is unstated friend pronouns.
+// consecutive: 0042 is machine roles, 0043 is subscription billing,
+// 0044 is unstated friend pronouns, and 0045 drops the tier's stored routes.
 func migrationVersion(i int) int {
 	return i + 1
 }
@@ -30,7 +30,8 @@ func TestMigrationsHoldEveryNamedTableToTheRowNamePattern(t *testing.T) {
 	require.NotEmpty(t, all)
 
 	// Migrations() numbers stay unique and consecutive. 0042 is machine roles,
-	// 0043 is subscription billing, and 0044 is unstated friend pronouns.
+	// 0043 is subscription billing, 0044 is unstated friend pronouns, and 0045
+	// drops the tier's stored routes.
 	for i, m := range all {
 		wantVersion := migrationVersion(i)
 		assert.Equal(t, wantVersion, m.Version, "migration at index %d has version %d, want %d", i, m.Version, wantVersion)
@@ -66,4 +67,12 @@ func TestMigrationsHoldEveryNamedTableToTheRowNamePattern(t *testing.T) {
 	assert.Contains(t, sql, pattern, "migration 27 SQL must contain the name pattern")
 	require.GreaterOrEqual(t, len(all), 41)
 	assert.Contains(t, all[40].SQL, "providers_name_pattern CHECK (name ~ '"+pattern+"')")
+
+	// 0045 drops the tier's stored route array: membership is route.tier, so
+	// the column was a second copy (docs/SPEC-CONFIG.md, "tier").
+	require.GreaterOrEqual(t, len(all), 45, "the tier routes column is dropped by migration 45")
+	drop := all[44]
+	require.Equal(t, 45, drop.Version, "tier routes migration version")
+	require.Equal(t, "0045_tier_routes_derived.sql", drop.Name, "tier routes migration name")
+	assert.Contains(t, drop.SQL, "ALTER TABLE config.tiers DROP COLUMN IF EXISTS routes", "0045 drops the stored array so membership is route.tier")
 }
