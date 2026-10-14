@@ -142,7 +142,7 @@ func TestCodexLoopDeliversServerChallengesAndOrdinaryEventsWithoutClientChalleng
 	var out bytes.Buffer
 	c := &tool.Call{Stdout: &out}
 	challengeCalls := 0
-	result := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { challengeCalls++; return nil }, &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"})
+	result := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { challengeCalls++; return nil }, &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"}, nil)
 	assert.Equal(t, tool.OK, result.Status, out.String())
 	assert.Equal(t, 2, delivered)
 	assert.Zero(t, challengeCalls)
