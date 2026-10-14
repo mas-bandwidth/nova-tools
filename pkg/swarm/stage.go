@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
 // DefaultStageTimeout is the hard timeout for card staging (120 s).
@@ -330,7 +330,7 @@ type StageOptions struct {
 	Rework *Rework
 	// GitIdentity, when set, is the author and committer the clone's local config is set to
 	// ("Name <email>"), the sprint row's git_identity; "" uses the machine's own default
-	// (config.DefaultGitIdentity), never the host's global git config.
+	// (gitrun.DefaultGitIdentity), never the host's global git config.
 	GitIdentity string
 
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
@@ -609,16 +609,16 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	// A checkout whose identity could not be set would take the model's commits under no
 	// name, found only when it commits: the stage fails here instead, saying which. The
 	// configured identity (the sprint row's git_identity) is set when given, else the
-	// machine's own default (config.DefaultGitIdentity), never the host's global git config
+	// machine's own default (gitrun.DefaultGitIdentity), never the host's global git config
 	// or a placeholder, so a clone the launcher stages and a rework-at-tip carry take the
 	// machine.
 	identityStr := opts.GitIdentity
 	if strings.TrimSpace(identityStr) == "" {
-		identityStr = config.DefaultGitIdentity
+		identityStr = gitrun.DefaultGitIdentity
 	}
 	name, email := "worker", "worker@example.com"
 	var identity []string
-	if id, ok := config.ParseGitIdentity(identityStr); ok {
+	if id, ok := gitrun.ParseGitIdentity(identityStr); ok {
 		name, email = id.Name, id.Email
 		identity = id.Env()
 	}

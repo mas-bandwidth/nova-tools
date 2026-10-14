@@ -14,7 +14,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
@@ -75,7 +74,7 @@ func TestReworkAtTipCarriesTheConfiguredIdentity(t *testing.T) {
 	// rework-at-tip commit can name it.
 	clone := filepath.Join(root, "clone")
 	stageTestGit(t, root, "clone", "-q", bare, clone)
-	identity := config.GitIdentity{Name: "nova-sprint", Email: "nova-sprint@example.invalid"}
+	identity := gitrun.GitIdentity{Name: "nova-sprint", Email: "nova-sprint@example.invalid"}
 	var fetchTime, checkoutTime time.Duration
 	carry, what, out, err := restageAtTip(context.Background(), git, clone, "sprint/card", "base",
 		Rework{Prev: prev, From: 1}, identity.Env(), &fetchTime, &checkoutTime)
@@ -116,12 +115,12 @@ func TestStageJobCloneCarriesTheConfiguredIdentity(t *testing.T) {
 	stageTestGit(t, work, "add", "README")
 	stageTestGit(t, work, "commit", "-q", "-m", "base")
 
-	require.NoError(t, StageJobAs(pool, job, work, config.DefaultGitIdentity))
+	require.NoError(t, StageJobAs(pool, job, work, gitrun.DefaultGitIdentity))
 
 	require.Equal(t, "nova-sprint", stageTestGit(t, work, "config", "user.name"))
 	require.Equal(t, "nova-sprint@example.invalid", stageTestGit(t, work, "config", "user.email"))
 
-	require.NoError(t, StageCloneIdentityAs(work, StagingIdentity{Owner: "owner", Name: "bob", Email: "bob@example.com"}, config.DefaultGitIdentity))
+	require.NoError(t, StageCloneIdentityAs(work, StagingIdentity{Owner: "owner", Name: "bob", Email: "bob@example.com"}, gitrun.DefaultGitIdentity))
 	require.Equal(t, "nova-sprint", stageTestGit(t, work, "config", "user.name"))
 	require.Equal(t, "nova-sprint@example.invalid", stageTestGit(t, work, "config", "user.email"))
 

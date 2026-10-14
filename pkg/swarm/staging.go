@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
@@ -127,7 +126,7 @@ func StagingGitEnv(id StagingIdentity) []string {
 // (docs/SPEC-SPRINT.md, the machine's commit identity).
 func StageCloneIdentityAs(repoDir string, id StagingIdentity, gitIdentity string) error {
 	name, email := id.Name, id.Email
-	if parsed, ok := config.ParseGitIdentity(gitIdentity); ok {
+	if parsed, ok := gitrun.ParseGitIdentity(gitIdentity); ok {
 		name, email = parsed.Name, parsed.Email
 	}
 	for _, kv := range [][2]string{
@@ -227,13 +226,13 @@ func escapes(p, root string) bool {
 
 // StageJob is the launcher's staging: the machine's identity, the clone's local
 // git config, and the no-way-out check, in that order. The clone's local config
-// is set to the machine's identity (config.DefaultGitIdentity, the sprint row's
+// is set to the machine's identity (gitrun.DefaultGitIdentity, the sprint row's
 // git_identity default), never the pool's owner, so a commit the worker makes in
 // the clone carries the machine. A pool with no identity row is refused before
 // anything is written; a tree with a way out is refused by path. repoDir is the
 // job clone and may be empty where the worker has not cloned yet.
 func StageJob(poolDir, jobRoot, repoDir string) error {
-	return StageJobAs(poolDir, jobRoot, repoDir, config.DefaultGitIdentity)
+	return StageJobAs(poolDir, jobRoot, repoDir, gitrun.DefaultGitIdentity)
 }
 
 // StageJobAs is StageJob with the sprint row's machine identity (gitIdentity, "Name
@@ -241,7 +240,7 @@ func StageJob(poolDir, jobRoot, repoDir string) error {
 // commit the machine makes in the clone (a rework-at-tip carry included) carries the
 // configured identity. Empty falls back to the pool's identity. A launcher that knows the
 // sprint row passes it (docs/SPEC-SPRINT.md, the machine's commit identity). The live
-// wrapper StageJob passes the machine's own default (config.DefaultGitIdentity), so a clone
+// wrapper StageJob passes the machine's own default (gitrun.DefaultGitIdentity), so a clone
 // staged by the launcher carries the machine, never the pool's owner.
 func StageJobAs(poolDir, jobRoot, repoDir, gitIdentity string) error {
 	id, err := LoadPoolIdentity(poolDir)
