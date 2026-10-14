@@ -1,9 +1,11 @@
 // roadmap writes ROADMAP.md from docs/roadmap.sexp (and, with --kind fixes,
 // FIXES.md from docs/fixes.sexp), so neither page is ever written by hand: the
-// sexp is the data, internal/roadmap decodes it through internal/roadmap/sexp
+// sexp is the data, pkg/roadmap decodes it through pkg/sexp
 // (nothing is evaluated) and renders the page, and
 // internal/docs's TestRoadmapIsGeneratedFromTheSexp and
 // TestFixesIsGeneratedFromTheSexp hold the committed pages to what this writes.
+// It is the one roadmap generator: nova-sprint runs this command (go run on this
+// module's tools/roadmap, at the version its go.mod names) from its make roadmap.
 package main
 
 import (
@@ -12,7 +14,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/roadmap"
+	"github.com/mas-bandwidth/nova-tools/pkg/roadmap"
 )
 
 func main() {

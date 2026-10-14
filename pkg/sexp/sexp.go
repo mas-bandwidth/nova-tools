@@ -1,8 +1,9 @@
 /*
-Package sexp is the bounded reader for docs/roadmap.sexp, a restricted-Lisp file.
-Its one caller is internal/roadmap. It is nova-sprint's internal/worklang reader
-(the split, v1.2.3, took that package to the nova-sprint repository), kept here
-under its own path so the roadmap does not import the sprint.
+Package sexp is the bounded reader for a restricted-Lisp file: docs/roadmap.sexp
+and docs/fixes.sexp (through pkg/roadmap), and nova-work's tree file in
+nova-sprint (its SPEC-WORKLANG.md). It is the one copy of the reader: nova-sprint's
+worklang package was the same code under another name, and imports this package
+instead.
 
 A file is data the reader returns, never a program it evaluates. The grammar is a
 sequence of s-expressions made only of lists, keywords, strings, integers and
@@ -224,7 +225,7 @@ func (r *reader) symbol() (Form, error) {
 	if err := r.node(start); err != nil {
 		return Form{}, err
 	}
-	return Form{Kind: Symbol, Offset: start, Value: string(r.data[start:r.pos])}, nil
+	return Form{Kind: Symbol, Offset: start, End: r.pos, Value: string(r.data[start:r.pos])}, nil
 }
 
 func (r *reader) list() (Form, error) {

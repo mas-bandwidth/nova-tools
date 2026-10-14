@@ -28,6 +28,7 @@ type hookRig struct {
 func newHookRig(t *testing.T, role hook.Role) *hookRig {
 	t.Helper()
 	r := &hookRig{h: hooktest.New(t), now: start, session: true}
+	r.h.Evidence(t, "bob") // a heartbeat server passing and her answer (hook.Served.Down): this file is about the holder
 	r.restart(t, role)
 	return r
 }
@@ -256,6 +257,8 @@ func TestALostRecordReArmsUnderARunningDaemon(t *testing.T) {
 	require.Equal(t, hook.StateProven, r.h.State(t, "bob").State)
 
 	r.h.MR.FlushAll()
+	r.dh.step(ctx)
+	r.h.Evidence(t, "bob") // the flush took the heartbeat's rows too: a server passing again and her answer
 	r.dh.step(ctx)
 	ok, why := r.dh.ok()
 	assert.True(t, ok, why)

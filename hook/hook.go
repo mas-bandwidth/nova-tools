@@ -97,6 +97,13 @@ const (
 	// bound outlives the whole bound of the next (a session answering every
 	// challenge inside its bound is never unproven between them).
 	ProofTTL = ChallengeEvery + 2*AnswerBound
+	// BeatEvery is the heartbeat's default interval: nova-hook serve challenges
+	// every hooked name whose role carries the bus push once an interval, and
+	// the answer is due within the same interval (tla/HookBeat.tla).
+	BeatEvery = time.Minute
+	// MissLimit is how many challenges in a row a name may leave unanswered:
+	// at the MissLimit-th, serve unhooks it.
+	MissLimit = 2
 )
 
 // The keys (docs/SPEC-HOOK.md, the key layout), all in the bus Redis.
@@ -104,6 +111,12 @@ const (
 	prefix = "hook:"
 	// NamesKey is the set of every name that ever hooked in.
 	NamesKey = prefix + "names"
+	// ServeKey is the heartbeat server's own stamp: a hash of at, every, by.
+	ServeKey = prefix + "serve"
+	// EventsKey is the capped stream of the heartbeat's unhooks, one entry each.
+	EventsKey = prefix + "events"
+	// EventsMax caps EventsKey (approximately, MAXLEN ~).
+	EventsMax = 10000
 )
 
 // RecordKey is name's record: a hash of role, state, epoch, armed, unhooked, by.
@@ -173,7 +186,15 @@ type Status struct {
 	Epoch    int64
 	Armed    time.Time // when the record was last hooked, zero when never
 	Unhooked time.Time // when it was unhooked, zero when it is not
-	Pushes   []PushStatus
+	Reason   string    // why it was unhooked, when the heartbeat did it ("missed 2 challenges")
+	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
+	AnswerAt time.Time // when the session last answered a challenge, zero when never
+	// Down is why the record reads down at this read whatever its state says
+	// (Served.Down: no server, a stale one, or no answer), "" when the evidence
+	// stands. No reader trusts the last written state then, and the gate refuses.
+	Down   string
+	Misses int // challenges in a row left unanswered
+	Pushes []PushStatus
 }
 
 // Judge is the status a record and its pushes' reads say: the state machine,
@@ -188,6 +209,10 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	st.Role = Role(rec["role"])
 	st.Epoch, _ = strconv.ParseInt(rec["epoch"], 10, 64) // ignored: an epoch that is no number matches no stamp, so nothing counts
 	st.Armed = msTime(rec["armed"])
+	st.BeatAt = msTime(rec["beat_at"])
+	st.AnswerAt = msTime(rec["answered_at"])
+	st.Misses, _ = strconv.Atoi(rec["misses"]) // ignored: no count reads as none missed
+	st.Reason = rec["reason"]
 	if rec["state"] != "hooked" {
 		st.State = StateUnhooked
 		st.Unhooked = msTime(rec["unhooked"])
@@ -281,7 +306,7 @@ func (st Status) Gate(w Want) *Refusal {
 		}
 	}
 	otherRole := hooked && len(w.Roles) > 0 && !slices.Contains(w.Roles, st.Role)
-	if st.State == StateProven && len(missing) == 0 && !otherRole {
+	if st.State == StateProven && len(missing) == 0 && !otherRole && st.Down == "" {
 		return nil
 	}
 	role := st.Role
@@ -290,10 +315,12 @@ func (st Status) Gate(w Want) *Refusal {
 	}
 	r := &Refusal{Status: st}
 	switch {
+	case st.Down != "" && st.State == StateProven: // proven, without the heartbeat's evidence; any other state says its own why
+		r.Why = fmt.Sprintf("%s is not hooked in: %s: up needs a heartbeat server passing (nova-hook serve) and, for a session, its answer to the latest challenge (nova-hook prove); nothing on the bus, friend comms or the sprint works until then", w.Name, st.Down)
 	case st.State == StateNone:
 		r.Why = fmt.Sprintf("%s is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is", w.Name)
 	case st.State == StateUnhooked:
-		r.Why = fmt.Sprintf("%s is not hooked in: unhooked at %s; nothing on the bus, friend comms or the sprint works until it hooks in again", w.Name, st.Unhooked.Format(time.RFC3339))
+		r.Why = fmt.Sprintf("%s is not hooked in: unhooked at %s%s; nothing on the bus, friend comms or the sprint works until it hooks in again", w.Name, st.Unhooked.Format(time.RFC3339), st.because())
 	case otherRole:
 		r.Why = fmt.Sprintf("%s is hooked in as %s, and this act is only for %s; hook in as one of them", w.Name, st.Role, roleWords(w.Roles))
 	case len(missing) > 0:
@@ -303,6 +330,14 @@ func (st Status) Gate(w Want) *Refusal {
 	}
 	r.Hook, r.Lines = Breadcrumb(w.Name, role, w.Need, st)
 	return r
+}
+
+// because is the heartbeat's reason for an unhook as a clause, "" when it gave none.
+func (st Status) because() string {
+	if st.Reason == "" {
+		return ""
+	}
+	return " by the heartbeat (" + st.Reason + ")"
 }
 
 // pushWords is each push's state: "bus=proven sprint=down".
