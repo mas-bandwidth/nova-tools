@@ -104,8 +104,14 @@ One first native turn carries the ordered recovery batch and any newly created
 bootstrap challenge. Its saved JSON explicitly permits duplicates: it is a new
 startup recovery operation, not a retry of the prior native request. Every
 process makes one attempt per event/initial batch and stops on uncertain native
-failure. No live native call is retried. Existing saved files are immutable and
-never deleted or rewritten. Model answers suppress corresponding bus events;
+failure. No live native call is retried. At most one native notice is pending. A new
+native push waits until the model has consumed that notice. While it is
+pending, later messages rewrite its saved file in place: the newest valid
+challenge and a count of the messages. A valid challenge has the canonical
+body, a hook-record sum that matches the nonce, and the same epoch. A stale
+nonce, an altered body, and a wrong epoch do not replace the saved nonce.
+Rewriting the file does not prove the challenge and does not write a proof.
+Every other saved file is immutable and is never deleted or rewritten. Model answers suppress corresponding bus events;
 saved-file absence is never proof that an event was not previously delivered.
 After startup the client streams strictly past the captured boundary, so a
 message between cursor capture and lease publication is covered.
@@ -122,7 +128,9 @@ unexamined data. The selected batch is at most 128 messages and must fit the
 64 KiB encoded envelope; incomplete coverage requires explicit reconciliation.
 
 Each event is saved atomically as `<directory>/<validated event ID>.json` with
-mode 0600 and NoReplace, at most 64 KiB. The fixed native notice is one compact
+mode 0600 and NoReplace, at most 64 KiB. The one pending notice is the exception:
+that same file is replaced in place while the notice is outstanding. A new event
+still uses NoReplace. The fixed native notice is one compact
 line identifying the saved external-data file. Body, subject, nonce and sender
 never enter native turn text. Saved local receiver fields supply the validated
 identity, resolved Redis address, recorded hook role/epoch and Redis save time,
@@ -136,7 +144,9 @@ new hook epoch. It reconstructs recovery only from bus data, per-ID model
 answers and the current challenge. The exclusive directory process lock and a
 fresh recovery event ID distinguish a deliberate startup batch from a blind
 retry. No saved-file absence or former native outcome is treated as delivery
-authority. Existing files are never replaced or deleted automatically.
+authority. The one pending notice file is the only file rewritten, and only in
+place until the model consumes it. Every other saved file is never replaced or
+deleted automatically.
 
 Only the model answers a current challenge using `nova-hook prove --as ...
 --redis ... --nonce ...`; bootstrap supplies its nonce directly, while a server

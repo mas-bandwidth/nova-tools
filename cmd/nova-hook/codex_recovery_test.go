@@ -134,19 +134,24 @@ func TestMessageBetweenCursorAndLeaseIsStreamed(t *testing.T) {
 	// answered so startup need not re-notify it.
 	initial := recoveryMessage(t, r, "already answered")
 	require.NoError(t, r.h.Client.HSet(context.Background(), bus.AnswersOf("ada"), initial.ID, "1791720000").Err())
-	var sent bus.Message
 	r.h.Client.AddHook(&cursorArrivalHook{after: func() {
 		assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State, "cursor must precede any lease")
-		sent = recoveryMessage(t, r, "between cursor and lease")
+		recoveryMessage(t, r, "between cursor and lease")
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
 	saw := false
-	w.codexSave = func(_ string, _ string, data []byte) error {
+	delivers := 0
+	w.codexDeliver = func(context.Context, string, string, string, string) (string, error) {
+		delivers++
+		return "native-turn", nil
+	}
+	w.codexSave = func(_ string, id string, data []byte) error {
 		var e savedCodexEvent
 		require.NoError(t, json.Unmarshal(data, &e))
-		if e.Message != nil && e.Message.ID == sent.ID {
+		if e.NoticeCount >= 1 {
+			assert.True(t, strings.HasPrefix(id, "recovery-"), "the between message updates the one pending notice")
 			saw = true
 			cancel()
 		}
@@ -154,7 +159,8 @@ func TestMessageBetweenCursorAndLeaseIsStreamed(t *testing.T) {
 	}
 	code := run(codexArgs, strings.NewReader(""), io.Discard, io.Discard, w)
 	assert.Zero(t, code)
-	assert.True(t, saw)
+	assert.True(t, saw, "a message between cursor and lease is still covered")
+	assert.Equal(t, 1, delivers, "that message does not start a second native prompt")
 }
 
 func TestRecoveryWindowUsesRedisTime(t *testing.T) {

@@ -46,6 +46,7 @@ type world struct {
 	codexLock     func(string) (func() error, error)
 	codexValidate func(string, string, string) error
 	codexSave     func(string, string, []byte) error
+	codexRewrite  func(string, string, []byte) error
 	codexDeliver  func(context.Context, string, string, string, string) (string, error)
 	getenv        func(string) string
 	open          func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
@@ -66,7 +67,7 @@ func realWorld() world {
 	if err != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
-	w := world{codexLock: lockCodexRoute, codexValidate: validateCodexRoute, codexSave: saveCodexEvent, codexDeliver: codexdesktop.DeliverSaved, getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
+	w := world{codexLock: lockCodexRoute, codexValidate: validateCodexRoute, codexSave: saveCodexEvent, codexRewrite: rewriteCodexEvent, codexDeliver: codexdesktop.DeliverSaved, getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
 		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
@@ -184,7 +185,9 @@ This proof records a protocol response to the challenge; it does not establish f
 Codex desktop delivery uses --codex-socket, --codex-thread and --codex-events-dir together (or NOVA_HOOK_CODEX_SOCKET,
 NOVA_HOOK_CODEX_THREAD, NOVA_HOOK_CODEX_EVENTS_DIR). The directory must exist, be private (0700), canonical and owned
 by the current user. The route probes the native thread owner before arming. Each event is saved as external JSON
-and one fixed native notice names that file; message body and subject never enter native turn text. Native acceptance
+and one fixed native notice names that file; message body and subject never enter native turn text. At most one
+native notice is pending. Later messages rewrite that saved file in place with the newest valid challenge and a
+count of the messages. The next native push waits until the model has consumed the notice. Native acceptance
 is not proof or acknowledgment: only the model runs nova-hook prove or answers with nova-bus send --re. A local failure
 revokes route proof and stops renewal; unknown native outcomes are reported without declaring the model absent.
 Do not blindly restart after accepted or unknown delivery: inspect the saved event and model answer first.
@@ -570,6 +573,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 				if out := w.codexSend(c, s, native, role, epoch, e); out != nil {
 					return out
 				}
+				native.startTurn(s, e.EventID, native.pendingTurn)
 			}
 		}
 		if !created {

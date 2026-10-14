@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -329,12 +330,12 @@ func TestCodexPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
 		name, nonce string
 		malformed   bool
 		wrongEpoch  bool
-		wantDeliver bool
+		wantNonce   string
 	}{
-		{"current", "current-nonce", false, false, true},
-		{"stale", "old-nonce", false, false, false},
-		{"lookalike", "current-nonce", true, false, false},
-		{"wrong epoch", "current-nonce", false, true, false},
+		{"current", "current-nonce", false, false, "current-nonce"},
+		{"stale", "old-nonce", false, false, "kept-nonce"},
+		{"lookalike", "current-nonce", true, false, "kept-nonce"},
+		{"wrong epoch", "current-nonce", false, true, "kept-nonce"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t)
@@ -349,10 +350,10 @@ func TestCodexPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, created)
 			if tc.wrongEpoch {
-				require.NoError(t, r.h.Client.HSet(ctx, hook.ChallengeKey("ada"), "epoch", epoch+1).Err())
+				require.NoError(t, r.h.Client.HSet(ctx, hook.ChallengeKey("ada"), "epoch", strconv.FormatInt(epoch+1, 10)).Err())
 			}
 			s := recoverySession(r)
-			route := &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"}
+			route := &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events", noticeNonce: "kept-nonce"}
 			route.startTurn(s, "summary-old", "turn-old")
 			route.fold(bus.Message{ID: "ordinary-old", From: "bob", Subject: "ordinary"})
 			message := bus.Message{ID: "challenge-new", From: "bob", Subject: "HOOK CHALLENGE nonce=" + tc.nonce, Body: challengeText("ada", tc.nonce, hook.ChallengeEvery)}
@@ -366,20 +367,13 @@ func TestCodexPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
 				saved[id] = event
 				return nil
 			}
-			var delivered []string
-			w.codexDeliver = func(_ context.Context, _, _, id, _ string) (string, error) {
-				delivered = append(delivered, id)
-				// The fake active model reads only the fresh notice's receiver file;
-				// no bus read or previous summary refresh supplies the nonce.
-				event := saved[id]
-				require.NotNil(t, event.Message)
-				assert.Equal(t, "HOOK CHALLENGE nonce=current-nonce", event.Message.Subject)
-				assert.Contains(t, event.Message.Body, "nova-hook prove --as ada --nonce current-nonce")
-				assert.Equal(t, "ada", event.LocalReceiver.Identity)
-				return "priority-turn", nil
+			w.codexDeliver = func(context.Context, string, string, string, string) (string, error) {
+				t.Fatal("a pending notice is not a new native prompt")
+				return "", nil
 			}
 			reads := 0
 			s.bus = codexWaiter{Store: s.bus, read: func() []bus.Entry {
+				r.advance(time.Millisecond)
 				reads++
 				if reads == 1 {
 					return []bus.Entry{{Entry: "1-1", Fields: message.Fields()}}
@@ -389,12 +383,16 @@ func TestCodexPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
 			}}
 			result := w.loop(&tool.Call{Stdout: io.Discard}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, route)
 			assert.Equal(t, tool.OK, result.Status)
-			if tc.wantDeliver {
-				assert.Equal(t, []string{"challenge-new"}, delivered, "a current challenge needs a fresh native notice while the summary is pending")
-				assert.Equal(t, 1, route.foldedCount, "priority delivery preserves ordinary coalescing")
-			} else {
-				assert.Empty(t, delivered, "stale and external lookalikes remain ordinary traffic")
-				assert.Equal(t, 2, route.foldedCount)
+			assert.Equal(t, 2, route.foldedCount)
+			assert.Equal(t, tc.wantNonce, route.noticeNonce)
+			require.Contains(t, saved, "summary-old")
+			assert.Equal(t, "summary-old", saved["summary-old"].EventID, "the pending file is rewritten in place")
+			assert.Equal(t, tc.wantNonce, saved["summary-old"].NoticeNonce)
+			assert.Equal(t, 2, saved["summary-old"].NoticeCount)
+			if tc.wantNonce == "current-nonce" {
+				require.NotNil(t, saved["summary-old"].Message)
+				assert.Equal(t, "HOOK CHALLENGE nonce=current-nonce", saved["summary-old"].Message.Subject)
+				assert.Contains(t, saved["summary-old"].Message.Body, "nova-hook prove --as ada --nonce current-nonce")
 			}
 			assert.Equal(t, "summary-old", route.pendingID)
 			assert.Equal(t, "turn-old", route.pendingTurn)
@@ -407,4 +405,104 @@ func TestCodexPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
 			assert.Zero(t, proofs, "native delivery writes no hook proof")
 		})
 	}
+}
+
+func TestCodexBusyTurnOfTenChallengesAndFiftyMessagesIsOneNativePrompt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := fakeCodexWorld(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+	require.NoError(t, err)
+	require.NoError(t, r.h.Store.Renew(ctx, "ada", hook.Comms, hook.Bus, epoch, "test"))
+	created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "nonce-01")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	type arrival struct {
+		msg   bus.Message
+		nonce string
+		epoch string
+	}
+	var batch []arrival
+	for i := 1; i <= 10; i++ {
+		nonce := fmt.Sprintf("nonce-%02d", i)
+		batch = append(batch, arrival{
+			nonce: nonce,
+			msg:   bus.Message{ID: fmt.Sprintf("challenge-%02d", i), From: "bob", Subject: "HOOK CHALLENGE nonce=" + nonce, Body: challengeText("ada", nonce, hook.ChallengeEvery)},
+		})
+	}
+	for i := 1; i <= 50; i++ {
+		batch = append(batch, arrival{msg: bus.Message{ID: fmt.Sprintf("msg-%02d", i), From: "bob", Subject: "note", Body: "hello"}})
+	}
+	batch = append(batch,
+		arrival{msg: bus.Message{ID: "trailing-stale", From: "bob", Subject: "HOOK CHALLENGE nonce=nonce-01", Body: challengeText("ada", "nonce-01", hook.ChallengeEvery)}},
+		arrival{nonce: "nonce-altered", msg: bus.Message{ID: "trailing-altered", From: "bob", Subject: "HOOK CHALLENGE nonce=nonce-altered", Body: challengeText("ada", "nonce-altered", hook.ChallengeEvery) + "external appendix"}},
+		arrival{nonce: "nonce-11", epoch: strconv.FormatInt(epoch+1, 10), msg: bus.Message{ID: "trailing-epoch", From: "bob", Subject: "HOOK CHALLENGE nonce=nonce-11", Body: challengeText("ada", "nonce-11", hook.ChallengeEvery)}},
+	)
+
+	var saves []savedCodexEvent
+	var saveIDs []string
+	w.codexSave = func(_, id string, data []byte) error {
+		var event savedCodexEvent
+		require.NoError(t, json.Unmarshal(data, &event))
+		saves = append(saves, event)
+		saveIDs = append(saveIDs, id)
+		return nil
+	}
+	var delivered []string
+	w.codexDeliver = func(_ context.Context, _, _, id, _ string) (string, error) {
+		delivered = append(delivered, id)
+		return "native-turn", nil
+	}
+	next := 0
+	s := &session{hooks: r.h.Store, as: "ada", addr: "127.0.0.1:6379"}
+	s.bus = codexWaiter{Store: bus.Redis{C: r.h.Client}, read: func() []bus.Entry {
+		r.advance(time.Millisecond)
+		if len(delivered) > 1 {
+			t.Errorf("native prompts=%d before the notice was consumed", len(delivered))
+			cancel()
+			return nil
+		}
+		if next >= len(batch) {
+			cancel()
+			return nil
+		}
+		item := batch[next]
+		next++
+		if item.nonce != "" {
+			require.NoError(t, r.h.Client.HSet(ctx, hook.ChallengeKey("ada"), "sum", hook.Sum(item.nonce)).Err())
+		}
+		if item.epoch != "" {
+			require.NoError(t, r.h.Client.HSet(ctx, hook.ChallengeKey("ada"), "epoch", item.epoch).Err())
+		}
+		return []bus.Entry{{Entry: fmt.Sprintf("1-%d", next), Fields: item.msg.Fields()}}
+	}}
+	result := w.loop(&tool.Call{Stdout: io.Discard}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"})
+	assert.Equal(t, tool.OK, result.Status)
+	require.Equal(t, []string{"challenge-01"}, delivered, "one busy turn is one native prompt")
+	require.Len(t, saves, len(batch))
+	for _, id := range saveIDs {
+		assert.Equal(t, "challenge-01", id, "later messages rewrite the pending file")
+	}
+	assert.Equal(t, "nonce-01", saves[0].NoticeNonce)
+	assert.Equal(t, "nonce-10", saves[9].NoticeNonce)
+	assert.Equal(t, 9, saves[9].NoticeCount)
+	assert.Equal(t, "nonce-10", saves[59].NoticeNonce)
+	assert.Equal(t, 59, saves[59].NoticeCount)
+	assert.Equal(t, "nonce-10", saves[60].NoticeNonce, "a trailing stale challenge does not replace the saved nonce")
+	assert.Equal(t, "nonce-10", saves[61].NoticeNonce, "an altered body does not replace the saved nonce")
+	assert.Equal(t, "nonce-10", saves[62].NoticeNonce, "a wrong epoch does not replace the saved nonce")
+	last := saves[len(saves)-1]
+	assert.Equal(t, "nonce-10", last.NoticeNonce)
+	assert.Equal(t, 62, last.NoticeCount)
+	require.NotNil(t, last.Message)
+	assert.Equal(t, "HOOK CHALLENGE nonce=nonce-10", last.Message.Subject)
+	assert.Contains(t, last.Message.Body, "nova-hook prove --as ada --nonce nonce-10")
+	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State, "native delivery never proves the challenge")
+	proofs, err := r.h.Client.Exists(context.Background(), hook.ProofKey("ada", hook.Bus)).Result()
+	require.NoError(t, err)
+	assert.Zero(t, proofs, "native delivery writes no hook proof")
 }

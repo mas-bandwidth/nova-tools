@@ -36,6 +36,8 @@ type codexRoute struct {
 	foldedCount       int
 	foldedSenders     []string
 	foldedChallenge   *bus.Message
+	notice            savedCodexEvent
+	noticeNonce       string
 }
 
 func (r *codexRoute) fold(m bus.Message) {
@@ -46,10 +48,6 @@ func (r *codexRoute) fold(m bus.Message) {
 	}
 	if !slices.Contains(r.foldedSenders, from) {
 		r.foldedSenders = append(r.foldedSenders, from)
-	}
-	if strings.HasPrefix(m.Subject, "HOOK CHALLENGE nonce=") {
-		cp := m
-		r.foldedChallenge = &cp
 	}
 }
 
@@ -163,6 +161,8 @@ type savedCodexEvent struct {
 	EventID            string        `json:"event_id"`
 	BootstrapNonce     string        `json:"bootstrap_nonce,omitempty"`
 	Summary            string        `json:"summary,omitempty"`
+	NoticeCount        int           `json:"notice_count,omitempty"`
+	NoticeNonce        string        `json:"notice_nonce,omitempty"`
 	Message            *bus.Message  `json:"external_message,omitempty"`
 }
 
@@ -190,29 +190,23 @@ func (w world) codexPush(c *tool.Call, s *session, r *codexRoute, role hook.Role
 		r.pendingTurn = ""
 	}
 	if r != nil && r.pending {
-		if m != nil && canonicalHookChallenge(*m, s.as) {
-			ctx, cancel := call()
-			challenge, err := s.hooks.C.HMGet(ctx, hook.ChallengeKey(s.as), "sum", "epoch").Result()
-			cancel()
-			if err != nil {
-				return codexDeliveryFailure(s, role, epoch, id, err)
-			}
-			nonce := strings.TrimPrefix(m.Subject, "HOOK CHALLENGE nonce=")
-			if challenge[0] == hook.Sum(nonce) && challenge[1] == strconv.FormatInt(epoch, 10) {
-				// SPEC-CODEX-DESKTOP-WAKE: a native notice is immutable. A
-				// current heartbeat gets a fresh notice without waiting for the
-				// proof it requests. Keep the ordinary summary's boundary intact.
-				priority := *r
-				return w.codexSend(c, s, &priority, role, epoch, savedCodexEvent{EventID: id, Message: m, HookEpoch: epoch, HookRole: role})
-			}
+		return w.holdOneCodexNotice(c, s, r, role, epoch, id, m)
+	}
+	if r != nil && m != nil {
+		kept, err := currentChallengeNonce(s, epoch, *m)
+		if err != nil {
+			return codexDeliveryFailure(s, role, epoch, id, err)
 		}
-		if m != nil {
-			r.fold(*m)
+		if kept != "" {
+			r.noticeNonce = kept
+			cp := *m
+			r.foldedChallenge = &cp
 		}
-		line(c, tool.Done().As("PUSH").Fact("push", "codex").Fact("id", id).Fact("native", "coalesced").Fact("pending", r.foldedCount).Fact("summary", tool.Text(r.summary())).Note("folded into pending notice; delivered at next turn boundary"))
-		return nil
 	}
 	e := savedCodexEvent{EventID: id, BootstrapNonce: nonce, Message: m, HookEpoch: epoch, HookRole: role}
+	if r != nil {
+		e.NoticeNonce = r.noticeNonce
+	}
 	out := w.codexSend(c, s, r, role, epoch, e)
 	if out == nil && r != nil {
 		r.startTurn(s, id, r.pendingTurn)
@@ -231,24 +225,26 @@ func (w world) codexStep(c *tool.Call, s *session, r *codexRoute, role hook.Role
 		return nil
 	}
 	summary := r.summary()
+	count := r.foldedCount
 	id := "summary-" + w.nonce()
 	from := "bus"
 	if len(r.foldedSenders) > 0 {
 		from = strings.Join(r.foldedSenders, ", ")
 	}
 	e := savedCodexEvent{
-		EventID:   id,
-		HookEpoch: epoch,
-		HookRole:  role,
-		Summary:   summary,
-		Message:   &bus.Message{ID: id, From: from, Subject: summary, Body: summary},
+		EventID:     id,
+		HookEpoch:   epoch,
+		HookRole:    role,
+		Summary:     summary,
+		NoticeCount: count,
+		NoticeNonce: r.noticeNonce,
+		Message:     &bus.Message{ID: id, From: from, Subject: summary, Body: summary},
 	}
 	if r.foldedChallenge != nil {
 		e.Recovery = []bus.Message{*r.foldedChallenge}
 	}
 	r.foldedCount = 0
 	r.foldedSenders = nil
-	r.foldedChallenge = nil
 	out := w.codexSend(c, s, r, role, epoch, e)
 	if out == nil {
 		r.startTurn(s, id, r.pendingTurn)
@@ -258,31 +254,7 @@ func (w world) codexStep(c *tool.Call, s *session, r *codexRoute, role hook.Role
 
 func (w world) codexSend(c *tool.Call, s *session, r *codexRoute, role hook.Role, epoch int64, e savedCodexEvent) *tool.Out {
 	id, m := e.EventID, e.Message
-	ctx, clockCancel := call()
-	savedAt, clockErr := s.hooks.C.Time(ctx).Result()
-	clockCancel()
-	if clockErr != nil {
-		return codexDeliveryFailure(s, role, epoch, id, clockErr)
-	}
-	e.SavedAt = savedAt
-
-	e.LocalReceiver.Identity = s.as
-	e.LocalReceiver.Redis = s.addr
-	e.LocalReceiver.Proof = "For a current hook challenge only, run nova-hook prove --as <identity> --redis <redis> --nonce <nonce>. Only the model may prove."
-	e.LocalReceiver.Acknowledge = "For an ordinary bus message, send a model answer with nova-bus send --as <identity> --redis <redis> --to <sender> --re <message ID> --subject ACK --body <answer>. A native accepted turn is not this answer. Read recovery_messages in order; they may duplicate earlier delivery. If recovery_coverage is nonempty, notify the coordinator once with its oldest retained entry ID."
-	var data []byte
-	var err error
-	if m != nil && codexMessageBytes(*m) > maxCodexEvent {
-		err = fmt.Errorf("external event wants at most %d bytes", maxCodexEvent)
-	} else {
-		data, err = json.Marshal(e)
-	}
-	if err == nil && len(data) > maxCodexEvent {
-		err = fmt.Errorf("external event wants at most %d bytes", maxCodexEvent)
-	}
-	if err == nil {
-		err = w.codexSave(r.directory, id, data)
-	}
+	e, err := w.persistCodexEvent(s, r, id, e, false)
 	turn := ""
 	if err == nil {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -302,6 +274,7 @@ func (w world) codexSend(c *tool.Call, s *session, r *codexRoute, role hook.Role
 	if err == nil {
 		if r != nil {
 			r.pendingTurn = turn
+			r.notice = e
 		}
 		o := tool.Done().As("PUSH").Fact("push", "codex").Fact("id", id).Fact("native", "accepted").Fact("turn", turn)
 		if e.Summary != "" {
@@ -311,6 +284,43 @@ func (w world) codexSend(c *tool.Call, s *session, r *codexRoute, role hook.Role
 		return nil
 	}
 	return codexDeliveryFailure(s, role, epoch, id, err)
+}
+
+// persistCodexEvent writes one saved notice. replace is the one pending
+// notice, rewritten in place. A new event stays NoReplace.
+func (w world) persistCodexEvent(s *session, r *codexRoute, id string, e savedCodexEvent, replace bool) (savedCodexEvent, error) {
+	ctx, clockCancel := call()
+	savedAt, clockErr := s.hooks.C.Time(ctx).Result()
+	clockCancel()
+	if clockErr != nil {
+		return e, clockErr
+	}
+	e.SavedAt = savedAt
+	e.LocalReceiver.Identity = s.as
+	e.LocalReceiver.Redis = s.addr
+	e.LocalReceiver.Proof = "For a current hook challenge only, run nova-hook prove --as <identity> --redis <redis> --nonce <nonce>. Only the model may prove."
+	e.LocalReceiver.Acknowledge = "For an ordinary bus message, send a model answer with nova-bus send --as <identity> --redis <redis> --to <sender> --re <message ID> --subject ACK --body <answer>. A native accepted turn is not this answer. Read recovery_messages in order; they may duplicate earlier delivery. If recovery_coverage is nonempty, notify the coordinator once with its oldest retained entry ID."
+	var data []byte
+	var err error
+	if e.Message != nil && codexMessageBytes(*e.Message) > maxCodexEvent {
+		err = fmt.Errorf("external event wants at most %d bytes", maxCodexEvent)
+	} else {
+		data, err = json.Marshal(e)
+	}
+	if err == nil && len(data) > maxCodexEvent {
+		err = fmt.Errorf("external event wants at most %d bytes", maxCodexEvent)
+	}
+	if err != nil {
+		return e, err
+	}
+	save := w.codexSave
+	if replace && w.codexRewrite != nil {
+		save = w.codexRewrite
+	}
+	if err := save(r.directory, id, data); err != nil {
+		return e, err
+	}
+	return e, nil
 }
 
 func codexDeliveryFailure(s *session, role hook.Role, epoch int64, id string, err error) *tool.Out {
@@ -368,6 +378,22 @@ func saveCodexEvent(directory, id string, data []byte) error {
 	}
 	// Refuse replacement, including a saved accepted/unknown event after restart.
 	return atomicfile.Write(path, data, 0600, atomicfile.NoReplace())
+}
+
+// rewriteCodexEvent replaces the one pending notice file. A new event uses
+// saveCodexEvent and stays NoReplace.
+func rewriteCodexEvent(directory, id string, data []byte) error {
+	if len(data) > maxCodexEvent {
+		return errors.New("saved event exceeds 64 KiB")
+	}
+	if err := privateCodexDirectory(directory); err != nil {
+		return err
+	}
+	path, err := codexdesktop.SavedPath(directory, id)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(path, data, 0600)
 }
 
 // codexAnswered reads one existing bus-owned answer field. It never scans the
