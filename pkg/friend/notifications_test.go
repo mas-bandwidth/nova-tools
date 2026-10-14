@@ -71,18 +71,18 @@ func TestNotificationOnlyNeverInvokesNativeMutationHooks(t *testing.T) {
 			r.d.NotificationOnly = true
 			r.d.NotificationStateDir = t.TempDir()
 			r.d.Notifications = &NotificationPolicy{Window: 10 * time.Second}
-			r.d.Beat = func(context.Context, time.Time) error { t.Error("native beat called"); return nil }
-			r.d.Held = func(context.Context) (Row, error) { t.Error("held/claim path called"); return Row{}, nil }
-			r.d.Stage = func(context.Context, Packet) (string, error) { t.Error("stage called"); return "", nil }
-			r.d.Prune = func(context.Context, map[string]bool) ([]string, error) { t.Error("prune called"); return nil, nil }
-			r.d.Finish = func(context.Context, []string) error { t.Error("finish called"); return nil }
-			r.d.Progress = func(context.Context, []Card) error { t.Error("progress called"); return nil }
-			r.d.Proof = func() (bool, string) { t.Error("native proof called"); return true, "" }
-			r.d.Row = func() (string, int) { t.Error("native row called"); return ModeOneShot, 4 }
-			r.d.Status = func(Status) error { t.Error("native status/proof written"); return nil }
-			r.d.Seat = func(context.Context) (string, error) { t.Error("native seat called"); return "", nil }
-			r.d.LoadLanes = func() (LaneState, error) { t.Error("lanes loaded"); return LaneState{}, nil }
-			r.d.SaveLanes = func(LaneState) error { t.Error("lanes saved"); return nil }
+			r.d.Beat = func(context.Context, time.Time) error { assert.Fail(t, "native beat called"); return nil }
+			r.d.Held = func(context.Context) (Row, error) { assert.Fail(t, "held/claim path called"); return Row{}, nil }
+			r.d.Stage = func(context.Context, Packet) (string, error) { assert.Fail(t, "stage called"); return "", nil }
+			r.d.Prune = func(context.Context, map[string]bool) ([]string, error) { assert.Fail(t, "prune called"); return nil, nil }
+			r.d.Finish = func(context.Context, []string) error { assert.Fail(t, "finish called"); return nil }
+			r.d.Progress = func(context.Context, []Card) error { assert.Fail(t, "progress called"); return nil }
+			r.d.Proof = func() (bool, string) { assert.Fail(t, "native proof called"); return true, "" }
+			r.d.Row = func() (string, int) { assert.Fail(t, "native row called"); return ModeOneShot, 4 }
+			r.d.Status = func(Status) error { assert.Fail(t, "native status/proof written"); return nil }
+			r.d.Seat = func(context.Context) (string, error) { assert.Fail(t, "native seat called"); return "", nil }
+			r.d.LoadLanes = func() (LaneState, error) { assert.Fail(t, "lanes loaded"); return LaneState{}, nil }
+			r.d.SaveLanes = func(LaneState) error { assert.Fail(t, "lanes saved"); return nil }
 			if fail {
 				r.exit = 2
 			}
