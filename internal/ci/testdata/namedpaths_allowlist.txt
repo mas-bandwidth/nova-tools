@@ -51,7 +51,6 @@ pkg/mod the Go module cache under GOPATH (go env GOMODCACHE), not a directory of
 cmd/nova-card nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 cmd/nova-sprint nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 cmd/nova-sprint/fleet.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
-cmd/nova-sprint/friends.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 cmd/nova-sprint/land.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 cmd/nova-sprint/landloop.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 cmd/nova-sprint/main.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
@@ -63,7 +62,6 @@ docs/SPEC-SPRINT-DASHBOARD.md moved to mas-bandwidth/nova-sprint with the dashbo
 internal/cardgen nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprint nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprint/held.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
-internal/sprint/presence.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprint/provider_funds.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprint/rate.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprint/route.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
