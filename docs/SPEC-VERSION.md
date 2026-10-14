@@ -132,14 +132,17 @@ nova-version diff --from <a.tsv> --to <b.tsv>
     milliseconds. A warm-up exec outside the bound buys nothing: an exec killed early
     leaves the assessment unpaid, and one under `--budget` would turn a genuinely broken
     binary's prompt refusal into a whole-budget wait.
-12. **A version line can name the generation of its verb set.** `pkg/buildinfo` computes a
+12. **Every version line names the generation of its verb set.** `pkg/buildinfo` computes a
     binary's verb-set generation as its size and the twelve-hex hash of its verb names
     sorted (`VerbSet`), and renders the pair as the extras `verbs=<n> verbset=<12 hex>`
-    (`VerbSetExtras`). Because the hash is over the sorted names, two binaries whose helps
-    list the same verbs in any order share a generation, and one added verb is a new
-    generation; this is the fact the nova-tools and nova-sprint binaries, whose verb sets
-    diverged silently, would have carried. The two are named extras after the four
-    mandatory tokens, so a reader takes them BY NAME and a reader that has heard of
+    (`VerbSetExtras`). Each binary names its own set: `pkg/tool` computes it from every verb
+    the tool answers — the verbs it declares, hidden ones included, plus `version`; `help`
+    is not one of them, being the same door in every binary — and `internal/update` gives
+    nova-update the same pair from its own verbs. Because the hash is over the sorted names,
+    two binaries whose helps list the same verbs in any order share a generation, and one
+    added verb is a new generation; this is the fact the nova-tools and nova-sprint
+    binaries, whose verb sets diverged silently, now carry. The two are named extras after
+    the four mandatory tokens, so a reader takes them BY NAME and a reader that has heard of
     neither still reads the line (SPEC.md's Conventions).
 
 ### Tests this section demands
@@ -161,4 +164,5 @@ reaches a network.
 11. `TestSnapshotToleratesTheFirstExecOfANeverSeenBinary`: a fake binary that is slow on its FIRST invocation and immediate on every one after — the platform's assessment made deterministic — is read, not refused, under the default bound, so the verb's own normal case (a `--bin` one `go install` old) is not a refusal.
 12. `TestSnapshotTakesItsBoundsFromFlags`: a fake binary sleeping past a given `--timeout` is exit 2 naming that tool and that duration with no partial `--out`; four such binaries under a `--budget` shorter than one of them is exit 2 naming the budget rather than a tool's slowness; a non-positive `--timeout` is exit 2 naming the flags.
 13. `TestSnapshotNotesARowWhoseSourceMetadataIsPartial`: a stub printing only `repo=` and `revision=`, and one printing all four with `dirty=maybe`, are each noted by name (`NOTE partial source metadata: "<name>"`) and the snapshot still succeeds with both rows; a stub with none of the four keys, and one with all four well formed, are named in no note.
- 14. `TestVersionNamesTheVerbSetGeneration`: the same verb list in any order yields the same `verbs=` count and `verbset=` hash, one added verb changes the hash, and a line `pkg/buildinfo.Line` writes from those extras is one `pkg/buildinfo.Parse` reads back. (See also pkg/buildinfo/verbset_test.go and cmd/nova-version/main.go.)
+14. `TestVersionNamesTheVerbSetGeneration`: the same verb list in any order yields the same `verbs=` count and `verbset=` hash, one added verb changes the hash, and a line `pkg/buildinfo.Line` writes from those extras is one `pkg/buildinfo.Parse` reads back (pkg/buildinfo/verbset_test.go).
+15. `TestEveryToolsVersionLineNamesItsVerbSet`: two `pkg/tool` tools whose verbs are the same set in another order print the same `verbset=`, a third with one verb more prints a different one, and each line's `verbs=` is the number of names the tool answers (pkg/tool/version_verbset_test.go).

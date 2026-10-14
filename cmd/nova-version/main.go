@@ -1,6 +1,8 @@
 // Command nova-version reports installed tool identities and shares the update
 // reader: local stdout by default, optional prepared bus delivery. The contract
-// is docs/SPEC-VERSION.md (every version line carries `verbs=<n> verbset=<12hex>` naming the generation of its verb set, computed by VerbSet). The tool is internal/update's VersionTool on
+// is docs/SPEC-VERSION.md: every version line carries `verbs=<n> verbset=<12
+// hex>`, the generation of the binary's verb set, computed from the names of
+// the verbs the tool answers. The tool is internal/update's VersionTool on
 // pkg/tool, and its help banner ends in the runnable block below, which
 // cmd/nova-version/slow_test.go runs, as printed, with the binary alone.
 //
@@ -19,4 +21,4 @@ import (
 
 var version string
 
-func main() { os.Exit(update.VersionTool(version, update.Environment{}).Main()) } // cites docs/SPEC-VERSION.md for verbset on version lines per binary
+func main() { os.Exit(update.VersionTool(version, update.Environment{}).Main()) }

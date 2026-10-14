@@ -444,13 +444,35 @@ func (t *Tool) Problems() []string {
 	return p
 }
 
-// verbs is the tool's verbs and the version verb every tool has.
+// verbNames is the name of every verb the tool answers: the verbs it declares,
+// hidden ones included, and the `version` verb every tool has. It is the set
+// whose generation the version line names (docs/SPEC-VERSION.md item 12), so the
+// line and the verbs the tool really answers cannot drift. `help` is not one of
+// the names: `help` is a door onto the banner and a verb's own lines, not a verb
+// the tool answers, and it is the same for every tool, so naming it would add a
+// constant to every generation.
+func (t *Tool) verbNames() []string {
+	var names []string
+	for _, v := range t.verbs() {
+		names = append(names, v.Name)
+	}
+	return names
+}
+
+// verbs is the tool's verbs and the version verb every tool has. The version
+// line carries the generation of the tool's verb set -- `verbs=<n>` and
+// `verbset=<12 hex>` over the sorted names verbNames returns -- as the extras
+// buildinfo.Line takes, so a reader holding two binaries can tell whether they
+// carry the same set (docs/SPEC-VERSION.md item 12).
 func (t *Tool) verbs() []Verb {
 	return append(append([]Verb(nil), t.Verbs...), Verb{
 		Name:   "version",
 		Usage:  "version",
 		Effect: Inspection,
-		Run:    func(*Call) *Out { return Payload(buildinfo.Line(t.Name, t.Stamp)) },
+		Run: func(*Call) *Out {
+			// cites docs/SPEC-VERSION.md item 12: the generation of the verb set
+			return Payload(buildinfo.Line(t.Name, t.Stamp, buildinfo.VerbSetExtras(t.verbNames())...))
+		},
 	})
 }
 

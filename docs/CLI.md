@@ -3170,8 +3170,10 @@ without running a process; it exits 1 when any adopted tool does not answer
 
 Snapshot reads the version line with `pkg/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
-`platform=`, and the verb set generation `verbs=<n> verbset=<12 hex>` (docs/SPEC-VERSION.md), are accepted as metadata. A binary that prints no version line is
-refused by name; a partial inventory is not reported as complete. Name
+`platform=`, and each binary's verb set generation `verbs=<n> verbset=<12 hex>`
+(docs/SPEC-VERSION.md), are accepted as metadata. A binary that prints no
+version line is refused by name; a partial inventory is not reported as
+complete. Name
 `--snapshot` to quiet repeats: an unchanged observation sends nothing.
 `--send` delivers one note through nova-bus on the Redis bus:
 `nova-bus send --as <sender> --to <recipients> --subject <one line> --stdin`.
