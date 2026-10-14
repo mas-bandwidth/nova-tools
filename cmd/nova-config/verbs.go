@@ -22,6 +22,8 @@ const (
 	effectStatus    = "inspection: reads the store and Redis, writes nothing"
 	effectApply     = "external delivery: writes Redis, the copy of the rows the fleet reads, through its own Redis Functions; --dry-run prints the lines and writes nothing"
 	effectInventory = "inspection: reads Redis (the state apply wrote) or the --fixture file, never PostgreSQL, and writes nothing"
+	effectSnapshot  = "inspection: reads the store and writes {kind}.json for the eight kinds and when.json into a directory; it writes only those files"
+	effectCompare   = "inspection: reads two snapshots and the store's history, names the act behind a changed row, and writes nothing and reverts nothing"
 )
 
 // migrateMore is the ownership rule migrate -h states.
@@ -85,6 +87,8 @@ var toolExamples = map[string]string{
 	"inventory": "nova-config inventory --example > inv.yml",
 	"loop run":  "nova-config loop run sleeper --run-dir ./run -- sleep 1",
 	"version":   "nova-config version",
+	"snapshot":  "nova-config snapshot --out snap/tag --file try.json",
+	"compare":   "nova-config compare --before snap/before --after snap/after --file try.json",
 }
 
 // verbExtra is the lines a verb's -h prints above its flags: its effect and
@@ -106,6 +110,10 @@ func verbExtra(verb string) string {
 	case verb == "inventory":
 		effect = effectInventory
 		more = inventoryMore
+	case verb == "snapshot":
+		effect = effectSnapshot
+	case verb == "compare":
+		effect = effectCompare
 	case verb == "loop run":
 		effect = loopRunEffect
 		more = loopRunMore

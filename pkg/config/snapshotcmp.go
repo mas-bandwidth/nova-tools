@@ -49,15 +49,15 @@ type CmpRow struct {
 
 // CmpKind is one kind's rows at one instant.
 type CmpKind struct {
-	Kind string        `json:"kind"`
+	Kind string   `json:"kind"`
 	Rows []CmpRow `json:"rows"`
 }
 
 // CmpSnap is what `nova-config snapshot --out {dir}` wrote: the eight kinds at
 // one instant, and when.json's time (RFC 3339 UTC) and tool (the version).
 type CmpSnap struct {
-	At    string                  `json:"at"`
-	Tool  string                  `json:"tool"`
+	At    string             `json:"at"`
+	Tool  string             `json:"tool"`
 	Kinds map[string]CmpKind `json:"kinds"`
 }
 
