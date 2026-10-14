@@ -630,6 +630,11 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 					}
 				}
 			}
+			if native != nil {
+				if out := w.codexStep(c, s, native, role, epoch); out != nil {
+					return out
+				}
+			}
 		} else {
 			pause()
 		}
