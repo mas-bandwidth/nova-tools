@@ -22,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // resultFixture writes a RESULT.md under a fresh directory and returns its path.
@@ -264,6 +265,10 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		require.True(t, c.Done(), "%s: a child whose done channel is closed is done", tc.name)
 		r := c.Result()
 		wantReport := strings.ReplaceAll(tc.report, "LOG", logPath)
+		if fault := typedrec.ParseCardResult([]byte(tc.result)).Fault; fault != "" && tc.finish == "" {
+			// a work card's RESULT.md out of the contract's shape: the report says what is wrong with it
+			wantReport = "RESULT.md shape fault: " + fault + "; " + wantReport
+		}
 		if tc.finish != "" {
 			assert.Equal(t, "the body\n\n## RESULT.md\n\nRESULT: c1 sha=0123\n## One line\ngate green", r.Body, "the child's RESULT.md rides in the body")
 		}

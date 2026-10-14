@@ -421,6 +421,7 @@ func (claude) JobText(f Frame, s Staged) string {
 		b.WriteString("When the work is done: commit, `git push`, then `gh pr create --title \"<title>\" --body \"<body>\"`. That ends the card; there is nothing else to write. The title is the card's report; put the gate command and its output in the body, which the readers see.\n")
 		b.WriteString("Every card ends with a commit. If there is nothing to do, end with `gh pr create --title \"nothing: <why>\"`. If the work cannot be done, write " + s.Job + "/RESULT.md with `verdict: not-done` in this shape:\n\n")
 		b.WriteString(ShapeText("work") + "\n")
+		b.WriteString("\n" + ShapeRules + ShapeWorkRule)
 	}
 	writeCommon(&b, f, s)
 	return b.String()
@@ -449,11 +450,13 @@ func (plain) JobText(f Frame, s Staged) string {
 		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok, or broken with your findings):\n\n")
 		b.WriteString(BrokenFindingText + "\n\n")
 		b.WriteString(ShapeText("read") + "\n")
+		b.WriteString("\n" + ShapeRules)
 	} else {
 		fmt.Fprintf(&b, "# JOB: %s, attempt %d\n\n", f.Card, f.Attempt)
 		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s, from %s. Work there and commit on that branch. Do not clone: the repository is already here. `git push` is recorded and done for you when the card finishes; there is no GitHub CLI.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.BaseRef))
 		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok when the work is committed, not-done when it cannot be, nothing with the reason as the report when there is nothing to do: every card ends with a commit):\n\n")
 		b.WriteString(ShapeText("work") + "\n")
+		b.WriteString("\n" + ShapeRules + ShapeWorkRule)
 	}
 	writeCommon(&b, f, s)
 	return b.String()

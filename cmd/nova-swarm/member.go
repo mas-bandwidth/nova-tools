@@ -1356,6 +1356,13 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
+		if cr.Fault != "" && !c.read {
+			// the worker of a WORK card wrote a RESULT.md not in the contract's shape: the
+			// failed finish says what is wrong with it, so the next attempt (and the seat
+			// reading the judgment) can fix that and not guess. A read's report is its
+			// reader's own words (the older shapes still carry it): left as they are
+			report = oneline.Cap("RESULT.md shape fault: "+cr.Fault+"; "+report, 600)
+		}
 		if usageError != "" {
 			// Keep the missing receipt visible in the stored cost record and the finish
 			// words; never turn an unreadable snapshot into a measured zero.
