@@ -10,8 +10,6 @@ Commands report results and refusals in text you can read or parse. Help names
 the inputs, output format and exit codes, including the exceptions for
 wrappers and policy decisions. Start with `<tool> help`. For verb help,
 `<tool> <verb> --help` exits 0 before reading or changing your data.
-`nova-fuse` keeps its deliberate exception: exit 0 means CLEAR, so use
-`nova-fuse help` rather than a verb’s `--help`.
 
 The examples below use disposable data. Paths under `cmd/` are fixtures in a
 nova-tools checkout; run those examples from its root with the chosen binary

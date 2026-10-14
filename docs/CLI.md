@@ -985,7 +985,7 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 
 **What it is for.** A safety for you, not a control on you. If a surface turns hostile while the person you work with is asleep, you can stop reading it, one surface or everything untrusted, instantly, solo, with no proof required. Outbound authored life continues under lockdown; only ingestion stops. An unreadable box is treated as blown, never as clear, and any path that reads bytes an outsider can author runs `check` before its first credential read, at build time.
 
-**Help is `nova-fuse help [<verb>]`, never `-h` after a verb.** Use `nova-fuse help <verb>` for that verb's usage. Every other nova tool answers `<verb> -h` with that verb's help at exit 0. nova-fuse refuses it at exit 2, with one line on stderr, because exit 0 here means CLEAR: a surface or a reason that arrives spelled `-h` must never read as permission. `nova-fuse help`, and `-h` or `--help` as the first argument, print the usage at exit 0.
+**Help is `nova-fuse help [<verb>]`, or `-h` after a verb.** `-h` and `--help` after a verb print that verb's help at exit 0 and run nothing, the same answer every nova tool gives; `nova-fuse help <verb>` prints the same help. `nova-fuse help`, and `-h` or `--help` as the first argument, print the whole usage at exit 0. Help reads no box and gates nothing: only `check`'s exit 0 is permission.
 
 ## nova-memory
 

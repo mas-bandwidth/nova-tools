@@ -2065,11 +2065,14 @@ grammar, and `check`'s answer is its exit code.
 `OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr, and
 **this tool is the only thing that writes to either** — the flag parser is given
 no stream and prints neither its errors nor its usage, because its error text
-quotes the argument it could not parse. An unparseable flag AFTER a verb, `-h`
-included, is this tool's own refusal at exit 2 printed as a bounded one-line
-error followed by the standard help door (`run: nova-fuse help`) on stderr;
-`check` never answers 0 for one. `nova-fuse help`, `-h` and `--help` as the FIRST argument are
-unchanged: exit 0, usage on stdout, and that text carries no grammar token.
+quotes the argument it could not parse. `-h` and `--help` after a verb are
+help at exit 0 — the verb's usage on stdout, no box read, nothing written —
+and `nova-fuse help <verb>` prints the same help. Any other unparseable flag
+AFTER a verb is this tool's own refusal at exit 2 printed as a bounded
+one-line error followed by the standard help door (`run: nova-fuse help`) on
+stderr; `check` never answers 0 for one. `nova-fuse help`, `-h` and `--help`
+as the FIRST argument print the usage at exit 0, and that text carries no
+grammar token.
 `path` prints the bare path — a value, not an event. Output is deterministic:
 same box, same bytes (quarantines sort; the clock is injected).
 
@@ -3117,8 +3120,8 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 160. `TestStatusSurvivesAHandEditedBox` — `at`/`reason` are read back defensively; a missing key prints `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
 161. `TestExitCodes` — exit 0 = clear or done and verified; 1 = blown or could not do/verify; 2 = could not run.
 162. `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` / `TestNoOtherWriterOrShadowCanBypassTheEscape` — OK lines go to stdout, FAIL lines/refusals/notes to stderr; the tool is the only writer and the flag parser is given no stream.
-163. `TestAFlagErrorCannotForgeALineEither` / `TestLateFlagRefusalNamesDoor` — an unparseable flag AFTER a verb (`-h` included) is this tool's own refusal at exit 2, a bounded one-line error plus the help door, and `check` never answers 0 for one.
-164. `TestHelpIsNotAnError` — `nova-fuse help`, `-h`, `--help` as the FIRST argument are exit 0, usage on stdout.
+163. `TestAFlagErrorCannotForgeALineEither` / `TestLateFlagRefusalNamesDoor` — an unparseable flag AFTER a verb is this tool's own refusal at exit 2, a bounded one-line error plus the help door, and `check` never answers 0 for one.
+164. `TestHelpIsNotAnError` / `TestDashHPrintsHelpAtExitZero` — `nova-fuse help`, `-h`, `--help` as the FIRST argument, and `-h` and `--help` after a verb, are exit 0, that help on stdout.
 165. (A) the help usage text carries no grammar token.
 166. `TestPathEchoesTheBoxFlag` — `path` prints the bare path, a value not an event.
 167. `TestStatusIsDeterministic` / `TestLockdownIsWrittenVerifiedAndAnnounced` — output is deterministic: same box, same bytes (quarantines sort; the clock is injected).
