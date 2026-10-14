@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -317,10 +318,4 @@ func snapshotScope(o options) string {
 	return string(b)
 }
 
-func cloneObserved(m map[string]observed) map[string]observed {
-	n := map[string]observed{}
-	for k, v := range m {
-		n[k] = v
-	}
-	return n
-}
+func cloneObserved(m map[string]observed) map[string]observed { return maps.Clone(m) }

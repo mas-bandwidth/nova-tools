@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -620,7 +619,16 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 	}
 	close(jobs)
 	wg.Wait()
-	sort.SliceStable(rs, func(i, j int) bool { return rs[i].Entry.Kind == "pin" && rs[j].Entry.Kind != "pin" })
+	slices.SortStableFunc(rs, func(a, b entryRead) int {
+		ap, bp := a.Entry.Kind == "pin", b.Entry.Kind == "pin"
+		if ap == bp {
+			return 0
+		}
+		if ap {
+			return -1
+		}
+		return 1
+	})
 	return rs
 }
 

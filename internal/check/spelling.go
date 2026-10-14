@@ -70,16 +70,9 @@ func NewSpellingChecker(ignore []string) *SpellingChecker {
 		return defaultSpellingChecker()
 	}
 
-	sorted := make([]string, len(words))
-	copy(sorted, words)
+	sorted := slices.Clone(words)
 	slices.Sort(sorted)
-
-	dedup := sorted[:0]
-	for i, w := range sorted {
-		if i == 0 || w != sorted[i-1] {
-			dedup = append(dedup, w)
-		}
-	}
+	dedup := slices.Compact(sorted)
 	cacheKey := strings.Join(dedup, ",")
 
 	checkerCacheMu.RLock()

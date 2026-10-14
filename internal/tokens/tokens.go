@@ -718,15 +718,3 @@ func readSourceFS(fsys fs.FS, name string) ([]byte, error) {
 	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading
 	return cappedRead(f, name)
 }
-
-// keyLess orders two keys of one day by (model, repo), the order a day file's rows
-// are written in and the order its reader checks.
-func keyLess(a, b Key) bool {
-	if a.Model != b.Model {
-		return a.Model < b.Model
-	}
-	if a.Repo != b.Repo {
-		return a.Repo < b.Repo
-	}
-	return false
-}
