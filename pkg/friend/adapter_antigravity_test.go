@@ -283,7 +283,7 @@ func TestAntigravityDeliveryIsATurnInTheOpenConversation(t *testing.T) {
 			if name == "ps" {
 				return "  root 1 /sbin/launchd\n", 0, nil
 			}
-			t.Fatalf("unexpected call: %s %v", name, args)
+			require.Failf(t, "unexpected call", "%s %v", name, args)
 			return "", 1, nil
 		}
 		a := &Antigravity{User: "emma", Dir: "/w/emma", Run: run, Home: "/home"}

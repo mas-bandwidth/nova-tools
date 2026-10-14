@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,9 +53,7 @@ func TestCodexDeliversIntoTheOpenChatOrDefers(t *testing.T) {
 			if tc.deferred {
 				var d Deferred
 				require.ErrorAs(t, err, &d)
-				assert.Contains(t, d.Reason, "queue")
-				assert.Contains(t, d.Reason, "exec")
-				assert.Contains(t, d.Reason, "actionable receipt")
+				must.ContainsAll(t, d.Reason, "queue", "exec", "actionable receipt")
 				assert.NotContains(t, d.Reason, strings.Repeat("x", OutputKept+1))
 				assert.Empty(t, record.String())
 			} else {

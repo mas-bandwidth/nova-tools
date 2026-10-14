@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,10 +65,7 @@ func TestAStartedSessionGetsThePresentAndNeverTheBacklog(t *testing.T) {
 	require.Len(t, r.delivered, 1, "one PRESENT turn, and nothing older after it")
 	p := r.delivered[0]
 	assert.True(t, strings.HasPrefix(p, PresentTextRule+" at "), p)
-	assert.Contains(t, p, "You are bob; the seat is ada.")
-	assert.Contains(t, p, "Your live queue, 1 card(s) on your row:\n- live.w1 working inbox/live.w1~15/BRIEF.md\n")
-	assert.Contains(t, p, "Skipped: 1 deals, 1 pings, 1 notes, all superseded by the present at ")
-	assert.Contains(t, p, "The newest note from the coordinator:\n\n"+Text(newest), "the newest coordinator note rides in the present, plain from the seat")
+	must.ContainsAll(t, p, "You are bob; the seat is ada.", "Your live queue, 1 card(s) on your row:\n- live.w1 working inbox/live.w1~15/BRIEF.md\n", "Skipped: 1 deals, 1 pings, 1 notes, all superseded by the present at ", "The newest note from the coordinator:\n\n"+Text(newest))
 	for _, old := range []string{"old note", "card old.w1 dealt", "n-old", "n-fresh"} {
 		assert.NotContains(t, p, old, "nothing older is delivered")
 	}
@@ -76,9 +74,7 @@ func TestAStartedSessionGetsThePresentAndNeverTheBacklog(t *testing.T) {
 	ada := strings.Join(r.adaGot(t), "\n")
 	assert.Contains(t, ada, DaemonPongSubject+": daemon-pong n-fresh", "a nonce inside the window is answered by the daemon")
 	assert.NotContains(t, ada, "daemon-pong n-old", "an expired nonce is dropped, never answered")
-	assert.Contains(t, ada, "friend bob: present at ", "the seat is told, on the bus log")
-	assert.Contains(t, ada, "skipped 1 deals, 1 pings, 1 notes")
-	assert.Contains(t, ada, "Every older message on their stream was marked superseded unread, superseded by the present at ")
+	must.ContainsAll(t, ada, "friend bob: present at ", "skipped 1 deals, 1 pings, 1 notes", "Every older message on their stream was marked superseded unread, superseded by the present at ")
 	log, err := r.store.Range(context.Background(), bus.LogKey, "-", "+", 100)
 	require.NoError(t, err)
 	assert.Contains(t, log[len(log)-1].Message().Body, "superseded by the present at ", "the bus log shows the acks")
@@ -109,9 +105,7 @@ func TestADeliveryAfterTheStaleBoundIsThePresent(t *testing.T) {
 	assert.Contains(t, r.delivered[0], PresentTextRule, "the start")
 	assert.Contains(t, r.delivered[0], "Skipped: 0 deals, 0 pings, 0 notes")
 	assert.Equal(t, Text(first), r.delivered[1], "inside the bound a message is delivered as it comes")
-	assert.Contains(t, r.delivered[2], PresentTextRule, "after the bound: the present")
-	assert.Contains(t, r.delivered[2], "Skipped: 1 deals, 0 pings, 0 notes")
-	assert.Contains(t, r.delivered[2], Text(after))
+	must.ContainsAll(t, r.delivered[2], PresentTextRule, "Skipped: 1 deals, 0 pings, 0 notes", Text(after))
 	assert.NotContains(t, r.delivered[2], "card late.w1 dealt")
 	r.streamEmpty(t)
 }
@@ -128,9 +122,7 @@ func TestAFriendsOwnPresentRequestBringsThePresent(t *testing.T) {
 	}
 	r.run(t, 8)
 	require.Len(t, r.delivered, 2, "%q", r.delivered)
-	assert.Contains(t, r.delivered[1], PresentTextRule)
-	assert.Contains(t, r.delivered[1], "Skipped: 0 deals, 0 pings, 0 notes", "the request is no note, and the newest note rides")
-	assert.Contains(t, r.delivered[1], "an older note")
+	must.ContainsAll(t, r.delivered[1], PresentTextRule, "Skipped: 0 deals, 0 pings, 0 notes", "an older note")
 	r.streamEmpty(t)
 }
 

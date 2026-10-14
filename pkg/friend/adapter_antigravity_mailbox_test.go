@@ -13,6 +13,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -282,9 +283,7 @@ func TestTheLiveConversationFollowsWhoReads(t *testing.T) {
 		assert.Len(t, h.got("B"), 4, "sent again once, never twice")
 		said := out.String()
 		assert.Equal(t, 1, strings.Count(said, "antigravity: live conversation is now B (the named one stopped reading)\n"), said)
-		assert.Contains(t, said, "antigravity: message A-1 read by conversation A\n")
-		assert.Contains(t, said, "antigravity: message B-1 read by conversation B\n")
-		assert.Contains(t, said, "antigravity: message A-2, unread in conversation A, sent again into conversation B\n")
+		must.ContainsAll(t, said, "antigravity: message A-1 read by conversation A\n", "antigravity: message B-1 read by conversation B\n", "antigravity: message A-2, unread in conversation A, sent again into conversation B\n")
 
 		agDeliver(t, a, "next")
 		assert.Equal(t, "B", h.sentTo[len(h.sentTo)-1], "the next delivery goes to the conversation that reads")

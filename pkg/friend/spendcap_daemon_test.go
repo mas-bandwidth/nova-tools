@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,9 +74,7 @@ func TestTheDaemonStopsTurnsPastTheCapAndRaisesOneJudgment(t *testing.T) {
 	assert.Equal(t, "hello", pending[0].Message().Subject)
 	mu.Lock()
 	require.Len(t, judged, 1, "one judgment raised to the seat and the owner")
-	assert.Contains(t, judged[0], "bob")
-	assert.Contains(t, judged[0], "deepseek")
-	assert.Contains(t, judged[0], "25")
+	must.ContainsAll(t, judged[0], "bob", "deepseek", "25")
 	mu.Unlock()
 }
 

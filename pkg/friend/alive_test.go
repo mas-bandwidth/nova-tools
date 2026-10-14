@@ -112,35 +112,41 @@ func TestEveryAdapterAnswersTheHarnessCheck(t *testing.T) {
 	}
 }
 
-func TestAnAppIsRunningWhenItsMainExecutableIsInTheTableForThatUser(t *testing.T) {
+// The finding of 2026-10-06: the app ran as Contents/Resources/../MacOS/<name>
+// and the literal path read it as not running for a morning. The app is its
+// bundle and its name, the path cleaned; a process outside the bundle, a
+// helper, another user's process, or a longer name is not it.
+func TestAnAppIsRunningOnlyAsItsOwnExecutableForThatUser(t *testing.T) {
 	t.Parallel()
 	dsh := App{Bundle: "/Applications/DeepSeek Harness.app", Name: "DeepSeek Harness"}
 	chat := App{Bundle: "/Applications/ChatGPT.app", Name: "ChatGPT"}
-	table := strings.Join([]string{
+	spaced := strings.Join([]string{
 		"glenn 501 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --flag",
 		"glenn 502 /Applications/ChatGPT.app/Contents/Frameworks/ChatGPT Helper.app/Contents/MacOS/ChatGPT Helper",
 		"rowan 503 /Applications/Antigravity.app/Contents/MacOS/Antigravity",
 		"glenn 504 /Applications/ChatGPT.app/Contents/MacOS/ChatGPTX",
 	}, "\n")
-	assert.True(t, AppRunning(table, "glenn", dsh), "a path with spaces, then its arguments")
-	assert.False(t, AppRunning(table, "glenn", chat), "a helper, or a longer name, is not the app")
-	assert.False(t, AppRunning(table, "glenn", AntigravityApp), "another user's app is not this friend's")
-	assert.True(t, AppRunning(table, "rowan", AntigravityApp))
-}
-
-// The finding of 2026-10-06: the app ran as Contents/Resources/../MacOS/<name>
-// and the literal path read it as not running for a morning. The app is its
-// bundle and its name, the path cleaned; a process outside the bundle with
-// the same name is not it.
-func TestAnAppLaunchedThroughAnotherSpellingOfItsPathIsRunning(t *testing.T) {
-	t.Parallel()
-	dsh := App{Bundle: "/Applications/DeepSeek Harness.app", Name: "DeepSeek Harness"}
-	assert.True(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/../MacOS/DeepSeek Harness", "zhi", dsh))
-	assert.True(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/../MacOS/DeepSeek Harness --hidden", "zhi", dsh))
-	assert.True(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "zhi", dsh))
-	assert.False(t, AppRunning("zhi 9 /tmp/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "zhi", dsh), "outside the bundle")
-	assert.False(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh headless --session-id s -", "zhi", dsh), "the CLI inside the bundle is not the app")
-	assert.False(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek HarnessX", "zhi", dsh), "a longer name is not the app")
+	for _, tc := range []struct {
+		name, table, user string
+		app               App
+		want              bool
+	}{
+		{"a path with spaces, then its arguments", spaced, "glenn", dsh, true},
+		{"a helper, or a longer name, is not the app", spaced, "glenn", chat, false},
+		{"another user's app is not this friend's", spaced, "glenn", AntigravityApp, false},
+		{"the owner's process", spaced, "rowan", AntigravityApp, true},
+		{"a cleaned .. path", "zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/../MacOS/DeepSeek Harness", "zhi", dsh, true},
+		{"a cleaned path with arguments", "zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/../MacOS/DeepSeek Harness --hidden", "zhi", dsh, true},
+		{"the bundle's own executable", "zhi 9 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "zhi", dsh, true},
+		{"outside the bundle", "zhi 9 /tmp/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "zhi", dsh, false},
+		{"the CLI inside the bundle is not the app", "zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh headless --session-id s -", "zhi", dsh, false},
+		{"a longer name is not the app", "zhi 9 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek HarnessX", "zhi", dsh, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, AppRunning(tc.table, tc.user, tc.app))
+		})
+	}
 }
 
 func TestAnAppCheckReadsTheProcessTableOnMacOSAndCannotTellElsewhere(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/must"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
@@ -116,11 +117,7 @@ func TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile(t *testing.T) {
 		require.NoError(t, err, "%s has its JOB.md", c.h.Card)
 		job := string(raw)
 		assert.True(t, strings.HasPrefix(job, "# JOB: work "+c.h.Card+", "+c.attempt+"\n"), "the card-contract title: %q", job)
-		assert.Contains(t, job, "The staged checkout: "+checkout+" (a git worktree of mas-bandwidth/nova-tools at ")
-		assert.Contains(t, job, base+", on branch "+c.branch+")")
-		assert.Contains(t, job, "git push -u origin "+c.branch)
-		assert.Contains(t, job, "Finish: write "+filepath.Join(dir, "outbox", c.h.Job, "REPORT.md")+" with 'Verdict: LAND|HOLD|FAIL' and 'Head: <sha>'")
-		assert.Contains(t, job, "RESULT.md beside it")
+		must.ContainsAll(t, job, "The staged checkout: "+checkout+" (a git worktree of mas-bandwidth/nova-tools at ", base+", on branch "+c.branch+")", "git push -u origin "+c.branch, "Finish: write "+filepath.Join(dir, "outbox", c.h.Job, "REPORT.md")+" with 'Verdict: LAND|HOLD|FAIL' and 'Head: <sha>'", "RESULT.md beside it")
 	}
 	mirrors, err := filepath.Glob(filepath.Join(dir, "mirrors", "*", "*"))
 	require.NoError(t, err)
