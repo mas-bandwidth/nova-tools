@@ -96,7 +96,7 @@ type CardHeaderFinding struct {
 // StopNamedRemedy below, merged into `cmd/nova-swarm/lint.go`'s cardLintRemedies.
 var CardHeaderRemedies = map[string]string{
 	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does; a declared kind whose row names no instruction kind is this finding too: name the instruction kind on that row of the one kinds list",
-	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
+	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`; " + PathsReadRemedy,
 	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate",
 	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>`",
 }
@@ -106,8 +106,9 @@ var CardHeaderRemedies = map[string]string{
 // CardHeaderChecks is the four tokens of §5 rule 1; `cmd/nova-swarm/lint.go` merges these
 // into its cardLintRemedies, so a start-named or stop-named line names its remedy.
 const (
-	StartNamedRemedy = "the brief carries `START: <files or packages to read first>`, the files or packages the child reads before it spends; it names where the work begins, so the reading is bounded before a token is spent"
-	StopNamedRemedy  = "the brief carries `STOP: <the condition that ends the task>`, the condition that ends the task; it bounds a flash child's reading, which otherwise runs past its budget"
+	StartNamedRemedy     = "the brief carries `START: <files or packages to read first>`, the files or packages the child reads before it spends; it names where the work begins, so the reading is bounded before a token is spent"
+	StopNamedRemedy      = "the brief carries `STOP: <the condition that ends the task>`, the condition that ends the task; it bounds a flash child's reading, which otherwise runs past its budget"
+	ConsumersNamedRemedy = "the brief carries `CONSUMERS: <cards that need this sentinel>`, naming every card that needs it; a sentinel brief missing CONSUMERS: is refused"
 )
 
 // CardHeaderChecks is every token this file draws, in one byte-stable order.
@@ -188,9 +189,10 @@ func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[str
 		}
 		m := headerKeyRE.FindStringSubmatch(line)
 		if ended {
-			// Past the block, only the five typed keys matter: any other `KEY:` line
-			// is a table row or a heading and is nobody's business here.
-			if m != nil && cardTypedKeys[m[1]] {
+			// Past the block, a header key the card format names is collected: LintHeaderStranded
+			// refuses it, since the gate never reads it. Any other `KEY:` line is a table row or a
+			// heading and is nobody's business here.
+			if m != nil && cardHeaderKeys[m[1]] {
 				if _, seen := stranded[m[1]]; !seen {
 					stranded[m[1]] = n
 				}
@@ -241,15 +243,49 @@ func CardPaths(raw []byte) []string {
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 
+// cardHeaderKeys is every key the card header grammar names: the five typed lines
+// (cardTypedKeys) plus the brief's own keys (docs/SPEC-SPRINT.md section 2, the card
+// header). A `KEY: value` line of one of these below the header block is a header key
+// the gate will never read; LintHeaderStranded refuses it rather than letting a card
+// writer find out at accept. The names stay as written: `tier` is lower case, as the
+// contract line writes it.
+var cardHeaderKeys = map[string]bool{
+	"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true,
+	"START": true, "STOP": true,
+	"DEPENDS-ON": true, "PRIORITY": true, "NEW": true, "SHARED": true,
+	"REPO": true, "BASE": true, "tier": true, "RESULT": true,
+	"CONSUMERS": true, "WHO": true,
+}
+
+// LintHeaderStranded returns one finding per header key (cardHeaderKeys) written as a
+// `KEY: value` line below the header block the gate reads (docs/SPEC-SPRINT.md section 2,
+// the card header). A key in the header passes; a key below the first prose line is one
+// finding naming the key and its line. A sentence that merely mentions a key mid-line is
+// not a `KEY: value` line and draws nothing.
+func LintHeaderStranded(raw []byte) []CardHeaderFinding {
+	_, stranded := cardHeaderBlock(raw)
+	var out []CardHeaderFinding
+	for _, k := range slices.Sorted(maps.Keys(stranded)) {
+		line := stranded[k]
+		out = append(out, CardHeaderFinding{
+			Check:   "stranded-key",
+			Line:    line,
+			Excerpt: fmt.Sprintf("%s: on line %d is below the header block and is not read: the header is the unbroken run of `KEY: value` lines directly under the contract line; a header key below the first prose line is refused, never ignored", k, line),
+		})
+	}
+	return out
+}
+
 // cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
 // token of their own, so a stranded or repeated one answers under `kind-declared`, which
 // is the token for "the typed header is not the header the gate will read".
 var cardKeyCheck = map[string]string{
-	"KIND":   "kind-declared",
-	"PATHS":  "paths-declared",
-	"TEST":   "test-named",
-	"LEGS":   "kind-declared",
-	"SOURCE": "kind-declared",
+	"KIND":      "kind-declared",
+	"PATHS":     "paths-declared",
+	"TEST":      "test-named",
+	"LEGS":      "kind-declared",
+	"SOURCE":    "kind-declared",
+	"CONSUMERS": "consumers-named",
 }
 
 // StartNamedCheck and StopNamedCheck are the tokens for the two reading lines of the
@@ -259,8 +295,9 @@ var cardKeyCheck = map[string]string{
 // flash brief and prints it as a note for tier pro, or no tier. Both carry a remedy in
 // StartNamedRemedy and StopNamedRemedy above, so the note names what to write.
 const (
-	StartNamedCheck = "start-named"
-	StopNamedCheck  = "stop-named"
+	StartNamedCheck     = "start-named"
+	StopNamedCheck      = "stop-named"
+	ConsumersNamedCheck = "consumers-named"
 )
 
 // validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
@@ -344,8 +381,12 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 		out = append(out, CardHeaderFinding{Check: check, Line: line, Excerpt: excerpt})
 	}
 	// The stranded lines first, in line order, because they are why the rest of this
-	// card's header reads the way it does.
+	// card's header reads the way it does. Only a typed key answers here: a key with no
+	// token of its own is LintHeaderStranded's finding.
 	for _, k := range slices.Sorted(maps.Keys(stranded)) {
+		if cardKeyCheck[k] == "" {
+			continue
+		}
 		add(cardKeyCheck[k], stranded[k], fmt.Sprintf("%s: on line %d is below the header block and the gate will never read it: the typed header is the unbroken run of `KEY: value` lines directly under the contract line", k, stranded[k]))
 	}
 	// A repeated key next: a card with two of one line has no one value for it.
@@ -383,12 +424,15 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 
 	// 2. PATHS: is declared, and every glob is one the gate could use.
 	paths := h["PATHS"]
+	readWhy := PathsReadRefusal(paths.value)
 	switch {
 	case !paths.found && stranded["PATHS"] > 0:
 	case !paths.found:
 		add("paths-declared", 1, "no PATHS: line under the contract line")
 	case paths.value == "":
 		add("paths-declared", paths.line, "PATHS: with no globs after it; a card that changes nothing says `PATHS: none`")
+	case readWhy != "":
+		add("paths-declared", paths.line, readWhy)
 	case paths.value != "none":
 		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. In `PATHS: , , ` each empty
 		// entry is a finding, not a value skipped past: the line declares no glob and
@@ -435,6 +479,9 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 		if kind.value != "" && hygiene.KindGated(kind.value) {
 			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
 		}
+	case tl.Runner == "ctest":
+		// ParseTest already held the name to a ctest test name; there is no
+		// package to hold to the PATHS path rule.
 	default:
 		pkg := strings.Trim(tl.Package, "/")
 		if pkg == "" {
@@ -471,6 +518,14 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 		}
 		if f := h["STOP"]; !f.found {
 			add(StopNamedCheck, 1, "no STOP: line under the contract line; the brief names the condition that ends the task")
+		}
+	}
+	if kind.value == "sentinel" {
+		f := h["CONSUMERS"]
+		if !f.found {
+			add(ConsumersNamedCheck, 1, "no CONSUMERS: line under the contract line; the brief carries CONSUMERS: <cards that need this sentinel>")
+		} else if strings.TrimSpace(f.value) == "" {
+			add(ConsumersNamedCheck, f.line, "CONSUMERS: with no cards after it; a sentinel brief names every card that needs it")
 		}
 	}
 	return out

@@ -334,6 +334,8 @@ func ChildRemedy(rules []ChildRule, check string) string {
 		return LibrariesConsideredRemedy
 	case EmptyCardCheck:
 		return EmptyCardRemedy
+	case DashboardAskCheck:
+		return DashboardAskRemedy
 	}
 	return ""
 }
@@ -505,14 +507,26 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 }
 
 // childLines calls fn with every line of the card outside the RULES paragraph, which runs
-// from its `RULES` line to the first blank line and is where a card quotes what it forbids.
+// from its `RULES` line to the first blank line and is where a card quotes what it forbids,
+// and outside every fenced code block, which is a program or an example the card shows.
+// Neither is a command the child runs, so neither is scanned: a card that documents its
+// make-driven gate, or the text of a Makefile target, draws no step- finding from it. The
+// rule is the card lint's child scans (docs/SPEC-SPRINT.md section 11, add, the card lint's
+// child rules; docs/SPEC-CARD-CONTRACT.md, the card's frame).
 func childLines(raw []byte, fn func(n int, line string)) {
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	n, inRules := 0, false
+	n, inRules, inFence := 0, false, false
 	for sc.Scan() {
 		n++
 		line := strings.TrimRight(sc.Text(), "\r")
+		if cardFenceRE.MatchString(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		if strings.TrimSpace(line) == "" {
 			inRules = false
 		} else if childRulesHeadRE.MatchString(line) {
