@@ -134,7 +134,7 @@ func TestFirstContactLoadsOnlyWhenMissingAndOnce(t *testing.T) {
 	require.Error(t, err, "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.EqualValues(t, 1, fresh.loads, "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.Contains(t, err.Error(), "ERR Function not found: function ns_table_drop", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
-	require.Contains(t, err.Error(), "; run: nova-redis fn load --addr <host:port>", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
+	require.Contains(t, err.Error(), "; run: nova-redis fn load --redis <host:port>", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.True(t, remedied(err.Error()), "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.Equal(t, redisconn.Other, redisconn.Classify(err), "a miss is the store's refusal (exit 1), got class %s", redisconn.Classify(err))
 	require.False(t, lost(err), "a miss is the store's refusal (exit 1), got class %s", redisconn.Classify(err))
@@ -190,22 +190,23 @@ func TestFirstContactFailedLoadIsTriedAgain(t *testing.T) {
 	}
 }
 
-// TestFirstContactPipelines: a pipeline of FCALLs that all missed is sent
-// again after the one load; a pipeline holding any other command, or a
-// transaction, is loaded for but never sent again, and its missed FCALLs
-// carry the remedy.
+// TestFirstContactPipelines: a pipeline of write FCALLs that all missed is
+// sent again after the one load; a pipeline whose missing commands are all
+// reads (FCALL_RO) is refused without a load, as a single read is; a pipeline
+// holding any other command, or a transaction, is loaded for but never sent
+// again, and its missed FCALLs carry the remedy.
 func TestFirstContactPipelines(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
 	s := &fakeStore{}
 	hook := libraryHook{state: &firstContact{}, load: s.load}
-	cmds := []redis.Cmder{redis.NewCmd(ctx, "fcall_ro", "ns_table_read", 1, "k"), redis.NewCmd(ctx, "fcall_ro", "ns_table_read", 1, "j")}
+	cmds := []redis.Cmder{redis.NewCmd(ctx, "fcall", "ns_table_set", 1, "k"), redis.NewCmd(ctx, "fcall", "ns_table_set", 1, "j")}
 	{
 		err := hook.ProcessPipelineHook(s.pipeline)(ctx, cmds)
-		require.NoError(t, err, "all FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
-		require.EqualValues(t, 1, s.loads, "all FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
-		require.EqualValues(t, 4, s.sends, "all FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
+		require.NoError(t, err, "all write FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
+		require.EqualValues(t, 1, s.loads, "all write FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
+		require.EqualValues(t, 4, s.sends, "all write FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
 	}
 	for _, cmd := range cmds {
 		require.NoError(t, cmd.Err(), "%v after the load: %v", cmd.Args(), cmd.Err())
