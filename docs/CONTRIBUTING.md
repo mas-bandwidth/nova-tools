@@ -49,8 +49,8 @@ contribution from outside is judged on it, like every other.
 [STANDARD.md](STANDARD.md) is the one standard: how a tool is built, the
 onboarding points every command meets, the ten rules never to break and every
 class test by name, and the rules for working in the tree. The root
-[AGENTS.md](../AGENTS.md) embeds it whole, so a contributor's harness reads it
-at the start of a session. This page is how review goes.
+[AGENTS.md](../AGENTS.md) links it, so a contributor reads the one source at
+the start of a session. This page is how review goes.
 
 ## Why the bar is where it is
 
