@@ -38,6 +38,7 @@ func TestReceiptRefusesBeforeTheStore(t *testing.T) {
 		{receiptArgs("--from-runner=false"), "--from-runner is required"},
 		{receiptArgs("--sha", "abc"), "--sha wants the 40-hex head"},
 		{receiptArgs("--conclusion", "skipped"), "--conclusion wants success, failure or cancelled"},
+		{func() []string { a := receiptArgs(); a[3] = ""; return a }(), "needs --redis <host:port> or NOVA_REDIS_ADDR"},
 	} {
 		var out, errOut bytes.Buffer
 		code := cmdGitHub(c.args, &out, &errOut, noEnv)
@@ -76,16 +77,6 @@ func TestReceiptDryRunChecksAndDialsNothing(t *testing.T) {
 	assert.Equal(t, "CI RECEIPT mas-bandwidth/nova-tools sha="+receiptSHA+" run=42 workflow=CI conclusion=success pr=7 ev=-\n"+
 		"CI RECEIPT NOTE --dry-run: the fields are good; nothing was dialled or written; drop --dry-run to write it\n", out.String())
 	assert.Empty(t, errOut.String())
-}
-
-func TestReceiptNeedsAStoreAddress(t *testing.T) {
-	t.Parallel()
-	args := receiptArgs()
-	args[3] = ""
-	var out, errOut bytes.Buffer
-	code := cmdGitHub(args, &out, &errOut, noEnv)
-	require.Equal(t, 2, code, "code %d err %q", code, errOut.String())
-	require.Contains(t, errOut.String(), "needs --redis <host:port> or NOVA_REDIS_ADDR", "code %d err %q", code, errOut.String())
 }
 
 // receipt -h is the verb's help: its usage lines, every flag with what it
@@ -134,7 +125,7 @@ func TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints(t *testing.T) {
 		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
-		t.Error(p)
+		assert.NoError(t, p)
 	}
 }
 

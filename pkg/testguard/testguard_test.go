@@ -67,8 +67,7 @@ func TestAllowHostsIsScopedAndNests(t *testing.T) {
 	inner()                      // closing twice is not a second decrement
 	g.RefuseHosts("ssh", "hulk")
 	outer()
-	defer func() {
-		require.NotNil(t, recover(), "the guard must be armed again once every scope has closed")
-	}()
-	g.RefuseHosts("ssh", "hulk")
+	assert.Panics(t, func() {
+		g.RefuseHosts("ssh", "hulk")
+	}, "the guard must be armed again once every scope has closed")
 }

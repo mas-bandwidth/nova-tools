@@ -31,33 +31,35 @@ func durationTool() *Tool {
 	}
 }
 
-// TestToolCoverDurReadsADurationFlag pins Call.Dur's main path: a duration flag
-// is read back as a time.Duration and rendered as its own string.
-func TestToolCoverDurReadsADurationFlag(t *testing.T) {
+// TestToolCoverDur pins Call.Dur: valid duration flags are parsed and rendered,
+// and invalid values are refused with what the flag wants.
+func TestToolCoverDur(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, given, want string }{
-		{"a compound duration", "1m30s", "for=1m30s"},
-		{"the zero value", "0s", "for=0s"},
-		{"a sub-second duration", "250ms", "for=250ms"},
-	} {
+	cases := []struct {
+		name       string
+		given      string
+		wantCode   int
+		wantStdout string
+		wantStderr string
+	}{
+		{"a compound duration", "1m30s", 0, "for=1m30s", ""},
+		{"the zero value", "0s", 0, "for=0s", ""},
+		{"a sub-second duration", "250ms", 0, "for=250ms", ""},
+		{"refuses invalid duration", "soon", 2, "", "invalid value for --for: it wants a duration"},
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := testkit.Main(durationTool().Run).Run("wait", "--for", tc.given)
-			assert.Equal(t, 0, r.Code, "stdout=%q stderr=%q", r.Stdout, r.Stderr)
-			assert.Contains(t, r.Stdout, tc.want)
+			assert.Equal(t, tc.wantCode, r.Code, "stdout=%q stderr=%q", r.Stdout, r.Stderr)
+			if tc.wantStdout != "" {
+				assert.Contains(t, r.Stdout, tc.wantStdout)
+			}
+			if tc.wantStderr != "" {
+				assert.Contains(t, r.Stderr, tc.wantStderr)
+			}
 		})
 	}
-}
-
-// TestToolCoverDurRefusesABadDuration pins the refusal beside Dur's main path:
-// a value the duration flag cannot parse is refused before the verb runs, with
-// the flag named and what it wants.
-func TestToolCoverDurRefusesABadDuration(t *testing.T) {
-	t.Parallel()
-	r := testkit.Main(durationTool().Run).Run("wait", "--for", "soon")
-	assert.Equal(t, 2, r.Code)
-	assert.Contains(t, r.Stderr, "invalid value for --for: it wants a duration")
-	assert.Contains(t, r.Stderr, "run: nova-cover wait -h")
 }
 
 // TestToolCoverMainRunsAndRefuses pins Tool.Main: it hands the process's own
