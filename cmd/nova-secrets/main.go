@@ -21,28 +21,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// boSeatKey is the setup line that writes bo's key and the assignment of its
-// public half, the variable seat add reads (docs/SPEC-SECRETS.md "--sops <path>
-// is the sops binary": age-keygen is the same law, an absolute path named once).
-const boSeatKey = "  " + "nova-secrets" + " keygen --as bo --key ~/.config/nova-secrets/bo.key \\\n" +
-	"    --age-keygen \"$AGE_KEYGEN\"\n" +
-	"  BO_PUB=\"$(sed -n 's/^# public key: //p' ~/.config/nova-secrets/bo.key)\"\n"
-
-// exampleBlock is the banner's example: lines. Each --sops and --age-keygen is
-// the variable the setup block sets (docs/SPEC-SECRETS.md "--sops <path> is the
-// sops binary"), and seat add's public key is $BO_PUB from the key file above.
-const exampleBlock = "\nexample:\n  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen \"$AGE_KEYGEN\"\n" +
-	"  nova-secrets names  --store ./secrets --as ada\n" +
-	("  " + "nova-secrets" + " check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\"\n") +
-	"  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\" --only GH_TOKEN --require GH_TOKEN -- gh api user\n" +
-	("  " + "nova-secrets" + " place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\" --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv\n") +
-	("  " + "nova-secrets" + " place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops \"$SOPS\" --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run\n") +
-	"  nova-secrets placed --machine bench-a\n" +
-	("  " + "nova-secrets" + " seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops \"$SOPS\" --name API_KEY --dry-run\n") +
-	("  " + "nova-secrets" + " seat add --store ./secrets --as bo --pub \"$BO_PUB\" --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\"\n") +
-	("  " + "nova-secrets" + " seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\" --no-pr\n") +
-	("  " + "nova-secrets" + " seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops \"$SOPS\" --dry-run\n")
-
+// usage is the banner: one raw string literal (docs/SPEC-SECRETS.md "--sops
+// <path> is the sops binary": --sops and --age-keygen are absolute paths set
+// once in the setup block's variables; seat add's public key is $BO_PUB from
+// the key file the setup block writes). It stays one literal so the tree's
+// usage reader sees the verb table.
 const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time
 
 how it works: the store is a git working copy holding a .sops.yaml (one rule per
@@ -133,7 +116,10 @@ setup: age-keygen and sops by absolute path, set below; run these from an empty 
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
     --age-keygen "$AGE_KEYGEN" \
     --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
-` + boSeatKey + `  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
+  nova-secrets keygen --as bo --key ~/.config/nova-secrets/bo.key \
+    --age-keygen "$AGE_KEYGEN"
+  BO_PUB="$(sed -n 's/^# public key: //p' ~/.config/nova-secrets/bo.key)"
+  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
   git init -q --bare ./secrets.git
   git -C ./secrets remote add origin ../secrets.git
   git -C ./secrets push -qu origin main
@@ -143,7 +129,19 @@ first value:
     --key ~/.config/nova-secrets/ada.key --sops "$SOPS" \
     --name GH_TOKEN --stdin --no-pr
 
-` + exampleBlock
+example:
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen "$AGE_KEYGEN"
+  nova-secrets names  --store ./secrets --as ada
+  nova-secrets check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --only GH_TOKEN --require GH_TOKEN -- gh api user
+  nova-secrets place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+  nova-secrets placed --machine bench-a
+  nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops "$SOPS" --name API_KEY --dry-run
+  nova-secrets seat add --store ./secrets --as bo --pub "$BO_PUB" --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops "$SOPS"
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops "$SOPS" --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops "$SOPS" --dry-run
+`
 
 // storeUpstreamHelp is the store prerequisite check and exec enforce (SPEC-SECRETS
 // invariant 8), printed by both verbs' own help so a caller learns it before the
