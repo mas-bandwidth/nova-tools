@@ -1368,8 +1368,9 @@ standard error at exit 1. `--json` prints one object when the wait ends:
 each message `{"id":<id>,"from":<name>,"subject":<s>,"bytes":<n>}` and the wake
 `{"file":<path>,"line":<text>}`.
 
-`send` prints `SEND OK id= to= cc= at= bytes= sha256=`: the id is the message's for ever, the
-count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). Who you
+`send` prints `SEND OK id= to= cc= at= bytes= sha256= landed=`: the id is the message's for ever, the
+count and the digest are the body's as the store holds it (check a file against `shasum -a 256`), and
+`landed=yes` says the message is on the stream (`landed=no` under `--dry-run`, which wrote nothing). Who you
 are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
 may repeat it or be left out, and another name is refused; on a store with no
 users (this first run) `--as` is your word and every write says `login=none`. `peek`
@@ -1382,7 +1383,9 @@ message for fifteen minutes. With `--exec '<command>'` the command reads that sa
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
 answers `acked=false` for an id that is not pending, at exit 0. `names` prints
-each name's push (`push=proven|stale|down|none age= harness=`). What a first run
+each name's push (`push=proven|stale|down|none age= harness=`). A sender or reader whose name's push is not
+proven gets one short `SEND NOTE`/`RECV NOTE` line naming the name, its push state and the one command that
+fixes it, `nova-hook status --as <name>`; the long explanation is in `nova-bus send -h`. What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
 `recv` refuse it with the `nova-config friend add` line that adds one); a deaf
 name, the sender, a recipient or the reader, with no inbox push its friend daemon

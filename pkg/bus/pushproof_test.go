@@ -12,8 +12,8 @@ import (
 
 // A proof's state at the store's now: none with no proof, down whatever its
 // age when its daemon says the session did not answer, stale at PushFresh,
-// proven below; the unheard line names the state, the name, its age and what
-// would prove one, and is empty for a proven one (SPEC-BUS.md,
+// proven below; the unheard line names the state, the name and the one command
+// that fixes it, and is empty for a proven one (SPEC-BUS.md,
 // bus-requires-inbox-push-proof).
 func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 	t.Parallel()
@@ -41,13 +41,10 @@ func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 			assert.Empty(t, c.p.Unheard(now))
 			continue
 		}
-		assert.Contains(t, c.p.Unheard(now), "push="+c.state+" for bob: no proven push since "+c.age+": ")
-		assert.Contains(t, c.p.Unheard(now), "waits on its stream until something reads it (nova-bus recv --as bob)")
-		assert.Contains(t, c.p.Unheard(now), "nova-friend install --as bob --harness <h> --dir <d>")
+		assert.Equal(t, "push="+c.state+" for bob: nova-hook status --as bob", c.p.Unheard(now))
 	}
-	assert.Contains(t, down.Unheard(at), "(no session answer)")
-	assert.Contains(t, up.Unheard(at.Add(time.Hour)), "its daemon (claude) last renewed it 1h0m0s ago")
-	assert.Contains(t, none.Unheard(at), "no daemon has recorded one")
+	assert.Equal(t, "push=stale for bob: nova-hook status --as bob", up.Unheard(at.Add(time.Hour)))
+	assert.Equal(t, "push=none for bob: nova-hook status --as bob", none.Unheard(at))
 }
 
 // ProvePush stamps the proof with the store's time and writes it in one
@@ -102,8 +99,8 @@ func TestThePushProofAdvisesAndNeverRefuses(t *testing.T) {
 	lines, err := b.Unheard(ctx, "ada", "bob", "cy", "ada")
 	require.NoError(t, err)
 	require.Len(t, lines, 3, "ada, bob and cy, once each, in order: %v", lines)
-	assert.Contains(t, lines[0], "push=none for ada: no proven push since never")
-	assert.Contains(t, lines[2], "push=none for cy")
+	assert.Equal(t, "push=none for ada: nova-hook status --as ada", lines[0])
+	assert.Equal(t, "push=none for cy: nova-hook status --as cy", lines[2])
 
 	e, ok, err := b.Recv(ctx, "bob", 0)
 	require.NoError(t, err, "an unheard name reads")
@@ -125,7 +122,7 @@ func TestThePushProofAdvisesAndNeverRefuses(t *testing.T) {
 	lines, err = b.Unheard(ctx, "ada", "bob")
 	require.NoError(t, err)
 	require.Len(t, lines, 2)
-	assert.Contains(t, lines[0], "push=stale for ada: no proven push since 10m")
+	assert.Equal(t, "push=stale for ada: nova-hook status --as ada", lines[0])
 	_, err = b.Send(ctx, m)
 	require.NoError(t, err, "stale is advice too")
 	assert.Equal(t, 2, f.Len(LogKey))

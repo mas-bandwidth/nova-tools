@@ -227,7 +227,7 @@ func TestTheLoopSendPeekRecvAckLog(t *testing.T) {
 	cli := r.cli()
 
 	sent := cli.OK(t, "send", "--as", "ada", "--to", "bob", "--cc", "ada", "--subject", "hello there", "--body", "line one\nline two\n")
-	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=ada at=2026-10-03T12:00:01Z bytes=18 sha256=[0-9a-f]{64} login=none\n$`, sent.Stdout)
+	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=ada at=2026-10-03T12:00:01Z bytes=18 sha256=[0-9a-f]{64} landed=yes login=none\n$`, sent.Stdout)
 	mid := id(t, sent.Stdout)
 
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=1", "PEEK MESSAGE state=new id="+mid+" from=ada at=2026-10-03T12:00:01Z subject=\"hello there\"")
@@ -361,7 +361,7 @@ func TestTheIdentityIsTheLoginUser(t *testing.T) {
 	r.login = "ada"
 	cli := r.cli()
 	sent := cli.OK(t, "send", "--to", "bob", "--subject", "s", "--body", "x")
-	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=- at=2026-10-03T12:00:01Z bytes=1 sha256=[0-9a-f]{64}\n$`, sent.Stdout, "no login=none with a login")
+	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=- at=2026-10-03T12:00:01Z bytes=1 sha256=[0-9a-f]{64} landed=yes\n$`, sent.Stdout, "no login=none with a login")
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x")
 	cli.Do(t, "log", "--as", "ada").Exit(0).Out("LOG OK total=2", "from=ada")
 	for _, verb := range [][]string{

@@ -257,13 +257,12 @@ without a proof, a claude friend's daemon then wrote none (no session to
 push into), and a new machine with no daemon could neither read the keeper's
 notes nor answer them. So the proof advises and never refuses: a message to
 an unheard name lands and waits on its stream, a recv by an unheard name
-reads, and the state is one line each, after the result:
+reads, and the state is one short line each, after the result, naming the name,
+the push state and the one command that fixes it (`nova-bus send -h` keeps the
+long explanation):
 
 ```
-SEND NOTE push=<none|down|stale> for <x>: no proven push since <age|never>: <why>; a message to <x> waits on
-its stream until something reads it (nova-bus recv --as <x>); the proof: <x> runs its friend daemon
-(nova-friend install --as <x> --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK;
-nova-bus names shows every name's push
+SEND NOTE push=<none|down|stale> for <x>: nova-hook status --as <x>
 ```
 
 (`RECV NOTE` the same, once per recv run, on its first result; `--dry-run`

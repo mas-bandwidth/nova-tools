@@ -77,21 +77,16 @@ func (p PushProof) AgeWord(now time.Time) string {
 // Unheard is the advisory line for name at now, "" when its proof is proven:
 // the NOTE send and recv print beside their result (SPEC-BUS.md,
 // bus-requires-inbox-push-proof). It never refuses: a message to an unheard
-// name lands and waits on its stream; the line says what the proof's state
-// is and what would prove one, so a sender knows nothing is pushing it in.
+// name lands and waits on its stream. The line is one short line naming the
+// name, its push state and the one command that fixes it, so a reader sees
+// the message landed instead of an essay; the explanation stays in
+// `nova-bus send -h`.
 func (p PushProof) Unheard(now time.Time) string {
-	var why string
-	switch p.State(now) {
-	case PushProven:
+	state := p.State(now)
+	if state == PushProven {
 		return ""
-	case PushNone:
-		why = "no daemon has recorded one"
-	case PushDown:
-		why = fmt.Sprintf("its daemon holds no answered SESSION CHECK from the session (%s)", p.Reason)
-	case PushStale:
-		why = fmt.Sprintf("its daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
 	}
-	return fmt.Sprintf("push=%s for %s: no proven push since %s: %s; a message to %s waits on its stream until something reads it (nova-bus recv --as %s); the proof: %s runs its friend daemon (nova-friend install --as %s --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK; nova-bus names shows every name's push", p.State(now), p.Name, p.AgeWord(now), why, p.Name, p.Name, p.Name, p.Name)
+	return fmt.Sprintf("push=%s for %s: nova-hook status --as %s", state, p.Name, p.Name)
 }
 
 // Deaf is why name is not heard at now, "" when its proof is proven: the

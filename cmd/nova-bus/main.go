@@ -218,17 +218,19 @@ example: nova-bus wait --as bob --timeout 1s`,
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
-				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> [kind=<k>] at=<RFC3339> bytes=<n> sha256=<hex>: the id is the
-message's for ever, and the byte count and digest are the body's as the store holds it, so a sender
-can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
+				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> [kind=<k>] at=<RFC3339> bytes=<n> sha256=<hex> landed=<yes|no>: the id is the
+message's for ever, the byte count and digest are the body's as the store holds it, so a sender
+can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline);
+landed=yes says the message is on the stream (landed=no under --dry-run, which wrote nothing).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none. The message lands whoever is listening: for the sender and each
 recipient whose friend daemon has not proved its inbox push (a SESSION CHECK carried in by its
 harness's deliver adapter and answered by the session, or a per-card harness's daemon up) under ten
-minutes ago, one SEND NOTE push=<none|down|stale> for <name> line follows, saying the message waits
-on its stream and what would prove the push; nothing is refused on it (nova-bus names shows each
-name's push). With --require-push (or ` + RequirePushEnv + `=1) any such name is refused instead,
+minutes ago, one short SEND NOTE push=<none|down|stale> for <name> line follows, naming the one command
+that fixes it (nova-hook status --as <name>): the message waits on its stream until something reads it
+(nova-bus recv --as <name>), and nothing is refused on it (nova-bus names shows each name's push). With
+--require-push (or ` + RequirePushEnv + `=1) any such name is refused instead,
 deaf: <name> has no proven push since <age> and the remedy, and nothing is written. --dry-run checks
 the message as send does (every problem named) and prints the line with no id and the same NOTE
 lines (or the same refusal), writing nothing.
@@ -483,6 +485,12 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 	}
 	st, login, closeStore, err := w.open(ctx, addr)
 	if err != nil {
+		// a --dry-run writes nothing, so its store refusal says so and names
+		// the store it could not reach (the finding of 2026-10-14); a real
+		// run's refusal is the store's words and would not have written either
+		if c.DryRun() {
+			return nil, "", nil, tool.Refuse(fmt.Sprintf("--dry-run reached no store, so nothing was written: %s did not answer: %s", addr, err))
+		}
 		return nil, "", nil, tool.Refuse(err.Error())
 	}
 	if timeout <= 0 {
@@ -639,9 +647,16 @@ func (w world) send(c *tool.Call) *tool.Out {
 		}
 	}
 	sum := sha256.Sum256([]byte(m.Body))
+	// landed=yes says the message is on the stream, in the same field style as
+	// the line's other facts; a --dry-run wrote nothing, so it says landed=no
+	// (the finding of 2026-10-14).
+	landed := "yes"
+	if dry {
+		landed = "no"
+	}
 	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
 	o = loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
-		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
+		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])).Fact("landed", landed), login)
 	for _, line := range unheard {
 		o.Note(line)
 	}
