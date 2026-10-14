@@ -33,8 +33,8 @@ Out (later releases):
 
 ## Guarantees
 
-Numbered, each one testable. Each one holds with nova-sprint not installed, except 4 and 5,
-which are the card records nova-sprint deals and this client only reports.
+Numbered, each one testable. Each one holds with nova-sprint not installed, except 4, 5 and 9
+to 11, which are the card records nova-sprint deals and this client only reports.
 
 1. **No local truth.** Stop the client and start another. The server's records of what is
    taken, running, and finished are unchanged, and the new client shows those records. The
@@ -48,8 +48,7 @@ which are the card records nova-sprint deals and this client only reports.
    third stays with the server. Fail one run. The other run finishes. Both results are on
    the server. The third card is dealt only after one lane is free.
 4. **A claim survives a wrap.** Take a card, then end the session without finishing. The
-   card stays taken by that friend. It is not returned by the wrap. It leaves the friend
-   when the run finishes, the server releases it, or the server's deadline passes.
+   card stays taken by that friend. It is not returned by the wrap. It leaves the friend when the run finishes or the server releases it; at the execution deadline the claim enters needs-reconciliation and still holds the card until the server releases or reassigns it.
 5. **A provider refusal is a judgment.** A run whose provider refuses writes one judgment
    the server can show, and that lane is finished failed. The other lanes are still
    running. Nothing about the refusal exists only in the client's memory.
@@ -60,6 +59,33 @@ which are the card records nova-sprint deals and this client only reports.
 8. **Install is one command, and a second run changes nothing.** On an empty host,
    `nova-friend install` leaves one client that answers a session check. Running it again
    leaves that same client and does not start another.
+9. **Down does not take a card back.** Beside the wrap rule of guarantee 4 (round 2, proposal
+   5 of layer 60 as corrected by change 7): when layer 20 reads the friend down (guarantee 17
+   there), including the case where her daemon answers and her session does not, the server
+   stops new deals to her and moves her taken or running claims to needs-reconciliation. Deaf
+   keeps them as they are. A card returns to the deal only when its holder finishes or releases
+   it, or reconciliation establishes the run's outcome or stop. Observation: with a fake clock,
+   take two cards, let the friend go deaf and then down; both claims read needs-reconciliation,
+   neither card is dealt again, and a finish from her then lands as guarantee 11 says.
+10. **No take without a proven link.** A lane takes a card only while its friend is hooked
+    (layer 20 guarantee 12) and has passed the self-test of layer 30 guarantee 6. A take from an
+    unhooked friend is refused with the link remedy and changes no claim. Observation: unit test
+    with a fake store: an unhooked friend's take is refused and the card stays dealt; after arm,
+    prove and self-test the take succeeds.
+11. **A finished report stays its author's.** A finish is recorded under the friend the server
+    shows holding the claim, read from the server claim and never from a branch suffix or a name
+    the client supplies. A finish that arrives after its claim was released or reassigned is
+    recorded as a late finish under that same friend and held for reconciliation; it is never
+    refused without a record, and it merges nothing on its own. Observation: release a claim,
+    then finish it from the old holder: one late-finish record exists under her name, and no
+    "no longer the friend's" refusal leaves the finish unrecorded.
+
+The lane carries every deal, take, finish, judgment and read over the psychic link of layer 20
+(guarantees 12 to 18), and asks Redis, the one server, for everything it shows (layer 10
+guarantees 14 and 15). The take-back by a tick that redeals a taken card, which in the three
+hours before 14:24Z on 2026-10-14 moved friend cards from working to ready 12,709 times and left
+finished reports refused (the Grok friend 92, the Antigravity friend 21, a one-shot dsh friend
+8), is what guarantees 4, 9 and 11 remove.
 
 ## State and transitions
 
@@ -70,18 +96,27 @@ A lane is one of these. The server stores the state. The client displays it.
 - `running`: the run has started.
 - `finished`: the run ended and the result is on the server.
 - `failed`: the run ended without a result, and the judgment is on the server.
-- `released`: the server took the card back, by its deadline or by an explicit release.
+- `needs-reconciliation`: the execution deadline passed, or the friend went down, while the
+  card was `taken` or `running`. The claim still holds the card; it counts against `width`.
+- `released`: the server took the card back by an explicit release, or after reconciliation
+  established the run's outcome or stop.
 
 Events:
 
-- `Deal`: `idle` to `taken`. The server does this. A client with `width` lanes already
-  `taken` or `running` is not dealt another.
+- `Deal`: `idle` to `taken`. The server does this, only to a hooked friend (guarantee 10). A
+  client with `width` lanes already `taken`, `running` or `needs-reconciliation` is not dealt
+  another.
 - `Start`: `taken` to `running`. The client does this by beginning the run, and the server
   records it.
-- `Finish`: `running` to `finished`. The result is on the server before the run's process
-  exits.
+- `Finish`: `running` to `finished`. The result is on the server before the run's process exits, recorded under the friend the server shows holding the claim. A finish that arrives after its claim was released or reassigned is recorded as a late finish under that same friend and held for reconciliation; it is never refused without a record, and it merges nothing on its own.
 - `Fail`: `running` to `failed`. One judgment is on the server before the process exits.
-- `Release`: `taken` or `running` to `released`. Only the server does this.
+- `Deadline` and `Down`: `taken` or `running` to `needs-reconciliation`. Only the server does
+  this, at the execution deadline on its clock or when layer 20 reads the friend down.
+- `Reconcile`: `needs-reconciliation` to `finished`, `failed` or `released`, once the holder
+  (on re-hook, through her replay) or the coordinator (as a judgment) establishes the run's
+  outcome or stop. A finish from the holder in this state is a `Finish`.
+- `Release`: `taken` or `running` to `released`, by the holder or the server explicitly; every
+  release and its reason are recorded on the claim and replayed to its holder on attach.
 - `ClientCrash`: the process is gone. The stored state does not change. A crash is not a
   `Fail` and not a `Release`.
 - `SessionEnd` and `SessionAttach`: no lane changes state.
@@ -97,8 +132,9 @@ Who owns each record:
 
 1. **The client dies mid-run.** The server sees the process gone only by the lane missing
    its next report before the deadline. Until then the state stays `running`. Recovery:
-   the server `Release`s at its deadline. A new client does not take the card while it is
-   still `running` or `taken`.
+   at its deadline the server moves the claim to `needs-reconciliation`; the card is released
+   only after reconciliation. A new client does not take the card while it is still `running`,
+   `taken` or `needs-reconciliation`.
 2. **The session wraps.** The session is gone and the client is not. Recovery: the next
    session attaches and reads layer 20's replay. The lane state is whatever the server
    stored.
@@ -112,16 +148,21 @@ Who owns each record:
 
 ## Interfaces
 
-- Below: server records (10), comms verbs (20), and the harness hook-in (30). The client
-  is the process layer 30 keeps alive.
+- Below: server records on Redis, the one server (10); comms verbs and the psychic link (20);
+  and the harness hook-in (30). The client is the process layer 30 keeps alive. Every deal,
+  take, finish, judgment and read reaches the lane through the link and no other path: the
+  daemon polls, ping/pong session checks, nonce and wake files, local inbox and outbox
+  folders, lane files, presence file, epoch flag and nudge-debt ledger of today's friend
+  daemon are retired, and the lane caches server state only as layer 10 guarantee 15 allows.
 - Above: 50 deals a card by the `Deal` event and reads `finished`, `failed`, and
   `released`. This layer does not choose which card, and it does not schedule.
 
 ## Open questions
 
 1. Whether a running lane owes the server a heartbeat before the deadline, or the
-   deadline alone is the release. v1.3 uses the deadline alone. A heartbeat is a second
-   clock, and this layer has one.
+   deadline alone is the release. v1.3 uses the deadline alone, and at the deadline the
+   claim enters needs-reconciliation rather than being released (guarantee 4). A heartbeat
+   is a second clock, and this layer has one.
 2. Layer 10 does not yet have a slot record for a shared host. Until it does, this layer
    does not deal slots.
 

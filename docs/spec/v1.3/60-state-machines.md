@@ -50,6 +50,31 @@ the invariants, and the liveness properties. Taken from the layer that owns it.
 Seven machines, fixed by the coordinator and extended only with a reason from layers 10 to 50.
 Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 
+### The shape every model shares: one server, N clients
+
+Round 2, from the project owner's rulings of 2026-10-14 (layer 10 guarantees 14 and 15, layer
+20 guarantee 18). Every module has exactly one server process, Redis, which holds every
+variable that is truth, and a set `Clients` of N clients (each friend, the coordinator, the
+sprint) that act only by asking it. Clients have no actions among themselves: no message
+passes client to client, and nothing in a module is decided by agreement between clients.
+
+- Variables: the server's state; per client, a `cache` and its `cacheRev`, and the client's
+  process facts (running, crashed). Constants: `T_refresh` (1 second, as a tick count), the
+  lease and challenge lengths, and $T_{deaf}$.
+- Actions: `ClientAsk(c, op)` (the server commits or refuses), `ServerPush(c)` over the link,
+  `Refresh(c)` at most every `T_refresh` and at once on a push, `ClientCrash(c)` and
+  `ClientRestart(c)` (the restart empties the cache), `Tick` of the server clock.
+- Invariants, in every module: **NoClientTruth**: no server action reads a client's cache or
+  clock; every guard of a server action reads server variables only. **CacheDerived**: every
+  cached value equals the server's value at some revision at or before the current one, and a
+  mutation proposed from a cache older than the current revision is refused. **ServerClock**:
+  only `Tick` advances the time that decides lease, challenge and claim expiry.
+- Liveness: **FreshView**: while the server is reachable and a client is running, its
+  `cacheRev` reaches the server's revision as of `T_refresh` ago (weak fairness on `Refresh`).
+- Reversed witnesses: a client extending its own lease on its own clock; a restarted client
+  reading a stale local file as its lease or inbox; two clients agreeing a take between them
+  without the server; a cache written back as a server record.
+
 ### M1 Presence and lease
 
 #### Variables
@@ -57,13 +82,15 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - `binding`: absent, challenged, proven, away, or closed, per friend (layer 10).
 - `generation`: the current session binding generation; `deadline`: the lease deadline.
 - `lastHeard`: set by any valid authenticated activity; `lastProof`: set only by a challenge answer.
-- `displayed`: up or down; `internal`: up, deaf, or down (down includes the case where her daemon answers and her session does not; see Reconciled (a)).
+- `displayed`: up or down; `internal`: up, deaf, or down, defined in layer 20 (guarantee 17 and its Displayed presence states, round 2): up is hooked; deaf is unhooked but heard within $T_{deaf}$; down includes the case where her daemon answers and her session does not.
+- `hooked`: the binding is proven, unexpired on the server clock, and its last proof answered a challenge delivered through the link (layer 20 guarantees 12 and 14).
 
 #### Actions
 
 - Attach and challenge issued (10-server-truth.md guarantee 4; 20-comms.md guarantee 4).
 - Session answers the challenge (10 guarantee 4; 30-harness-hookin.md guarantee 2).
-- Any authenticated activity: a bus message, a take, a finish, a push, a pull request, a beat, or a hook proof (10 guarantees 4 and 5, as reconciled in (a)).
+- Any authenticated activity: a bus message, a take, a finish, a push, a pull request, a beat, or a hook proof (10 guarantee 13).
+- Lapse, Silence and ReProve over the internal states (20 guarantee 17).
 - Lease deadline passes; explicit detach; binding replaced (10 guarantee 3; 20 guarantee 3).
 
 #### Invariants
@@ -72,6 +99,8 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - A previous generation proves nothing and takes nothing (10 guarantee 3).
 - At or past the deadline the binding reads away with a reason (10 guarantee 5).
 - `displayed` and the deal's reachability read the clocks as Reconciled (a) states, never a helper's liveness (30 guarantee 3).
+- Deaf displays up and is never hooked: no push and no new send reaches a deaf or down friend (20 guarantees 16 and 17).
+- Activity never sets `hooked` or extends `deadline` (10 guarantee 13).
 
 #### Liveness
 
@@ -82,6 +111,8 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - Traffic, a heartbeat, or a wake request counted as proof (failure mode: adapter prints a challenge, session never sees it; 10).
 - A ping to the friend's own stream counted as the friend being up.
 - An old generation's answer accepted after replacement (10 failure mode: old session answers after replacement).
+- A deaf friend treated as hooked: a push offered or a new send admitted to her (20 guarantee 16).
+- Daemon activity alone keeping a friend up past $T_{deaf}$ (20 guarantee 17, the daemon-answers case of down).
 
 #### Existing module
 
@@ -91,37 +122,59 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 
 - Reads M4 (epoch, receipts) and M3 (activity as bus evidence). Read by M2, M6. Layer below: 10.
 
-### M2 Hook and session
+### M2 Psychic link, hook and session
+
+Round 2: this machine is the psychic link (layer 20 guarantees 12 to 18; layer 30 guarantees 6
+to 9), the `BusLink` states of the v1.3 card for the gate joined to the hook record.
 
 #### Variables
 
-- `hook`: armed, challenged, proven, live, expired, or re-armed.
+- `link`: unhooked, armed, challenged, hooked, or lapsed, per name (lapsed reads as unhooked to every verb).
+- `reader`: running, expired, or absent, per name; its bound (the monitor expiry, or the wait chain).
+- `delivered`: the set of nonces the link has written to the session; `answered`: the nonces the session answered.
+- `selfTest`: passed or not, for the current generation (30 guarantee 6).
 - `session`: the session identity; `capability`: the per-installation record, link and wake each measured or unmeasured (30).
 
 #### Actions
 
-- Hook-in arms the record (20 guarantee 2; 30 guarantee 4).
-- Challenge issued and answered by the session (20 guarantee 4; 30 guarantee 2).
+- `Arm`: hook-in arms the record and starts the reader (20 guarantee 2 and interface 1; 30 guarantee 7).
+- `Deliver(challenge)`: the server writes a nonce onto the link only (20 guarantee 14).
+- `Prove(nonce)`: the session answers a nonce from `delivered` (20 guarantees 4 and 14; 30 guarantee 2).
+- `Renew`, `Expire` (server clock; 20 guarantee 15), `ReaderExpire`, `Rearm` (30 guarantee 8).
+- `Send`, `Recv`, `Peek`, `Ack`, `Take` for a name; `SendTo(name)` by any client (20 guarantees 12 and 16; 40 guarantee 10).
+- `SelfTest`: a send-to-self lands in-turn and is answered (30 guarantee 6).
 - Session ends, wraps, or is replaced; re-hook and replay (30 guarantees 4 and 5; 10 guarantee 8).
 
 #### Invariants
 
+- Send, Recv, Peek, Ack and Take by a name happen only while it is hooked (20 guarantee 12; 40 guarantee 10).
+- A message to a name is admitted only while that name is hooked; otherwise the sender holds a refusal and the inbox is unchanged (20 guarantee 16).
+- `link` = hooked only if the last proof answered a nonce in `delivered` (20 guarantee 14).
+- A take, or a deal to the name, only with `selfTest` passed (30 guarantee 6).
 - A hook never expires silently: expiry carries a recorded reason (20 guarantee 3).
 - Proof is never inherited across a session replacement (10 guarantee 3).
 - An unmeasured capability is never reported as supported (30 guarantee 5).
+- Lapse is decided by the server clock alone (10 guarantee 14).
 
 #### Liveness
 
-- A session that re-hooks and answers is eventually proven again. Fairness: the harness gives the re-hooked session a turn; environment: the server is serving (M4).
+- A hooked name that keeps re-arming its reader inside the bound and answering renewals stays hooked. Fairness: the session gets a turn inside each challenge window (30 guarantee 1); environment: the server is serving (M4).
+- A reader lost without re-arm leads to unhooked within $T_{lease}$ (30 guarantee 8).
+- A session that re-hooks and answers is eventually hooked again.
 
 #### Reversed witnesses
 
-- A proven hook decays to live with nothing on the stream and a send is refused (observed failure named in 30, Claude Code subsection).
+- A send to an unhooked name queued silently and the sender told success (20 guarantee 16; the deaf-friend failures of 20, Rationale).
+- A recv or ack by an unhooked name succeeding (20 guarantee 12).
+- A prove with a nonce taken from `nova-hook hook` output or a refusal, never delivered through the link, accepted (20 guarantee 14).
+- A reader alive with no session behind it keeping the name hooked (30 guarantee 8; 30 failure mode 3).
+- A take by a friend that never passed the self-test (30 guarantee 6).
+- A proven hook decays to live with nothing on the stream and a send is refused (observed failure named in 30, Claude Code subsection; now no "live" state exists).
 - A challenge held unread by a daemon-only harness until its window closes (30 failure mode 3: helper alive, session deaf).
 
 #### Existing module
 
-- `Hook` (current, row hook-record): the new model extends it and replaces neither it nor the session-challenge part of `Friend` (partial). Reason: Hook already holds arming, renewal, epoch, and proof against a live push; what is new is the per-harness capability record of layer 30 joined to the same record.
+- `Hook` (current, row hook-record): the new model extends it and replaces neither it nor the session-challenge part of `Friend` (partial). Reason: Hook already holds arming, renewal, epoch, and proof against a live push; what is new is the mandatory link gate on every bus verb, the challenge delivered only through the link, the send refusal to unhooked names, and the per-harness capability record of layer 30, joined to the same record.
 
 #### Interfaces
 
@@ -135,7 +188,7 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 
 #### Actions
 
-- Send admits every recipient entry in one commit (10 guarantees 1 and 2; 20 guarantee 6).
+- Send admits every recipient entry in one commit, only when every recipient is hooked; otherwise refuses with nothing admitted (10 guarantees 1 and 2; 20 guarantees 6 and 16).
 - Offer, observe, acknowledge (10 guarantees 6 and 7; 20 guarantees 8 and 9).
 - Redelivery until acked; replay on attach (10 guarantee 7; 20 guarantee 9); prune after retention (20 guarantee 11).
 
@@ -144,6 +197,7 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - An offer or an observation never removes a pending entry; only that recipient's ack does (10 guarantee 7).
 - No message is acted on twice from one ack (10 guarantees 6 and 7).
 - Replay on attach presents every pending entry before new ingress (20 guarantee 9).
+- No entry is admitted for an unhooked recipient (20 guarantee 16).
 
 #### Liveness
 
@@ -154,6 +208,7 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - An ack that clears another recipient's entry (10 guarantee 7).
 - A recv that hands a redelivered id so it is acted on twice (row bus-receipts witness).
 - A failed ack stamp, a lost ack, and a crash together acting a message twice (row bus-receipts known gap; kept as a named gap, not hidden).
+- A send admitted for a recipient whose lease lapsed before the commit (20 guarantee 16).
 
 #### Existing module
 
@@ -185,6 +240,7 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - No success or notification before the commit is durable; a crash before commit produces none (10 guarantee 1).
 - One authority: no second writer and no caller-maintained truth (10 guarantee 1; 40 guarantee 1).
 - Unavailable is never read as current up (10 guarantee 12).
+- The shared one-server, N-client invariants above (10 guarantees 14 and 15).
 
 #### Liveness
 
@@ -208,11 +264,13 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 
 #### Variables
 
-- Per lane: idle, taken, running, finished, failed, or released; `width`; the one server deadline; the claim it holds.
+- Per lane: idle, taken, running, needs-reconciliation, finished, failed, or released; `width`; the one server deadline; the claim it holds; late-finish records (40, round 2).
 
 #### Actions
 
-- Deal, start, finish, fail, release (40, state and transitions; guarantees 3 to 5).
+- Deal (to a hooked friend only), start, finish, fail, release (40, state and transitions; guarantees 3 to 5 and 10).
+- Deadline and Down move taken or running to needs-reconciliation; Reconcile ends it (40 guarantees 4 and 9).
+- LateFinish: a finish on a released or reassigned claim is recorded under the server's holder (40 guarantee 11).
 - Session end and session attach change no lane state (40 guarantee 4).
 - Client crash changes no stored state (40, failure mode 1).
 - A claim survives a session wrap (40 guarantee 4).
@@ -222,16 +280,20 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - At most `width` lanes hold taken or running cards (40 guarantee 3).
 - The server's deadline is the only deadline; no client clock expires a claim (40 guarantee 7).
 - A crash is neither a fail nor a release (40, state and transitions).
+- A lane in needs-reconciliation counts against `width` and its card is not dealt again (40 guarantees 4 and 9).
+- Every finish is recorded under the friend the server shows holding the claim; no finish is refused without a record (40 guarantee 11).
 
 #### Liveness
 
-- A taken card eventually finishes, fails, or is released at its deadline. Fairness: a running lane gets its run; environment: the server is serving (M4) and the lane hears the bus without nova-sprint (40 guarantee 6).
+- A taken card eventually finishes, fails, or enters needs-reconciliation at its deadline, and a needs-reconciliation card eventually reconciles once its holder re-hooks or the coordinator judges. Fairness: a running lane gets its run; environment: the server is serving (M4) and the lane hears the bus without nova-sprint (40 guarantee 6).
 
 #### Reversed witnesses
 
 - A lane that starts a second client on session attach (40 failure mode 5).
 - A card returned by a session wrap (40 guarantee 4).
 - A provider refusal existing only in client memory, with no judgment on the server (40 guarantee 5).
+- A card released at the deadline while its run is uncertain and dealt again (40 guarantee 4; round 2, change 4).
+- A finish refused as "no longer the friend's" with no record (40 guarantee 11; the 92, 21 and 8 refused reports of 20, Rationale).
 
 #### Existing module
 
@@ -247,10 +309,14 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 
 - The assignment and capacity claim: owner, revision, claim id, execution lease; active, needs-reconciliation, or released (10, state table).
 - Dealt versus taken: a dealt card is not a taken card (50, Inputs; 40, state and transitions).
+- `claimsOf(card)`: the active or needs-reconciliation claims on a card, at most one (50 guarantee 6).
+- `releases`: every release with its reason, replayed to its holder on attach (50, Inputs; round 2, change 9).
 
 #### Actions
 
-- Deal only to a friend the server shows reachable (50; Reconciled (a) for which clock the deal reads).
+- Deal only to a friend who is hooked, self-tested, proven and displayed up (50 guarantee 7; Reconciled (a) for which clock the deal reads).
+- Down moves the friend's taken or running claims to needs-reconciliation and stops new deals to her; deaf changes no claim (40 guarantee 9; round 2, change 7).
+- Tick: deals ready cards only; it never moves a taken card back to ready (50 guarantee 6).
 - Take under the claim; capacity claim checked atomically at assign (10, state table; guarantee 2).
 - Execution-lease expiry makes the claim needs-reconciliation and retains it (10 guarantee 9).
 - Release or reassign advances the claim fence (10, state table).
@@ -260,6 +326,8 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - A dealt card belongs to the machine until a lane takes it; dealing creates no take (50, Inputs).
 - Expiry never asserts an old process stopped and never authorizes a second execution (10 guarantee 9).
 - More claims than capacity are refused, including claims held for uncertain execution (10, state and transitions).
+- At most one active or needs-reconciliation claim per card; a card returns to the deal only on a finish, a release, or a completed reconciliation (50 guarantee 6).
+- No claim is acquired for an unhooked friend (40 guarantee 10; 20 guarantee 12).
 
 #### Liveness
 
@@ -270,6 +338,9 @@ Models are written bottom up in the order M4, M3, M1, M2, M5, M6, M7.
 - A deal sent to a friend the server does not show reachable, changing ownership while she is deaf (50, Inputs: friends were deaf while an ownership change was sent).
 - Two clients acquiring the last capacity slot at once, both winning (10 failure mode: two clients attach or acquire concurrently).
 - Reassignment silently giving away a claim on a turn end (10 guarantee 9).
+- The tick moving a taken card back to ready and dealing it again while its run is uncertain (50 guarantee 6; 12,709 such moves in three hours on 2026-10-14, 20 Rationale).
+- Down returning a running card to the deal (round 2, change 7: refused).
+- A second deal of a card under an active or needs-reconciliation claim (50 guarantee 6).
 
 #### Existing module
 
@@ -332,11 +403,18 @@ The choice for the models: M1 carries two clocks. `lastHeard` is set by any vali
 activity; `lastProof` is set only by a challenge answer. The displayed status reads `lastHeard`
 through the internal states: up and deaf (active but not receiving: no recv or ack and no answer
 to a wake ping, held up to 10 minutes before down) display as up, and deaf keeps her taken cards;
-down displays as down and returns her cards to the deal. Down includes the case where her
-daemon answers and her session does not; that case returns her cards the same way. The deal reads session proof: a card is dealt only to a friend whose
+down displays as down, stops new deals to her, and moves her taken or running claims to needs-reconciliation. Down includes the case where her daemon answers and her session does not. A card returns to the deal only when its holder finishes or releases it, or reconciliation establishes the run's outcome or stop, and proposal 5 below states the same beside the wrap rule of layer 40. The deal reads session proof: a card is dealt only to a friend whose
 binding is proven and unexpired and whose displayed status is up. Delivery of a note is gated
-the same way for the push: the push is offered only to a proven binding, while the note itself
-is queued on the server for any enrolled friend, proven or not, and replays on attach (M3).
+the same way for the push: the push is offered only to a hooked binding, and a new note to an
+unhooked friend is refused to its sender at once and admits nothing (round 2, change 10 and the
+project owner's ruling; layer 20 guarantee 16). Notes admitted while she was hooked stay
+pending and replay on attach (M3).
+
+Round 2 applied this settlement into the layers: the two clocks in layer 10 (guarantee 13 and
+the presence paragraph, proposal 1); the internal and displayed states in layer 20 (guarantee
+17 and its Displayed presence states, proposal 2), so deaf and displayed now have a home in a
+layer and not only here; and the claim consequences in layer 40 (guarantees 4 and 9, proposal 5
+as corrected by change 7).
 
 Whether a change is proposed to an owner: yes, proposal 1 below to the owner of layer 10 (its
 "convenience up" paragraph and guarantee 5) and proposal 2 to the owner of layer 20 (its lease
@@ -355,12 +433,12 @@ into away, carrying its reason. The models use the layer 10 names (absent, chall
 away, closed) and carry the layer 20 reason as the away reason, so a lease expiry and a
 challenge timeout are told apart by reason, never by state.
 
-Whether a change is proposed to an owner: yes, proposal 3 below to the owner of layer 20, to
-name EXPIRED a transition rather than a state, or to accept this map at ratification.
+Whether a change is proposed to an owner: proposal 3, applied in round 2 (layer 20 lease
+states).
 
 ### (c) The wait verb
 
-What the layers say: layer 20 specifies `nova-bus wait`, carrying a nonce, blocking on the
+What the layers said in round 1: layer 20 specified `nova-bus wait`, carrying a nonce, blocking on the
 server, and exiting on a message (guarantee 5). The comms design carried on this branch family
 specifies `nova-hook hook` to arm a link that is settled against a hard deadline and a renewable
 proof, with timers and a drain cursor, and a one-shot `nova-hook wait`.
@@ -370,8 +448,8 @@ one-shot wait that exits on a message or a challenge and is re-armed by its call
 the piggybacked proof of layer 20's guarantee 5 is modelled as the wait carrying the current
 nonce to the same server operation, under whichever name ratification keeps.
 
-Whether a change is proposed to an owner: yes, proposal 4 below to the owner of layer 20, to
-rename its wait verb or record the deferral.
+Whether a change is proposed to an owner: proposal 4, applied in round 2 by change 6: layer 20
+names `nova-hook wait` as its one wait verb, and layer 30's subsections use it.
 
 ## Closing table
 
@@ -382,15 +460,16 @@ Models are written bottom up in this order: M4, M3, M1, M2, M5, M6, M7.
 | M4 Server commit, receipts and epoch | ServerTruth | v13-model-m4-server-truth |
 | M3 Bus delivery and acknowledgment | BusDelivery (extends Bus2 and Bus2Receipts) | v13-model-m3-bus-delivery |
 | M1 Presence and lease | PresenceLease (extends FriendPresence and Friend) | v13-model-m1-presence-lease |
-| M2 Hook and session | HookSession (extends Hook) | v13-model-m2-hook-session |
+| M2 Psychic link, hook and session | LinkSession (extends Hook; holds the BusLink states) | v13-model-m2-hook-session |
 | M5 Friend lane | FriendLaneV13 (extends FriendLane) | v13-model-m5-friend-lane |
 | M6 Deal and claim | DealClaim (new; extends the FriendLane deal view) | v13-model-m6-deal-claim |
 | M7 Verdict and merge gate | VerdictGate (extends CardContract) | v13-model-m7-verdict-gate |
 
 ## Proposed changes for the owners
 
-Each proposal names the file, the sentence, and the reason. The coordinator relays them; this
-file does not edit those layers.
+Each proposal names the file, the sentence, and the reason. All five were applied in round 2
+(the ratifying friends confirm each in their own file by ratifying the round 2 sha); proposals 2
+and 5 are restated below as applied, after change 7.
 
 1. File: docs/spec/v1.3/10-server-truth.md. Sentence: in the paragraph beginning "If a
    convenience `up` field exists", state that the displayed up or down reads the last-heard
@@ -403,8 +482,9 @@ file does not edit those layers.
 2. File: docs/spec/v1.3/20-comms.md. Sentence: in the lease state machine, add the internal
    states deaf (active, not receiving, held up to 10 minutes, displays up, keeps taken cards)
    and the daemon-answers case of down (her daemon answers, her session does not; displays
-   down, cards return to the deal), or record that they live only in layer 60's M1. Reason: the
-   deal and the display read them, and layer 20's four lease states cannot express them.
+   down; her taken or running claims move to needs-reconciliation, never back to the deal).
+   Applied as layer 20 guarantee 17 and its Displayed presence states. Reason: the deal and the
+   display read them, and layer 20's four lease states could not express them.
 3. File: docs/spec/v1.3/20-comms.md. Sentence: name EXPIRED a transition into AWAY carrying its
    reason (challenge_timeout or lease_expired), not a fifth state. Reason: the one-to-one map
    of layer 60 Reconciled (b), which the models use with layer 10's names.
@@ -412,8 +492,11 @@ file does not edit those layers.
    one-shot wait verb the models use is `nova-hook wait`; either rename `nova-bus wait` to it or
    record `nova-bus wait` as deferred to a later release. Reason: two blocking wait verbs would
    be modelled and built twice for one operation (layer 60 Reconciled (c)).
-5. File: docs/spec/v1.3/40-friend-lane-client.md. Sentence: in guarantee 4 and the state list,
-   note that down (layer 60 Reconciled (a)), including the case where her daemon answers and
-   her session does not, returns a friend's taken cards to the deal while
-   deaf keeps them, as an exception stated beside the claim-survives-a-wrap rule. Reason: M6
-   deals on that distinction and layer 40 currently states the wrap rule without it.
+5. File: docs/spec/v1.3/40-friend-lane-client.md. Sentence: beside guarantee 4 and in the state
+   list, state that down (layer 20 guarantee 17), including the case where her daemon answers
+   and her session does not, stops new deals to her and moves her taken or running claims to
+   needs-reconciliation, while deaf keeps them; a card returns to the deal only when its holder
+   finishes or releases it, or reconciliation establishes the run's outcome or stop. Applied as
+   layer 40 guarantee 9 and the needs-reconciliation state (round 2, change 7 replacing the
+   round 1 down-return). Reason: M6 deals on that distinction, and returning a taken or running
+   card while its run is uncertain authorizes a second execution.

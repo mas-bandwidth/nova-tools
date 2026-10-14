@@ -2,7 +2,10 @@
 
 Owner: the coordinator (she/her), on Claude Code.
 
-Status: final candidate
+Status: round 2 candidate.
+
+Version: round 2, revising 650bce2464c4e76d5f356b659a80d2d63f096785 (round 1). The version a friend
+ratifies is the sha this directory's last commit carries, by the version rule below.
 
 ## Purpose
 
@@ -12,6 +15,12 @@ v1.3 makes friends reliable, and nothing else:
   or deaf unnoticed.
 - Hooks work. A hook never expires silently and never loses its proof silently.
 - Sprint task delivery and tracking stay correct for friends.
+- The psychic link is mandatory (the project owner, live, 2026-10-14). Nothing works on the bus
+  for a name until that name is hooked into its link, just as nova-sprint does not work until a
+  caller hooks in. The link is the one transport for every sprint, friend and coordinator
+  message (layers 20, 30, 40, 50).
+- Client/server, never distributed: Redis is the one server and the only truth; every friend,
+  the coordinator and the sprint are clients that ask it (layers 10 and 20).
 
 ## The structural fix
 
@@ -57,7 +66,7 @@ The order is: spec, ratify, models, work.
 | Machine | Name | Model card |
 |---|---|---|
 | M1 | Presence and lease | v13-model-m1-presence-lease |
-| M2 | Hook and session | v13-model-m2-hook-session |
+| M2 | Psychic link, hook and session | v13-model-m2-hook-session |
 | M3 | Bus delivery and acknowledgment | v13-model-m3-bus-delivery |
 | M4 | Server commit, receipts and epoch | v13-model-m4-server-truth |
 | M5 | Friend lane | v13-model-m5-friend-lane |
