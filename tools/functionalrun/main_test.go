@@ -105,7 +105,7 @@ func flagValue(t *testing.T, args []string, flag string) string {
 			return args[i+1]
 		}
 	}
-	t.Fatalf("argv has no %s: %q", flag, args)
+	require.FailNowf(t, "argv has no flag", "argv has no %s: %q", flag, args)
 	return ""
 }
 
@@ -679,7 +679,7 @@ func (w orderWriter) Write(p []byte) (int, error) {
 		}
 	}
 	if !removed {
-		w.t.Errorf("logged %q before the container was removed", p)
+		assert.True(w.t, removed, "logged %q before the container was removed", p)
 	}
 	return len(p), nil
 }

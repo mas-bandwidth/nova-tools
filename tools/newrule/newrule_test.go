@@ -4,38 +4,29 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewRuleScaffoldValidatesInput(t *testing.T) {
 	t.Parallel()
 
 	tree := t.TempDir()
-	// No go.mod
-	if _, err := rule(tree, "sample"); err == nil {
-		t.Errorf("expected error when go.mod missing, got nil")
-	}
+	_, err := rule(tree, "sample")
+	require.Error(t, err, "a tree with no go.mod")
 
-	// Create dummy go.mod
-	_ = os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module test"), 0o644)
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module test"), 0o644))
 
-	// Invalid names
 	for _, bad := range []string{"123num", "BadName", "rule with spaces", "for", "type"} {
-		if _, err := rule(tree, bad); err == nil {
-			t.Errorf("expected error for invalid rule name %q, got nil", bad)
-		}
+		_, err := rule(tree, bad)
+		assert.Error(t, err, "invalid rule name %q", bad)
 	}
 
-	// Valid name
 	written, err := rule(tree, "my-rule")
-	if err != nil {
-		t.Fatalf("Scaffold failed on valid name: %v", err)
-	}
-	if len(written) != 3 {
-		t.Fatalf("Scaffold wrote %d files, want 3", len(written))
-	}
+	require.NoError(t, err, "a valid name")
+	assert.Len(t, written, 3)
 
-	// Second run refused
-	if _, err := rule(tree, "my-rule"); err == nil {
-		t.Errorf("expected error on duplicate scaffold, got nil")
-	}
+	_, err = rule(tree, "my-rule")
+	assert.Error(t, err, "a duplicate scaffold")
 }
