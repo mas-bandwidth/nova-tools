@@ -54,15 +54,12 @@ func TestNamedShareAndSum(t *testing.T) {
 	require.Equal(t, "4", got, "done cell text %q", got)
 	got = ntable.CellText(tb.Columns, tb.Rows[1], okpct)
 	require.Equal(t, "0.0%", got, "zero denominator %q, want the known-empty 0.0%%", got)
-}
 
-// TestNamedShareFixedWidths: a fixed width pads a sum column on the left, as
-// a count, and a percentage on the right, as before.
-func TestNamedShareFixedWidths(t *testing.T) {
-	t.Parallel()
-	tb := shareTable(t, shareSpec, map[string][]int64{"m1": {2, 3, 1}}, []string{"m1"})
-	got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet", Widths: map[string]int{"done": 6, "okpct": 8}})
-	want := "fleet | ready |   done | ok%\n" +
+	// a fixed width pads a sum column on the left, as a count, and a
+	// percentage on the right, as before.
+	tb = shareTable(t, shareSpec, map[string][]int64{"m1": {2, 3, 1}}, []string{"m1"})
+	got = ntable.Render(tb, ntable.RenderOpts{Title: "fleet", Widths: map[string]int{"done": 6, "okpct": 8}})
+	want = "fleet | ready |   done | ok%\n" +
 		"------+-------+--------+---------\n" +
 		"m1    |     2 |      4 | 75.0%\n" +
 		"------+-------+--------+---------\n" +
@@ -106,7 +103,7 @@ func TestBarePctDeadSourceIsUnknown(t *testing.T) {
 				return strings.TrimSpace(parts[column])
 			}
 		}
-		t.Fatalf("row %q missing from render:\n%s", row, rendered)
+		require.Failf(t, "row missing from render", "row %q missing from render:\n%s", row, rendered)
 		return ""
 	}
 	tb := newTable(t)
