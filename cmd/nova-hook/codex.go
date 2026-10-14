@@ -109,6 +109,11 @@ func (w world) codexTurnBoundary(s *session, r *codexRoute) bool {
 	return false
 }
 
+// push delivers one bus event through the Codex route; it satisfies nativeRoute.
+func (r *codexRoute) push(w world, c *tool.Call, s *session, role hook.Role, epoch int64, id string, m *bus.Message) *tool.Out {
+	return w.codexPush(c, s, r, role, epoch, id, "", m)
+}
+
 // codexConfig refuses partial routes before any hook record or lease is written.
 func (w world) codexConfig(c *tool.Call) (*codexRoute, error) {
 	r := &codexRoute{socket: c.Str("codex-socket"), thread: c.Str("codex-thread"), directory: c.Str("codex-events-dir")}

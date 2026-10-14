@@ -70,6 +70,7 @@ internal/ci/slowtests	0.0	@run37411066588	self-hosted
 internal/ci/timing	0.2	@run37411066588	self-hosted
 internal/cireceipt	0.0	@run37411066588	self-hosted
 pkg/codexdesktop	0.004	@b2	-
+pkg/dshdesktop	0.2	@local	-
 pkg/config	0.7	@run37518625834	self-hosted
 internal/converge	0.0	@run37411066588	self-hosted
 pkg/decide	0.3	@run37518625834	self-hosted
