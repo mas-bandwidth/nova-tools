@@ -1003,16 +1003,6 @@ repeats; verify gates links and frontmatter.
 first run: quickstart --root on any folder of .md files, or create the small
 corpus in setup: and run the lines under example:.
 
-SEARCH CAL score=1.46 score-channel=bm25 probe=unrelated-control
-is the CAL line every retrieval run prints. CAL is context, not a cutoff.
-CAL is the top score of a fixed unrelated query, for scale; it does not
-prove relevance, and a hit's score= at or below it is not noise: the probe
-may be about your own notes, and a right answer can fall below it. search -h
-prints the probe's own text. The example's search prints, as its rank 1 of 2:
-SEARCH HIT rank=1 score=0.99 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/lantern.md:1 "The lantern glazing needs clean cloths for brass and glass."
-class is the top-level directory ("." for root files); name/type are
-frontmatter values, with "-" meaning absent.
-
 usage:
   nova-memory version    print this build identity (--version also accepted)
   nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]... [--json]
@@ -1094,6 +1084,17 @@ flags:
                         their size), one slash path per line relative to
                         --root (# comments and blank lines ignored). Required —
                         boot never walks the directory.
+
+CAL:
+SEARCH CAL score=1.46 score-channel=bm25 probe=unrelated-control
+is the CAL line every retrieval run prints. CAL is context, not a cutoff.
+CAL is the top score of a fixed unrelated query, for scale; it does not
+prove relevance, and a hit's score= at or below it is not noise: the probe
+may be about your own notes, and a right answer can fall below it. search -h
+prints the probe's own text. The example's search prints, as its rank 1 of 2:
+SEARCH HIT rank=1 score=0.99 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/lantern.md:1 "The lantern glazing needs clean cloths for brass and glass."
+class is the top-level directory ("." for root files); name/type are
+frontmatter values, with "-" meaning absent.
 
 A refusal reports every flag it can see at once — two missing flags are two
 sentences and one run, not two runs. Flags may stand before or after the
