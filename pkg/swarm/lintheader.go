@@ -435,6 +435,9 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 		if kind.value != "" && hygiene.KindGated(kind.value) {
 			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
 		}
+	case tl.Runner == "ctest":
+		// ParseTest already held the name to a ctest test name; there is no
+		// package to hold to the PATHS path rule.
 	default:
 		pkg := strings.Trim(tl.Package, "/")
 		if pkg == "" {

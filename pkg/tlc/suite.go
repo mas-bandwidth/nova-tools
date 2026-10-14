@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
@@ -37,6 +38,19 @@ func CheckLimits(budget time.Duration, workers int, manual bool) error {
 	return nil
 }
 
+// CheckParallel refuses a case-pool width outside the bench's CPU budget.
+// This enforces README.md's rule that width limits concurrent work.
+func CheckParallel(parallel, cpus int) error {
+	max := cpus / 2
+	if max < 1 {
+		max = 1
+	}
+	if parallel < 1 || parallel > max {
+		return fmt.Errorf("parallel must be between 1 and %d (half the %d CPUs)", max, cpus)
+	}
+	return nil
+}
+
 // Options is one suite: the selected cases under one budget.
 type Options struct {
 	Root     string        // checkout root; the models are root/tla
@@ -47,6 +61,7 @@ type Options struct {
 	Out      string        // output directory: logs, RUNS.tsv and the private copy of the models
 	Budget   time.Duration // the whole suite's limit
 	Workers  int           // TLC workers for a case expected to pass; counterexample cases use one
+	Parallel int           // cases to run concurrently
 	Manual   bool          // mode=manual in the records
 	Platform string        // the platform label recorded in the host column (Platform)
 	CPUs     int           // logical CPUs of the machine, recorded
@@ -96,10 +111,12 @@ type Result struct {
 
 const workDir = "work"
 
-// RunSuite runs the selected cases one after the other. Each runs in a private
-// copy of the models, with its own temporary directory for TLC's standard
-// modules and state files, and its log at Out/<config>.log. When the cases are
-// done the fingerprint of each is taken again and the records are written to
+// RunSuite runs the selected cases with a bounded worker pool. README.md's
+// width rule bounds how many independent cases are concurrent. Each runs in a
+// private copy of the models, with its own temporary directory for TLC's standard
+// modules and state files, and its log at Out/<config>.log. OnCase is called by
+// this goroutine in completion order. When the cases are done fingerprints are
+// checked again and records are written to
 // Out/RUNS.tsv only if none changed; a suite whose inputs moved under it
 // writes nothing and says so. A budget that ends before the last case is a
 // failure, and the records of the cases that ran are still written.
@@ -181,67 +198,106 @@ func RunSuite(o Options) (Result, error) {
 		mode = "manual"
 	}
 	// What runs is the selection of the digested plan, never the caller's slice.
-	for _, c := range chosen {
-		started := clock()
-		log := filepath.Join(out, c.Config+".log")
-		code := ExitTimeout
-		workers := 1
-		if c.Expected == "pass" {
-			workers = o.Workers
-		}
-		if remaining := deadline.Sub(started); remaining <= 0 {
-			if err := os.WriteFile(log, []byte("TLC suite budget exhausted before starting this case\n"), 0o644); err != nil {
-				return res, err
+	// A zero value preserves the prior one-at-a-time behavior for library callers.
+	parallel := o.Parallel
+	if parallel < 1 {
+		parallel = 1
+	}
+	if parallel > len(chosen) {
+		parallel = len(chosen)
+	}
+	type completed struct {
+		index  int
+		record Record
+		err    error
+	}
+	jobs := make(chan int)
+	finished := make(chan completed, len(chosen))
+	var wg sync.WaitGroup
+	for w := 0; w < parallel; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				c := chosen[i]
+				started := clock()
+				log := filepath.Join(out, c.Config+".log")
+				code := ExitTimeout
+				workers := 1
+				if c.Expected == "pass" {
+					workers = o.Workers
+				}
+				var runErr error
+				if remaining := deadline.Sub(started); remaining <= 0 {
+					runErr = os.WriteFile(log, []byte("TLC suite budget exhausted before starting this case\n"), 0o644)
+				} else {
+					var scratch string
+					scratch, runErr = os.MkdirTemp(out, "tlc-")
+					if runErr == nil {
+						ctx, cancel := context.WithTimeout(context.Background(), remaining)
+						code = exec(ctx, Run{
+							Java: o.Java, Jar: o.Jar.Path, Dir: res.Work,
+							JVM:    []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"},
+							TmpDir: scratch, Workers: workers, LnCheckFinal: true,
+							NoDeadlock: c.Deadlock == "ignore-terminal", MetaDir: filepath.Join(scratch, "states"),
+							Config: c.Config, Module: c.Module,
+						}, log)
+						cancel()
+						_ = safepath.RemoveUnder(out, scratch)
+					}
+				}
+				var rec Record
+				if runErr == nil {
+					var raw, cfg []byte
+					raw, runErr = os.ReadFile(log)
+					if runErr == nil {
+						cfg, runErr = os.ReadFile(filepath.Join(res.Work, c.Config))
+					}
+					if runErr == nil {
+						outcome := Parse(string(raw))
+						ok := Accepts(c, code, string(raw), string(cfg)) && outcome.HasStats()
+						rec = Record{
+							Config: c.Config, Module: c.Module, InputSHA256: digests[c.Config].fingerprint, InputFiles: digests[c.Config].files,
+							JarSHA256: o.Jar.SHA256, JavaVersion: o.JavaVer, Workers: workers, Host: o.Platform, CPUs: o.CPUs,
+							StartedUTC: started.UTC().Format("2006-01-02T15:04:05.000000-07:00"), Generated: outcome.Generated, Distinct: outcome.Distinct,
+							Seconds: fmt.Sprintf("%.3f", clock().Sub(started).Seconds()), Exit: code, Result: "PASS", Expected: c.Expected, Property: c.Property, Budget: budget, Mode: mode,
+						}
+						if !ok {
+							rec.Result = "FAIL"
+						}
+					}
+				}
+				finished <- completed{index: i, record: rec, err: runErr}
 			}
-		} else {
-			scratch, err := os.MkdirTemp(out, "tlc-")
-			if err != nil {
-				return res, err
+		}()
+	}
+	go func() {
+		for i := range chosen {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+		close(finished)
+	}()
+	res.Records = make([]Record, len(chosen))
+	var firstErr error
+	for done := range finished {
+		if done.err != nil {
+			if firstErr == nil {
+				firstErr = done.err
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), remaining)
-			code = exec(ctx, Run{
-				Java: o.Java, Jar: o.Jar.Path, Dir: res.Work,
-				JVM:          []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"},
-				TmpDir:       scratch,
-				Workers:      workers,
-				LnCheckFinal: true,
-				NoDeadlock:   c.Deadlock == "ignore-terminal",
-				MetaDir:      filepath.Join(scratch, "states"),
-				Config:       c.Config,
-				Module:       c.Module,
-			}, log)
-			cancel()
-			_ = safepath.RemoveUnder(out, scratch)
+			continue
 		}
-		raw, err := os.ReadFile(log)
-		if err != nil {
-			return res, fmt.Errorf("cannot read %s: %v", log, err)
-		}
-		cfg, err := os.ReadFile(filepath.Join(res.Work, c.Config))
-		if err != nil {
-			return res, fmt.Errorf("cannot read the configuration %s: %v", c.Config, err)
-		}
-		outcome := Parse(string(raw))
-		ok := Accepts(c, code, string(raw), string(cfg)) && outcome.HasStats()
-		rec := Record{
-			Config: c.Config, Module: c.Module, InputSHA256: digests[c.Config].fingerprint, InputFiles: digests[c.Config].files, JarSHA256: o.Jar.SHA256, JavaVersion: o.JavaVer, Workers: workers,
-			Host: o.Platform, CPUs: o.CPUs, StartedUTC: started.UTC().Format("2006-01-02T15:04:05.000000-07:00"),
-			Generated: outcome.Generated, Distinct: outcome.Distinct,
-			Seconds: fmt.Sprintf("%.3f", clock().Sub(started).Seconds()),
-			Exit:    code, Result: "PASS", Expected: c.Expected, Property: c.Property,
-			Budget: budget, Mode: mode,
-		}
-		if !ok {
-			rec.Result = "FAIL"
+		res.Records[done.index] = done.record
+		if done.record.Result == "FAIL" {
 			res.Failed = true
 		}
-		res.Records = append(res.Records, rec)
 		if o.OnCase != nil {
-			o.OnCase(rec)
+			o.OnCase(done.record)
 		}
-		if !clock().Before(deadline) {
-			break
-		}
+	}
+	if firstErr != nil {
+		return res, firstErr
 	}
 	after, err := SourceAt(o.Root)
 	if err != nil {

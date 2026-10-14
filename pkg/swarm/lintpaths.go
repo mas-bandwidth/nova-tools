@@ -184,14 +184,32 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 	case !tree:
 		missingFinding("donewhen-test-name", testF.line)
 	default:
-		present, err := testDefinedAt(bb.Repo, bb.Sha, doneTest{runner: "go", name: tl.Name, scope: []string{goPkgArg(tl.Package)}})
+		runner := tl.Runner
+		if runner == "" {
+			runner = "go"
+		}
+		if runner == "ctest" {
+			if _, err := baseGit(bb.Repo, "cat-file", "-e", "--end-of-options", bb.Sha+":CMakeLists.txt"); err != nil {
+				add("donewhen-test-name", testF.line, fmt.Sprintf("TEST: ctest %s names a CMake test, and %s holds no CMakeLists.txt at the base", tl.Name, at()))
+				break
+			}
+		}
+		var scope []string
+		if runner == "go" {
+			scope = []string{goPkgArg(tl.Package)}
+		}
+		present, err := testDefinedAt(bb.Repo, bb.Sha, doneTest{runner: runner, name: tl.Name, scope: scope})
 		switch {
 		case err != nil:
 			add("donewhen-test-name", testF.line, fmt.Sprintf("MISSING: could not search the tree at %s for %s: %v", at(), tl.Name, err))
 		case present && ledgerClassTest(h["KIND"].value, tl.Package):
 			// a ledger card: its class test is green at the base by construction (LedgerKind)
 		case present:
-			add("donewhen-test-name", testF.line, fmt.Sprintf("TEST %s exists in %s at %s, so it cannot be red there; name the new test the card adds", tl.Name, tl.Package, at()))
+			where := tl.Package + " "
+			if runner == "ctest" {
+				where = ""
+			}
+			add("donewhen-test-name", testF.line, fmt.Sprintf("TEST %s exists in %sat %s, so it cannot be red there; name the new test the card adds", tl.Name, where, at()))
 		}
 	}
 
