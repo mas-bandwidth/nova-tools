@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -166,9 +167,7 @@ func TestEveryCLPackageFitsItsShardWall(t *testing.T) {
 	rows, problems := parseShardWalls(string(text))
 	require.NotEmpty(t, rows, "%s has no rows", shardWallsPath)
 	problems = append(problems, shardWallProblems(rows, livePackageDirs(t, root))...)
-	for _, p := range problems {
-		t.Errorf("%s", p)
-	}
+	assert.Empty(t, problems, "a CL package does not fit its shard wall")
 }
 
 // TestTheShardWallRuleRefusesGrowthAndGaps is the rule's reversed witnesses on

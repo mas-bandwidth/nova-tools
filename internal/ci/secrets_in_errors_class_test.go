@@ -228,17 +228,11 @@ func TestNoSecretReachesAnError(t *testing.T) {
 	t.Parallel()
 	found := secretcheck.OpenersIn(secretFiles(repoTree(t).GoFilesUnder(false, "cmd", "internal", "pkg")))
 	require.NotEmpty(t, found, "the walk found no Open*/Parse*/Dial*/New* function; a rule that checks nothing passes")
-	for _, f := range secretcheck.TableFindings(found, secretOpeners, secretExempt) {
-		t.Error(f)
-	}
+	assert.Empty(t, secretcheck.TableFindings(found, secretOpeners, secretExempt), "the secret opener table has a leak")
 	allowed, bad := secretcheck.ParseAllowlist(secretLeakAllowlist)
-	for _, b := range bad {
-		t.Error(b)
-	}
+	assert.Empty(t, bad, "the leak allowlist does not parse")
 	assert.NotContains(t, allowed, "pkg/config.OpenPG", "the Postgres DSN opener is the case the rule was written for and is never allowlisted")
-	for _, f := range secretcheck.Verdict(secretcheck.LeakFindings(secretOpeners, secretcheck.Shapes), allowed) {
-		t.Error(f)
-	}
+	assert.Empty(t, secretcheck.Verdict(secretcheck.LeakFindings(secretOpeners, secretcheck.Shapes), allowed), "the leak witness names a secret in an error")
 }
 
 // secretFixtures are the openers the witness drives: each leaks one way, or

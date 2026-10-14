@@ -127,9 +127,7 @@ func TestNoUnitTestOpensASocket(t *testing.T) {
 	}
 	require.NotZerof(t, files, "read no unit-tier test file; the rule would pass by checking nothing")
 	t.Logf("unit-tier test files=%d socket calls=%d (SPEC-CI's ratchet row: the unit-sockets ledger's site count only falls)", files, sites)
-	for _, v := range ledger.violations(t, unitSocketsRemedy) {
-		t.Error(v)
-	}
+	assert.Empty(t, ledger.violations(t, unitSocketsRemedy), "a unit-tier test opens a socket")
 }
 
 // TestUnitSocketsDetectorRefusesTheCallsAndNotTheRemedies pins the scan over
