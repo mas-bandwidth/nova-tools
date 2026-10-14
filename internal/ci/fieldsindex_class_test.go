@@ -87,9 +87,7 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 			fieldsIndexAllowlistPath, key))
 	}
 	sort.Strings(violations)
-	for _, v := range violations {
-		t.Error(v)
-	}
+	require.Empty(t, violations)
 }
 
 // splitFinding is one unchecked index or slice expression: the allowlist key it

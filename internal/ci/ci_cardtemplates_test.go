@@ -261,13 +261,11 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 	}
 	require.NotZero(t, res.Templates, "no card template was read under %v or from nova-swarm template; the list has gone stale", CardTemplateDirs)
 	for _, f := range res.Findings {
-		t.Errorf("%s", f.Render())
+		assert.Fail(t, f.Render())
 		res.Measured[f.Key()] = true // the swarm templates' findings too
 	}
 	list := loadAllowlist(t, cardTemplateAllowlistPath, FileLineListOptions)
-	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
-		t.Errorf("%s:%d: %q names no offender on the tree; delete the stale row; this list only shrinks", cardTemplateAllowlistPath, row.Line, row.Text)
-	}
+	assert.Empty(t, allowlist.Check(t, list, res.Measured).Stale, cardTemplateAllowlistPath+" names no offender on the tree; delete the stale row; this list only shrinks")
 	require.Zero(t, res.Refused(), "%s", res.FailLine())
 	t.Logf("%s", res.OKLine())
 }

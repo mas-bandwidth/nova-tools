@@ -144,13 +144,10 @@ func TestGoEnvClassRuleHoldsOverTheRepository(t *testing.T) {
 	res, err := CheckGoEnv(repoRoot(t), goEnvAllowlistPath)
 	require.NoError(t, err)
 	for _, f := range res.Findings {
-		t.Errorf("%s", f.Render())
+		assert.Fail(t, f.Render())
 	}
 	list := loadAllowlist(t, goEnvAllowlistPath, FileLineListOptions)
-	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
-		t.Errorf("%s:%d lists %s, but nothing there inherits the environment any more; %s",
-			goEnvAllowlistPath, row.Line, row.Key, GoEnvRemedyAllow)
-	}
+	assert.Empty(t, allowlist.Check(t, list, res.Measured).Stale, goEnvAllowlistPath+" lists paths where nothing inherits the environment any more; "+GoEnvRemedyAllow)
 	require.NotZero(t, res.Files, "the walk read no files; the repository root is wrong")
 	require.Zero(t, res.Refused(), "%s", res.FailLine())
 }

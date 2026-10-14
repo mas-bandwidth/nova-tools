@@ -70,7 +70,7 @@ func TestNoMultiLineValueIsWrittenToAStepOutput(t *testing.T) {
 		found := flaggedOutputWrites(src)
 		require.NotEmpty(t, runBlocks(src), "no run blocks parsed from %s; the parser is looking in the wrong place", file)
 		for _, v := range found {
-			t.Errorf("%s:%d: %s", file, v.line, v.msg)
+			assert.Failf(t, "multi-line value written to a step output", "%s:%d: %s", file, v.line, v.msg)
 		}
 	}
 }

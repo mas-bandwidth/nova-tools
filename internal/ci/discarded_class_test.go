@@ -74,9 +74,7 @@ func TestNoErrorIsDiscarded(t *testing.T) {
 			ledger.add(src.Rel+":"+s.fn+":"+s.shape, fmt.Sprintf("%s:%d (%s)", src.Rel, s.line, s.text))
 		}
 	}
-	for _, v := range ledger.violations(t, discardedRemedy) {
-		t.Error(v)
-	}
+	assert.Empty(t, ledger.violations(t, discardedRemedy))
 }
 
 // discardedRemedy is what a finding says to do: fix the site or give it its reason. A
@@ -280,9 +278,6 @@ func missingReasons(allow *allowlist.Packages) []string {
 func requireReasons(t *testing.T, allow *allowlist.Packages) {
 	t.Helper()
 	missing := missingReasons(allow)
-	for _, problem := range missing {
-		t.Error(problem)
-	}
 	require.Empty(t, missing)
 }
 
@@ -451,9 +446,7 @@ func TestNoScriptHidesAFailure(t *testing.T) {
 			}
 		}
 	}
-	for _, v := range ledger.violations(t, "the line throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above (a row's count only falls)") {
-		t.Error(v)
-	}
+	assert.Empty(t, ledger.violations(t, "the line throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above (a row's count only falls)"))
 }
 
 // scriptHideLine returns the shapes one line holds.
