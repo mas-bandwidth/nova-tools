@@ -130,7 +130,7 @@ func TestSnapshotCompareNamesTheActBehindAChangedRow(t *testing.T) {
 		}}
 		after := CmpSnap{At: "2026-10-13T22:00:00Z", Kinds: map[string]CmpKind{
 			KindProvider: {Kind: KindProvider, Rows: []CmpRow{{Name: "p", Fields: map[string]string{
-				"billing": "metered", "funded": "false", "balance_usd": "999", "balance_as_of": "2026-10-13", "beat": "2026-10-13T00:00:00Z", "console_url": "https://example",
+				"billing": "metered", "funded": "false", "balance_usd": "999", "balance_as_of": "2026-10-13", "beat": "2026-10-13T00:00:00Z", "console_url": "https://example.test",
 			}}}},
 		}}
 		res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
