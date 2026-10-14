@@ -127,7 +127,11 @@ func ExampleTree() {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			panic(err)
+		}
+	}()
 	rec := &recording{dir: dir}
 	Tree(rec, map[string]string{"a/b.txt": "x", "bin/run.sh": Exec("#!/bin/sh\n")})
 	fmt.Println(rec.failed, Exists(rec, filepath.Join(dir, "a", "b.txt")))
