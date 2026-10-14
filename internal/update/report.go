@@ -229,7 +229,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 	if err != nil {
 		return "uncertain", err
 	}
-	s.Delivered[scope] = delivery{cloneObserved(seen), id, env.Now().UTC().Format(time.RFC3339)}
+	s.Delivered[scope] = delivery{maps.Clone(seen), id, env.Now().UTC().Format(time.RFC3339)}
 	if err = save(); err != nil {
 		return "uncertain", err
 	}
