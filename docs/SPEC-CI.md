@@ -581,10 +581,10 @@ assertion on elapsed time; it polls for the event up to `NOVA_TEST_WAIT`
 **The mistake it prevents.** A wait cut to fit the two-minute gate makes a test
 flaky under load, and a flaky test drops innocent PRs from the queue.
 **The test.** `TestNoFixedWaitsOnTheCIPath` (`internal/ci/ci_waits_test.go`),
-with its six red tests — `TestWaitsRefusesFixedSleep`, `TestWaitsRefusesShortBound`,
-`TestWaitsRefusesElapsedAssertion`, `TestWaitsAllowsThePoll`,
-`TestWaitsAllowsFakeBenchAndClock`, `TestWaitsAllowlistGrowsRefused` — and
-`TestWaitsAllowlistSurvivesShiftedLines` for the file-and-kind match.
+with its six red cases under `TestCIScanRules/waits` — `RefusesFixedSleep`,
+`RefusesShortBound`, `RefusesElapsedAssertion`, `AllowsThePoll`,
+`AllowsFakeBenchAndClock`, `AllowlistGrowsRefused` — and
+`AllowlistSurvivesShiftedLines` for the file-and-kind match.
 **Its allowlist.** `internal/ci/testdata/fixed-waits-allowlist.txt`, the waits
 that predate the checker, one `file:line kind date reason` per row; shrink-only.
 **Its remedy lines.** `remedy="poll for the event up to NOVA_TEST_WAIT, not a
@@ -610,11 +610,11 @@ for a test whose subject is that the file is NOT the same binary.
 fixtures queues behind the macOS policy scanner past the thirty seconds a test
 waits; hard-linking the one fixture passes in less than half the time.
 **The test.** `TestNoCopiedTestBinariesOnTheCIPath`
-(`internal/ci/ci_testbins_test.go`), with `TestTestbinsRefusesACopiedBinary`,
-`TestTestbinsRefusesAMapHeldCopy`, `TestTestbinsAllowsAShellScript`,
-`TestTestbinsAllowsThePlacedHelper`, `TestTestbinsAllowlistGrowsRefused`,
-`TestTestbinsOutputMatchesTheSpec`, `TestTestbinsVerbLineMatchesTheSpec` and
-`TestTestbinsAllowlistSurvivesShiftedLines` for the file-and-kind match.
+(`internal/ci/ci_testbins_test.go`), with the cases under
+`TestCIScanRules/testbins` — `RefusesACopiedBinary`, `RefusesAMapHeldCopy`,
+`AllowsAShellScript`, `AllowsThePlacedHelper`, `AllowlistGrowsRefused`,
+`OutputMatchesTheSpec`, `VerbLineMatchesTheSpec` and
+`AllowlistSurvivesShiftedLines` for the file-and-kind match.
 **Its allowlist.** `internal/ci/testdata/fixed-testbins-allowlist.txt` — empty,
 because every site places by link through `testbin.Place`; shrink-only.
 **Its remedy lines.** `remedy="place built binaries with testbin.Place: link,
@@ -636,10 +636,10 @@ wrapped in `strconv.Quote` (or `oneline.Quote`); a raw `filepath.Join(...)` or a
 into a JSON worker description puts `C:\…\key` in a literal whose grammar has no
 such escape, so the parse fails on Windows where Linux and darwin never look.
 **The test.** `TestNoUnquotedPathsInTemplateLiterals`
-(`internal/ci/ci_templates_test.go`), with `TestTemplatesRefusesRawFilepathJoin`,
-`TestTemplatesRefusesUnquotedOSPathLiteral`, `TestTemplatesRefusesUnquotedPathInTemplate`,
-`TestTemplatesAllowsStrconvQuote`, `TestTemplatesAllowsOnelineQuote` and
-`TestTemplatesAllowlistGrowsRefused`.
+(`internal/ci/ci_templates_test.go`), with the cases under
+`TestCIScanRules/templates` — `RefusesRawFilepathJoin`,
+`RefusesUnquotedOSPathLiteral`, `RefusesUnquotedPathInTemplate`,
+`AllowsStrconvQuote`, `AllowsOnelineQuote` and `AllowlistGrowsRefused`.
 **Its allowlist.** `internal/ci/testdata/template-paths-allowlist.txt`, four
 `ToSlash(Join(...))` rows in `pkg/swarm/inputlimit_test.go` that predate the
 checker; shrink-only.
@@ -663,10 +663,10 @@ fails on the network, not on its logic. A fixture carrying an
 honest fix is to generalize the code to any origin host and retarget the
 fixture — splitting the literal to hide it from the class is an evasion.
 **The test.** `TestNoRealNetworkHostsOnTheCIPath` (`internal/ci/ci_net_test.go`),
-with `TestNetRefusesRealURLHost`, `TestNetAllowsLocalAndReservedHosts`,
-`TestNetAllowsNightlyBuildTag`, `TestNetAllowsSoakBuildTag`,
-`TestNetRefusesBareHostPort`, `TestNetAllowsLocalHostPort`,
-`TestNetAllowlistGrowsRefused` and `TestNetAllowlistSurvivesShiftedLines`.
+with the cases under `TestCIScanRules/net` — `RefusesRealURLHost`,
+`AllowsLocalAndReservedHosts`, `AllowsNightlyBuildTag`, `AllowsSoakBuildTag`,
+`RefusesBareHostPort`, `AllowsLocalHostPort`, `AllowlistGrowsRefused` and
+`AllowlistSurvivesShiftedLines`.
 **Its allowlist.** `internal/ci/testdata/net-allowlist.txt`, matched by file and
 kind; shrink-only.
 **Its remedy lines.** `remedy="mock the endpoint with httptest or a local fake"`,

@@ -8,7 +8,6 @@ import (
 	"path"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -92,15 +91,6 @@ func seatRedisCallName(e ast.Expr) string {
 	return ""
 }
 
-func seatRedisStringLit(e ast.Expr) (string, bool) {
-	lit, ok := e.(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		return "", false
-	}
-	s, err := strconv.Unquote(lit.Value)
-	return s, err == nil
-}
-
 // seatRedisViolations reads one parsed file and returns "<line>: <why>" for
 // every --redis flag with a default that is not seat-aware, and every
 // hand-parsed --redis read in a function that never calls redisOr. flags is
@@ -148,26 +138,26 @@ func seatRedisViolations(fset *token.FileSet, f *ast.File) (out []string, flags 
 				sel, isSel := x.Fun.(*ast.SelectorExpr)
 				switch {
 				case isSel && sel.Sel.Name == "String" && len(x.Args) == 3:
-					if flag, ok := seatRedisStringLit(x.Args[0]); ok && seatRedisFlagName(flag) {
+					if flag, ok := stringLit(x.Args[0]); ok && seatRedisFlagName(flag) {
 						flags++
 						if !seatAware(x.Args[1]) {
 							out = append(out, fmt.Sprintf("%d: --%s defaults to something that is not the seat's address", fset.Position(x.Pos()).Line, flag))
 						}
 					}
 				case isSel && sel.Sel.Name == "StringVar" && len(x.Args) == 4:
-					if flag, ok := seatRedisStringLit(x.Args[1]); ok && seatRedisFlagName(flag) {
+					if flag, ok := stringLit(x.Args[1]); ok && seatRedisFlagName(flag) {
 						flags++
 						if !seatAware(x.Args[2]) {
 							out = append(out, fmt.Sprintf("%d: --%s defaults to something that is not the seat's address", fset.Position(x.Pos()).Line, flag))
 						}
 					}
 				case name == "flagValues" && len(x.Args) == 2:
-					if flag, ok := seatRedisStringLit(x.Args[1]); ok && flag == "redis" {
+					if flag, ok := stringLit(x.Args[1]); ok && flag == "redis" {
 						handReads = append(handReads, x.Pos())
 					}
 				}
 			case *ast.IndexExpr:
-				if key, ok := seatRedisStringLit(x.Index); ok && key == "redis" {
+				if key, ok := stringLit(x.Index); ok && key == "redis" {
 					handReads = append(handReads, x.Pos())
 				}
 			}
