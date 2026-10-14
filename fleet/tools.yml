@@ -1430,13 +1430,13 @@
             path: "{{ nova_release_window_file }}"
             state: absent
           register: seat_window_removed
-          # ignored: the assert below names the step, so a failed removal is refused
+          # ignored: failed_when: false overwrites result.failed (Task._validate_failed_when, lib/ansible/playbook/task.py; _evaluate_failed_when_result, lib/ansible/executor/task_executor.py); the assert reads msg, set only on failure
           failed_when: false
           when: seat_window and not ansible_check_mode
 
         - name: "window: the release window sentinel is gone"
           ansible.builtin.assert:
-            that: not (seat_window_removed.failed | default(false))
+            that: seat_window_removed.msg is not defined
             fail_msg: >-
               ADOPT REFUSED step=window-sentinel host={{ inventory_hostname }}: the release window file
               {{ nova_release_window_file }} could not be removed ({{ seat_window_removed.msg | default('the removal did not answer') }});
@@ -1533,13 +1533,13 @@
             path: "{{ nova_release_window_file }}"
             state: absent
           register: seat_window_removed
-          # ignored: the assert below names the step, so a failed removal is refused
+          # ignored: failed_when: false overwrites result.failed (Task._validate_failed_when, lib/ansible/playbook/task.py; _evaluate_failed_when_result, lib/ansible/executor/task_executor.py); the assert reads msg, set only on failure
           failed_when: false
           when: seat_window and not ansible_check_mode
 
         - name: "rollback: the release window sentinel is gone"
           ansible.builtin.assert:
-            that: not (seat_window_removed.failed | default(false))
+            that: seat_window_removed.msg is not defined
             fail_msg: >-
               ADOPT REFUSED step=window-sentinel host={{ inventory_hostname }}: the release window file
               {{ nova_release_window_file }} could not be removed ({{ seat_window_removed.msg | default('the removal did not answer') }});

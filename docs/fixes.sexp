@@ -1450,10 +1450,12 @@
      ansible_check_mode: {\"open\":true,\"reason\":\"adopt <version>\",\"opened\":\"<RFC3339 UTC>\",
      \"until\":\"<RFC3339 UTC>\",\"back_in_s\":<n>}, with until = opened + nova_seat_window_max (default
      1800 s) and back_in_s = nova_member_stop_timeout + nova_seat_quiet + 120. It removes the file when
-     the window closes (after the last agent is bootstrapped, loaded and fresh and the server answers on
-     its --listen addresses) and first in the rollback block, so a stale open never outlives the window;
-     a removal that cannot remove the file (permission) is a failed step with ADOPT REFUSED
-     step=window-sentinel. The file is advice for a human or an agent, nothing's behaviour depends on it,
+      the window closes (after the last agent is bootstrapped, loaded and fresh and the server answers on
+      its --listen addresses) and first in the rollback block, so a stale open never outlives the window;
+      a removal that cannot remove the file (permission) is a failed step with ADOPT REFUSED
+      step=window-sentinel, because the refusal reads the file module's msg (set only on failure);
+      failed_when: false overwrites failed, so a refusal that reads failed is a silent leave. The file
+      is advice for a human or an agent, nothing's behaviour depends on it,
      and --check writes and removes nothing. The reader (nova-sprint) is a separate card; nothing here
      calls a nova-sprint verb. Tests: TestTheSeatPlayWritesTheReleaseWindowSentinel
      (fleet/release_window_test.go; red at the base, green at the fix); the seat's parallel functional

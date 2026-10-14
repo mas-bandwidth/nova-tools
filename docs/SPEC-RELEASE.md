@@ -584,7 +584,11 @@ fresh and the server answers on its `--listen` addresses) and first in the rollb
 removes nothing. The file is advice for a human or an agent; nothing's behaviour depends on it. A second
 adopt on a host with a leftover file overwrites it when its window opens and removes it when the window
 closes, and the reader's stale rule covers the gap. A removal that cannot remove the file (permission) is a
-refused step, `ADOPT REFUSED step=window-sentinel`, never a silent leave. The seat's own functional tests
+refused step, `ADOPT REFUSED step=window-sentinel`, never a silent leave: the refusal reads the file module's
+`msg`, which is set only on failure. `failed_when: false` overwrites `failed`
+(`Task._validate_failed_when`, `lib/ansible/playbook/task.py`; `_evaluate_failed_when_result`,
+`lib/ansible/executor/task_executor.py`), so a refusal that reads `failed` cannot fire. The seat's own
+functional tests
 (the "parallel functional tests" the release check runs) read the file present while the window is open and
 absent after it closes.
 

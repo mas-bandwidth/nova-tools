@@ -67,7 +67,8 @@ func TestTheSeatPlayWritesTheReleaseWindowSentinel(t *testing.T) {
 		"the sentinel is removed before the server answers on its --listen addresses")
 
 	// A removal that cannot remove the file is a failed step naming
-	// step=window-sentinel, never a silent leave.
+	// step=window-sentinel, never a silent leave. The refusal reads msg:
+	// failed_when: false overwrites .failed (lib/ansible/executor/task_executor.py).
 	assertRefusesOnAFailedRemoval(t, tasks, windowRemoveName)
 
 	// (3) The rollback block's first task removes the file, before the
@@ -80,6 +81,8 @@ func TestTheSeatPlayWritesTheReleaseWindowSentinel(t *testing.T) {
 	assertRemovesReleaseWindow(t, rescue[0])
 	assert.Equal(t, windowGuard, asText(rescue[0]["when"]),
 		"the rollback's sentinel removal is not guarded by seat_window and not ansible_check_mode")
+	require.GreaterOrEqual(t, len(rescue), 2, "the rollback has no refusal after the sentinel removal")
+	assertRefusalReadsTheSurvivingSignal(t, rescue[1])
 
 	// (4) The play's own template, rendered with fixed variables, is the
 	// contract's JSON: open, reason, opened, until, back_in_s, until after
@@ -164,22 +167,43 @@ func assertRemovesReleaseWindow(t *testing.T, task map[string]any) {
 }
 
 // assertRefusesOnAFailedRemoval pins that the step after the removal fails with
-// the contract's text when the removal did not run: a stale open never outlives
-// the window by a silent leave.
+// the contract's text, and that the refusal reads a signal failed_when: false
+// does not erase. Task._validate_failed_when (lib/ansible/playbook/task.py)
+// wraps a non-list scalar as a one-element list, and _evaluate_failed_when_result
+// (lib/ansible/executor/task_executor.py) then sets result['failed'] to that
+// result, so seat_window_removed.failed is always false. The file module sets
+// msg only on failure (fail_json), and that field survives, so a that that
+// reads .failed is the silent leave the contract forbids.
 func assertRefusesOnAFailedRemoval(t *testing.T, tasks []map[string]any, removeName string) {
 	t.Helper()
 	i := taskIndex(tasks, removeName)
 	require.GreaterOrEqual(t, i, 0, "no sentinel removal to check")
 	for _, task := range tasks[i+1:] {
-		a, ok := task["ansible.builtin.assert"].(map[string]any)
-		if !ok {
+		if _, ok := task["ansible.builtin.assert"].(map[string]any); !ok {
 			continue
 		}
-		assert.Contains(t, asText(a["fail_msg"]), windowRefused,
-			"a removal that cannot remove the file does not fail with %q", windowRefused)
+		assertRefusalReadsTheSurvivingSignal(t, task)
 		return
 	}
 	require.FailNow(t, "the sentinel removal has no assertion naming "+windowRefused)
+}
+
+// assertRefusalReadsTheSurvivingSignal pins the refusal's that: it names msg,
+// the signal the file module sets only on failure, and not .failed, which
+// failed_when: false overwrites (lib/ansible/executor/task_executor.py,
+// _evaluate_failed_when_result). Reverting that to the .failed form turns this
+// red, so a permission denial cannot pass as a silent leave.
+func assertRefusalReadsTheSurvivingSignal(t *testing.T, task map[string]any) {
+	t.Helper()
+	a, ok := task["ansible.builtin.assert"].(map[string]any)
+	require.True(t, ok, "the step after the sentinel removal is not the refusal")
+	assert.Contains(t, asText(a["fail_msg"]), windowRefused,
+		"a removal that cannot remove the file does not fail with %q", windowRefused)
+	that := asText(a["that"])
+	assert.Contains(t, that, "msg",
+		"the refusal does not read msg, the signal failed_when: false leaves; .failed is overwritten and a permission denial is a silent leave")
+	assert.NotContains(t, that, ".failed",
+		"the refusal reads .failed, which failed_when: false overwrites, so a permission denial is a silent leave")
 }
 
 // renderWindowDocument is the play's own content template, rendered with fixed
