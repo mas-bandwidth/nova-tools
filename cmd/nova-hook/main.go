@@ -67,6 +67,10 @@ type world struct {
 	holder             string                                           // who holds the pushes this process holds, as the lease shows it
 	tick               time.Duration                                    // one blocking read of the loop
 	grok               *grokRoute                                       // the grok harness, when --harness grok installed one; nil on every other route
+	claudeInstall      func(claudeSetup) error                          // Claude Code Stop hook; nil refuses before arming
+	claudeDeliver      func(claudeDelivery) error                       // fake harness; nil means the stdout line is the delivery
+	claudeIdle         func() bool                                      // fake harness idle label; nil uses the notice's own bit
+	claude             *claudeNotice                                    // the one pending notice, shared across the value receiver
 }
 
 // nativeRoute is one harness delivery route the hook loop pushes bus events
@@ -92,6 +96,7 @@ func realWorld() world {
 		antigravityHome:    os.UserHomeDir,
 		antigravityInstall: installAntigravityRoute,
 		antigravityDeliver: deliverAntigravitySaved,
+		claudeInstall:      installClaudeFiles,
 		getenv:             os.Getenv,
 		now:                time.Now,
 		tick:               Tick,
@@ -235,6 +240,7 @@ Before arming, it installs its own harness setup (<home>/.gemini/antigravity/bin
 directory), discovers the live Antigravity language_server and conversation, saves each event as bounded external JSON,
 and delivers via agentapi send-message --title=nova-hook: ordinary messages coalesce to at most one pending notice per turn,
 while HOOK CHALLENGE messages deliver immediately into a running turn.
+Claude Code delivery is --harness claude together with --claude-state and --claude-settings (or NOVA_HOOK_CLAUDE_STATE and NOVA_HOOK_CLAUDE_SETTINGS). Both directories must already exist. The client installs a Stop hook that advances a generation file, then prints one HOOK PUSH notice for a burst of bus messages; further messages fold into the next notice until that Stop hook runs. The notice is closed text: message body and subject stay out of it. The client does not query a live Claude session. A Monitor on this process's stdout delivers the notice into a running turn and wakes an idle session; the Stop hook is the turn boundary. This does not measure a real Claude Code session. --once is refused. --dry-run installs nothing.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
 --dry-run reads the record and prints the plan the real run would take (the role, the epoch, the pushes held and
@@ -243,7 +249,7 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
-					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, deepseek (alias dsh) or antigravity; the Codex desktop route uses the --codex-* flags")
+					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, deepseek (alias dsh), antigravity, or claude (one coalesced bus notice); the Codex desktop route uses the --codex-* flags")
 					f.String("grok-home", w.getenv("GROK_HOME"), "absolute grok config directory the adapter installs into; empty uses GROK_HOME, else the grok directory under the user home")
 					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
 					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
@@ -261,6 +267,9 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("antigravity-server", w.getenv("NOVA_HOOK_ANTIGRAVITY_SERVER"), "optional Antigravity server host:port override")
 					f.String("antigravity-events-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_EVENTS_DIR"), "private directory for Antigravity saved event JSON (default: ~/.gemini/antigravity/nova-hook/<as>)")
 					f.String("antigravity-since", w.getenv("NOVA_HOOK_ANTIGRAVITY_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds) for Antigravity recovery")
+					f.String("claude-state", w.getenv("NOVA_HOOK_CLAUDE_STATE"), "existing directory whose generation file marks a Claude Code turn boundary")
+					f.String("claude-settings", w.getenv("NOVA_HOOK_CLAUDE_SETTINGS"), "existing directory where the Claude Code Stop hook is installed")
+					f.Bool("claude-boundary", false, "advance the Claude Code generation file and exit; the installed Stop hook runs this")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
 					f.Check(func(c *tool.Call) {
@@ -460,51 +469,84 @@ func holds(r hook.Role) []hook.Push {
 // hook is the verb: arm, hold, challenge, then stream until a signal or an unhook
 // (docs/SPEC-HOOK.md, the hook verb; tla/Hook.tla, Arm, Renew and Challenge).
 func (w world) hook(c *tool.Call) *tool.Out {
+	if err := claudeConflicts(c); err != nil {
+		if c.Given("dry-run") {
+			c.DryRun()
+		}
+		return tool.Refuse(err.Error())
+	}
 	native, nativeErr := w.codexConfig(c)
 	if nativeErr != nil {
 		return tool.Refuse(nativeErr.Error())
 	}
+	claude, claudeErr := w.claudeConfig(c)
+	if claudeErr != nil {
+		if c.Given("dry-run") {
+			c.DryRun()
+		}
+		return tool.Refuse(claudeErr.Error())
+	}
+	if claude != nil && claude.boundary {
+		if c.DryRun() {
+			return tool.Refuse("claude boundary writes the generation file; omit --dry-run")
+		}
+		return claudeBump(claude.state)
+	}
+	if claude != nil && !c.DryRun() {
+		if w.claudeInstall == nil {
+			return tool.Refuse("claude delivery wants an installer")
+		}
+		if err := w.claudeInstall(*claude); err != nil {
+			return tool.Refuse("claude setup could not be installed: " + err.Error())
+		}
+		adapter, err := armClaude(claude, w.claudeDeliver, w.claudeIdle)
+		if err != nil {
+			return tool.Refuse("claude generation could not be read: " + err.Error())
+		}
+		w.claude = adapter
+	}
 	var dsh *dshRoute
 	var muse *museRoute
 	var grokR *grokRoute
-	switch strings.ToLower(c.Str("harness")) {
-	case "muse":
-		var err error
-		muse, err = w.museConfig(c)
-		if err != nil {
-			return tool.Refuse(err.Error())
-		}
-	case hookHarnessGrok:
-		var err error
-		grokR, err = w.grokConfig(c)
-		if err != nil {
-			return tool.Refuse(err.Error())
-		}
-	case "", "deepseek", "dsh":
-		var err error
-		dsh, err = w.dshConfig(c)
-		if err != nil {
-			return tool.Refuse(err.Error())
-		}
-	case "antigravity":
-	default:
-		return tool.Refuse("--harness wants muse or antigravity (or grok, deepseek, dsh); the Codex desktop route uses --codex-* flags")
-	}
-
-	if (muse != nil || grokR != nil) && (c.Str("dsh-events-dir") != "" || c.Str("dsh-hooks-file") != "" || c.Str("dsh-since") != "" || c.Str("dsh-session") != "") {
-		return tool.Refuse("harness delivery routes are exclusive; configure one harness route")
-	}
-	if native != nil && (dsh != nil || muse != nil) {
-		return tool.Refuse("native harness delivery routes are exclusive; configure one harness route")
-	}
-	if grokR != nil && (native != nil || muse != nil) {
-		return tool.Refuse("one harness at a time: --harness grok, --harness muse, or the Codex desktop route")
-	}
-	if muse != nil && !c.DryRun() {
-		if out := w.museInstall(c, muse); out != nil {
-			return out
+	if claude == nil {
+		switch strings.ToLower(c.Str("harness")) {
+		case "muse":
+			var err error
+			muse, err = w.museConfig(c)
+			if err != nil {
+				return tool.Refuse(err.Error())
+			}
+		case hookHarnessGrok:
+			var err error
+			grokR, err = w.grokConfig(c)
+			if err != nil {
+				return tool.Refuse(err.Error())
+			}
+		case "", "deepseek", "dsh":
+			var err error
+			dsh, err = w.dshConfig(c)
+			if err != nil {
+				return tool.Refuse(err.Error())
+			}
+		case "antigravity":
+		default:
+			return tool.Refuse("--harness wants muse or antigravity (or grok, deepseek, dsh); the Codex desktop route uses --codex-* flags")
 		}
 
+		if (muse != nil || grokR != nil) && (c.Str("dsh-events-dir") != "" || c.Str("dsh-hooks-file") != "" || c.Str("dsh-since") != "" || c.Str("dsh-session") != "") {
+			return tool.Refuse("harness delivery routes are exclusive; configure one harness route")
+		}
+		if native != nil && (dsh != nil || muse != nil) {
+			return tool.Refuse("native harness delivery routes are exclusive; configure one harness route")
+		}
+		if grokR != nil && (native != nil || muse != nil) {
+			return tool.Refuse("one harness at a time: --harness grok, --harness muse, or the Codex desktop route")
+		}
+		if muse != nil && !c.DryRun() {
+			if out := w.museInstall(c, muse); out != nil {
+				return out
+			}
+		}
 	}
 	s, refused := w.openSession(c, true)
 	if refused != nil {
@@ -792,25 +834,38 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				unread = ""
 				line(c, tool.Done().As("STATE").Fact("state", "read").Note("the bus stream answers again"))
 			}
-			for _, e := range got {
-				cursor = e.Entry
-				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
-					if w.grok != nil {
-						// A validated current challenge is its own wake line.
-						// Every other message counts toward the one pending notice.
-						bypass, out := w.grokChallenge(c, s, epoch, m)
-						if out != nil {
-							return out
+			if w.claude != nil {
+				// One notice for the whole read. tla/ClaudeCodeNotice.tla: Arrive, then Deliver.
+				var n int
+				var prove string
+				cursor, n, prove = claudeBatch(s.as, cursor, got)
+				if n > 0 {
+					w.claude.offer(n, prove)
+				}
+				if out := w.emitClaude(c); out != nil {
+					return out
+				}
+			} else {
+				for _, e := range got {
+					cursor = e.Entry
+					if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
+						if w.grok != nil {
+							// A validated current challenge is its own wake line.
+							// Every other message counts toward the one pending notice.
+							bypass, out := w.grokChallenge(c, s, epoch, m)
+							if out != nil {
+								return out
+							}
+							if !bypass {
+								w.grok.note.add(1)
+							}
+							continue
 						}
-						if !bypass {
-							w.grok.note.add(1)
-						}
-						continue
-					}
-					line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))
-					if native != nil {
-						if out := native.push(w, c, s, role, epoch, m.ID, &m); out != nil {
-							return out
+						line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))
+						if native != nil {
+							if out := native.push(w, c, s, role, epoch, m.ID, &m); out != nil {
+								return out
+							}
 						}
 					}
 				}
@@ -827,6 +882,11 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			}
 		} else {
 			pause()
+		}
+		if w.claude != nil {
+			if out := w.pollClaude(c); out != nil {
+				return out
+			}
 		}
 		if ctx.Err() != nil {
 			continue
