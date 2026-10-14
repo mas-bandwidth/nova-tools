@@ -2325,3 +2325,4 @@ pkg/testkit/waits_test.go testkit.Waits had no caller outside its own test (go t
 pkg/testkit/script_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/script_failure_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/contract_test.go testkit.Contract had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with contract.go
+internal/doctor/check_friend_live_test.go the friend-live doctor check (daemon beat age and beat/inbox refusal on status.json) is retired with the friend daemon beat in v1.3 (Rowan 2026-10-14, old-presence-inventory.md A21; nova-hook's heartbeat record is the friend liveness check)
