@@ -2326,3 +2326,6 @@ pkg/testkit/script_test.go testkit.Script had no caller outside its own tests (g
 pkg/testkit/script_failure_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
 pkg/testkit/contract_test.go testkit.Contract had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with contract.go
 cmd/nova-bus/pushproof_test.go nova-bus send, recv and names read the hook record and no longer emit bus2:push notes or take --require-push; TestNamesReadsTheHookRecord in cmd/nova-bus/hook_test.go covers names
+cmd/nova-friend/pong_defaults_test.go pong.json deleted as a record in v1.3 (E2c); nova-friend pong reads queue and width from QUEUE.json and status.json directly and sends on the bus
+pkg/bus/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
+pkg/friend/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record

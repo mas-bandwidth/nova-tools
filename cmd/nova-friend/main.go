@@ -1468,14 +1468,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// when the sprint server last took her session's answer to a check as its proof (the up
 	// beat's answer says proved=<nonce>): status proof_sent, check proof=sent
 	var sent atomic.Pointer[time.Time]
-	// the presence file says a limit while there is one, whatever the session check saw; the
-	// harness's process never decides it (friend.HarnessWatch is advisory)
-	writePresence := func(p friend.PresenceStatus) error {
-		if until, reason, limited := fl.Limited(); limited {
-			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
-		}
-		return friend.WritePresence(state, p)
-	}
 	// what her lanes have cost and the limit they last read (friend.Spender), said on the beat
 	// when it changed since the last one said it (docs/SPEC-FRIEND.md, the Claude lanes)
 	var spent atomic.Pointer[string]
@@ -1495,9 +1487,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 	tellSeat := func(subject, body string) {}
 	fl.Down = func(until time.Time, reason string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns and beats held until then, then a wake")
-		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
-			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
-		}
 		tellSeat(friend.LimitDownText(name, pro.Get(), until, reason))
 	}
 	fl.Unread = func(text string) {
@@ -1833,7 +1822,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fmt.Sprintf(`%s send --as %s --to %s --subject "card %s done" --body "<the first line of your REPORT.md>" --redis %s`, busBin, name, to, card, c.Str("redis"))
 		},
 		Record: record,
-		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
+		Pong:   busPongReader(st, name),
 		Status: func(s friend.Status) error {
 			seatMu.Lock()
 			seat = s.Seat
@@ -2277,6 +2266,40 @@ func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, t
 	return res, remedy, undriven, ""
 }
 
+// busPongReader reads the latest session pong sent by name from the bus log.
+func busPongReader(st bus.Store, name string) func() (friend.Pong, bool, error) {
+	var cursor string
+	var last friend.Pong
+	var found bool
+	return func() (friend.Pong, bool, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), bus.CallTimeout)
+		defer cancel()
+		start := "-"
+		if cursor != "" {
+			start = "(" + cursor
+		}
+		es, err := st.Range(ctx, bus.LogKey, start, "+", friend.LogBatch)
+		if err != nil {
+			return last, found, err
+		}
+		for _, e := range es {
+			cursor = e.Entry
+			m := e.Message()
+			if m.From != name || m.Subject == friend.DaemonPongSubject {
+				continue
+			}
+			if nonce, q, wk, wd, ok := friend.ParsePong(strings.TrimSpace(m.Body)); ok {
+				to := ""
+				if len(m.To) > 0 {
+					to = m.To[0]
+				}
+				last, found = friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: q, Working: wk, Width: wd}, true
+			}
+		}
+		return last, found, nil
+	}
+}
+
 // conformance is the delivery check through deliver over st: the session
 // check carries this binary's pong line, sent to to (checkTo).
 func (w world) conformance(c *tool.Call, name, harness, state, to string, within time.Duration, deliver friend.Deliverer, st bus.Store) friend.Conformance {
@@ -2287,7 +2310,7 @@ func (w world) conformance(c *tool.Call, name, harness, state, to string, within
 		Text: func(nonce string) string {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), c.Str("dir")), to)
 		},
-		Pong: func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
+		Pong: busPongReader(st, name),
 	}
 }
 
@@ -2384,15 +2407,11 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if now.Sub(s.At) < friend.DaemonStale {
 		daemon = "up"
 	}
-	p, _, perr := friend.ReadPong(state)
 	queue, working, qerr := friend.ReadQueue(dir)
 	width := s.Width
-	if p.Width > 0 {
-		width = p.Width
-	}
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
-		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
+		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(s.LastPong)).Fact("session_pong_age", age(now, s.LastPong)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
 		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("envelope", s.Envelope).Fact("envelope_bytes", s.EnvelopeBytes).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
@@ -2436,25 +2455,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Harness == "grok" {
 		route, routeLine, routeErr = (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
 	}
-	v := friend.FriendStatus(w.evidence(c, s, p, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
+	v := friend.FriendStatus(w.evidence(c, s, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
-	}
-	pr, prFound, prErr := friend.ReadPresence(state)
-	switch {
-	case !prFound || prErr != nil: // a daemon from before presence: no word
-	case daemon == "down":
-		o.Fact("presence", friend.PresenceDown).Fact("presence_reason", tool.Text("no daemon"))
-	default:
-		o.Fact("presence", pr.Presence).Fact("last_session", stamp(pr.LastHeard))
-		if pr.Presence != friend.PresenceUp {
-			o.Fact("presence_reason", tool.Text(pr.Reason))
-			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down, and no beat goes to the sprint server until the session answers a session check")
-		}
-	}
-	if prErr != nil {
-		o.Note("the presence file: " + prErr.Error())
 	}
 	o.Fact("status", v.Status).Fact("why", tool.Text(v.Reason)).Fact("evidence", tool.Text(strings.Join(v.Evidence, "; "))).
 		Fact("harness_seen", tool.Text(dash(s.HarnessSeen))) // advisory, after the verdict it does not decide
@@ -2463,9 +2467,6 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	if s.StoreError != "" {
 		o.Note("the store: " + s.StoreError)
-	}
-	if perr != nil {
-		o.Note("the pong file: " + perr.Error())
 	}
 	if qerr != nil {
 		o.Note("the queue file: " + qerr.Error())
@@ -2498,15 +2499,12 @@ func (w world) status(c *tool.Call) *tool.Out {
 // --redis names the store), and the last turn's line of the log. A daemon
 // that is down, a broken session and a store that does not answer are a bus
 // that cannot deliver to her. What cannot be read is a NOTE on o.
-func (w world) evidence(c *tool.Call, s friend.Status, p friend.Pong, now time.Time, daemonUp bool, route string, o *tool.Out) friend.Evidence {
+func (w world) evidence(c *tool.Call, s friend.Status, now time.Time, daemonUp bool, route string, o *tool.Out) friend.Evidence {
 	state := w.stateDir(c, c.Str("dir"))
-	e := friend.Evidence{DaemonUp: daemonUp, LastAnswer: p.At, Undelivered: -1}
+	e := friend.Evidence{DaemonUp: daemonUp, LastAnswer: s.LastPong, Undelivered: -1}
 	e.Harness = s.HarnessSeen // the daemon's harness check: advisory, shown and never deciding
 	if route == "push" {
 		e.Harness = friend.HarnessRunning // a tail runs under the open window's pid
-	}
-	if pr, found, err := friend.ReadPresence(state); daemonUp && err == nil && found && pr.Presence == friend.PresenceUp && pr.LastHeard.After(e.LastAnswer) {
-		e.LastAnswer = pr.LastHeard // the session's last word the daemon read on the bus, when the pong file is older or was never written
 	}
 	l, _, err := friend.ReadLimitFile(state)
 	if err != nil {
@@ -2565,14 +2563,8 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if to == "" {
 		return tool.Refuse("--to is required: no ping has named a seat yet (no status file in " + state + "); it wants the coordinator's name")
 	}
-	previous, _, err := friend.ReadPong(state)
-	if err != nil {
-		return tool.Refuse("the previous pong file cannot be read: " + err.Error())
-	}
-	queue, working, width := previous.Queue, previous.Working, previous.Width
-	if s.Width > 0 {
-		width = s.Width
-	}
+	var queue, working int
+	width := s.Width
 	if dir := c.Str("dir"); dir != "" && (!c.Given("queue") || !c.Given("working")) {
 		q, wk, err := friend.ReadQueue(dir)
 		if err != nil {
@@ -2597,7 +2589,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	line := friend.PongLine(nonce, queue, working, width)
 	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"}
 	if c.DryRun() {
-		// the note checked as send checks it; nothing sent, no pong file
+		// the note checked as send checks it; nothing sent
 		if _, err := b.Check(context.Background(), pong); err != nil {
 			return answer(err)
 		}
@@ -2606,10 +2598,6 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	m, err := b.Send(context.Background(), pong)
 	if err != nil {
 		return answer(err)
-	}
-	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: queue, Working: working, Width: width}
-	if err := friend.WritePong(state, p); err != nil {
-		return tool.Fail("sent, but the pong file was not written: "+err.Error()).Fact("id", m.ID)
 	}
 	return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("id", m.ID).Fact("at", m.At.Format(time.RFC3339))
 }
