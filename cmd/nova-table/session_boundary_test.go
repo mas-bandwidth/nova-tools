@@ -19,11 +19,9 @@ func TestShellLineLimitAndRecovery(t *testing.T) {
 	for _, end := range []string{"\n", "\r\n", ""} {
 		var out, errs bytes.Buffer
 		line := "#" + strings.Repeat("x", maxShellLine-1) + end
-		{
-			code := (&application{}).readCommands(strings.NewReader(line), &out, &errs, false, false)
-			require.EqualValues(t, 0, code, "exact limit with ending %q: %d %s", end, code, &errs)
-			require.EqualValues(t, 0, errs.Len(), "exact limit with ending %q: %d %s", end, code, &errs)
-		}
+		code := (&application{}).readCommands(strings.NewReader(line), &out, &errs, false, false)
+		require.EqualValues(t, 0, code, "exact limit with ending %q: %d %s", end, code, &errs)
+		require.EqualValues(t, 0, errs.Len(), "exact limit with ending %q: %d %s", end, code, &errs)
 	}
 	for _, keep := range []bool{false, true} {
 		var out, errs bytes.Buffer
@@ -39,10 +37,8 @@ func TestShellConnectionFailureIsUsage(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("table call: %w", &net.OpError{Op: "dial", Net: "unix", Err: os.ErrNotExist})
 	var out bytes.Buffer
-	{
-		code := (&connection{}).refusal(&out, "list", err)
-		require.EqualValues(t, 2, code, "missing socket: code=%d %s", code, &out)
-	}
+	code := (&connection{}).refusal(&out, "list", err)
+	require.EqualValues(t, 2, code, "missing socket: code=%d %s", code, &out)
 }
 
 func TestShellCommandFailureNamesLine(t *testing.T) {
@@ -64,11 +60,9 @@ func TestShellPipelineFailureAfterLogicalRefusalBreaksConnection(t *testing.T) {
 		cmds[1].SetErr(&net.OpError{Op: "read", Net: "tcp", Err: io.EOF})
 		return want
 	})
-	{
-		err := call(ctx, commands)
-		require.ErrorIs(t, err, want, "pipeline: %v broken=%v", err, c.broken.Load())
-		require.True(t, c.broken.Load(), "pipeline: %v broken=%v", err, c.broken.Load())
-	}
+	err := call(ctx, commands)
+	require.ErrorIs(t, err, want, "pipeline: %v broken=%v", err, c.broken.Load())
+	require.True(t, c.broken.Load(), "pipeline: %v broken=%v", err, c.broken.Load())
 }
 
 type shellPartialReadError struct{}

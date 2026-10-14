@@ -97,30 +97,22 @@ func TestLoginIsTheStoresLogin(t *testing.T) {
 	require.Empty(t, o.Env.PasswordEnv, "no user: %v %v", o, err)
 	// No user is no password, whatever the password's variable holds.
 	env["NOVA_SPRINT_REDIS_PASSWORD_ENV"] = "OTHER_PASSWORD"
-	{
-		r, err := redisconn.Resolve(o, getenv)
-		require.NoError(t, err, "no user, a password variable named: %v %v", r, err)
-		require.Empty(t, r.PasswordEnv, "no user, a password variable named: %v %v", r, err)
-	}
+	r, err := redisconn.Resolve(o, getenv)
+	require.NoError(t, err, "no user, a password variable named: %v %v", r, err)
+	require.Empty(t, r.PasswordEnv, "no user, a password variable named: %v %v", r, err)
 	delete(env, "NOVA_SPRINT_REDIS_PASSWORD_ENV")
 	env["NOVA_SPRINT_REDIS_USER"] = "bench"
-	{
-		o, _, err = login("127.0.0.1:1", &seatcred.Selection{}, getenv)
-		require.NoError(t, err, "default password variable: %v %v", o, err)
-		require.Equal(t, "NOVA_REDIS_BENCH_PASSWORD", o.PasswordEnv, "default password variable: %v %v", o, err)
-		require.Equal(t, "NOVA_SPRINT_REDIS_PASSWORD_ENV", o.Env.PasswordEnv, "default password variable: %v %v", o, err)
-	}
+	o, _, err = login("127.0.0.1:1", &seatcred.Selection{}, getenv)
+	require.NoError(t, err, "default password variable: %v %v", o, err)
+	require.Equal(t, "NOVA_REDIS_BENCH_PASSWORD", o.PasswordEnv, "default password variable: %v %v", o, err)
+	require.Equal(t, "NOVA_SPRINT_REDIS_PASSWORD_ENV", o.Env.PasswordEnv, "default password variable: %v %v", o, err)
 	env["NOVA_SPRINT_REDIS_PASSWORD_ENV"] = "OTHER_PASSWORD"
-	{
-		o, _, err = login("127.0.0.1:1", &seatcred.Selection{}, getenv)
-		require.NoError(t, err, "named password variable: %v %v", o, err)
-		require.Empty(t, o.PasswordEnv, "named password variable: %v %v", o, err)
-	}
-	{
-		r, err := redisconn.Resolve(o, getenv)
-		require.Error(t, err, "named and empty: %v %v", r, err)
-		require.Contains(t, err.Error(), "OTHER_PASSWORD is empty", "named and empty: %v %v", r, err)
-	}
+	o, _, err = login("127.0.0.1:1", &seatcred.Selection{}, getenv)
+	require.NoError(t, err, "named password variable: %v %v", o, err)
+	require.Empty(t, o.PasswordEnv, "named password variable: %v %v", o, err)
+	r, err = redisconn.Resolve(o, getenv)
+	require.Error(t, err, "named and empty: %v %v", r, err)
+	require.Contains(t, err.Error(), "OTHER_PASSWORD is empty", "named and empty: %v %v", r, err)
 
 	var sel seatcred.Selection
 	sel.SelectWith("synthetic", "", func(string) (seatcred.Cred, error) {
@@ -136,11 +128,9 @@ func TestLoginIsTheStoresLogin(t *testing.T) {
 
 	var broken seatcred.Selection
 	broken.SelectWith("synthetic", "", func(string) (seatcred.Cred, error) { return seatcred.Cred{}, errors.New("seat synthetic: no file") })
-	{
-		_, _, err := login("127.0.0.1:1", &broken, getenv)
-		require.Error(t, err, "seat refusal: %v", err)
-		require.Equal(t, "seat synthetic: no file", err.Error(), "seat refusal: %v", err)
-	}
+	_, _, err = login("127.0.0.1:1", &broken, getenv)
+	require.Error(t, err, "seat refusal: %v", err)
+	require.Equal(t, "seat synthetic: no file", err.Error(), "seat refusal: %v", err)
 }
 
 // TestSeatWordsNameTheSeat: a seat's password is named as the seat's file's
@@ -149,19 +139,15 @@ func TestLoginIsTheStoresLogin(t *testing.T) {
 func TestSeatWordsNameTheSeat(t *testing.T) {
 	t.Parallel()
 	line := "redis at h:1 as user coordinator (password from NOVA_REDIS_COORDINATOR_PASSWORD): login refused: WRONGPASS; next: check that NOVA_REDIS_COORDINATOR_PASSWORD holds the password of coordinator and that the store has that user switched on"
-	{
-		got := seatWords(&seatcred.Selection{}, line)
-		require.Equal(t, line, got, "no seat: %q", got)
-	}
+	got := seatWords(&seatcred.Selection{}, line)
+	require.Equal(t, line, got, "no seat: %q", got)
 	var sel seatcred.Selection
 	sel.SelectWith("synthetic", "", func(string) (seatcred.Cred, error) {
 		return seatcred.Cred{Seat: "synthetic", User: "coordinator", Key: "NOVA_REDIS_COORDINATOR_PASSWORD", Password: secrets.NewSecret("synthetic-seat-pw")}, nil
 	})
 	want := "redis at h:1 as user coordinator (password from seat synthetic, key NOVA_REDIS_COORDINATOR_PASSWORD of its file): login refused: WRONGPASS; next: check that seat synthetic's file holds under NOVA_REDIS_COORDINATOR_PASSWORD the password of coordinator and that the store has that user switched on"
-	{
-		got := seatWords(&sel, line)
-		require.Equal(t, want, got, "seat:\n got %q\nwant %q", got, want)
-	}
+	got = seatWords(&sel, line)
+	require.Equal(t, want, got, "seat:\n got %q\nwant %q", got, want)
 	err := &reworded{want, errors.New("cause")}
 	require.ErrorIs(t, err, err.err, "reworded: %v", err)
 	require.Equal(t, want, err.Error(), "reworded: %v", err)

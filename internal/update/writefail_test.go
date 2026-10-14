@@ -51,6 +51,6 @@ func TestRefusalFoldsAWriteErrorIntoTheExitCode(t *testing.T) {
 func TestWatchAdoptFailsWhenItsDoneLineCannotBePrinted(t *testing.T) {
 	t.Parallel()
 
-	code := watchAdopt(context.Background(), nil, options{timeout: time.Second}, time.Now(), failWriter{}, &bytes.Buffer{}, Environment{})
+	code := watchAdopt(context.Background(), nil, options{timeout: time.Second}, time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC), failWriter{}, &bytes.Buffer{}, Environment{})
 	assert.Equal(t, 1, code)
 }

@@ -114,9 +114,8 @@ func printer(t *testing.T, s string) string {
 func manifest(t *testing.T, rows ...string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "versions.tsv")
-	if e := os.WriteFile(p, []byte(Header+"\n"+strings.Join(rows, "\n")+"\n"), 0600); e != nil {
-		require.NoError(t, e, e)
-	}
+	e := os.WriteFile(p, []byte(Header+"\n"+strings.Join(rows, "\n")+"\n"), 0600)
+	require.NoError(t, e, e)
 	return p
 }
 func row(name, kind, installed, latest, apply string) string {
@@ -131,9 +130,7 @@ func run(t *testing.T, env Environment, a ...string) (int, string, string) {
 func need(t *testing.T, s string, want ...string) {
 	t.Helper()
 	for _, w := range want {
-		if !strings.Contains(s, w) {
-			require.Containsf(t, s, w, "missing %q in:\n%s", w, s)
-		}
+		require.Containsf(t, s, w, "missing %q in:\n%s", w, s)
 	}
 }
 func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
@@ -141,14 +138,11 @@ func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
 
 	good := row("x", "tool", "example version", "github:o/r", "none")
 	for _, s := range []string{"", good + "\n", Header + "\nx\n", Header + "\n" + strings.Replace(good, "example version", "example  version", 1), Header + "\n" + strings.Replace(good, "tool", "weights", 1), Header + "\n" + good + "\n" + good, Header + "\n" + strings.Replace(good, "example version", "\"space path\" version", 1)} {
-		if _, e := Load(strings.NewReader(s)); e == nil {
-			require.Errorf(t, e, "accepted %q", s)
-		}
+		_, e := Load(strings.NewReader(s))
+		require.Errorf(t, e, "accepted %q", s)
 	}
 	es, e := Load(strings.NewReader(Header + "\n# comment\n" + good + "\n"))
-	if e != nil || len(es) != 1 {
-		require.Failf(t, "", "%v %v", es, e)
-	}
+	require.Falsef(t, e != nil || len(es) != 1, "%v %v", es, e)
 }
 func TestWholeVersionAndVerifiedOrder(t *testing.T) {
 	t.Parallel()
@@ -156,41 +150,29 @@ func TestWholeVersionAndVerifiedOrder(t *testing.T) {
 	examples := map[string]string{"gh version 2.100.0 (2026-09-03)": "2.100.0", "go version go1.27.1 darwin/arm64": "1.27.1", "ollama version is 0.33.3": "0.33.3", "v1.3.2": "1.3.2", "1.18.30": "1.18.30", "codex-cli 0.153.4": "0.153.4", "0.46.0": "0.46.0", "sops 3.13.3": "3.13.3", "git version 2.55.0": "2.55.0", "v26.8.2": "26.8.2", "nova-bus v0.12.1-0.20260912135226-0459069+dirty darwin/arm64 go1.27.1": "0.12.1-0.20260912135226-0459069+dirty"}
 	for line, want := range examples {
 		r := identity(Entry{Kind: "tool"}, line+"\nsecond 900.0.0", true)
-		if r.Version != want || r.Raw != line || !r.Known() {
-			require.Failf(t, "", "%q: %+v", line, r)
-		}
+		require.Falsef(t, r.Version != want || r.Raw != line || !r.Known(), "%q: %+v", line, r)
 	}
 	for _, line := range []string{"nova-wake devel darwin/arm64 go1.27.1", "nova-merge 0459069"} {
 		r := identity(Entry{Kind: "tool"}, line, true)
-		if !r.Known() || r.Version != "" {
-			require.Fail(t, fmt.Sprintln(r))
-		}
+		require.False(t, !r.Known() || r.Version != "", fmt.Sprintln(r))
 		r = identity(Entry{Kind: "tool"}, line, false)
-		if r.Reason != "no_release_identity" {
-			require.EqualValues(t, "no_release_identity", r.Reason, r)
-		}
+		require.EqualValues(t, "no_release_identity", r.Reason, r)
 	}
 	for _, c := range [][3]string{{"1.9.0", "1.10.0", "OLDER"}, {"1.10.0", "1.9.0", "NEWER"}, {"1.9", "1.9.0", "DIFFERENT"}, {"1.09.0", "1.9.0", "DIFFERENT"}, {"1.0.0-rc1", "1.0.0", "DIFFERENT"}, {"0.12.0", "0.12.1-0.1-abc", "DIFFERENT"}, {"999999999999999999999999.0", "1000000000000000000000000.0", "OLDER"}} {
-		if got := Compare(c[0], c[1]); got != c[2] {
-			require.EqualValuesf(t, c[2], got, "%v got %s", c, got)
-		}
+		got := Compare(c[0], c[1])
+		require.EqualValuesf(t, c[2], got, "%v got %s", c, got)
 	}
 }
 func TestModelDigestAndPinIdentity(t *testing.T) {
 	t.Parallel()
 
 	r := identity(Entry{Name: "model:tag", Kind: "model"}, "NAME ID SIZE\nmodel:other ffffffffffff 4GB\nmodel:tag 07d35212591f 4GB\n", true)
-	if r.Version != "07d35212591f" || r.Raw != "model:tag 07d35212591f 4GB" {
-		require.Fail(t, fmt.Sprintln(r))
-	}
-	if identity(Entry{Name: "model", Kind: "model"}, "model:tag 07d35212591f 4GB", true).Known() {
-		require.Fail(t, fmt.Sprintln("untagged match"))
-	}
+	require.False(t, r.Version != "07d35212591f" || r.Raw != "model:tag 07d35212591f 4GB", fmt.Sprintln(r))
+	require.False(t, identity(Entry{Name: "model", Kind: "model"}, "model:tag 07d35212591f 4GB", true).Known(), fmt.Sprintln("untagged match"))
 	for _, s := range []string{"v0.12.0", "devel", "v0.12.1-0.foo"} {
 		r := entryRead{Entry: Entry{Kind: "pin"}, Installed: identity(Entry{Kind: "pin"}, "nova-wake "+s, false), Latest: identity(Entry{Kind: "pin"}, "nova-bus "+s, false)}
-		if v, _ := verdict(r); v != "EQUAL" {
-			require.EqualValues(t, "EQUAL", v, r)
-		}
+		v, _ := verdict(r)
+		require.EqualValues(t, "EQUAL", v, r)
 	}
 }
 
@@ -265,17 +247,11 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	defer close()
 	for _, tc := range [][3]string{{"github:o/r", "tool", "0.11.0"}, {"npm:package", "tool", "1.2.3"}, {"brew:formula", "tool", "2.3.4"}} {
 		r := Latest(context.Background(), Entry{Kind: tc[1], Latest: tc[0]}, time.Second, client)
-		if !r.Known() || r.Version != tc[2] {
-			require.Fail(t, fmt.Sprintln(r))
-		}
+		require.False(t, !r.Known() || r.Version != tc[2], fmt.Sprintln(r))
 	}
-	if len(calls) != 4 || calls[1] != "/repos/o/r/tags?per_page=1" {
-		require.Fail(t, fmt.Sprintln(calls))
-	}
+	require.False(t, len(calls) != 4 || calls[1] != "/repos/o/r/tags?per_page=1", fmt.Sprintln(calls))
 	r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, client)
-	if r.Version != shaText(`{"schemaVersion":2,"layers":[]}`)[:12] {
-		require.Fail(t, fmt.Sprintln(r))
-	}
+	require.True(t, r.Version == shaText(`{"schemaVersion":2,"layers":[]}`)[:12], fmt.Sprintln(r))
 	for _, tc := range []struct {
 		status     int
 		body, want string
@@ -287,9 +263,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		})
 		r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, c)
 		done()
-		if r.Reason != tc.want {
-			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
-		}
+		require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
 		if tc.status == 429 {
 			need(t, r.Remedy, "123")
 		}
@@ -297,9 +271,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	c, done := testClient(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, r.URL.Path+"x", http.StatusFound) })
 	r = Latest(context.Background(), Entry{Kind: "tool", Latest: "npm:pkg"}, time.Second, c)
 	done()
-	if r.Known() {
-		require.Fail(t, fmt.Sprintln("redirect loop accepted"))
-	}
+	require.False(t, r.Known(), fmt.Sprintln("redirect loop accepted"))
 }
 func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	t.Parallel()
@@ -310,15 +282,11 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 		return nil, fmt.Errorf("forbidden")
 	})}}
 	code, _, errs := run(t, env, "report", "--file", p, "--host", "air")
-	if code != 1 {
-		require.EqualValues(t, 1, code, code)
-	}
+	require.EqualValues(t, 1, code, code)
 	need(t, errs, "host=air", "REPORT TOOL name=good", "version=1.2.3-rc1+dirty", "REPORT UNKNOWN name=bad", "not_found")
 	need(t, errs, "REPORT FAILED checked=2 known=1 unknown=1")
 	code, out, errs := run(t, env, "report", "--file", p, "--draft", "--as", "fixture", "--to", "integrator")
-	if code != 1 || !strings.HasPrefix(out, "From: fixture\nTo: integrator\nSubject: versions on - at ") {
-		require.Failf(t, "", "%d %s %s", code, out, errs)
-	}
+	require.Falsef(t, code != 1 || !strings.HasPrefix(out, "From: fixture\nTo: integrator\nSubject: versions on - at "), "%d %s %s", code, out, errs)
 }
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	t.Parallel()
@@ -330,30 +298,21 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	p := manifest(t, row("x", "tool", read, "local:"+printer(t, "v1.2.0\n"), write), row("model:tag", "model", "should-not-run", "ollama:model:tag", write))
 	for _, a := range [][]string{{"apply", "--file", p}, {"apply", "--file", p, "wrong"}, {"apply", "--file", p, "model:tag"}, {"apply", "--file", p, "--all"}} {
 		c, _, _ := run(t, Environment{}, a...)
-		if c != 2 {
-			require.EqualValues(t, 2, c, fmt.Sprintln(a, c))
-		}
+		require.EqualValues(t, 2, c, fmt.Sprintln(a, c))
 	}
 	c, out, err := run(t, Environment{}, "apply", "--file", p, "x", "--version", "1.2.0")
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, err)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, out, err)
 	need(t, out, "APPLY BEFORE", "installed=1.0.0", "APPLY AFTER", "installed=1.2.0", "APPLY OK")
 	p = manifest(t, row("x", "tool", read, "local:"+printer(t, "1.3.0"), command(t, "write", state, "1.1.1")))
 	c, _, err = run(t, Environment{}, "apply", "--file", p, "x")
-	if c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
+	require.EqualValues(t, 1, c, c)
 	need(t, err, "installed 1.1.1, asked 1.3.0")
 	calls := filepath.Join(dir, "calls")
 	logged := Environment{Env: append(os.Environ(), "NOVA_UPDATE_CALLS="+calls)}
 	c, _, _ = run(t, logged, "apply", "--file", p, "--version", "9.0.0", "x")
-	if c != 2 {
-		require.EqualValues(t, 2, c, c)
-	}
-	if _, e := os.Stat(calls); !os.IsNotExist(e) {
-		require.Fail(t, fmt.Sprintln("refusal ran a process"))
-	}
+	require.EqualValues(t, 2, c, c)
+	_, e := os.Stat(calls)
+	require.True(t, os.IsNotExist(e), fmt.Sprintln("refusal ran a process"))
 }
 func TestFourReadLimitAndOverallBudget(t *testing.T) {
 	t.Parallel()
@@ -377,98 +336,91 @@ func TestFourReadLimitAndOverallBudget(t *testing.T) {
 		defer cancel()
 
 		r := readEntries(ctx, entries, options{timeout: time.Minute}, Environment{Client: client}, false)
-		if len(r) != 40 {
-			require.Lenf(t, r, 40, "expected 40 results, got %d", len(r))
-		}
-		if r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget" {
-			require.Failf(t, "", "expected budget reason on unread entry, got: %+v", r[39])
-		}
+		require.Lenf(t, r, 40, "expected 40 results, got %d", len(r))
+		require.Falsef(t, r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget", "expected budget reason on unread entry, got: %+v", r[39])
 	})
 }
 
 func TestFourReadConcurrencyLimit(t *testing.T) {
 	t.Parallel()
 
-	var active, max atomic.Int32
-	var fifthAttempt atomic.Bool
-	ready4 := make(chan struct{})
-	release := make(chan struct{})
-	var closeOnce sync.Once
+	// readEntries bounds each read with a context deadline; the bubble's clock is fake.
+	synctest.Test(t, func(t *testing.T) {
+		var active, max atomic.Int32
+		var fifthAttempt atomic.Bool
+		ready4 := make(chan struct{})
+		release := make(chan struct{})
+		var closeOnce sync.Once
 
-	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
-		cur := active.Add(1)
-		defer active.Add(-1)
-		for {
-			old := max.Load()
-			if cur <= old || max.CompareAndSwap(old, cur) {
-				break
+		transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+			cur := active.Add(1)
+			defer active.Add(-1)
+			for {
+				old := max.Load()
+				if cur <= old || max.CompareAndSwap(old, cur) {
+					break
+				}
 			}
-		}
-		if cur > 4 {
-			fifthAttempt.Store(true)
-			return nil, fmt.Errorf("concurrency exceeded 4: active=%d", cur)
-		}
-		if cur == 4 {
-			closeOnce.Do(func() { close(ready4) })
-		}
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-		return &http.Response{
-			StatusCode: 200,
-			Body:       io.NopCloser(strings.NewReader(`{"version":"2.0.0"}`)),
-			Header:     make(http.Header),
-		}, nil
-	})
-	client := &http.Client{Transport: transport}
-
-	entries := make([]Entry, 12)
-	for i := range entries {
-		entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
-	}
-
-	var workersStarted atomic.Int32
-	fifthAttempted := make(chan struct{})
-	var fifthOnce sync.Once
-
-	env := Environment{
-		Client: client,
-		WorkerStart: func(id int) {
-			workersStarted.Add(1)
-		},
-		JobAttempt: func(i int) {
-			if i == 4 {
-				fifthOnce.Do(func() { close(fifthAttempted) })
+			if cur > 4 {
+				fifthAttempt.Store(true)
+				return nil, fmt.Errorf("concurrency exceeded 4: active=%d", cur)
 			}
-		},
-	}
+			if cur == 4 {
+				closeOnce.Do(func() { close(ready4) })
+			}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Body:       io.NopCloser(strings.NewReader(`{"version":"2.0.0"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})
+		client := &http.Client{Transport: transport}
 
-	done := make(chan struct{})
-	go func() {
-		readEntries(context.Background(), entries, options{timeout: 5 * time.Second}, env, false)
-		close(done)
-	}()
+		entries := make([]Entry, 12)
+		for i := range entries {
+			entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
+		}
 
-	<-ready4
-	<-fifthAttempted
+		var workersStarted atomic.Int32
+		fifthAttempted := make(chan struct{})
+		var fifthOnce sync.Once
 
-	if n := workersStarted.Load(); n != 4 {
+		env := Environment{
+			Client: client,
+			WorkerStart: func(id int) {
+				workersStarted.Add(1)
+			},
+			JobAttempt: func(i int) {
+				if i == 4 {
+					fifthOnce.Do(func() { close(fifthAttempted) })
+				}
+			},
+		}
+
+		done := make(chan struct{})
+		go func() {
+			readEntries(context.Background(), entries, options{timeout: 5 * time.Second}, env, false)
+			close(done)
+		}()
+
+		<-ready4
+		<-fifthAttempted
+
+		n := workersStarted.Load()
 		require.EqualValuesf(t, 4, n, "expected 4 workers launched, got %d", n)
-	}
-	if cur := active.Load(); cur != 4 {
+		cur := active.Load()
 		require.EqualValuesf(t, 4, cur, "expected active == 4 at barrier, got %d", cur)
-	}
-	if fifthAttempt.Load() {
-		require.Fail(t, fmt.Sprintln("a 5th active read was attempted"))
-	}
+		require.False(t, fifthAttempt.Load(), fmt.Sprintln("a 5th active read was attempted"))
 
-	close(release)
-	<-done
+		close(release)
+		<-done
 
-	if max.Load() != 4 {
-		require.Failf(t, "", "expected max active == 4, got %d", max.Load())
-	}
+		require.Truef(t, max.Load() == 4, "expected max active == 4, got %d", max.Load())
+	})
 }
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	t.Parallel()
@@ -476,24 +428,16 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	need(t, o, "changed=yes")
 	c, o, e = run(t, Environment{}, "report", "--file", p, "--snapshot", s)
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	need(t, o, "changed=no")
 	state, err := readSnapshot(s)
-	if err != nil || len(state.Delivered) != 0 {
-		require.Fail(t, fmt.Sprintln(state, err))
-	}
+	require.False(t, err != nil || len(state.Delivered) != 0, fmt.Sprintln(state, err))
 	ctx := context.Background()
 	unlock, err := lockSnapshot(ctx, s)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	blocked, cancel2 := context.WithCancel(t.Context())
 	cancel2()
 	if release, err := lockSnapshot(blocked, s); err == nil {
@@ -580,13 +524,9 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 		}, nil
 	})}}
 	c, o, e := run(t, env, "check", "--file", p, "--kind", "tool", "--max", "2")
-	if c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
+	require.EqualValues(t, 1, c, c)
 	need(t, e, "entries=27", "CHECK MORE kind=stale shown=2 total=26", "checked=26", "stale=26")
-	if strings.Contains(o+e, "excluded") {
-		require.Fail(t, fmt.Sprintln(o+e))
-	}
+	require.False(t, strings.Contains(o+e, "excluded"), fmt.Sprintln(o+e))
 }
 
 // A held pipe is the cause the hosted macOS red had: the version command exits
@@ -598,22 +538,17 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 func TestProcessFailuresAreDistinguishable(t *testing.T) {
 	t.Parallel()
 
-	if r := process(context.Background(), nil, nil, nil, ChildCap); r.Reason != "empty argv" {
-		require.EqualValues(t, "empty argv", r.Reason, r.Reason)
-	}
-	if r := process(context.Background(), nil, []string{"nova-no-such-tool-exists"}, nil, ChildCap); r.Reason != "not_found" {
-		require.EqualValues(t, "not_found", r.Reason, r.Reason)
-	}
-	if r := process(context.Background(), nil, mustArgv(t, command(t, "fail")), nil, ChildCap); r.Reason != "exit 3" {
-		require.EqualValues(t, "exit 3", r.Reason, r.Reason)
-	}
+	r := process(context.Background(), nil, nil, nil, ChildCap)
+	require.EqualValues(t, "empty argv", r.Reason, r.Reason)
+	r = process(context.Background(), nil, []string{"nova-no-such-tool-exists"}, nil, ChildCap)
+	require.EqualValues(t, "not_found", r.Reason, r.Reason)
+	r = process(context.Background(), nil, mustArgv(t, command(t, "fail")), nil, ChildCap)
+	require.EqualValues(t, "exit 3", r.Reason, r.Reason)
 }
 func mustArgv(t *testing.T, s string) []string {
 	t.Helper()
 	a, err := argv(s)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	return a
 }
 
@@ -628,14 +563,10 @@ func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
 	// installed is a version string, not a command; latest points to the real binary.
 	p := manifest(t, row("mytool", "tool", "v1.2.3", "local:"+binCmd, "none"))
 	code, out, errs := run(t, Environment{}, "report", "--file", p, "--host", "air")
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "want exit 0, got %d: out=%s errs=%s", code, out, errs)
-	}
+	require.EqualValuesf(t, 0, code, "want exit 0, got %d: out=%s errs=%s", code, out, errs)
 	need(t, out, "REPORT TOOL name=mytool", "version=1.2.3")
 	need(t, out, "REPORT OK checked=1 known=1 unknown=0")
-	if strings.Contains(out, "not_found") || strings.Contains(errs, "not_found") {
-		require.Failf(t, "", "unexpected not_found in output: out=%s errs=%s", out, errs)
-	}
+	require.Falsef(t, strings.Contains(out, "not_found") || strings.Contains(errs, "not_found"), "unexpected not_found in output: out=%s errs=%s", out, errs)
 }
 
 func TestDefaultClientRefusesARedirectToAnotherSchemeOrHost(t *testing.T) {

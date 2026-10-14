@@ -32,10 +32,8 @@ func TestShellWords(t *testing.T) {
 		assert.Equal(t, tc.want, got, "%q: %q %v, want %q", tc.line, got, err, tc.want)
 	}
 	for _, line := range []string{`row add t 'unfinished`, `row add t "unfinished`, `row add t trailing\`, `show t; drop t`, `show t | cat`, `show t > out`} {
-		{
-			_, err := shellWords(line)
-			assert.Error(t, err, "accepted %q", line)
-		}
+		_, err := shellWords(line)
+		assert.Error(t, err, "accepted %q", line)
 	}
 }
 
@@ -67,10 +65,8 @@ func TestShellHelpNeverDials(t *testing.T) {
 	// no network command, even though its store address is pinned.
 	var out, errout bytes.Buffer
 	app := &application{in: strings.NewReader("help row move\nversion\nquit\ndrop never\n")}
-	{
-		code := app.run([]string{"shell", "--redis", "127.0.0.1:1"}, &out, &errout)
-		require.EqualValues(t, 0, code, "%d %s %s", code, &out, &errout)
-		require.EqualValues(t, 0, errout.Len(), "%d %s %s", code, &out, &errout)
-		require.Contains(t, out.String(), "row move", "%d %s %s", code, &out, &errout)
-	}
+	code := app.run([]string{"shell", "--redis", "127.0.0.1:1"}, &out, &errout)
+	require.EqualValues(t, 0, code, "%d %s %s", code, &out, &errout)
+	require.EqualValues(t, 0, errout.Len(), "%d %s %s", code, &out, &errout)
+	require.Contains(t, out.String(), "row move", "%d %s %s", code, &out, &errout)
 }

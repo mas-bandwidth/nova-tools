@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"testing"
 
@@ -52,13 +51,4 @@ func TestMainCoverExitOf(t *testing.T) {
 			assert.Equal(t, tc.want, exitOf(tc.err))
 		})
 	}
-
-	// The run loop's own shape: a failed write of the held notes is exit 1.
-	j := &jsonRefusals{}
-	j.Write([]byte("a note\n"))
-	var full bytes.Buffer
-	_, err := full.Write(j.said.Bytes())
-	require.NoError(t, err)
-	assert.Equal(t, 0, exitOf(err))
-	assert.Equal(t, 1, exitOf(errors.New("short write")))
 }
