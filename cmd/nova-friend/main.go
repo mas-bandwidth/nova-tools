@@ -1231,25 +1231,6 @@ func (o *runOut) shut() {
 	o.done = true
 }
 
-// joined schedules f through sched, counting the delivery in bg so run joins
-// it before it returns. A nil sched runs f in a goroutine, as the session
-// check's own default does; a fake-clock sched runs it in place, so its
-// semantics are unchanged.
-func joined(bg *sync.WaitGroup, sched func(func())) func(func()) {
-	return func(f func()) {
-		bg.Add(1)
-		run := func() {
-			defer bg.Done()
-			f()
-		}
-		if sched == nil {
-			go run()
-			return
-		}
-		sched(run)
-	}
-}
-
 func (w world) run(c *tool.Call) *tool.Out {
 	if c.Bool("notifications-only") {
 		return w.runNotifications(c)
@@ -1526,16 +1507,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// so this joins before closeStore and stdout.shut).
 	var bg sync.WaitGroup
 	defer func() { stop(); bg.Wait() }()
-	// the push proof is a state, never an exit (docs/SPEC-FRIEND.md, The push proof): the
-	// daemon starts, its first SESSION CHECK goes in at once (the presence's own), and it
-	// delivers nothing into the session until the session answers it; a check the last run
-	// queued and never saw answered keeps its nonce, so the session's late answer proves it
-	if perCard {
-		record(w.now().UTC().Format(time.RFC3339) + " push proof: owed by the folder: " + c.Str("harness") + " runs each card as a process of its own, so the session check goes in as " + friend.SessionCheckFile(dir, "<nonce>") + "; a live session answers it with nova-friend pong --as " + name + " --nonce <nonce> --state-dir " + state + ", and the beat carries the answer; with no live session the friend's cards' finishes are the friend's presence, and nothing is held back")
-	} else {
-		record(w.now().UTC().Format(time.RFC3339) + " push proof: pending: the first session check goes into the " + c.Str("harness") + " session now; nothing is delivered until the session answers it")
-	}
-	// the seat the last ping named, from the daemon's status: whom the session check's answer goes to
+	// the seat the last ping named, from the daemon's status: whom the limit report goes to
 	var seatMu sync.Mutex
 	seat := ""
 	answerTo := func() string {
@@ -1545,23 +1517,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return seat
 		}
 		return c.Str("coordinator")
-	}
-	// presence is the session's, never the daemon's (docs/SPEC-FRIEND.md, presence); each
-	// presence saved is also the bus's push proof, without which nova-bus refuses this name
-	// as deaf (docs/SPEC-BUS.md, bus-requires-inbox-push-proof)
-	prover := &friend.PushProver{Friend: name, Harness: c.Str("harness"), Store: st, Now: w.now, Record: record}
-	keep := ""
-	if pr, found, err := friend.ReadPresence(state); err == nil && found {
-		keep = pr.Nonce // the last run's check, never answered: its answer still proves the push
-	}
-	sc := &friend.SessionCheck{
-		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
-		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
-		Go:   joined(&bg, w.checkGo),
-		Save: prover.Save(writePresence),
-		Text: func(nonce string) string {
-			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
-		},
 	}
 	// the spend cap per day and provider (docs/SPEC-FRIEND.md, spend caps): read
 	// from --spend-cap, measured from the harness's own usage report, never
@@ -1611,29 +1566,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// gate before its Rest retry, so the spend cap raises its judgment and stops
 	// the turns at once (docs/SPEC-FRIEND.md, spend caps)
 	fl.Funds = spendCap.Refuse
-	// the daemon's own turns, or her card runner, under the spend cap; the session
-	// check and the prover keep the ungated chain, so presence.go's under() still
-	// reads the adapter through the harness's limit gate
-	laneDeliver := sc.Gate(fl.Gate(deliver))
+	laneDeliver := fl.Gate(deliver)
 	spendDeliver := spendCap.Gate(laneDeliver)
-	sc.Deliver = laneDeliver
-	if perCard {
-		// the check goes in by the folder, ungated: her lanes hold no turn of the session
-		sc.Deliver = &friend.FolderCheck{Friend: name, Dir: dir}
-	}
-	prover.Deliver = sc.Deliver
-	// the daemon is her hook (docs/SPEC-HOOK.md, holders; hook.go): it hooks her in as a
-	// friend at its first step and holds her bus push (proven by her session's answer to its
-	// check) and her work push (proven by the sprint server's answers to her beats); while
-	// the gate says no her lanes take and report nothing and her beat says her down, unhooked
-	// her bus push's proof: a session harness's session answered its check and is
-	// present (within BusGrace); a per-card harness has no interactive session to wait
-	// for, so the daemon's own round trip on her bus store proves it
-	busProof := sessionProof(sc, w.now, BusGrace)
-	if perCard {
-		busProof = roundTripProof(st)
-	}
-	dh := w.newDaemonHook(st, name, hook.Friend, busProof, record)
+	dh := w.newDaemonHook(st, name, hook.Friend, nil, record)
 	bg.Add(1)
 	go func() {
 		defer bg.Done()
@@ -1646,7 +1581,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: no seat or coordinator to tell: " + subject)
 			return
 		}
-		if _, err := (&bus.Bus{Store: sc.DaemonStore()}).Send(ctx, bus.Message{From: name, To: []string{to}, Subject: subject, Body: body}); err != nil {
+		if _, err := (&bus.Bus{Store: st}).Send(ctx, bus.Message{From: name, To: []string{to}, Subject: subject, Body: body}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
 		}
 	}
@@ -1696,7 +1631,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return w.finish(ctx, server, argv)
 		},
-		Store: sc.DaemonStore(), Deliver: spendDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
+		Store: st, Deliver: spendDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at
@@ -1719,32 +1654,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
-		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
-		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
 		Beat: func(ctx context.Context, active time.Time) error {
 			// up or down, held back or not: the beat's record says what the lanes cost
 			saySpend()
-			held := sc.Beat // the session's answer holds the beat back
-			if perCard {
-				// a per-card harness's beat is never held back: her cards' finishes are her presence
-				// at the server; the check still steps (by the folder) and its answer rides the beat
-				held = sc.BeatAlways
-			}
-			// the owner, 2026-10-05 ~9:30 AM ET: "there is no value in things that are answered
-			// just by the daemon": the words are the check asked and the check the session
-			// answered that no beat has said, for a per-card harness too (the folder's answer)
-			words := sc.Words
 			up := func(ctx context.Context) error {
-				said := words()
+				var said friend.BeatWords
 				said.StopReturns = owedStopReturns()
 				answer, err := w.beat(ctx, server, name, active, said)
-				if err == nil {
-					sc.Said(said)
-					if said.Pong != "" && strings.Contains(answer, " proved="+said.Pong) {
-						at := w.now()
-						sent.Store(&at) // the server took her session's answer as its proof
-					}
-				}
 				if st, ok := friend.ParseMachine(answer); err == nil && ok {
 					machineStopped.Store(st == friend.MachineStoppedWord) // STOPPED cancels the lanes (stop.go)
 				}
@@ -1777,32 +1693,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return err
 			}
 			if w.beatDown == nil {
-				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
+				return fl.Beat(up)(ctx) // no down beat: held back while she is at her limit
 			}
-			// while her harness is at its limit her beat says down with the until and the
-			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before,
-			// ahead of the look; the inner check is the last before the up beat, so a limit
-			// seen during the step is never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
-				said := words()
-				err := w.beatDown(ctx, server, name, active, until, reason, said)
-				if err == nil {
-					sc.Said(said)
-				}
-				return err
-			}
-			if !perCard {
-				// while her session is down her beat says so, with the check's nonce and why; a
-				// limit seen during the step is the reason first, with its reset
-				sessionDown := func(ctx context.Context, until time.Time, reason string) error {
-					if u, r, limited := fl.Limited(); limited {
-						until, reason = u, "harness limit: "+r
-					}
-					return down(ctx, until, reason)
-				}
-				held = func(beat func(context.Context) error) func(context.Context) error {
-					return sc.BeatOr(beat, sessionDown)
-				}
+				return w.beatDown(ctx, server, name, active, until, reason, friend.BeatWords{})
 			}
 			// a provider failure paused her lanes: her beat says her down with its exact
 			// message until a person clears the marker (nova-friend resume; friend.PauseBeat)
@@ -1820,10 +1714,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if h := refusalDown.Load(); h != nil && w.now().Before(h.until) {
 				return down(ctx, h.until, h.reason)
 			}
-			if _, _, limited := fl.Limited(); limited && !perCard {
-				sc.Step(ctx)
-			}
-			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
+			return fl.BeatOrDown(up, down)(ctx)
 		},
 		Row: func() (string, int) {
 			// the daemon's loop reads the row before it launches any turn: the cap's
@@ -1935,22 +1826,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	owedStopReturns = d.OwedStopReturns
-	if c.Str("harness") == "opencode" {
-		// a one-shot friend's presence is her lanes', never a growing session
-		// (docs/SPEC-FRIEND.md, presence): her check goes in as a fresh turn of its
-		// own, so a session that is full or missing is never the reason she is down.
-		// The mode is read from --mode (the config at start) first, then the row her
-		// beat delivered; "" (not yet read) is the presence check's own fallback.
-		sc.Mode = func() string { m, _ := d.Row(); return m }
-	}
 	if w.finish == nil || w.cards == nil {
 		d.Take = nil // a world that asks no server: its lanes run the cards on her row in order (a test's)
 	}
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
-	}
-	if !perCard {
-		d.Proof = sc.Proof // nothing goes into the session until it answers its check
 	}
 	if perCard {
 		// a claude lane proves its harness before it takes: claude -p "ok"

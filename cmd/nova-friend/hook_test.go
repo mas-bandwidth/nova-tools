@@ -44,14 +44,13 @@ func (r *hookRig) restart(t *testing.T, role hook.Role) {
 
 // TestALaneTakesNothingWhileAPushIsDown pins the friend's gate in her daemon
 // (docs/SPEC-HOOK.md; tla/Hook.tla, GateMeansHooked): with her bus push
-// unproven (her session's check unanswered) her lanes take nothing and report
-// nothing; once her bus push is proven the take is sent; unhooked, nothing is
+// unproven her lanes take nothing and report nothing; once her challenge is
+// answered her bus push is proven and the take is sent; unhooked, nothing is
 // taken until she is hooked in again.
 func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
-	r.session = false
 	sent := 0
 	take := gated(r.dh, func(context.Context, []string) (string, error) { sent++; return "LANE OK", nil })
 
@@ -59,10 +58,10 @@ func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 	_, err := take(ctx, []string{"friend", "take"})
 	require.ErrorIs(t, err, ErrUnhooked)
 	assert.Contains(t, err.Error(), "live as friend (bus=armed)")
-	assert.Zero(t, sent, "a lane with her bus push unproven takes nothing")
+	assert.Zero(t, sent, "a lane with its push unproven takes nothing")
 	assert.Equal(t, hook.StateLive, r.h.State(t, "bob").State)
 
-	r.session = true
+	r.h.Hook(t, "bob", hook.Friend)
 	r.dh.step(ctx)
 	got, err := take(ctx, []string{"friend", "take"})
 	require.NoError(t, err)
@@ -70,11 +69,10 @@ func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 	assert.Equal(t, 1, sent)
 	assert.Equal(t, hook.StateProven, r.h.State(t, "bob").State)
 
-	r.session = false
+	require.NoError(t, r.h.Store.Unprove(ctx, "bob", hook.Friend, hook.Bus, r.dh.holder.Epoch()))
 	r.dh.step(ctx)
 	_, err = take(ctx, nil)
-	assert.ErrorIs(t, err, ErrUnhooked, "her session's check unanswered: the bus push is unproven")
-	r.session = true
+	assert.ErrorIs(t, err, ErrUnhooked, "her bus push unproven: nothing is taken")
 
 	r.h.Unhook(t, "bob")
 	r.dh.step(ctx)
@@ -84,8 +82,7 @@ func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State, "an unhook stands against the running daemon")
 	assert.Equal(t, 1, sent)
 
-	_, _, err = r.h.Store.HookAs(ctx, "bob", hook.Friend, "nova-hook")
-	require.NoError(t, err)
+	r.h.Hook(t, "bob", hook.Friend)
 	r.dh.step(ctx)
 	_, err = take(ctx, nil)
 	assert.NoError(t, err, "hooked in again, the daemon rejoins")
@@ -94,12 +91,11 @@ func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 
 // TestTheBeatSaysUnhooked pins her beat: while the gate says no her beat is a
 // down beat with the reason unhooked, never an up beat that would show her
-// alive; hooked in, the up beat goes.
+// alive; hooked in and proven, the up beat goes.
 func TestTheBeatSaysUnhooked(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
-	r.session = false
 	var ups, downs []string
 	up := func(_ context.Context, _, name string, _ time.Time, _ friend.BeatWords) (string, error) {
 		ups = append(ups, name)
@@ -118,14 +114,13 @@ func TestTheBeatSaysUnhooked(t *testing.T) {
 	require.Len(t, downs, 1)
 	assert.Contains(t, downs[0], "bob until="+start.Add(hook.LeaseTTL).Format(time.RFC3339)+" unhooked: bob is not hooked in")
 
-	r.session = true
-	r.dh.step(ctx) // her bus push is proven now
+	r.h.Hook(t, "bob", hook.Friend)
+	r.dh.step(ctx)
 	_, err = beat(ctx, "srv", "bob", time.Time{}, friend.BeatWords{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bob"}, ups)
 
 	r2 := newHookRig(t, hook.Friend)
-	r2.session = false
 	beatNoDown, _ := r2.dh.beats(func() time.Time { return r2.now }, up, nil)
 	_, err = beatNoDown(ctx, "srv", "bob", time.Time{}, friend.BeatWords{})
 	assert.ErrorIs(t, err, ErrUnhooked, "with no down beat an unhooked beat is not sent")
@@ -136,6 +131,7 @@ func TestTheBeatSaysUnhooked(t *testing.T) {
 func TestNotificationsHoldTheBusAsComms(t *testing.T) {
 	t.Parallel()
 	r := newHookRig(t, hook.Comms)
+	r.h.Hook(t, "bob", hook.Comms)
 	r.dh.step(context.Background())
 	ok, why := r.dh.ok()
 	assert.True(t, ok, why)
@@ -218,14 +214,13 @@ func TestAnUnhookStandsAcrossADaemonRestart(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
-	r.dh.beatAnswered(nil)
+	r.h.Hook(t, "bob", hook.Friend)
 	r.dh.step(ctx)
 	ok, why := r.dh.ok()
 	require.True(t, ok, why)
 	r.h.Unhook(t, "bob")
 
 	r.restart(t, hook.Friend)
-	r.dh.beatAnswered(nil)
 	r.dh.step(ctx)
 	ok, why = r.dh.ok()
 	assert.False(t, ok)
@@ -234,8 +229,7 @@ func TestAnUnhookStandsAcrossADaemonRestart(t *testing.T) {
 	r.dh.step(ctx)
 	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State, "and every later step too")
 
-	_, _, err := r.h.Store.HookAs(ctx, "bob", hook.Friend, "nova-hook")
-	require.NoError(t, err)
+	r.h.Hook(t, "bob", hook.Friend)
 	r.dh.step(ctx)
 	ok, why = r.dh.ok()
 	assert.True(t, ok, why)
@@ -249,18 +243,19 @@ func TestALostRecordReArmsUnderARunningDaemon(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
-	r.dh.beatAnswered(nil)
+	r.h.Hook(t, "bob", hook.Friend)
 	r.dh.step(ctx)
 	require.Equal(t, hook.StateProven, r.h.State(t, "bob").State)
 
 	r.h.MR.FlushAll()
 	r.dh.step(ctx)
-	r.h.Evidence(t, "bob") // the flush took the heartbeat's rows too: a server passing again and her answer
+	assert.Equal(t, hook.StateLive, r.h.State(t, "bob").State, "the running daemon armed the lost record again")
+	assert.Equal(t, hook.Friend, r.h.State(t, "bob").Role)
+	r.h.Hook(t, "bob", hook.Friend) // the flush took the heartbeat's rows too: a server passing again and her answer
 	r.dh.step(ctx)
 	ok, why := r.dh.ok()
 	assert.True(t, ok, why)
-	assert.Equal(t, hook.StateProven, r.h.State(t, "bob").State, "the running daemon armed the lost record again")
-	assert.Equal(t, hook.Friend, r.h.State(t, "bob").Role)
+	assert.Equal(t, hook.StateProven, r.h.State(t, "bob").State)
 }
 
 // TestASessionProofNeedsHerSessionPresent pins a session harness's bus push
@@ -303,7 +298,7 @@ func TestAPerCardFriendsBusPushIsTheDaemonsRoundTrip(t *testing.T) {
 	h := newHookRig(t, hook.Friend)
 	w := world{now: func() time.Time { return h.now }, hookStore: func(bus.Store) (hook.Store, error) { return h.h.Store, nil }}
 	h.dh = w.newDaemonHook(nil, "bob", hook.Friend, roundTripProof(r.store), func(string) {})
-	h.dh.beatAnswered(nil)
+	h.h.Hook(t, "bob", hook.Friend)
 	h.dh.step(ctx)
 	ok, why := h.dh.ok()
 	assert.True(t, ok, "with no session at all, her lanes take: %s", why)
