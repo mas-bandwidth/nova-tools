@@ -1222,7 +1222,7 @@ From: card from the sprint store (2026-10-10); cards moved out of the sprint (wo
 
 Model the friend daemon's one-shot lanes, message delivery and acks, presence across batch turns, the session check file and the lane governor, and check them with TLC.
 
-Target: v1.3
+Target: v1.5
 
 From: card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)
 

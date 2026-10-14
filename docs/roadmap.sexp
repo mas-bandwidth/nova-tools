@@ -1721,7 +1721,7 @@
    :text "Model the friend daemon's one-shot lanes, message delivery and acks, presence across batch
     turns, the session check file and the lane governor, and check them with TLC."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-harness-version-pinned-under-the-wall" :group "friends"
    :title "Pin the friend harness version, including under the lane wall"
