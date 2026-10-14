@@ -147,7 +147,7 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 	}
 	code, shown, errs := h.run(t, "route", "show", "flash-luna6-opencode", "--pg", dsn)
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, shown, " note=by\\x20hand ", "the dry run wrote nothing")
+	assert.Contains(t, shown, " note=\"by hand\" ", "the dry run wrote nothing")
 
 	// the real run
 	out, code, calls = runSeed(t, dir, "m7")
@@ -166,17 +166,17 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 		assert.Contains(t, wrote, "changed=note\n", "%v", c)
 	}
 	for name, want := range map[string][]string{
-		"flash-luna6-opencode":          {"2\\x20ok\\x20of\\x2012"},
-		"flash-luna6-openrouter":        {"4\\x20ok\\x20of\\x2014"},
-		"flash-mimo26pro-openrouter":    {"3\\x20ok\\x20of\\x207", "1200\\x20s\\x20deadline"},
-		"flash-nemotron-openrouter":     {"4\\x20ok\\x20of\\x2052", "48\\x20ended\\x20with\\x20no\\x20result"},
-		"flash-gemini31lite-openrouter": {"34\\x20ok\\x20of\\x2058"},
-		"flash-mercury-openrouter":      {"use\\x20mercury\\x20only\\x20direct", "10\\x20ok\\x20of\\x2016"},
+		"flash-luna6-opencode":          {"2 ok of 12"},
+		"flash-luna6-openrouter":        {"4 ok of 14"},
+		"flash-mimo26pro-openrouter":    {"3 ok of 7", "1200 s deadline"},
+		"flash-nemotron-openrouter":     {"4 ok of 52", "48 ended with no result"},
+		"flash-gemini31lite-openrouter": {"34 ok of 58"},
+		"flash-mercury-openrouter":      {"use mercury only direct", "10 ok of 16"},
 	} {
 		code, shown, errs := h.run(t, "route", "show", name, "--pg", dsn)
 		require.Equal(t, 0, code, errs)
 		assert.Contains(t, shown, " enabled=false ", "%s stays disabled", name)
-		assert.NotContains(t, shown, "by\\x20hand", "%s: the note is replaced", name)
+		assert.NotContains(t, shown, "by hand", "%s: the note is replaced", name)
 		assert.Contains(t, shown, "nova-tools#5101", name)
 		for _, w := range want {
 			assert.Contains(t, shown, w, name)
@@ -186,7 +186,7 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 	assert.Contains(t, shown, " enabled=true ")
 	assert.Contains(t, shown, " note=- ", "a route that is on got no note")
 	_, shown, _ = h.run(t, "machine", "show", "m7", "--pg", dsn)
-	assert.Contains(t, shown, "held\\x201:46\\x20PM\\x20ET\\x202026-10-02:\\x20reads\\x20kernel-bound")
+	assert.Contains(t, shown, "held 1:46 PM ET 2026-10-02: reads kernel-bound")
 	assert.Contains(t, shown, " width=8 ", "the script changes no width")
 	_, hist, _ := h.run(t, "route", "history", "flash-luna6-opencode", "--pg", dsn)
 	assert.Equal(t, 2, strings.Count(hist, "HISTORY id="), "the add (disabled by hand, with its note) and the script's note, and no row from the dry run: %s", hist)

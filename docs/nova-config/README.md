@@ -162,8 +162,8 @@ CONFIG ADD kind=machine name=m2 rev=1
 nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --tla true --as f1
 CONFIG ADD kind=machine name=m1 rev=2
 nova-config machine list
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 roles=bench width=16 tla=true note=-
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 roles=bench width=32 tla=false note=-
+MACHINE OK name=m1 user=nova seat=m1 slots=64 runners=1 roles=bench width=16 tla=true note=-
+MACHINE OK name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 roles=bench width=32 tla=false note=-
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -187,11 +187,11 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis db1:6380
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 roles=bench width=16 tla=true note=- beat=none
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 roles=bench width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=<t>
+MACHINE OK name=m1 user=nova seat=m1 slots=64 runners=1 roles=bench width=16 tla=true note=- beat=none
+MACHINE OK name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 roles=bench width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=<t>
 CONFIG LIST kind=machine rows=2
 nova-config machine list --max 1
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
+MACHINE OK name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
 CONFIG MORE kind=machine shown=1 total=2 --max <n> raises the ceiling, --max 0 lists all
 CONFIG LIST kind=machine rows=2
 ```
@@ -256,7 +256,7 @@ what nova-bus reads when `NOVA_BUS_REDIS` is unset, so no friend types it.
 nova-config fleet set --store m2 --coordinator m1 --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as f1
 CONFIG SET kind=fleet name=fleet rev=3 changed=coordinator,pg_dsn,redis_port,store
 nova-config fleet show
-FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_config@localhost:5432/nova bus=- created=<t> updated=<t>
+FLEET OK name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_config@localhost:5432/nova bus=- created=<t> updated=<t>
 ```
 
 ### friend
@@ -272,7 +272,7 @@ CONFIG ADD kind=friend name=f1 rev=4
 nova-config friend set f1 --roles builder,reader --width 4 --as f1
 CONFIG SET kind=friend name=f1 rev=5 changed=roles,width
 nova-config friend list
-FRIEND name=f1 tiers=frontier,pro roles=builder,reader width=4 mode=one-shot
+FRIEND OK name=f1 tiers=frontier,pro roles=builder,reader width=4 mode=one-shot
 CONFIG LIST kind=friend rows=1
 nova-config friend history f1
 HISTORY id=4 kind=friend name=f1 op=add actor=f1 at=<t> mode=one-shot roles=builder tiers=frontier,pro width=16
@@ -306,7 +306,7 @@ it is the handover; a friend the sprint names cannot be removed.
 nova-config sprint set --coordinator f1 --as f1
 CONFIG SET kind=sprint name=sprint rev=6 changed=coordinator
 nova-config sprint show
-SPRINT name=sprint coordinator=f1 created=<t> updated=<t>
+SPRINT OK name=sprint coordinator=f1 created=<t> updated=<t>
 ```
 
 ### loop
@@ -322,13 +322,13 @@ CONFIG ADD kind=loop name=reader-m1 rev=12
 nova-config loop add refresh-m1 --machine m1 --argv '["/opt/bin/refresh","--once"]' --every 60 --as a1
 CONFIG ADD kind=loop name=refresh-m1 rev=13
 nova-config loop list
-LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true
-LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false enabled=true
+LOOP OK name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true
+LOOP OK name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false enabled=true
 CONFIG LIST kind=loop rows=2
 nova-config loop set reader-m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader","--width","16"]' --as a1
 nova-config loop set REFUSED: loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>; run: nova-config loop show reader-m1
 nova-config machine show m1
-MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 roles=bench width=4 tla=false note=- created=<t> updated=<t> loops=reader-m1,refresh-m1
+MACHINE OK name=m1 user=u1 seat=s-m1 slots=4 runners=0 roles=bench width=4 tla=false note=- created=<t> updated=<t> loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a

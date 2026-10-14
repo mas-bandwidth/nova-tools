@@ -116,13 +116,13 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "friend", "set", "rowan", "--width", "16", "--roles", "")
 	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,width\n", out, "friend set: %q", out)
 	out, _ = r.run(t, 0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=- width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated)\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND OK name=rowan tiers=frontier,pro roles=- width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated)\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "studio")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- created="), "machine show: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE OK name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- created="), "machine show: %q", out)
 	// The fleet row: there since migrate, set without a name, a machine it
 	// names cannot be removed.
 	out, _ = r.run(t, 0, "fleet", "show")
-	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- loops_dir=~/nova-bench/loops created="), "fleet show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FLEET OK name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- loops_dir=~/nova-bench/loops created="), "fleet show: %q", out)
 	_, errs = r.run(t, 1, "fleet", "set", "--store", "space")
 	require.Equal(t, "nova-config fleet set REFUSED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
 	out, _ = r.run(t, 0, "fleet", "set", "--coordinator", "studio")
@@ -239,9 +239,9 @@ func TestApplyEndToEnd(t *testing.T) {
 	// machine that has not beaten; nothing is stored.
 	r.client.HSet(ctx, config.BeatKey("hulk"), "host", "hulk", "at", "1790000000000", "load1", "0.5", "ncpu", "64", "cpu", "3")
 	out, _ = r.run(t, 0, "machine", "list")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 roles=bench width=- tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=0 roles=bench width=- tla=false note=- beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list with the live facts: %q", out)
+	require.Equal(t, "MACHINE OK name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 roles=bench width=- tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE OK name=studio user=glenn seat=studio slots=64 runners=0 roles=bench width=- tla=false note=- beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list with the live facts: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "hulk")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 roles=bench width=- tla=false note=- created="), "machine show with the live facts: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE OK name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 roles=bench width=- tla=false note=- created="), "machine show with the live facts: %q", out)
 	require.True(t, strings.HasSuffix(out, " os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\n"), "machine show with the live facts: %q", out)
 	gotCheck282 := r.client.HGet(ctx, "machine:hulk", "cores").Val()
 	require.Equal(t, "", gotCheck282, "a live fact was stored in the registry hash")

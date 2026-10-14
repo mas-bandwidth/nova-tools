@@ -47,15 +47,15 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "list prints every field in declaration order, a price not set as a dash",
 			args: []string{"route", "list"},
-			out: "ROUTE name=pro-deepseek-direct tier=pro provider=deepseek model=deepseek-v4 harness=opencode tokens=400000 usd=- deadline=1800 enabled=true first=false" + noPrices + "\n" +
-				"ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 harness=opencode tokens=400000 usd=- deadline=1800 enabled=true first=false" + noPrices + "\n" +
-				"ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 harness=opencode tokens=300000 usd=- deadline=1800 enabled=true first=false" + noPrices + "\n" +
+			out: "ROUTE OK name=pro-deepseek-direct tier=pro provider=deepseek model=deepseek-v4 harness=opencode tokens=400000 usd=- deadline=1800 enabled=true first=false" + noPrices + "\n" +
+				"ROUTE OK name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 harness=opencode tokens=400000 usd=- deadline=1800 enabled=true first=false" + noPrices + "\n" +
+				"ROUTE OK name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 harness=opencode tokens=300000 usd=- deadline=1800 enabled=true first=false" + noPrices + "\n" +
 				"CONFIG LIST kind=route rows=3\n",
 		},
 		{
 			name: "show carries the stamps",
 			args: []string{"route", "show", "pro-grok-openrouter"},
-			out:  "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 harness=opencode tokens=300000 usd=- deadline=1800 enabled=true first=false" + noPrices + " created=",
+			out:  "ROUTE OK name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 harness=opencode tokens=300000 usd=- deadline=1800 enabled=true first=false" + noPrices + " created=",
 			pre:  true,
 		},
 		{
@@ -68,7 +68,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "show prints the sheet",
 			args: []string{"route", "show", "pro-deepseek-opencode"},
-			out: "ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 harness=opencode tokens=400000 usd=- deadline=1800 enabled=true first=false price_input=0.27 price_cache_read=0.07 " +
+			out: "ROUTE OK name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 harness=opencode tokens=400000 usd=- deadline=1800 enabled=true first=false price_input=0.27 price_cache_read=0.07 " +
 				"price_cache_write=- price_output=1.1 reasoning_as_output=true long_context=128000 price_input_long=0.54 price_output_long=2.2 price_request=- billing=metered " +
 				"gateway_percent=5 price_source=https://example.com/pricing price_as_of=2026-10-01 note=- created=",
 			pre: true,
@@ -140,12 +140,12 @@ func TestFrontierRouteVerbsKeepThreeTierRows(t *testing.T) {
 	}
 	code, out, errs := h.run(t, "route", "list")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "ROUTE name=frontier-a tier=frontier provider=p model=m harness=opencode tokens=0 usd=- deadline=60 enabled=true first=false"+noPrices+"\n"+
-		"ROUTE name=pro-a tier=frontier provider=p model=m harness=opencode tokens=0 usd=- deadline=60 enabled=true first=false"+noPrices+"\n"+
+	assert.Equal(t, "ROUTE OK name=frontier-a tier=frontier provider=p model=m harness=opencode tokens=0 usd=- deadline=60 enabled=true first=false"+noPrices+"\n"+
+		"ROUTE OK name=pro-a tier=frontier provider=p model=m harness=opencode tokens=0 usd=- deadline=60 enabled=true first=false"+noPrices+"\n"+
 		"CONFIG LIST kind=route rows=2\n", out)
 	code, out, errs = h.run(t, "tier", "list")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "TIER name=flash routes=-\nTIER name=heavy routes=-\nTIER name=pro routes=-\nCONFIG LIST kind=tier rows=3\n", out)
+	assert.Equal(t, "TIER OK name=flash routes=-\nTIER OK name=heavy routes=-\nTIER OK name=pro routes=-\nCONFIG LIST kind=tier rows=3\n", out)
 }
 
 // An enabled route with no price refuses apply and apply --check: the one line
@@ -345,7 +345,7 @@ func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 	code, out, _ = h.run(t, "tier", "list")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "TIER name=flash routes=a,b,b\nTIER name=heavy routes=-\nTIER name=pro routes=-\nCONFIG LIST kind=tier rows=3\n", out)
+	assert.Equal(t, "TIER OK name=flash routes=a,b,b\nTIER OK name=heavy routes=-\nTIER OK name=pro routes=-\nCONFIG LIST kind=tier rows=3\n", out)
 	code, _, errs = h.run(t, "apply", "--kind", "tier")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, "a,b,b", h.redis.views["tier"]["flash"]["routes"])
