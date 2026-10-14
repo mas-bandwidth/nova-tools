@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
@@ -155,7 +155,7 @@ func (r *nativeRunner) prune(now time.Time) (removed, kept int) {
 		}
 		all = append(all, ended{name: name, at: at})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].at.After(all[j].at) })
+	slices.SortFunc(all, func(a, b ended) int { return b.at.Compare(a.at) })
 	for i, e := range all {
 		if i < keepFailed {
 			kept++

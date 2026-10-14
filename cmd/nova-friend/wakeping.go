@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -198,11 +199,7 @@ func (w world) wakePass(ctx context.Context, b *bus.Bus, me string, targets []st
 	if ctx.Err() != nil { // interrupted: no one is called deaf for a wait that was cut
 		return len(targets), nil, nil
 	}
-	deaf := make([]string, 0, len(waiting))
-	for n := range waiting {
-		deaf = append(deaf, n)
-	}
-	slices.Sort(deaf)
+	deaf := slices.Sorted(maps.Keys(waiting))
 	return len(targets), deaf, nil
 }
 

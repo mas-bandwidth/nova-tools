@@ -45,7 +45,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -289,7 +289,7 @@ func walkChecked(dir *os.File, vr volumeReader, comps []string, rel string, out 
 	if err != nil {
 		return err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	for _, d := range entries {
 		t := d.Type()
 		if !t.IsDir() && !t.IsRegular() {

@@ -9,6 +9,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -20,7 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -487,7 +488,7 @@ func readRecords(scratch string) []worktreeRecord {
 			out = append(out, rec)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
+	slices.SortFunc(out, func(a, b worktreeRecord) int { return cmp.Compare(a.id, b.id) })
 	return out
 }
 

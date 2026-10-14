@@ -32,12 +32,13 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -186,11 +187,8 @@ func printDenied(stderr io.Writer, denied []deniedPath, max int, stat statFunc) 
 	if len(denied) == 0 {
 		return
 	}
-	sort.SliceStable(denied, func(i, j int) bool {
-		if denied[i].Path != denied[j].Path {
-			return denied[i].Path < denied[j].Path
-		}
-		return denied[i].Op < denied[j].Op
+	slices.SortStableFunc(denied, func(a, b deniedPath) int {
+		return cmp.Or(cmp.Compare(a.Path, b.Path), cmp.Compare(a.Op, b.Op))
 	})
 	shown := denied
 	if max > 0 && len(shown) > max {

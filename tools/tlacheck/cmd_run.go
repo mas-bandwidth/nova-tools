@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -310,7 +310,7 @@ func explainMissing(missing *tlc.MissingError, dropped []tlc.Dropped, root, keep
 		}
 		absent = append(absent, c)
 	}
-	sort.Strings(groups)
+	slices.Sort(groups)
 	var parts []string
 	if len(stale) > 0 {
 		var cmds []string

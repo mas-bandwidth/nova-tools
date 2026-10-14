@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -74,7 +74,7 @@ func doSums(e env, args []string) int {
 			want = append(want, artifactName(n, stamp, t))
 		}
 	}
-	sort.Strings(want)
+	slices.Sort(want)
 	if len(want) == 0 {
 		fmt.Fprintln(e.stderr, "refusing: the shipped set is empty (cmd/*/ x release-targets)")
 		return 1
@@ -89,7 +89,7 @@ func doSums(e env, args []string) int {
 	for _, ent := range entries {
 		have = append(have, ent.Name())
 	}
-	sort.Strings(have)
+	slices.Sort(have)
 	if missing, extra := diffSorted(want, have); len(missing)+len(extra) > 0 {
 		fmt.Fprintf(e.stdout, "--- shipped set\n+++ %s\n", dist)
 		for _, n := range missing {

@@ -332,17 +332,14 @@ func memberStatusFile(as, root string) func(word string) error {
 // beat that carries 0 for want of a reading sends a plain --load 0, never a flag the sprint
 // would refuse.
 func probeLoadUnmeasured(send func(context.Context, ...[]string) ([]sprintwire.Result, error)) func() bool {
-	var once sync.Once
-	var listed bool
-	return func() bool {
-		once.Do(func() {
-			res, err := send(context.Background(), []string{"fleet", "beat", "-h"})
-			if err == nil && len(res) > 0 {
-				listed = strings.Contains(res[0].Stdout, "--load-unmeasured") || strings.Contains(res[0].Stderr, "--load-unmeasured")
-			}
-		})
-		return listed
-	}
+	listed := sync.OnceValue(func() bool {
+		res, err := send(context.Background(), []string{"fleet", "beat", "-h"})
+		if err == nil && len(res) > 0 {
+			return strings.Contains(res[0].Stdout, "--load-unmeasured") || strings.Contains(res[0].Stderr, "--load-unmeasured")
+		}
+		return false
+	})
+	return listed
 }
 
 // exitReplaced is member's exit when its binary was replaced under it: not 0, so

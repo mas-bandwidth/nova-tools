@@ -1,12 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -95,7 +96,7 @@ func judge(cs []listed, now time.Time, grace time.Duration, ownerID string) (out
 		}
 		out = append(out, v)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
+	slices.SortFunc(out, func(a, b verdict) int { return cmp.Compare(a.id, b.id) })
 	return out, foreign
 }
 

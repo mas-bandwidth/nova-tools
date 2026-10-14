@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record"
@@ -65,7 +64,7 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 			kind, _, _ := strings.Cut(s, ":")
 			kinds[kind] = true
 		}
-		sort.Strings(srcs)
+		slices.Sort(srcs)
 		a.e.Sources = strings.Join(srcs, ",")
 		a.e.Provider = strings.Join(slices.Sorted(maps.Keys(kinds)), ",")
 		out = append(out, a.e)
@@ -120,7 +119,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 				paths = append(paths, m)
 			}
 		}
-		sort.Strings(paths)
+		slices.Sort(paths)
 	}
 	// The seat is resolved under --dry-run too, so a dry run refuses a login the real run
 	// would refuse; only the dial and the write are skipped.

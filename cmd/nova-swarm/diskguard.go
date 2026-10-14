@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -532,7 +532,7 @@ func (g *guard) sweep(slots string, entries []os.DirEntry) {
 			ended = append(ended, launch{name, at})
 		}
 	}
-	sort.Slice(ended, func(i, j int) bool { return ended[i].at.After(ended[j].at) })
+	slices.SortFunc(ended, func(a, b launch) int { return b.at.Compare(a.at) })
 	for i, l := range ended {
 		if i < guardKeepNewest {
 			continue

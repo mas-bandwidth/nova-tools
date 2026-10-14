@@ -8,7 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -214,7 +214,7 @@ func contextHash(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 	h := sha256.New()
 	for _, f := range files {
 		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(f)))

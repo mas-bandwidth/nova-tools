@@ -4,13 +4,13 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"runtime"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -176,11 +176,8 @@ func topTerms(c *memindex.Corpus, n int) []string {
 			terms = append(terms, t)
 		}
 	}
-	sort.Slice(terms, func(i, j int) bool {
-		if c.DF[terms[i]] != c.DF[terms[j]] {
-			return c.DF[terms[i]] > c.DF[terms[j]]
-		}
-		return terms[i] < terms[j]
+	slices.SortFunc(terms, func(a, b string) int {
+		return cmp.Or(cmp.Compare(c.DF[b], c.DF[a]), cmp.Compare(a, b))
 	})
 	if len(terms) > n {
 		terms = terms[:n]
