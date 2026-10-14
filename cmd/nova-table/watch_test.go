@@ -89,16 +89,12 @@ func TestWatchDrawsInPlaceTheTableAndNothingElse(t *testing.T) {
 	ticks <- clock.Add(time.Second)
 	<-out.drawn
 	cancel()
-	{
-		code := <-done
-		require.EqualValues(t, 0, code, "watch exited %d", code)
-	}
+	code := <-done
+	require.EqualValues(t, 0, code, "watch exited %d", code)
 	want := clearScreen + ntable.Render(tables[0], ntable.RenderOpts{Title: tables[0].Name}) +
 		clearScreen + ntable.Render(tables[1], ntable.RenderOpts{Title: tables[1].Name})
-	{
-		got := out.buf.String()
-		require.Equal(t, want, got, "watched output:\n%q\nwant:\n%q", got, want)
-	}
+	got := out.buf.String()
+	require.Equal(t, want, got, "watched output:\n%q\nwant:\n%q", got, want)
 	require.EqualValues(t, 0, errOut.Len(), "stderr: %q", errOut.String())
 }
 
@@ -137,28 +133,22 @@ func TestWatchKeepsTheLastGoodTableWithOneUnreachableLine(t *testing.T) {
 		<-out.drawn
 	}
 	cancel()
-	{
-		code := <-done
-		require.EqualValues(t, 0, code, "watch exited %d", code)
-	}
+	code := <-done
+	require.EqualValues(t, 0, code, "watch exited %d", code)
 	want := clearScreen + "store unreachable since 03:00:00\n" +
 		clearScreen + table +
 		clearScreen + table + "store unreachable since 03:00:14\n" +
 		clearScreen + table + "store unreachable since 03:00:14\n" +
 		clearScreen + table
 	require.NotContains(t, out.buf.String(), "stale", "watched output holds a stale counter:\n%q", out.buf.String())
-	{
-		got := out.buf.String()
-		require.Equal(t, want, got, "watched output:\n%q\nwant:\n%q", got, want)
-	}
+	got := out.buf.String()
+	require.Equal(t, want, got, "watched output:\n%q\nwant:\n%q", got, want)
 	wantErr := "nova-table watch: dial tcp: connection refused; the last good table stands until it answers\n" +
 		"nova-table watch: Redis answers again\n" +
 		"nova-table watch: dial tcp: connection refused; the last good table stands until it answers\n" +
 		"nova-table watch: Redis answers again\n"
-	{
-		got := errOut.String()
-		require.Equal(t, wantErr, got, "stderr:\n%q\nwant:\n%q", got, wantErr)
-	}
+	got = errOut.String()
+	require.Equal(t, wantErr, got, "stderr:\n%q\nwant:\n%q", got, wantErr)
 }
 
 // TestWatchPublishesToAFileByRename: with --out every tick writes the text
@@ -180,10 +170,8 @@ func TestWatchPublishesToAFileByRename(t *testing.T) {
 	}()
 	ticks <- time.Time{}
 	cancel()
-	{
-		code := <-done
-		require.EqualValues(t, 0, code, "watch exited %d", code)
-	}
+	code := <-done
+	require.EqualValues(t, 0, code, "watch exited %d", code)
 	body, err := os.ReadFile(out)
 	require.NoError(t, err, "published file: %q %v; want the table", body, err)
 	require.Equal(t, table, string(body), "published file: %q %v; want the table", body, err)
@@ -223,10 +211,8 @@ func TestWatchOutputFailureStopsWithSinkRemedy(t *testing.T) {
 		for _, want := range []string{"--out:", out, "next: make --out", "parent directory present and writable"} {
 			require.Contains(t, stderr.String(), want, "stderr %q lacks %q", stderr.String(), want)
 		}
-		{
-			_, err := os.Stat(out)
-			require.ErrorIs(t, err, os.ErrNotExist, "failed publication left target: %v", err)
-		}
+		_, err := os.Stat(out)
+		require.ErrorIs(t, err, os.ErrNotExist, "failed publication left target: %v", err)
 	})
 }
 
@@ -268,45 +254,31 @@ func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 	empty := ntable.Table{Name: "empty", Columns: a.Columns}
 	ra, rb := ntable.Render(a, ntable.RenderOpts{Title: "demo"}), ntable.Render(b, ntable.RenderOpts{Title: "other"})
 	re := ntable.Render(empty, ntable.RenderOpts{Title: "empty"})
-	{
-		got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{})
-		require.Equal(t, ra+"\n"+re+"\n"+rb, got, "two tables and an empty one:\n%q", got)
-	}
-	{
-		got := renderAll("SPRINT", []ntable.Table{a}, ntable.RenderOpts{})
-		require.Equal(t, "SPRINT\n\n"+ra, got, "with a title:\n%q", got)
-	}
-	{
-		got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{})
-		require.Equal(t, re, got, "an empty table alone renders %q, want its header and footer %q", got, re)
-		require.NotEmpty(t, re, "an empty table alone renders %q, want its header and footer %q", got, re)
-	}
+	got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{})
+	require.Equal(t, ra+"\n"+re+"\n"+rb, got, "two tables and an empty one:\n%q", got)
+	got = renderAll("SPRINT", []ntable.Table{a}, ntable.RenderOpts{})
+	require.Equal(t, "SPRINT\n\n"+ra, got, "with a title:\n%q", got)
+	got = renderAll("", []ntable.Table{empty}, ntable.RenderOpts{})
+	require.Equal(t, re, got, "an empty table alone renders %q, want its header and footer %q", got, re)
+	require.NotEmpty(t, re, "an empty table alone renders %q, want its header and footer %q", got, re)
 	require.NotContains(t, ra, "\n\n", "%v", "a render holds a blank line")
 }
 
 func TestViewSummaryUsesAllKnownCounts(t *testing.T) {
 	t.Parallel()
-	{
-		got := ntable.SummaryLine(ntable.View{Summary: "ready"}, demoTable(0))
-		require.Equal(t, "0/0 0.0% -> ETA", got, "empty known counts: %s", got)
-	}
+	got := ntable.SummaryLine(ntable.View{Summary: "ready"}, demoTable(0))
+	require.Equal(t, "0/0 0.0% -> ETA", got, "empty known counts: %s", got)
 	tb := demoTable(3)
 	tb.Hidden = []string{"ready"}
 	tb.Rows[0].Hidden = true
-	{
-		got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb)
-		require.Equal(t, "3/3 100.0% -> ETA", got, "hidden counts: %s", got)
-	}
+	got = ntable.SummaryLine(ntable.View{Summary: "ready"}, tb)
+	require.Equal(t, "3/3 100.0% -> ETA", got, "hidden counts: %s", got)
 	tb.Rows[0].Cells[1].Unread = true
-	{
-		got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb)
-		require.Equal(t, "?/? ? -> ETA", got, "unknown count: %s", got)
-	}
+	got = ntable.SummaryLine(ntable.View{Summary: "ready"}, tb)
+	require.Equal(t, "?/? ? -> ETA", got, "unknown count: %s", got)
 	tb.Rows[0].Cells[1].Unread = false
-	{
-		got := ntable.SummaryLine(ntable.View{Summary: "missing"}, tb)
-		require.Equal(t, "?/? ? -> ETA", got, "missing column: %s", got)
-	}
+	got = ntable.SummaryLine(ntable.View{Summary: "missing"}, tb)
+	require.Equal(t, "?/? ? -> ETA", got, "missing column: %s", got)
 }
 
 // A view's frame: while the view has a state, the summary line is that state
@@ -426,40 +398,26 @@ func TestWatchCheckFlagWired(t *testing.T) {
 func TestFormatStall(t *testing.T) {
 	t.Parallel()
 	err1 := fmt.Errorf("table demo: %w: [row col id duplicate place]; run: nova-table show 'demo'", ntable.ErrDrift)
-	{
-		got := formatStall("demo", err1)
-		require.Equal(t, "stall: demo: member record and owned set disagree: [row col id duplicate place]", got, "unexpected format: %q", got)
-	}
+	got := formatStall("demo", err1)
+	require.Equal(t, "stall: demo: member record and owned set disagree: [row col id duplicate place]", got, "unexpected format: %q", got)
 	err2 := fmt.Errorf("table demo: %w: requested 1, active 2; run: nova-table show 'demo'", ntable.ErrStale)
-	{
-		got := formatStall("demo", err2)
-		require.Equal(t, "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2", got, "unexpected format: %q", got)
-	}
+	got = formatStall("demo", err2)
+	require.Equal(t, "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2", got, "unexpected format: %q", got)
 	err3 := errors.New("connection failed")
-	{
-		got := formatStall("demo", err3)
-		require.Equal(t, "stall: demo: connection failed", got, "unexpected format: %q", got)
-	}
+	got = formatStall("demo", err3)
+	require.Equal(t, "stall: demo: connection failed", got, "unexpected format: %q", got)
 }
 
 func TestAppendStalls(t *testing.T) {
 	t.Parallel()
-	{
-		got := appendStalls("table\n", nil)
-		require.Equal(t, "table\n", got, "empty stalls: got %q", got)
-	}
-	{
-		got := appendStalls("table\n", []string{"stall: a: b"})
-		require.Equal(t, "table\nstall: a: b\n", got, "with trailing newline: got %q", got)
-	}
-	{
-		got := appendStalls("table", []string{"stall: a: b"})
-		require.Equal(t, "table\nstall: a: b\n", got, "without trailing newline: got %q", got)
-	}
-	{
-		got := appendStalls("", []string{"stall: a: b"})
-		require.Equal(t, "stall: a: b\n", got, "empty text: got %q", got)
-	}
+	got := appendStalls("table\n", nil)
+	require.Equal(t, "table\n", got, "empty stalls: got %q", got)
+	got = appendStalls("table\n", []string{"stall: a: b"})
+	require.Equal(t, "table\nstall: a: b\n", got, "with trailing newline: got %q", got)
+	got = appendStalls("table", []string{"stall: a: b"})
+	require.Equal(t, "table\nstall: a: b\n", got, "without trailing newline: got %q", got)
+	got = appendStalls("", []string{"stall: a: b"})
+	require.Equal(t, "stall: a: b\n", got, "empty text: got %q", got)
 }
 
 // A stored view's frame draws every table and every row, all-zero or not.
