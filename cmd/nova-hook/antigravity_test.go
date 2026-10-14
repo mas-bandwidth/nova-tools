@@ -813,4 +813,3 @@ func TestAntigravityPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
 		})
 	}
 }
-

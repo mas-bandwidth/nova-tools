@@ -568,11 +568,11 @@ func readProtoVarint(b []byte) (uint64, int) {
 	var v uint64
 	var shift uint
 	for i := 0; i < len(b) && i < 10; i++ {
-		 v |= uint64(b[i]&0x7f) << shift
-		 if b[i] < 0x80 {
-			 return v, i + 1
-		 }
-		 shift += 7
+		v |= uint64(b[i]&0x7f) << shift
+		if b[i] < 0x80 {
+			return v, i + 1
+		}
+		shift += 7
 	}
 	return 0, 0
 }
