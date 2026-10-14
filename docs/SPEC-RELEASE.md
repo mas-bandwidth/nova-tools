@@ -573,6 +573,17 @@ it passes the launchd agents directory and the system-domain LaunchDaemons direc
 
 *Test: `TestAdoptRunsThePlayAndRefusesAHalfMove`.*
 
+The loops play (`fleet/loops.yml`) builds each Linux unit's state before the
+`ansible.builtin.systemd_service` call. A parenthesised ternary chained to a second `if ... else` inside the
+module's args stops ansible-core's templar at the `else` ("expected token ')', got 'else'"), so the task never
+reaches systemd and the host keeps the old argv; the value is built from `loop_unit_changed`,
+`loop_unit_wants_restart` and `loop_unit_state` instead. The play ends with a recap gate: a unit whose file
+changed and whose restart did not run fails the host, so the release checklist reads the recap per host, never
+the exit code alone.
+
+*Test: `TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs`,
+`TestLoopsPlayStateExpressionRendersThroughTheTemplar`.*
+
 ## 16. `release check` is the gate, and a release ships when it says OK
 
 ### release-check-frame

@@ -56,12 +56,12 @@
   gather_facts: true
   gather_subset: [min]
   vars:
-    loop_darwin: "{{ ansible_system == 'Darwin' }}"
+    loop_darwin: "{{ ansible_facts['system'] == 'Darwin' }}"
     loop_user_dir: "{{ nova_home ~ ('/Library/LaunchAgents' if loop_darwin else '/.config/systemd/user') }}"
     loop_system_dir: "{{ '/Library/LaunchDaemons' if loop_darwin else '/etc/systemd/system' }}"
     loop_dir: "{{ loop_system_dir if loop_system else loop_user_dir }}"
     loop_other_dir: "{{ loop_user_dir if loop_system else loop_system_dir }}"
-    loop_domain: "{{ 'system' if loop_system else 'gui/' ~ ansible_user_uid }}"
+    loop_domain: "{{ 'system' if loop_system else 'gui/' ~ ansible_facts['user_uid'] }}"
     loop_patterns: "{{ ['com.nova.loop.*.plist'] if loop_darwin else ['nova-loop-*.service', 'nova-loop-*.timer'] }}"
     # The disk guard every machine runs (nova-swarm disk-guard, docs/FLEET.md): a
     # periodic row this play adds beside the records, its --root each root a
@@ -106,7 +106,7 @@
       {{ (with_guard | selectattr('name', 'in', loop_only) | list) if loop_only else with_guard }}
     loop_names: "{{ loop_records | map(attribute='name') | list }}"
     loop_scope: "{{ 'system' if loop_system else 'user' }}"
-    loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}" }
+    loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}" }
     # The records that run a member or a reader (nova-swarm member, after any
     # env words): their units stop the member by draining it (SIGTERM, then
     # nova_member_stop_timeout), never by killing its cards.
@@ -176,7 +176,7 @@
         quiet: true
 
     - name: does the login have a GUI launchd domain (darwin, nova_launchd_domain auto)
-      ansible.builtin.command: "launchctl print gui/{{ ansible_user_uid }}"
+      ansible.builtin.command: "launchctl print gui/{{ ansible_facts['user_uid'] }}"
       register: loop_gui
       changed_when: false
       # ignored: a non-zero exit is the answer "no GUI domain", read as .rc below
@@ -198,7 +198,7 @@
       ansible.builtin.file: { path: "{{ nova_home }}/nova-bench/loops", state: directory, mode: "0755" }
 
     - name: the launchd log directory (darwin)
-      ansible.builtin.file: { path: "{{ ansible_env.HOME }}/Library/Logs", state: directory, mode: "0755" }
+      ansible.builtin.file: { path: "{{ ansible_facts['env']['HOME'] }}/Library/Logs", state: directory, mode: "0755" }
       when: loop_darwin
 
     - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
@@ -374,7 +374,7 @@
           or item.name in loop_restart)
 
     - name: unload the retired (darwin; one launchd does not hold is already out)
-      ansible.builtin.command: "launchctl bootout {{ 'system' if item.system else 'gui/' ~ ansible_user_uid }}/com.nova.loop.{{ item.name }}"
+      ansible.builtin.command: "launchctl bootout {{ 'system' if item.system else 'gui/' ~ ansible_facts['user_uid'] }}/com.nova.loop.{{ item.name }}"
       loop: "{{ loop_retire }}"
       loop_control: { label: "{{ item.name }}" }
       register: loop_bootout
@@ -385,21 +385,33 @@
 
     # linux: systemd. A kept-alive loop is its service; a periodic loop is its
     # timer, which starts the oneshot service every n seconds.
+    # The state is built before the module call, a short named variable per
+    # branch: the module's args hold no inline conditional. A parenthesised
+    # ternary chained to a second `if ... else` inside the args is where
+    # ansible-core's templar stops at the `else` ("expected token ')', got
+    # 'else'"), so the task never reaches systemd and the host keeps the old
+    # unit. loop_unit_changed is the selectattr chain as a list,
+    # loop_unit_wants_restart is changed-or-named, and loop_unit_state keeps the
+    # same four outcomes: disabled stopped, changed or named restarted, any
+    # other enabled one started.
     - name: start the enabled, stop the disabled (linux)
+      vars:
+        loop_unit_changed: >-
+          {{ (loop_units.results + (loop_timers.results | default([])))
+             | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list }}
+        loop_unit_wants_restart: "{{ loop_unit_changed | length > 0 or item.name in loop_restart }}"
+        loop_unit_state: "{{ 'stopped' if not item.enabled else ('restarted' if loop_unit_wants_restart else 'started') }}"
       ansible.builtin.systemd_service:
         name: "nova-loop-{{ item.name }}.{{ 'service' if item.keepalive else 'timer' }}"
         scope: "{{ loop_scope }}"
         daemon_reload: true
         enabled: "{{ item.enabled }}"
-        state: >-
-          {{ ('restarted' if (((loop_units.results + (loop_timers.results | default([])))
-                                | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list
-                                or item.name in loop_restart) else 'started')
-             if item.enabled else 'stopped' }}
+        state: "{{ loop_unit_state }}"
       loop: "{{ loop_records }}"
       loop_control: { label: "{{ item.name }}" }
       environment: "{{ {} if loop_system else loop_runtime }}"
       become: "{{ loop_system }}"
+      register: loop_states
       when: not loop_darwin and not ansible_check_mode
 
     - name: stop the retired (linux)
@@ -427,6 +439,29 @@
       loop: "{{ loop_retire | map(attribute='system') | unique | list }}"
       environment: "{{ {} if item else loop_runtime }}"
       become: "{{ item }}"
+      when: not loop_darwin and not ansible_check_mode
+
+    # The gate: a host whose unit file changed and whose restart did not run is
+    # a failed play, not a green one. The release checklist reads this recap per
+    # host, never the exit code alone: the file on disk may be new while the host
+    # still runs the old argv.
+    - name: every changed unit was restarted or started (linux)
+      vars:
+        loop_changed_units: >-
+          {{ ((loop_units.results | default([])) + (loop_timers.results | default([])))
+             | selectattr('changed') | map(attribute='item.name') | unique | list }}
+        loop_restarted_units: >-
+          {{ loop_states.results | default([])
+             | rejectattr('failed', 'equalto', true) | rejectattr('skipped', 'equalto', true)
+             | map(attribute='item.name') | list }}
+        loop_unrestarted: "{{ loop_changed_units | reject('in', loop_restarted_units) | list }}"
+      ansible.builtin.assert:
+        that: loop_unrestarted | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} wrote the unit file of {{ loop_unrestarted | join(', ') }} and did not
+          restart it: the host still runs the old argv. Run fleet/loops.yml again, or restart each by hand:
+          systemctl --user restart nova-loop-<name>.service
+        quiet: true
       when: not loop_darwin and not ansible_check_mode
 
     - name: the receipt
