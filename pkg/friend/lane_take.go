@@ -32,7 +32,11 @@ import (
 //  3. Report by the ids the server gave: progress and finish name the card at its generation,
 //     the epoch the server said, and the lane (ProgressArgv, FinishArgv).
 //  4. Any refusal, of the ask or of a report: the lane drops the job and asks again. A lane
-//     never says "took" unless the server's line says it holds the card.
+//     never says "took" unless the server's line says it holds the card. The one exception is
+//     a LANE line the lane cannot read (Unparseable): it says so once and parks, asking no
+//     more until the daemon restarts; the server's record goes by the gone bound
+//     (tla/FriendLane.tla ParkedRunsNothing, RefusedOnceNotALoop, ParkedNeverAsks,
+//     ParkedRecordIsGone, ResumesAfterRestart; MCFriendLaneParkedBroken*.cfg).
 //
 // A reader's reads go through the same loop (read_lanes.go): `take --as reader-<name> --lane
 // <n>` begins its next read. The model is tla/FriendLane.tla (WorkingOnlyOnTheServersSay,
@@ -186,6 +190,7 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 	var bad *Unparseable
 	if errors.As(err, &bad) {
 		// the same server answers the same line: asking again is a loop, not a retry
+		// (tla/FriendLane.tla Refuse: the lane parks; RefusedOnceNotALoop, ParkedNeverAsks)
 		ln.askAt = now.Add(neverAgain)
 		l.laneSay(ln, fmt.Sprintf("%s lane %d: asked the server what it holds: refused: %s; it runs nothing and asks no more until the daemon restarts", at, ln.n, oneLine(err.Error(), 400)))
 		return Card{}, false
